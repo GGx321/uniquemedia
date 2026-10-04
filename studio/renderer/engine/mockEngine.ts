@@ -719,6 +719,16 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
+   * The bytes of the stand-in for the own sticker `mediaId` (3f.5), as main answers `media.stickerBytes` with the stored file; null for a media the
+   * mock does not hold as a sticker. The window's `ownStickerUrl` for the dev build, where there is no `studio-media://`, is this as a data URL.
+   */
+  mockOwnStickerBytes(mediaId: string): Uint8Array | null {
+    const record = this.ownMedia.stickerOf(mediaId);
+    if (record === undefined || record.width === null || record.height === null || record.loopFrames === null || record.delayFrames === null) return null;
+    return mockOwnStickerBytes({ mediaId: record.mediaId, width: record.width, height: record.height, loopFrames: record.loopFrames, delayFrames: record.delayFrames });
+  }
+
+  /**
    * The dev build's own sticker (3f.5): one stored record, with no job and no event, so the preview and the render can be tried with an own sticker.
    * Its id and time are its own (never the ones `nextId` and the clock hand out), so seeding it shifts nothing that comes later.
    */
@@ -1392,14 +1402,11 @@ export class MockEngine implements EngineBridge {
       case "media.stickerBytes": {
         // Main's answer from the stored sticker's record (3f.5): the mock's is its own stand-in, on the record's canvas, loop and delays. An id that is
         // not an own sticker (missing, deleted, another kind) is one NOT_FOUND with the engine's fixed text.
-        const record = this.ownMedia.stickerOf(c.payload.mediaId);
-        if (record === undefined || record.width === null || record.height === null || record.loopFrames === null || record.delayFrames === null) {
-          return this.fail(c, { code: "NOT_FOUND", detail: "no such own sticker" });
-        }
-        const bytes = mockOwnStickerBytes({ mediaId: record.mediaId, width: record.width, height: record.height, loopFrames: record.loopFrames, delayFrames: record.delayFrames });
+        const bytes = this.mockOwnStickerBytes(c.payload.mediaId);
+        if (bytes === null) return this.fail(c, { code: "NOT_FOUND", detail: "no such own sticker" });
         let binary = "";
         for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        return this.ok(c, { mediaId: record.mediaId, apngBase64: btoa(binary) });
+        return this.ok(c, { mediaId: c.payload.mediaId, apngBase64: btoa(binary) });
       }
       case "media.list":
         return this.ok(c, this.ownMedia.list(c.payload.kind));
@@ -3190,7 +3197,7 @@ export function mockEngineClient(engine: MockEngine = new MockEngine()): EngineC
   const client = createEngineClient(engine, "mock", () => `msg-${String(++messageCounter).padStart(6, "0")}`);
   // The dev build has no `studio-media://`: a text preview's PNG is handed to the window as a data URL, and a built-in
   // sticker as a stand-in of the mock's own.
-  return { ...client, textPreviewUrl: (previewId) => pngDataUrl(engine.mockPreviewPng(previewId)), stickerUrl: mockStickerUrl };
+  return { ...client, textPreviewUrl: (previewId) => pngDataUrl(engine.mockPreviewPng(previewId)), stickerUrl: mockStickerUrl, ownStickerUrl: (mediaId) => pngDataUrl(engine.mockOwnStickerBytes(mediaId)) };
 }
 
 function pngDataUrl(bytes: Uint8Array | null): string | null {

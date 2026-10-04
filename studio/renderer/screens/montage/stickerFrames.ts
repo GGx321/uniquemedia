@@ -1,3 +1,4 @@
+import { Id } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
 
 // 3d.4: a sticker's frames for the preview's canvas, decoded by WebCodecs `ImageDecoder` (the 3b.5 hand-off):
@@ -24,8 +25,20 @@ export interface StickerFrames {
   close(): void;
 }
 
-/** Opens a sticker's frames; null when this window cannot decode it (no `ImageDecoder`, no PNG decoding, no bytes for it). */
-export type OpenStickerFrames = (stickerId: string) => Promise<StickerFrames | null>;
+/** Opens a sticker's frames by its KEY (a built-in id, or an own sticker's `ownStickerKey`); null when this window cannot decode it (no `ImageDecoder`, no PNG decoding, no bytes for it). */
+export type OpenStickerFrames = (key: string) => Promise<StickerFrames | null>;
+
+const OWN_KEY_PREFIX = "own:";
+
+/** The key a cache and an opener know an OWN sticker by (3f.5). A built-in id is a contract `Id`, which has no colon, so the two never collide. */
+export const ownStickerKey = (mediaId: string): string => `${OWN_KEY_PREFIX}${mediaId}`;
+
+/** The media id of an own sticker's key, or null for a built-in id or anything that is not a key made by `ownStickerKey` from a contract id. */
+export function mediaIdOfOwnKey(key: string): string | null {
+  if (!key.startsWith(OWN_KEY_PREFIX)) return null;
+  const id = key.slice(OWN_KEY_PREFIX.length);
+  return Id.safeParse(id).success ? id : null;
+}
 
 /** The window's own decoder: `ImageDecoder` over an APNG's bytes, colours untouched. */
 export async function openWithImageDecoder(bytes: Uint8Array): Promise<StickerFrames | null> {
@@ -70,10 +83,22 @@ function bytesOfBase64(base64: string): Uint8Array {
   return bytes;
 }
 
-/** The editor's opener: a built-in sticker's verified bytes from main (`stickers.bytes`), decoded by the window's `ImageDecoder`. */
+/**
+ * The editor's opener: a sticker's verified bytes from main, decoded by the window's `ImageDecoder`. A built-in sticker's come from
+ * `stickers.bytes` (the shipped catalogue); an OWN sticker's from `media.stickerBytes` (3f.5: main resolves the media id through its record). The
+ * two doors are separate commands and the key says which is asked: an own key never reaches the built-in command, and a key that is neither a
+ * built-in id nor an own key is not asked for at all.
+ */
 export function stickerFramesFrom(client: Pick<EngineClient, "request">): OpenStickerFrames {
-  return async (stickerId) => {
-    const reply = await client.request("stickers.bytes", { stickerId });
+  return async (key) => {
+    const mediaId = mediaIdOfOwnKey(key);
+    if (mediaId !== null) {
+      const reply = await client.request("media.stickerBytes", { mediaId });
+      return reply.ok ? openWithImageDecoder(bytesOfBase64(reply.result.apngBase64)) : null;
+    }
+    // A built-in id: anything else is refused by the contract before it leaves (and not asked for here).
+    if (!Id.safeParse(key).success) return null;
+    const reply = await client.request("stickers.bytes", { stickerId: key });
     if (!reply.ok) return null;
     return openWithImageDecoder(bytesOfBase64(reply.result.apngBase64));
   };

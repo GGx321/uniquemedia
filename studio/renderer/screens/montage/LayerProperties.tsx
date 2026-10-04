@@ -395,7 +395,7 @@ function StickerFields({ session, layer, onReplace }: { session: DraftSession; l
         </span>
         <span className="ed-sticker-facts">
           <span className="ed-sticker-name">{stickerName(layer)}</span>
-          <span className="mono muted">{entry === undefined ? (layer.sticker.source === "own" ? "свой · скоро" : "нет во встроенном наборе") : `встроенный · ${loop ?? ""}`}</span>
+          <span className="mono muted">{entry === undefined ? (layer.sticker.source === "own" ? "свой" : "нет во встроенном наборе") : `встроенный · ${loop ?? ""}`}</span>
           {category !== undefined && <span className="tag">{category.nameRu}</span>}
         </span>
       </div>

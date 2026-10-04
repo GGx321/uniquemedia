@@ -146,7 +146,19 @@ describe("the layers on screen", () => {
     const layer = { ...stickerLayer(0, 0, 1_000), sticker: { source: "builtin" as const, stickerId: "heart-pulse" }, size: 0.3 };
     expect(stickerLayerBox(layer)).toEqual(stickerBox(layer, { w: BUILTIN_STICKER_SIZE, h: BUILTIN_STICKER_SIZE }));
     expect(stickerLayerBox({ ...layer, sticker: { source: "builtin", stickerId: "no-such-sticker" } })).toBe(null);
+    // An own sticker has no box until its record's canvas is known (3f.5).
     expect(stickerLayerBox({ ...layer, sticker: { source: "own", mediaId: "media-own-0001" } })).toBe(null);
+  });
+
+  test("an own sticker's box is the engine's, on ITS canvas (which need not be square); with the canvas of another sticker it is that one's", () => {
+    const layer = { ...stickerLayer(0, 0, 1_000), sticker: { source: "own" as const, mediaId: "media-own-0001" }, size: 0.4, x: 0.6, y: 0.4 };
+    expect(stickerLayerBox(layer, { width: 400, height: 200 })).toEqual(stickerBox(layer, { w: 400, h: 200 }));
+    expect(stickerLayerBox(layer, { width: 400, height: 200 })).not.toEqual(stickerLayerBox(layer, { width: 200, height: 200 }));
+  });
+
+  test("the canvas of an own sticker is not used for a built-in one: the set's own square picture stays the box", () => {
+    const layer = { ...stickerLayer(0, 0, 1_000), sticker: { source: "builtin" as const, stickerId: "heart-pulse" }, size: 0.3 };
+    expect(stickerLayerBox(layer, { width: 400, height: 200 })).toEqual(stickerBox(layer, { w: BUILTIN_STICKER_SIZE, h: BUILTIN_STICKER_SIZE }));
   });
 });
 
