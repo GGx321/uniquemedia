@@ -15,6 +15,7 @@ import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import { isRevealCommand, isRevealFolderCommand, type RevealCommand, type RevealFolderCommand } from "./revealFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
+import { isOwnStickerBytesCommand, type OwnStickerBytesCommand } from "./ownStickerBytesFlow";
 import { isStickerBytesCommand, type StickerBytesCommand } from "./stickerBytesFlow";
 
 /** What main knows about the frame an IPC message came from (from `event.senderFrame`). */
@@ -112,6 +113,12 @@ export interface RequestRoutes {
    * own catalogue, so the media scheme never has to open to script reads; the window names an id and is never told a path.
    */
   stickerBytes(command: StickerBytesCommand): Promise<ResponseMessage>;
+  /**
+   * 3f.5: `media.stickerBytes {mediaId}`. An OWN sticker's bytes for the same decoder, a door of its own beside the built-in one: main resolves the
+   * media id through its record (the kind must be sticker, the sha256 is checked on the exact bytes, the size is capped before it reads) and answers the
+   * file, never a path. The window names a media id and is never told which check failed.
+   */
+  ownStickerBytes(command: OwnStickerBytesCommand): Promise<ResponseMessage>;
   /** Everything else, forwarded to the engine. */
   engine(command: EngineCommandMessage): Promise<ResponseMessage>;
 }
@@ -131,6 +138,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
     if (isRevealCommand(message)) return routes.reveal(message);
     if (isRevealFolderCommand(message)) return routes.revealFolder(message);
     if (isStickerBytesCommand(message)) return routes.stickerBytes(message);
+    if (isOwnStickerBytesCommand(message)) return routes.ownStickerBytes(message);
     return errorResponseFor(message, { code: "INTERNAL", detail: `${message.type} has no handler in main` });
   }
   if (isSettingsCommand(message)) return routes.settings(message);

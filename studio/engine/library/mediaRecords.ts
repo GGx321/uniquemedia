@@ -88,6 +88,12 @@ export interface ServedMediaRecord {
   readonly bytes: number;
   /** `<id>.<extension of the format>`, inside `<library>/media/`: the only name the route may open. */
   readonly file: string;
+  /** The sha256 of the stored file's bytes: `media.stickerBytes` checks the exact bytes it sends against it (3f.5). */
+  readonly sha256: string;
+  /** The stored canvas, and a sticker's loop in 30 fps frames (null for what has none): what the bytes of a sticker must say they are (3f.5). */
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly loopFrames: number | null;
 }
 
 /**
@@ -101,7 +107,7 @@ export function servedMediaRecord(json: unknown): ServedMediaRecord | null {
   const record = parsed.data;
   if (!FORMATS_OF_KIND[record.kind].includes(record.format)) return null;
   if (record.file !== `${record.id}.${MEDIA_EXTENSIONS[record.format]}`) return null;
-  return { id: record.id, kind: record.kind, format: record.format, bytes: record.bytes, file: record.file };
+  return { id: record.id, kind: record.kind, format: record.format, bytes: record.bytes, file: record.file, sha256: record.sha256, width: record.width, height: record.height, loopFrames: record.loopFrames };
 }
 
 /** What an importer learned of the file it made; which fields a kind has is the contract's (`MediaSummary`). */
