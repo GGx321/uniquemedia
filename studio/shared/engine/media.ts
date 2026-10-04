@@ -46,9 +46,20 @@ export const MAX_PICKED_FILES = 20;
  * - `too-many`: more than `MAX_PICKED_FILES` in one pick;
  * - `failed`: the kind's importer failed, or the engine could not go on with this file (the rest of a pick that stopped there is `failed` too);
  * - `cancelled`: the import was stopped (the window closed, the engine's own time ran out, the app quit);
- * - `not-yet-supported`: the kind has no importer yet.
+ * - `not-yet-supported`: the kind has no importer yet;
+ * - `too-long`: a video longer than three minutes (3f.3a);
+ * - `codec`: a video whose codec the importer does not take: H.264, HEVC (HDR and Dolby Vision 8.x included) and ProRes are taken, VP9, AV1 and the rest are not (3f.3a);
+ * - `dimensions`: a picture past 4K, 4096 on its long side or 2160 on its short one (3f.3a);
+ * - `too-small`: a picture with a side under 2 pixels (3f.3a).
  */
-export const MediaUnsupportedReason = z.enum(["not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported"]);
+export const MediaUnsupportedReason = z.enum([
+  "not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported",
+  // 3f.3a (video):
+  "too-long",
+  "codec",
+  "dimensions",
+  "too-small",
+]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 
 /** A file name as a person reads it (no folder): at most 120 characters, and no control or bidi characters. */

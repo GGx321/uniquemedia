@@ -123,6 +123,10 @@ describe("byte caps", () => {
 
 describe("refusal reasons", () => {
   test("name the boundary's own reasons", () => {
-    expect(MediaUnsupportedReason.options).toEqual(["not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported"]);
+    expect(MediaUnsupportedReason.options).toEqual([
+      "not-a-file", "empty", "too-large", "format", "heic", "changed", "unreadable", "no-space", "too-many", "failed", "cancelled", "not-yet-supported",
+      // 3f.3a, the video importer's:
+      "too-long", "codec", "dimensions", "too-small",
+    ]);
   });
 });
