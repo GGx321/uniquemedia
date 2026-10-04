@@ -67,6 +67,7 @@ export type ProbeRefusal =
   | "stray-track"
   | "duplicate-box"
   | "sample-count-mismatch"
+  | "unsupported-edit"
   | "several-sample-entries"
   | "dimension-mismatch"
   | "unsupported-codec"
@@ -103,8 +104,17 @@ export interface VideoTrackInfo {
   readonly dolbyVision: { readonly profile: number; readonly compatibilityId: number } | null;
   readonly samples: number;
   readonly timescale: number;
-  /** The sum of the `stts` runs, in `timescale` ticks. */
+  /** The sum of the `stts` runs, in `timescale` ticks: the length of the SAMPLES. */
   readonly durationTicks: number;
+  /**
+   * The track's edit list, when it has one: ffmpeg honours it, so the picture is the part of the samples it names. Only one media segment
+   * (optionally after one empty edit, a delay) is taken. `mediaTime` is where in the samples it starts (the track's timescale), `durationTicks`
+   * how long it runs (the MOVIE's timescale, `mvhd`'s). A clip trimmed without re-encoding has one: its samples start at the keyframe before the
+   * cut and the edit cuts into them; x264 and x265 write one to make up for the delay B-frames cause.
+   */
+  readonly edit: { readonly mediaTime: number; readonly durationTicks: number } | null;
+  /** How long the picture is: the edit's length when there is an edit, else the samples'. Exact (ticks of its own timescale), never rounded. */
+  readonly presentation: { readonly ticks: number; readonly timescale: number };
   /** Samples per second on average, to three decimals; between 0.001 and 1000. */
   readonly sourceFps: number;
   /** The sample lengths differ by more than rounding (the last sample, which a muxer ends on its own terms, is not counted). */
@@ -122,9 +132,9 @@ export interface VideoInfo {
 
 export type VideoProbe = { readonly ok: true; readonly info: VideoInfo } | { readonly ok: false; readonly reason: ProbeRefusal };
 
-/** True when the file's length, by `mvhd` or by its video track, is more than `seconds`: exact, in ticks, never rounded. */
+/** True when the picture (the edit's length, else the samples') is longer than `seconds`: exact, in ticks, never rounded. */
 export function longerThan(info: VideoInfo, seconds: number): boolean {
-  return info.mvhd.duration > seconds * info.mvhd.timescale || info.video.durationTicks > seconds * info.video.timescale;
+  return info.video.presentation.ticks > seconds * info.video.presentation.timescale;
 }
 
 class Refusal extends Error {
@@ -163,6 +173,7 @@ const CODECS: Readonly<Record<string, VideoCodec>> = {
 const NON_VIDEO_ENTRIES: ReadonlySet<string> = new Set([
   "mp4a", "ac-3", "ec-3", "alac", "sowt", "twos", "lpcm", "ipcm", "fpcm", ".mp3", "samr", "sawb", "Opus", "fLaC", "in24", "in32", "fl32", "fl64", "raw ", "ulaw", "alaw",
   "mebx", "tmcd", "text", "tx3g", "c608", "c708", "clcp", "gpmd", "camm", "sbtl", "stpp", "wvtt", "priv", "fdsc", "rtmd", "mett", "metx",
+  "djmd", "dbgi", "CTMD", "rtp ", "mp4s",
 ]);
 
 const latin1 = (bytes: Uint8Array, from: number, to: number): string => String.fromCharCode(...bytes.subarray(from, to));
@@ -327,6 +338,51 @@ function resolveColour(colr: ColrNclx | null, dolby: { profile: number; compatib
   };
 }
 
+/**
+ * The track's edit list: none, or one media segment after at most one empty edit. Anything else (two segments, a segment at another speed, a
+ * segment of no length, an empty edit that is the whole list) is refused, because what ffmpeg would play of it is not what the walker measured.
+ */
+function readEdit(m: Uint8Array, view: DataView, edts: BoxRef | undefined, budget: { visited: number }): { mediaTime: number; durationTicks: number } | null {
+  if (edts === undefined) return null;
+  const elst = onlyOf(childrenOf(m, view, edts.body, edts.end, budget), "elst");
+  if (elst === undefined) return null;
+  const version = m[elst.body] ?? 0;
+  if (version !== 0 && version !== 1) throw new Refusal("unsupported-edit");
+  if (payloadLength(elst) < 8) throw new Refusal("bad-box");
+  const count = view.getUint32(elst.body + 4);
+  const size = version === 1 ? 20 : 12;
+  if (count > (payloadLength(elst) - 8) / size) throw new Refusal("bad-box");
+  if (count === 0) return null;
+  if (count > 2) throw new Refusal("unsupported-edit");
+  const entries: { duration: number; mediaTime: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    const at = elst.body + 8 + i * size;
+    let duration: number;
+    let mediaTime: number;
+    let rateAt: number;
+    if (version === 1) {
+      const wide = view.getBigUint64(at);
+      const time = view.getBigInt64(at + 8);
+      if (wide > BigInt(Number.MAX_SAFE_INTEGER) || time > BigInt(Number.MAX_SAFE_INTEGER) || time < -1n) throw new Refusal("unsupported-edit");
+      duration = Number(wide);
+      mediaTime = Number(time);
+      rateAt = at + 16;
+    } else {
+      duration = view.getUint32(at);
+      mediaTime = view.getInt32(at + 4);
+      rateAt = at + 8;
+    }
+    // Rate 1.0 only: an integer part of 1 and no fraction.
+    if (mediaTime >= 0 && (view.getInt16(rateAt) !== 1 || view.getInt16(rateAt + 2) !== 0)) throw new Refusal("unsupported-edit");
+    entries.push({ duration, mediaTime });
+  }
+  const segment = entries[entries.length - 1];
+  const delay = entries.length === 2 ? entries[0] : undefined;
+  // The last entry is the picture; a first one, when there is one, is a delay (an empty edit, media time -1) and nothing else.
+  if (segment === undefined || segment.mediaTime < 0 || segment.duration === 0 || (delay !== undefined && delay.mediaTime !== -1)) throw new Refusal("unsupported-edit");
+  return { mediaTime: segment.mediaTime, durationTicks: segment.duration };
+}
+
 interface SampleTimes {
   readonly samples: number;
   readonly durationTicks: number;
@@ -383,7 +439,7 @@ function checkDataReferences(m: Uint8Array, view: DataView, inMinf: readonly Box
   }
 }
 
-function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined, mdhd: BoxRef | undefined, tables: readonly BoxRef[] | undefined, budget: { visited: number }): VideoTrackInfo {
+function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined, edts: BoxRef | undefined, mdhd: BoxRef | undefined, tables: readonly BoxRef[] | undefined, movieTimescale: number, budget: { visited: number }): VideoTrackInfo {
   if (tkhd === undefined || mdhd === undefined || tables === undefined) throw new Refusal("bad-header");
   const { rotation, width: tkhdWidth, height: tkhdHeight } = readTkhd(m, view, tkhd);
   const { timescale } = readTimes(m, view, mdhd);
@@ -417,6 +473,7 @@ function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined,
   const { colour, range } = resolveColour(readColr(m, view, inside), dolby, width, height);
 
   const times = readStts(view, stts);
+  const edit = readEdit(m, view, edts, budget);
   // ffmpeg counts the samples of a track from its size table, not from `stts`: a file whose two disagree could be 1 s by the one and 3 h by the other.
   const sizes = onlyOf(tables, "stsz");
   const compact = onlyOf(tables, "stz2");
@@ -438,6 +495,8 @@ function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined,
     samples: times.samples,
     timescale,
     durationTicks: times.durationTicks,
+    edit,
+    presentation: edit === null ? { ticks: times.durationTicks, timescale } : { ticks: edit.durationTicks, timescale: movieTimescale },
     sourceFps: Math.max(MIN_FPS, sourceFps),
     variableFrameRate: times.variableFrameRate,
   };
@@ -508,18 +567,19 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
     const stsd = tables === undefined ? undefined : onlyOf(tables, "stsd");
     const entryType = stsd !== undefined && payloadLength(stsd) >= 16 ? latin1(m, stsd.body + 12, stsd.body + 16) : undefined;
     if (handler === "soun") audioTracks++;
-    // A video track by its handler OR by its sample entry (see NON_VIDEO_ENTRIES).
+    // A sound track is a sound track whatever its codec is called: ffmpeg never makes a video stream of a `soun` track (the video tag lookup is
+    // skipped once the handler has said audio), and no decoder but the pinned one is opened. The `hdlr` is the track's only one (a second is refused
+    // above), so a sound handler cannot hide another. Otherwise: a video track by its handler OR by its sample entry (see NON_VIDEO_ENTRIES).
+    if (handler === "soun") continue;
     if (handler !== "vide" && (entryType === undefined || NON_VIDEO_ENTRIES.has(entryType))) continue;
     // ONE video track only. ffmpeg silently drops a track it cannot use (no samples, a broken table), so with two the stream it maps as the
     // first video could be the one this walker never judged.
     if (video !== undefined) throw new Refusal("several-video-tracks");
-    video = readVideoTrack(m, view, onlyOf(parts, "tkhd"), onlyOf(inMdia, "mdhd"), tables, budget);
+    video = readVideoTrack(m, view, onlyOf(parts, "tkhd"), onlyOf(parts, "edts"), onlyOf(inMdia, "mdhd"), tables, movieTimes.timescale, budget);
   }
   if (video === undefined) throw new Refusal("no-video-track");
 
-  const movieMs = (movieTimes.duration * 1000) / movieTimes.timescale;
-  const trackMs = (video.durationTicks * 1000) / video.timescale;
-  return { brand, durationMs: Math.round(Math.max(movieMs, trackMs)), mvhd: movieTimes, video, audioTracks };
+  return { brand, durationMs: Math.round((video.presentation.ticks * 1000) / video.presentation.timescale), mvhd: movieTimes, video, audioTracks };
 }
 
 /** Reads the facts of an MP4 or MOV, or says why it is not one this importer takes. Rejects only when `source.read` does. */

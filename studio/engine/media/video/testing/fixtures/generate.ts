@@ -127,6 +127,21 @@ try {
   writeFileSync(join(work, "big-claims-1080p.mp4"), withClaimedSize(readFileSync(join(work, "big.mp4")), 1920, 1080));
   emit("h264-sps-4224x2176-claims-1080p.mp4", join(work, "big-claims-1080p.mp4"));
 
+  // 9. Clips trimmed WITHOUT re-encoding (`-c copy`, what an editor that does not re-encode writes): a 10 s clip with a keyframe every 2 s, cut
+  // at 0.5, 1.0 and 1.9 s for 3 s. The samples run from the keyframe before the cut, and an edit list (`elst`) cuts into them: `stts` says 3.5,
+  // 4.0 and 4.9 s, the picture is 3.0 s. ffmpeg honours the edit.
+  ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=128x72:r=30:d=10", "-c:v", "libx264", "-g", "60", "-keyint_min", "60", "-sc_threshold", "0", "-bf", "0", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "gop2.mp4")]);
+  for (const ss of ["0.5", "1.0", "1.9"]) {
+    ffmpeg(["-ss", ss, "-i", join(work, "gop2.mp4"), "-t", "3", "-c", "copy", "-fflags", "+bitexact", join(work, `trim${ss}.mp4`)]);
+    emit(`h264-copy-trim-ss${ss}.mp4`, join(work, `trim${ss}.mp4`));
+  }
+
+  // 10. B-frames, as x264 and x265 write them to MP4: a `ctts` (composition offsets) and an `elst` whose media time compensates the delay.
+  ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=128x72:r=30:d=2", "-c:v", "libx264", "-bf", "3", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "bf.mp4")]);
+  emit("h264-bframes.mp4", join(work, "bf.mp4"));
+  ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=128x72:r=30:d=2", "-c:v", "libx265", "-x265-params", "bframes=4:pools=1:frame-threads=1:log-level=error", "-tag:v", "hvc1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "hbf.mp4")]);
+  emit("hevc-bframes.mp4", join(work, "hbf.mp4"));
+
   console.log(JSON.stringify(out, null, 2));
 } finally {
   rmSync(work, { recursive: true, force: true });

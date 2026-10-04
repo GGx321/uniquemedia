@@ -44,9 +44,8 @@ describe("H1: a track is a video track by its sample entry, whatever its handler
     expect(await refusalOf({ tracks: [{ handler: "meta", sampleEntry: "video", entry: entry({ fourcc: "xyzw" }) }] })).toBe("unsupported-codec");
   });
 
-  test("a track with an audio handler and a video entry is the video track", async () => {
-    const info = await infoOf({ tracks: [{ handler: "soun", sampleEntry: "video", entry: entry() }] });
-    expect(info.video.codec).toBe("h264");
+  test("a track with an audio handler and a video entry is a sound track (ffmpeg decides by the handler for sound)", async () => {
+    expect(await refusalOf({ tracks: [{ handler: "soun", sampleEntry: "video", entry: entry() }] })).toBe("no-video-track");
   });
 
   test.each(["mp4a", "tmcd", "mebx"])("a %s track (sound, timecode, timed metadata: what a phone writes) is not a video track", async (fourcc) => {

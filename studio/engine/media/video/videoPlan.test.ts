@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../../shared/engine";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
-import { judgeVideo, VIDEO_LIMITS, videoArgs, videoFilterGraph, type VideoPlan } from "./videoPlan";
+import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, videoFilterGraph, type VideoPlan } from "./videoPlan";
 import { buildMp4, MATRIX, trackBox, type ColrSpec, type Mp4Spec, type TrackSpec, type VideoEntrySpec } from "./testing/mp4VideoBuilder";
 import { bytesSource, probeVideo } from "./videoProbe";
 useNativeGlobals();
@@ -47,9 +47,22 @@ describe("the limits, to the edge", () => {
     expect((await judged(withVideo({ mdhdTimescale: 90000, stts: [[1, 16_200_000]] }, { mvhdTimescale: 1000, mvhdDuration: 1000 }))).ok).toBe(true);
   });
 
-  test("mvhd alone can make a file too long (a track that is short, a movie that says otherwise)", async () => {
-    expect(await refusal(withVideo({}, { mvhdTimescale: 1000, mvhdDuration: 180_001 }))).toBe("too-long");
-    expect((await judged(withVideo({}, { mvhdTimescale: 1000, mvhdDuration: 180_000 }))).ok).toBe(true);
+  test("the movie's own length (mvhd) no longer decides: ffmpeg decodes the video track, and only its length counts", async () => {
+    expect((await judged(withVideo({}, { mvhdTimescale: 1000, mvhdDuration: 600_000 }))).ok).toBe(true);
+  });
+
+  test("a clip whose edit list shows 3 minutes of long media is taken, and one whose edit shows 3 minutes and a tick is too long", async () => {
+    const long = { mdhdTimescale: 1000, stts: [[600, 1000]] } as const;
+    expect((await judged(withVideo({ ...long, edits: [{ duration: 180_000, mediaTime: 0 }] }))).ok).toBe(true);
+    expect(await refusal(withVideo({ ...long, edits: [{ duration: 180_001, mediaTime: 0 }] }))).toBe("too-long");
+  });
+
+  test("media that is long and cut short by its edit (a trim that keeps all the samples) is a clip of the edit's length", async () => {
+    expect((await judged(withVideo({ mdhdTimescale: 1000, stts: [[10_800, 1000]], edits: [{ duration: 3000, mediaTime: 0 }] }))).ok).toBe(true);
+  });
+
+  test("a clip with no edit list is too long by its samples", async () => {
+    expect(await refusal(withVideo({ mdhdTimescale: 1000, stts: [[181, 1000]] }))).toBe("too-long");
   });
 
   test("a file of exactly 2 GiB is taken, and one byte more is too large (the claim, not a real file)", async () => {
@@ -169,11 +182,65 @@ describe("the size of the mezzanine: fitted inside 1080 x 1920, never upscaled, 
   });
 });
 
+describe("the frames a normalised clip must have", () => {
+  const expected = async (spec: Mp4Spec): Promise<[number, number]> => {
+    const { min, max } = expectedFrames((await planOf(spec)).info);
+    return [min, max];
+  };
+  const samples = (seconds: number): Partial<TrackSpec> => ({ mdhdTimescale: 30000, stts: [[seconds * 30, 1000]] });
+
+  test("with no edit list: the samples' length at 30 fps, two frames either way", async () => {
+    expect(await expected(withVideo(samples(2)))).toEqual([58, 62]);
+  });
+
+  test("a trim without re-encoding: 3.5 s of samples, an edit of 3 s from 0.5 s in: 90 frames, not 105", async () => {
+    // What ffmpeg makes of the real fixture (measured): 90.
+    const [min, max] = await expected(withVideo({ ...samples(3.5), edits: [{ duration: 3000, mediaTime: 15000 }] }));
+    expect(min).toBeLessThanOrEqual(90);
+    expect(max).toBeGreaterThanOrEqual(90);
+    expect(max).toBeLessThan(95);
+  });
+
+  test("B-frames: an edit that starts a little into the samples and is as long as they are keeps the frame count within the range", async () => {
+    // 60 samples, edit of 2.000 s from media time 1024 of 15360 (x264's): ffmpeg makes 60.
+    const [min, max] = await expected(withVideo({ mdhdTimescale: 15360, stts: [[60, 512]], edits: [{ duration: 2000, mediaTime: 1024 }] }));
+    expect(min).toBeLessThanOrEqual(60);
+    expect(max).toBeGreaterThanOrEqual(60);
+  });
+
+  test("an empty edit before the segment adds nothing", async () => {
+    const plain = await expected(withVideo({ ...samples(3), edits: [{ duration: 3000, mediaTime: 0 }] }));
+    expect(await expected(withVideo({ ...samples(3), edits: [{ duration: 2000, mediaTime: -1 }, { duration: 3000, mediaTime: 0 }] }))).toEqual(plain);
+  });
+
+  test("an edit that claims more than the samples hold cannot raise the count past the samples", async () => {
+    const [, max] = await expected(withVideo({ ...samples(2), edits: [{ duration: 100_000, mediaTime: 0 }] }));
+    expect(max).toBeLessThanOrEqual(62);
+  });
+
+  test("an edit that claims a short span of long samples is the short span", async () => {
+    const [min, max] = await expected(withVideo({ ...samples(100), edits: [{ duration: 1000, mediaTime: 0 }] }));
+    expect([min, max]).toEqual([28, 32]);
+  });
+
+  test("an edit that starts near the end of the samples leaves only what remains", async () => {
+    // 4 s of samples, a 3 s edit from 3 s in: one second remains.
+    const [min, max] = await expected(withVideo({ ...samples(4), edits: [{ duration: 3000, mediaTime: 90_000 }] }));
+    expect(min).toBeLessThanOrEqual(30);
+    expect(max).toBeGreaterThanOrEqual(30);
+  });
+});
+
 describe("the plan carries what the importer needs", () => {
   test("HDR (PQ and HLG) is tone-mapped, SDR is not", async () => {
     expect((await planOf(withVideo({ entry: entry({ fourcc: "hvc1", colr: nclx(9, 16, 9) }) }))).hdrToSdr).toBe(true);
     expect((await planOf(withVideo({ entry: entry({ fourcc: "hvc1", colr: nclx(9, 18, 9) }) }))).hdrToSdr).toBe(true);
     expect((await planOf(withVideo({ entry: entry({ colr: nclx(1, 1, 1) }) }))).hdrToSdr).toBe(false);
+  });
+
+  test("the wall-clock limit follows the edit's length, not the samples': a forged short edit on long media cannot buy ffmpeg a long time", async () => {
+    const forged = await planOf(withVideo({ mdhdTimescale: 1000, stts: [[10_800, 1000]], edits: [{ duration: 1000, mediaTime: 0 }] }));
+    expect(forged.timeoutMs).toBe(60_000 + 1000 * 10);
   });
 
   test("the wall-clock limit grows with the length and has a floor", async () => {

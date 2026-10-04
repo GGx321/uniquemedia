@@ -130,6 +130,29 @@ export function withFirstTrackAtTopLevel(source: Uint8Array): Uint8Array {
   return concat(source.subarray(0, moov.start), source.subarray(trak.start, trak.end), u32(rest.byteLength + 8), Uint8Array.from([0x6d, 0x6f, 0x6f, 0x76]), rest, source.subarray(moov.end));
 }
 
+/**
+ * A copy whose video track has THIS edit list (version 0, replacing the `edts` it had, or added if it had none): each entry's segment duration
+ * (movie timescale), media time (-1 for an empty edit) and rate (default 1.0). The file needs its moov after its mdat.
+ */
+export function withEditList(source: Uint8Array, entries: readonly { duration: number; mediaTime: number; rate?: readonly [number, number] }[]): Uint8Array {
+  const path = videoPath(source);
+  const moov = path[0];
+  const trak = path[1];
+  if (moov === undefined || trak === undefined) throw new Error("no video track");
+  const mdat = children(source, 0, source.byteLength).find((b) => b.type === "mdat");
+  if (mdat === undefined || mdat.start > moov.start) throw new Error("this helper needs a file with its moov after its mdat");
+  const rows = entries.map((e) => concat(u32(e.duration), u32(e.mediaTime >>> 0), Uint8Array.from([0, e.rate?.[0] ?? 1, 0, e.rate?.[1] ?? 0])));
+  const edts = box("edts", fullBox("elst", 0, concat(u32(entries.length), ...rows)));
+  const old = children(source, trak.body, trak.end).find((b) => b.type === "edts");
+  const cutFrom = old === undefined ? trak.body : old.start;
+  const cutTo = old === undefined ? trak.body : old.end;
+  const out = concat(source.subarray(0, cutFrom), edts, source.subarray(cutTo));
+  const delta = edts.byteLength - (cutTo - cutFrom);
+  const view = new DataView(out.buffer);
+  for (const b of [moov, trak]) view.setUint32(b.start, view.getUint32(b.start) + delta);
+  return out;
+}
+
 /** A copy that CLAIMS another picture size in `tkhd` and the sample entry (the bitstream is untouched, and says what it said). */
 export function withClaimedSize(source: Uint8Array, width: number, height: number): Uint8Array {
   const bytes = Uint8Array.from(source);

@@ -68,11 +68,11 @@ describe("size and length", () => {
     expect(info.durationMs).toBe(Math.round((450 * 1001 * 1000) / 30000));
   });
 
-  test("mvhd's length counts when it is the longer (an audio track outlasting the picture)", async () => {
+  test("mvhd's length does not count: it can be an audio track outlasting the picture, and ffmpeg decodes the picture", async () => {
     const info = await infoOf({ mvhdTimescale: 1000, mvhdDuration: 20_000, tracks: [video({ stts: [[30, 1000]] })] });
     expect(info.durationMs).toBe(30_000);
     const longer = await infoOf({ mvhdTimescale: 1000, mvhdDuration: 40_000, tracks: [video({ stts: [[30, 1000]] })] });
-    expect(longer.durationMs).toBe(40_000);
+    expect(longer.durationMs).toBe(30_000);
   });
 
   test("a version 1 mvhd, tkhd and mdhd (64-bit times) are read", async () => {

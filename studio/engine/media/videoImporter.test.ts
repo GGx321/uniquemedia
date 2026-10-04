@@ -154,12 +154,23 @@ describe("what it checks of the file ffmpeg wrote, one property at a time", () =
     expect(await outcomeFor(output([]))).toEqual({ ok: false, reason: "failed" });
   });
 
-  test("the frame count must be the plan's length at 30 fps, within two frames: a decode of another stream than the one judged is caught here", async () => {
+  test("the frame count must be the plan's length at 30 fps, within two frames of the range ffmpeg makes of the samples and the edit: a decode of another stream than the one judged is caught here", async () => {
     // The plan is 5 samples over 5/30 s: 5 frames expected.
     expect((await outcomeOf(good({ stts: [[7, 1000]] }))).ok).toBe(true);
     expect((await outcomeOf(good({ stts: [[3, 1000]] }))).ok).toBe(true);
-    expect(await outcomeOf(good({ stts: [[8, 1000]] }))).toEqual({ ok: false, reason: "failed" });
-    expect(await outcomeOf(good({ stts: [[2, 1000]] }))).toEqual({ ok: false, reason: "failed" });
+    expect(await outcomeOf(good({ stts: [[9, 1000]] }))).toEqual({ ok: false, reason: "failed" });
+  });
+
+  test("with no edit list the range is the samples' length at 30 fps, two frames either way: 28 to 32 frames of a 1 s clip", async () => {
+    const input = buildMp4({ tracks: [{ handler: "vide", entry: { fourcc: "avc1", width: 192, height: 96, colr: colour }, mdhdTimescale: 30000, stts: [[30, 1000]] }] });
+    const outcomeFor = async (frames: number) => {
+      const run: Run = async (options) => writeFile(options.output, good({ stts: [[frames, 1000]] }));
+      return createVideoImporter({ run })(requestFor(tmp(), await stage(tmp(), input)).request);
+    };
+    expect((await outcomeFor(28)).ok).toBe(true);
+    expect((await outcomeFor(32)).ok).toBe(true);
+    expect(await outcomeFor(27)).toEqual({ ok: false, reason: "failed" });
+    expect(await outcomeFor(33)).toEqual({ ok: false, reason: "failed" });
   });
 
   test("a file with a sound track is refused", async () => {

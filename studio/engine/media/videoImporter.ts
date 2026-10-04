@@ -3,7 +3,7 @@ import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { MEDIA_BYTE_CAPS } from "../../shared/engine";
 import type { MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
-import { judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
+import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
 import { probeVideo, type VideoInfo } from "./video/videoProbe";
 
 // The own-video importer (Stage 3 plan, 3f.3a). It turns an owner's MP4 or MOV into the mezzanine the render and the preview read: H.264 at
@@ -25,8 +25,6 @@ import { probeVideo, type VideoInfo } from "./video/videoProbe";
 const MAX_OUTPUT_FRAMES = VIDEO_LIMITS.maxSeconds * VIDEO_LIMITS.fps + 1;
 /** The rate the mezzanine is written at; its own `stts` may round it a little. */
 const RATE_TOLERANCE = 0.05;
-/** How far the mezzanine's frame count may be from the source's length at 30 fps: the rounding of the first and the last frame. */
-const FRAME_TOLERANCE = 2;
 
 export interface VideoImporterOptions {
   /** Starts ffmpeg; Node's `spawn` by default (a test injects a wrapper). */
@@ -40,6 +38,7 @@ export interface VideoImporterOptions {
 /** Whether what ffmpeg wrote is what the plan asked for; the walker's reading of it, never ffmpeg's. */
 function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
   const { video } = info;
+  const expected = expectedFrames(plan.info);
   return (
     video.codec === "h264" &&
     video.width === plan.outWidth &&
@@ -55,9 +54,10 @@ function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
     Math.abs(video.sourceFps - VIDEO_LIMITS.fps) <= RATE_TOLERANCE &&
     video.samples >= 1 &&
     video.samples <= MAX_OUTPUT_FRAMES &&
-    // The decode must be the clip that was judged: its length at 30 fps is the source's length (by the track's own clock, which `stsz` was
-    // checked against), give or take the rounding of the first and last frame. A different stream, or a table that lied, lands elsewhere.
-    Math.abs(video.samples - Math.round((plan.info.video.durationTicks / plan.info.video.timescale) * VIDEO_LIMITS.fps)) <= FRAME_TOLERANCE &&
+    // The decode must be the clip that was judged: its frame count is what ffmpeg makes of the samples AND the edit list the walker read (see
+    // `expectedFrames`). A different stream, or a table that lied, lands outside it.
+    video.samples >= expected.min &&
+    video.samples <= expected.max &&
     info.audioTracks === 0
   );
 }

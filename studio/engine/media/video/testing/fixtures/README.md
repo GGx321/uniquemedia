@@ -37,6 +37,17 @@ Two more are hostile layouts made with a real encoder:
 | `mpeg4-then-h264-two-video-tracks.mp4` | MPEG-4 Part 2 320 x 240 first, H.264 64 x 64 second, moov after mdat | the track-bypass tests: a test patches the first track's `hdlr` or moves it out of `moov`, and ffmpeg still sees it |
 | `h264-sps-4224x2176-claims-1080p.mp4` | H.264 whose bitstream is 4224 x 2176 (past 4K) under a `tkhd` and sample entry that say 1920 x 1080 | that `-max_pixels` stops a decode the headers lied about |
 
+And the ones real editors and encoders make (review round 2): edit lists.
+
+| File | What | Used for |
+| --- | --- | --- |
+| `h264-copy-trim-ss0.5.mp4`, `-ss1.0`, `-ss1.9` | a 10 s clip with a keyframe every 2 s, cut with `-c copy` at 0.5 / 1.0 / 1.9 s for 3 s: 105 / 120 / 147 samples, an `elst` of 3.000 s from 0.5 / 1.0 / 1.9 s in | the picture is the EDIT's length (90 frames at 30 fps), not the samples' |
+| `h264-bframes.mp4`, `hevc-bframes.mp4` | x264 / x265 B-frames in MP4: a `ctts` and an `elst` of the clip's own length from media time 1024 of 15360 | the count is the samples' (60), and an edit that starts a little way in is not a trim |
+
+What ffmpeg 6.0 does with them, measured: it honours the edit list (the trims come out at 90 frames, not 105, 120 or 147; with a `ctts` and its
+compensating edit the count is the samples'; an empty edit before the segment adds no frames; an edit longer than the samples plays all the
+samples; one shorter cuts them). The importer's frame check is built from that (`expectedFrames`, `../../videoPlan.ts`).
+
 Hostile and truncated box trees are not files: the tests build them byte by byte (`../mp4VideoBuilder.ts`) and fuzz them.
 
 ## What the HLG clip proves (invariant 36, "where the chart allows")

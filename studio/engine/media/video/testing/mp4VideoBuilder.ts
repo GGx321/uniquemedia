@@ -86,6 +86,14 @@ export interface TrackSpec {
   /** Write `tkhd` and `mdhd` in their 64-bit form. */
   version1?: boolean;
   noStts?: boolean;
+  /** An edit list (`edts/elst`): each entry's segment duration (movie timescale), media time (-1 for an empty edit) and rate (integer, fraction). */
+  edits?: readonly { duration: number; mediaTime: number; rate?: readonly [number, number] }[];
+  /** Write the edit list in its 64-bit form. */
+  editsV1?: boolean;
+  /** Declare this many entries in the edit list whatever it holds. */
+  editsDeclaredCount?: number;
+  /** Repeat the `edts` (or only its `elst`) inside its parent. */
+  duplicateEdit?: "edts" | "elst";
   /** `stsz`'s own sample count (default: what `stts` sums to), or leave `stsz` out. */
   stszCount?: number;
   noStsz?: boolean;
@@ -192,7 +200,16 @@ export function trackBox(spec: TrackSpec): Uint8Array {
   const stszBox = twice("stsz", spec.stz2 === true ? fullBox("stz2", 0, concat(u8(0, 0, 0, 16), u32(count))) : fullBox("stsz", 0, concat(u32(0), u32(count))));
   const stbl = box("stbl", concat(stsd, ...(spec.noStts === true ? [] : [sttsBox]), ...(spec.noStsz === true ? [] : [stszBox]), ...(spec.alsoStz2 === true ? [fullBox("stz2", 0, concat(u8(0, 0, 0, 16), u32(count)))] : [])));
   const mdia = box("mdia", concat(mdhd, twice("hdlr", hdlr), box("minf", concat(box("dinf", dref), stbl))));
-  return box("trak", concat(...(spec.noTkhd === true ? [] : [twice("tkhd", tkhd)]), mdia, ...(spec.trakExtra ?? [])));
+  const dup = <T extends Uint8Array>(type: string, one: T): Uint8Array => (spec.duplicateEdit === type ? concat(one, one) : one);
+  const v1edit = spec.editsV1 === true;
+  const elst = (spec.edits ?? []).length === 0 ? [] : [
+    box(
+      "edts",
+      dup("elst", fullBox("elst", 0, concat(u32(spec.editsDeclaredCount ?? (spec.edits ?? []).length), concatList((spec.edits ?? []).map((e) => v1edit ? concat(u32(0), u32(e.duration), u32(e.mediaTime < 0 ? 0xffffffff : 0), u32(e.mediaTime >>> 0), u16(e.rate?.[0] ?? 1), u16(e.rate?.[1] ?? 0)) : concat(u32(e.duration), u32(e.mediaTime >>> 0), u16(e.rate?.[0] ?? 1), u16(e.rate?.[1] ?? 0))))), v1edit ? 1 : 0)),
+    ),
+  ];
+  const edts = elst.map((one) => dup("edts", one));
+  return box("trak", concat(...(spec.noTkhd === true ? [] : [twice("tkhd", tkhd)]), ...edts, mdia, ...(spec.trakExtra ?? [])));
 }
 
 export function moovBox(spec: Mp4Spec): Uint8Array {

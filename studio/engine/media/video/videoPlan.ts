@@ -36,6 +36,9 @@ export const VIDEO_LIMITS = {
   fps: 30,
 } as const;
 
+/** Frames of slack either way in `expectedFrames`: the rounding of the first and the last. */
+const FRAME_SLACK = 2;
+
 /** One allocation may take at most 256 MiB: above a 4K 12-bit 4:4:4 plane (about 35 MiB) and far below a container bomb. */
 const MAX_ALLOC_BYTES = 256 * 1024 * 1024;
 /** ffmpeg's wall-clock limit is this floor plus ten times the clip's length: a 3 minute 4K HDR clip is a quarter of an hour at its slowest. */
@@ -80,6 +83,26 @@ function reasonOf(refusal: ProbeRefusal): MediaUnsupportedReason {
 
 /** The decoder ffmpeg is allowed to use for each codec the walker names; the argument of `-codec_whitelist` and of the input's `-c:v`. */
 const DECODERS: Readonly<Record<VideoCodec, string>> = { h264: "h264", hevc: "hevc", prores: "prores" };
+
+/**
+ * How many 30 fps frames a faithful normalisation of this clip has, as a range. ffmpeg honours the edit list (measured on 6.0): a trim that
+ * keeps the samples from the keyframe before the cut and cuts into them with an edit gives the EDIT's length, not the samples'; an empty edit
+ * before the segment gives nothing (the picture starts later, it is not longer); B-frames make x264 write an edit that starts a little way in and
+ * is as long as the samples, and the count is the samples'. It stops at whichever of the edit and the samples runs out first.
+ * - the most it can be: the shorter of the edit and the samples;
+ * - the least: the shorter of the edit and what is left of the samples after the edit's start;
+ * and two frames of slack either way for the first and the last frame's rounding. A forged length (a `stts` that is short, an edit that is
+ * long) lands outside this and fails the import.
+ */
+export function expectedFrames(info: VideoInfo): { min: number; max: number } {
+  const { video } = info;
+  const samples = video.durationTicks / video.timescale;
+  const edit = video.edit === null ? samples : video.edit.durationTicks / info.mvhd.timescale;
+  const start = video.edit === null ? 0 : video.edit.mediaTime / video.timescale;
+  const most = Math.min(edit, samples);
+  const least = Math.min(edit, Math.max(0, samples - start));
+  return { min: Math.max(0, Math.floor(least * VIDEO_LIMITS.fps) - FRAME_SLACK), max: Math.ceil(most * VIDEO_LIMITS.fps) + FRAME_SLACK };
+}
 
 /**
  * What to do with a file the walker read, or why not. `bytes` is the size of the staged copy. The order is the size of the file, then what
