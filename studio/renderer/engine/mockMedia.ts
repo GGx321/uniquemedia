@@ -262,6 +262,11 @@ export class MockOwnMedia {
     return record === undefined || record.durationMs === null ? null : { durationMs: record.durationMs };
   }
 
+  /** The display name of a stored track (3f.4): what the video's tile says of it; undefined for a media that is not there or is not a track. */
+  nameOf(mediaId: string): string | undefined {
+    return this.#records.find((r) => r.mediaId === mediaId && r.kind === "audio")?.name;
+  }
+
   /** A stored track's waveform (3f.4), or undefined for a media that is not there or is not a track. */
   waveformOf(mediaId: string): readonly number[] | undefined {
     return this.holdsTrack(mediaId) === null ? undefined : this.#waveforms.get(mediaId);

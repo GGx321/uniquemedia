@@ -2232,6 +2232,8 @@ export class MockEngine implements EngineBridge {
     // The tile's music (K13): the stored track the video was rendered with, as the engine writes it from the track it opened.
     const trending = spec.music?.source === "trending" ? spec.music.trackId : null;
     const track = trending === null ? undefined : this.music.tracks.find((t) => t.summary.trackId === trending)?.summary;
+    // An own track (3f.4) is shown under its file name, with no artist and no track id: the engine writes the tile from the track it opened.
+    const ownName = spec.music?.source === "own" ? this.ownMedia.nameOf(spec.music.mediaId) : undefined;
     const summary: VideoSummary = {
       videoId: job.videoId,
       avatarId: job.avatarId,
@@ -2243,7 +2245,7 @@ export class MockEngine implements EngineBridge {
       fileState: "present",
       montageId,
       photoCount: job.photoIds.length,
-      music: track === undefined ? null : { title: track.title, artist: track.artist, trackId: track.trackId },
+      music: track !== undefined ? { title: track.title, artist: track.artist, trackId: track.trackId } : ownName !== undefined ? { title: ownName, artist: null, trackId: null } : null,
       hasPoster: false,
       title: job.title,
       // The first clip as it was rendered: the tile's still (3e.2), as the engine reads it from the record.

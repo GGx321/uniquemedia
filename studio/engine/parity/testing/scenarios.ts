@@ -606,6 +606,8 @@ const BASE_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    // 3f.4 lifted N9 for an own track, so the two answers this story gets for it changed from `not-yet-supported` to `media-unavailable` (the library holds
+    // no such media): the ONLY golden lines of an older story that were edited. The name stays, because it is the golden's key; the new stories are `own music: ...`.
     name: "music: a trending track the store does not hold is track-unavailable for get and for render, and an own track is still not yet supported",
     async run(t, w) {
       const trending = { source: "trending", trackId: "4199287736976977", startMs: 1_500 };
@@ -1213,8 +1215,114 @@ const OWN_PHOTO_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
+// ---------- 3f.4: an own track as the music ----------
+
+/** A montage of two scene photos (2 s each) with the own track `mediaId` as its music, from `startMs`. */
+function ownTrackSpec(w: World, mediaId: string, startMs: number): Record<string, unknown> {
+  return {
+    schemaVersion: 1,
+    avatarId: w.avatarId,
+    layers: [],
+    music: { source: "own", mediaId, startMs },
+    seed: 7,
+    clips: [1, 2].map((n) => ({ clipId: `clip-000000${n}`, kind: "photo", cell: { photo: { source: "scene", photoId: photo(w, n) }, focus: null }, motion: "static", durationMs: 2_000, transitionIn: "cut" })),
+  };
+}
+
+/** Imports the one good track (12 s) and answers its media id. */
+async function importedTrackId(t: Transcript, control: Control): Promise<string> {
+  await control.mediaDialog("track");
+  await t.call("media.pickImport", { kind: "audio" });
+  await t.settle();
+  const [mediaId] = listedMediaIds(await t.call("media.list", { kind: "audio" }));
+  if (mediaId === undefined) throw new Error("the track was not stored");
+  return mediaId;
+}
+
+/** Appended after the 3f.2 scenarios: the golden transcripts above are append-only. */
+const OWN_MUSIC_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own music: a draft judges its track by the library and its length, music.peaks windows the waveform, a render holds the track until it ends, and a deleted track is media-unavailable everywhere",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedTrackId(t, control);
+      t.note("the track's waveform: the whole of it, a window from the middle, and a window past the end (silence there)");
+      await t.call("music.peaks", { track: { source: "own", mediaId }, startMs: 0, durationMs: 12_000, bars: 24 });
+      await t.call("music.peaks", { track: { source: "own", mediaId }, startMs: 3_000, durationMs: 1_500, bars: 16 });
+      await t.call("music.peaks", { track: { source: "own", mediaId }, startMs: 20_000, durationMs: 1_000, bars: 16 });
+      t.note("a draft with the track from the start: the engine finds nothing wrong");
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      await t.call("montages.save", { montageId, spec: ownTrackSpec(w, mediaId, 0), name: "With music" });
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      t.note("one millisecond too late for its length (the montage is 4 s of a 12 s track), and exactly the last start that fits");
+      await t.call("montages.save", { montageId, spec: ownTrackSpec(w, mediaId, 8_001), name: "With music" });
+      await t.call("montages.get", { montageId });
+      await t.call("montages.save", { montageId, spec: ownTrackSpec(w, mediaId, 8_000), name: "With music" });
+      await t.call("montages.get", { montageId });
+      t.note("the render is queued: the track is held, so deleting it is refused and it stays listed");
+      await t.call("videos.render", { montageId });
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", {});
+      t.note("the render ends: the same delete goes through, and the waveform goes with the track");
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", {});
+      await t.call("music.peaks", { track: { source: "own", mediaId }, startMs: 0, durationMs: 4_000, bars: 16 });
+      t.note("the draft still names the track: it reads unavailable, and a render of it is refused for that");
+      await t.call("montages.get", { montageId });
+      await t.call("montages.list", { avatarId: w.avatarId });
+      await t.call("videos.render", { montageId });
+    },
+  },
+  {
+    name: "own music: a render that fails lets its track go, and a spec naming a track nobody holds, or one too short, is refused before the export folder is asked",
+    rig: { ownMedia: true },
+    async run(t, w, control) {
+      const mediaId = await importedTrackId(t, control);
+      t.note("the first render's ffmpeg fails: while it runs the track is held, and when it has failed the delete goes through");
+      control.failNextRender("encode");
+      await t.call("videos.render", { spec: ownTrackSpec(w, mediaId, 0) });
+      await t.call("media.delete", { mediaId });
+      await t.settle();
+      await t.call("media.delete", { mediaId });
+      t.note("a track that is not there, in a spec that is otherwise good");
+      await t.call("videos.render", { spec: ownTrackSpec(w, "media-00000404", 0) });
+      t.note("a track that is there but too short for its start");
+      const second = await importedTrackId(t, control);
+      await t.call("videos.render", { spec: ownTrackSpec(w, second, 9_000) });
+      t.note("a spec with a structural issue is refused for that alone, whatever its track");
+      await t.call("videos.render", { spec: { ...ownTrackSpec(w, "media-00000404", 0), clips: [] } });
+      t.note("a photo is not a track: its id as the music is media-unavailable");
+      await control.mediaDialog("good");
+      await t.call("media.pickImport", { kind: "photo" });
+      await t.settle();
+      const [photoId] = listedMediaIds(await t.call("media.list", { kind: "photo" }));
+      await t.call("videos.render", { spec: ownTrackSpec(w, photoId ?? "", 0) });
+    },
+  },
+  {
+    name: "own music: the music importer refuses a track inside its job as too-long, and the job fails with its reason",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      t.note("the boundary takes the file (its bytes are an mp3's); the importer turns it away: one progress step at the total, then job.failed");
+      await control.mediaDialog("long-track");
+      await t.call("media.pickImport", { kind: "audio" });
+      await t.settle();
+      t.note("nothing is stored, and the failed job is in a window's snapshot");
+      await t.call("media.list", { kind: "audio" });
+      await t.call("engine.snapshot", {});
+      t.note("the next track takes its turn as if nothing happened");
+      await control.mediaDialog("track");
+      await t.call("media.pickImport", { kind: "audio" });
+      await t.settle();
+      await t.call("media.list", { kind: "audio" });
+    },
+  },
+];
+
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_MUSIC_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

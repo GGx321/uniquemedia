@@ -107,7 +107,7 @@ export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | 
  * The owner's pick in main's own-media dialog (3f.1): nothing (`cancel`), or seven files at once, each a different way for the boundary to
  * turn it away (`mixed`, see MIXED_MEDIA). The real rig makes the files on disk; the mock is told the verdict for each name, and holds no path.
  */
-export type MediaDialog = "cancel" | "mixed" | "good" | "tiny";
+export type MediaDialog = "cancel" | "mixed" | "good" | "tiny" | "track" | "long-track";
 
 /** The one good photo of the `good` pick (3f.1b): accepted by the rigs' importer, and `PARITY_PHOTO_BYTES` long. */
 const GOOD_PHOTO = "lake.jpg";
@@ -117,6 +117,38 @@ export const PARITY_PHOTO_FACTS = { width: 100, height: 200, durationMs: null, s
 
 /** The one picture of the `tiny` pick (3f.2): the boundary takes it (its bytes are a photo's) and the photo importer refuses it inside the job. */
 const TINY_PHOTO = "dot.jpg";
+
+/** The one good track of the `track` pick (3f.4): its bytes are an mp3's head, and the rigs' importer stores it as an M4A of `PARITY_TRACK_MS`. */
+const GOOD_TRACK = "voice.mp3";
+export const PARITY_TRACK_BYTES = 200;
+export const PARITY_TRACK_MS = 12_000;
+/** What the real rig's music importer says of any track it takes, and what the mock is told to say. */
+export const PARITY_TRACK_FACTS = { width: null, height: null, durationMs: PARITY_TRACK_MS, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } as const;
+/** The waveform both rigs keep for the good track: one value per 50 ms, 0 to 1000, never flat. */
+export const PARITY_TRACK_WAVEFORM: readonly number[] = Array.from({ length: PARITY_TRACK_MS / 50 }, (_, i) => (i * 53 + 90) % 1001);
+
+/** The one track of the `long-track` pick (3f.4): the boundary takes it (its bytes are an mp3's) and the music importer refuses it inside the job as `too-long`. */
+const LONG_TRACK = "long.mp3";
+
+/** The head of an mp3 with an ID3v2 tag, then padding: what the boundary's sniff takes for music. */
+const trackHead = (fill: number): Buffer => Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 0]), Buffer.alloc(PARITY_TRACK_BYTES - 10, fill)]);
+
+/** An M4A's first bytes (brand `M4A `): what the rigs' music importer "makes", so the stored track is one the render's chain could read. */
+const PARITY_M4A = Buffer.from([0, 0, 0, 0x14, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20, 0, 0, 2, 0, 0x6d, 0x70, 0x34, 0x32]);
+
+/** Writes the `track` pick's file into `folder` and returns its path. */
+async function writeGoodTrack(folder: string): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, GOOD_TRACK), trackHead(5));
+  return [join(folder, GOOD_TRACK)];
+}
+
+/** Writes the `long-track` pick's file into `folder` and returns its path. */
+async function writeLongTrack(folder: string): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, LONG_TRACK), trackHead(6));
+  return [join(folder, LONG_TRACK)];
+}
 
 /** Writes the `tiny` pick's file into `folder` and returns its path. */
 async function writeTinyMedia(folder: string): Promise<string[]> {
@@ -298,7 +330,11 @@ export function mockRig(options: RigOptions = {}): ParityRig {
                 [options.ownMedia === true ? { name: GOOD_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, facts: PARITY_PHOTO_FACTS } } : { name: GOOD_PHOTO, reason: "not-yet-supported" }]
               : answer === "tiny"
                 ? [options.ownMedia === true ? { name: TINY_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, failWith: "too-small" } } : { name: TINY_PHOTO, reason: "not-yet-supported" }]
-                : MIXED_MEDIA,
+                : answer === "track"
+                  ? [options.ownMedia === true ? { name: GOOD_TRACK, accept: { kind: "audio", bytes: PARITY_TRACK_BYTES, facts: PARITY_TRACK_FACTS, waveform: [...PARITY_TRACK_WAVEFORM] } } : { name: GOOD_TRACK, reason: "not-yet-supported" }]
+                  : answer === "long-track"
+                    ? [options.ownMedia === true ? { name: LONG_TRACK, accept: { kind: "audio", bytes: PARITY_TRACK_BYTES, failWith: "too-long" } } : { name: LONG_TRACK, reason: "not-yet-supported" }]
+                    : MIXED_MEDIA,
         ),
       holdImports: (held) => engine.holdImports(held),
       // The mock answers main's own key command itself, as the dev build does.
@@ -537,13 +573,21 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   // The importer takes every photo, except the 1 px picture of the `tiny` pick (3f.2: the real importer refuses it as `too-small`, inside its job).
   const parityPhotoImporter: MediaImporter = async ({ name }) => (name === TINY_PHOTO ? { ok: false, reason: "too-small" } : { ok: true, facts: PARITY_PHOTO_FACTS });
+  // 3f.4: the music importer takes every track, except the `long-track` pick (the real importer refuses a track over ten minutes as `too-long`, inside its
+  // job). What it stores is an M4A (a stand-in: the rig's ffmpeg is not there, so the render's stream check and true-peak pass are scripted below).
+  const parityTrackImporter: MediaImporter = async ({ name, workFile }) => {
+    if (name === LONG_TRACK) return { ok: false, reason: "too-long" };
+    const file = await workFile();
+    await writeFile(file.path, PARITY_M4A, { flag: "wx" });
+    return { ok: true, facts: PARITY_TRACK_FACTS, output: { file, format: "m4a" }, waveform: [...PARITY_TRACK_WAVEFORM] };
+  };
   const { engine, events, posted } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
     deps: {
       musicSink: store,
       musicTracks: store,
       text: { gate: textLane },
-      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter } } : {}),
+      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, audio: parityTrackImporter } } : {}),
       mediaStaging: {
         fs: {
           openOut: async (path) => {
@@ -563,7 +607,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       videos: {
         renderOverrides: {
           verify: acceptingVerify,
-          runDeps: { run },
+          // An own track's private copy is a stand-in, not audio ffmpeg could read: its stream check and true-peak pass are scripted (a quiet track, no gain).
+          runDeps: { run, measure: async () => -5.7 },
+          inspectStreams: async () => ["Audio"],
           // The commit stops at its claim, past the saving announcement, until the gate is open; a commit that cannot write fails there.
           hooks: {
             reached: async (step) => {
@@ -746,7 +792,18 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       },
       mediaDialog: async (answer) => {
         const folder = join(dir, `picked-media-${++dialogs}`);
-        nextMedia = answer === "cancel" ? null : answer === "good" ? await writeGoodMedia(folder) : answer === "tiny" ? await writeTinyMedia(folder) : await writeMixedMedia(folder);
+        nextMedia =
+          answer === "cancel"
+            ? null
+            : answer === "good"
+              ? await writeGoodMedia(folder)
+              : answer === "tiny"
+                ? await writeTinyMedia(folder)
+                : answer === "track"
+                  ? await writeGoodTrack(folder)
+                  : answer === "long-track"
+                    ? await writeLongTrack(folder)
+                    : await writeMixedMedia(folder);
       },
       holdImports,
       // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).

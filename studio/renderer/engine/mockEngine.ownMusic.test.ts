@@ -48,6 +48,17 @@ describe("videos.render: an own track as the music", () => {
     expect(mock.events.some((e) => e.type === "job.done" && e.payload.jobId === jobId)).toBe(true);
   });
 
+  test("the finished video's tile names the track by its file name, with no artist and no track id (the engine writes it from the track it opened)", async () => {
+    const mock = makeMock();
+    const mediaId = await storeTrack(mock, song("my mix.mp3"));
+    await unwrap(render(mock, specWith(mediaId)));
+    mock.scheduler.runAll();
+
+    const { videos } = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));
+
+    expect(videos[0]?.music).toEqual({ title: "my mix.mp3", artist: null, trackId: null });
+  });
+
   test("a media that is not there is MONTAGE_INVALID with media-unavailable at music, and nothing is queued", async () => {
     const mock = makeMock();
 
