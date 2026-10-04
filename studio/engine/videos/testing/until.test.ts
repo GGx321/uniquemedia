@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { until as harnessUntil } from "../../testing/engineHarness";
 import { until } from "./serviceKit";
+import { useNativeGlobals } from "../../../testing/nativeGlobals";
+useNativeGlobals();
 
 // serviceKit used to keep its own copy of `until` with a 5 s ceiling, and missed the raise to 15 s that the harness's got for slow
 // Windows runners; it is the harness's function now, so the two cannot drift again.
