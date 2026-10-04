@@ -192,6 +192,40 @@ describe("runFfmpegArgv: progress in frames", () => {
 });
 
 describe("runFfmpegArgv: how it ends", () => {
+  test("onStderr sees what ffmpeg printed, in order, also when it exits 0", async () => {
+    const seen: string[] = [];
+    const { spawner } = fakeSpawner((c) => {
+      c.child.complain("first ");
+      c.child.complain("second\n");
+      succeed(c.child);
+    });
+
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, onStderr: (text) => seen.push(text) });
+
+    expect(seen.join("")).toBe("first second\n");
+  });
+
+  test("a throwing onStderr does not break the run: it is an observer", async () => {
+    const { spawner } = fakeSpawner((c) => {
+      c.child.complain("warning\n");
+      succeed(c.child);
+    });
+
+    const outcome = await outcomeOf(
+      runFfmpegArgv({
+        argv: ARGV,
+        output: OUT,
+        spawner,
+        env: {},
+        onStderr: () => {
+          throw new Error("listener broke");
+        },
+      }),
+    );
+
+    expect(outcome).toBe("resolved");
+  });
+
   test("rejects with the exit code and only a short stderr tail when ffmpeg fails", async () => {
     const { spawner } = fakeSpawner((c) => {
       c.child.complain("x".repeat(50_000));

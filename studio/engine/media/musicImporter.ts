@@ -128,6 +128,25 @@ export function encodeArgv(input: { path: string; demuxer: AudioDemuxer; decoder
   ];
 }
 
+/** What ffmpeg's Ogg demuxer prints when a later link of a chained file adds a stream it cannot take in. */
+const CHAIN_MESSAGES: readonly string[] = ["failed to create or replace stream", "New streams are not supposed to be added"];
+const LONGEST_CHAIN_MESSAGE = Math.max(...CHAIN_MESSAGES.map((message) => message.length));
+
+/** Watches ffmpeg's stderr, chunk by chunk, for a message of `CHAIN_MESSAGES`, even one split across two chunks. Keeps only the tail it needs. */
+function chainWatch(): { see: (text: string) => void; seen: () => boolean } {
+  let tail = "";
+  let found = false;
+  return {
+    see: (text) => {
+      if (found) return;
+      const window = tail + text;
+      found = CHAIN_MESSAGES.some((message) => window.includes(message));
+      tail = window.slice(-(LONGEST_CHAIN_MESSAGE - 1));
+    },
+    seen: () => found,
+  };
+}
+
 export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter {
   const maxMs = deps.maxDurationMs ?? MAX_TRACK_MS;
   const maxStored = deps.maxStoredBytes ?? MAX_STORED_BYTES;
@@ -175,14 +194,17 @@ export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter
     const out = await request.workFile();
     signal.throwIfAborted();
     const argv = [...encodeArgv({ path: staged.path, demuxer, decoder: verdict.decoder, maxDurationMs: maxMs, maxStoredBytes: maxStored }), out.path];
+    // What ffmpeg SAID, not only how it ended: an Ogg chain whose later link adds a stream makes the demux say so and go on with the first (3f.4 review, round 2).
+    const chain = chainWatch();
     try {
-      await runFfmpegArgv({ argv, output: out.path, signal, timeoutMs: deps.encodeTimeoutMs ?? encodeTimeoutFor(verdict.headerMs), ...spawnerOption });
+      await runFfmpegArgv({ argv, output: out.path, signal, timeoutMs: deps.encodeTimeoutMs ?? encodeTimeoutFor(verdict.headerMs), onStderr: chain.see, ...spawnerOption });
     } catch (error) {
       if (signal.aborted) throw error;
       // A time-out is a machine that is too slow or a file that is too heavy, not a verdict on the format; any other failure is a stream ffmpeg cannot decode.
       throw new Refused(error instanceof FfmpegTimeoutError ? "failed" : "format");
     }
     signal.throwIfAborted();
+    if (chain.seen()) throw new Refused("format");
 
     // 4. What was made is judged again: its size, its own dump, then its DECODED length.
     const written = await stat(out.path);

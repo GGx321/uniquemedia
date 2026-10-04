@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import type { FfmpegSpawner } from "../../node/runFfmpeg";
+import { PassThrough } from "node:stream";
+import type { FfmpegChild, FfmpegSpawner } from "../../node/runFfmpeg";
 import { heavyTest } from "../../testing/bunTiers";
 import { tempDirFor } from "../../testing/tempDir";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -599,5 +600,96 @@ describe("an mp3's decoder priming does not make a track of the limit too long (
   test("the allowance covers the worst priming there is: 1105 samples at the lowest sample rate an mp3 has (8 kHz)", () => {
     expect(MP3_PRIMING_MS).toBeGreaterThanOrEqual(Math.ceil((1105 * 1000) / 8000));
     expect(MP3_PRIMING_MS).toBeLessThanOrEqual(200);
+  });
+});
+
+// 3f.4 review, round 2: a stream line the probe cannot read is never skipped; a language may hold a space or a non-ASCII letter; and an Ogg chain that ffmpeg
+// cannot follow is refused on what ffmpeg itself says about it.
+describe("what the second review of the probe found (3f.4, round 2)", () => {
+  const isEncode = (argv: readonly string[]): boolean => argv.includes("-frames:a");
+
+  test("an m4a whose video track's language prints as `~~~` is a format by the probe's own reading, and nothing is encoded", async () => {
+    const recorded = recordingSpawner();
+    const { outcome } = await runFixture("videoTildeLang", { spawner: recorded.spawner });
+    expect(outcome).toEqual({ ok: false, reason: "format" });
+    expect(recorded.argvs.filter(isEncode)).toHaveLength(0);
+    // The probe alone refused it: not even the selection checks were started.
+    expect(recorded.argvs).toHaveLength(1);
+  });
+
+  test("a probe whose last stream line cannot be read is a format, not the audio stream before it", async () => {
+    const dump = `  Duration: 00:00:00.40, start: 0.000000, bitrate: 48 kb/s\n  Stream #0:0(und): Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s\n  Stream #0:1(${"x".repeat(33)}): Video: mpeg4\n`;
+    const real = recordingSpawner();
+    let first = true;
+    const spawner: FfmpegSpawner = (command, args, options) => {
+      if (!first) return real.spawner(command, args, options);
+      first = false;
+      return printingChild(1, dump);
+    };
+    const { outcome } = await runFixture("ogg", { spawner });
+    expect(outcome).toEqual({ ok: false, reason: "format" });
+    expect(real.argvs.filter(isEncode)).toHaveLength(0);
+  });
+
+  test.each<MusicFixtureName>(["langSpaced", "langRussian"])("%s: an Ogg with a legitimate language in its comment is imported", async (name) => {
+    const stored = await accepted(await runFixture(name));
+    expect(stored.durationMs).toBeGreaterThan(300);
+  });
+
+  test("a chained Ogg whose second link holds two streams is a format", async () => {
+    expect(reasonOf((await runFixture("chainVorbisThenTwo")).outcome)).toBe("format");
+  });
+
+  test.each(["[ogg @ 0x1] failed to create or replace stream\n", "[ogg @ 0x1] New streams are not supposed to be added in between Ogg context save/restore operations.\n"])(
+    "an encode that ends 0 but says %p on stderr is a format: the demux could not follow the file",
+    async (text) => {
+      const real = recordingSpawner();
+      const spawner: FfmpegSpawner = (command, args, options) => (isEncode(args) ? printingChild(0, text) : real.spawner(command, args, options));
+      const { outcome } = await runFixture("ogg", { spawner });
+      expect(outcome).toEqual({ ok: false, reason: "format" });
+    },
+  );
+
+  test("the text split across two chunks of stderr is still found", async () => {
+    const real = recordingSpawner();
+    const spawner: FfmpegSpawner = (command, args, options) => {
+      if (!isEncode(args)) return real.spawner(command, args, options);
+      // A child that prints its stderr in two pieces, the message cut in the middle, with a pause between them, and then ends 0.
+      const stdout = new PassThrough();
+      const stderr = new PassThrough();
+      const child: FfmpegChild = {
+        exitCode: null,
+        stdout,
+        stderr,
+        kill: () => true,
+        on: ((event: string, listener: (code: number | null, signal: NodeJS.Signals | null) => void) => {
+          if (event === "close") {
+            setTimeout(() => {
+              stderr.write("[ogg @ 0x1] failed to create or ");
+              setTimeout(() => {
+                stderr.write("replace stream\n");
+                stdout.end();
+                stderr.end();
+                setTimeout(() => listener(0, null), 5);
+              }, 5);
+            }, 0);
+          }
+          return child;
+        }) as FfmpegChild["on"],
+      };
+      return child;
+    };
+    const { outcome } = await runFixture("ogg", { spawner });
+    expect(outcome).toEqual({ ok: false, reason: "format" });
+  });
+
+  test("an ordinary warning on stderr does not refuse a file", async () => {
+    const real = recordingSpawner();
+    const spawner: FfmpegSpawner = (command, args, options) => {
+      const child = real.spawner(command, args, options);
+      if (isEncode(args)) queueMicrotask(() => child.stderr?.emit("data", Buffer.from("[mp3float @ 0x1] Header missing\n")));
+      return child;
+    };
+    expect(reasonOf((await runFixture("mp3", { spawner })).outcome)).toBe("accepted");
   });
 });

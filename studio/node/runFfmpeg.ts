@@ -70,6 +70,8 @@ interface SupervisionOptions {
    * and rejects the call with that error.
    */
   onFrames?: (frames: number) => void;
+  /** Sees each piece of ffmpeg's stderr as it arrives (decoded text, a character never split); a throw is ignored. For a caller that must act on what ffmpeg SAID, not only on how it ended. */
+  onStderr?: (text: string) => void;
 }
 
 export interface RunFfmpegOptions extends SupervisionOptions {
@@ -321,7 +323,13 @@ function supervise(run: Supervised): Promise<void> {
     // A character split across two chunks must not turn into U+FFFD: the scrubber could no longer recognise a path holding it.
     const stderrDecoder = new StringDecoder("utf8");
     child.stderr?.on("data", (chunk: Buffer | string) => {
-      stderrTail = (stderrTail + (typeof chunk === "string" ? chunk : stderrDecoder.write(chunk))).slice(-STDERR_ROLLING_LIMIT);
+      const text = typeof chunk === "string" ? chunk : stderrDecoder.write(chunk);
+      stderrTail = (stderrTail + text).slice(-STDERR_ROLLING_LIMIT);
+      try {
+        run.onStderr?.(text);
+      } catch {
+        // A listener of stderr is an observer: it cannot break the supervision.
+      }
     });
 
     child.stdout?.on("data", (chunk: Buffer) => {
