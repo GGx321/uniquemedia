@@ -5,6 +5,7 @@ import { observer, type MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
 import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
 import { probeVideo, type VideoInfo } from "./video/videoProbe";
+import { checkVideoStreams } from "./video/videoStreams";
 
 // The own-video importer (Stage 3 plan, 3f.3a). It turns an owner's MP4 or MOV into the mezzanine the render and the preview read: H.264 at
 // CRF 16, 4:2:0, a constant 30 fps, BT.709 limited range, inside 1080 x 1920, upright, with no sound and no metadata.
@@ -37,6 +38,11 @@ export interface VideoImporterOptions {
    * fixtures are a few frames, and 0 takes any length.
    */
   readonly minDurationMs?: number;
+  /**
+   * Asks ffmpeg how many video streams the staged copy has and whether the one is the clip the walker judged (`checkVideoStreams`, by default). A test with a FAKE ffmpeg
+   * (a file of synthetic boxes no real ffmpeg reads) injects an answer; a test of the check itself uses the real one.
+   */
+  readonly streamCheck?: typeof checkVideoStreams;
   /** The largest mezzanine stored; `MAX_STORED_VIDEO_BYTES` by default (a test lowers it). */
   readonly maxStoredBytes?: number;
   /** How far above the cap the encode's `-fs` stops it; `STORED_STOP_SLACK_BYTES` (64 MiB) by default (a test makes it small so that a real encode reaches it quickly). */
@@ -95,6 +101,22 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     const planned = expectedFrames(plan.info);
     if (planned.max < minFrames) return { ok: false, reason: "too-short" };
     const maxStoredBytes = options.maxStoredBytes ?? MAX_STORED_VIDEO_BYTES;
+    if (signal.aborted) return { ok: false, reason: "cancelled" };
+
+    // ffmpeg is the authority for how many video streams the staged copy has (3f.6 review, H1): the walker judged one clip, but `-map 0:V:0` takes the first video stream ffmpeg
+    // MADE, and a parser can hide another before it. Two or more is a file of several videos (`structure`); one that is not the clip judged (its codec, its size) is a file whose
+    // boxes disagree with its bitstream (`failed`, as a lying header is); a probe that cannot run proves nothing and fails the import.
+    try {
+      const verdict = await (options.streamCheck ?? checkVideoStreams)({
+        path: staged.path,
+        expected: { codec: plan.info.video.codec, width: plan.info.video.width, height: plan.info.video.height },
+        signal,
+      });
+      if (verdict === "several") return { ok: false, reason: "structure" };
+      if (verdict === "mismatch") return { ok: false, reason: "failed" };
+    } catch {
+      return { ok: false, reason: signal.aborted ? "cancelled" : "failed" };
+    }
     if (signal.aborted) return { ok: false, reason: "cancelled" };
 
     const work = await workFile();

@@ -59,6 +59,13 @@ const STREAM_PART_BOXES: HidingBox[] = ["meta", "sinf", "schi", "wave", "traf", 
 const HANDLER_BOXES: ("sinf" | "wave" | "traf" | "meta" | "schi" | "mvex")[] = ["sinf", "wave", "traf", "meta", "schi", "mvex"];
 const TRAK_HOMES: TrakHome[] = ["moov/udta", "moov/meta", "top/udta"];
 
+/** H.264 128 x 64 and AAC, five seconds: the video is the first track. */
+async function videoWithSound(): Promise<Uint8Array> {
+  const out = join(tmp(), "av.mp4");
+  await runFfmpegOk(["-hide_banner", "-y", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=128x64:rate=30:duration=5", "-f", "lavfi", "-i", "sine=duration=5", "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-c:a", "aac", out]);
+  return new Uint8Array(await Bun.file(out).arrayBuffer());
+}
+
 describe("the control", () => {
   test("two ordinary video tracks are refused by the walker as several, and a single one is read", async () => {
     const two = await twoVideos();
@@ -94,5 +101,13 @@ describe("a whole track in a box outside moov's own list of tracks (measured: ff
     const bytes = withFirstTrakIn(await twoVideos(), home);
     expect((await probeVideo(bytesSource(bytes))).ok).toBe(true);
     expect(await imported(bytes, "video")).toBe("done:video");
+  });
+});
+
+describe("the audio importer's own check (3f.4's `0:V` must match nothing) stands behind the route", () => {
+  test.each(STREAM_PART_BOXES)("a video hidden in trak/%s beside a sound track: picked as audio it is refused as a format, and as any it is not `done`", async (box) => {
+    const bytes = withFirstVideoPartsIn(await videoWithSound(), box);
+    expect(await imported(bytes, "audio")).toBe("failed:audio:format");
+    expect(await imported(bytes, "any")).not.toMatch(/^done/);
   });
 });

@@ -21,7 +21,7 @@ const tmp = tempDirFor({ beforeEach, afterEach }, "studio-video-review-");
 
 const bytesOf = async (name: keyof typeof FIXTURES): Promise<Uint8Array> => new Uint8Array(await readFile(FIXTURES[name].file));
 
-async function importBytes(bytes: Uint8Array) {
+async function importBytes(bytes: Uint8Array, extra: Parameters<typeof createVideoImporter>[0] = {}) {
   const started: string[] = [];
   const rig = requestFor(tmp(), await stage(tmp(), bytes));
   const outcome = await createVideoImporter({
@@ -29,6 +29,7 @@ async function importBytes(bytes: Uint8Array) {
       started.push("ffmpeg");
       await runFfmpegArgv(options);
     },
+    ...extra,
   })(rig.request);
   return { outcome, started, rig };
 }
@@ -88,9 +89,18 @@ describe("L5: the pixel cap holds when the headers lie about the size", () => {
     const lie = await bytesOf("h264-sps-4224x2176-claims-1080p.mp4");
     const probe = await probeVideo(bytesSource(lie));
     expect(probe.ok && [probe.info.video.width, probe.info.video.height]).toEqual([1920, 1080]);
-    const { outcome, started, rig } = await importBytes(lie);
+    // The encode's own guard, on its own: ffmpeg's stream check (3f.6, which now stops this file first, below) is let through here.
+    const { outcome, started, rig } = await importBytes(lie, { streamCheck: async () => "ok" });
     expect(started).toEqual(["ffmpeg"]);
     expect(outcome).toEqual({ ok: false, reason: "failed" });
     expect(rig.released).toHaveLength(1);
+  });
+
+  test("and by default the stream check stops it BEFORE ffmpeg encodes: ffmpeg's own stream line says 4224 x 2176, which is not the clip the walker judged", async () => {
+    const lie = await bytesOf("h264-sps-4224x2176-claims-1080p.mp4");
+    const { outcome, started, rig } = await importBytes(lie);
+    expect(started).toEqual([]);
+    expect(outcome).toEqual({ ok: false, reason: "failed" });
+    expect(rig.workFiles).toEqual([]);
   });
 });
