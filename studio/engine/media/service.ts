@@ -1,5 +1,6 @@
 import {
   Id,
+  ImportPrepare,
   PROTOCOL_VERSION,
   type EngineError,
   type MediaKind,
@@ -9,7 +10,7 @@ import {
 } from "../../shared/engine";
 import type { JobRegistry } from "../jobs";
 import { MediaCommitError, MediaDiskError, MediaRecords, type MediaRecordsOptions } from "../library/mediaRecords";
-import type { MediaImportCall, MediaImporters, MediaImportResult } from "./imports";
+import type { MediaImportCall, MediaImporters, MediaImportResult, PrepareReporter } from "./imports";
 import { open } from "node:fs/promises";
 import { formatOf, SNIFF_HEAD_BYTES, type MediaFormat } from "./sniff";
 import { MediaStaging, type MediaStagingOptions, type OpenedMedia, type StagedMedia, type WorkFile } from "./staging";
@@ -400,10 +401,36 @@ export class MediaService {
       if (signal.aborted) return { status: "cancelled" };
       const importer = this.#deps.importers?.[staged.kind];
       if (importer === undefined) return { status: "failed", reason: "not-yet-supported", detail: `${staged.kind} files cannot be imported yet` };
+      // The importer's own progress (3f.6): the stage begins when it says how much there is, and a percent at a time after that. Sealed with the job:
+      // an importer that was dropped (it ignored the cancel) and reports later is heard by nobody.
+      let begun = false;
+      let lastPrepared = 0;
+      const prepare: PrepareReporter = {
+        begin: (total, judged) => {
+          if (sealed || signal.aborted || begun) return;
+          // What the probe judged is checked at the seam: a value the schema refuses is dropped, and the stage goes on without it.
+          const facts = judged === undefined ? undefined : ImportPrepare.safeParse(judged);
+          const payload = this.#deps.jobs.beginImportPrepare(jobId, total, facts?.success === true ? facts.data : undefined);
+          if (payload === null) return;
+          begun = true;
+          this.#event("job.progress", payload);
+        },
+        report: (done) => {
+          if (sealed || signal.aborted || !begun) return;
+          const payload = this.#deps.jobs.progress(jobId, done);
+          if (payload === null || payload.kind !== "import" || payload.stage !== "prepare") return;
+          const percent = Math.floor((payload.done * 100) / payload.total);
+          if (percent > lastPrepared) {
+            lastPrepared = percent;
+            this.#event("job.progress", payload);
+          }
+        },
+      };
       const answered = importer({
         staged,
         name,
         signal,
+        prepare,
         workFile: async () => {
           if (sealed) throw new Error("the import has ended");
           const work = await area.staging.workFile();
