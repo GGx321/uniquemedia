@@ -166,7 +166,7 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });
 
-  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "holdImports", "MockOwnMedia", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
+  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "holdImports", "MockOwnMedia", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos", "seedOwnSticker", "seedDemoOwnSticker", "mockOwnStickerBytes"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
     expect(productionBundleProblems(`engine.${control}(1);`)).toEqual([`contains ${control}`]);
   });
 

@@ -52,6 +52,10 @@ const FORBIDDEN_DEBUG_MARKERS = [
   // 3e.2: the dev build's demo videos (Mia's records in every file state): the mock's option and the method that seeds them.
   "demoVideos",
   "seedDemoVideos",
+  // 3f.5: the dev build's own sticker (a seeded record, its option, and the stand-in for the stored file): the mock is dev-only.
+  "seedOwnSticker",
+  "seedDemoOwnSticker",
+  "mockOwnStickerBytes",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",
