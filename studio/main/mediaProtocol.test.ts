@@ -253,6 +253,95 @@ describe("video: the renderer goes away, and the file is deleted while it plays"
   });
 });
 
+describe("an own track plays in the editor's preview by its media id: audio with byte ranges (3f.4)", () => {
+  // The preview's `<audio>` element loads `studio-media://media/<mediaId>` and seeks by Range; main resolves the id THROUGH ITS RECORD, never a path. The stored
+  // file is the importer's M4A (brand `M4A `), as long as a few read chunks so a seek lands in the middle of it.
+  const TRACK_ID = "media-000007";
+  const M4A = Buffer.concat([Buffer.from([0, 0, 0, 0x20]), Buffer.from("ftypM4A "), Buffer.from(fakeVideoBytes(CHUNK_BYTES * 2 + 1000, 9))]);
+  const trackUrl = (id = TRACK_ID): string => `studio-media://media/${id}`;
+  const record = (patch: Record<string, unknown> = {}): string =>
+    JSON.stringify({ schemaVersion: 1, id: TRACK_ID, kind: "audio", name: "song.mp3", createdAt: "2026-10-04T10:00:00.000Z", bytes: M4A.length, sha256: "a".repeat(64), format: "m4a", file: `${TRACK_ID}.m4a`, width: null, height: null, durationMs: 9_000, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null, ...patch });
+
+  beforeEach(async () => {
+    await mkdir(join(w.libraryRoot, "media"), { recursive: true });
+    await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.m4a`), M4A);
+    await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.json`), record());
+  });
+
+  test("answers 200 with the whole file as audio/mp4, ranges on offer, and nosniff", async () => {
+    const response = await get(trackUrl());
+    expect(response.status).toBe(200);
+    expect(response.headers.get("Content-Type")).toBe("audio/mp4");
+    expect(response.headers.get("Accept-Ranges")).toBe("bytes");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(response.headers.get("Content-Length")).toBe(String(M4A.length));
+    expect(Buffer.from(await response.arrayBuffer()).equals(M4A)).toBe(true);
+  });
+
+  test("a seek into the middle: 206 with the bytes asked for and their Content-Range", async () => {
+    const response = await get(trackUrl(), { range: `bytes=${CHUNK_BYTES - 5}-${CHUNK_BYTES + 5}` });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Content-Type")).toBe("audio/mp4");
+    expect(response.headers.get("Content-Range")).toBe(`bytes ${CHUNK_BYTES - 5}-${CHUNK_BYTES + 5}/${M4A.length}`);
+    expect(Buffer.from(await response.arrayBuffer()).equals(M4A.subarray(CHUNK_BYTES - 5, CHUNK_BYTES + 6))).toBe(true);
+  });
+
+  test("an open-ended range, as an audio element asks to play on from a position", async () => {
+    const response = await get(trackUrl(), { range: `bytes=${M4A.length - 100}-` });
+    expect(response.status).toBe(206);
+    expect(Buffer.from(await response.arrayBuffer()).equals(M4A.subarray(M4A.length - 100))).toBe(true);
+  });
+
+  test("the first bytes: what the element asks for to read the header", async () => {
+    const response = await get(trackUrl(), { range: "bytes=0-1" });
+    expect(response.status).toBe(206);
+    expect(response.headers.get("Content-Range")).toBe(`bytes 0-1/${M4A.length}`);
+  });
+
+  test("a range past the end is 416 with the size and no body", async () => {
+    const response = await get(trackUrl(), { range: `bytes=${M4A.length}-` });
+    expect(response.status).toBe(416);
+    expect(response.headers.get("Content-Range")).toBe(`bytes */${M4A.length}`);
+  });
+
+  test("a track whose record is gone is a 404: a media whose delete has begun, or an orphan, is never played", async () => {
+    await rm(join(w.libraryRoot, "media", `${TRACK_ID}.json`));
+    const response = await get(trackUrl());
+    expect(response.status).toBe(404);
+    expect(response.headers.get("Content-Range")).toBeNull();
+  });
+
+  test("a stored file that grew past the size its record was written for is a 404", async () => {
+    await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.m4a`), Buffer.concat([M4A, Buffer.from([0])]));
+    expect((await get(trackUrl())).status).toBe(404);
+  });
+
+  test("a stored file that is SHORTER than its record says (cut off, partly written) is a 404", async () => {
+    await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.m4a`), M4A.subarray(0, M4A.length - 1));
+    expect((await get(trackUrl())).status).toBe(404);
+  });
+
+  test("a stored file that does not start like an M4A is a 404, whatever its record says", async () => {
+    await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.m4a`), Buffer.concat([Buffer.from("not an mp4 at all"), Buffer.alloc(M4A.length - 17)]));
+    expect((await get(trackUrl())).status).toBe(404);
+  });
+
+  test("a record that names another file than its own is a 404: the route opens only <id>.<ext>", async () => {
+    await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.json`), record({ file: "media-000008.m4a" }));
+    expect((await get(trackUrl())).status).toBe(404);
+  });
+
+  test("a record that makes the track a photo is not served as audio: the kind's own containers only", async () => {
+    await writeFile(join(w.libraryRoot, "media", `${TRACK_ID}.json`), record({ kind: "photo", width: 10, height: 10, durationMs: null }));
+    expect((await get(trackUrl())).status).toBe(404);
+  });
+
+  test("no route carries a path: an id with a separator or a dot is refused before anything is opened", async () => {
+    expect((await get("studio-media://media/..%2Fx")).status).toBe(404);
+    expect((await get("studio-media://media/media-000007.m4a")).status).toBe(404);
+  });
+});
+
 describe("every refusal looks the same", () => {
   const plain = async (response: Response): Promise<unknown> => ({
     status: response.status,
