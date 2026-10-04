@@ -222,3 +222,56 @@ describe("a restart", () => {
     expect((await unwrap(mock.client.request("media.list", {}))).total).toBe(0);
   });
 });
+
+// The 3f.1b review: the engine holds the library for an import (L-2, probe P7) and queues the jobs that wait for their turn.
+describe("a library switch while an import runs", () => {
+  test("is refused IN_FLIGHT, as the engine refuses it, and goes through once the job is over", async () => {
+    const mock = makeMock();
+    mock.engine.holdImports(true);
+    await pick(mock, [photo]);
+    expect(await mock.client.request("settings.setLibraryPath", { path: "/Users/someone/OtherLibrary" })).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
+    mock.engine.holdImports(false);
+    mock.scheduler.runAll();
+    expect(await mock.client.request("settings.setLibraryPath", { path: "/Users/someone/OtherLibrary" })).toMatchObject({ ok: true });
+  });
+
+  test("a cancelled job gives the library back too", async () => {
+    const mock = makeMock();
+    mock.engine.holdImports(true);
+    const answer = await pick(mock, [photo]);
+    if (!answer.picked) throw new Error("not picked");
+    await unwrap(mock.client.request("media.cancelImport", { jobId: answer.jobIds[0] as string }));
+    mock.engine.holdImports(false);
+    mock.scheduler.runAll();
+    expect(await mock.client.request("settings.setLibraryPath", { path: "/Users/someone/OtherLibrary" })).toMatchObject({ ok: true });
+  });
+});
+
+describe("jobs that wait for their turn", () => {
+  test("the second of two picked files is queued, announced queued at zero, and announced again when it runs", async () => {
+    const mock = makeMock();
+    const answer = await pick(mock, [photo, { name: "second.jpg", accept: { kind: "photo", bytes: 130 } }]);
+    if (!answer.picked) throw new Error("not picked");
+    const [first, second] = answer.jobIds as [string, string];
+    const snapshot = await unwrap(mock.client.request("engine.snapshot", {}));
+    expect(snapshot.jobs.find((j) => j.jobId === first)).toMatchObject({ status: "running" });
+    expect(snapshot.jobs.find((j) => j.jobId === second)).toMatchObject({ status: "queued" });
+    const zero = (jobId: string): unknown[] => importEvents(mock).flatMap((e) => (e.type === "job.progress" && e.payload.kind === "import" && e.payload.jobId === jobId && e.payload.done === 0 ? [e.payload.queued === true] : []));
+    expect(zero(second)).toEqual([true]);
+    mock.scheduler.runAll();
+    expect(zero(second)).toEqual([true, false]);
+    expect(zero(first)).toEqual([false]);
+    expect((await unwrap(mock.client.request("media.list", {}))).total).toBe(2);
+  });
+
+  test("a queued job is cancelled at once and never stores", async () => {
+    const mock = makeMock();
+    const answer = await pick(mock, [photo, { name: "second.jpg", accept: { kind: "photo", bytes: 130 } }]);
+    if (!answer.picked) throw new Error("not picked");
+    const [, second] = answer.jobIds as [string, string];
+    await unwrap(mock.client.request("media.cancelImport", { jobId: second }));
+    expect(importEvents(mock).some((e) => e.type === "job.cancelled")).toBe(true);
+    mock.scheduler.runAll();
+    expect((await unwrap(mock.client.request("media.list", {}))).media.map((m) => m.name)).toEqual(["lake.jpg"]);
+  });
+});

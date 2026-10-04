@@ -1885,6 +1885,9 @@ export const GOLDEN: Record<string, string[]> = {
     "< ok {\"media\":[{\"mediaId\":\"media#1\",\"kind\":\"photo\",\"name\":\"lake.jpg\",\"bytes\":\"<masked>\",\"createdAt\":\"<masked>\",\"width\":100,\"height\":200,\"durationMs\":null,\"sourceFps\":null,\"hdrToSdr\":false,\"loopFrames\":null,\"delayFrames\":null}],\"total\":1}",
     "> media.list {\"kind\":\"video\"}",
     "< ok {\"media\":[],\"total\":0}",
+    "# an own photo is no avatar's photo (invariant 24): the avatars' photo and unused counts are what they were",
+    "> avatars.list {}",
+    "< ok {\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":22},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}],\"unreadableTotal\":0}",
     "# a second photo is picked and the owner cancels its job before its copy starts: no record, only job.cancelled",
     "> media.pickImport {\"kind\":\"photo\"}",
     "event job.progress {\"kind\":\"import\",\"jobId\":\"job#2\",\"mediaKind\":\"photo\",\"name\":\"lake.jpg\",\"mediaId\":null,\"total\":120,\"phase\":\"start\"}",
@@ -1908,6 +1911,8 @@ export const GOLDEN: Record<string, string[]> = {
     "< error NOT_FOUND {\"detail\":\"no own media media#1 in the open library\"}",
     "> media.list {}",
     "< ok {\"media\":[],\"total\":0}",
+    "> avatars.list {}",
+    "< ok {\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":22},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}],\"unreadableTotal\":0}",
   ],
   "own media: without an importer a good photo is refused and nothing is stored": [
     "> media.pickImport {\"kind\":\"photo\"}",

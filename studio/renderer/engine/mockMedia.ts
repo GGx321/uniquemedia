@@ -45,7 +45,7 @@ interface ImportJob {
   readonly total: number;
   readonly accept: MockMediaAccept;
   done: number;
-  status: "running" | "done" | "failed" | "cancelled";
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
   mediaId: string | null;
   result: ImportResult | undefined;
   error: EngineError | undefined;
@@ -95,11 +95,35 @@ export class MockOwnMedia {
       cancelRequested: false,
       cancelTimers: [],
     };
+    // As the engine: imports run one at a time, and one that finds the turn taken waits in its queue, announced queued.
+    if (this.active() > 0) job.status = "queued";
     this.#jobs.push(job);
-    this.#event("job.progress", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name, mediaId: null, done: 0, total: job.total });
+    this.#announce(job);
+    if (job.status === "running") this.#startRunning(job);
+    return job.jobId;
+  }
+
+  /** How many imports are queued or running: the library is held for them, as the engine's `#busy()` holds it. */
+  active(): number {
+    return this.#jobs.filter((job) => job.status === "queued" || job.status === "running").length;
+  }
+
+  #announce(job: ImportJob): void {
+    this.#event("job.progress", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null, done: 0, total: job.total, ...(job.status === "queued" ? { queued: true } : {}) });
+  }
+
+  #startRunning(job: ImportJob): void {
     if (this.#held) this.#waiting.push(job);
     else this.#scheduleEnd(job);
-    return job.jobId;
+  }
+
+  /** The turn is free: the first job that waits runs, and is announced again at zero. */
+  #promote(): void {
+    const next = this.#jobs.find((job) => job.status === "queued");
+    if (next === undefined || this.#jobs.some((job) => job.status === "running")) return;
+    next.status = "running";
+    this.#announce(next);
+    this.#startRunning(next);
   }
 
   #scheduleEnd(job: ImportJob): void {
@@ -119,6 +143,7 @@ export class MockOwnMedia {
     if (job.cancelRequested) {
       job.status = "cancelled";
       this.#event("job.cancelled", ref);
+      this.#promote();
       return;
     }
     job.done = job.total;
@@ -138,12 +163,19 @@ export class MockOwnMedia {
     job.mediaId = summary.mediaId;
     job.result = { kind: "import", mediaId: summary.mediaId, media: summary };
     this.#event("job.done", { jobId: job.jobId, result: job.result });
+    this.#promote();
   }
 
   /** `media.cancelImport`: false for a job that is not an import here; a finished job stays as it ended. */
   cancel(jobId: string): boolean {
     const job = this.#jobs.find((j) => j.jobId === jobId);
     if (job === undefined) return false;
+    if (job.status === "queued") {
+      // A job still in its queue ends at once: it has copied nothing.
+      job.status = "cancelled";
+      this.#event("job.cancelled", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null });
+      return true;
+    }
     if (job.status !== "running") return true;
     job.cancelRequested = true;
     // A job still held ends when it is let go; one that is running ends soon on the clock.
@@ -172,7 +204,7 @@ export class MockOwnMedia {
       const common = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: job.mediaId, done: job.done, total: job.total };
       if (job.status === "done" && job.result !== undefined) return { ...common, status: "done", result: job.result };
       if (job.status === "failed" && job.error !== undefined) return { ...common, status: "failed", error: job.error };
-      return { ...common, status: job.status === "cancelled" ? "cancelled" : "running" };
+      return { ...common, status: job.status === "cancelled" ? "cancelled" : job.status === "queued" ? "queued" : "running" };
     });
   }
 

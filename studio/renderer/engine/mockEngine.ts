@@ -1329,7 +1329,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, this.settings);
       case "settings.setLibraryPath":
         // A library switch is refused while any job, a render included, is queued or running.
-        if (this.running().length > 0 || this.renderJobs.some(isActive)) return this.fail(c, { code: "IN_FLIGHT" });
+        if (this.running().length > 0 || this.renderJobs.some(isActive) || this.ownMedia.active() > 0) return this.fail(c, { code: "IN_FLIGHT" });
         if (c.payload.path !== this.settings.libraryPath) this.librarySwitchGeneration += 1;
         this.settings = { ...this.settings, libraryPath: c.payload.path };
         this.emitSettingsChanged();

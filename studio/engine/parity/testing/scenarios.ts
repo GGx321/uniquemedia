@@ -1064,6 +1064,8 @@ const OWN_MEDIA_RECORD_SCENARIOS: readonly Scenario[] = [
       await t.settle();
       const listed = await t.call("media.list", {});
       await t.call("media.list", { kind: "video" });
+      t.note("an own photo is no avatar's photo (invariant 24): the avatars' photo and unused counts are what they were");
+      await t.call("avatars.list", {});
       t.note("a second photo is picked and the owner cancels its job before its copy starts: no record, only job.cancelled");
       control.holdImports(true);
       await control.mediaDialog("good");
@@ -1082,6 +1084,7 @@ const OWN_MEDIA_RECORD_SCENARIOS: readonly Scenario[] = [
       await t.call("media.delete", { mediaId });
       await t.call("media.delete", { mediaId });
       await t.call("media.list", {});
+      await t.call("avatars.list", {});
     },
   },
   {
