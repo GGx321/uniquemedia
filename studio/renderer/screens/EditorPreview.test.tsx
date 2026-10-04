@@ -271,6 +271,25 @@ describe("a caption in the Reels zones (AM10: judged on the engine's box)", () =
   });
 });
 
+describe("«Послушать» (R49)", () => {
+  test("plays the montage from its start, the music with it; pressed again it stops", async () => {
+    frames = manualFrames();
+    const track = { trackId: "track-espresso-01", title: "Espresso", artist: "Sabrina Carpenter", durationMs: 60_000, explicit: false, highlightsMs: [30_000, 12_000], hasCover: false, peaks: Array.from({ length: 1_200 }, () => 500) };
+    const { client, engine } = await studio({ music: { tracks: [track], list: { fetchedAt: "2026-10-02T11:02:00.000Z", trackCount: 1, bytesOnDisk: 1_000_000 } } });
+    await openDraft(engine, client, { music: { source: "trending", trackId: track.trackId, startMs: 12_000 } });
+    fireEvent.keyDown(within(timeline()).getByRole("slider", { name: "Плейхед" }), { key: "ArrowRight", shiftKey: true });
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Музыка:/ }));
+    const listen = await within(props()).findByRole("button", { name: "Послушать" });
+    fireEvent.click(listen);
+    expect(clockText()).toBe("00:00.0 / 00:08.0");
+    frames.advance(1_000);
+    expect(clockText()).toBe("00:01.0 / 00:08.0");
+    expect(within(timeline()).getByRole("button", { name: "Пауза" })).toBeDefined();
+    fireEvent.click(within(props()).getByRole("button", { name: "Остановить" }));
+    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
+  });
+});
+
 describe("stickers", () => {
   test("a built-in sticker sits in the engine's box on the set's square picture", async () => {
     const { client, engine } = await studio();

@@ -3,7 +3,7 @@ import type { MontageDraft, TrackSummary } from "../../../shared/engine";
 import { STEP_MS } from "../../../shared/montage";
 import { useEngine } from "../../engine/react";
 import { NBSP } from "../../lib/format";
-import { Icon } from "../../ui/Icon";
+import { Icon, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { trackClock } from "./labels";
@@ -12,6 +12,7 @@ import { clampMusicStart, highlightPicks, musicStartRange, musicWindow, setMusic
 import { Cover, trackLength } from "./MusicTab";
 import { type TrackLookup, usePeaks } from "./MusicTrack";
 import type { DraftSession } from "./session";
+import { usePlaying } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // 3d.5: the music card (EditorMusic.dc.html, `sel = music`; R42–R51). The track's cover and facts, «Лучшая часть»: the WHOLE track's
@@ -184,6 +185,7 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
   const track = lookup.state === "listed" ? lookup.track : null;
   const ask = music?.source === "trending" && track !== null && track.durationMs > 0 ? { trackId: track.trackId, startMs: 0, durationMs: track.durationMs, bars: CARD_BARS } : null;
   const { peaks, missing } = usePeaks(client, ask, listVersion);
+  const playing = usePlaying(timeline.playhead);
   if (music === null) return null;
   const total = totalMs(spec);
   const problem = trackProblem({ missing: missing !== null, verdict, guessTooShort: track !== null && music.startMs + total > track.durationMs });
@@ -254,9 +256,25 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
               ))}
             </div>
           )}
-          <span className="mono ed-hl-range">
-            {trackClock(music.startMs)} → {trackClock(music.startMs + total)}
-          </span>
+          <div className="ed-prow ed-hl-listen">
+            <span className="mono ed-hl-range">
+              {trackClock(music.startMs)} → {trackClock(music.startMs + total)}
+            </span>
+            {/* R49 «Послушать» (3d.4): the montage plays from its start, the music in step with the preview's clock. */}
+            <button
+              type="button"
+              className="btn btn-s"
+              aria-pressed={playing}
+              disabled={total === 0}
+              onClick={() => {
+                if (!playing) timeline.seek(0);
+                timeline.togglePlay();
+              }}
+            >
+              {playing ? <PauseIcon size={12} /> : <PlayIcon size={12} />}
+              {playing ? "Остановить" : "Послушать"}
+            </button>
+          </div>
         </div>
       ) : (
         lookup.state === "unlisted" && <p className="faint ed-props-note">Длина и лучшие части этого трека неизвестны: выберите его снова во вкладке «Музыка» или замените.</p>
