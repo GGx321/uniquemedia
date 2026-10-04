@@ -4,14 +4,14 @@ import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { openFileSource } from "./video/fileSource";
 import { judgeVideo } from "./video/videoPlan";
-import { probeVideo } from "./video/videoProbe";
+import { probeVideo, type ProbeRefusal } from "./video/videoProbe";
 useNativeGlobals();
 setDefaultTimeout(120_000);
 
 // 3f.3a follow-up, review round 5: a regression probe on REAL files. Every fixture of the suite is made by ffmpeg, and both HIGHs of the round-5
 // review (a zero terminator at the end of an Apple sample entry; a `trak/meta` with an `mdta` handler) were invisible to them: they only show on
 // what Apple's own writers make. macOS ships hundreds of such movies in /System/Library. This test walks whatever of them the machine has and holds
-// that the walker never refuses one for the structure of its boxes (`bad-box`, `hidden-handler`): a refusal of those kinds on a file Apple wrote
+// that the walker never refuses one for the structure of its boxes (any code but its codec, colour, no video track or fragmented): a refusal of those kinds on a file Apple wrote
 // is a walker that is stricter than ffmpeg. (Files refused for their codec, colour tags or having no video track are right to be.)
 //
 // It skips cleanly where there are no such files (CI's Linux and Windows runners; a machine that is not a Mac) and is tagged [heavy]. The files are
@@ -54,6 +54,9 @@ function collect(): string[] {
   return found;
 }
 
+/** What a real file is right to be refused for: its codec, its colour tags, having no video track, being fragmented or having two video tracks (a colour and an alpha, as a few system movies do): the importer does not take those. Nothing about its boxes. */
+const RIGHT_TO_REFUSE: ReadonlySet<ProbeRefusal> = new Set<ProbeRefusal>(["no-video-track", "unsupported-codec", "unsupported-colour", "fragmented", "several-video-tracks"]);
+
 const files = collect();
 
 describe.skipIf(files.length === 0)(`[heavy] real Apple files: ${files.length} movies found on this machine`, () => {
@@ -67,7 +70,9 @@ describe.skipIf(files.length === 0)(`[heavy] real Apple files: ${files.length} m
         if (probe.ok) {
           read++;
           judgeVideo(probe, opened.source.size);
-        } else if (probe.reason === "bad-box" || probe.reason === "hidden-handler") {
+        } else if (!RIGHT_TO_REFUSE.has(probe.reason)) {
+          // ANY structural refusal counts (bad-box, hidden-handler, hidden-track-box, stray-track...), not a list of two: the codes grow with the walker's rules, and a new rule that
+          // trips on a file Apple wrote is a walker stricter than ffmpeg (3f.6 review).
           refused.push(`${path}: ${probe.reason}`);
         }
       } finally {

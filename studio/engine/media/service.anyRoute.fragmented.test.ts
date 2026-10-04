@@ -10,8 +10,9 @@ import { pickedIdentityOf } from "./identity";
 import { routeIsoFile } from "./isoRoute";
 import { createMusicImporter } from "./musicImporter";
 import { MediaService } from "./service";
-import { buildMp4 } from "./video/testing/mp4VideoBuilder";
-import { bytesSource } from "./video/videoProbe";
+import { buildMp4, hdlrBox } from "./video/testing/mp4VideoBuilder";
+import { withFirstVideoPartsIn } from "./video/testing/mp4Lift";
+import { bytesSource, soundAndPictureTracks } from "./video/videoProbe";
 import { createVideoImporter } from "./videoImporter";
 useNativeGlobals();
 setDefaultTimeout(120_000);
@@ -37,6 +38,12 @@ const FRAGMENTED = ["-movflags", "frag_keyframe+empty_moov", "-f", "mp4"];
 const fragmentedVoice = (): Promise<Uint8Array> => made("frag-voice.mp4", ["-f", "lavfi", "-i", "sine=duration=6", "-c:a", "aac", ...FRAGMENTED]);
 const fragmentedVideo = (): Promise<Uint8Array> =>
   made("frag-video.mp4", ["-f", "lavfi", "-i", "testsrc=size=64x64:rate=30:duration=3", "-f", "lavfi", "-i", "sine=duration=3", "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", ...FRAGMENTED]);
+
+/** Two video tracks with the moov after the mdat (the lift helpers need that) and a `moof` appended: a file the strict walker would call fragmented. */
+async function twoVideosWithMoof(): Promise<Uint8Array> {
+  const two = await made("two.mp4", ["-f", "lavfi", "-i", "testsrc=size=128x64:rate=30:duration=2", "-f", "lavfi", "-i", "testsrc2=size=128x64:rate=30:duration=2", "-map", "0:v", "-map", "1:v", "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"]);
+  return new Uint8Array([...two, 0, 0, 0, 16, 0x6d, 0x6f, 0x6f, 0x66, 0, 0, 0, 0, 0, 0, 0, 0]);
+}
 
 async function imported(bytes: Uint8Array): Promise<string> {
   const jobs = new JobRegistry();
@@ -81,6 +88,39 @@ describe("a fragmented MP4 picked as any", () => {
     // The light pass takes the same hidden-handler and stream-part rules as the walker: a track it cannot vouch for is a video's to refuse.
     const bytes = buildMp4({ tracks: [{ handler: "soun" }, { handler: "vide" }], topExtra: [new Uint8Array([0, 0, 0, 16, 0x6d, 0x6f, 0x6f, 0x66, 0, 0, 0, 0, 0, 0, 0, 0])] });
     expect(await routeIsoFile(bytesSource(bytes))).toBe("video");
+  });
+});
+
+describe("the light pass keeps the walker's refusals (N7) and has room for a long recording (follow-up 4)", () => {
+  const MOOF = new Uint8Array([0, 0, 0, 16, 0x6d, 0x6f, 0x6f, 0x66, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+  test("a fragmented file whose sound track hides an `hdlr vide` is refused by the light pass (null), and routes to VIDEO, not audio", async () => {
+    const bytes = buildMp4({ tracks: [{ handler: "soun", trakExtra: [hdlrBox("vide")] }], topExtra: [MOOF] });
+    expect(await soundAndPictureTracks(bytesSource(bytes))).toBeNull();
+    expect(await routeIsoFile(bytesSource(bytes))).toBe("video");
+  });
+
+  test("a fragmented-looking file whose video's parts hide in a sinf is refused by the light pass too", async () => {
+    const hidden = withFirstVideoPartsIn(await twoVideosWithMoof(), "sinf");
+    expect(await soundAndPictureTracks(bytesSource(hidden))).toBeNull();
+  });
+
+  test("a voice memo of nine minutes cut into one-second fragments (MediaRecorder.start(1000)) has over a thousand top-level boxes, and is still a track", async () => {
+    const long = await made("long.mp4", ["-f", "lavfi", "-i", "sine=duration=540", "-c:a", "aac", "-b:a", "32k", "-frag_duration", "1000000", ...FRAGMENTED]);
+    let boxes = 0;
+    for (let at = 0; at + 8 <= long.length; ) {
+      boxes++;
+      at += new DataView(long.buffer, long.byteOffset).getUint32(at);
+    }
+    // The premise: the strict walker's bound (1000) is passed, so only a light pass with its own, higher bound can read this file.
+    expect(boxes).toBeGreaterThan(1000);
+    expect(await soundAndPictureTracks(bytesSource(long))).toEqual({ sound: 1, picture: 0 });
+    expect(await routeIsoFile(bytesSource(long))).toBe("audio");
+  });
+
+  test("the light pass is bounded all the same: more boxes than its own limit is refused (null)", async () => {
+    const many = buildMp4({ tracks: [{ handler: "soun" }], topExtra: Array.from({ length: 20_001 }, () => MOOF) });
+    expect(await soundAndPictureTracks(bytesSource(many))).toBeNull();
   });
 });
 

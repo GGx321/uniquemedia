@@ -188,3 +188,22 @@ export function withFirstTrakIn(src: Uint8Array, home: TrakHome): Uint8Array {
   const holder = home === "moov/udta" ? make("udta", moved) : make("meta", cat(u32(0), hdlrBox("mdir"), moved));
   return cat(src.subarray(0, moov.start), make("moov", cat(...rest, holder)), src.subarray(moov.end));
 }
+
+/**
+ * A copy whose FIRST video track is `trak{tkhd, minf}`: no `mdia`, no `mdhd` and no `hdlr` (ffmpeg takes the timescale from `mvhd`), the form that leaves nothing a walker looks
+ * for in the places it looks.
+ */
+export function withVideoMinfOnly(src: Uint8Array): Uint8Array {
+  const { moov, inMoov } = movieOf(src);
+  const first = inMoov.find((b) => b.type === "trak");
+  if (first === undefined) throw new Error("no track");
+  const parts = inMoov.map((b) => {
+    if (b !== first) return src.subarray(b.start, b.end);
+    const tk = kids(src, b.body, b.end);
+    const mdia = tk.find((x) => x.type === "mdia");
+    const minf = mdia === undefined ? undefined : kids(src, mdia.body, mdia.end).find((y) => y.type === "minf");
+    if (mdia === undefined || minf === undefined) throw new Error("no minf");
+    return make("trak", cat(...tk.filter((x) => x.type !== "mdia").map((x) => src.subarray(x.start, x.end)), src.subarray(minf.start, minf.end)));
+  });
+  return cat(src.subarray(0, moov.start), make("moov", cat(...parts)), src.subarray(moov.end));
+}

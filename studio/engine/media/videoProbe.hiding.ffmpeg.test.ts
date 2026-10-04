@@ -9,7 +9,7 @@ import { runFfmpegOk } from "../render/ffmpeg.testkit";
 import { pickedIdentityOf } from "./identity";
 import { createMusicImporter } from "./musicImporter";
 import { MediaService } from "./service";
-import { withFirstTrackHiddenHandlerIn, withFirstTrakIn, withFirstVideoPartsIn, type HidingBox, type TrakHome } from "./video/testing/mp4Lift";
+import { withFirstTrackHiddenHandlerIn, withFirstTrakIn, withFirstVideoPartsIn, withVideoMinfOnly, type HidingBox, type TrakHome } from "./video/testing/mp4Lift";
 import { bytesSource, probeVideo } from "./video/videoProbe";
 import { createVideoImporter } from "./videoImporter";
 useNativeGlobals();
@@ -82,6 +82,16 @@ describe("a video track's stream parts hidden in a box of the trak that ffmpeg d
 
   test.each(STREAM_PART_BOXES)("trak/%s: the import is not `done`, through video and through any", async (box) => {
     const bytes = withFirstVideoPartsIn(await twoVideos(), box);
+    expect(await imported(bytes, "video")).toBe("failed:video:structure");
+    expect(await imported(bytes, "any")).toBe("failed:video:structure");
+  });
+});
+
+describe("the form with nothing in the usual places: trak{tkhd, minf}", () => {
+  test("no mdia, no mdhd, no hdlr (ffmpeg takes the timescale from mvhd): refused, and the import is not `done` through video or any", async () => {
+    const bytes = withVideoMinfOnly(await twoVideos());
+    const probe = await probeVideo(bytesSource(bytes));
+    expect(probe).toEqual({ ok: false, reason: "hidden-track-box" });
     expect(await imported(bytes, "video")).toBe("failed:video:structure");
     expect(await imported(bytes, "any")).toBe("failed:video:structure");
   });
