@@ -79,8 +79,8 @@ async function nextSave(engine: MockEngine): Promise<MontageDraft> {
 function drag(node: HTMLElement, dx: number, pointerId: number, end: "up" | "cancel" = "up"): void {
   fireEvent.pointerDown(node, { pointerId, button: 0, clientX: 500 });
   act(() => {
-    window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 500 + dx / 2 }));
-    window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 500 + dx }));
+    window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 500 + dx / 2, buttons: 1 }));
+    window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 500 + dx, buttons: 1 }));
     window.dispatchEvent(new PointerEvent(end === "up" ? "pointerup" : "pointercancel", { pointerId, clientX: 500 + dx }));
   });
 }
@@ -164,7 +164,7 @@ describe("moving and trimming a layer (100 ms steps, one undo step per gesture)"
     const target = block(/^Текст 1:/);
     fireEvent.pointerDown(target, { pointerId: 3, button: 0, clientX: 500 });
     act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 3, clientX: 500 + ONE_SECOND_PX }));
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 3, clientX: 500 + ONE_SECOND_PX, buttons: 1 }));
     });
     expect(plain(timeline().querySelector(".ed-blk-range")?.textContent)).toBe("1.3 → 5.4 с");
     // Nothing is saved or undoable before the block is let go.
@@ -296,7 +296,7 @@ describe("the keyboard focus stays on a block that changes rows (review round 1)
     const end = within(timeline()).getByRole("slider", { name: "Текст 1: конец" });
     fireEvent.pointerDown(end, { pointerId: 14, button: 0, clientX: 500 });
     act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 14, clientX: 500 + ONE_SECOND_PX }));
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 14, clientX: 500 + ONE_SECOND_PX, buttons: 1 }));
     });
     expect(within(timeline()).queryAllByRole("slider", { name: "Текст 1: конец" }).length).toBe(1);
     act(() => {

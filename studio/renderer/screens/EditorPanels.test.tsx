@@ -337,7 +337,7 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     const block = (): string => plain(within(timeline()).getByRole("button", { name: /^Музыка:/ }).getAttribute("aria-label"));
     const move = (pointerId: number, clientX: number, type: "pointermove" | "pointerup" | "pointercancel" = "pointermove"): void => {
       act(() => {
-        window.dispatchEvent(new PointerEvent(type, { pointerId, clientX }));
+        window.dispatchEvent(new PointerEvent(type, { pointerId, clientX, buttons: type === "pointermove" ? 1 : 0 }));
       });
     };
 

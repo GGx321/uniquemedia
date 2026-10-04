@@ -260,7 +260,7 @@ describe("selecting and acting on a clip", () => {
     if (third === undefined) throw new Error("no clip 3");
     fireEvent.pointerDown(third, { pointerId: 7, button: 0, clientX: 300 });
     act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 200 }));
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 7, clientX: 200, buttons: 1 }));
     });
     expect(timeline().querySelector(".ed-clip-lifted")).not.toBeNull();
     act(() => {
@@ -498,8 +498,8 @@ describe("undo steps of a gesture (one gesture, one step)", () => {
     const drag = (pointerId: number): void => {
       fireEvent.pointerDown(handle, { pointerId, button: 0, clientX: 500 });
       act(() => {
-        window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 535 }));
-        window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 570 }));
+        window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 535, buttons: 1 }));
+        window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 570, buttons: 1 }));
         window.dispatchEvent(new PointerEvent("pointerup", { pointerId, clientX: 570 }));
       });
     };
@@ -605,7 +605,7 @@ describe("a cancelled pointer", () => {
     if (third === undefined) throw new Error("no clip 3");
     fireEvent.pointerDown(third, { pointerId: 9, button: 0, clientX: 300 });
     act(() => {
-      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 9, clientX: 200 }));
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 9, clientX: 200, buttons: 1 }));
       window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 9 }));
     });
     await flush();

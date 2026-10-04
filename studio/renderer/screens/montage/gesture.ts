@@ -5,12 +5,20 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 
 /**
  * Window-wide pointer tracking from a press: the gesture keeps going wherever the pointer goes. `onEnd` gets the
- * release, or null when the gesture was cancelled (`pointercancel`, a new gesture, the timeline closing).
+ * release, or null when the gesture was cancelled (`pointercancel`, a move with the primary button no longer held, a new
+ * gesture, the timeline closing).
  */
-export function trackPointer(press: ReactPointerEvent, onMove: (event: PointerEvent) => void, onEnd: (event: PointerEvent | null) => void): () => void {
+export function trackPointer(press: Pick<ReactPointerEvent, "pointerId">, onMove: (event: PointerEvent) => void, onEnd: (event: PointerEvent | null) => void): () => void {
   const id = press.pointerId;
   const move = (event: PointerEvent): void => {
-    if (event.pointerId === id) onMove(event);
+    if (event.pointerId !== id) return;
+    // The system swallowed the release (⌘Tab mid-drag, a menu over the window): the owner let go long ago, so the gesture is
+    // cancelled here rather than dropped where this move happens to be (3d.5 review LOW).
+    if ((event.buttons & 1) === 0) {
+      cancel(event);
+      return;
+    }
+    onMove(event);
   };
   const stop = (): void => {
     window.removeEventListener("pointermove", move);
