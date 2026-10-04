@@ -6,18 +6,18 @@ import type { Rect } from "./types";
 // frame, like Instagram's story bars. PREVIEW-ONLY: the render never draws
 // them (the plan: "Slide progress bars appear only in the preview").
 //
-// Layout (provisional until the designer's artboards fix it): 24 px side
-// margins and top inset, 6 px tall bars, 6 px gaps. The available width
-// (frame minus margins minus gaps) is shared in proportion to each clip's
-// frames with CUMULATIVE rounding down: bar i spans
-// `floor(avail * start_i / total)` to `floor(avail * end_i / total)`, so the
-// widths add up to the available width exactly and each is within 1 px of its
-// true share.
+// Layout (the designer's artboards, CF19 of the 3d.0 reconciliation, even-
+// rounded at 1080): 36 px side margins and top inset, 10 px tall bars, 14 px
+// gaps. The plan's model stays: the available width (frame minus margins
+// minus gaps) is shared in proportion to each clip's frames with CUMULATIVE
+// rounding down: bar i spans `floor(avail * start_i / total)` to
+// `floor(avail * end_i / total)`, so the widths add up to the available width
+// exactly and each is within 1 px of its true share.
 
-export const SEGMENT_MARGIN = 24;
-export const SEGMENT_TOP = 24;
-export const SEGMENT_HEIGHT = 6;
-export const SEGMENT_GAP = 6;
+export const SEGMENT_MARGIN = 36;
+export const SEGMENT_TOP = 36;
+export const SEGMENT_HEIGHT = 10;
+export const SEGMENT_GAP = 14;
 
 export interface ProgressSegment {
   readonly clipId: string;

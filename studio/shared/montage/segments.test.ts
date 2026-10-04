@@ -7,8 +7,8 @@ import { clipRanges } from "./timeline";
 const clipsOf = (durations: number[]) => durations.map((durationMs, i) => ({ clipId: `clip-seg-${i}`, durationMs }));
 
 describe("progressSegments (preview-only: never rendered)", () => {
-  test("uses a 24 px margin, a 24 px top inset, 6 px bars and 6 px gaps", () => {
-    expect([SEGMENT_MARGIN, SEGMENT_TOP, SEGMENT_HEIGHT, SEGMENT_GAP]).toEqual([24, 24, 6, 6]);
+  test("uses the designer's 36 px margin, 36 px top inset, 10 px bars and 14 px gaps (CF19, even-rounded)", () => {
+    expect([SEGMENT_MARGIN, SEGMENT_TOP, SEGMENT_HEIGHT, SEGMENT_GAP]).toEqual([36, 36, 10, 14]);
   });
 
   test("no clips, no segments", () => {
@@ -16,13 +16,13 @@ describe("progressSegments (preview-only: never rendered)", () => {
   });
 
   test("one clip is one bar across the whole width inside the margins", () => {
-    expect(progressSegments(clipsOf([8000]))).toEqual([{ clipId: "clip-seg-0", rect: { x: 24, y: 24, w: 1032, h: 6 }, startFrame: 0, endFrame: 240 }]);
+    expect(progressSegments(clipsOf([8000]))).toEqual([{ clipId: "clip-seg-0", rect: { x: 36, y: 36, w: 1008, h: 10 }, startFrame: 0, endFrame: 240 }]);
   });
 
-  test("two equal clips share the width minus the gap: 513 px each, the second starting after the gap", () => {
+  test("two equal clips share the width minus the gap: 497 px each, the second starting after the gap", () => {
     const [a, b] = progressSegments(clipsOf([4000, 4000]));
-    expect(a?.rect).toEqual({ x: 24, y: 24, w: 513, h: 6 });
-    expect(b?.rect).toEqual({ x: 543, y: 24, w: 513, h: 6 });
+    expect(a?.rect).toEqual({ x: 36, y: 36, w: 497, h: 10 });
+    expect(b?.rect).toEqual({ x: 547, y: 36, w: 497, h: 10 });
   });
 
   test("segment frame ranges are the clip ranges", () => {
@@ -89,7 +89,7 @@ describe("segmentFillWidth", () => {
   });
 
   test("is half the bar at the clip's midpoint", () => {
-    expect(segmentFillWidth(segment, 60)).toBe(516);
+    expect(segmentFillWidth(segment, 60)).toBe(504);
   });
 
   test("is 0 for a frame before the clip", () => {
