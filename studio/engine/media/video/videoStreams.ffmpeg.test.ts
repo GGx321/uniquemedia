@@ -113,6 +113,26 @@ describe("what is read of ffmpeg's text", () => {
     expect(await check(spawnerSaying(`${LINE.replace("#0:0", "#0:1")}\n`))).toBe("mismatch");
   });
 
+  test("both children hold the encode's own limits (round 3): no decoded picture past 4K, one thread, a capped allocation, the file protocol only, the demuxer forced", async () => {
+    const argvs: string[][] = [];
+    const spawner: FfmpegSpawner = (_command, args) => {
+      argvs.push([...args]);
+      return printingChild(1, argvs.length === 1 ? `${LINE}\n` : "Stream map '0:V:1' matches no streams.\n");
+    };
+    expect(await check(spawner)).toBe("ok");
+    expect(argvs).toHaveLength(2);
+    for (const argv of argvs) {
+      const at = (flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
+      expect(Number(at("-max_pixels"))).toBe(4096 * 2160);
+      expect(at("-threads")).toBe("1");
+      expect(at("-protocol_whitelist")).toBe("file");
+      expect(Number(at("-max_alloc"))).toBeGreaterThan(0);
+      expect(at("-f")).toBe("mov");
+      expect(argv.indexOf("-max_pixels")).toBeLessThan(argv.indexOf("-i"));
+      expect(argv.indexOf("-threads")).toBeLessThan(argv.indexOf("-i"));
+    }
+  });
+
   test("a cancelled signal rejects, and nothing is started", async () => {
     const controller = new AbortController();
     controller.abort();

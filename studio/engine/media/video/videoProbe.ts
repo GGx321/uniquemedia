@@ -489,6 +489,9 @@ function readStts(view: DataView, box: BoxRef): SampleTimes {
  * at the top of the file alike. `meta` is read from its own `hdlr` (`mov_read_meta`) and is scanned on its own terms (`metaChildren`). The list is the containers of that table
  * that matter to a stream (the ones a track's parts, a handler or a whole `trak` can hide in); the table is long and a box this list lacks is the SECOND layer's business
  * (`videoStreams.ts` asks ffmpeg itself how many video streams there are), not a reason to trust the walker's count.
+ * MEASURED on the bundled ffmpeg (a real-ffmpeg test each, `videoProbe.hiding.ffmpeg.test.ts`): `mdia minf stbl dinf edts tref udta sinf schi wave traf mvex` and `meta`. NOT measured:
+ * `moof`, `iprp` and `ipco`, which were added DEFENSIVELY from the table (no probe made ffmpeg read a track part in them); the second layer covers them whatever they do, and none
+ * of the 293 system videos on a Mac holds one in a track.
  */
 const TRAK_CONTAINERS: ReadonlySet<string> = new Set(["mdia", "minf", "stbl", "dinf", "edts", "tref", "udta", "sinf", "schi", "wave", "traf", "mvex", "moof", "iprp", "ipco"]);
 /** The lists the walker reads strictly anyway (a malformed box refuses the file); the rest of a track is read the lenient way ffmpeg reads it. */

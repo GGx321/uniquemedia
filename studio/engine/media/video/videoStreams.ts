@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 import type { FfmpegSpawner } from "../../../node/runFfmpeg";
 import { hasUnreadableStreamLine } from "../../music/decodeCheck";
 import { capture, isAttachedPicture, probeArgv, streamLinesOf } from "../audioProbe";
+import { VIDEO_LIMITS } from "./videoPlan";
 import type { VideoCodec } from "./videoProbe";
 
 // ffmpeg as the AUTHORITY for how many video streams a file has (Stage 3 plan, 3f.6 review, H1 as a class). The box walker (`videoProbe.ts`) is the first gate and judges the
@@ -56,16 +57,23 @@ const NO_STREAM = "Stream map '0:V:1' matches no streams.";
 export async function checkVideoStreams(options: VideoStreamsOptions): Promise<VideoStreamsVerdict> {
   if (!isAbsolute(options.path)) throw new TypeError("checkVideoStreams: the path must be absolute");
   const probe = { path: options.path, demuxer: "mov", whitelist: VIDEO_DECODERS } as const;
+  // The FIRST ffmpeg that touches the file holds the encode's limits (the L5 lie: a 8000 x 8000 bitstream under a small box made the probe alone take 165 MiB): no decoded picture
+  // past 4K, and one decoder thread. They are options of the input, so they go before `-f` and `-i`.
+  const argv = (): string[] => {
+    const base = probeArgv(probe);
+    const at = base.indexOf("-f");
+    return [...base.slice(0, at), "-max_pixels", String(VIDEO_LIMITS.maxLongSide * VIDEO_LIMITS.maxShortSide), "-threads", "1", ...base.slice(at)];
+  };
   const asked = { signal: options.signal, timeoutMs: options.timeoutMs, spawner: options.spawner };
 
-  const { stderr: dump } = await capture(probeArgv(probe), asked);
+  const { stderr: dump } = await capture(argv(), asked);
   if (hasUnreadableStreamLine(dump)) return "mismatch";
   const streams = streamLinesOf(dump);
   if (!streams.every((stream, position) => stream.index === position)) return "mismatch";
   const videos = streams.filter((stream) => stream.kind === "Video" && !isAttachedPicture(stream));
   if (videos.length > 1) return "several";
 
-  const selector = await capture([...probeArgv(probe), "-v", "error", "-map", "0:V:1", "-t", "0.05", "-f", "null", "-"], asked);
+  const selector = await capture([...argv(), "-v", "error", "-map", "0:V:1", "-t", "0.05", "-f", "null", "-"], asked);
   if (selector.code === 0 || selector.code === null || !selector.stderr.includes(NO_STREAM)) return "several";
 
   const only = videos[0];
