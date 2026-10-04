@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { EventMessage } from "../shared/engine";
 import { CH, type StudioApi } from "./api";
+import { droppedFiles } from "./dropped";
 
 /** What the window saves before a quit (the montage editor's pending edit); each answers whether it saved. */
 const flushHandlers = new Set<() => Promise<boolean>>();
@@ -31,6 +32,8 @@ const studio: StudioApi = {
     };
   },
   quitWithoutSaving: () => ipcRenderer.send(CH.quitWithoutSaving),
+  // 3f.6 round 2 (M13): `File` objects in, the paths Electron knows for them out to main; the page never names a path.
+  importDropped: (files) => ipcRenderer.invoke(CH.importDropped, droppedFiles(files, webUtils)),
 };
 
 contextBridge.exposeInMainWorld("studio", studio);

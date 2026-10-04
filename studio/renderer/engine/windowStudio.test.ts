@@ -165,3 +165,49 @@ test("without a bridge (a browser, an older preload) asking for flushes is a no-
   Reflect.set(window, "studio", { version: async () => "0.1.0" });
   expect(() => onFlushRequest(async () => true)()).not.toThrow();
 });
+
+// 3f.6 round 2 (M13): files dropped onto «Мои». The window hands the preload's `importDropped` the dropped `File` objects themselves and
+// nothing else; the answer crosses a trust boundary, so it is checked against a pick's result before the tab sees it.
+function installDrop(answer: (files: unknown) => unknown): unknown[] {
+  const given: unknown[] = [];
+  install(okMoney);
+  const studio: unknown = Reflect.get(window, "studio");
+  if (typeof studio !== "object" || studio === null) throw new Error("no bridge");
+  Reflect.set(studio, "importDropped", async (files: unknown) => {
+    given.push(files);
+    return answer(files);
+  });
+  return given;
+}
+
+test("a drop hands the preload the File objects themselves, and a pick's answer comes back checked", async () => {
+  const given = installDrop(() => ({ ok: true, result: { picked: true, jobIds: ["job-00000001"], refused: [{ name: "track.wma", reason: "format" }], skipped: 0 } }));
+  const client = windowStudioClient();
+  const file = new File(["a"], "beach.jpg", { type: "image/jpeg" });
+  const reply = await client?.importDropped?.([file]);
+  expect(given).toEqual([[file]]);
+  expect(reply).toEqual({ ok: true, result: { picked: true, jobIds: ["job-00000001"], refused: [{ name: "track.wma", reason: "format" }], skipped: 0 } });
+});
+
+test("a refusal comes back as the engine's error", async () => {
+  installDrop(() => ({ ok: false, error: { code: "IN_FLIGHT", detail: "another import is being picked" } }));
+  expect(await windowStudioClient()?.importDropped?.([new File(["a"], "a.jpg")])).toEqual({ ok: false, error: { code: "IN_FLIGHT", detail: "another import is being picked" } });
+});
+
+test("an answer that breaks the contract, or a bridge that throws, is INTERNAL (never shown as a result)", async () => {
+  for (const bad of [null, "ok", { ok: true }, { ok: true, result: { picked: true, jobIds: [], refused: [{ name: "a", reason: "nope" }], skipped: 0 } }, { ok: true, result: { picked: false }, path: "/x" }]) {
+    installDrop(() => bad);
+    const reply = await windowStudioClient()?.importDropped?.([new File(["a"], "a.jpg")]);
+    expect(reply?.ok === false ? reply.error.code : "ok").toBe("INTERNAL");
+  }
+  installDrop(() => {
+    throw new Error("bridge gone");
+  });
+  const thrown = await windowStudioClient()?.importDropped?.([new File(["a"], "a.jpg")]);
+  expect(thrown?.ok === false ? thrown.error.code : "ok").toBe("INTERNAL");
+});
+
+test("a preload without the drop door gives a client without one: the tab then offers the dialog only", () => {
+  install(okMoney);
+  expect(windowStudioClient()?.importDropped).toBeUndefined();
+});

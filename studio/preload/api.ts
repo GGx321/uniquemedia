@@ -13,6 +13,11 @@ export const CH = {
   flushDone: "studio:flush-done",
   /** renderer → main: the owner quits although this window could not save (the quit skips asking again). */
   quitWithoutSaving: "studio:quit-without-saving",
+  /**
+   * renderer → main (`ipcRenderer.invoke`, 3f.6 round 2): files dropped onto «Мои», as the PRELOAD's `{paths, more}` (preload/dropped.ts):
+   * the paths Electron gave the dropped `File`s, never a path the page wrote. Answered `{ok, result | error}`, a pick's `MediaPickResult`.
+   */
+  importDropped: "studio:import-dropped",
 } as const;
 
 /**
@@ -37,4 +42,10 @@ export interface StudioApi {
   onFlushRequest(handler: () => Promise<boolean>): () => void;
   /** Quits although this window could not save: the owner's explicit choice. */
   quitWithoutSaving(): void;
+  /**
+   * 3f.6 round 2 (M13): imports files dropped onto «Мои». Takes the dropped `File` objects ONLY: the preload maps each to the path the OS gave
+   * it (a `File` the page built itself has none and is left out) and main treats the paths as its own dialog's picks. Resolves with
+   * `{ok: true, result}` (a pick's `MediaPickResult`) or `{ok: false, error}`; the renderer validates it.
+   */
+  importDropped(files: File[]): Promise<unknown>;
 }
