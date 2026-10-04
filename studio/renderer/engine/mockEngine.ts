@@ -62,6 +62,7 @@ import { mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
+import { MockOwnMedia, type MockMediaAccept } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
 // An in-memory engine that speaks the T0 wire protocol. It exists so the
@@ -154,13 +155,11 @@ function displayPath(path: string): string {
 
 /**
  * What main's own-media dialog answers in the mock (`pickMediaNext`): the files picked, each by DISPLAY NAME (the mock holds no path and
- * answers none) with the verdict the boundary gives it. No importer exists yet (3f.2 to 3f.5), so every file is refused, a good one as
- * `not-yet-supported`; accepted files, with their jobs, arrive with the importers.
+ * answers none) with the verdict the boundary gives it: a refusal (`reason`: with no importer yet, a good file is `not-yet-supported`), or
+ * an acceptance (`accept`, 3f.1b: what the engine's importer would make of it) that starts an import job and ends in a record.
  */
-export interface MockMediaPick {
-  name: string;
-  reason: MediaUnsupportedReason;
-}
+export type MockMediaPick = { name: string; reason: MediaUnsupportedReason } | { name: string; accept: MockMediaAccept };
+export type { MockMediaAccept, MockMediaFacts } from "./mockMedia";
 
 /** What main's folder dialog answers in the mock (`pickExportFolderNext`). */
 export interface MockExportPick {
@@ -668,6 +667,8 @@ export class MockEngine implements EngineBridge {
   private unscriptedPicks = 0;
   /** What main's own-media dialog answers next: the files picked, or `null` (and the default) for a cancel. */
   private mediaPick: readonly MockMediaPick[] | null = null;
+  /** Own media's records and import jobs (3f.1b). */
+  private readonly ownMedia: MockOwnMedia;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" | "late" } | null = null;
   private music: MockMusic;
   private readonly textPreviews: MockTextPreviews;
@@ -677,6 +678,7 @@ export class MockEngine implements EngineBridge {
     this.textPreviews = new MockTextPreviews({ scheduler: this.scheduler, drawMs: options.textDrawMs ?? 0, newId: () => this.nextId("preview") });
     this.latencyMs = options.latencyMs ?? 0;
     this.stepMs = options.stepMs ?? 700;
+    this.ownMedia = new MockOwnMedia({ scheduler: this.scheduler, stepMs: this.stepMs, nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso(), emit: (event) => this.emit(event) });
     this.capacity = options.eventCapacity ?? 256;
     this.log = new EventLog(this.capacity, this.bootId());
     const apiKey = options.apiKey ?? { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
@@ -1133,6 +1135,11 @@ export class MockEngine implements EngineBridge {
     this.mediaPick = pick;
   }
 
+  /** 3f.1b: while held, an import job that starts waits (the engine's copy waits before its first byte); `false` lets every held job go on. */
+  holdImports(held: boolean): void {
+    this.ownMedia.hold(held);
+  }
+
   private newExportRootId(): string {
     return `root-mock-${String(++this.exportRootsMade).padStart(4, "0")}`;
   }
@@ -1251,6 +1258,7 @@ export class MockEngine implements EngineBridge {
       this.movingUsage(job.avatarId, job.photoIds, () => void (job.status = "cancelled"));
     }
     this.renderJobs = [];
+    this.ownMedia.restart();
     this.boot += 1;
     this.log = new EventLog(this.capacity, this.bootId());
     if (this.reserves.size > 0 && !this.reconcileReasons.includes("open-reserves")) {
@@ -1332,7 +1340,14 @@ export class MockEngine implements EngineBridge {
         const pick = this.mediaPick;
         this.mediaPick = null;
         if (pick === null || pick.length === 0) return this.ok(c, { picked: false });
-        return this.ok(c, { picked: true, jobIds: [], refused: pick.map((file) => ({ name: file.name, reason: file.reason })), skipped: 0 });
+        // As main's flow does, file by file in the dialog's order: a refused file is listed by name and reason, an accepted one starts its job.
+        const jobIds: string[] = [];
+        const refused: { name: string; reason: MediaUnsupportedReason }[] = [];
+        for (const file of pick) {
+          if ("accept" in file) jobIds.push(this.ownMedia.startImport(file.name, file.accept));
+          else refused.push({ name: file.name, reason: file.reason });
+        }
+        return this.ok(c, { picked: true, jobIds, refused, skipped: 0 });
       }
       case "settings.exportDisplay":
         return this.ok(c, { display: displayPath(this.settings.exportPath) });
@@ -1345,9 +1360,13 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { stickerId: c.payload.stickerId, apngBase64: btoa(binary) });
       }
       case "media.list":
+        return this.ok(c, this.ownMedia.list(c.payload.kind));
       case "media.delete":
+        if (!this.ownMedia.delete(c.payload.mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${c.payload.mediaId} in the open library` });
+        return this.ok(c, { mediaId: c.payload.mediaId });
       case "media.cancelImport":
-        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not played by the mock yet` });
+        if (!this.ownMedia.cancel(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no import job ${c.payload.jobId} in this engine` });
+        return this.ok(c, { jobId: c.payload.jobId });
       case "export.check": {
         this.checkExport();
         return this.ok(c, { exportStatus: this.exportReported });
@@ -2816,7 +2835,7 @@ export class MockEngine implements EngineBridge {
       drafts: this.drafts,
       unreadableAvatars: this.unreadable,
       unreadableTotal: this.unreadableCount(),
-      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j))],
+      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j)), ...this.ownMedia.jobStates()],
       librarySwitchGeneration: this.librarySwitchGeneration,
       exportStatus: this.exportReported,
       notices: [],

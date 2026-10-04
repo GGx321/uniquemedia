@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
@@ -12,6 +12,7 @@ import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { manifestTraits } from "../../avatars/records";
 import { EXPORT_MARKER_FILE, NODE_EXPORT_ROOT_FS, type ExportRootFs } from "../../exportRoot";
 import { openLibrary } from "../../library";
+import type { MediaImporter } from "../../media/imports";
 import { TrackStore } from "../../music/trackStore";
 import { excerptOf, fakeCdn, JPEG_1X1 } from "../../music/testing/storeKit";
 import { createCaptionRenderer, type CaptionRequest } from "../../text/caption/renderer";
@@ -70,6 +71,11 @@ export interface Control {
   exportMarker(state: "damaged" | "intact"): Promise<void>;
   /** 3f.1: what main's own-media dialog answers the next `media.pickImport` (used once; with nothing said it is cancelled). */
   mediaDialog(answer: MediaDialog): Promise<void>;
+  /**
+   * 3f.1b: while held, an import job that starts waits before its first byte is copied (the real rig's staging copy, the mock's timer), so
+   * a scenario can answer, cancel or list while it runs. `false` lets every held job go on. Needs `RigOptions.ownMedia`.
+   */
+  holdImports(held: boolean): void;
   /** 3c.6: the owner stored a RapidAPI key (the engine is told as main tells it after «Сохранить»). */
   musicKey(): Promise<void>;
   /** 3c.6: the flashapi quota log on disk gets a complete line that cannot be read (`corrupt`), or a folder where the file was (`unreadable`). */
@@ -101,7 +107,21 @@ export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | 
  * The owner's pick in main's own-media dialog (3f.1): nothing (`cancel`), or seven files at once, each a different way for the boundary to
  * turn it away (`mixed`, see MIXED_MEDIA). The real rig makes the files on disk; the mock is told the verdict for each name, and holds no path.
  */
-export type MediaDialog = "cancel" | "mixed";
+export type MediaDialog = "cancel" | "mixed" | "good";
+
+/** The one good photo of the `good` pick (3f.1b): accepted by the rigs' importer, and `PARITY_PHOTO_BYTES` long. */
+const GOOD_PHOTO = "lake.jpg";
+export const PARITY_PHOTO_BYTES = 120;
+/** What the real rig's photo importer says of any photo it takes, and what the mock is told to say. */
+export const PARITY_PHOTO_FACTS = { width: 100, height: 200, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } as const;
+
+/** Writes the `good` pick's file into `folder` and returns its path. */
+async function writeGoodMedia(folder: string): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(PARITY_PHOTO_BYTES - 4, 7)]);
+  await writeFile(join(folder, GOOD_PHOTO), jpeg);
+  return [join(folder, GOOD_PHOTO)];
+}
 
 /** The seven files of the `mixed` pick, in the order the dialog returns them, with the verdict the boundary gives each (no importer exists yet, so a good photo is `not-yet-supported`). */
 const MIXED_MEDIA: readonly MockMediaPick[] = [
@@ -133,6 +153,8 @@ async function writeMixedMedia(folder: string): Promise<string[]> {
 export interface RigOptions {
   /** How many renders run at once; 1 unless a scenario needs a wider pool. */
   readonly renderConcurrency?: number;
+  /** 3f.1b: the real rig gets a photo importer (as 3f.2 will give the app one), so a good photo is accepted; the mock accepts the dialog's `good` file. Without it no importer exists and a good photo is `not-yet-supported`. */
+  readonly ownMedia?: boolean;
 }
 
 export interface ParityRig extends Recorded {
@@ -256,7 +278,16 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       freeSpace: (bytes) => engine.setExportFreeBytes(bytes),
       exportMarker: async (state) => engine.setExportDisk(state === "damaged" ? { status: "unavailable", reason: "invalid-marker" } : { status: "ok" }),
       exportDialog: async (answer) => engine.pickExportFolderNext(mockDialog(answer, writable, ++dialogs)),
-      mediaDialog: async (answer) => engine.pickMediaNext(answer === "cancel" ? null : MIXED_MEDIA),
+      mediaDialog: async (answer) =>
+        engine.pickMediaNext(
+          answer === "cancel"
+            ? null
+            : answer === "good"
+              ? // With an importer the good photo is accepted; without one (the app until 3f.2) it is turned away before it is copied.
+                [options.ownMedia === true ? { name: GOOD_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, facts: PARITY_PHOTO_FACTS } } : { name: GOOD_PHOTO, reason: "not-yet-supported" }]
+              : MIXED_MEDIA,
+        ),
+      holdImports: (held) => engine.holdImports(held),
       // The mock answers main's own key command itself, as the dev build does.
       musicKey: async () => {
         await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setMusicKey", payload: { key: PARITY_MUSIC_KEY } }));
@@ -477,12 +508,36 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     },
   });
   const textLane = new HeldTextLane();
+  // 3f.1b: an import job's copy waits before its first byte while the scenario holds imports (the gate is the `.part` file's creation).
+  let importGate: Promise<void> | null = null;
+  let letImportsGo: () => void = () => undefined;
+  const holdImports = (held: boolean): void => {
+    if (held) {
+      if (importGate !== null) return;
+      importGate = new Promise<void>((resolve) => {
+        letImportsGo = () => {
+          importGate = null;
+          resolve();
+        };
+      });
+    } else letImportsGo();
+  };
+  const parityPhotoImporter: MediaImporter = async () => ({ ok: true, facts: PARITY_PHOTO_FACTS });
   const { engine, events, posted } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
     deps: {
       musicSink: store,
       musicTracks: store,
       text: { gate: textLane },
+      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter } } : {}),
+      mediaStaging: {
+        fs: {
+          openOut: async (path) => {
+            if (importGate !== null) await importGate;
+            return open(path, "wx");
+          },
+        },
+      },
       musicFetch: () => Promise.reject(new Error("the parity suite never sends a flashapi request")),
       exportRootFs,
       // No face models in a test: the resolver judges the scored photos and none of the rest, as the mock does.
@@ -519,6 +574,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     gate.set(3);
     await engine.renders.idle();
     await engine.settled();
+    await engine.mediaSettled();
     gate.reset();
   };
 
@@ -675,8 +731,10 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         }
       },
       mediaDialog: async (answer) => {
-        nextMedia = answer === "cancel" ? null : await writeMixedMedia(join(dir, `picked-media-${++dialogs}`));
+        const folder = join(dir, `picked-media-${++dialogs}`);
+        nextMedia = answer === "cancel" ? null : answer === "good" ? await writeGoodMedia(folder) : await writeMixedMedia(folder);
       },
+      holdImports,
       // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).
       musicKey: () => engine.applyControl({ kind: "control", type: "musicKey.set", key: PARITY_MUSIC_KEY, origin: "user" }),
       musicTracks: async (variant) => {
@@ -712,6 +770,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     },
     stop: async () => {
       textLane.hold(false);
+      holdImports(false);
       await settle();
     },
   };

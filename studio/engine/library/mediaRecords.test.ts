@@ -484,6 +484,27 @@ describe("the listing", () => {
     expect(store.list("audio")).toEqual({ media: [], total: 0 });
   });
 
+  test("two records made in the same instant list the later one first, whatever their ids sort like", async () => {
+    const queue = ["media-00000009", "media-00000008"];
+    const store = records({ newId: () => queue.shift() ?? "media-00000001", now: () => new Date("2026-10-04T10:00:00.000Z") });
+    const first = await store.commit(await photoInput({ name: "first.jpg" }));
+    const second = await store.commit(await photoInput({ name: "second.jpg" }));
+    expect(store.list().media.map((m) => m.mediaId)).toEqual([second.mediaId, first.mediaId]);
+  });
+
+  test("after a restart the same instant is listed by id, the same way every time", async () => {
+    const queue = ["media-00000009", "media-00000008"];
+    const store = records({ newId: () => queue.shift() ?? "media-00000001", now: () => new Date("2026-10-04T10:00:00.000Z") });
+    await store.commit(await photoInput());
+    await store.commit(await photoInput());
+    const one = records();
+    await one.recover();
+    const two = records();
+    await two.recover();
+    expect(one.list().media.map((m) => m.mediaId)).toEqual(two.list().media.map((m) => m.mediaId));
+    expect(one.list().total).toBe(2);
+  });
+
   test("a listing is cut at MAX_LISTED_MEDIA and says how many there are", async () => {
     const store = records();
     const count = MAX_LISTED_MEDIA + 3;

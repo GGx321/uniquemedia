@@ -178,6 +178,9 @@ export class MediaRecords {
   readonly #dir: string;
   readonly #staging: string;
   readonly #index = new Map<string, RecordShape>();
+  /** The order records came into the index: the tie-break of a listing when two were made in the same instant. */
+  readonly #order = new Map<string, number>();
+  #entered = 0;
   /** Ids between the file's rename and the record's write: a cleanup must not take their file for an orphan. */
   readonly #inFlight = new Set<string>();
 
@@ -306,14 +309,15 @@ export class MediaRecords {
     for (const entry of entries) {
       if (entry.isFile() && (isTempName(entry.name) && RECORD_TEMP_NAME.test(entry.name))) await this.#removeQuietly(join(this.#dir, entry.name));
     }
-    for (const entry of entries) {
+    // In the order of their names, so that what a restart lists never depends on the disk's own listing order.
+    for (const entry of [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
       const match = RECORD_NAME.exec(entry.name);
       if (match === null || !entry.isFile()) continue;
       const judged = await this.#judge(entry.name);
       if (judged.kind === "problem") problems.push({ file: entry.name, reason: judged.reason });
       else if (judged.kind === "dangling") {
         if (await this.#removeQuietly(join(this.#dir, entry.name))) removedDangling++;
-      } else if (!this.#inFlight.has(judged.record.id)) this.#index.set(judged.record.id, judged.record);
+      } else if (!this.#inFlight.has(judged.record.id)) this.#enter(judged.record);
     }
     for (const entry of entries) {
       if (!entry.isFile() || !ORPHAN_NAME.test(entry.name)) continue;
@@ -352,10 +356,16 @@ export class MediaRecords {
     return { kind: "record", record };
   }
 
-  /** Newest first (then by id), cut at `MAX_LISTED_MEDIA`; `total` counts every match. */
+  #enter(record: RecordShape): void {
+    if (!this.#index.has(record.id)) this.#order.set(record.id, ++this.#entered);
+    this.#index.set(record.id, record);
+  }
+
+  /** Newest first (the later one first when two share an instant), cut at `MAX_LISTED_MEDIA`; `total` counts every match. */
   list(kind?: MediaKind): { media: MediaSummary[]; total: number } {
     const all = [...this.#index.values()].filter((r) => kind === undefined || r.kind === kind);
-    all.sort((a, b) => (a.createdAt === b.createdAt ? (a.id < b.id ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
+    const orderOf = (record: RecordShape): number => this.#order.get(record.id) ?? 0;
+    all.sort((a, b) => (a.createdAt === b.createdAt ? orderOf(b) - orderOf(a) : a.createdAt < b.createdAt ? 1 : -1));
     return { media: all.slice(0, MAX_LISTED_MEDIA).map((r) => this.#summaryOf(r)), total: all.length };
   }
 
@@ -474,7 +484,7 @@ export class MediaRecords {
       };
       const hook = this.#options.hooks?.beforeRecordRename;
       await writeJsonAtomic(recordPath, record, hook === undefined ? {} : { beforeRename: hook });
-      this.#index.set(id, record);
+      this.#enter(record);
       return this.#summaryOf(record);
     } catch (error) {
       // A crash cannot clean up after itself: the disk is left as the crash left it, and the next open settles it.
@@ -513,6 +523,7 @@ export class MediaRecords {
       if (!hasErrorCode(error, "ENOENT")) throw new MediaDiskError("the media record could not be removed", errorCodeOf(error) ?? "error");
     }
     this.#index.delete(mediaId);
+    this.#order.delete(mediaId);
     await fsyncDir(this.#dir).catch(() => undefined);
     // The name is rebuilt from the id and format, never taken from the record's own `file` text.
     await this.#removeQuietly(join(this.#dir, basename(this.#expectedFile(record.id, record.format))));

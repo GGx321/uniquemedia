@@ -16,7 +16,7 @@ import { ProgressInvariants } from "./progress";
 export type Answer = { readonly ok: true; readonly result: Record<string, unknown> } | { readonly ok: false; readonly error: EngineError };
 
 /** The events whose order is under test. */
-export const COVERED_EVENTS: ReadonlySet<string> = new Set(["job.progress", "job.done", "job.failed", "job.cancelled", "video.changed", "montage.changed", "avatar.changed", "export.status", "music.changed"]);
+export const COVERED_EVENTS: ReadonlySet<string> = new Set(["job.progress", "job.done", "job.failed", "job.cancelled", "video.changed", "montage.changed", "avatar.changed", "export.status", "music.changed", "media.changed"]);
 
 /**
  * Values that differ between the mock and the engine by design, with why. A masked field is written as `"<masked>"`; whether the
@@ -49,6 +49,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "music list and peaks (3d.1b): the real rig's store holds tracks it downloaded from a fake CDN, the mock's are seeded from the same fixture list; both answer through the track store's own highlight and waveform rules (studio/shared/music/trackShape.ts). The mock models no disk for a track: no torn envelope file, no track deleted under a live record (the engine's `peaks` is then NOT_FOUND while `list` still lists it, until a restart), no cover file: those are the store's own unit tests' business, and no story deletes the music folder after storing tracks. The cap of 100 listed tracks is not played: the real rig would have to download 101 tracks; it is pinned by the mock's own test and the track store's",
   "a video's first clip (3e.2): the engine's record holds the RESOLVED spec (every focus filled, the stand-in point where no face was found), the mock's the draft's (null there); `videos.get` writes the clip as its kind, layout and photos, never its focus, and the older stories' lines leave out the title, the first clip and the track id (no older golden line changed)",
   "usage (3e.2): the mock has no disk, so an avatar's broken records or marks are the usage it was seeded with (a renderer test's state) and a recovery clears its own reason; the engine moves or copies files. No story breaks a file: the suite plays the recoveries of a sound avatar, which change nothing on either. `photos.rebuildRejected`'s `kept` is the engine's count of readable log lines and the mock's of rejected photos: equal for a log of one mark per photo, which is what the story writes",
+  "own media (3f.1b): the mock has no disk and copies nothing. An accepted file's job is a timer on the mock's clock: it announces its start, then (when released, one step later) one progress step at the total, the stored record, and its end; the engine's copy announces one step per percent. The rule is the same as for renders: the start and the total are compared, the steps between are collapsed (the file in the story is one chunk, so there are none). A held import (`holdImports`) is a copy held before its first byte in the real rig and a timer that is not set in the mock. The mock accepts what the dialog's script says it accepts and refuses the rest with the script's reason; it models no importer, no staging folder, no crash window and no record that cannot be read: those are the engine's own unit tests' business. `media.changed` is written, with the media's id as `media#N`",
   "music (3c.6): the mock keeps its quota log and its list as numbers on its own clock, so the times a status carries (`listFetchedAt`, `nextFreeAt`) are written as set or null, a refresh's steps are not written, and a music error's detail (it names a time) is not compared: its code and its `musicReason` are. No story sends a flashapi request: the real rig's flashapi refuses every call",
 ];
 
@@ -80,7 +81,7 @@ const ID_KINDS: Readonly<Record<string, string>> = {
   clipId: "clip",
   layerId: "layer",
 };
-const ID_LIST_KINDS: Readonly<Record<string, string>> = { photoIds: "photo", usedIn: "video" };
+const ID_LIST_KINDS: Readonly<Record<string, string>> = { photoIds: "photo", usedIn: "video", jobIds: "job" };
 
 /** Replaces identifiers by their role and order of appearance, and masks what `MASKED` lists. */
 export class Normalizer {
@@ -98,6 +99,11 @@ export class Normalizer {
     return alias;
   }
 
+  /** Names an own media's id, in order of first appearance (`media#1`), so every later line of the transcript writes it the same way. */
+  registerMedia(id: string): void {
+    this.register("media", id);
+  }
+
   /** A free text (an error's detail) with every known identifier in it replaced. */
   text(raw: string): string {
     let out = raw;
@@ -109,6 +115,9 @@ export class Normalizer {
     if (typeof value === "string") {
       const kind = key === undefined ? undefined : ID_KINDS[key];
       if (kind !== undefined) return this.register(kind, value);
+      // An own media's id is aliased once the transcript has MET it (`registerMedia`: the first `media.changed` or listing that carries it): the
+      // older stories name their own-media ids by hand, and those stay as written.
+      if (key === "mediaId" && this.#aliases.has(value)) return this.register("media", value);
       if (key !== undefined && key in MASKED) return "<masked>";
       if (key === "relPath") return value.replace(/\d{4}-\d{2}-\d{2}/, "<date>");
       return this.text(value);
@@ -194,6 +203,7 @@ export function eventLine(event: EventMessage, norm: Normalizer): string | null 
     return `event job.progress ${compact({ ...objectOf(norm.value(rest)), phase })}`;
   }
   if (event.type === "avatar.changed") return `event avatar.changed ${compact(norm.value(avatarLine(objectOf(event.payload).avatar)))}`;
+  if (event.type === "media.changed" && event.payload.change === "upserted") norm.registerMedia(event.payload.media.mediaId);
   if (event.type === "music.changed") return `event music.changed ${compact(musicLine(event.payload.status))}`;
   if (event.type === "video.changed" && event.payload.change === "upserted") return `event video.changed ${compact(norm.value({ change: "upserted", video: videoLine(event.payload.video) }))}`;
   return `event ${event.type} ${compact(norm.value(event.payload))}`;
@@ -300,6 +310,13 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
     return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal, order })}`, ...held.map((s) => `  ${s}`)].join("\n");
   }
   if (type === "engine.snapshot") return snapshotLine(answer.result, norm);
+  if (type === "media.list") {
+    for (const media of Array.isArray(answer.result.media) ? answer.result.media : []) {
+      const id = objectOf(media).mediaId;
+      if (typeof id === "string") norm.registerMedia(id);
+    }
+    return `< ok ${compact(norm.value(answer.result))}`;
+  }
   if (type === "settings.setExportPath") {
     // A pick answers the settings too, whose folder paths are the rig's own (a temp dir, the mock's home): only the folder's identity
     // (as `root#N`, in order of appearance, so a folder met again reads the same) and the counts are compared.

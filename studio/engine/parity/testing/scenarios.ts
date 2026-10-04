@@ -1025,8 +1025,77 @@ const OWN_MEDIA_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
+// ---------- 3f.1b: own media as records, and the import job ----------
+
+/** The job ids a `media.pickImport` answered. */
+function pickedJobIds(answer: Answer): string[] {
+  const ids = resultOf(answer).jobIds;
+  if (!Array.isArray(ids)) throw new Error("expected job ids");
+  return ids.map((id: unknown) => {
+    if (typeof id !== "string") throw new Error("expected a job id");
+    return id;
+  });
+}
+
+/** The media ids `media.list` answered, newest first. */
+function listedMediaIds(answer: Answer): string[] {
+  const media = resultOf(answer).media;
+  if (!Array.isArray(media)) throw new Error("expected media");
+  return media.map((item: unknown) => {
+    if (typeof item !== "object" || item === null) throw new Error("expected a media record");
+    return stringAt(Object.fromEntries(Object.entries(item)), "mediaId");
+  });
+}
+
+/** Appended after the 3f.1 scenario: the golden transcripts above are append-only. */
+const OWN_MEDIA_RECORD_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own media: an import is a job that ends in a record, a cancelled one stores nothing, and a record is listed and deleted",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      t.note("nothing is stored yet");
+      await t.call("media.list", {});
+      t.note("a photo is picked: its job starts, and is held before its first byte, so the answer comes with the job running");
+      control.holdImports(true);
+      await control.mediaDialog("good");
+      await t.call("media.pickImport", { kind: "photo" });
+      t.note("the job goes on: the copy, the record, media.changed, then job.done");
+      control.holdImports(false);
+      await t.settle();
+      const listed = await t.call("media.list", {});
+      await t.call("media.list", { kind: "video" });
+      t.note("a second photo is picked and the owner cancels its job before its copy starts: no record, only job.cancelled");
+      control.holdImports(true);
+      await control.mediaDialog("good");
+      const [second] = pickedJobIds(await t.call("media.pickImport", { kind: "photo" }));
+      if (second === undefined) throw new Error("the second pick started no job");
+      await t.call("media.cancelImport", { jobId: second });
+      control.holdImports(false);
+      await t.settle();
+      await t.call("media.list", {});
+      t.note("a job that is over is answered as it ended; one that never was is not found");
+      await t.call("media.cancelImport", { jobId: second });
+      await t.call("media.cancelImport", { jobId: "job-00000404" });
+      t.note("delete: the record goes and media.changed says so; the same id again is not found");
+      const [mediaId] = listedMediaIds(listed);
+      if (mediaId === undefined) throw new Error("nothing was listed");
+      await t.call("media.delete", { mediaId });
+      await t.call("media.delete", { mediaId });
+      await t.call("media.list", {});
+    },
+  },
+  {
+    name: "own media: without an importer a good photo is refused and nothing is stored",
+    async run(t, _w, control) {
+      await control.mediaDialog("good");
+      await t.call("media.pickImport", { kind: "photo" });
+      await t.call("media.list", {});
+    },
+  },
+];
+
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

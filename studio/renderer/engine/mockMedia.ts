@@ -1,0 +1,185 @@
+import { MAX_LISTED_MEDIA, PROTOCOL_VERSION, type EngineError, type ImportResult, type JobState, type MediaKind, type MediaSummary, type UnsequencedEvent } from "../../shared/engine";
+import type { Scheduler } from "./scheduler";
+
+// The mock's own media (3f.1b): the engine's import jobs and records, on the mock's clock. The mock copies nothing and keeps no path: the
+// dialog's script names a file by its DISPLAY NAME and says what the engine would learn of it (`MockMediaAccept`). An accepted file starts
+// a job that ends in a record; a cancelled job stores nothing; a restart keeps the records (they are on disk) and drops the jobs (they are
+// in memory). The parity suite (studio/engine/parity) holds this and the engine side by side; what differs on purpose is listed in
+// transcript.ts.
+
+/** What the engine's importer would say of a file: the facts a record holds (the contract's `MediaSummary`). */
+export interface MockMediaFacts {
+  width: number | null;
+  height: number | null;
+  durationMs: number | null;
+  sourceFps: number | null;
+  hdrToSdr: boolean;
+  loopFrames: number | null;
+  delayFrames: number[] | null;
+}
+
+/** A file the script accepts: its kind, its size in bytes (the job's `total`) and, when the story cares, the facts of its record. */
+export interface MockMediaAccept {
+  kind: MediaKind;
+  bytes: number;
+  facts?: Partial<MockMediaFacts>;
+}
+
+const NO_FACTS: MockMediaFacts = { width: null, height: null, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null };
+
+/** What a kind's record has when the script says nothing: the fields the contract gives that kind, with plausible values. */
+const DEFAULT_FACTS: Readonly<Record<MediaKind, MockMediaFacts>> = {
+  photo: { ...NO_FACTS, width: 1080, height: 1440 },
+  video: { ...NO_FACTS, width: 1080, height: 1920, durationMs: 6400, sourceFps: 30 },
+  audio: { ...NO_FACTS, durationMs: 95_000 },
+  sticker: { ...NO_FACTS, width: 320, height: 320, loopFrames: 6, delayFrames: [2, 2, 2] },
+};
+
+/** A cancel that nothing holds ends the job after this long (the real engine's copy sees it between two chunks). */
+const CANCEL_DELAY_MS = 50;
+
+interface ImportJob {
+  readonly jobId: string;
+  readonly mediaKind: MediaKind;
+  readonly name: string;
+  readonly total: number;
+  readonly accept: MockMediaAccept;
+  done: number;
+  status: "running" | "done" | "failed" | "cancelled";
+  mediaId: string | null;
+  result: ImportResult | undefined;
+  error: EngineError | undefined;
+  cancelRequested: boolean;
+  cancelTimers: (() => void)[];
+}
+
+export interface MockOwnMediaDeps {
+  readonly scheduler: Scheduler;
+  /** How long an accepted file's job runs before it ends. */
+  readonly stepMs: number;
+  readonly nextId: (prefix: string) => string;
+  readonly nowIso: () => string;
+  readonly emit: (event: UnsequencedEvent) => void;
+}
+
+export class MockOwnMedia {
+  readonly #deps: MockOwnMediaDeps;
+  /** In the order they were stored; the mock's clock moves on at every record, so this is also the order of `createdAt`. */
+  #records: MediaSummary[] = [];
+  #jobs: ImportJob[] = [];
+  /** Jobs that started while imports were held and wait for the let-go. */
+  #waiting: ImportJob[] = [];
+  #held = false;
+
+  constructor(deps: MockOwnMediaDeps) {
+    this.#deps = deps;
+  }
+
+  #event<T extends UnsequencedEvent["type"]>(type: T, payload: Extract<UnsequencedEvent, { type: T }>["payload"]): void {
+    this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.nextId("evt"), kind: "event", type, payload } as UnsequencedEvent);
+  }
+
+  /** Starts the job of an accepted file and announces it at zero; its id. */
+  startImport(name: string, accept: MockMediaAccept): string {
+    const job: ImportJob = {
+      jobId: this.#deps.nextId("job"),
+      mediaKind: accept.kind,
+      name,
+      total: accept.bytes,
+      accept,
+      done: 0,
+      status: "running",
+      mediaId: null,
+      result: undefined,
+      error: undefined,
+      cancelRequested: false,
+      cancelTimers: [],
+    };
+    this.#jobs.push(job);
+    this.#event("job.progress", { kind: "import", jobId: job.jobId, mediaKind: job.mediaKind, name, mediaId: null, done: 0, total: job.total });
+    if (this.#held) this.#waiting.push(job);
+    else this.#scheduleEnd(job);
+    return job.jobId;
+  }
+
+  #scheduleEnd(job: ImportJob): void {
+    job.cancelTimers.push(this.#deps.scheduler.schedule(this.#deps.stepMs, () => this.#end(job)));
+  }
+
+  /** While held, a job that starts waits for the let-go; letting go (false) sets every waiting job going. */
+  hold(held: boolean): void {
+    this.#held = held;
+    if (held) return;
+    for (const job of this.#waiting.splice(0)) this.#scheduleEnd(job);
+  }
+
+  #end(job: ImportJob): void {
+    if (job.status !== "running" || !this.#jobs.includes(job)) return;
+    const ref = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null };
+    if (job.cancelRequested) {
+      job.status = "cancelled";
+      this.#event("job.cancelled", ref);
+      return;
+    }
+    job.done = job.total;
+    this.#event("job.progress", { ...ref, done: job.total, total: job.total });
+    const summary: MediaSummary = {
+      mediaId: this.#deps.nextId("media"),
+      kind: job.mediaKind,
+      name: job.name,
+      bytes: job.total,
+      createdAt: this.#deps.nowIso(),
+      ...DEFAULT_FACTS[job.mediaKind],
+      ...job.accept.facts,
+    };
+    this.#records.push(summary);
+    this.#event("media.changed", { change: "upserted", media: summary });
+    job.status = "done";
+    job.mediaId = summary.mediaId;
+    job.result = { kind: "import", mediaId: summary.mediaId, media: summary };
+    this.#event("job.done", { jobId: job.jobId, result: job.result });
+  }
+
+  /** `media.cancelImport`: false for a job that is not an import here; a finished job stays as it ended. */
+  cancel(jobId: string): boolean {
+    const job = this.#jobs.find((j) => j.jobId === jobId);
+    if (job === undefined) return false;
+    if (job.status !== "running") return true;
+    job.cancelRequested = true;
+    // A job still held ends when it is let go; one that is running ends soon on the clock.
+    if (!this.#waiting.includes(job)) job.cancelTimers.push(this.#deps.scheduler.schedule(CANCEL_DELAY_MS, () => this.#end(job)));
+    return true;
+  }
+
+  /** Newest first, cut as the engine cuts it: the contract's 500. */
+  list(kind?: MediaKind): { media: MediaSummary[]; total: number } {
+    const all = this.#records.filter((r) => kind === undefined || r.kind === kind).reverse();
+    return { media: all.slice(0, MAX_LISTED_MEDIA), total: all.length };
+  }
+
+  /** Removes a record and announces it; false for an id it does not hold. */
+  delete(mediaId: string): boolean {
+    const at = this.#records.findIndex((r) => r.mediaId === mediaId);
+    if (at < 0) return false;
+    this.#records.splice(at, 1);
+    this.#event("media.changed", { change: "removed", mediaId });
+    return true;
+  }
+
+  /** The import jobs as a snapshot lists them. */
+  jobStates(): JobState[] {
+    return this.#jobs.map((job): JobState => {
+      const common = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: job.mediaId, done: job.done, total: job.total };
+      if (job.status === "done" && job.result !== undefined) return { ...common, status: "done", result: job.result };
+      if (job.status === "failed" && job.error !== undefined) return { ...common, status: "failed", error: job.error };
+      return { ...common, status: job.status === "cancelled" ? "cancelled" : "running" };
+    });
+  }
+
+  /** The engine process restarts: the records are on disk and stay, the jobs were in memory and are gone with it, with whatever they were about to store. */
+  restart(): void {
+    for (const job of this.#jobs) for (const cancel of job.cancelTimers) cancel();
+    this.#jobs = [];
+    this.#waiting = [];
+  }
+}
