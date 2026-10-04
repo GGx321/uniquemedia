@@ -28,8 +28,8 @@ import { loadTextRasteriser } from "./text/load";
 import { RASTER_WASM } from "./text/rasterTypes";
 import { createTextWorkerSpawner } from "./text/worker/spawn";
 import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textGate";
-import { createLazyImageDecoder } from "./decode/lazyDecoder";
-import { createRealDecodeBackend } from "./decode/realBackend";
+import { createDecodeGate } from "./decode/decodeGate";
+import { createDecodeWorkerSpawner } from "./decode/spawn";
 import { createPhotoImporter, MAX_PHOTO_PIXELS } from "./media/photoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
 
@@ -95,6 +95,11 @@ async function withinStartWait<T>(work: Promise<T>, ms: number): Promise<T | nul
 // models, the WASM codecs, onnxruntime-web's own files) is handed to it as
 // `workerData`: it resolves no path itself.
 const FACE_WORKER_URL = new URL("./faceWorker.js", import.meta.url);
+// 3f.2: the own-photo decode worker (engine/photoDecodeWorker), resolved the same way. The decode of a camera picture is synchronous WASM that
+// takes hundreds of megabytes, which never shrink: it runs there, is ended on a cancel, a time limit and after 60 s idle.
+const PHOTO_DECODE_WORKER_URL = new URL("./photoDecodeWorker.js", import.meta.url);
+const PHOTO_DECODE_IDLE_RECYCLE_MS = 60_000;
+const PHOTO_DECODE_TIMEOUT_MS = 120_000;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -254,9 +259,10 @@ parentPort.once("message", (event) => {
       // is not linked) to kill the engine there. `STUDIO_E2E` is a build-time constant: a production bundle has neither the
       // branch nor the module (bundleChecks.ts's `productionEngineProblems`).
       ...(STUDIO_E2E ? { videos: { renderOverrides: { hooks: { reached: createCommitHold({ dir: dirname(init.data.ledgerPath) }) } } } } : {}),
-      // 3f.2: the own-photo importer. JPEG and PNG are decoded by the engine's WASM codecs (loaded at the first photo, by the same
-      // verified loader the face worker uses); a WebP is decoded by ffmpeg in a child process; the stored file is a JPEG without metadata.
-      mediaImporters: { photo: createPhotoImporter({ decode: createLazyImageDecoder(() => createRealDecodeBackend(NODE_MODULES_DIR), { maxPixels: MAX_PHOTO_PIXELS }) }) },
+      // 3f.2: the own-photo importer. JPEG and PNG are decoded by the WASM codecs in their own worker thread (fix round 1: ended on a
+      // cancel, a time limit and when idle, so the engine thread stays free and the memory goes back); a WebP is decoded by ffmpeg in a child
+      // process; the stored file is a JPEG without metadata.
+      mediaImporters: { photo: createPhotoImporter({ decode: createDecodeGate({ spawnWorker: createDecodeWorkerSpawner(PHOTO_DECODE_WORKER_URL, { nodeModulesDir: NODE_MODULES_DIR, maxPixels: MAX_PHOTO_PIXELS }), idleRecycleMs: PHOTO_DECODE_IDLE_RECYCLE_MS, timeoutMs: PHOTO_DECODE_TIMEOUT_MS }).decode }) },
     });
 
     void ready.then((engine) => {

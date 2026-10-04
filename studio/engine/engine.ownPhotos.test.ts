@@ -7,7 +7,8 @@ import { useNativeGlobals } from "../testing/nativeGlobals";
 import type { PickedFileIdentity } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { EngineReply } from "./control";
-import { createLazyImageDecoder } from "./decode/lazyDecoder";
+import { createDecodeGate } from "./decode/decodeGate";
+import { createWasmImageDecoder } from "./decode/wasmDecode";
 import { createRealDecodeBackend } from "./decode/realBackend";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
@@ -29,6 +30,15 @@ const exportDir = () => join(dir(), "export");
 const pickedDir = (): string => join(dir(), "picked");
 const mediaFolder = (): string => join(dir(), "library", "media");
 const NODE_MODULES_DIR = join(import.meta.dir, "../../node_modules");
+
+/** The real WASM decode, in this thread: what these tests use where the decode itself is not the point (the engine's own entry uses a worker). */
+function inThreadDecode(): ReturnType<typeof createWasmImageDecoder> {
+  let decoder: Promise<ReturnType<typeof createWasmImageDecoder>> | undefined;
+  return async (bytes, signal) => {
+    decoder ??= createRealDecodeBackend(NODE_MODULES_DIR).then((backend) => createWasmImageDecoder(backend));
+    return (await decoder)(bytes, signal);
+  };
+}
 
 const settingsOf = () => engineSettings(dir(), { renderConcurrency: 1 });
 type Started = Awaited<ReturnType<typeof startEngine>>;
@@ -62,7 +72,7 @@ async function startWith(ffmpeg: { run: (opts: RunFfmpegArgvOptions) => Promise<
   const started = await startEngine(dir(), {
     init: { renderTmpDir: renderTmp(), settings: settingsOf() },
     deps: {
-      mediaImporters: { photo: createPhotoImporter({ decode: createLazyImageDecoder(() => createRealDecodeBackend(NODE_MODULES_DIR)) }) },
+      mediaImporters: { photo: createPhotoImporter({ decode: inThreadDecode() }) },
       videos: { renderOverrides: { verify: acceptingVerify, runDeps: { run: ffmpeg.run } } },
       ...extraDeps,
     },
@@ -232,7 +242,7 @@ describe("the owner's own photos in a draft and a render, through the engine", (
       const avatarId = await seedAvatar();
       const started = await startEngine(dir(), {
         init: { renderTmpDir: renderTmp(), settings: settingsOf() },
-        deps: { mediaImporters: { photo: createPhotoImporter({ decode: createLazyImageDecoder(() => createRealDecodeBackend(NODE_MODULES_DIR)) }) } },
+        deps: { mediaImporters: { photo: createPhotoImporter({ decode: inThreadDecode() }) } },
       });
       await mkdir(exportDir(), { recursive: true });
       await started.engine.settled();
@@ -246,4 +256,74 @@ describe("the owner's own photos in a draft and a render, through the engine", (
     },
     120_000,
   );
+});
+
+describe("the decode of an own photo runs in its own thread: the engine stays free, and a cancel ends it (3f.2 fix round 1, H1)", () => {
+  /** A decode worker that takes the picture and never answers: a decode that is still running. It records that it was ended. */
+  function hungWorker() {
+    const state = { posted: 0, ended: 0, onPosted: () => undefined as void };
+    const exits: ((code: number) => void)[] = [];
+    const worker = {
+      postMessage: () => {
+        state.posted++;
+        state.onPosted();
+      },
+      on: (event: string, listener: never) => {
+        if (event === "exit") exits.push(listener as (code: number) => void);
+        return worker;
+      },
+      terminate: async () => {
+        state.ended++;
+        for (const exit of exits) exit(1);
+        return 1;
+      },
+    };
+    return { state, worker };
+  }
+
+  async function startWithHungDecode() {
+    const hung = hungWorker();
+    const gate = createDecodeGate({ spawnWorker: () => hung.worker, idleRecycleMs: 60_000, timeoutMs: 600_000 });
+    const started = await startWith(gatedFfmpeg(), { mediaImporters: { photo: createPhotoImporter({ decode: gate.decode }) } });
+    return { started, hung };
+  }
+
+  async function startImport(started: Started, name: string): Promise<string> {
+    await mkdir(pickedDir(), { recursive: true });
+    const path = join(pickedDir(), name);
+    await writeFile(path, await quadrantPicture(join(dir(), "fixtures"), name, 40, 30, "png"));
+    const expected: PickedFileIdentity = pickedIdentityOf(await lstat(path, { bigint: true }));
+    const callId = `call-${String(++calls).padStart(8, "0")}`;
+    await started.engine.receive({ kind: "control", type: "media.import", callId, pick: "photo", path, name, expected });
+    const reply = started.posted.map((m) => EngineReply.safeParse(m)).find((r) => r.success && r.data.callId === callId);
+    if (reply === undefined || !reply.success || reply.data.mediaJobId === undefined) throw new Error("the import was not started");
+    return reply.data.mediaJobId;
+  }
+
+  test("while a decode is running an engine command answers", async () => {
+    const { started, hung } = await startWithHungDecode();
+    const jobId = await startImport(started, "slow.png");
+    await until(() => hung.state.posted > 0, "the decode to be handed to its worker");
+
+    const snapshot = ok(await started.engine.handle(command("engine.snapshot")));
+    expect(snapshot.type).toBe("engine.snapshot");
+    expect(ok(await started.engine.handle(command("media.list", {}))).result).toMatchObject({ total: 0 });
+
+    ok(await started.engine.handle(command("media.cancelImport", { jobId })));
+    await started.engine.mediaSettled();
+  });
+
+  test("media.cancelImport during the decode ends its worker, and the job ends cancelled within the grace window with nothing left staged", async () => {
+    const { started, hung } = await startWithHungDecode();
+    const jobId = await startImport(started, "slow.png");
+    await until(() => hung.state.posted > 0, "the decode to be handed to its worker");
+
+    ok(await started.engine.handle(command("media.cancelImport", { jobId })));
+    await started.engine.mediaSettled();
+
+    expect((await jobEnd(started.events, jobId)).type).toBe("job.cancelled");
+    expect(hung.state.ended).toBe(1);
+    expect(await readdir(join(mediaFolder(), ".staging")).catch(() => [])).toEqual([]);
+    expect(await stored()).toEqual([]);
+  });
 });

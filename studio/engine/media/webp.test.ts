@@ -45,6 +45,23 @@ describe("webpInfo", () => {
     expect(webpInfo(riff(vp8x(0x02, 100, 100), chunk("ANIM", [0, 0, 0, 0, 0, 0])))?.animated).toBe(true);
   });
 
+  test("the animation flag ALONE makes it animated: no ANIM or ANMF chunk is needed", () => {
+    expect(webpInfo(riff(vp8x(0x02, 100, 100), vp8(100, 100)))?.animated).toBe(true);
+  });
+
+  test("M3: a small VP8X canvas over a big bitstream is judged by the bigger size: ffmpeg decodes at the bitstream's", () => {
+    expect(webpInfo(riff(vp8x(0, 100, 100), vp8(16000, 16000)))).toEqual({ width: 16000, height: 16000, animated: false });
+    expect(webpInfo(riff(vp8x(0, 100, 100), vp8l(16000, 16000)))).toEqual({ width: 16000, height: 16000, animated: false });
+  });
+
+  test("M3: each side is judged by its larger value: a wide canvas over a tall bitstream is both", () => {
+    expect(webpInfo(riff(vp8x(0, 5000, 10), vp8(10, 5000)))).toEqual({ width: 5000, height: 5000, animated: false });
+  });
+
+  test("M3: a big canvas over a small bitstream stays the canvas", () => {
+    expect(webpInfo(riff(vp8x(0, 4096, 2), vp8(10, 2)))).toEqual({ width: 4096, height: 2, animated: false });
+  });
+
   test("an ANMF frame chunk makes it animated even when the flag byte says no", () => {
     expect(webpInfo(riff(vp8x(0x00, 100, 100), chunk("ANMF", new Array<number>(16).fill(0))))?.animated).toBe(true);
   });

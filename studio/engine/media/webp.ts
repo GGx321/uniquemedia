@@ -55,6 +55,7 @@ export function webpInfo(bytes: Uint8Array): WebpInfo | null {
     // Chunks are padded to an even length.
     at = body + length + (length % 2);
   }
-  const size = canvas ?? image;
+  // The bigger of the two, side by side: ffmpeg decodes at the BITSTREAM's size whatever the canvas says, and a canvas can claim less.
+  const size = canvas === null ? image : image === null ? canvas : { width: Math.max(canvas.width, image.width), height: Math.max(canvas.height, image.height) };
   return size === null ? null : { width: size.width, height: size.height, animated };
 }

@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { MediaSummary } from "../../shared/engine";
@@ -9,6 +9,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { heavyTest } from "../../testing/bunTiers";
 import { tempDirFor } from "../../testing/tempDir";
 import { runFfmpegOk } from "../render/ffmpeg.testkit";
+import { DecodeWorkerError } from "../decode/decodeGate";
 import { createRealDecodeBackend } from "../decode/realBackend";
 import { createWasmImageDecoder } from "../decode/wasmDecode";
 import type { MediaImportOutcome } from "./imports";
@@ -427,6 +428,15 @@ describe("the photo importer: ffmpeg is a child process that a cancel kills", ()
     expect(await folderListing(tmp())).toBe(after);
   });
 
+  test("a decode worker that failed or ran out of time is `failed`, not a picture that cannot be read", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 16, 16, "jpeg");
+    const hand = await handoff(tmp(), picture, { format: "jpeg" });
+    const broken: PhotoImporterDeps["decode"] = async () => {
+      throw new DecodeWorkerError("the decode worker stopped");
+    };
+    expect(await createPhotoImporter({ decode: broken })(hand.request)).toEqual({ ok: false, reason: "failed" });
+  });
+
   test("a cancel during the WASM decode is seen before ffmpeg is started", async () => {
     const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
     const hand = await handoff(tmp(), picture, { format: "jpeg" });
@@ -494,5 +504,41 @@ describe("the photo importer: ffmpeg is a child process that a cancel kills", ()
     const allowed = new Set([hand.request.staged.path, ...hand.works.map((w) => w.path)]);
     for (const token of mentioned) expect(allowed.has(token)).toBe(true);
     expect(calls.flat().join(" ")).not.toContain("holiday");
+  });
+});
+
+describe("the photo importer: what the review of 3f.2 found (round 1)", () => {
+  test("M3: the PNG ffmpeg made of a WebP is looked at before it is read: over the ceiling it is refused as dimensions", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 48, 32, "webp");
+    expect((await runWith(picture, "webp", { maxDecodedPngBytes: 16 })).outcome).toEqual({ ok: false, reason: "dimensions" });
+  });
+
+  test("M3: the same WebP is taken when the PNG is under the ceiling", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 48, 32, "webp");
+    expect((await runWith(picture, "webp", { maxDecodedPngBytes: 10_000_000 })).outcome.ok).toBe(true);
+  });
+
+  test("L2: the RGB work file is written with `wx`: a link already at its name is never written through", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 16, 16, "jpeg");
+    const hand = await handoff(tmp(), picture, { format: "jpeg" });
+    const victim = join(tmp(), "victim.bin");
+    await writeFile(victim, "keep me");
+    const link = join(tmp(), "work-link.media");
+    await symlink(victim, link);
+    const request = { ...hand.request, workFile: async () => ({ path: link, release: async () => undefined }) };
+    expect(await importerWith()(request)).toEqual({ ok: false, reason: "failed" });
+    expect(await readFile(victim, "utf8")).toBe("keep me");
+  });
+
+  test("L2: a stored JPEG whose own header is not the size that was meant is refused", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    // The encode is told to make a 2x2 picture instead of the 32x32 one the importer meant.
+    const spawner: FfmpegSpawner = (command, args, options) => {
+      const argv = [...args];
+      if (argv.includes("rawvideo")) argv.splice(argv.indexOf("-frames:v"), 0, "-vf", "scale=2:2");
+      const { env, ...rest } = options;
+      return spawn(command, argv, { ...rest, ...(env === undefined ? {} : { env }), stdio: [...options.stdio] });
+    };
+    expect((await runWith(picture, "jpeg", { spawner })).outcome).toEqual({ ok: false, reason: "failed" });
   });
 });

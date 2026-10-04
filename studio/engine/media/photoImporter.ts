@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../shared/engine";
+import { DecodeWorkerError } from "../decode/decodeGate";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import type { FaceGateImage } from "../face";
 import { imageSize } from "../library/media";
@@ -37,6 +38,9 @@ const MAX_ALLOC_BYTES = 512 * 1024 * 1024;
 
 /** The most pixels a source may have, judged from its header before any decode: 8000 x 6000 is a 48 megapixel camera picture; memory (the decoded RGBA, the upright RGB) is about 350 MB at the cap. */
 export const MAX_PHOTO_PIXELS = 50_000_000;
+
+/** The most a PNG of a WebP may take on disk: 4 bytes a pixel at the cap, with headroom for a filter byte a row and the chunks (a PNG of noise is about that large). */
+export const MAX_DECODED_PNG_BYTES = MAX_PHOTO_PIXELS * 4 + 16 * 1024 * 1024;
 const DEFAULT_FFMPEG_TIMEOUT_MS = 90_000;
 
 export interface PhotoImporterDeps {
@@ -46,6 +50,8 @@ export interface PhotoImporterDeps {
   readonly spawner?: FfmpegSpawner | undefined;
   /** How long one ffmpeg call may run before it is killed; 90 s by default. */
   readonly ffmpegTimeoutMs?: number | undefined;
+  /** The most bytes the PNG ffmpeg makes of a WebP may have before it is read; `MAX_DECODED_PNG_BYTES` by default. A test knob. */
+  readonly maxDecodedPngBytes?: number | undefined;
 }
 
 /** A photo the importer turns away, with the reason the owner is told. */
@@ -119,6 +125,9 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
         png.path,
         signal,
       );
+      // What ffmpeg made is looked at before it is read whole: a header that lied about its size cannot make the engine read a bomb.
+      const made = await stat(png.path);
+      if (made.size > (deps.maxDecodedPngBytes ?? MAX_DECODED_PNG_BYTES)) throw new Refused("dimensions");
       pictureBytes = new Uint8Array(await readFile(png.path, { signal }));
     }
 
@@ -129,6 +138,8 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
       decoded = await deps.decode(pictureBytes, signal);
     } catch (error) {
       if (signal.aborted) throw error;
+      // The worker itself failed or ran out of time: the picture is not to blame.
+      if (error instanceof DecodeWorkerError) throw new Refused("failed");
       // A file the decoder cannot read (cut off, damaged, not the format its start says) is not a picture.
       throw new Refused("format");
     }

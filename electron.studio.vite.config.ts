@@ -64,6 +64,9 @@ export default defineConfig(({ command }) => ({
           // built at all; bundleChecks.ts and the production smoke fail the
           // build checks when it is missing.
           "engine/faceWorker": at("studio/engine/face/worker/faceWorker.ts"),
+          // 3f.2: the own-photo decode worker thread (studio/engine/main.ts's PHOTO_DECODE_WORKER_URL): synchronous WASM, its memory never shrinks,
+          // so it runs in a thread the engine ends on a cancel and when idle. Listed here or it would not be built at all.
+          "engine/photoDecodeWorker": at("studio/engine/decode/photoDecodeWorker.ts"),
           // 3b.2: the text worker thread (resvg-wasm and the fonts) the engine spawns by file URL
           // (studio/engine/main.ts's TEXT_WORKER_URL). resvg-wasm is a devDependency, so its JS glue is
           // bundled into this entry only, never into engine/main.js (bundleChecks.ts's textWorkerProblems

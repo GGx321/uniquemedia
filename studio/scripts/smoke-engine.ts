@@ -101,7 +101,7 @@ import { parseFlashapiList } from "../engine/music/listSchema";
 import { EXCERPTS, excerptOf } from "../engine/music/testing/storeKit";
 import { startMockCdn, withExcerptDurations, withFutureExpiry } from "./mockCdn";
 import { startMockFlashapi } from "./mockFlashapi";
-import { faceWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
@@ -599,6 +599,8 @@ function checkPackage(target: Target): void {
   check("app.asar contains the face gate's models and onnxruntime-web's WASM runtime", missingFaceAssets.length === 0, { missingFaceAssets });
   // T7c: the face worker thread is its own built entry, loaded by file URL
   // from inside the asar (never unpacked, for the same integrity reason).
+  // 3f.2: the own-photo decode worker, the same way: inside the asar, never unpacked.
+  check("app.asar contains the own-photo decode worker entry, and it is not unpacked", entries.includes("/out-studio/engine/photoDecodeWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "photoDecodeWorker.js")));
   check("app.asar contains the face worker entry, and it is not unpacked", entries.includes("/out-studio/engine/faceWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "faceWorker.js")));
   // 3b.2, the text rasteriser: resvg's .wasm, the six fonts and their OFL texts stay inside the asar too (never
   // unpacked, for the same integrity reason). That they load from there under the fuses, in the real
@@ -718,6 +720,12 @@ function checkFaceWorker(where: string, engine: string, worker: string | null, f
   check(`${where}: the face worker entry is built, loaded by file URL, a worker thread, Electron-free, and every chunk it imports is present`, problems.length === 0, problems);
 }
 
+/** 3f.2: the own-photo decode worker entry, wherever it was read from (bundleChecks.ts's `photoDecodeWorkerProblems`). */
+function checkPhotoDecodeWorker(where: string, engine: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): void {
+  const problems = photoDecodeWorkerProblems(engine, worker, fileExists);
+  check(`${where}: the own-photo decode worker entry is built, loaded by file URL, a worker thread, Electron-free, with every chunk it imports present and the WASM decode only inside it`, problems.length === 0, problems);
+}
+
 /** 3b.2: the text worker entry, wherever it was read from (bundleChecks.ts's `textWorkerProblems`). */
 function checkTextWorker(where: string, engine: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): void {
   const problems = textWorkerProblems(engine, worker, fileExists);
@@ -763,6 +771,13 @@ async function productionCheck(target: Target): Promise<void> {
       existsSync(textWorkerPath) ? await readFile(textWorkerPath, "utf8") : null,
       (outStudioPath) => existsSync(join(ROOT, "out-studio", outStudioPath)),
     );
+    const photoWorkerPath = join(ROOT, "out-studio", "engine", "photoDecodeWorker.js");
+    checkPhotoDecodeWorker(
+      "the production build",
+      await readFile(join(ROOT, "out-studio", "engine", "main.js"), "utf8"),
+      existsSync(photoWorkerPath) ? await readFile(photoWorkerPath, "utf8") : null,
+      (outStudioPath) => existsSync(join(ROOT, "out-studio", outStudioPath)),
+    );
     const workerPath = join(ROOT, "out-studio", "engine", "faceWorker.js");
     checkFaceWorker(
       "the production build",
@@ -787,6 +802,12 @@ async function productionCheck(target: Target): Promise<void> {
     "the package",
     asarText(target, join("out-studio", "engine", "main.js")),
     packagedEntries.has("/out-studio/engine/textWorker.js") ? asarText(target, join("out-studio", "engine", "textWorker.js")) : null,
+    (outStudioPath) => packagedEntries.has(`/out-studio/${outStudioPath}`),
+  );
+  checkPhotoDecodeWorker(
+    "the package",
+    asarText(target, join("out-studio", "engine", "main.js")),
+    packagedEntries.has("/out-studio/engine/photoDecodeWorker.js") ? asarText(target, join("out-studio", "engine", "photoDecodeWorker.js")) : null,
     (outStudioPath) => packagedEntries.has(`/out-studio/${outStudioPath}`),
   );
   checkFaceWorker(

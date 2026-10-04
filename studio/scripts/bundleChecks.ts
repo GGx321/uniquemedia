@@ -277,6 +277,17 @@ export function textWorkerProblems(engineMain: string, worker: string | null, fi
   return problems;
 }
 
+/**
+ * 3f.2 (fix round 1): the same checks for the own-photo decode worker (`out-studio/engine/photoDecodeWorker.js`), plus one that keeps the
+ * WASM decode where it belongs: `wasmDecode.ts` carries a distinctive message, and the engine bundle must not contain it, or the decode
+ * (synchronous, hundreds of megabytes that never shrink) could run on the engine's own thread again.
+ */
+export function photoDecodeWorkerProblems(engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
+  const problems = workerEntryProblems("photoDecodeWorker", engineMain, worker, fileExists);
+  if (engineMain.includes("decode/wasmDecode: unsupported image format")) problems.push("the engine bundle contains the WASM image decoder; it must run only inside the decode worker");
+  return problems;
+}
+
 function workerEntryProblems(name: string, engineMain: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): string[] {
   const problems: string[] = [];
   if (!new RegExp(`new URL\\(\\s*["']\\./${name}\\.js["']\\s*,\\s*import\\.meta\\.url\\s*\\)`).test(engineMain)) {
