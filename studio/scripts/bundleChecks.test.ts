@@ -166,7 +166,7 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });
 
-  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
+  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "holdImports", "MockOwnMedia", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
     expect(productionBundleProblems(`engine.${control}(1);`)).toEqual([`contains ${control}`]);
   });
 
@@ -267,6 +267,14 @@ describe("productionEngineProblems", () => {
 
   test("flags the E2E commit hold that made it into the engine bundle: it would stop a real commit at the rename", () => {
     expect(productionEngineProblems(bundle(SHUT, 'const held = "studio-e2e-commit-hold.held";'))).toEqual(["a test-only commit hold is in the engine bundle"]);
+  });
+
+  test("flags the E2E photo importer that made it into the engine bundle: it would accept a picture without decoding it", () => {
+    expect(productionEngineProblems(bundle(SHUT, 'Object.defineProperty(importer, "name", { value: "studio-e2e-photo-importer" });'))).toEqual(["a test-only photo importer is in the engine bundle"]);
+  });
+
+  test("flags the photo importer too when the bundler put it in a shared chunk beside the entry", () => {
+    expect(productionEngineBundleProblems(SHUT, 'const MARKER = "studio-e2e-photo-importer";')).toEqual(["a test-only photo importer is in the engine bundle"]);
   });
 
   test("flags the commit hold when the bundler put it in a shared chunk beside the entry, which the entry's own text does not show", () => {

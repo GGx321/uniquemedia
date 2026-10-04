@@ -35,6 +35,9 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "pickExportFolderNext",
   // 3f.1: the mock's stand-in for main's own-media dialog.
   "pickMediaNext",
+  // 3f.1b: the mock's own-media jobs (a held import, and the class that plays them): the mock is dev-only.
+  "holdImports",
+  "MockOwnMedia",
   // 3c.6: the mock's scripted music refresh failure and its stand-in for a damaged quota log.
   "failNextMusicRefresh",
   "setMusicQuotaLog",
@@ -192,6 +195,9 @@ export function productionEngineProblems(engine: string): string[] {
   // 3a.9: the packaged E2E stops a commit right after the rename to kill the engine there (studio/engine/videos/e2eCommitHold.ts).
   // The hook is built behind STUDIO_E2E, so a production bundle has neither the module nor the marker its files are named by.
   if (engine.includes("studio-e2e-commit-hold")) problems.push("a test-only commit hold is in the engine bundle");
+  // 3f.1b: the packaged E2E drives a whole own-media import through a stand-in photo importer (studio/engine/media/e2ePhotoImporter.ts),
+  // built behind STUDIO_E2E. A production bundle must not carry it: it would accept a picture without decoding it.
+  if (engine.includes("studio-e2e-photo-importer")) problems.push("a test-only photo importer is in the engine bundle");
   return problems;
 }
 

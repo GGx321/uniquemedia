@@ -28,6 +28,7 @@ import { loadTextRasteriser } from "./text/load";
 import { RASTER_WASM } from "./text/rasterTypes";
 import { createTextWorkerSpawner } from "./text/worker/spawn";
 import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textGate";
+import { createE2ePhotoImporter } from "./media/e2ePhotoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
 
 const parentPort = process.parentPort;
@@ -251,6 +252,9 @@ parentPort.once("message", (event) => {
       // is not linked) to kill the engine there. `STUDIO_E2E` is a build-time constant: a production bundle has neither the
       // branch nor the module (bundleChecks.ts's `productionEngineProblems`).
       ...(STUDIO_E2E ? { videos: { renderOverrides: { hooks: { reached: createCommitHold({ dir: dirname(init.data.ledgerPath) }) } } } } : {}),
+      // 3f.1b: only an E2E build has a photo importer, a stand-in that keeps the staged PNG as it is, so the smoke can drive a whole import
+      // through the packaged engine; the app has none until 3f.2. Same build-time guard, and bundleChecks.ts looks for its marker.
+      ...(STUDIO_E2E ? { mediaImporters: { photo: createE2ePhotoImporter() } } : {}),
     });
 
     void ready.then((engine) => {
