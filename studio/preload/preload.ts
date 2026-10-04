@@ -1,7 +1,11 @@
 import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from "electron";
 import type { EventMessage } from "../shared/engine";
 import { CH, type StudioApi } from "./api";
+import { trustedDropGate } from "./dropGate";
 import { droppedFiles } from "./dropped";
+
+/** 3f.6 round 2 (MEDIUM-2): the last drop the browser itself made on this window; `importDropped` takes only its files, once, within 10 s. */
+const dropGate = trustedDropGate(window);
 
 /** What the window saves before a quit (the montage editor's pending edit); each answers whether it saved. */
 const flushHandlers = new Set<() => Promise<boolean>>();
@@ -32,8 +36,9 @@ const studio: StudioApi = {
     };
   },
   quitWithoutSaving: () => ipcRenderer.send(CH.quitWithoutSaving),
-  // 3f.6 round 2 (M13): `File` objects in, the paths Electron knows for them out to main; the page never names a path.
-  importDropped: (files) => ipcRenderer.invoke(CH.importDropped, droppedFiles(files, webUtils)),
+  // 3f.6 round 2 (M13): `File` objects in (only the last trusted drop's own, once), the paths Electron knows for them out to main; the page
+  // never names a path.
+  importDropped: (files) => ipcRenderer.invoke(CH.importDropped, droppedFiles(dropGate.take(files), webUtils)),
 };
 
 contextBridge.exposeInMainWorld("studio", studio);
