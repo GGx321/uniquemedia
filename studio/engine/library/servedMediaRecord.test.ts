@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { servedMediaRecord } from "./mediaRecords";
+useNativeGlobals();
 
 // What main reads of a record to SERVE a stored file (3f.2's `media/<id>` route, 3f.5's `media.stickerBytes`): which file to open and what it must be.
 // 3f.5 adds the hash and the canvas and loop the stored sticker was made with, so main can check the exact bytes it sends.

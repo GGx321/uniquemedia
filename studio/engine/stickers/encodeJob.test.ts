@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { inspectApng } from "../../shared/stickers/apng";
 import { decodeFrames } from "../../scripts/stickers/apngDecode.testkit";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { EncodeTooLargeError } from "./encodeErrors";
 import { encodeStickerFrames } from "./encodeJob";
+
+useNativeGlobals();
 
 // 3f.5: the encode worker's job, with the raw frames behind a function so no file or thread is needed. The thread and its file are
 // tested in encodeGate.test.ts (scripted) and encodeGate.real.test.ts (real).

@@ -709,7 +709,7 @@ describe("own stickers", () => {
   test("a sticker the library does not hold shows its place with nothing in it, and asks main for no bytes", async () => {
     const harness = await studio();
     await openDraft(harness.engine, harness.client, { layers: [ownLayer(0, "media-00000404")] });
-    expect(preview().querySelector("canvas")).toBeNull();
+    expect(preview().querySelector("canvas") === null).toBe(true);
     expect(inPreview("Стикер 1: свой стикер").parentElement?.className).toContain("pv-sticker-missing");
     expect(callsOf(harness.engine, "media.stickerBytes")).toEqual([]);
   });
@@ -724,7 +724,7 @@ describe("own stickers", () => {
 
     await asAnotherWindow(() => harness.client.request("media.delete", { mediaId }));
 
-    await waitFor(() => expect(preview().querySelector("canvas")).toBeNull());
+    await waitFor(() => expect(preview().querySelector("canvas") === null).toBe(true));
     expect(decoders.closed).toBe(1);
   });
 });
