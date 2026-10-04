@@ -5,7 +5,7 @@ import { tempDirFor } from "../../testing/tempDir";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { requestFor, stage } from "./video/testing/importKit";
 import { FIXTURES, type VideoFixtureName } from "./video/testing/fixtures/index";
-import { withEditList } from "./video/testing/mp4Patch";
+import { withEditList, withHiddenVideoHandler } from "./video/testing/mp4Patch";
 import { openFileSource } from "./video/fileSource";
 import { bytesSource, probeVideo, type VideoInfo } from "./video/videoProbe";
 import { createVideoImporter } from "./videoImporter";
@@ -122,6 +122,39 @@ describe("a forged edit list cannot buy a clip past its limits or make ffmpeg wo
     const { outcome } = await importBytes(forged);
     if (!outcome.ok || outcome.output === undefined) throw new Error(`the import was refused: ${JSON.stringify(outcome)}`);
     expect(Math.abs((await infoOf(outcome.output.file.path)).video.samples - 30)).toBeLessThanOrEqual(2);
+  });
+});
+
+describe("round 3: the handlers of a track are all judged, and the held last frame is a clip", () => {
+  test("B: a sound-labelled track with a video handler hidden in minf is refused as a structure, and ffmpeg is not started", async () => {
+    const { outcome, started } = await importBytes(withHiddenVideoHandler(await bytesOf("mpeg4-then-h264-two-video-tracks.mp4"), "minf"));
+    expect(outcome).toEqual({ ok: false, reason: "structure" });
+    expect(started).toEqual([]);
+  });
+
+  test("C: the same with the handler in a meta box at the end of the trak", async () => {
+    const { outcome, started } = await importBytes(withHiddenVideoHandler(await bytesOf("mpeg4-then-h264-two-video-tracks.mp4"), "meta"));
+    expect(outcome).toEqual({ ok: false, reason: "structure" });
+    expect(started).toEqual([]);
+  });
+
+  test("an ordinary QuickTime file, whose minf has the data handler `dhlr` in minf (alis or url), is still imported", async () => {
+    // ffmpeg's MOV muxer writes the data handler every ordinary QuickTime file has (`minf/hdlr`, component type dhlr): the ProRes fixture carries one.
+    const source = await bytesOf("prores-hq-chart.mov");
+    expect(Buffer.from(source).toString("latin1")).toContain("dhlr");
+    const { outcome } = await importBytes(source);
+    expect(outcome.ok).toBe(true);
+  });
+
+  test("a VFR clip whose last frame is held for two seconds by ctts is imported at its shown length", async () => {
+    const source = await bytesOf("h264-vfr-held-last-frame-bframes.mp4");
+    const probe = await probeVideo(bytesSource(source));
+    if (!probe.ok) throw new Error(`refused: ${probe.reason}`);
+    // The samples say about a second; the edit shows three (the hold). The old upper bound was the shorter of the two.
+    expect(probe.info.video.durationTicks / probe.info.video.timescale).toBeLessThan(1.5);
+    const { outcome } = await importBytes(source);
+    if (!outcome.ok || outcome.output === undefined) throw new Error(`the import was refused: ${JSON.stringify(outcome)}`);
+    expect((await infoOf(outcome.output.file.path)).video.samples).toBeGreaterThan(80);
   });
 });
 

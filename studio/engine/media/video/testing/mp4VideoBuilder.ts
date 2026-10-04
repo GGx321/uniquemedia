@@ -103,6 +103,8 @@ export interface TrackSpec {
   alsoStz2?: boolean;
   /** Which kind of sample entry to write, whatever the handler says (default: a video entry for `vide`, an audio one otherwise). */
   sampleEntry?: "video" | "audio";
+  /** Boxes put in `minf` before its `dinf` (a data-handler `hdlr`, as an ordinary MOV has, or a hostile one). */
+  minfExtra?: readonly Uint8Array[];
   /** Repeat one box of the track inside its parent. */
   duplicate?: "hdlr" | "stts" | "stsd" | "stsz" | "tkhd";
   noTkhd?: boolean;
@@ -171,6 +173,11 @@ function videoEntry(spec: VideoEntrySpec): Uint8Array {
 
 const audioEntry = (): Uint8Array => box("mp4a", concat(new Uint8Array(6), u16(1), new Uint8Array(8), u16(2), u16(16), u16(0), u16(0), u32(44100 * 65536)));
 
+/** An `hdlr` box with this component subtype (`vide`, `soun`, `alis`, ...); QuickTime's component type field is left empty. */
+export function hdlrBox(subtype: string): Uint8Array {
+  return fullBox("hdlr", 0, concat(u32(0), ascii(subtype.padEnd(4, " ").slice(0, 4)), new Uint8Array(12), u8(0)));
+}
+
 export const SDR_ENTRY: VideoEntrySpec = { fourcc: "avc1", width: 1920, height: 1080 };
 
 export function trackBox(spec: TrackSpec): Uint8Array {
@@ -199,7 +206,7 @@ export function trackBox(spec: TrackSpec): Uint8Array {
   const count = spec.stszCount ?? samples;
   const stszBox = twice("stsz", spec.stz2 === true ? fullBox("stz2", 0, concat(u8(0, 0, 0, 16), u32(count))) : fullBox("stsz", 0, concat(u32(0), u32(count))));
   const stbl = box("stbl", concat(stsd, ...(spec.noStts === true ? [] : [sttsBox]), ...(spec.noStsz === true ? [] : [stszBox]), ...(spec.alsoStz2 === true ? [fullBox("stz2", 0, concat(u8(0, 0, 0, 16), u32(count)))] : [])));
-  const mdia = box("mdia", concat(mdhd, twice("hdlr", hdlr), box("minf", concat(box("dinf", dref), stbl))));
+  const mdia = box("mdia", concat(mdhd, twice("hdlr", hdlr), box("minf", concat(...(spec.minfExtra ?? []), box("dinf", dref), stbl))));
   const dup = <T extends Uint8Array>(type: string, one: T): Uint8Array => (spec.duplicateEdit === type ? concat(one, one) : one);
   const v1edit = spec.editsV1 === true;
   const elst = (spec.edits ?? []).length === 0 ? [] : [

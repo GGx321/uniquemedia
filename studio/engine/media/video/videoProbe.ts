@@ -68,6 +68,7 @@ export type ProbeRefusal =
   | "duplicate-box"
   | "sample-count-mismatch"
   | "unsupported-edit"
+  | "hidden-handler"
   | "several-sample-entries"
   | "dimension-mismatch"
   | "unsupported-codec"
@@ -175,6 +176,11 @@ const NON_VIDEO_ENTRIES: ReadonlySet<string> = new Set([
   "mebx", "tmcd", "text", "tx3g", "c608", "c708", "clcp", "gpmd", "camm", "sbtl", "stpp", "wvtt", "priv", "fdsc", "rtmd", "mett", "metx",
   "djmd", "dbgi", "CTMD", "rtp ", "mp4s",
 ]);
+
+/** Handler subtypes that name a MEDIA type: a track's kind. Data-reference handlers (`alis`, `url `, `rsrc`) and the like name none, and every ordinary MOV has one in `minf`. */
+const MEDIA_HANDLER_TYPES: ReadonlySet<string> = new Set(["vide", "soun", "subp", "clcp", "text", "sbtl", "meta"]);
+/** The longest an edit's start (`media_time`) may be into the samples: a legal trim starts within one keyframe interval, and this bounds the pre-roll ffmpeg decodes and throws away. */
+const MAX_EDIT_START_SECONDS = 30;
 
 const latin1 = (bytes: Uint8Array, from: number, to: number): string => String.fromCharCode(...bytes.subarray(from, to));
 
@@ -342,7 +348,7 @@ function resolveColour(colr: ColrNclx | null, dolby: { profile: number; compatib
  * The track's edit list: none, or one media segment after at most one empty edit. Anything else (two segments, a segment at another speed, a
  * segment of no length, an empty edit that is the whole list) is refused, because what ffmpeg would play of it is not what the walker measured.
  */
-function readEdit(m: Uint8Array, view: DataView, edts: BoxRef | undefined, budget: { visited: number }): { mediaTime: number; durationTicks: number } | null {
+function readEdit(m: Uint8Array, view: DataView, edts: BoxRef | undefined, timescale: number, budget: { visited: number }): { mediaTime: number; durationTicks: number } | null {
   if (edts === undefined) return null;
   const elst = onlyOf(childrenOf(m, view, edts.body, edts.end, budget), "elst");
   if (elst === undefined) return null;
@@ -380,6 +386,7 @@ function readEdit(m: Uint8Array, view: DataView, edts: BoxRef | undefined, budge
   const delay = entries.length === 2 ? entries[0] : undefined;
   // The last entry is the picture; a first one, when there is one, is a delay (an empty edit, media time -1) and nothing else.
   if (segment === undefined || segment.mediaTime < 0 || segment.duration === 0 || (delay !== undefined && delay.mediaTime !== -1)) throw new Refusal("unsupported-edit");
+  if (segment.mediaTime > MAX_EDIT_START_SECONDS * timescale) throw new Refusal("unsupported-edit");
   return { mediaTime: segment.mediaTime, durationTicks: segment.duration };
 }
 
@@ -424,6 +431,42 @@ function readStts(view: DataView, box: BoxRef): SampleTimes {
   fold(pendingCount - 1, pendingDelta);
   // Rounding a 30 fps clip to milliseconds gives 33 and 34: a spread of a tick, or a tenth of the shortest, is not a variable rate.
   return { samples, durationTicks, variableFrameRate: Number.isFinite(min) && max > min && max - min > Math.max(1, min * 0.1) };
+}
+
+/** The children of `[start, end)` of a box whose layout is not trusted: what can be read, and nothing when it cannot be (a refusal for too many boxes still goes up). */
+function tryChildren(m: Uint8Array, view: DataView, start: number, end: number, budget: { visited: number }): BoxRef[] {
+  try {
+    return childrenOf(m, view, start, end, budget);
+  } catch (error) {
+    if (error instanceof Refusal && error.reason === "bad-box") return [];
+    throw error;
+  }
+}
+
+/** Refuses an `hdlr` whose subtype names a media type. */
+function checkHandlerBox(m: Uint8Array, box: BoxRef): void {
+  if (payloadLength(box) >= 12 && MEDIA_HANDLER_TYPES.has(latin1(m, box.body + 8, box.body + 12))) throw new Refusal("hidden-handler");
+}
+
+/**
+ * ffmpeg parses EVERY `hdlr` inside a `trak` and the last one wins, so a track's handler is only what the walker read if no other `hdlr` of the
+ * track names a media type. `mdia`'s own is read (and a second one refused) by the caller; this looks at the other places an `hdlr` can stand: `minf`
+ * (where an ordinary MOV has a data handler, which names no media type and is taken), `trak/meta` and `trak/udta/meta` (a `meta` box with or
+ * without the version and flags in front of its children).
+ */
+function checkHiddenHandlers(m: Uint8Array, view: DataView, parts: readonly BoxRef[], inMinf: readonly BoxRef[], budget: { visited: number }): void {
+  const inMinfHandlers = inMinf.filter((box) => box.type === "hdlr");
+  if (inMinfHandlers.length > 1) throw new Refusal("duplicate-box");
+  for (const box of inMinfHandlers) checkHandlerBox(m, box);
+  const metas = [...parts.filter((box) => box.type === "meta")];
+  for (const udta of parts.filter((box) => box.type === "udta")) metas.push(...tryChildren(m, view, udta.body, udta.end, budget).filter((box) => box.type === "meta"));
+  for (const meta of metas) {
+    for (const start of [meta.body + 4, meta.body]) {
+      const handlers = tryChildren(m, view, start, meta.end, budget).filter((box) => box.type === "hdlr");
+      for (const box of handlers) checkHandlerBox(m, box);
+      if (handlers.length > 0) break;
+    }
+  }
 }
 
 /** Every `dref` entry of a track must be the file itself: a reference to another file is a way to make ffmpeg open one. */
@@ -473,7 +516,7 @@ function readVideoTrack(m: Uint8Array, view: DataView, tkhd: BoxRef | undefined,
   const { colour, range } = resolveColour(readColr(m, view, inside), dolby, width, height);
 
   const times = readStts(view, stts);
-  const edit = readEdit(m, view, edts, budget);
+  const edit = readEdit(m, view, edts, timescale, budget);
   // ffmpeg counts the samples of a track from its size table, not from `stts`: a file whose two disagree could be 1 s by the one and 3 h by the other.
   const sizes = onlyOf(tables, "stsz");
   const compact = onlyOf(tables, "stz2");
@@ -562,14 +605,15 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
     const handler = hdlr !== undefined && payloadLength(hdlr) >= 12 ? latin1(m, hdlr.body + 8, hdlr.body + 12) : "";
     const inMinf = minf === undefined ? [] : childrenOf(m, view, minf.body, minf.end, budget);
     checkDataReferences(m, view, inMinf, budget);
+    checkHiddenHandlers(m, view, parts, inMinf, budget);
     const stbl = onlyOf(inMinf, "stbl");
     const tables = stbl === undefined ? undefined : childrenOf(m, view, stbl.body, stbl.end, budget);
     const stsd = tables === undefined ? undefined : onlyOf(tables, "stsd");
     const entryType = stsd !== undefined && payloadLength(stsd) >= 16 ? latin1(m, stsd.body + 12, stsd.body + 16) : undefined;
     if (handler === "soun") audioTracks++;
     // A sound track is a sound track whatever its codec is called: ffmpeg never makes a video stream of a `soun` track (the video tag lookup is
-    // skipped once the handler has said audio), and no decoder but the pinned one is opened. The `hdlr` is the track's only one (a second is refused
-    // above), so a sound handler cannot hide another. Otherwise: a video track by its handler OR by its sample entry (see NON_VIDEO_ENTRIES).
+    // skipped once the handler has said audio), and no decoder but the pinned one is opened. No other `hdlr` of the
+    // track names a media type (`checkHiddenHandlers`: ffmpeg reads them all and the last one wins), so a sound handler cannot hide another. Otherwise: a video track by its handler OR by its sample entry (see NON_VIDEO_ENTRIES).
     if (handler === "soun") continue;
     if (handler !== "vide" && (entryType === undefined || NON_VIDEO_ENTRIES.has(entryType))) continue;
     // ONE video track only. ffmpeg silently drops a track it cannot use (no samples, a broken table), so with two the stream it maps as the

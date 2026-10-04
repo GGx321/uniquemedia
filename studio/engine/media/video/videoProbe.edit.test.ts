@@ -68,6 +68,13 @@ describe("the edit list", () => {
     expect(await refusalOf({ tracks: [video({ ...media, edits })] })).toBe("unsupported-edit");
   });
 
+  test("a segment that starts 30 s into the samples is taken, and one a tick later is not (a legal trim starts within one keyframe interval)", async () => {
+    const info = await infoOf({ tracks: [video({ mdhdTimescale: 30000, stts: [[3000, 1000]], edits: [{ duration: 3000, mediaTime: 900_000 }] })] });
+    expect(info.video.edit?.mediaTime).toBe(900_000);
+    expect(await refusalOf({ tracks: [video({ mdhdTimescale: 30000, stts: [[3000, 1000]], edits: [{ duration: 3000, mediaTime: 900_001 }] })] })).toBe("unsupported-edit");
+    expect(await refusalOf({ tracks: [video({ mdhdTimescale: 30000, stts: [[3000, 1000]], editsV1: true, edits: [{ duration: 3000, mediaTime: 900_001 }] })] })).toBe("unsupported-edit");
+  });
+
   test("a list that declares more entries than it holds is refused", async () => {
     expect(await refusalOf({ tracks: [video({ ...media, edits: [{ duration: 3000, mediaTime: 0 }], editsDeclaredCount: 9000 })] })).toBe("bad-box");
   });
