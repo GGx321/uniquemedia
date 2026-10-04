@@ -456,6 +456,17 @@ describe("an own video plays in the editor's preview by its media id: video/mp4 
     }
   });
 
+  test("a video record that names an audio container (an M4A file that exists) is not served as video/mp4", async () => {
+    await writeFile(fileOf(`${VIDEO_ID}.m4a`), MEZZANINE);
+    await writeFile(fileOf(`${VIDEO_ID}.json`), record({ format: "m4a", file: `${VIDEO_ID}.m4a` }));
+    expect((await get(mediaUrl())).status).toBe(404);
+  });
+
+  test("a record read under another media's id is not served for that id: the record must be this media's own", async () => {
+    await writeFile(fileOf("media-000012.json"), record());
+    expect((await get(mediaUrl("media-000012"))).status).toBe(404);
+  });
+
   test("a video record in a container the preview has no type for (a MOV) is not served", async () => {
     await writeFile(fileOf(`${VIDEO_ID}.mov`), MEZZANINE);
     await writeFile(fileOf(`${VIDEO_ID}.json`), record({ format: "mov", file: `${VIDEO_ID}.mov` }));
