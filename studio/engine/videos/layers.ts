@@ -5,6 +5,8 @@ import { layerRange, stickerBox, textBox } from "../../shared/montage";
 import type { OverlayInput } from "../render";
 import { RenderFailure } from "../renderQueue/queue";
 import { captionFailure, type PreviewGate } from "../text/preview";
+import { ownMediaUnavailable } from "./ownMedia";
+import { readVerifiedOwnSticker, type OwnStickerSource } from "./ownStickers";
 import { StickerAssetError, type StickerAssets } from "./stickerAssets";
 
 // The spec's text and sticker layers as the render's overlay inputs (plan 3b.6).
@@ -14,7 +16,9 @@ import { StickerAssetError, type StickerAssets } from "./stickerAssets";
 // - A BUILT-IN sticker is read from the verified set (`stickerAssets.ts`: the catalogue's sha256, the structure, the loop and
 //   size agreeing with the manifest) and placed by `stickerBox(layer)`; it is scaled to its box and loops at the period stored
 //   with it.
-// - Both are written into the JOB's own folder, under names this module makes (`text-NN.png`, `sticker-NN.apng`, NN being
+// - An OWN sticker (3f.5) is read from a copy the render verifies (`ownStickers.ts`: the record's size and sha256 on the exact bytes, the strict
+//   APNG reader, the record's canvas and loop) and placed by `stickerBox(layer, its canvas)`; the stored library file is never an ffmpeg input.
+// - All are written into the JOB's own folder, under names this module makes (`text-NN.png`, `sticker-NN.apng`, NN being
 //   the layer's place in z-order), exclusively: the renderer names no path, ffmpeg opens only files the engine made a moment
 //   ago, and nothing already on disk is overwritten.
 //
@@ -47,7 +51,12 @@ function stickerFailure(error: unknown): unknown {
   return error;
 }
 
-export async function resolveLayers(layers: readonly Layer[], jobDir: string, deps: LayerDeps, signal: AbortSignal): Promise<ResolvedLayers> {
+/**
+ * `ownStickers` are the own stickers the admission held for this render (3f.5), by media id: each is read as a VERIFIED copy
+ * (`readVerifiedOwnSticker`) when its layer is reached, and written into the job's folder like every other layer's file. A layer whose media is
+ * not among them fails the render: the admission guarantees it is, so this is a bug or a race, and the render never goes on without the sticker.
+ */
+export async function resolveLayers(layers: readonly Layer[], jobDir: string, deps: LayerDeps, signal: AbortSignal, ownStickers: ReadonlyMap<string, OwnStickerSource> = new Map()): Promise<ResolvedLayers> {
   const overlays: OverlayInput[] = [];
   const files: Array<{ name: string; bytes: Uint8Array }> = [];
 
@@ -66,12 +75,18 @@ export async function resolveLayers(layers: readonly Layer[], jobDir: string, de
       files.push({ name, bytes: image.png });
       overlays.push({ path: join(jobDir, name), format: "png", box: textBox(layer, { w: image.width, h: image.height }), resize: false, startFrame: range.startFrame, endFrame: range.endFrame });
     } else {
-      if (layer.sticker.source !== "builtin") throw new RenderFailure({ code: "INTERNAL", detail: "an own sticker cannot be rendered yet" });
       let asset: Awaited<ReturnType<StickerAssets["read"]>>;
-      try {
-        asset = await deps.stickers.read(layer.sticker.stickerId);
-      } catch (error) {
-        throw stickerFailure(error);
+      if (layer.sticker.source === "own") {
+        // No path or media id in what a failed read says (ownMedia.ts): only that the sticker is no longer available.
+        const held = ownStickers.get(layer.sticker.mediaId);
+        if (held === undefined) throw ownMediaUnavailable("sticker");
+        asset = await readVerifiedOwnSticker(held, signal);
+      } else {
+        try {
+          asset = await deps.stickers.read(layer.sticker.stickerId);
+        } catch (error) {
+          throw stickerFailure(error);
+        }
       }
       const name = `sticker-${NN(index)}.apng`;
       files.push({ name, bytes: asset.bytes });

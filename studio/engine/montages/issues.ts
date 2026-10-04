@@ -4,6 +4,7 @@ import { photoAvailability, type Availability } from "./availability";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { trackIssues } from "../../shared/montage/trackIssues";
 import type { TrackLookup } from "../music/renderTrack";
+import { ownStickerIssues } from "../../shared/montage/ownStickers";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
 
 // The engine's verdict on a draft (`montages.get`, `montages.list`): the structural issues a render would raise
@@ -18,7 +19,8 @@ import { stickerIssues } from "../../shared/stickers/stickerIssues";
 //                        exist yet; the check is `layers.i.value` against them, wired when 3b.3 and 3b.4b land.
 //   media-unavailable    DONE  for an own PHOTO (`clips.i.cell`, `clips.i.cells.j`): the library does not hold it as a photo (3f.2).
 //                        TODO(3f.3b) an own video clip (`clips.i`), TODO(3f.4) an own track (`music`).
-//   sticker-unavailable  TODO(3f.5) for an OWN sticker (its media id, in the same store).
+//   media-unavailable    DONE  for an own STICKER (`layers.i.sticker`): the library does not hold it as a sticker (3f.5), judged after the
+//                        built-in stickers' own verdict.
 //   track-unavailable    DONE  a trending track that is not in the track store (`music`), by `trackIssues`, the function the mock uses
 //                        too; with no store wired no track is held. TODO(3f.4) for an own track.
 //   track-too-short      DONE  a trending track shorter than `startMs` plus the montage's total (`music`). TODO(3f.4) for an own track.
@@ -48,9 +50,16 @@ function photoCells(spec: Pick<MontageDraft, "clips">): PhotoCell[] {
 /**
  * The referential issues of a draft, in order: photos (clips, then cells: a scene photo that is not usable, an own photo the library does
  * not hold), then stickers (layers), then the music track. Not bounded here. `holdsOwnPhoto` says whether the library holds a media as a
- * photo; absent, none is held (an engine with no media store refuses an own photo the way a render does).
+ * photo, `holdsOwnSticker` as a sticker (3f.5); absent, none is held (an engine with no media store refuses an own photo or sticker the way a
+ * render does).
  */
-export function referentialIssues(spec: MontageDraft, availability: Availability, tracks?: TrackLookup, holdsOwnPhoto?: (mediaId: string) => boolean): MontageIssue[] {
+export function referentialIssues(
+  spec: MontageDraft,
+  availability: Availability,
+  tracks?: TrackLookup,
+  holdsOwnPhoto?: (mediaId: string) => boolean,
+  holdsOwnSticker?: (mediaId: string) => boolean,
+): MontageIssue[] {
   const issues: MontageIssue[] = [];
   for (const cell of photoCells(spec)) {
     if (cell.photo.source === "scene") {
@@ -60,6 +69,7 @@ export function referentialIssues(spec: MontageDraft, availability: Availability
     }
   }
   issues.push(...stickerIssues(spec));
+  issues.push(...ownStickerIssues(spec, (mediaId) => holdsOwnSticker?.(mediaId) ?? false));
   issues.push(...trackIssues(spec, tracks === undefined ? undefined : (trackId) => tracks.stored(trackId)));
   return issues;
 }
@@ -68,7 +78,15 @@ export function referentialIssues(spec: MontageDraft, availability: Availability
  * Every issue of `spec` as the engine sees it now: what a render would refuse first (structure, then N9), then the referential ones, cut at `MAX_MONTAGE_ISSUES`. `availability`
  * is the avatar's photo state (`photoAvailability`); a caller judging many drafts of one avatar asks it once.
  */
-export function draftIssues(library: Library, spec: MontageDraft, log: (line: string) => void, availability?: Availability, tracks?: TrackLookup, holdsOwnPhoto?: (mediaId: string) => boolean): MontageIssue[] {
+export function draftIssues(
+  library: Library,
+  spec: MontageDraft,
+  log: (line: string) => void,
+  availability?: Availability,
+  tracks?: TrackLookup,
+  holdsOwnPhoto?: (mediaId: string) => boolean,
+  holdsOwnSticker?: (mediaId: string) => boolean,
+): MontageIssue[] {
   const known = availability ?? photoAvailability(library, spec.avatarId, log);
-  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known, tracks, holdsOwnPhoto)].slice(0, MAX_MONTAGE_ISSUES);
+  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known, tracks, holdsOwnPhoto, holdsOwnSticker)].slice(0, MAX_MONTAGE_ISSUES);
 }

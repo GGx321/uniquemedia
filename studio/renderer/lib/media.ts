@@ -49,6 +49,17 @@ export function stickerUrl(client: Pick<EngineClient, "kind" | "stickerUrl">, st
 }
 
 /**
+ * The picture of an OWN sticker as an element shows it (3f.5): main serves the stored file through its record as `studio-media://media/<mediaId>`
+ * (the fallback where a window cannot decode it; the preview's own frames come over IPC); the dev mock hands its own stand-in. Null for an id that
+ * breaks the contract.
+ */
+export function ownStickerUrl(client: Pick<EngineClient, "kind" | "ownStickerUrl">, mediaId: string): string | null {
+  if (client.ownStickerUrl !== undefined) return client.ownStickerUrl(mediaId);
+  if (!Id.safeParse(mediaId).success) return null;
+  return `studio-media://media/${mediaId}`;
+}
+
+/**
  * The cover of a listed trending track in the editor (3d.5): `coverUrl` when the store holds one (`TrackSummary.hasCover`) and the
  * client is the real one (the dev mock stores no pictures); null otherwise, and the window draws a placeholder.
  */

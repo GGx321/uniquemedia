@@ -43,11 +43,16 @@
  * - the own-media scenario (plan 3f.1b, `runPackagedMediaScenario`): `media.pickImport` through main's E2E dialog stand-in
  *   (`--studio-pick-media`, one path whose file is rewritten between picks) with one tiny file per kind picked as `any` (the kind
  *   comes from the bytes): a PNG is imported by a JOB (the copy, the E2E build's stand-in importer, the record) and stored with its
- *   record, listed, kept across an app restart, and deleted; a track and a sticker are refused `not-yet-supported` (no importer
+ *   record, listed, kept across an app restart, and deleted; a track is refused `not-yet-supported` (no importer
  *   yet), a bare video header is accepted into a job that fails `format` (3f.3a), a text file is refused `format`, a HEIC picture
  *   `heic`; what a crash left in `media/` and its `.staging` is removed at the library's opening; the window cannot name a path.
  *   Last, a real HEVC HLG, variable-rate, turned clip (3f.3a) is imported through the packaged ffmpeg of the operating system and
  *   must come out as a 96 x 192 constant-rate SDR H.264 record. `--only media` runs it alone.
+ * - the own-sticker scenario (plan 3f.5, `runPackagedStickerScenario`): a GIF of three frames is imported by a job in the packaged engine
+ *   (the bounded GIF reader, the packaged ffmpeg's decodes, the encode worker thread inside app.asar) and stored as an APNG with its
+ *   record (canvas, a 9 frame loop, 3 slots a frame); `media.stickerBytes` answers the stored file itself through the real main, refuses a
+ *   file changed since the import, and the built-in `stickers.bytes` never serves it; a one-frame GIF fails `not-animated`, a truncated
+ *   one `format`; deleting the media ends the door. `--only sticker` runs it alone.
  *
  * Every debug door (remote debugging, DevTools, the test switches) is a
  * build-time constant: a `build:studio` output has none, however it is
@@ -87,7 +92,8 @@ import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
 import { probeVideo } from "../engine/render/ffmpeg.testkit";
 import { FIXTURES } from "../engine/media/video/testing/fixtures/index";
-import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems, STICKER_SMOKE_FILES, STICKER_SMOKE_STORED } from "./mediaSmoke";
+import { inspectApng } from "../shared/stickers/apng";
 import { PEAK_RSS_BYTES } from "../engine/renderQueue/pool";
 import { verifyRenderedMp4 } from "../engine/verify";
 import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
@@ -104,7 +110,7 @@ import { parseFlashapiList } from "../engine/music/listSchema";
 import { EXCERPTS, excerptOf } from "../engine/music/testing/storeKit";
 import { startMockCdn, withExcerptDurations, withFutureExpiry } from "./mockCdn";
 import { startMockFlashapi } from "./mockFlashapi";
-import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
@@ -604,6 +610,8 @@ function checkPackage(target: Target): void {
   // from inside the asar (never unpacked, for the same integrity reason).
   // 3f.2: the own-photo decode worker, the same way: inside the asar, never unpacked.
   check("app.asar contains the own-photo decode worker entry, and it is not unpacked", entries.includes("/out-studio/engine/photoDecodeWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "photoDecodeWorker.js")));
+  // 3f.5: the own-sticker encode worker, the same way: inside the asar, never unpacked.
+  check("app.asar contains the own-sticker encode worker entry, and it is not unpacked", entries.includes("/out-studio/engine/stickerEncodeWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "stickerEncodeWorker.js")));
   check("app.asar contains the face worker entry, and it is not unpacked", entries.includes("/out-studio/engine/faceWorker.js") && !existsSync(join(`${target.asar}.unpacked`, "out-studio", "engine", "faceWorker.js")));
   // 3b.2, the text rasteriser: resvg's .wasm, the six fonts and their OFL texts stay inside the asar too (never
   // unpacked, for the same integrity reason). That they load from there under the fuses, in the real
@@ -729,6 +737,12 @@ function checkPhotoDecodeWorker(where: string, engine: string, worker: string | 
   check(`${where}: the own-photo decode worker entry is built, loaded by file URL, a worker thread, Electron-free, with every chunk it imports present and the WASM decode only inside it`, problems.length === 0, problems);
 }
 
+/** 3f.5: the own-sticker encode worker entry, wherever it was read from (bundleChecks.ts's `stickerEncodeWorkerProblems`). */
+function checkStickerEncodeWorker(where: string, engine: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): void {
+  const problems = stickerEncodeWorkerProblems(engine, worker, fileExists);
+  check(`${where}: the own-sticker encode worker entry is built, loaded by file URL, a worker thread, Electron-free, with every chunk it imports present and the APNG writer only inside it`, problems.length === 0, problems);
+}
+
 /** 3b.2: the text worker entry, wherever it was read from (bundleChecks.ts's `textWorkerProblems`). */
 function checkTextWorker(where: string, engine: string, worker: string | null, fileExists: (outStudioPath: string) => boolean): void {
   const problems = textWorkerProblems(engine, worker, fileExists);
@@ -781,6 +795,13 @@ async function productionCheck(target: Target): Promise<void> {
       existsSync(photoWorkerPath) ? await readFile(photoWorkerPath, "utf8") : null,
       (outStudioPath) => existsSync(join(ROOT, "out-studio", outStudioPath)),
     );
+    const stickerEncodeWorkerPath = join(ROOT, "out-studio", "engine", "stickerEncodeWorker.js");
+    checkStickerEncodeWorker(
+      "the production build",
+      await readFile(join(ROOT, "out-studio", "engine", "main.js"), "utf8"),
+      existsSync(stickerEncodeWorkerPath) ? await readFile(stickerEncodeWorkerPath, "utf8") : null,
+      (outStudioPath) => existsSync(join(ROOT, "out-studio", outStudioPath)),
+    );
     const workerPath = join(ROOT, "out-studio", "engine", "faceWorker.js");
     checkFaceWorker(
       "the production build",
@@ -811,6 +832,12 @@ async function productionCheck(target: Target): Promise<void> {
     "the package",
     asarText(target, join("out-studio", "engine", "main.js")),
     packagedEntries.has("/out-studio/engine/photoDecodeWorker.js") ? asarText(target, join("out-studio", "engine", "photoDecodeWorker.js")) : null,
+    (outStudioPath) => packagedEntries.has(`/out-studio/${outStudioPath}`),
+  );
+  checkStickerEncodeWorker(
+    "the package",
+    asarText(target, join("out-studio", "engine", "main.js")),
+    packagedEntries.has("/out-studio/engine/stickerEncodeWorker.js") ? asarText(target, join("out-studio", "engine", "stickerEncodeWorker.js")) : null,
     (outStudioPath) => packagedEntries.has(`/out-studio/${outStudioPath}`),
   );
   checkFaceWorker(
@@ -1550,6 +1577,120 @@ async function runPackagedMediaScenario(target: Target): Promise<void> {
     check("media scenario: the clip's record carries no path", !JSON.stringify(clipListed).includes(tmp), clipListed);
     const clipRemoved = await req(running.cdp, "media.delete", { mediaId: clipId });
     check("media scenario: media.delete removes the clip and its file", field(clipRemoved, "ok") === true && (await names(mediaDir)).filter((n) => n !== ".staging").length === 0, clipRemoved);
+  } finally {
+    await quit(running);
+    await removeTemp(tmp);
+  }
+}
+
+// ---------- own stickers: the import job and the preview's bytes (3f.5) ----------
+
+/**
+ * The own-sticker import in the real build, on both operating systems: main's dialog stand-in (`--studio-pick-media`) names ONE path whose file is
+ * rewritten between picks. A GIF of three frames of 10 cs goes through the whole job in the PACKAGED engine: the bounded GIF reader, the packaged
+ * ffmpeg's two decodes (the count at 30 fps, then the raw frames, with the decoder pinned), the encode in its own worker thread loaded from inside
+ * app.asar, and the stored APNG with its record (the canvas, a loop of 9 and delays of 3 slots on the 30 fps grid). Then the preview's door: main answers
+ * `media.stickerBytes` with the stored file itself (its hash is the stored file's), refuses a file changed on disk since the import, and the built-in
+ * `stickers.bytes` never serves a user file. A GIF of one frame fails as `not-animated`, a truncated one as `format`; deleting the media ends the door.
+ */
+async function runPackagedStickerScenario(target: Target): Promise<void> {
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-sticker-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "sticker-library");
+  const pickedDir = join(tmp, "picked");
+  const pickedPath = join(pickedDir, STICKER_SMOKE_STORED.name);
+  await mkdir(userData, { recursive: true });
+  await mkdir(pickedDir, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+  await openLibrary(libraryRoot);
+  const mediaDir = join(libraryRoot, "media");
+  const stagingDir = join(mediaDir, ".staging");
+  const args = [`--studio-pick-folder=${libraryRoot}`, `--studio-pick-media=${pickedPath}`];
+  const running = await launch(target, userData, args);
+  const names = async (dir: string): Promise<string[]> => (await readdir(dir).catch(() => [] as string[])).sort();
+  const snapshotJobs = async (): Promise<unknown[]> => {
+    const jobs = field(await req(running.cdp, "engine.snapshot"), "result", "jobs");
+    return Array.isArray(jobs) ? jobs : [];
+  };
+  const endOf = (jobId: string, what: string) => waitFor(what, async () => (await snapshotJobs()).find((job) => field(job, "jobId") === jobId && field(job, "status") !== "running" && field(job, "status") !== "queued") ?? null, 60_000, 100);
+  const sha256 = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+  try {
+    const libSet = await req(running.cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check("sticker scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)", field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot, libSet);
+
+    // 1. The animated GIF becomes a job that ends in a record.
+    const animated = STICKER_SMOKE_FILES.find((file) => file.label === "animated-gif");
+    if (animated === undefined) throw new Error("the smoke's sticker table has no animated GIF");
+    await Bun.write(pickedPath, animated.bytes);
+    const started = await req(running.cdp, "media.pickImport", { kind: "any" });
+    const jobIds = field(started, "result", "jobIds");
+    check("sticker scenario: picking a GIF starts one import job, and refuses nothing", field(started, "ok") === true && Array.isArray(jobIds) && jobIds.length === 1 && JSON.stringify(field(started, "result", "refused")) === "[]", started);
+    const jobId = Array.isArray(jobIds) ? String(jobIds[0]) : "";
+    const ended = await endOf(jobId, "the sticker import job to end");
+    check("sticker scenario: the import job is done, with its record, and it is an import of a sticker", field(ended, "status") === "done" && field(ended, "kind") === "import" && field(ended, "mediaKind") === "sticker", ended);
+    const mediaId = String(field(ended, "mediaId"));
+    const listed = await req(running.cdp, "media.list", { kind: "sticker" });
+    const record = field(listed, "result", "media", "0");
+    check(
+      "sticker scenario: media.list has the record: the GIF's name and canvas, a loop of 9 frames at 30 fps and 3 slots a frame (10 cs is 3 slots)",
+      field(listed, "result", "total") === 1 &&
+        field(record, "mediaId") === mediaId &&
+        field(record, "kind") === STICKER_SMOKE_STORED.kind &&
+        field(record, "name") === STICKER_SMOKE_STORED.name &&
+        field(record, "width") === STICKER_SMOKE_STORED.width &&
+        field(record, "height") === STICKER_SMOKE_STORED.height &&
+        field(record, "loopFrames") === STICKER_SMOKE_STORED.loopFrames &&
+        JSON.stringify(field(record, "delayFrames")) === JSON.stringify(STICKER_SMOKE_STORED.delayFrames),
+      listed,
+    );
+    check("sticker scenario: the record carries no path", !JSON.stringify(listed).includes(tmp), listed);
+    const storedPath = join(mediaDir, `${mediaId}.${STICKER_SMOKE_STORED.extension}`);
+    const stored = new Uint8Array(await readFile(storedPath));
+    const inspected = inspectApng(stored);
+    check(
+      "sticker scenario: the stored file is an APNG the importer made (not the picked GIF) that the strict reader takes, on the record's canvas and loop",
+      inspected.ok && inspected.info.width === STICKER_SMOKE_STORED.width && inspected.info.height === STICKER_SMOKE_STORED.height && inspected.info.loopFrames === STICKER_SMOKE_STORED.loopFrames && JSON.stringify(inspected.info.frames.map((f) => f.delayFrames)) === JSON.stringify(STICKER_SMOKE_STORED.delayFrames) && sha256(stored) !== sha256(animated.bytes),
+      inspected,
+    );
+    const recordText = await readFile(join(mediaDir, `${mediaId}.json`), "utf8");
+    check("sticker scenario: the record on disk names the file by its own name and the picked path nowhere", recordText.includes(`"file": "${mediaId}.${STICKER_SMOKE_STORED.extension}"`) && !recordText.includes(pickedDir), recordText);
+    check("sticker scenario: media/ holds the stored file and its record and nothing else, and the staging folder is empty", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, STICKER_SMOKE_STORED.extension).length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
+
+    // 2. The preview's door, in the real main.
+    const bytesAnswer = await req(running.cdp, "media.stickerBytes", { mediaId });
+    const sent = typeof field(bytesAnswer, "result", "apngBase64") === "string" ? new Uint8Array(Buffer.from(String(field(bytesAnswer, "result", "apngBase64")), "base64")) : new Uint8Array(0);
+    check("sticker scenario: media.stickerBytes answers the stored file itself, byte for byte, and no path", field(bytesAnswer, "ok") === true && field(bytesAnswer, "result", "mediaId") === mediaId && sha256(sent) === sha256(stored) && !JSON.stringify({ ...(bytesAnswer as object), result: undefined }).includes(tmp), { ok: field(bytesAnswer, "ok"), sent: sent.length, stored: stored.length });
+    const builtIn = await req(running.cdp, "stickers.bytes", { stickerId: mediaId });
+    check("sticker scenario: the built-in stickers.bytes never serves a user file: a media id is NOT_FOUND there", field(builtIn, "ok") === false && field(builtIn, "error", "code") === "NOT_FOUND", builtIn);
+    const unknown = await req(running.cdp, "media.stickerBytes", { mediaId: "media-00000404" });
+    check("sticker scenario: media.stickerBytes of a media nobody holds is NOT_FOUND, with the fixed text", field(unknown, "ok") === false && field(unknown, "error", "code") === "NOT_FOUND" && field(unknown, "error", "detail") === "no such own sticker", unknown);
+    // A file changed on disk since the import (same size): main refuses it and sends none of it.
+    const changed = Uint8Array.from(stored);
+    changed[changed.length - 20] = (changed[changed.length - 20] ?? 0) ^ 0xff;
+    await writeFile(storedPath, changed);
+    const tampered = await req(running.cdp, "media.stickerBytes", { mediaId });
+    check("sticker scenario: a file changed since the import is refused with the fixed text, and none of it is sent", field(tampered, "ok") === false && field(tampered, "error", "code") === "INTERNAL" && field(tampered, "error", "detail") === "the own sticker failed its check" && !JSON.stringify(tampered).includes(tmp), tampered);
+    await writeFile(storedPath, stored);
+    const restored = await req(running.cdp, "media.stickerBytes", { mediaId });
+    check("sticker scenario: with the file put back the same door answers again", field(restored, "ok") === true, restored);
+
+    // 3. A still GIF and a truncated one fail inside their jobs.
+    for (const file of STICKER_SMOKE_FILES.filter((f) => f.label !== "animated-gif")) {
+      await Bun.write(pickedPath, file.bytes);
+      const answer = await req(running.cdp, "media.pickImport", { kind: "any" });
+      const wantedReason = "failed" in file.expect ? file.expect.failed : "";
+      const taken = field(answer, "result", "jobIds");
+      const failedId = Array.isArray(taken) && taken.length === 1 ? String(taken[0]) : "";
+      const failed = await endOf(failedId, `the ${file.label} import job to end`);
+      check(`sticker scenario: the ${file.label} file starts a job that fails as ${wantedReason}, and names no path`, failedId !== "" && field(failed, "status") === "failed" && field(failed, "error", "code") === "MEDIA_UNSUPPORTED" && field(failed, "error", "mediaReason") === wantedReason && !JSON.stringify(failed).includes(tmp), failed);
+    }
+    check("sticker scenario: the refused files left nothing in media/ or its staging folder", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, STICKER_SMOKE_STORED.extension).length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
+
+    // 4. Delete: the door ends with the record.
+    const removed = await req(running.cdp, "media.delete", { mediaId });
+    check("sticker scenario: media.delete answers the id", field(removed, "ok") === true && field(removed, "result", "mediaId") === mediaId, removed);
+    const afterDelete = await req(running.cdp, "media.stickerBytes", { mediaId });
+    check("sticker scenario: a deleted sticker's bytes are NOT_FOUND, and its files are gone", field(afterDelete, "ok") === false && field(afterDelete, "error", "code") === "NOT_FOUND" && (await names(mediaDir)).filter((n) => n !== ".staging").length === 0, { answer: afterDelete, media: await names(mediaDir) });
   } finally {
     await quit(running);
     await removeTemp(tmp);
@@ -2641,6 +2782,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // `--only sticker` runs the own-sticker scenario alone (3f.5), for working on it.
+  if (argValue("--only") === "sticker") {
+    await runPackagedStickerScenario(target);
+    finish();
+    return;
+  }
+
   // `--only music` runs the track store's scenario alone, for working on it; the full run is the one that counts.
   if (argValue("--only") === "music") {
     await runMusicScenario(target);
@@ -2789,8 +2937,8 @@ async function main(): Promise<void> {
     };
     const videosLayered = await req(cdp, "videos.render", { spec: layered });
     check(
-      "videos.render refuses a spec with an own sticker layer as not-yet-supported (N9, own media come in 3f), before touching anything",
-      field(videosLayered, "ok") === false && field(videosLayered, "error", "code") === "MONTAGE_INVALID" && JSON.stringify(field(videosLayered, "error", "issues")).includes("not-yet-supported"),
+      "videos.render refuses a spec whose own sticker is not in the library as media-unavailable, before touching anything",
+      field(videosLayered, "ok") === false && field(videosLayered, "error", "code") === "MONTAGE_INVALID" && JSON.stringify(field(videosLayered, "error", "issues")).includes("media-unavailable"),
       videosLayered,
     );
     const engineJobs = await req(cdp, "engine.snapshot");
@@ -3061,6 +3209,7 @@ async function main(): Promise<void> {
   await runAvatarScenario(target);
   await runImportScenario(target);
   await runPackagedMediaScenario(target);
+  await runPackagedStickerScenario(target);
   await runMusicScenario(target);
   await runPhotoRunKillResumeScenario(target);
   await runPackagedRenderScenario(target);

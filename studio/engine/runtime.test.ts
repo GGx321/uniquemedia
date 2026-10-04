@@ -322,3 +322,25 @@ test("the walk from the photo decode worker entry reaches its codecs and protoco
 test("every module reachable from the photo decode worker entry uses only node:* APIs and never reads the environment", () => {
   expect(walkFromEntry(PHOTO_DECODE_WORKER_ENTRY).problems).toEqual([]);
 });
+
+// 3f.5: the own-sticker encode worker, reached by URL only (main.ts's STICKER_ENCODE_WORKER_URL), holding the same rules. The APNG writer with its
+// hand-written deflate is synchronous and takes tens of seconds over 300 frames, so only the worker's graph may reach it.
+const STICKER_ENCODE_WORKER_ENTRY = join(ENGINE_DIR, "stickers", "stickerEncodeWorker.ts");
+
+test("the walk from the sticker encode worker entry reaches the APNG writer and its protocol, and only there does the writer come in", () => {
+  const { files } = walkFromEntry(STICKER_ENCODE_WORKER_ENTRY);
+  expect(files).toContain(join("shared", "stickers", "apngWriter.ts"));
+  expect(files).toContain(join("shared", "stickers", "deflate.ts"));
+  expect(files).toContain(join("engine", "stickers", "encodeProtocol.ts"));
+  // The engine's own graph holds the gate that talks to the worker and the importer, never the writer.
+  const engine = walkFromEntry().files;
+  expect(engine).toContain(join("engine", "stickers", "encodeGate.ts"));
+  expect(engine).toContain(join("engine", "media", "stickerImporter.ts"));
+  expect(engine).not.toContain(join("shared", "stickers", "apngWriter.ts"));
+  expect(engine).not.toContain(join("shared", "stickers", "deflate.ts"));
+  expect(engine).not.toContain(join("engine", "stickers", "encodeJob.ts"));
+});
+
+test("every module reachable from the sticker encode worker entry uses only node:* APIs and never reads the environment", () => {
+  expect(walkFromEntry(STICKER_ENCODE_WORKER_ENTRY).problems).toEqual([]);
+});

@@ -2,5 +2,7 @@
 // read, and the bounded APNG validator that 3b.6 and 3f.5 reuse. Pure: bytes
 // in, facts out.
 export * from "./apng";
+export * from "./gif";
 export * from "./manifest";
+export * from "./quantise";
 export * from "./stickerIssues";

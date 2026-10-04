@@ -9,7 +9,9 @@ import { probeVideo } from "../engine/media/video/videoProbe";
 import { webpInfo } from "../engine/media/webp";
 import { formatOf, resolveMediaKind, unfitReason } from "../engine/media/sniff";
 import { useNativeGlobals } from "../testing/nativeGlobals";
-import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { inspectGif } from "../shared/stickers/gif";
+import { quantiseByAccumulatedTime } from "../shared/stickers/quantise";
+import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems, STICKER_SMOKE_FILES, STICKER_SMOKE_STORED } from "./mediaSmoke";
 useNativeGlobals();
 
 // The packaged smoke's own-media files (3f.1b): one tiny file per kind, picked through `--studio-pick-media` with `any`. The table is
@@ -43,17 +45,25 @@ describe("the smoke's own-media files", () => {
     expect(animated?.expect).toEqual({ failed: "animated-webp" });
   });
 
-  test("a video, a track and a sticker are what their kind says", () => {
+  test("a video and a track are what their kind says", () => {
     const kinds = Object.fromEntries(MEDIA_SMOKE_FILES.map((f) => [f.label, resolveMediaKind("any", f.bytes)]));
-    expect(kinds).toMatchObject({ video: "video", audio: "audio", sticker: "sticker" });
+    expect(kinds).toMatchObject({ video: "video", audio: "audio" });
   });
 
-  test("no importer takes a track or a sticker yet", () => {
-    for (const label of ["audio", "sticker"]) expect(MEDIA_SMOKE_FILES.find((f) => f.label === label)?.expect).toEqual({ refused: "not-yet-supported" });
+  test("no importer takes a track yet", () => {
+    expect(MEDIA_SMOKE_FILES.find((f) => f.label === "audio")?.expect).toEqual({ refused: "not-yet-supported" });
   });
 
   test("a video has an importer (3f.3a): a bare header is accepted into a job that fails as a format", () => {
     expect(MEDIA_SMOKE_FILES.find((f) => f.label === "video")?.expect).toEqual({ failed: "format" });
+  });
+
+  test("a GIF that is only a header is a sticker by its bytes (3f.5 gave stickers an importer) and the importer refuses it inside its job as format", () => {
+    const broken = MEDIA_SMOKE_FILES.find((f) => f.label === "broken-gif");
+    expect(resolveMediaKind("any", broken?.bytes ?? new Uint8Array())).toBe("sticker");
+    expect(formatOf(broken?.bytes ?? new Uint8Array())).toBe("gif");
+    expect(inspectGif(broken?.bytes ?? new Uint8Array()).ok).toBe(false);
+    expect(broken?.expect).toEqual({ failed: "format" });
   });
 
   test("a text file is a format refusal and a HEIC picture its own reason, by the bytes and not the name", () => {
@@ -126,5 +136,51 @@ describe("mediaRecordFileProblems", () => {
   test("names what a crash or a failed import would leave: a copy, a partial copy, a temp file, an orphan", () => {
     const problems = mediaRecordFileProblems([...folder, "old-00000001.media", ".old-00000001.part", ".media-abc.json.0123456789ab.tmp", "orphan-00000001.png"], "media-abc", "png");
     expect(problems).toHaveLength(4);
+  });
+});
+
+// 3f.5: the packaged smoke's own-sticker files. Picked with `any` through the same dialog stand-in; the engine's own sniffing and the bounded GIF reader
+// agree with the table here, so a wrong byte fails a unit test and not a packaged run on two systems.
+describe("the smoke's own-sticker files", () => {
+  const byLabel = (label: string) => STICKER_SMOKE_FILES.find((f) => f.label === label);
+
+  test("every file is a small GIF the engine takes for a sticker", () => {
+    for (const file of STICKER_SMOKE_FILES) {
+      expect(file.bytes.length).toBeLessThan(400);
+      expect(resolveMediaKind("any", file.bytes)).toBe("sticker");
+      expect(formatOf(file.bytes)).toBe("gif");
+    }
+  });
+
+  test("the animated GIF is a job that ends in a record; the still one and the broken one fail inside their jobs, with their reasons", () => {
+    expect(byLabel("animated-gif")?.expect).toEqual({ job: true });
+    expect(byLabel("still-gif")?.expect).toEqual({ failed: "not-animated" });
+    expect(byLabel("broken-gif")?.expect).toEqual({ failed: "format" });
+  });
+
+  test("the animated GIF has three frames of 10 cs, which the importer puts on the 30 fps grid as 3 slots each", () => {
+    const inspected = inspectGif(byLabel("animated-gif")?.bytes ?? new Uint8Array());
+    if (!inspected.ok) throw new Error(inspected.code);
+    expect(inspected.info.frames.map((f) => f.playedCs)).toEqual([10, 10, 10]);
+    expect(quantiseByAccumulatedTime(inspected.info.frames.map((f) => ({ num: f.playedCs, den: 100 }))).slots).toEqual([3, 3, 3]);
+    expect([inspected.info.width, inspected.info.height]).toEqual([STICKER_SMOKE_STORED.width, STICKER_SMOKE_STORED.height]);
+    const total = [...STICKER_SMOKE_STORED.delayFrames].reduce<number>((sum, d) => sum + d, 0);
+    expect(total === STICKER_SMOKE_STORED.loopFrames).toBe(true);
+  });
+
+  test("the still GIF has one frame, and the broken one is refused by the bounded reader", () => {
+    const still = inspectGif(byLabel("still-gif")?.bytes ?? new Uint8Array());
+    expect(still.ok && still.info.frameCount).toBe(1);
+    expect(inspectGif(byLabel("broken-gif")?.bytes ?? new Uint8Array()).ok).toBe(false);
+  });
+
+  test("the table names each case once, the animated one first (it is the one that is stored)", () => {
+    const labels = STICKER_SMOKE_FILES.map((f) => f.label);
+    expect(labels[0]).toBe("animated-gif");
+    expect(new Set(labels).size).toBe(labels.length);
+  });
+
+  test("what the stored sticker is expected to be: an APNG named for the id, under the name it was picked by, on the grid", () => {
+    expect(STICKER_SMOKE_STORED).toEqual({ kind: "sticker", name: "smoke-sticker.gif", width: 6, height: 4, loopFrames: 9, delayFrames: [3, 3, 3], extension: "png" });
   });
 });

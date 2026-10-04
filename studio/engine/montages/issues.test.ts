@@ -209,11 +209,18 @@ describe("draftIssues: what a render refuses for a part whose slice has not land
     expect(issuesOf(w, spec)).toEqual([]);
   });
 
-  test("an own sticker is still not-yet-supported, like videos.render says: own media arrive in 3f", () => {
+  test("an own sticker is not refused as not-yet-supported since 3f.5: the library is asked, and with no store it is media-unavailable at its layer's sticker", () => {
     const w = world();
     const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text, ownSticker] });
 
-    expect(issuesOf(w, spec)).toEqual([{ code: "not-yet-supported", path: ["layers", 1] }]);
+    expect(issuesOf(w, spec)).toEqual([{ code: "media-unavailable", path: ["layers", 1, "sticker"] }]);
+  });
+
+  test("an own sticker the library holds as a sticker is no issue", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text, ownSticker] });
+
+    expect(draftIssues(w.library, spec, () => undefined, undefined, undefined, undefined, (mediaId) => mediaId === "media-0000001")).toEqual([]);
   });
 
   test("an own track and an own video clip are too (a trending track no longer is: 3c.5; an own photo no longer is: 3f.2)", () => {
@@ -248,11 +255,11 @@ describe("draftIssues: a built-in sticker that is gone", () => {
     expect(issuesOf(w, spec).filter((i) => i.code === "sticker-unavailable")).toEqual([{ code: "sticker-unavailable", path: ["layers", 1, "sticker"] }]);
   });
 
-  test("an own sticker is not judged here: 3f.5 brings the store", () => {
+  test("an own sticker is judged against the library's stickers, not the built-in set: it is media-unavailable, never sticker-unavailable", () => {
     const w = world();
     const own = { ...sticker(1, "x"), sticker: { source: "own" as const, mediaId: "media-0000001" } };
 
-    expect(issuesOf(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [own] })).filter((i) => i.code !== "not-yet-supported")).toEqual([]);
+    expect(issuesOf(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [own] }))).toEqual([{ code: "media-unavailable", path: ["layers", 0, "sticker"] }]);
   });
 });
 

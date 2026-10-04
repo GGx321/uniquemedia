@@ -11,6 +11,7 @@ export * from "./layers";
 export * from "./motion";
 export * from "./notYetSupported";
 export * from "./ownPhotos";
+export * from "./ownStickers";
 export * from "./safeZones";
 export * from "./segments";
 export * from "./split";

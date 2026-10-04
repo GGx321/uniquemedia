@@ -1,4 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -98,7 +99,9 @@ describe("an own photo through the import job", () => {
     const mediaId = (await r.service.list("photo")).media[0]?.mediaId ?? "";
     const record = servedMediaRecord(JSON.parse(await readFile(join(mediaDir(), `${mediaId}.json`), "utf8")));
     const file = await readFile(join(mediaDir(), `${mediaId}.jpg`));
-    expect(record).toEqual({ id: mediaId, kind: "photo", format: "jpeg", bytes: file.length, file: `${mediaId}.jpg` });
+    expect(record).toMatchObject({ id: mediaId, kind: "photo", format: "jpeg", bytes: file.length, file: `${mediaId}.jpg` });
+    // 3f.5: and the hash the served file is checked against is the hash of what was stored.
+    expect(record?.sha256).toBe(createHash("sha256").update(file).digest("hex"));
   });
 
   test("the stored photo can be looked up for a render: its path, size and hash are those of the stored JPEG", async () => {

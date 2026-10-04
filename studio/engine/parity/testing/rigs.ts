@@ -1,9 +1,10 @@
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
 import { handleMediaPickCommand, isMediaPickCommand, type MediaImportFlowDeps } from "../../../main/mediaImportFlow";
 import { SettingsStore } from "../../../main/settingsStore";
+import { createApngEncoder } from "../../../shared/stickers/apngWriter";
 import { EngineReply } from "../../control";
 import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg";
 import { MockEngine, type MockExportPick, type MockMediaPick } from "../../../renderer/engine/mockEngine";
@@ -107,7 +108,7 @@ export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | 
  * The owner's pick in main's own-media dialog (3f.1): nothing (`cancel`), or seven files at once, each a different way for the boundary to
  * turn it away (`mixed`, see MIXED_MEDIA). The real rig makes the files on disk; the mock is told the verdict for each name, and holds no path.
  */
-export type MediaDialog = "cancel" | "mixed" | "good" | "tiny" | "video" | "badVideo";
+export type MediaDialog = "cancel" | "mixed" | "good" | "tiny" | "sticker" | "stillSticker" | "video" | "badVideo";
 
 /**
  * The video picks (3f.3a), for a rig with `ownMedia`: one clip the rigs' video importer takes (`video`), and one it refuses after its copy as
@@ -141,6 +142,33 @@ export const PARITY_PHOTO_FACTS = { width: 100, height: 200, durationMs: null, s
 
 /** The one picture of the `tiny` pick (3f.2): the boundary takes it (its bytes are a photo's) and the photo importer refuses it inside the job. */
 const TINY_PHOTO = "dot.jpg";
+
+/**
+ * The own sticker of the `sticker` pick (3f.5): a GIF the boundary takes, which the rigs' sticker importer stores as a real two-frame APNG (12 x 8, 3
+ * slots a frame, a loop of 6), because a render reads the stored file back and checks it against its record. The `stillSticker` pick is a PNG the
+ * boundary takes (a PNG may be a sticker) and the importer turns away inside the job as `not-animated`.
+ */
+const GOOD_STICKER = "party.gif";
+const STILL_STICKER = "still.png";
+export const PARITY_STICKER_BYTES = 120;
+export const PARITY_STICKER_FACTS = { width: 12, height: 8, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: 6, delayFrames: [3, 3] } as const;
+
+/** The APNG the rigs' sticker importer stores: deterministic, valid for the strict reader, and what the record says it is. */
+function parityStickerApng(): Uint8Array {
+  const encoder = createApngEncoder({ width: PARITY_STICKER_FACTS.width, height: PARITY_STICKER_FACTS.height, frameCount: 2 });
+  encoder.add(new Uint8Array(12 * 8 * 4).fill(60), 3);
+  encoder.add(new Uint8Array(12 * 8 * 4).fill(200), 3);
+  return encoder.finish();
+}
+
+/** Writes the `sticker` or `stillSticker` pick's file into `folder` and returns its path. */
+async function writeStickerMedia(folder: string, still: boolean): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  const name = still ? STILL_STICKER : GOOD_STICKER;
+  const head = still ? Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) : Buffer.from("GIF89a");
+  await writeFile(join(folder, name), Buffer.concat([head, Buffer.alloc(PARITY_STICKER_BYTES - head.length, 5)]));
+  return [join(folder, name)];
+}
 
 /** Writes the `tiny` pick's file into `folder` and returns its path. */
 async function writeTinyMedia(folder: string): Promise<string[]> {
@@ -322,6 +350,10 @@ export function mockRig(options: RigOptions = {}): ParityRig {
                 [options.ownMedia === true ? { name: GOOD_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, facts: PARITY_PHOTO_FACTS } } : { name: GOOD_PHOTO, reason: "not-yet-supported" }]
               : answer === "tiny"
                 ? [options.ownMedia === true ? { name: TINY_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, failWith: "too-small" } } : { name: TINY_PHOTO, reason: "not-yet-supported" }]
+                : answer === "sticker"
+                  ? [options.ownMedia === true ? { name: GOOD_STICKER, accept: { kind: "sticker", bytes: PARITY_STICKER_BYTES, facts: { ...PARITY_STICKER_FACTS, delayFrames: [...PARITY_STICKER_FACTS.delayFrames] } } } : { name: GOOD_STICKER, reason: "not-yet-supported" }]
+                  : answer === "stillSticker"
+                    ? [options.ownMedia === true ? { name: STILL_STICKER, accept: { kind: "sticker", bytes: PARITY_STICKER_BYTES, failWith: "not-animated" } } : { name: STILL_STICKER, reason: "not-yet-supported" }]
                 : answer === "video"
                   ? [{ name: GOOD_VIDEO, accept: { kind: "video", bytes: PARITY_VIDEO_BYTES, facts: PARITY_VIDEO_FACTS } }]
                   : answer === "badVideo"
@@ -510,7 +542,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       failArmed = null;
       throw new FfmpegError("ffmpeg failed", 1, "boom");
     }
-    opts.onFrames?.(1_000_000);
+    // A layer file (3f.5: the first parity render with a layer) is checked against the timeline's frames; this ffmpeg is not there to count them, so it
+    // reports none for it, which the runner reads as a scripted ffmpeg that said nothing. Every other call reports far more than it has, as before.
+    if (!basename(opts.output).startsWith("layers-")) opts.onFrames?.(1_000_000);
     await atGate(2, opts.signal);
     await writingRun(opts);
   };
@@ -565,6 +599,13 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   // The importer takes every photo, except the 1 px picture of the `tiny` pick (3f.2: the real importer refuses it as `too-small`, inside its job).
   const parityPhotoImporter: MediaImporter = async ({ name }) => (name === TINY_PHOTO ? { ok: false, reason: "too-small" } : { ok: true, facts: PARITY_PHOTO_FACTS });
+  // The sticker importer (3f.5) stores a real APNG, which the render reads back; the still file of the `stillSticker` pick is refused inside the job.
+  const parityStickerImporter: MediaImporter = async ({ name, workFile }) => {
+    if (name === STILL_STICKER) return { ok: false, reason: "not-animated" };
+    const file = await workFile();
+    await writeFile(file.path, parityStickerApng(), { flag: "wx" });
+    return { ok: true, facts: { ...PARITY_STICKER_FACTS, delayFrames: [...PARITY_STICKER_FACTS.delayFrames] }, output: { file, format: "apng" } };
+  };
   // 3f.3a: a stand-in for the video importer: it takes a clip and refuses the one that carries the codec it does not read, after the copy.
   const parityVideoImporter: MediaImporter = async ({ staged }) =>
     Buffer.from(staged.head).toString("latin1").includes(PARITY_UNSUPPORTED_CODEC) ? { ok: false, reason: "codec" } : { ok: true, facts: PARITY_VIDEO_FACTS };
@@ -574,7 +615,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       musicSink: store,
       musicTracks: store,
       text: { gate: textLane },
-      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, video: parityVideoImporter } } : {}),
+      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, video: parityVideoImporter, sticker: parityStickerImporter } } : {}),
       mediaStaging: {
         fs: {
           openOut: async (path) => {
@@ -784,6 +825,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
               ? await writeGoodMedia(folder)
               : answer === "tiny"
                 ? await writeTinyMedia(folder)
+                : answer === "sticker" || answer === "stillSticker"
+                  ? await writeStickerMedia(folder, answer === "stillSticker")
                 : answer === "video" || answer === "badVideo"
                   ? await writeVideoMedia(folder, answer === "badVideo")
                   : await writeMixedMedia(folder);

@@ -31,6 +31,8 @@ import { createTextGate, TEXT_WORKER_IDLE_RECYCLE_MS } from "./text/worker/textG
 import { createDecodeGate } from "./decode/decodeGate";
 import { createDecodeWorkerSpawner } from "./decode/spawn";
 import { createPhotoImporter, MAX_PHOTO_PIXELS } from "./media/photoImporter";
+import { createStickerImporter } from "./media/stickerImporter";
+import { createStickerEncodeGate, createStickerEncodeSpawner } from "./stickers/encodeGate";
 import { createVideoImporter } from "./media/videoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
 
@@ -101,6 +103,10 @@ const FACE_WORKER_URL = new URL("./faceWorker.js", import.meta.url);
 const PHOTO_DECODE_WORKER_URL = new URL("./photoDecodeWorker.js", import.meta.url);
 const PHOTO_DECODE_IDLE_RECYCLE_MS = 60_000;
 const PHOTO_DECODE_TIMEOUT_MS = 120_000;
+// 3f.5: the own-sticker encode worker (engine/stickerEncodeWorker), resolved the same way: re-encoding up to 300 frames with Studio's own deflate takes
+// tens of seconds and is synchronous, so it runs in a thread of its own, one per import, that a cancel or the time limit ends.
+const STICKER_ENCODE_WORKER_URL = new URL("./stickerEncodeWorker.js", import.meta.url);
+const STICKER_ENCODE_TIMEOUT_MS = 180_000;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -267,6 +273,9 @@ parentPort.once("message", (event) => {
       mediaImporters: {
         photo: createPhotoImporter({ decode: createDecodeGate({ spawnWorker: createDecodeWorkerSpawner(PHOTO_DECODE_WORKER_URL, { nodeModulesDir: NODE_MODULES_DIR, maxPixels: MAX_PHOTO_PIXELS }), idleRecycleMs: PHOTO_DECODE_IDLE_RECYCLE_MS, timeoutMs: PHOTO_DECODE_TIMEOUT_MS }).decode }),
         video: createVideoImporter(),
+        // 3f.5: the own-sticker importer. A GIF or APNG is judged by bounded pure readers, decoded by ffmpeg in a child process and re-encoded
+        // as an APNG on the 30 fps grid by the writer, in its own worker thread.
+        sticker: createStickerImporter({ encode: createStickerEncodeGate({ spawnWorker: createStickerEncodeSpawner(STICKER_ENCODE_WORKER_URL), timeoutMs: STICKER_ENCODE_TIMEOUT_MS }).encode }),
       },
     });
 

@@ -1,6 +1,7 @@
 import type { MediaUnsupportedReason } from "../shared/engine";
 import { SMOKE_TEST_PNG } from "../engine/decode/realBackend";
 import { PNG_1X1 } from "../engine/library/testing/sampleData";
+import { buildGif, framesOf } from "../shared/stickers/gif.testkit";
 
 // The pure parts of the packaged smoke's own-media scenario (3f.1b), kept apart so they are tested. The scenario drives `media.pickImport`
 // through main's E2E dialog stand-in (`--studio-pick-media`, one path): the file at that path is REWRITTEN between picks, one tiny file per
@@ -41,7 +42,8 @@ export const MEDIA_SMOKE_FILES: readonly MediaSmokeFile[] = [
   { label: "animated-webp", bytes: animatedWebpHeaders(), expect: { failed: "animated-webp" } },
   { label: "video", bytes: ftyp("isom"), expect: { failed: "format" } },
   { label: "audio", bytes: ftyp("M4A "), expect: { refused: "not-yet-supported" } },
-  { label: "sticker", bytes: Uint8Array.from([...ascii("GIF89a"), 1, 0, 1, 0, 0, 0, 0]), expect: { refused: "not-yet-supported" } },
+  // 3f.5: a sticker has an importer, so a GIF that is only a header is taken as a job and refused INSIDE it (a truncated file is `format`).
+  { label: "broken-gif", bytes: Uint8Array.from([...ascii("GIF89a"), 1, 0, 1, 0, 0, 0, 0]), expect: { failed: "format" } },
   { label: "text", bytes: Uint8Array.from(ascii("just some notes, not a media file\n")), expect: { refused: "format" } },
   { label: "heic", bytes: ftyp("heic"), expect: { refused: "heic" } },
 ];
@@ -75,6 +77,21 @@ export function mediaRecordFileProblems(names: readonly string[], mediaId: strin
   return [...wanted.filter((name) => !names.includes(name)).map((name) => `${name} is missing`), ...names.filter((name) => !wanted.includes(name)).map((name) => `${name} is left in media/`)];
 }
 
+// ---------- own stickers (3f.5) ----------
+
+/**
+ * The packaged smoke's own-sticker files, picked with `any` through the same dialog stand-in (the kind is read from the bytes). A 6x4 GIF of three
+ * frames of 10 cs becomes, in the packaged engine (the bounded GIF reader, the packaged ffmpeg's two decodes, the encode worker thread inside the asar),
+ * an APNG of the same canvas with three delays of 3 slots on the 30 fps grid; a GIF of one frame fails as `not-animated`, a truncated one as `format`.
+ */
+export const STICKER_SMOKE_FILES: readonly MediaSmokeFile[] = [
+  { label: "animated-gif", bytes: buildGif({ width: 6, height: 4, frames: framesOf(3, 10) }), expect: { job: true } },
+  { label: "still-gif", bytes: buildGif({ width: 6, height: 4, frames: framesOf(1, 10) }), expect: { failed: "not-animated" } },
+  { label: "broken-gif", bytes: Uint8Array.from([...ascii("GIF89a"), 1, 0, 1, 0, 0, 0, 0]), expect: { failed: "format" } },
+];
+
+/** What the stored sticker's record must say of the animated GIF, and the extension of the stored APNG. */
+export const STICKER_SMOKE_STORED = { kind: "sticker", name: "smoke-sticker.gif", width: 6, height: 4, loopFrames: 9, delayFrames: [3, 3, 3], extension: "png" } as const;
 /**
  * The real clip the packaged smoke imports (3f.3a): an HEVC HLG clip, variable frame rate, turned a quarter, in a QuickTime file (an iPhone held
  * upright). It is the committed fixture `video/testing/fixtures/hevc-hlg-rotated-vfr.mov`, 4 KB: the packaged ffmpeg of each operating system
