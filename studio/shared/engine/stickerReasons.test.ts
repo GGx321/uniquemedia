@@ -22,6 +22,18 @@ describe("the sticker refusal reasons", () => {
   });
 });
 
+describe("the `not-animated` texts say what is true of the rule (L6)", () => {
+  test("neither promises 'different' frames, which are never compared: two identical frames are taken", () => {
+    expect(MEDIA_REASONS_RU["not-animated"]).not.toContain("разными");
+    expect(MEDIA_REASONS_BY_KIND_RU.sticker?.["not-animated"]).not.toContain("разными");
+  });
+
+  test("both say the frames must differ in TIME: frames that follow each other faster than 30 a second do not count as more than one", () => {
+    expect(MEDIA_REASONS_RU["not-animated"]).toContain("30 кадров в секунду");
+    expect(MEDIA_REASONS_BY_KIND_RU.sticker?.["not-animated"]).toContain("30 кадров в секунду");
+  });
+});
+
 describe("STICKER_REASONS_RU", () => {
   test("holds a text only for a real reason, in Russian, with no path or placeholder", () => {
     for (const [reason, text] of Object.entries(STICKER_REASONS_RU)) {
