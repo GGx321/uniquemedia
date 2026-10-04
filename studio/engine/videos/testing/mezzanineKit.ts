@@ -108,12 +108,13 @@ export async function mezzanineOf(dir: string, mediaId: string, video: RawVideo)
 /**
  * The luma (as stored, limited range 16 to 235: no conversion to full range) of every frame of `path`, shrunk to `cols` x `rows` by area (a mean) and read back:
  * `frames[f][row * cols + col]`. `cols` and `rows` are even (4:2:0). ffmpeg decodes and shrinks; nothing else touches the pixels, so a flat frame reads back as its own luma
- * and a gradient reads as its bands.
+ * and a gradient reads as its bands. `-fps_mode passthrough`: a Matroska clip keeps its times in milliseconds, and ffmpeg 6.1's default constant-rate output would duplicate and
+ * drop frames to fit 33.3 ms steps into them (seen on Windows CI), which is not what is under test.
  */
 export function lumaGrid(path: string, cols: number, rows: number): number[][] {
   const run = spawnSync(
     ffmpegPath(),
-    ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vf", `scale=${cols}:${rows}:flags=area`, "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1"],
+    ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vf", `scale=${cols}:${rows}:flags=area`, "-fps_mode", "passthrough", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1"],
     { maxBuffer: 1 << 28 },
   );
   if (run.status !== 0) throw new Error(`ffmpeg could not read the frames: ${run.stderr.toString()}`);
