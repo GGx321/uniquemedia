@@ -40,6 +40,12 @@
  *   used mark); a render with the export root removed refused as EXPORT_UNAVAILABLE before a job starts; a committed video played
  *   and seeked through studio-media://video with Range, and a missing or elsewhere record answering 404. It prints `FACT` lines
  *   (the box tree, metadata, time and memory per render) that the plan's 3a.9 notes are written from. `--only render` runs it alone.
+ * - the own-media scenario (plan 3f.1b, `runPackagedMediaScenario`): `media.pickImport` through main's E2E dialog stand-in
+ *   (`--studio-pick-media`, one path whose file is rewritten between picks) with one tiny file per kind picked as `any` (the kind
+ *   comes from the bytes): a PNG is imported by a JOB (the copy, the E2E build's stand-in importer, the record) and stored with its
+ *   record, listed, kept across an app restart, and deleted; a video, a track and a sticker are refused `not-yet-supported` (no
+ *   importer yet), a text file `format`, a HEIC picture `heic`; what a crash left in `media/` and its `.staging` is removed at the
+ *   library's opening; the window cannot name a path. `--only media` runs it alone.
  *
  * Every debug door (remote debugging, DevTools, the test switches) is a
  * build-time constant: a `build:studio` output has none, however it is
@@ -78,6 +84,7 @@ import { openLibrary } from "../engine/library";
 import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library/testing/sampleData";
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
 import { probeVideo } from "../engine/render/ffmpeg.testkit";
+import { MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
 import { PEAK_RSS_BYTES } from "../engine/renderQueue/pool";
 import { verifyRenderedMp4 } from "../engine/verify";
 import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
@@ -1356,6 +1363,135 @@ async function runImportScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- own media: the import job, the records, the dialog stand-in (3f.1b) ----------
+
+/**
+ * The own-media import in the real build, on both operating systems: main's dialog stand-in (`--studio-pick-media`) names ONE path; the
+ * file there is rewritten between picks. A PNG goes through the whole job in the packaged engine (copy into `media/.staging`, the E2E
+ * build's stand-in importer, the stored file and its record, written with the Windows retries and the fsyncs of the library's own
+ * helpers), then the record is listed, survives an app restart and is deleted with its file. The other kinds are refused where the
+ * engine says: no importer yet. Nothing is sent to the network.
+ */
+async function runPackagedMediaScenario(target: Target): Promise<void> {
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-media-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "media-library");
+  const pickedDir = join(tmp, "picked");
+  // The name says photo whatever the bytes are: the kind is read from the bytes, never from the name.
+  const pickedPath = join(pickedDir, MEDIA_SMOKE_STORED.name);
+  await mkdir(userData, { recursive: true });
+  await mkdir(pickedDir, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+  // The library file, so that the folder is a library the engine adopts (and not a folder it refuses for holding other things).
+  await openLibrary(libraryRoot);
+  const mediaDir = join(libraryRoot, "media");
+  const stagingDir = join(mediaDir, ".staging");
+  // What a crash of an earlier life left: a copy, a part file, a record's temp file, a stored file with no record.
+  await mkdir(stagingDir, { recursive: true });
+  await Bun.write(join(stagingDir, ".old-00000001.part"), "half a copy");
+  await Bun.write(join(stagingDir, "old-00000001.media"), "a whole copy");
+  await Bun.write(join(mediaDir, ".media-00000009.json.0123456789ab.tmp"), "half a record");
+  await Bun.write(join(mediaDir, "orphan-00000001.png"), "a stored file with no record");
+
+  const args = [`--studio-pick-folder=${libraryRoot}`, `--studio-pick-media=${pickedPath}`];
+  let running = await launch(target, userData, args);
+  const pick = (kind: string): Promise<unknown> => req(running.cdp, "media.pickImport", { kind });
+  const names = async (dir: string): Promise<string[]> => (await readdir(dir).catch(() => [] as string[])).sort();
+  const snapshotJobs = async (): Promise<unknown[]> => {
+    const snapshot = await req(running.cdp, "engine.snapshot");
+    const jobs = field(snapshot, "result", "jobs");
+    return Array.isArray(jobs) ? jobs : [];
+  };
+  try {
+    const libSet = await req(running.cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check(
+      "media scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)",
+      field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot,
+      libSet,
+    );
+
+    // 1. The library opened: media.list waits for its recovery, and what the crash left is gone (nothing but the empty staging folder).
+    const empty = await req(running.cdp, "media.list", {});
+    check("media scenario: media.list of a new library is empty", field(empty, "ok") === true && field(empty, "result", "total") === 0 && JSON.stringify(field(empty, "result", "media")) === "[]", empty);
+    check("media scenario: what a crash left in media/ is removed when the library opens (the orphan stored file and the record's temp file)", (await names(mediaDir)).filter((n) => n !== ".staging").length === 0, await names(mediaDir));
+    check("media scenario: what a crash left in the staging folder is removed too", (await names(stagingDir)).length === 0, await names(stagingDir));
+
+    // 2. The photo: a PNG, picked as `any`, becomes a JOB; the job ends with its record.
+    const photo = MEDIA_SMOKE_FILES.find((file) => file.label === "photo");
+    if (photo === undefined) throw new Error("the smoke's table has no photo");
+    await Bun.write(pickedPath, photo.bytes);
+    const started = await pick("any");
+    const jobIds = field(started, "result", "jobIds");
+    check(
+      "media scenario: picking a PNG starts one import job, and refuses nothing",
+      field(started, "ok") === true && field(started, "result", "picked") === true && Array.isArray(jobIds) && jobIds.length === 1 && JSON.stringify(field(started, "result", "refused")) === "[]",
+      started,
+    );
+    check("media scenario: the answer names a file by its base name and carries no path", !JSON.stringify(started).includes(tmp), started);
+    const jobId = Array.isArray(jobIds) ? String(jobIds[0]) : "";
+    const ended = await waitFor("the import job to end", async () => (await snapshotJobs()).find((job) => field(job, "jobId") === jobId && field(job, "status") !== "running") ?? null, 30_000, 100);
+    check("media scenario: the import job is done, with its record, and it is an import of a photo", field(ended, "status") === "done" && field(ended, "kind") === "import" && field(ended, "mediaKind") === "photo" && field(ended, "done") === field(ended, "total"), ended);
+    const mediaId = String(field(ended, "mediaId"));
+    const listed = await req(running.cdp, "media.list", {});
+    const first = field(listed, "result", "media", "0");
+    check(
+      "media scenario: media.list has the record: the photo's name, its size from the PNG, and the size of the stored file",
+      field(listed, "result", "total") === 1 && field(first, "mediaId") === mediaId && field(first, "kind") === MEDIA_SMOKE_STORED.kind && field(first, "name") === MEDIA_SMOKE_STORED.name && field(first, "width") === MEDIA_SMOKE_STORED.width && field(first, "height") === MEDIA_SMOKE_STORED.height && field(first, "bytes") === MEDIA_SMOKE_STORED.bytes,
+      listed,
+    );
+    check("media scenario: the record's JSON carries no path", !JSON.stringify(listed).includes(tmp), listed);
+    const problems = mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, "png");
+    check("media scenario: media/ holds the stored file and its record and nothing else", problems.length === 0, problems);
+    const storedBytes = new Uint8Array(await readFile(join(mediaDir, `${mediaId}.png`)));
+    check("media scenario: the stored file is the picked file, byte for byte", createHash("sha256").update(storedBytes).digest("hex") === createHash("sha256").update(photo.bytes).digest("hex"));
+    const recordText = await readFile(join(mediaDir, `${mediaId}.json`), "utf8");
+    check("media scenario: the record on disk names the file by its own name and the picked path nowhere", recordText.includes(`"file": "${mediaId}.png"`) && !recordText.includes(pickedDir), recordText);
+    check("media scenario: the staging folder is empty after the import", (await names(stagingDir)).length === 0, await names(stagingDir));
+
+    // 3. Every other case, through the same dialog stand-in: the bytes decide, whatever the name.
+    for (const file of MEDIA_SMOKE_FILES.filter((f) => f.label !== "photo")) {
+      await Bun.write(pickedPath, file.bytes);
+      const answer = await pick("any");
+      const refused = field(answer, "result", "refused", "0");
+      const wanted = "refused" in file.expect ? file.expect.refused : "";
+      check(
+        `media scenario: the ${file.label} file picked as any is refused as ${wanted}, starts no job and names no path`,
+        field(answer, "ok") === true && field(answer, "result", "picked") === true && JSON.stringify(field(answer, "result", "jobIds")) === "[]" && field(refused, "reason") === wanted && field(refused, "name") === MEDIA_SMOKE_STORED.name && !JSON.stringify(answer).includes(tmp),
+        answer,
+      );
+    }
+    check("media scenario: no refused file left anything in media/ or its staging folder", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, "png").length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
+
+    // 4. The window cannot name a file, and the commands of a job that is over or never was.
+    const withPath = await req(running.cdp, "media.pickImport", { kind: "photo", path: pickedPath });
+    check("media scenario: a pick that names a path is refused by the contract, and nothing is imported", field(withPath, "ok") === false && (await snapshotJobs()).filter((job) => field(job, "kind") === "import").length === 1, withPath);
+    const cancelOver = await req(running.cdp, "media.cancelImport", { jobId });
+    check("media scenario: media.cancelImport of a job that is over answers it as it ended, and changes nothing", field(cancelOver, "ok") === true && field(cancelOver, "result", "jobId") === jobId && (await req(running.cdp, "media.list", {}).then((r) => field(r, "result", "total"))) === 1, cancelOver);
+    const cancelUnknown = await req(running.cdp, "media.cancelImport", { jobId: "job-00000404" });
+    check("media scenario: media.cancelImport of a job that never was is NOT_FOUND", field(cancelUnknown, "ok") === false && field(cancelUnknown, "error", "code") === "NOT_FOUND", cancelUnknown);
+
+    // 5. The app restarts: the record is on disk, and the library's opening lists it again.
+    await quit(running);
+    running = await launch(target, userData, args);
+    const after = await req(running.cdp, "media.list", {});
+    check("media scenario: after an app restart the record is listed again, untouched", field(after, "ok") === true && field(after, "result", "total") === 1 && field(after, "result", "media", "0", "mediaId") === mediaId, after);
+    check("media scenario: the restart's jobs start clean (the engine's jobs live in memory only)", (await snapshotJobs()).filter((job) => field(job, "kind") === "import").length === 0);
+
+    // 6. Delete: the record and the stored file go; the same id again is NOT_FOUND.
+    const removed = await req(running.cdp, "media.delete", { mediaId });
+    check("media scenario: media.delete answers the id", field(removed, "ok") === true && field(removed, "result", "mediaId") === mediaId, removed);
+    check("media scenario: the record and the stored file are gone from media/", (await names(mediaDir)).filter((n) => n !== ".staging").length === 0, await names(mediaDir));
+    const gone = await req(running.cdp, "media.list", {});
+    check("media scenario: media.list is empty again", field(gone, "result", "total") === 0, gone);
+    const twice = await req(running.cdp, "media.delete", { mediaId });
+    check("media scenario: deleting the same id again is NOT_FOUND", field(twice, "ok") === false && field(twice, "error", "code") === "NOT_FOUND", twice);
+    check("media scenario: the picked file itself was never touched by any of it", existsSync(pickedPath));
+  } finally {
+    await quit(running);
+    await removeTemp(tmp);
+  }
+}
+
 // ---------- music: list -> downloads -> music.list -> playback, end to end (3c.4) ----------
 
 const SMOKE_MUSIC_KEY = "smoke-music-key-not-real-7q3z";
@@ -2434,6 +2570,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // `--only media` runs the own-media scenario alone, for working on it; the full run is the one that counts.
+  if (argValue("--only") === "media") {
+    await runPackagedMediaScenario(target);
+    finish();
+    return;
+  }
+
   // `--only music` runs the track store's scenario alone, for working on it; the full run is the one that counts.
   if (argValue("--only") === "music") {
     await runMusicScenario(target);
@@ -2853,6 +2996,7 @@ async function main(): Promise<void> {
 
   await runAvatarScenario(target);
   await runImportScenario(target);
+  await runPackagedMediaScenario(target);
   await runMusicScenario(target);
   await runPhotoRunKillResumeScenario(target);
   await runPackagedRenderScenario(target);
