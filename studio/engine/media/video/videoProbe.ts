@@ -37,6 +37,11 @@ export function bytesSource(bytes: Uint8Array): ByteSource {
 /** A camera's `moov` is a few hundred KiB for a 3 minute clip; 16 MiB holds hours of it, and is the most that is ever read in one piece. */
 export const MOOV_MAX_BYTES = 16 * 1024 * 1024;
 const MAX_TOP_LEVEL_BOXES = 1000;
+/**
+ * The light look at a FRAGMENTED file's tracks reads headers only, so it may walk far more of them: a voice memo cut into one-second fragments (`MediaRecorder.start(1000)`) has
+ * two boxes a second, and the strict bound above is passed at about eight minutes. 20 000 boxes are ten hours of such a recording, and 16 bytes of header each.
+ */
+const MAX_TOP_LEVEL_BOXES_LIGHT = 20_000;
 const MAX_CHILDREN = 512;
 /** Boxes visited inside `moov` (all levels together). */
 const MAX_VISITED = 4000;
@@ -478,8 +483,14 @@ function readStts(view: DataView, box: BoxRef): SampleTimes {
   return { samples, durationTicks, variableFrameRate: Number.isFinite(min) && max > min && max - min > Math.max(1, min * 0.1) };
 }
 
-/** The containers inside a `trak` that ffmpeg's mov demuxer descends into (its parse table); `meta` is scanned on its own terms. */
-const TRAK_CONTAINERS: ReadonlySet<string> = new Set(["mdia", "minf", "stbl", "dinf", "edts", "tref", "udta"]);
+/**
+ * The boxes whose children ffmpeg's mov demuxer reads as a list, wherever they are: in libavformat/mov.c (6.0 and 6.1) `mov_default_parse_table` maps each of these to
+ * `mov_read_default` (`wave` to `mov_read_wave`, which descends the same way), and the table is LEVEL-INDEPENDENT, so a box in it is read inside a `trak`, inside `moov`, or
+ * at the top of the file alike. `meta` is read from its own `hdlr` (`mov_read_meta`) and is scanned on its own terms (`metaChildren`). The list is the containers of that table
+ * that matter to a stream (the ones a track's parts, a handler or a whole `trak` can hide in); the table is long and a box this list lacks is the SECOND layer's business
+ * (`videoStreams.ts` asks ffmpeg itself how many video streams there are), not a reason to trust the walker's count.
+ */
+const TRAK_CONTAINERS: ReadonlySet<string> = new Set(["mdia", "minf", "stbl", "dinf", "edts", "tref", "udta", "sinf", "schi", "wave", "traf", "mvex", "moof", "iprp", "ipco"]);
 /** The lists the walker reads strictly anyway (a malformed box refuses the file); the rest of a track is read the lenient way ffmpeg reads it. */
 const STRICT_PATHS: ReadonlySet<string> = new Set(["trak", "trak/mdia", "trak/mdia/minf", "trak/mdia/minf/stbl", "trak/mdia/minf/dinf", "trak/edts"]);
 /** Where each box that makes a track's stream may be: the one list the walker reads it from. A copy anywhere else in a `trak` is refused (`hidden-track-box`). */
@@ -536,7 +547,8 @@ function checkHandlers(m: Uint8Array, view: DataView, trak: BoxRef, budget: Budg
       // `mdia` and no `hdlr` introduced (the codec of its sample entry says it is a video). Each is where the walker reads it or nowhere.
       // Judged AFTER what is inside it (a handler hidden in such a box is still told as a hidden handler).
       const home = STREAM_PART_HOMES[kid.type];
-      const stray = home !== undefined && !inMeta && path !== home;
+      // Not exempt inside `meta` either: a `meta` that holds a track's `mdhd` and `minf` (after an `mdta` handler, which names no media) is a stream like any other.
+      const stray = home !== undefined && path !== home;
       if (kid.type === "hdlr") {
         const allowed = inMeta ? !isMediaHandler(m, kid) : path === "trak/mdia" || (path === "trak/mdia/minf" && isDataHandler(m, kid));
         if (!allowed) throw new Refusal("hidden-handler");
@@ -656,7 +668,7 @@ async function openMovie(source: ByteSource, allowFragments: boolean): Promise<M
   let brand = "";
   let boxes = 0;
   for (let at = 0; at < source.size; ) {
-    if (++boxes > MAX_TOP_LEVEL_BOXES) throw new Refusal("too-many-boxes");
+    if (++boxes > (allowFragments ? MAX_TOP_LEVEL_BOXES_LIGHT : MAX_TOP_LEVEL_BOXES)) throw new Refusal("too-many-boxes");
     const remaining = source.size - at;
     if (remaining < 8) throw new Refusal("bad-box");
     const header = await readExactly(source, at, Math.min(HEADER_BYTES, remaining));
