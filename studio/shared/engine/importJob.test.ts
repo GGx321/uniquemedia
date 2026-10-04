@@ -38,6 +38,12 @@ describe("an import job", () => {
     expect(JobProgress.safeParse({ ...progressFields, done: 0, total: 0 }).success).toBe(true);
   });
 
+  test("a job that waits for its turn is announced queued, at zero only", () => {
+    expect(JobProgress.safeParse({ ...progressFields, done: 0, queued: true }).success).toBe(true);
+    expect(JobProgress.safeParse({ ...progressFields, done: 5, queued: true }).success).toBe(false);
+    expect(JobState.safeParse({ ...importJob, status: "queued", done: 0 }).success).toBe(true);
+  });
+
   test("has no path anywhere: an extra path field is refused", () => {
     expect(JobState.safeParse({ ...importJob, path: "/home/me/a.jpg" }).success).toBe(false);
     expect(JobProgress.safeParse({ ...progressFields, path: "/home/me/a.jpg" }).success).toBe(false);

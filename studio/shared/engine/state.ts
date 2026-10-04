@@ -479,11 +479,15 @@ export const JobProgress = z
     z.strictObject({ ...candidatesJobRef, ...progressCounts }),
     z.strictObject({ ...runJobRef, ...progressCounts }),
     z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving, ...renderQueued }),
-    z.strictObject({ ...importJobRef, ...progressCounts }),
+    z.strictObject({ ...importJobRef, ...progressCounts, ...renderQueued }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
   .refine((p) => !(p.kind === "render" && p.queued === true) || (p.done === 0 && p.saving !== true), {
     message: "a queued render is announced at zero and is not saving",
+    path: ["queued"],
+  })
+  .refine((p) => !(p.kind === "import" && p.queued === true) || p.done === 0, {
+    message: "a queued import is announced at zero",
     path: ["queued"],
   });
 

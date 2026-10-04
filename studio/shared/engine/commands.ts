@@ -491,8 +491,9 @@ const ENGINE_SPECS = [
     z.strictObject({ previewId: Id, width: z.number().int().positive(), height: z.number().int().positive() }),
   ),
   // Stage 3 (3f.1b, K28, K29): the own-media records and the import job. `media.list` is newest first (`total` says when a listing was cut);
-  // `media.delete` removes the stored file and its record and is never refused for a use: a draft that names the media keeps the
-  // reference and reads it as `media-unavailable`, and a rendered video is a file of its own. NOT_FOUND for an unknown id.
+  // `media.delete` removes the stored file and its record. A draft that names the media keeps the reference and reads it as
+  // `media-unavailable`, and a rendered video is a file of its own, so neither refuses it; a QUEUED OR RUNNING render that uses the media does
+  // (IN_FLIGHT: delete it when the render ends). NOT_FOUND for an unknown id.
   // `media.cancelImport` stops a running import job at whatever phase it is in (the copy, the importer, the record) and leaves
   // nothing behind; NOT_FOUND for a job that is not an import of this engine, and a job that already ended is answered as it is.
   defineCommand("media.list", MediaListPayload, MediaListResult),

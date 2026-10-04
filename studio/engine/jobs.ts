@@ -84,15 +84,31 @@ export class JobRegistry {
    * Registers a running own-media import (3f.1b). `total` is the size of the opened file in bytes and `done` counts the bytes copied; the
    * signal fires on `cancel`. The media id is null until the job is done.
    */
-  startImport(jobId: string, ref: ImportJobRef, total: number): AbortSignal {
+  startImport(jobId: string, ref: ImportJobRef, total: number, options: { queued?: boolean } = {}): AbortSignal {
     if (!Number.isSafeInteger(total) || total < 0) throw new Error("an import's size must be a count of bytes");
-    return this.#start({ kind: "import", jobId, mediaKind: ref.mediaKind, name: ref.name, mediaId: null, status: "running", done: 0, total });
+    return this.#start({ kind: "import", jobId, mediaKind: ref.mediaKind, name: ref.name, mediaId: null, status: options.queued === true ? "queued" : "running", done: 0, total });
   }
 
-  /** How many imports are running: what a library switch must wait for (the copy and the record write into the library). */
+  /** Moves a queued import to running (its turn came); false for any other job or state. */
+  startImportRunning(jobId: string): boolean {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.kind !== "import" || entry.state.status !== "queued") return false;
+    entry.state = { ...entry.state, status: "running" };
+    return true;
+  }
+
+  /** The `job.progress` payload at zero of a queued or running import (`queued: true` while it waits); null for any other job or one that ended. */
+  announceImport(jobId: string): JobProgress | null {
+    const state = this.#jobs.get(jobId)?.state;
+    if (state === undefined || state.kind !== "import" || (state.status !== "queued" && state.status !== "running")) return null;
+    const { mediaKind, name, total, done } = state;
+    return { kind: "import", jobId, mediaKind, name, mediaId: null, done, total, ...(state.status === "queued" ? { queued: true } : {}) };
+  }
+
+  /** How many imports are queued or running: what a library switch must wait for (the copy and the record write into the library, and a queued one holds its file open). */
   activeImports(): number {
     let n = 0;
-    for (const { state } of this.#jobs.values()) if (state.kind === "import" && state.status === "running") n++;
+    for (const { state } of this.#jobs.values()) if (state.kind === "import" && (state.status === "running" || state.status === "queued")) n++;
     return n;
   }
 
@@ -217,7 +233,7 @@ export class JobRegistry {
   /** Ends a running import job; its final state, or null for any other job or one that already ended. A done import takes its media id from its result. */
   finishImport(jobId: string, end: ImportJobEnd): JobState | null {
     const entry = this.#jobs.get(jobId);
-    if (entry === undefined || entry.state.status !== "running" || entry.state.kind !== "import") return null;
+    if (entry === undefined || (entry.state.status !== "running" && entry.state.status !== "queued") || entry.state.kind !== "import") return null;
     const { kind, mediaKind, name, done, total } = entry.state;
     const common = { kind, jobId, mediaKind, name, total };
     switch (end.status) {
@@ -252,7 +268,8 @@ export class JobRegistry {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined) return false;
     if (entry.state.status === "queued") this.finishRender(jobId, { status: "cancelled" });
-    if (entry.state.status === "running" || entry.state.status === "cancelled") entry.controller.abort();
+    // A queued import has an owner waiting on its signal, so it fires too (a queued render has none: it ended above).
+    if (entry.state.status === "running" || entry.state.status === "cancelled" || (entry.state.kind === "import" && entry.state.status === "queued")) entry.controller.abort();
     return true;
   }
 

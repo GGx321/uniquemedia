@@ -139,4 +139,45 @@ describe("JobRegistry, import jobs", () => {
     expect(() => jobs.startImport("job-00000001", MEDIA, -1)).toThrow();
     expect(() => jobs.startImport("job-00000002", MEDIA, 1.5)).toThrow();
   });
+
+  test("a job that waits for its turn is queued: counted as active, announced queued at zero, and not running until it is told to", () => {
+    const jobs = new JobRegistry();
+    jobs.startImport("job-00000001", MEDIA, 1000, { queued: true });
+
+    expect(jobs.stateOf("job-00000001")).toMatchObject({ status: "queued", done: 0, total: 1000, mediaId: null });
+    valid(jobs.states());
+    expect(jobs.activeImports()).toBe(1);
+    expect(jobs.progress("job-00000001", 10)).toBeNull();
+    const announced = jobs.announceImport("job-00000001");
+    expect(announced).toEqual({ kind: "import", jobId: "job-00000001", ...MEDIA, mediaId: null, done: 0, total: 1000, queued: true });
+    expect(JobProgress.safeParse(announced).success).toBe(true);
+  });
+
+  test("its turn comes: it runs, is announced again at zero without the queued flag, and only a queued job can be started", () => {
+    const jobs = new JobRegistry();
+    jobs.startImport("job-00000001", MEDIA, 1000, { queued: true });
+    expect(jobs.startImportRunning("job-00000001")).toBe(true);
+    expect(jobs.stateOf("job-00000001")).toMatchObject({ status: "running" });
+    expect(jobs.announceImport("job-00000001")).toEqual({ kind: "import", jobId: "job-00000001", ...MEDIA, mediaId: null, done: 0, total: 1000 });
+    expect(jobs.startImportRunning("job-00000001")).toBe(false);
+    expect(jobs.startImportRunning("job-00000404")).toBe(false);
+    expect(jobs.progress("job-00000001", 10)).toMatchObject({ done: 10 });
+  });
+
+  test("a queued job ends cancelled from its queue, and the cancel fires its signal", () => {
+    const jobs = new JobRegistry();
+    const signal = jobs.startImport("job-00000001", MEDIA, 1000, { queued: true });
+    expect(jobs.cancel("job-00000001")).toBe(true);
+    expect(signal.aborted).toBe(true);
+    expect(jobs.finishImport("job-00000001", { status: "cancelled" })).toMatchObject({ status: "cancelled", done: 0 });
+    expect(jobs.activeImports()).toBe(0);
+  });
+
+  test("announcing a job that is over, or unknown, is nothing", () => {
+    const jobs = new JobRegistry();
+    jobs.startImport("job-00000001", MEDIA, 10);
+    jobs.finishImport("job-00000001", { status: "cancelled" });
+    expect(jobs.announceImport("job-00000001")).toBeNull();
+    expect(jobs.announceImport("job-00000404")).toBeNull();
+  });
 });
