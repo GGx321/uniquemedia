@@ -3,7 +3,7 @@ import { isAbsolute } from "node:path";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 import { configuredFfmpegEnv } from "../../node/ffmpegEnv";
 import type { FfmpegSpawner } from "../../node/runFfmpeg";
-import { parseStreamLine } from "../music/decodeCheck";
+import { hasUnreadableStreamLine, parseStreamLine } from "../music/decodeCheck";
 import type { MediaFormat } from "./sniff";
 
 // What ffmpeg says a track is (Stage 3, 3f.4), read from its input dump: the streams the file holds, the codec of the audio one, and the length
@@ -132,7 +132,7 @@ export type SourceVerdict =
  */
 export function judgeDump(dump: string, demuxer: AudioDemuxer): SourceVerdict {
   const streams = streamLinesOf(dump);
-  if (!numberedInOrder(streams) || headerLengths(dump).length > 1) return { ok: false, reason: "format" };
+  if (hasUnreadableStreamLine(dump) || !numberedInOrder(streams) || headerLengths(dump).length > 1) return { ok: false, reason: "format" };
   const audio = streams.filter((stream) => stream.kind === "Audio");
   if (audio.length !== 1) return { ok: false, reason: "format" };
   if (streams.some((stream) => stream.kind !== "Audio" && !isAttachedPicture(stream))) return { ok: false, reason: "format" };
@@ -148,6 +148,8 @@ export function judgeDump(dump: string, demuxer: AudioDemuxer): SourceVerdict {
  * what an encode of a source with no audio that decodes leaves (ffmpeg writes no track); any other failure is our own output not being what was asked.
  */
 export function judgeStoredDump(dump: string): { ok: true; headerMs: number } | { ok: false; empty: boolean } {
+  // A stream line that cannot be read is a stream this check cannot describe: never `empty`, never skipped.
+  if (hasUnreadableStreamLine(dump)) return { ok: false, empty: false };
   const streams = streamLinesOf(dump);
   if (streams.length === 0) return { ok: false, empty: true };
   const only = streams[0];

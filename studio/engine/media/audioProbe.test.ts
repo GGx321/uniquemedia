@@ -248,14 +248,40 @@ describe("the stream line's grammar (3f.4 review H1)", () => {
     expect(streamLinesOf(dump("  Stream #0:0: Audio: mp3, 44100 Hz\rcomment: Video: png"))).toEqual([]);
   });
 
+  // Round 2: the last stream's line leaves no gap in the numbering when it is dropped, so a line that cannot be read must refuse the whole dump.
+  const UNREADABLE = ["  Stream #0:1(a:b): Video: mpeg4, yuv420p, 32x32", `  Stream #0:1(${"x".repeat(33)}): Video: mpeg4`, "  Stream #0:1: Video: mpeg4: Audio: aac"];
+
+  test.each(UNREADABLE)("a source dump with the unreadable last line %p is a format, not one audio stream", (line) => {
+    const text = dump(M4A_AAC, line);
+    expect(judgeDump(text, "mov")).toEqual({ ok: false, reason: "format" });
+  });
+
+  test.each(UNREADABLE)("an unreadable stream line %p in the dump of what the importer made is a failure, and not an `empty` one", (line) => {
+    expect(judgeStoredDump(dump(line))).toEqual({ ok: false, empty: false });
+  });
+
+  test("a source dump whose only stream line is unreadable is a format, not a missing stream", () => {
+    expect(judgeDump(dump("  Duration: 00:00:00.40, start: 0.000000, bitrate: 48 kb/s", UNREADABLE[0] ?? ""), "mov")).toEqual({ ok: false, reason: "format" });
+  });
+
+  test.each(["en US", "Русский", "~~~", "x".repeat(32)])("an Ogg whose language is %p is read as the one audio stream it is", (language) => {
+    const text = dump("  Duration: 00:00:00.40, start: 0.000000, bitrate: 48 kb/s", `  Stream #0:0(${language}): Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s`);
+    expect(judgeDump(text, "ogg")).toMatchObject({ ok: true, codec: "vorbis" });
+  });
+
+  test.each(["x): Video: png (attached pic", "a:b", "x)(y", "a(b"])("an Ogg whose language is the spoof %p is still refused", (language) => {
+    const text = dump("  Duration: 00:00:00.40, start: 0.000000, bitrate: 48 kb/s", `  Stream #0:0(${language}): Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s`, "  Stream #0:1: Audio: vorbis, 44100 Hz, mono, fltp, 48 kb/s");
+    expect(judgeDump(text, "ogg")).toEqual({ ok: false, reason: "format" });
+  });
+
   test("a line with a second `: <Kind>:` in it is no stream, whatever the first says", () => {
     expect(streamLinesOf(dump("  Stream #0:0: Audio: mp3, 44100 Hz, stereo, fltp, 48 kb/s: Video: png"))).toEqual([]);
     expect(streamLinesOf(dump("  Stream #0:0: Video: mjpeg (attached pic) comment: Audio: x"))).toEqual([]);
   });
 
-  test("a language is a short word: letters, digits, `_` and `-`, never a bracket, a colon or a space", () => {
-    for (const language of ["und", "eng", "en", "x", "zh-Hans", "en_US"]) expect(streamLinesOf(dump(`  Stream #0:0(${language}): Audio: mp3, 44100 Hz`)).map((s) => s.index)).toEqual([0]);
-    for (const language of ["x): Video: png (attached pic", "a b", "a:b", "x)(y", ""]) expect(streamLinesOf(dump(`  Stream #0:0(${language}): Audio: mp3, 44100 Hz`))).toEqual([]);
+  test("a language is 1 to 32 characters without a bracket, a parenthesis, a colon or a line end", () => {
+    for (const language of ["und", "eng", "en", "x", "zh-Hans", "en_US", "en US", "Русский", "~~~"]) expect(streamLinesOf(dump(`  Stream #0:0(${language}): Audio: mp3, 44100 Hz`)).map((s) => s.index)).toEqual([0]);
+    for (const language of ["x): Video: png (attached pic", "a:b", "x)(y", "a[b", "", "x".repeat(33)]) expect(streamLinesOf(dump(`  Stream #0:0(${language}): Audio: mp3, 44100 Hz`))).toEqual([]);
   });
 
   test("a stream id and a language in either order are still a stream", () => {

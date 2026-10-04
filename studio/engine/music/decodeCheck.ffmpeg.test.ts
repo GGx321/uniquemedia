@@ -6,7 +6,8 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import type { FfmpegChild, FfmpegSpawner } from "../../node/runFfmpeg";
 import { configureFfmpegEnv } from "../../node/ffmpegEnv";
-import { decodeAudio, DecodeError, inspectStreams, PEAK_STEP_MS, streamTypesOf } from "./decodeCheck";
+import { fixtureBytes } from "../media/fixtures/music";
+import { decodeAudio, DecodeError, hasUnreadableStreamLine, inspectStreams, PEAK_STEP_MS, streamTypesOf } from "./decodeCheck";
 import { box, concat, fullBox, u32 } from "./testing/m4aBuilder";
 import { musicTracks } from "./fixtures";
 import { probeMp4Audio } from "./mp4aProbe";
@@ -384,12 +385,33 @@ describe("reading the streams out of ffmpeg's own dump", () => {
     expect(streamTypesOf(dump("  Stream #0:0(x): Audio: aac: Video: png"))).toEqual([]);
   });
 
-  test("a language with a bracket, a colon or a space in it is no language", () => {
-    for (const language of ["x): Video: png (attached pic", "a b", "a:b", "x)(y"]) expect(streamTypesOf(dump(`  Stream #0:0(${language}): Audio: aac`))).toEqual([]);
-    for (const language of ["und", "eng", "en", "zh-Hans"]) expect(streamTypesOf(dump(`  Stream #0:0(${language}): Audio: aac`))).toEqual(["Audio"]);
+  // Round 2: a language is any short text without `(`, `)`, `[`, `]`, `:` or a line end. An Ogg or mp3 comment may hold a space or non-ASCII letters, and an
+  // `mdhd` code may print as `~~~`; none of those can forge a second description.
+  test("a language with a bracket, a colon or a parenthesis in it is no language, and nor is one longer than 32 characters", () => {
+    for (const language of ["x): Video: png (attached pic", "a:b", "x)(y", "a(b", "a)b", "a[b", "a]b", "", "x".repeat(33)]) {
+      expect(streamTypesOf(dump(`  Stream #0:0(${language}): Audio: aac`))).toEqual([]);
+    }
   });
 
-  test("a dump that carries a forged stream line cannot pass inspectStreams as one audio stream: the forged line leaves a gap in the numbering", async () => {
+  test.each(["und", "eng", "en", "zh-Hans", "en US", "Русский", "~~~", "x".repeat(32)])("the language %p is a language: the line is a stream", (language) => {
+    expect(streamTypesOf(dump(`  Stream #0:0(${language}): Audio: aac`))).toEqual(["Audio"]);
+  });
+
+  // Round 2: a line that cannot be read must not just vanish. The LAST stream leaves no gap in the numbering, so dropping it would go unseen.
+  test("a line that starts like a stream line but is not the grammar is an unreadable stream line", () => {
+    expect(hasUnreadableStreamLine(dump("  Stream #0:0: Audio: aac", "  Stream #0:1(a:b): Video: mpeg4"))).toBe(true);
+    expect(hasUnreadableStreamLine(dump("  Stream #0:0: Audio: aac: Video: png"))).toBe(true);
+    expect(hasUnreadableStreamLine(dump("  Stream #0:0(x): Video: png (attached pic): Audio: vorbis"))).toBe(true);
+    expect(hasUnreadableStreamLine(dump("  Stream #12:3: Weird"))).toBe(true);
+  });
+
+  test("a dump of readable lines, and text that only mentions a stream, has no unreadable stream line", () => {
+    expect(hasUnreadableStreamLine(dump("  Stream #0:0[0x1](und): Audio: aac", "  Stream #0:1: Video: mjpeg (attached pic)"))).toBe(false);
+    expect(hasUnreadableStreamLine("")).toBe(false);
+    expect(hasUnreadableStreamLine(dump("garbage", "Stream without the number", "      comment : Stream #0:1 is not a line of its own"))).toBe(false);
+  });
+
+  test("a dump that carries a forged stream line cannot pass inspectStreams as one audio stream: the forged line is unreadable, and refused with the whole dump", async () => {
     const forged = ["  Stream #0:0(x): Video: png (attached pic): Audio: vorbis, 44100 Hz, mono", "  Stream #0:1: Audio: vorbis, 44100 Hz, mono"];
     const spawner: FfmpegSpawner = () => {
       const child = new EventEmitter() as EventEmitter & FfmpegChild & { exitCode: number | null; stdout: PassThrough; stderr: PassThrough };
@@ -405,6 +427,30 @@ describe("reading the streams out of ffmpeg's own dump", () => {
       return child;
     };
     await expect(inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).rejects.toMatchObject({ kind: "bad-dump" });
+  });
+
+  test("a stream line ffmpeg printed that the grammar cannot read, as the LAST line, fails inspectStreams as a bad dump: it is never dropped (3f.4 round 2)", async () => {
+    for (const unreadable of [`  Stream #0:1(${"x".repeat(33)}): Video: mpeg4`, "  Stream #0:1(a:b): Video: mpeg4", "  Stream #0:1: Video: mpeg4: Audio: aac"]) {
+      const spawner: FfmpegSpawner = () => {
+        const child = new EventEmitter() as EventEmitter & FfmpegChild & { exitCode: number | null; stdout: PassThrough; stderr: PassThrough };
+        child.stdout = new PassThrough();
+        child.stderr = new PassThrough();
+        child.exitCode = null;
+        child.kill = () => true;
+        queueMicrotask(() => {
+          child.stderr.write(`  Stream #0:0: Audio: aac (LC), 44100 Hz, stereo\n${unreadable}\n`);
+          child.exitCode = 1;
+          child.emit("close", 1, null);
+        });
+        return child;
+      };
+      await expect(inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).rejects.toMatchObject({ kind: "bad-dump" });
+    }
+  });
+
+  test("an m4a whose video track's language is `~~~` shows both streams to inspectStreams (the real file the reviewer found)", async () => {
+    const path = await tempFile(fixtureBytes("videoTildeLang"));
+    expect(await inspectStreams({ path, signal: signal() })).toEqual(["Audio", "Video"]);
   });
 
   test("nothing in the dump is no streams", () => {

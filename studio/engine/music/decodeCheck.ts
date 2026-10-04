@@ -198,20 +198,35 @@ const MAX_DUMP_BYTES = 256 * 1024;
 const INSPECT_TIMEOUT_MS = 15_000;
 // `Stream #0:1[0x2](und): Audio: ...`: an index, an optional hex id and language in either order, then the kind and a colon.
 //
-// THE LANGUAGE IS TEXT THE FILE WRITES. A mov's comes from `mdhd` (three letters), but an Ogg's or an mp3's is a tag printed verbatim, and `x): Video: png
-// (attached pic` in it turns the line into `Stream #0:0(x): Video: png (attached pic): Audio: vorbis...`. So the grammar is strict: a language is a short word
-// (letters, digits, `_` and `-`: no bracket, no colon, no space), a stream id is hex, and a line that carries a SECOND `: <Kind>:` after its own is no stream
-// at all (it leaves a gap in the numbering, which the callers refuse). This reading is shared by the track store, the render and the own-music probe.
-const STREAM_LINE = /^\s*Stream #0:(\d+)(?:\[0x[0-9a-fA-F]+\])?(?:\([A-Za-z0-9_-]+\))?(?:\[0x[0-9a-fA-F]+\])?:\s*(Audio|Video|Subtitle|Data|Attachment|[A-Za-z]+):(.*)$/;
+// THE LANGUAGE IS TEXT THE FILE WRITES. A mov's comes from `mdhd` (three letters, which may print as `~~~`), but an Ogg's or an mp3's is a tag printed verbatim, and
+// `x): Video: png (attached pic` in it turns the line into `Stream #0:0(x): Video: png (attached pic): Audio: vorbis...`. So the grammar is strict where it
+// matters: a language is 1 to 32 characters of anything but a bracket, a parenthesis, a colon or a line end (a space or a non-ASCII letter is fine, because
+// it cannot close the parenthesis or open a second description), a stream id is hex, and a line that carries a SECOND `: <Kind>:` after its own is no stream.
+//
+// A line that is not this grammar is NEVER just skipped: `hasUnreadableStreamLine` says so, and every caller refuses the whole dump (a skipped LAST line leaves no
+// gap in the numbering, so the numbering check alone cannot catch it). This reading is shared by the track store, the render and the own-music probe.
+const STREAM_LINE = /^\s*Stream #0:(\d+)(?:\[0x[0-9a-fA-F]+\])?(?:\([^()[\]:\r\n]{1,32}\))?(?:\[0x[0-9a-fA-F]+\])?:\s*(Audio|Video|Subtitle|Data|Attachment|[A-Za-z]+):(.*)$/;
 const SECOND_KIND = /:\s*(?:Audio|Video|Subtitle|Data|Attachment)\s*:/;
+/** What a stream line starts with, whatever follows: a line that starts so is a stream line or it makes the dump unreadable. */
+const STREAM_LINE_START = /^\s*Stream #\d+:\d+/;
+
+/** The dump is split at `\n`; ffmpeg ends its lines with `\r\n` on Windows, so ONE trailing `\r` is the line's end and no more (a `\r` inside the line is the file's text). */
+const withoutLineEnd = (line: string): string => (line.endsWith("\r") ? line.slice(0, -1) : line);
 
 /** One stream line of ffmpeg's dump: its number, its kind, and what follows the kind's colon. Null for a line that is not exactly this grammar. */
 export function parseStreamLine(line: string): { index: number; kind: string; rest: string } | null {
-  // The dump is split at `\n`; ffmpeg ends its lines with `\r\n` on Windows, so ONE trailing `\r` is the line's end and no more (a `\r` inside the line is the file's text).
-  const match = STREAM_LINE.exec(line.endsWith("\r") ? line.slice(0, -1) : line);
+  const match = STREAM_LINE.exec(withoutLineEnd(line));
   if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return null;
   if (SECOND_KIND.test(match[3])) return null;
   return { index: Number(match[1]), kind: match[2], rest: match[3] };
+}
+
+/**
+ * Whether the dump has a line that starts like a stream line (`Stream #<n>:<n>`) and is not the grammar. Such a line is a stream this reading cannot describe
+ * (a forged line, or a language it does not allow): the dump is then not a plain list of the file's streams, and the caller must refuse it, never skip the line.
+ */
+export function hasUnreadableStreamLine(dump: string): boolean {
+  return dump.split("\n").some((line) => STREAM_LINE_START.test(withoutLineEnd(line)) && parseStreamLine(line) === null);
 }
 
 /** The index and kind of each stream line in ffmpeg's input dump, in the order printed. */
@@ -285,6 +300,7 @@ export function inspectStreams(options: InspectOptions): Promise<string[]> {
       options.signal.removeEventListener("abort", onAbort);
       if (failure !== null) return reject(failure);
       // ffmpeg ends with an error (no output file was given), so its exit code says nothing: the dump does.
+      if (hasUnreadableStreamLine(dump)) return reject(new DecodeError("bad-dump", "ffmpeg printed a stream line this check cannot read"));
       const streams = streamsOf(dump);
       // The streams ffmpeg lists are numbered 0..n-1 in order, once each. Anything else (a stream missing, a number twice, a
       // line a metadata key printed on its own) means the dump is not a plain list of the file's streams.
