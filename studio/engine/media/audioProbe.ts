@@ -233,10 +233,7 @@ export async function selectionHasNoExtraStreams(options: ProbeOptions): Promise
   for (const selector of EXTRA_STREAM_SELECTORS) {
     const argv = [...probeArgv(options), "-v", "error", "-map", selector, "-t", "0.05", "-f", "null", "-"];
     const { stderr, code } = await capture(argv, options);
-    if (code === 0 || !stderr.includes(`Stream map '${selector}' matches no streams.`)) {
-      console.error("DIAG-MUSIC select", selector, String(code), JSON.stringify(stderr));
-      return false;
-    }
+    if (code === 0 || code === null || !stderr.includes(`Stream map '${selector}' matches no streams.`)) return false;
   }
   return true;
 }

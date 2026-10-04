@@ -157,7 +157,7 @@ export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter
       throw new Refused(error instanceof ProbeError && error.kind === "dump-too-large" ? "format" : "failed");
     }
     const verdict = judgeDump(dump, demuxer);
-    if (!verdict.ok) { console.error("DIAG-MUSIC judge", verdict.reason, JSON.stringify(dump)); throw new Refused(verdict.reason); }
+    if (!verdict.ok) throw new Refused(verdict.reason);
     signal.throwIfAborted();
     // The verdict above is read from TEXT the file partly writes. ffmpeg's own stream selection says the same without parsing any: no second audio stream, no
     // real video, subtitle, data or attachment stream (an attached picture is none of them), or the file is refused (3f.4 review H1).
@@ -178,7 +178,6 @@ export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter
     try {
       await runFfmpegArgv({ argv, output: out.path, signal, timeoutMs: deps.encodeTimeoutMs ?? encodeTimeoutFor(verdict.headerMs), ...spawnerOption });
     } catch (error) {
-      console.error("DIAG-MUSIC encode", String(error), JSON.stringify(argv));
       if (signal.aborted) throw error;
       // A time-out is a machine that is too slow or a file that is too heavy, not a verdict on the format; any other failure is a stream ffmpeg cannot decode.
       throw new Refused(error instanceof FfmpegTimeoutError ? "failed" : "format");
