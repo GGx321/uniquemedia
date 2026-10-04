@@ -154,3 +154,40 @@ describe("RenderQueue: the reserved own media", () => {
     expect(queue.reservesMedia("media-0000009")).toBe(false);
   });
 });
+
+describe("RenderQueue: the admission's hold on an own media", () => {
+  test("a hold keeps the media reserved before any render names it, and its release lets it go", () => {
+    const queue = newQueue();
+    const release = queue.holdMedia("media-0000001");
+    expect(queue.reservesMedia("media-0000001")).toBe(true);
+    release();
+    expect(queue.reservesMedia("media-0000001")).toBe(false);
+  });
+
+  test("releasing twice releases nothing of another hold of the same media", () => {
+    const queue = newQueue();
+    const first = queue.holdMedia("media-0000001");
+    queue.holdMedia("media-0000001");
+    first();
+    first();
+    expect(queue.reservesMedia("media-0000001")).toBe(true);
+  });
+
+  test("a hold and a render of the same media are independent: the media stays held until both let go", async () => {
+    const queue = newQueue();
+    const release = queue.holdMedia("media-0000001");
+    const a = spec(1, [], ["media-0000001"]);
+    queue.submit(a);
+    release();
+    expect(queue.reservesMedia("media-0000001")).toBe(true);
+    a.finish(resultOf(1));
+    await queue.idle();
+    expect(queue.reservesMedia("media-0000001")).toBe(false);
+  });
+
+  test("holds only the media it was given", () => {
+    const queue = newQueue();
+    queue.holdMedia("media-0000001");
+    expect(queue.reservesMedia("media-0000002")).toBe(false);
+  });
+});

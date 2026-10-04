@@ -125,6 +125,15 @@ async function headOf(path: string): Promise<Uint8Array> {
   }
 }
 
+/** One stored media as `lookup` answers it. */
+export interface MediaLookup {
+  readonly summary: MediaSummary;
+  readonly path: string;
+  readonly sha256: string;
+  readonly bytes: number;
+  readonly format: MediaFormat;
+}
+
 export class MediaService {
   readonly #deps: MediaServiceDeps;
   /** One staging area and record index per library, by the folder's root. */
@@ -275,10 +284,20 @@ export class MediaService {
   /**
    * One stored media as the engine itself reads it (never a window): its summary, the file's path, and what the record holds to check the
    * file against (size, sha256, container). Undefined for an id the library does not hold, or holds as another kind than the one asked for.
-   * This is the seam of the per-kind tasks: 3f.2's referential check («own media exists and has the right kind»), and the render's copy of
-   * a stored file, which checks it again before it reads (3f.3b, 3f.4, 3f.5).
+   * This is the seam of the per-kind tasks: the referential check («own media exists and has the right kind»), and the render's copy of
+   * a stored file, which checks it again before it reads.
+   *
+   * `onFound` is the render's ADMISSION (3f.2, fix round 3 M1): it runs SYNCHRONOUSLY, in the same step that reads the record and before
+   * the answer travels back, so a render reserves the media with no await between the lookup and the reservation. `media.delete` takes a
+   * media out of the index in its first tick and only then asks the reserved provider, so a media is either found here and then refused
+   * to the delete (`in-use`), or already gone from this lookup. It is not called for a media that is not found; a throw from it is the
+   * lookup's own.
    */
-  async lookup(mediaId: string, kind?: MediaKind): Promise<{ summary: MediaSummary; path: string; sha256: string; bytes: number; format: MediaFormat } | undefined> {
+  async lookup(
+    mediaId: string,
+    kind?: MediaKind,
+    onFound?: (found: MediaLookup) => void,
+  ): Promise<MediaLookup | undefined> {
     return this.#deps.withLibrary(async (library) => {
       const area = this.#areaOf(library.root);
       await area.ready;
@@ -286,7 +305,9 @@ export class MediaService {
       const path = area.records.filePath(mediaId);
       const integrity = area.records.integrityOf(mediaId);
       if (summary === undefined || path === undefined || integrity === undefined || (kind !== undefined && summary.kind !== kind)) return undefined;
-      return { summary, path, ...integrity };
+      const found = { summary, path, ...integrity };
+      onFound?.(found);
+      return found;
     });
   }
 
