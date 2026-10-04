@@ -89,7 +89,7 @@ const DECODERS: Readonly<Record<VideoCodec, string>> = { h264: "h264", hevc: "he
  * keeps the samples from the keyframe before the cut and cuts into them with an edit gives the EDIT's length, not the samples'; an empty edit
  * before the segment gives nothing (the picture starts later, it is not longer); B-frames make x264 write an edit that starts a little way in and
  * is as long as the samples, and the count is the samples'. It stops at whichever of the edit and the samples runs out first.
- * - the most it can be: the shorter of the edit and the samples;
+ * - the most it can be: the samples' length with no edit, the edit's with one (the samples' length by `stts` can be shorter than what is shown, a held last frame whose time lives in `ctts`; ffmpeg stops at the edit, and a forged long edit is refused as too long first);
  * - the least: the shorter of the edit and what is left of the samples after the edit's start;
  * and two frames of slack either way for the first and the last frame's rounding. A forged length (a `stts` that is short, an edit that is
  * long) lands outside this and fails the import.
@@ -99,7 +99,8 @@ export function expectedFrames(info: VideoInfo): { min: number; max: number } {
   const samples = video.durationTicks / video.timescale;
   const edit = video.edit === null ? samples : video.edit.durationTicks / info.mvhd.timescale;
   const start = video.edit === null ? 0 : video.edit.mediaTime / video.timescale;
-  const most = Math.min(edit, samples);
+  // With an edit the upper bound is the edit's: the samples' length (`stts`) can be shorter than what is shown (a VFR clip's last frame held by `ctts`).
+  const most = video.edit === null ? samples : edit;
   const least = Math.min(edit, Math.max(0, samples - start));
   return { min: Math.max(0, Math.floor(least * VIDEO_LIMITS.fps) - FRAME_SLACK), max: Math.ceil(most * VIDEO_LIMITS.fps) + FRAME_SLACK };
 }

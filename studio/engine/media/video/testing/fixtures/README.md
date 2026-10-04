@@ -44,6 +44,8 @@ And the ones real editors and encoders make (review round 2): edit lists.
 | `h264-copy-trim-ss0.5.mp4`, `-ss1.0`, `-ss1.9` | a 10 s clip with a keyframe every 2 s, cut with `-c copy` at 0.5 / 1.0 / 1.9 s for 3 s: 105 / 120 / 147 samples, an `elst` of 3.000 s from 0.5 / 1.0 / 1.9 s in | the picture is the EDIT's length (90 frames at 30 fps), not the samples' |
 | `h264-bframes.mp4`, `hevc-bframes.mp4` | x264 / x265 B-frames in MP4: a `ctts` and an `elst` of the clip's own length from media time 1024 of 15360 | the count is the samples' (60), and an edit that starts a little way in is not a trim |
 
+| `h264-vfr-held-last-frame-bframes.mp4` | a variable-rate clip (29 frames at 30 fps, the last held until 3 s) re-encoded by x264 with B-frames: the hold is in `ctts` | `stts` says about 1 s and the edit shows 3 s: the upper frame bound is the edit's |
+
 What ffmpeg 6.0 does with them, measured: it honours the edit list (the trims come out at 90 frames, not 105, 120 or 147; with a `ctts` and its
 compensating edit the count is the samples'; an empty edit before the segment adds no frames; an edit longer than the samples plays all the
 samples; one shorter cuts them). The importer's frame check is built from that (`expectedFrames`, `../../videoPlan.ts`).

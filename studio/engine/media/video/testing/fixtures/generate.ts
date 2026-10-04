@@ -142,6 +142,11 @@ try {
   ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=128x72:r=30:d=2", "-c:v", "libx265", "-x265-params", "bframes=4:pools=1:frame-threads=1:log-level=error", "-tag:v", "hvc1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "hbf.mp4")]);
   emit("hevc-bframes.mp4", join(work, "hbf.mp4"));
 
+  // 11. A variable-rate clip (a screen recording) whose last frame is HELD for two seconds, re-encoded by x264 with B-frames: the hold lives in the
+  // composition times (`ctts`), so the samples (`stts`) say about one second and the picture shows three.
+  ffmpeg(["-f", "lavfi", "-i", "testsrc2=s=128x72:r=30:d=1", "-vf", "setpts='if(lt(N,29),N/30,3)/TB'", "-fps_mode", "vfr", "-c:v", "libx264", "-bf", "3", "-x264-params", "threads=1", "-pix_fmt", "yuv420p", "-fflags", "+bitexact", join(work, "held.mp4")]);
+  emit("h264-vfr-held-last-frame-bframes.mp4", join(work, "held.mp4"));
+
   console.log(JSON.stringify(out, null, 2));
 } finally {
   rmSync(work, { recursive: true, force: true });

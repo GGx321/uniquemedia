@@ -213,9 +213,12 @@ describe("the frames a normalised clip must have", () => {
     expect(await expected(withVideo({ ...samples(3), edits: [{ duration: 2000, mediaTime: -1 }, { duration: 3000, mediaTime: 0 }] }))).toEqual(plain);
   });
 
-  test("an edit that claims more than the samples hold cannot raise the count past the samples", async () => {
-    const [, max] = await expected(withVideo({ ...samples(2), edits: [{ duration: 100_000, mediaTime: 0 }] }));
-    expect(max).toBeLessThanOrEqual(62);
+  test("an edit longer than the samples raises the upper bound to the edit's length (a held last frame whose time lives in ctts is longer than stts says)", async () => {
+    // Changed deliberately in round 3: the upper bound was the shorter of the edit and the samples, and a VFR clip with a long-held last frame,
+    // re-encoded with B-frames, makes ffmpeg play the hold (91 frames against an expected 32). The lower bound is unchanged.
+    const [min, max] = await expected(withVideo({ ...samples(2), edits: [{ duration: 3000, mediaTime: 0 }] }));
+    expect(max).toBe(92);
+    expect(min).toBe(58);
   });
 
   test("an edit that claims a short span of long samples is the short span", async () => {
