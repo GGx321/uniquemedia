@@ -1,10 +1,11 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import type { FileState, VideoSummary, CommandPayload, EngineError, UnsequencedEvent } from "../../shared/engine";
+import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, UnsequencedEvent } from "../../shared/engine";
 import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail } from "../../shared/engine";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { ownPhotoCells, ownPhotoIssues } from "../../shared/montage/ownPhotos";
+import { ownStickerCells, ownStickerIssues } from "../../shared/montage/ownStickers";
 import { trackIssues } from "../../shared/montage/trackIssues";
 import type { RenderTrackSource } from "../music/renderTrack";
 import { estimateBytesUpper } from "../../shared/montage";
@@ -26,6 +27,7 @@ import type { CommitFs } from "./commitFs";
 import { deleteVideo, findVideoRecord, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
 import { createRenderExecute, totalFramesOf, type RenderPlan, type SettleInput, type VideoRenderDeps } from "./execute";
 import { ownPhotoCopyName, ownPhotoSourceOf, type OwnPhotoSource } from "./ownPhotos";
+import { ownStickerSourceOf, type OwnStickerSource } from "./ownStickers";
 import { newHashBudget, type FileStateChecker } from "./fileState";
 import type { LayerDeps } from "./layers";
 import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
@@ -95,11 +97,11 @@ export interface VideoServiceDeps {
    */
   readonly tracks?: RenderTrackSource;
   /**
-   * The own media (3f.2): `videos.render` looks each own photo of a spec up as a PHOTO (`MediaService.lookup`) and reserves it on the queue in
-   * the same step; the job copies it, verified, into its own folder. Absent: no own media is held, so a spec that names an own photo is
-   * refused as `media-unavailable`.
+   * The own media (3f.2, 3f.5): `videos.render` looks each own photo of a spec up as a PHOTO and each own sticker as a STICKER
+   * (`MediaService.lookup`) and reserves it on the queue in the same step; the job copies it, verified, into its own folder. Absent: no own
+   * media is held, so a spec that names an own photo or sticker is refused as `media-unavailable`.
    */
-  readonly media?: { lookup(mediaId: string, kind: "photo", onFound?: (found: MediaLookup) => void): Promise<MediaLookup | undefined> };
+  readonly media?: { lookup(mediaId: string, kind: MediaKind, onFound?: (found: MediaLookup) => void): Promise<MediaLookup | undefined> };
   readonly newId: () => string;
   readonly now: () => Date;
   readonly emit: (event: UnsequencedEvent) => void;
@@ -296,10 +298,10 @@ export class VideoService {
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });
-    // 3f.2: the own photos the spec names are looked up and RESERVED here, each in the step that finds it (MediaService.lookup's onFound), so
-    // `media.delete` of one is refused IN_FLIGHT from that moment. The holds are given back whatever happens below: `submit` takes over
-    // with the queue's own reservation, and a refusal leaves nothing held.
-    const admission = await this.#admitOwnPhotos(spec);
+    // 3f.2, 3f.5: the own photos and stickers the spec names are looked up and RESERVED here, each in the step that finds it (MediaService.lookup's
+    // onFound), so `media.delete` of one is refused IN_FLIGHT from that moment. The holds are given back whatever happens below: `submit` takes
+    // over with the queue's own reservation, and a refusal leaves nothing held.
+    const admission = await this.#admitOwnMedia(spec);
     try {
       // Invariant 35: the export folder, checked NOW, before anything else about the render is looked at (a spec that is
       // valid in shape gets this answer whatever else is wrong with it); its marker's id is the one the job commits against.
@@ -313,9 +315,9 @@ export class VideoService {
       return await this.#deps.withLibrary((library) => {
         // The draft was read from the library that was open then; a render is queued in the one that is open now.
         if (source.library !== null && source.library !== library) throw new EngineFailure({ code: "NOT_FOUND", detail: `no montage draft ${source.montageId} in the open library` });
-        // The own photos were found in the library that was open when they were looked up: another one now holds none of them.
-        if (admission.sources.size > 0 && admission.library !== library) throw new EngineFailure({ code: "IN_FLIGHT", detail: "the library was switched while the render was being prepared" });
-        return this.#render(library, spec, source, renderTmpDir, check, admission.sources, { remaining, marginMs });
+        // The own media were found in the library that was open when they were looked up: another one now holds none of them.
+        if (admission.photos.size + admission.stickers.size > 0 && admission.library !== library) throw new EngineFailure({ code: "IN_FLIGHT", detail: "the library was switched while the render was being prepared" });
+        return this.#render(library, spec, source, renderTmpDir, check, admission.photos, admission.stickers, { remaining, marginMs });
       });
     } finally {
       admission.release();
@@ -323,43 +325,59 @@ export class VideoService {
   }
 
   /**
-   * The own photos of `spec`, each looked up as a PHOTO and held on the queue in the same step that finds it (`onFound` runs inside the
-   * lookup, so there is no await between the two, and `media.delete` takes a media out of lookup in its first tick before it asks the
-   * reserved provider: a media is either found here and then refused to the delete, or not found). A media that two cells use is looked up
-   * once. One that is not there (or is another kind) is `media-unavailable` at each of its cells: every hold already made is given back
-   * and the render is refused. `release` gives the holds back; calling it again changes nothing.
+   * The own photos and own stickers of `spec`, each looked up as its kind (a PHOTO, a STICKER) and held on the queue in the same step that finds
+   * it (`onFound` runs inside the lookup, so there is no await between the two, and `media.delete` takes a media out of lookup in its first tick
+   * before it asks the reserved provider: a media is either found here and then refused to the delete, or not found). A media that two cells or
+   * layers use is looked up once. One that is not there (or is another kind) is `media-unavailable` at each of its places (the photos' first, in
+   * clip order, then the stickers', in layer order): every hold already made is given back and the render is refused. `release` gives the holds
+   * back; calling it again changes nothing.
    */
-  async #admitOwnPhotos(spec: MontageDraft): Promise<{ sources: Map<string, OwnPhotoSource>; library: Library | null; release: () => void }> {
-    const sources = new Map<string, OwnPhotoSource>();
+  async #admitOwnMedia(spec: MontageDraft): Promise<{ photos: Map<string, OwnPhotoSource>; stickers: Map<string, OwnStickerSource>; library: Library | null; release: () => void }> {
+    const photos = new Map<string, OwnPhotoSource>();
+    const stickers = new Map<string, OwnStickerSource>();
     const holds: (() => void)[] = [];
     const release = (): void => {
       for (const hold of holds.splice(0)) hold();
     };
-    const cells = ownPhotoCells(spec);
-    if (cells.length === 0) return { sources, library: null, release };
+    const photoCells = ownPhotoCells(spec);
+    const stickerCells = ownStickerCells(spec);
+    if (photoCells.length + stickerCells.length === 0) return { photos, stickers, library: null, release };
     const library = this.#deps.openLibrary();
     const media = this.#deps.media;
-    const asked = new Set<string>();
     try {
-      for (const { mediaId } of cells) {
-        if (asked.has(mediaId)) continue;
-        asked.add(mediaId);
+      const askedPhotos = new Set<string>();
+      for (const { mediaId } of photoCells) {
+        if (askedPhotos.has(mediaId)) continue;
+        askedPhotos.add(mediaId);
         if (media === undefined) continue;
         await media.lookup(mediaId, "photo", (found) => {
           // Synchronously, in the lookup's own step: the hold and the record it is a hold of.
           const source = ownPhotoSourceOf(found);
           if (source === null) return;
           holds.push(this.#deps.queue.holdMedia(mediaId));
-          sources.set(mediaId, source);
+          photos.set(mediaId, source);
         });
       }
-      const issues = ownPhotoIssues(spec, (mediaId) => sources.has(mediaId));
+      const askedStickers = new Set<string>();
+      for (const { mediaId } of stickerCells) {
+        if (askedStickers.has(mediaId)) continue;
+        askedStickers.add(mediaId);
+        if (media === undefined) continue;
+        await media.lookup(mediaId, "sticker", (found) => {
+          // The same step, for a sticker.
+          const source = ownStickerSourceOf(found);
+          if (source === null) return;
+          holds.push(this.#deps.queue.holdMedia(mediaId));
+          stickers.set(mediaId, source);
+        });
+      }
+      const issues = [...ownPhotoIssues(spec, (mediaId) => photos.has(mediaId)), ...ownStickerIssues(spec, (mediaId) => stickers.has(mediaId))];
       if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues: issues.slice(0, MAX_MONTAGE_ISSUES) });
     } catch (error) {
       release();
       throw error;
     }
-    return { sources, library, release };
+    return { photos, stickers, library, release };
   }
 
   /**
@@ -397,6 +415,7 @@ export class VideoService {
     renderTmpDir: string,
     check: Extract<ExportRootCheck, { ok: true }>,
     ownPhotos: ReadonlyMap<string, OwnPhotoSource>,
+    ownStickers: ReadonlyMap<string, OwnStickerSource>,
     time: { remaining(): number; marginMs: number },
   ): Promise<{ jobId: string; videoId: string }> {
     const deps = this.#deps;
@@ -470,6 +489,7 @@ export class VideoService {
         return own === undefined ? undefined : { path: join(renderTmpDir, jobId, ownPhotoCopyName(own.mediaId)), width: own.width, height: own.height };
       },
       ownPhotos: [...ownPhotos.values()],
+      ownStickers: [...ownStickers.values()],
       audio: { kind: "silent" },
       // The id and the start only: the file's path comes from the track store when the job runs (invariant 31).
       ...(filled.music?.source === "trending" ? { track: { trackId: filled.music.trackId, startMs: filled.music.startMs } } : {}),
@@ -494,7 +514,7 @@ export class VideoService {
       ...deps.renderOverrides,
     });
     // ONE number of frames: the queue's total, and the verifier's expectation (execute), come from the same function.
-    const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), mediaIds: [...ownPhotos.keys()], execute: execute(plan) });
+    const result = deps.queue.submit({ jobId, ref: { videoId, avatarId: spec.avatarId, montageId }, totalFrames: totalFramesOf(filled.clips), photoIds: scenePhotoIds(filled.clips), mediaIds: [...ownPhotos.keys(), ...ownStickers.keys()], execute: execute(plan) });
     if (!result.ok) {
       if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(result.limit) });
       const held = new Set(result.photoIds);

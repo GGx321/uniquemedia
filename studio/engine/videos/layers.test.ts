@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,9 @@ import type { CaptionRequest } from "../text/caption/types";
 import { RasterError } from "../text/rasterTypes";
 import type { PreviewGate } from "../text/preview";
 import type { GateCaption } from "../text/worker/textGate";
+import { flatApng } from "../media/stickerFixtures.testkit";
 import { resolveLayers, type LayerDeps } from "./layers";
+import type { OwnStickerSource } from "./ownStickers";
 import { StickerAssetError, type StickerAssets } from "./stickerAssets";
 useNativeGlobals();
 
@@ -200,9 +203,115 @@ describe("resolveLayers: a built-in sticker", () => {
     expect(failure.engineError.detail).not.toContain("/");
   });
 
-  test("an own sticker is refused: own media arrive in 3f", async () => {
-    const failure = await failureOf(resolveLayers([sticker(1, { sticker: { source: "own", mediaId: "media-0000001" } })], JOB, rig().deps, signal));
-    expect(failure.engineError.code).toBe("INTERNAL");
+});
+
+// 3f.5: an own sticker is read as a built-in one is, from a copy the render verified (the record's size and sha256 on the exact bytes, the strict
+// APNG reader, the record's canvas and loop), and written into the job's folder like the others. Its box is sized from ITS canvas, which need not be square.
+describe("resolveLayers: an own sticker", () => {
+  let dir: string | undefined;
+  afterEach(() => {
+    if (dir !== undefined) rmSync(dir, { recursive: true, force: true });
+    dir = undefined;
+  });
+  const folder = (): string => (dir = mkdtempSync(join(tmpdir(), "studio-own-layers-")));
+
+  const ownLayer = (k: number, mediaId: string, over: Partial<Extract<Layer, { kind: "sticker" }>> = {}) => sticker(k, { sticker: { source: "own", mediaId }, ...over });
+
+  /** A stored own sticker: a real two-frame APNG of 12 x 8, one slot a frame, at a path in a folder of its own. */
+  function stored(mediaId: string, over: Partial<OwnStickerSource> = {}, bytes: Uint8Array = flatApng([[255, 0, 0, 255], [0, 255, 0, 255]], { width: 12, height: 8 })): OwnStickerSource {
+    const path = join(folder(), `${mediaId}.png`);
+    writeFileSync(path, bytes);
+    return { mediaId, path, sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length, width: 12, height: 8, loopFrames: 2, ...over };
+  }
+
+  const sourcesOf = (...list: OwnStickerSource[]): ReadonlyMap<string, OwnStickerSource> => new Map(list.map((s) => [s.mediaId, s]));
+
+  test("is an APNG overlay in the job folder, scaled to its box, with the STORED loop and its own canvas", async () => {
+    const own = stored("media-0000001");
+    const layer = ownLayer(1, "media-0000001", { startMs: 600, endMs: 2_400, size: 0.3 });
+    const { overlays } = await resolveLayers([layer], JOB, rig().deps, signal, sourcesOf(own));
+    expect(overlays).toEqual([
+      { path: join(JOB, "sticker-00.apng"), format: "apng", box: stickerBox(layer, { w: 12, h: 8 }), resize: true, startFrame: 18, endFrame: 72, loopFrames: 2, sourceSize: { w: 12, h: 8 } },
+    ]);
+  });
+
+  test("its box follows its canvas: a 12 x 8 sticker is wider than it is high", async () => {
+    const own = stored("media-0000001");
+    const { overlays } = await resolveLayers([ownLayer(1, "media-0000001", { size: 0.6 })], JOB, rig().deps, signal, sourcesOf(own));
+    expect(overlays[0]?.box).toMatchObject({ w: 648, h: 432 });
+  });
+
+  test("the overlay names a file in the job folder, never the library file", async () => {
+    const own = stored("media-0000001");
+    const { overlays } = await resolveLayers([ownLayer(1, "media-0000001")], JOB, rig().deps, signal, sourcesOf(own));
+    expect(overlays[0]?.path.startsWith(JOB)).toBe(true);
+    expect(overlays[0]?.path).not.toBe(own.path);
+  });
+
+  test("stages the verified bytes under the overlay's name, byte for byte", async () => {
+    const own = stored("media-0000001");
+    const job = folder();
+    const resolved = await resolveLayers([ownLayer(1, "media-0000001")], job, rig().deps, signal, sourcesOf(own));
+    await resolved.stage(job);
+    expect(new Uint8Array(readFileSync(join(job, "sticker-00.apng")))).toEqual(new Uint8Array(readFileSync(own.path)));
+  });
+
+  test("a change to the library file after it was verified does not reach the staged copy", async () => {
+    const own = stored("media-0000001");
+    const job = folder();
+    const resolved = await resolveLayers([ownLayer(1, "media-0000001")], job, rig().deps, signal, sourcesOf(own));
+    const before = new Uint8Array(readFileSync(own.path));
+    writeFileSync(own.path, new Uint8Array(own.bytes).fill(3));
+    await resolved.stage(job);
+    expect(new Uint8Array(readFileSync(join(job, "sticker-00.apng")))).toEqual(before);
+  });
+
+  test("keeps the spec's order beside text and built-in layers, each file named after its place", async () => {
+    const own = stored("media-0000001");
+    const { overlays } = await resolveLayers([text(1), ownLayer(2, "media-0000001"), sticker(3)], JOB, rig().deps, signal, sourcesOf(own));
+    expect(overlays.map((o) => o.path)).toEqual([join(JOB, "text-00.png"), join(JOB, "sticker-01.apng"), join(JOB, "sticker-02.apng")]);
+  });
+
+  test("two layers that use one media each get their own file", async () => {
+    const own = stored("media-0000001");
+    const { overlays } = await resolveLayers([ownLayer(1, "media-0000001"), ownLayer(2, "media-0000001")], JOB, rig().deps, signal, sourcesOf(own));
+    expect(overlays.map((o) => o.path)).toEqual([join(JOB, "sticker-00.apng"), join(JOB, "sticker-01.apng")]);
+  });
+
+  test("what it gives is what the layer pass accepts", async () => {
+    const own = stored("media-0000001");
+    const { overlays } = await resolveLayers([ownLayer(1, "media-0000001", { x: 1, y: 1, startMs: 1_500, endMs: 3_000 })], JOB, rig().deps, signal, sourcesOf(own));
+    expect(() => buildLayerPass({ layers: overlays, totalFrames: 90, clipDir: JOB })).not.toThrow();
+  });
+
+  test("a file whose bytes are not the record's fails the render, with no path and no media id", async () => {
+    const own = stored("media-0000001");
+    writeFileSync(own.path, new Uint8Array(own.bytes).fill(1));
+    const failure = await failureOf(resolveLayers([ownLayer(1, "media-0000001")], JOB, rig().deps, signal, sourcesOf(own)));
+    expect(failure.engineError.code).toBe("RENDER_FAILED");
+    expect(JSON.stringify(failure.engineError)).not.toContain(own.path);
+    expect(JSON.stringify(failure.engineError)).not.toContain("media-0000001");
+  });
+
+  test("a sticker whose loop is not the record's fails the render", async () => {
+    const own = stored("media-0000001", { loopFrames: 9 });
+    expect((await failureOf(resolveLayers([ownLayer(1, "media-0000001")], JOB, rig().deps, signal, sourcesOf(own)))).engineError.code).toBe("RENDER_FAILED");
+  });
+
+  test("a layer whose media the admission did not hold fails the render rather than rendering without it", async () => {
+    const failure = await failureOf(resolveLayers([ownLayer(1, "media-0000001")], JOB, rig().deps, signal, sourcesOf()));
+    expect(failure.engineError.code).toBe("RENDER_FAILED");
+  });
+
+  test("with no own stickers given at all, an own layer fails the render the same way", async () => {
+    expect((await failureOf(resolveLayers([ownLayer(1, "media-0000001")], JOB, rig().deps, signal))).engineError.code).toBe("RENDER_FAILED");
+  });
+
+  test("a cancel stops it before the file is read", async () => {
+    const own = stored("media-0000001");
+    const controller = new AbortController();
+    controller.abort(new Error("stopped"));
+    await expect(resolveLayers([ownLayer(1, "media-0000001")], JOB, rig().deps, controller.signal, sourcesOf(own))).rejects.toThrow("stopped");
   });
 });
 

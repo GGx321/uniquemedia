@@ -30,7 +30,7 @@ describe("stickerIssues", () => {
     ]);
   });
 
-  test("an own sticker is not judged here: it stays not-yet-supported until 3f.5, and there is no store for it", () => {
+  test("an own sticker is not judged here: the library holds it, and `ownStickerIssues` asks (3f.5)", () => {
     expect(stickerIssues({ layers: [sticker(1, { source: "own", mediaId: "media-0000001" })] })).toEqual([]);
   });
 

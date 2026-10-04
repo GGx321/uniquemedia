@@ -731,6 +731,7 @@ export class Engine {
       openLibrary: () => this.library,
       focus: deps.montages?.focus ?? ((library) => this.#focusOf(library)),
       ownPhotos: (mediaIds) => this.#media.holding(mediaIds, "photo"),
+      ownStickers: (mediaIds) => this.#media.holding(mediaIds, "sticker"),
       ...(deps.musicTracks === undefined ? {} : { tracks: deps.musicTracks }),
       newId: deps.newId,
       now: () => new Date(deps.clock()),
