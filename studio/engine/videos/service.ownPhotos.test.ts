@@ -11,6 +11,7 @@ import type { MontageDraft } from "../../shared/engine/montage";
 import type { MediaLookup } from "../media/service";
 import { runRenderJob } from "../renderQueue/runner";
 import { ownPhotoCopyName } from "./ownPhotos";
+import type { VideoServiceDeps } from "./service";
 import { specOf, useWorld, type World } from "./testing/kit";
 import { fillingFocus, serviceRig, writingRun, type ServiceRig } from "./testing/serviceKit";
 useNativeGlobals();
@@ -86,7 +87,7 @@ const photoClip = (n: number, mediaId: string, durationMs = 4_000): MontageDraft
 const ownSpec = (w: World, mediaIds: string[], durationMs = 4_000): MontageDraft => ({ ...specOf(w.avatar.id, [], durationMs), clips: mediaIds.map((mediaId, i) => photoClip(i + 1, mediaId, durationMs)) });
 
 /** A rig whose ffmpeg is a recorder: every call's argv, and (at the first call) the private copies as they stand then. */
-function recordingRig(w: World, held: FakeMedia | undefined, extra: { gate?: Promise<void>; size?: number } = {}) {
+function recordingRig(w: World, held: FakeMedia | undefined, extra: { gate?: Promise<void>; size?: number; deps?: Partial<VideoServiceDeps> } = {}) {
   const calls: string[][] = [];
   const copies = new Map<string, Uint8Array>();
   const holder: { rig?: ServiceRig } = {};
@@ -103,7 +104,7 @@ function recordingRig(w: World, held: FakeMedia | undefined, extra: { gate?: Pro
     runDeps: { run },
     ...(extra.gate === undefined ? {} : { runJob: (async (input, deps) => (await extra.gate, runRenderJob(input, deps))) as typeof runRenderJob }),
   };
-  const rig = serviceRig(w, { ...(extra.size === undefined ? {} : { size: extra.size }), deps: { ...(held === undefined ? {} : { media: held.port }), renderOverrides } });
+  const rig = serviceRig(w, { ...(extra.size === undefined ? {} : { size: extra.size }), deps: { ...(held === undefined ? {} : { media: held.port }), renderOverrides, ...extra.deps } });
   holder.rig = rig;
   return { rig, calls, copies };
 }
@@ -311,6 +312,41 @@ describe("videos.render: an own photo that is not there", () => {
 
     expect(error.issues?.map((i) => i.code)).toEqual(["duration-too-short"]);
     expect(media.lookups).toEqual([]);
+  });
+});
+
+describe("videos.render: the media is held from the admission until the queue takes over, and until the render ends (review M2)", () => {
+  test("held while the export folder is being checked, held by the queue once the render is submitted, free when it ends", async () => {
+    const w = world();
+    let openExport: () => void = () => undefined;
+    const exportGate = new Promise<void>((resolve) => (openExport = resolve));
+    let askedExport: () => void = () => undefined;
+    const asked = new Promise<void>((resolve) => (askedExport = resolve));
+    let endRender: () => void = () => undefined;
+    const renderGate = new Promise<void>((resolve) => (endRender = resolve));
+    const media = await fakeMedia(w, () => rigRef.rig.queue, { "media-0000001": { bytes: JPEG(1), width: 1080, height: 1920 } });
+    // The export check hangs: the render is admitted (its media found and held) but not yet submitted.
+    const checkExport: VideoServiceDeps["checkExport"] = async () => {
+      askedExport();
+      await exportGate;
+      return { ok: true, root: w.exportRoot, rootId: w.rootId };
+    };
+    const { rig } = recordingRig(w, media, { gate: renderGate, deps: { checkExport } });
+    rigRef.rig = rig;
+    const rendering = rig.service.render({ spec: ownSpec(w, ["media-0000001"]) });
+    await asked;
+    // 1. During the wait nothing but the admission's hold keeps the media: no job exists yet.
+    expect(rig.queue.states()).toEqual([]);
+    expect(rig.queue.reservesMedia("media-0000001")).toBe(true);
+    openExport();
+    const { jobId } = await rendering;
+    // 2. Submitted: the queue's own reservation (the job names it) holds it, and the job is still running.
+    expect(rig.jobs.stateOf(jobId)?.status).toBe("running");
+    expect(rig.queue.reservesMedia("media-0000001")).toBe(true);
+    // 3. Ended: free.
+    endRender();
+    await rig.queue.idle();
+    expect(rig.queue.reservesMedia("media-0000001")).toBe(false);
   });
 });
 
