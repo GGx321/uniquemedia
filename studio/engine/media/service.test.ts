@@ -1209,7 +1209,8 @@ describe("a hung importer's late work file (fix round 3, M2)", () => {
     await r.service.settled();
     expect(r.jobs.stateOf(hung)).toMatchObject({ status: "cancelled" });
     late.resolve();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Waits for the late importer's own answer, not for a fixed time: its work-file call is disk work (slow on a loaded Windows runner).
+    for (let turn = 0; turn < 500 && lateOutcome === "not tried"; turn++) await new Promise((resolve) => setTimeout(resolve, 10));
     expect(lateOutcome).toBe("refused");
     expect(await staged()).toEqual([]);
   });
