@@ -8,7 +8,7 @@ import { Icon, type IconName, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, setDuration, totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, type GestureKit, SNAP_PX, trackPointer } from "./gesture";
 import { isTextEntry, ownsKeys } from "./keys";
-import { actionWhyLabel, clipAria, clockLabel, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel, VIDEO_PROBLEM_TAGS } from "./labels";
+import { actionWhyLabel, clipAria, clockLabel, layerAddLabel, PHOTO_PROBLEM_TAGS, secondsLabel, VIDEO_PROBLEM_TAGS, videoTag } from "./labels";
 import { addLayerRefusal, layerCap, layerCount } from "./layerOps";
 import { laneHeight, laneLayout, LayerTracks } from "./LayerTracks";
 import type { TrackVerdict } from "./musicOps";
@@ -20,7 +20,7 @@ import type { DraftSession } from "./session";
 import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, seekInto, snapEdge, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
 import { usePlayheadRest, usePlayheadStep, usePlaying } from "./usePlayhead";
 import { playheadStep, type TimelineState, useSelectionCommands } from "./useTimeline";
-import { durationLimitMs } from "./videoTrim";
+import { durationLimitMs, trimStartTo } from "./videoTrim";
 
 // 3d.3a: the timeline (Editor.dc.html's bottom band; the components sheet's «Линейка · плейхед · масштаб» and «Кадр на
 // главном треке»). The toolbar, the ruler and a scrubbable playhead, the track headers with their caps, and the
@@ -231,6 +231,28 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     return known.state === "known" ? durationLimitMs(clip, known.video.durationMs) : undefined;
   }
 
+  /**
+   * Clip `index` made `wantedMs` long by its `edge`: the right edge keeps the clip's start (an own video's start in its video too); the LEFT edge of an
+   * own video clip moves its start in the video with its end kept, as «Обрезка»'s left edge does (3f.3b fix round 1, L7); any other clip just takes
+   * the length (a photo has no source time to keep).
+   */
+  function resized(current: MontageDraft, index: number, edge: "start" | "end", wantedMs: number): MontageDraft {
+    const clip = current.clips[index];
+    if (clip === undefined) return current;
+    if (clip.kind === "video" && edge === "start") {
+      const known = videoLookup(videos, clip.mediaId);
+      // The left edge's limits do not depend on the video's end: an unknown video is held to the room and its start alone.
+      return trimStartTo(current, index, clip.trimStartMs + clip.durationMs - wantedMs, known.state === "known" ? known.video.durationMs : Number.POSITIVE_INFINITY);
+    }
+    return setDuration(current, index, wantedMs, limitOf(clip));
+  }
+
+  /** The longest clip `index` may get by its `edge`: an own video's left edge also stops at the video's start. */
+  function edgeMax(current: MontageDraft, index: number, clip: Clip, edge: "start" | "end"): number {
+    if (clip.kind === "video" && edge === "start") return Math.min(maxDurationMs(current, index), clip.trimStartMs + clip.durationMs);
+    return maxDurationMs(current, index, limitOf(clip));
+  }
+
   /** A layer the header's «+» just added: selected, and the focus goes to its block. */
   function focusAdded(layerId: string | null): void {
     if (layerId !== null) pendingFocus.current = { layerId };
@@ -372,9 +394,8 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
         if (edge === "end") wanted = snapEdge(start + wanted, [playhead], SNAP_PX / perMs) - start;
         const current = session.state.spec;
         const now = current.clips.findIndex((c) => c.clipId === clipId);
-        const clipNow = current.clips[now];
-        if (clipNow === undefined) return;
-        const next = setDuration(current, now, wanted, limitOf(clipNow));
+        if (now < 0) return;
+        const next = resized(current, now, edge, wanted);
         if (next !== current) session.edit(next, { mergeKey });
       },
       () => session.endMerge(),
@@ -390,20 +411,19 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
     // ←/→ follow the edge the way a drag does: the left edge pulled left makes the clip longer. ↑/↓ follow the value.
     const outward = edge === "start" ? "ArrowLeft" : "ArrowRight";
     const inward = edge === "start" ? "ArrowRight" : "ArrowLeft";
-    const limit = limitOf(clip);
     const targets: Record<string, number> = {
       [outward]: clip.durationMs + step,
       ArrowUp: clip.durationMs + step,
       [inward]: clip.durationMs - step,
       ArrowDown: clip.durationMs - step,
       Home: MIN_CLIP_MS,
-      End: maxDurationMs(current, index, limit),
+      End: edgeMax(current, index, clip, edge),
     };
     const wanted = targets[event.key];
     if (wanted === undefined) return;
     event.preventDefault();
     event.stopPropagation();
-    const next = setDuration(current, index, wanted, limit);
+    const next = resized(current, index, edge, wanted);
     // Held keys repeat: one undo step until the key is let go.
     heldKey.current = event.key;
     if (next !== current) session.edit(next, { mergeKey: `trim-key:${clipId}` });
@@ -580,8 +600,10 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                     const selected = resolved?.kind === "clip" && resolved.index === i;
                     const problem = flagged.get(i) ?? null;
                     // 3f.3b: an own video clip the render refuses (its video gone, or shorter than the clip asks) is flagged as a refused photo is.
-                    const videoProblem = clip.kind === "video" ? (videoProblems.get(clip.clipId) ?? null) : null;
                     const known = clip.kind === "video" ? videoLookup(videos, clip.mediaId) : null;
+                    const engineProblem = clip.kind === "video" ? (videoProblems.get(clip.clipId) ?? null) : null;
+                    // A video under the shortest clip is told apart (fix round 1, L3): no trim can help it.
+                    const videoProblem = engineProblem === null ? null : videoTag(engineProblem, known?.state === "known" ? known.video.durationMs : null);
                     const lifted = lift?.clipId === clip.clipId;
                     const tag =
                       problem !== null
@@ -595,7 +617,6 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                               : null;
                     const refused = problem !== null || videoProblem !== null;
                     const classes = ["ed-clip-slot", selected ? "ed-clip-on" : "", refused ? "ed-clip-flagged" : highlighted.includes(i) ? "ed-clip-warn" : "", lifted ? "ed-clip-lifted" : ""].filter(Boolean).join(" ");
-                    const max = maxDurationMs(spec, i, limitOf(clip));
                     const handle = (edge: "start" | "end") => (
                       <span
                         role="slider"
@@ -603,7 +624,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                         className={edge === "start" ? "hd hd-l" : "hd hd-r"}
                         aria-label={`Длительность кадра ${i + 1}: ${edge === "start" ? "левый" : "правый"} край`}
                         aria-valuemin={MIN_CLIP_MS}
-                        aria-valuemax={max}
+                        aria-valuemax={edgeMax(spec, i, clip, edge)}
                         aria-valuenow={clip.durationMs}
                         aria-valuetext={secondsLabel(clip.durationMs)}
                         onPointerDown={(e) => pressHandle(e, clip.clipId, edge)}

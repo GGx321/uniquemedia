@@ -114,15 +114,25 @@ describe("useOwnVideos", () => {
     const engine = new MockEngine({ scheduler, latencyMs: 0, preset: "demo" });
     const real = mockEngineClient(engine);
     const asked: Asked[] = [];
+    // A failing list is rejected when the test says so. Its handlers run in one batch when it fails (ours, then the hook's): awaiting what ours
+    // settles resumes the test only after that whole batch, the hook's handler included. No timer.
+    const failures: { reject: () => void; handled: Promise<unknown> }[] = [];
     const client: Pick<EngineClient, "request" | "subscribe"> = {
       request<T extends CommandType>(type: T, payload: CommandPayload<T>): Promise<EngineReply<T>> {
         asked.push({ type, payload });
-        if (options.fail === true && type === "media.list") return Promise.reject(new Error("the engine is gone"));
+        if (options.fail === true && type === "media.list") {
+          let reject = (): void => undefined;
+          const failing = new Promise<EngineReply<T>>((_, no) => {
+            reject = () => no(new Error("the engine is gone"));
+          });
+          failures.push({ reject, handled: failing.catch(() => undefined) });
+          return failing;
+        }
         return real.request(type, payload);
       },
       subscribe: (listener) => real.subscribe(listener),
     };
-    return { client, asked };
+    return { client, asked, failures };
   }
 
   const DEMO = "media-demo-0002";
@@ -145,15 +155,17 @@ describe("useOwnVideos", () => {
   });
 
   test("a list that cannot be read leaves every video unknown, never gone, and raises nothing", async () => {
-    const { client, asked } = watched({ fail: true });
+    const { client, asked, failures } = watched({ fail: true });
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
     try {
       const { result } = renderHook(() => useOwnVideos(client, [DEMO]));
       await waitFor(() => expect(lists(asked)).toHaveLength(1));
+      // The list fails now; awaiting our handler's result lets the hook's, queued with it, run first.
       await act(async () => {
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        failures[0]?.reject();
+        await failures[0]?.handled;
       });
       expect(videoLookup(result.current, DEMO)).toEqual({ state: "unknown" });
       expect(unhandled).toEqual([]);

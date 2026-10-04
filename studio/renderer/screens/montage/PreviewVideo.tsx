@@ -6,7 +6,7 @@ import { ownVideoUrl } from "../../lib/media";
 import { Icon } from "../../ui/Icon";
 import type { VideoLookup } from "./ownVideos";
 import type { PlayheadStore } from "./playhead";
-import { storedFrames, videoCorrection, videoTarget } from "./videoSync";
+import { peekTarget, storedFrames, videoCorrection, videoTarget } from "./videoSync";
 
 // 3f.3b: an own video clip in the preview (EditorMine.dc.html's centre, V4). A `<video>` of the clip's mezzanine, the very file the render cuts from, at
 // main's `studio-media://media/<mediaId>` (`ownVideoUrl`: the window names an id and never a path): ALWAYS muted (V4: the video's sound is never used),
@@ -47,9 +47,11 @@ export interface PreviewVideoProps {
   readonly window: Rect | null;
   /** The stored video's frame on screen: what the stand-in says. */
   readonly sourceFrame: number;
+  /** A frame «Обрезка» is dragging to (fix round 1, L8): shown at rest while the drag lasts, whatever the playhead. */
+  readonly peekFrame: number | null;
 }
 
-export function PreviewVideo({ spec, playhead, mediaId, video, window, sourceFrame }: PreviewVideoProps) {
+export function PreviewVideo({ spec, playhead, mediaId, video, window, sourceFrame, peekFrame }: PreviewVideoProps) {
   const { client } = useEngine();
   const url = ownVideoUrl(client, mediaId);
   const [failed, setFailed] = useState<string | null>(null);
@@ -62,9 +64,9 @@ export function PreviewVideo({ spec, playhead, mediaId, video, window, sourceFra
     <span className="pv-video-wrap" aria-hidden="true">
       <span className="pv-video-ground" style={placed} />
       {playable ? (
-        <VideoElement url={url} spec={spec} playhead={playhead} mediaId={mediaId} frames={storedFrames(known.durationMs)} style={placed} onFail={() => setFailed(url)} />
+        <VideoElement url={url} spec={spec} playhead={playhead} mediaId={mediaId} frames={storedFrames(known.durationMs)} peekFrame={peekFrame} style={placed} onFail={() => setFailed(url)} />
       ) : video.state === "gone" ? (
-        <VideoCard tone="warn" title="Файла больше нет" note="Это видео удалили из «Моих» — замените кадр." />
+        <VideoCard tone="warn" title="Файла больше нет" note="Это видео удалили из «Моих» — уберите этот кадр." />
       ) : failed !== null && failed === url ? (
         <VideoCard tone="warn" title="Видео не открылось" note={known?.name ?? null} />
       ) : (
@@ -101,18 +103,22 @@ interface VideoElementProps {
   readonly mediaId: string;
   /** The stored video's frames, from its record: a clip asking past them shows the last. */
   readonly frames: number;
+  /** A frame «Обрезка» is dragging to (fix round 1, L8): shown at rest instead of the playhead's while it lasts. */
+  readonly peekFrame: number | null;
   readonly style: CSSProperties | undefined;
   readonly onFail: () => void;
 }
 
 /**
  * The `<video>` itself, kept on the playhead by videoSync.ts on every change of the clock and every `seeked` / `loadedmetadata` of its own. The stage
- * re-renders it on every frame of a playback: what changes then is read through refs, so the element is set up once per file.
+ * re-renders it on every frame of a playback: what changes then is read through refs, so the element is set up once per file. The effect owns the
+ * element's source: it sets it, and on the way out takes it away and loads again, so the decoder is let go at once (fix round 1, L2; and a remount,
+ * as React's StrictMode makes, sets it again).
  */
-function VideoElement({ url, spec, playhead, mediaId, frames, style, onFail }: VideoElementProps) {
+function VideoElement({ url, spec, playhead, mediaId, frames, peekFrame, style, onFail }: VideoElementProps) {
   const ref = useRef<HTMLVideoElement>(null);
-  const latest = useRef({ spec, frames, onFail });
-  latest.current = { spec, frames, onFail };
+  const latest = useRef({ spec, frames, peekFrame, onFail });
+  latest.current = { spec, frames, peekFrame, onFail };
   /** The element's sync while it is set up: an edit that moves the clip's frames (a new trim) is shown without the playhead moving. */
   const resync = useRef<(() => void) | null>(null);
 
@@ -122,25 +128,51 @@ function VideoElement({ url, spec, playhead, mediaId, frames, style, onFail }: V
     // Never a sound: set as properties too (React's `muted` attribute alone is not the property on every engine).
     element.muted = true;
     element.defaultMuted = true;
+    element.setAttribute("src", url);
+    // An element that failed before anything could hear it (a fast 404, fix round 1, L1) is a stand-in at once; a later failure is `onError`'s.
+    if (element.error !== null) {
+      latest.current.onFail();
+      return;
+    }
     /** The element refused to play this file: no more seeks or tries until the file changes, only pauses. */
     let refused = false;
+    /** The offset in the video's time the element was put on last (fix round 1, M2): a different one while playing is a jump to seek to. */
+    let anchor: number | null = null;
+    /** How long the last seek made while playing took, in seconds: the next one is led by as much (a slow decoder, `MAX_SEEK_LEAD_SEC`). */
+    let lead = 0;
+    let seekStarted: number | null = null;
+    const seeking = (): void => {
+      seekStarted = element.paused ? null : performance.now();
+    };
+    const seeked = (): void => {
+      if (seekStarted !== null) lead = (performance.now() - seekStarted) / 1000;
+      seekStarted = null;
+    };
     const framesOf = (id: string): number | null => (id === mediaId ? latest.current.frames : null);
-    const fail = (): void => latest.current.onFail();
     const sync = (): void => {
-      const target = videoTarget(latest.current.spec, playhead.get(), framesOf);
+      const { spec: current, peekFrame: peek } = latest.current;
+      const onScreen = videoTarget(current, playhead.get(), framesOf);
+      // A frame «Обрезка» is dragging to wins over the playhead's, at rest.
+      const target = peek === null ? onScreen : peekTarget(onScreen, mediaId, peek);
       // The frame on screen is not this video's (the clip is going): it waits, paused.
       if (target === null || target.mediaId !== mediaId) {
         if (!element.paused) element.pause();
         return;
       }
-      const action = videoCorrection(target, {
-        currentTimeSec: element.currentTime,
-        paused: element.paused,
-        durationSec: element.duration,
-        seeking: element.seeking,
-        readyState: element.readyState,
-        rate: element.playbackRate,
-      });
+      const action = videoCorrection(
+        target,
+        {
+          currentTimeSec: element.currentTime,
+          paused: element.paused,
+          durationSec: element.duration,
+          seeking: element.seeking,
+          readyState: element.readyState,
+          rate: element.playbackRate,
+        },
+        anchor,
+        lead,
+      );
+      anchor = action.anchorMs;
       if (action.play === false) element.pause();
       if (refused) return;
       if (action.seekSec !== null) element.currentTime = action.seekSec;
@@ -155,22 +187,28 @@ function VideoElement({ url, spec, playhead, mediaId, frames, style, onFail }: V
     sync();
     resync.current = sync;
     const stop = playhead.subscribe(sync);
-    // A seek that ends, or the file's length and size becoming known, may leave the element short of the frame asked for last.
+    // A seek that ends, or the file's length and size becoming known, may leave the element short of the frame asked for last. A seek's own time is
+    // measured first, so the sync that follows it already leads by it.
+    element.addEventListener("seeking", seeking);
+    element.addEventListener("seeked", seeked);
     element.addEventListener("seeked", sync);
     element.addEventListener("loadedmetadata", sync);
-    element.addEventListener("error", fail);
     return () => {
       resync.current = null;
       stop();
+      element.removeEventListener("seeking", seeking);
+      element.removeEventListener("seeked", seeked);
       element.removeEventListener("seeked", sync);
       element.removeEventListener("loadedmetadata", sync);
-      element.removeEventListener("error", fail);
       element.pause();
+      // The decoder and the file's ranges are let go now, not when the element is collected.
+      element.removeAttribute("src");
+      element.load();
     };
   }, [playhead, url, mediaId]);
 
-  // The draft changed (a trim, a reorder, an undo): the frame the playhead asks for may be another one now.
-  useEffect(() => resync.current?.(), [spec, frames]);
+  // The draft changed (a trim, a reorder, an undo), or «Обрезка» drags to another frame: the frame to show may be another one now.
+  useEffect(() => resync.current?.(), [spec, frames, peekFrame]);
 
-  return <video ref={ref} className="pv-video" src={url} style={style} muted playsInline preload="auto" disablePictureInPicture tabIndex={-1} />;
+  return <video ref={ref} className="pv-video" style={style} muted playsInline preload="auto" disablePictureInPicture tabIndex={-1} onError={() => latest.current.onFail()} />;
 }

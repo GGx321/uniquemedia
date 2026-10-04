@@ -533,7 +533,7 @@ describe("a cell's crop by its face point", () => {
     expect(within(props()).getByText("Кадр 1 из 1")).toBeDefined();
     await flush();
     expect(callsOf(engine, "montages.save")).toHaveLength(0);
-    expect(within(cell()).getByText(/тяните/)).toBeDefined();
+    expect(within(preview()).getByText(/тяните/)).toBeDefined();
     drag(cell(), 0, 30, 11);
     const saved = await nextSave(engine);
     const first = saved.clips[0];

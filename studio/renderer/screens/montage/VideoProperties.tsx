@@ -1,12 +1,14 @@
-import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from "react";
-import { MONTAGE_ISSUE_MESSAGES_RU, type MontageDraft } from "../../../shared/engine";
+import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { MontageDraft } from "../../../shared/engine";
 import { MAX_TOTAL_MS, STEP_MS, videoClipCrop } from "../../../shared/montage";
 import { Icon } from "../../ui/Icon";
 import { roomMs, totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
-import { secondsLabel, trimOfLabel, trimRangeLabel, videoFactsLabel, videoRoomLabel } from "./labels";
+import { secondsLabel, trimOfLabel, trimRangeLabel, VIDEO_TAG_TEXTS, videoFactsLabel, videoRoomLabel, videoTag } from "./labels";
 import type { OwnVideo, VideoLookup, VideoProblem } from "./ownVideos";
 import type { DraftSession } from "./session";
+import { type TrimPeekStore, trimPeekFrame } from "./trimPeek";
+import { storedFrames } from "./videoSync";
 import { growMs, slideTrim, trimEndTo, trimLimits, trimStartTo, trimView } from "./videoTrim";
 
 // 3f.3b: the body of an own video clip's properties (EditorMine.dc.html, `sel = c3`; R16–R20), under ClipProperties' head:
@@ -48,9 +50,11 @@ export interface VideoClipBodyProps {
   readonly video: VideoLookup;
   /** What the render refuses the clip for (the engine's verdict, or the window's guess for an edit not judged yet). */
   readonly problem: VideoProblem | null;
+  /** Where «Обрезка» tells the preview which frame a drag is at (fix round 1, L8). */
+  readonly trimPeek: TrimPeekStore;
 }
 
-export function VideoClipBody({ session, spec, index, video, problem }: VideoClipBodyProps) {
+export function VideoClipBody({ session, spec, index, video, problem, trimPeek }: VideoClipBodyProps) {
   const clip = spec.clips[index];
   if (clip?.kind !== "video") return null;
   const known = video.state === "known" ? video.video : null;
@@ -62,7 +66,7 @@ export function VideoClipBody({ session, spec, index, video, problem }: VideoCli
       <div className="ed-pgroup">
         <span className="lbl">Обрезка</span>
         {known !== null ? (
-          <TrimStrip session={session} spec={spec} index={index} sourceMs={known.durationMs} />
+          <TrimStrip session={session} spec={spec} index={index} sourceMs={known.durationMs} peek={trimPeek} />
         ) : (
           <div className="ed-trim ed-trim-none">
             <span className="faint">{video.state === "gone" ? "Видео нет — обрезать нечего" : "Читаем видео…"}</span>
@@ -75,7 +79,7 @@ export function VideoClipBody({ session, spec, index, video, problem }: VideoCli
           </div>
         )}
         <span className="faint ed-props-note">
-          {known !== null ? videoRoomLabel(total, room, growMs(spec, index, known.durationMs)) : `ролик ${secondsLabel(total)} из ${MAX_TOTAL_MS / 1000}`}
+          {known !== null ? videoRoomLabel(total, room, growMs(spec, index, known.durationMs), known.durationMs) : `ролик ${secondsLabel(total)} из ${MAX_TOTAL_MS / 1000}`}
         </span>
       </div>
 
@@ -83,7 +87,7 @@ export function VideoClipBody({ session, spec, index, video, problem }: VideoCli
         // The music card's warning look (3d.5): the render's refusal in the contract's own words.
         <p className="ed-music-problem" role="status">
           <Icon name="alert" size={14} />
-          {MONTAGE_ISSUE_MESSAGES_RU[problem]}
+          {VIDEO_TAG_TEXTS[videoTag(problem, known?.durationMs ?? null)]}
         </p>
       )}
 
@@ -114,13 +118,25 @@ export function VideoClipBody({ session, spec, index, video, problem }: VideoCli
  * «Обрезка»: the strip, the window and its two edges, and the times under them. Drawn from what a drag holds while the pointer is down, else from the
  * draft; every edit is made on the session's CURRENT draft (another edit may have landed since this render).
  */
-function TrimStrip({ session, spec, index, sourceMs }: { session: DraftSession; spec: MontageDraft; index: number; sourceMs: number }) {
+function TrimStrip({ session, spec, index, sourceMs, peek }: { session: DraftSession; spec: MontageDraft; index: number; sourceMs: number; peek: TrimPeekStore }) {
   const strip = useRef<HTMLDivElement>(null);
   const gesture = useRef<(() => void) | null>(null);
   const heldKey = useRef<string | null>(null);
   /** Where a drag holds the clip's part while the pointer is down; null when nothing is dragged. */
   const [slip, setSlip] = useState<{ startMs: number; durationMs: number } | null>(null);
+  /** The strip as laid out (fix round 1, L9: the narrow window is judged on it); 0 until measured. */
+  const [stripPx, setStripPx] = useState(0);
   useEffect(() => () => gesture.current?.(), []);
+  useLayoutEffect(() => {
+    const element = strip.current;
+    if (element === null || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width !== undefined) setStripPx(width);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   const found = spec.clips[index];
   if (found?.kind !== "video") return null;
   const clip: VideoClip = found;
@@ -142,6 +158,12 @@ function TrimStrip({ session, spec, index, sourceMs }: { session: DraftSession; 
   function partOf(draft: MontageDraft): { startMs: number; durationMs: number } | null {
     const found = draft.clips.find((c) => c.clipId === clipId);
     return found?.kind === "video" ? { startMs: found.trimStartMs, durationMs: found.durationMs } : null;
+  }
+
+  /** What a drag holds now: drawn on the strip, and its edge's frame shown in the preview (fix round 1, L8); nothing is written to the draft. */
+  function hold(part: Part, held: { startMs: number; durationMs: number } | null): void {
+    setSlip(held);
+    peek.set(held === null ? null : { clipId, frame: trimPeekFrame(part === "end" ? "end" : "start", held, storedFrames(sourceMs)) });
   }
 
   function commit(next: MontageDraft | null, mergeKey?: string): void {
@@ -166,7 +188,7 @@ function TrimStrip({ session, spec, index, sourceMs }: { session: DraftSession; 
     // An edge moves at once; the window waits for a real drag, so a click on it changes nothing.
     let active = part !== "window";
     let last: number | null = part === "strip" ? wanted(startX) : null;
-    if (last !== null) setSlip(partOf(moved(what, last) ?? session.state.spec));
+    if (last !== null) hold(what, partOf(moved(what, last) ?? session.state.spec));
     gesture.current?.();
     gesture.current = trackPointer(
       event,
@@ -175,11 +197,11 @@ function TrimStrip({ session, spec, index, sourceMs }: { session: DraftSession; 
         active = true;
         last = wanted(move.clientX);
         const next = moved(what, last);
-        setSlip(next === null ? null : partOf(next));
+        hold(what, next === null ? null : partOf(next));
       },
       (end) => {
         gesture.current = null;
-        setSlip(null);
+        hold(what, null);
         // The system took the pointer: nothing changes.
         if (end === null || last === null) return;
         commit(moved(what, last));
@@ -226,7 +248,7 @@ function TrimStrip({ session, spec, index, sourceMs }: { session: DraftSession; 
 
   return (
     <>
-      <div className={["ed-trim", slip === null ? "" : "ed-trim-moving", view.width * STRIP_PX < NARROW_WINDOW_PX ? "ed-trim-narrow" : ""].filter(Boolean).join(" ")} ref={strip} onPointerDown={(e) => press(e, "strip")}>
+      <div className={["ed-trim", slip === null ? "" : "ed-trim-moving", view.width * (stripPx > 0 ? stripPx : STRIP_PX) < NARROW_WINDOW_PX ? "ed-trim-narrow" : ""].filter(Boolean).join(" ")} ref={strip} onPointerDown={(e) => press(e, "strip")}>
         <span className="ed-trim-film" aria-hidden="true">
           {Array.from({ length: STRIP_FRAMES }, (_, i) => (
             <span key={i} className="ed-trim-frame" />

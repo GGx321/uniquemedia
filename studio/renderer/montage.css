@@ -1127,6 +1127,13 @@
   line-height: 1.35;
 }
 
+/* The selected cell's point and its pill, in the cell's place but over the layers and the hints (3f.3b fix round 1, L6): a caption across the cell
+   never covers what dragging does. It takes no pointer: the cell under it does. */
+.pv-cell-hint {
+  position: absolute;
+  pointer-events: none;
+}
+
 /* an own video already 9:16 has nowhere to move: its pill sits in the middle, without a point */
 .pv-video-pill {
   top: 50%;

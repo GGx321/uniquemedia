@@ -24,6 +24,7 @@ import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { changeTouches, draftMediaIds } from "./montage/ownMedia";
 import { useOwnVideos, videoProblems } from "./montage/ownVideos";
+import { TrimPeekStore } from "./montage/trimPeek";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
 import { StickerTab, type StickerTabProps } from "./montage/StickerTab";
@@ -460,6 +461,8 @@ function DraftEditor({
   // screen, else the window's guess from the records.
   const ownVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId));
   const clipVideoProblems = videoProblems(state.spec, verdict, ownVideos);
+  // 3f.3b fix round 1 (L8): «Обрезка» tells the preview which frame a drag is at, without re-rendering the editor.
+  const [trimPeek] = useState(() => new TrimPeekStore());
   const focus = useFocusResolver(client, session, avatarId);
   /** A free photo dragged out of the bin. */
   const [dragPhoto, setDragPhoto] = useState<string | null>(null);
@@ -910,6 +913,7 @@ function DraftEditor({
             }}
             onSelectCell={(clip, cell) => selectClipAt(clip, cell)}
             videos={ownVideos}
+            trimPeek={trimPeek}
           />
           {selected?.kind === "clip" ? (
             <ClipProperties
@@ -924,6 +928,7 @@ function DraftEditor({
               onFillCell={fillCell}
               videos={ownVideos}
               videoProblems={clipVideoProblems}
+              trimPeek={trimPeek}
             />
           ) : selected?.kind === "layer" ? (
             <LayerProperties

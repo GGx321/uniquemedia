@@ -1,6 +1,6 @@
-import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Focus, Layer, MontageDraft, TextLayer } from "../../../shared/engine";
-import { FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, videoClipWindow, zonesHit } from "../../../shared/montage";
+import { clipRanges, FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, videoClipWindow, zonesHit } from "../../../shared/montage";
 import { ownStickerCells } from "../../../shared/montage/ownStickers";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
@@ -16,6 +16,7 @@ import { PreviewAudio } from "./PreviewAudio";
 import { PreviewVideo } from "./PreviewVideo";
 import { type OwnVideos, videoLookup } from "./ownVideos";
 import { storedFrames } from "./videoSync";
+import type { TrimPeekStore } from "./trimPeek";
 import { resolveSelection } from "./selection";
 import type { DraftSession } from "./session";
 import { StickerCanvas } from "./StickerCanvas";
@@ -126,9 +127,11 @@ export interface PreviewProps {
   readonly onSelectCell: (clip: number, cell: number) => void;
   /** 3f.3b: the own videos the draft's clips play (their records: the stored size the crop is cut from). */
   readonly videos: OwnVideos;
+  /** 3f.3b fix round 1 (L8): the frame «Обрезка» is dragging to, shown while the drag lasts. */
+  readonly trimPeek: TrimPeekStore;
 }
 
-export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos }: PreviewProps) {
+export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: PreviewProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const [zones, setZones] = useState(true);
   const [bars, setBars] = useState(true);
@@ -164,6 +167,7 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
             onFillCell={onFillCell}
             onSelectCell={onSelectCell}
             videos={videos}
+            trimPeek={trimPeek}
           />
         )}
       </div>
@@ -202,10 +206,11 @@ interface StageProps {
   readonly onFillCell: (clip: number, cell: number, photoId: string) => void;
   readonly onSelectCell: (clip: number, cell: number) => void;
   readonly videos: OwnVideos;
+  readonly trimPeek: TrimPeekStore;
 }
 
 /** The frame at the playhead: the one part of the editor that re-renders on every frame of a playback. */
-function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, focusPending, dragPhoto, onFillCell, onSelectCell, videos }: StageProps) {
+function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: StageProps) {
   const { client } = useEngine();
   const textPreviews = useTextPreviews();
   // The owner's own stickers by media id (3f.5): the record each own-sticker layer is drawn from.
@@ -219,8 +224,14 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
   const heldKey = useRef<string | null>(null);
   useEffect(() => () => gesture.current?.(), []);
 
+  // 3f.3b fix round 1 (L8): while «Обрезка» is dragged, the stage shows the clip being trimmed (from its first frame on the timeline, whatever the
+  // playhead), and its video the frame the drag is at.
+  const peek = useSyncExternalStore(trimPeek.subscribe, trimPeek.get);
   const live = liveSpec(spec, drag);
-  const frame = Math.min(playheadFrame, Math.max(0, totalFrames(live.clips) - 1));
+  const peekIndex = peek === null ? -1 : live.clips.findIndex((c) => c.kind === "video" && c.clipId === peek.clipId);
+  const peekRange = peekIndex < 0 ? undefined : clipRanges(live.clips)[peekIndex];
+  const frame = peekRange !== undefined ? peekRange.startFrame : Math.min(playheadFrame, Math.max(0, totalFrames(live.clips) - 1));
+  const peekFrame = peek !== null && peekRange !== undefined ? peek.frame : null;
   const mock = client.kind === "mock";
   // An own video's stored size is its record's (3f.3b): the crop is cut from it before the element has a frame, and in the mock, which has none.
   const videoSize = (mediaId: string): Size | null => {
@@ -233,6 +244,8 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
   const selected = resolveSelection(spec, timeline.selection);
   const selectedLayerId = selected?.kind === "layer" ? selected.layer.layerId : null;
   const selectedCell = selected?.kind === "clip" && view !== null && selected.index === view.index ? selected.cell : null;
+  /** The selected cell on screen, whose point and hint are drawn over everything. */
+  const hinted = selectedCell === null ? undefined : view?.cells[selectedCell];
 
   function startGesture(press: ReactPointerEvent, onMove: (event: PointerEvent) => void, onEnd: (event: PointerEvent | null) => void): void {
     gesture.current?.();
@@ -441,7 +454,8 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           mediaId={videoCell.content.mediaId}
           video={videoLookup(videos, videoCell.content.mediaId)}
           window={videoCell.window}
-          sourceFrame={videoSourceFrame(live, view.index, view.localFrame, videos)}
+          sourceFrame={peekFrame ?? videoSourceFrame(live, view.index, view.localFrame, videos)}
+          peekFrame={peekFrame}
         />
       )}
       {view?.cells.map((cell) => (
@@ -453,7 +467,6 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           avatarId={spec.avatarId}
           mock={mock}
           selected={selectedCell === cell.index}
-          pending={cell.content.kind === "scene" && focusPending.has(cell.content.photoId)}
           dropping={dragPhoto !== null && cell.content.kind === "empty"}
           onSize={(photoId, size) => setSizes((now) => (now.get(photoId)?.w === size.w && now.get(photoId)?.h === size.h ? now : new Map(now).set(photoId, size)))}
           onPointerDown={(e) => pressCell(e, cell)}
@@ -498,6 +511,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
       })}
       {zones && <ReelsZones />}
       {bars && <SlideBars spec={live} frame={frame} />}
+      {hinted !== undefined && <CellHint cell={hinted} pending={hinted.content.kind === "scene" && focusPending.has(hinted.content.photoId)} />}
     </div>
   );
 }
@@ -525,8 +539,6 @@ interface CellProps {
   readonly avatarId: string;
   readonly mock: boolean;
   readonly selected: boolean;
-  /** `montages.focus` is still judging the photo. */
-  readonly pending: boolean;
   /** A bin photo is being dragged and this empty cell can take it. */
   readonly dropping: boolean;
   readonly onSize: (photoId: string, size: Size) => void;
@@ -550,15 +562,11 @@ function cellLabel(clipNumber: number, cellCount: number, cell: CellView): strin
 /** Whether a crop can move at all: the window is smaller than the picture on some axis (an own video already 9:16 fills the frame whole). */
 const cropMoves = (window: Rect, source: Size): boolean => window.w < source.w || window.h < source.h;
 
-function PreviewCell({ clipNumber, cellCount, cell, avatarId, mock, selected, pending, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
+function PreviewCell({ clipNumber, cellCount, cell, avatarId, mock, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
   const { content, window, source } = cell;
   const classes = ["pv-cell", content.kind === "video" ? "pv-cell-video" : "", selected ? "pv-cell-on" : "", dropping ? "pv-cell-drop" : ""].filter(Boolean).join(" ");
   const style: CSSProperties = { ...boxStyle(cell.rect), opacity: cell.alphaPermille / 1000 };
   const url = content.kind === "scene" && !mock ? photoUrl(avatarId, content.photoId) : null;
-  // Where the face point (an own video's focus) sits in the cell on this frame (the crop follows it until it meets the picture's edge).
-  const framed = content.kind === "scene" || content.kind === "video";
-  const ring = framed && window !== null && source !== null && (content.kind === "scene" || cropMoves(window, source)) ? ringAt(content.focus, window, source) : null;
-  const pill = content.kind === "video" ? (window !== null && source !== null && !cropMoves(window, source) ? "видео 9:16 · весь кадр" : "тяните, чтобы сдвинуть") : pending ? "ищем лицо…" : content.kind === "scene" && content.focus === null ? "лицо не найдено · тяните" : "по лицу · тяните";
   return (
     <button
       type="button"
@@ -566,7 +574,8 @@ function PreviewCell({ clipNumber, cellCount, cell, avatarId, mock, selected, pe
       style={style}
       aria-label={cellLabel(clipNumber, cellCount, cell)}
       aria-pressed={selected}
-      aria-keyshortcuts={selected && framed ? "ArrowLeft ArrowRight ArrowUp ArrowDown Escape" : undefined}
+      // The arrows move only what can move (fix round 1, L9: never on an own video already 9:16).
+      aria-keyshortcuts={selected && framedOf(cell) !== null ? "ArrowLeft ArrowRight ArrowUp ArrowDown Escape" : undefined}
       onPointerDown={onPointerDown}
       onClick={(e) => {
         // A pointer's click came with its press; a key's (detail 0) did not.
@@ -603,21 +612,37 @@ function PreviewCell({ clipNumber, cellCount, cell, avatarId, mock, selected, pe
           перетащите фото
         </span>
       )}
-      {selected && (
-        <span className="pv-cell-frame" aria-hidden="true">
-          {ring !== null && (
-            <>
-              <span className="pv-face" style={{ left: pct(ring.x, 1), top: pct(ring.y, 1) }} />
-              {/* Under the face point; above it when the point is low in the cell (the zones' own pill sits in the bottom band). */}
-              <span className={ring.y > 0.7 ? "pill pv-face-pill pv-face-pill-up" : "pill pv-face-pill"} style={{ left: pct(ring.x, 1), top: pct(ring.y, 1) }}>
-                {pill}
-              </span>
-            </>
-          )}
-          {ring === null && content.kind === "video" && window !== null && <span className="pill pv-face-pill pv-video-pill">{pill}</span>}
-        </span>
-      )}
+      {selected && <span className="pv-cell-frame" aria-hidden="true" />}
     </button>
+  );
+}
+
+/**
+ * The selected cell's face point (an own video's focus) and what dragging it does (V13), drawn OVER the layers and the hints (fix round 1, L6: a
+ * caption across the cell never covers it), in the cell's place on the frame; it takes no pointer.
+ */
+function CellHint({ cell, pending }: { cell: CellView; pending: boolean }) {
+  const { content, window, source } = cell;
+  if (content.kind !== "scene" && content.kind !== "video") return null;
+  if (window === null || source === null) return null;
+  // Where the point sits in the cell on this frame (the crop follows it until it meets the picture's edge).
+  const moves = content.kind === "scene" || cropMoves(window, source);
+  const ring = moves ? ringAt(content.focus, window, source) : null;
+  const pill = content.kind === "video" ? (moves ? "тяните, чтобы сдвинуть" : "видео 9:16 · весь кадр") : pending ? "ищем лицо…" : content.focus === null ? "лицо не найдено · тяните" : "по лицу · тяните";
+  return (
+    <span className="pv-cell-hint" aria-hidden="true" style={boxStyle(cell.rect)}>
+      {ring !== null ? (
+        <>
+          <span className="pv-face" style={{ left: pct(ring.x, 1), top: pct(ring.y, 1) }} />
+          {/* Under the face point; above it when the point is low in the cell (the zones' own pill sits in the bottom band). */}
+          <span className={ring.y > 0.7 ? "pill pv-face-pill pv-face-pill-up" : "pill pv-face-pill"} style={{ left: pct(ring.x, 1), top: pct(ring.y, 1) }}>
+            {pill}
+          </span>
+        </>
+      ) : (
+        <span className="pill pv-face-pill pv-video-pill">{pill}</span>
+      )}
+    </span>
   );
 }
 

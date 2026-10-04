@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { Montage, MontageDraft } from "../../../shared/engine";
+import { MONTAGE_ISSUE_MESSAGES_RU, type Montage, type MontageDraft } from "../../../shared/engine";
 import { NBSP } from "../../lib/format";
 import {
   actionWhyLabel,
@@ -26,8 +26,10 @@ import {
   trimOfLabel,
   trimRangeLabel,
   VIDEO_PROBLEM_TAGS,
+  VIDEO_TAG_TEXTS,
   videoFactsLabel,
   videoRoomLabel,
+  videoTag,
   whenLabel,
   clipAria,
 } from "./labels";
@@ -276,10 +278,23 @@ describe("an own video clip (3f.3b)", () => {
   });
 
   test("what is left of the 15 s for this clip, as far as its video goes", () => {
-    expect(videoRoomLabel(9_600, 5_400, 5_400)).toBe(nb("ролик 9.6 с из 15 · кадр можно удлинить ещё на 5.4 с"));
-    expect(videoRoomLabel(9_600, 5_400, 1_200)).toBe(nb("ролик 9.6 с из 15 · кадр можно удлинить ещё на 1.2 с — дальше видео кончается"));
-    expect(videoRoomLabel(9_600, 5_400, 0)).toBe(nb("ролик 9.6 с из 15 · видео уже целиком в кадре"));
-    expect(videoRoomLabel(15_000, 0, 0)).toBe(nb("ролик 15.0 с из 15 · длиннее кадр уже не станет"));
+    expect(videoRoomLabel(9_600, 5_400, 5_400, 14_000)).toBe(nb("ролик 9.6 с из 15 · кадр можно удлинить ещё на 5.4 с"));
+    expect(videoRoomLabel(9_600, 5_400, 1_200, 6_400)).toBe(nb("ролик 9.6 с из 15 · кадр можно удлинить ещё на 1.2 с — дальше видео заканчивается"));
+    expect(videoRoomLabel(9_600, 5_400, 0, 2_000)).toBe(nb("ролик 9.6 с из 15 · видео уже целиком в кадре"));
+    expect(videoRoomLabel(15_000, 0, 0, 14_000)).toBe(nb("ролик 15.0 с из 15 · длиннее кадр уже не станет"));
+  });
+
+  test("fix round 1 (L3): a video shorter than the shortest clip (0.5 s) is told apart: it cannot be in the montage at all", () => {
+    expect(videoRoomLabel(4_500, 10_500, 0, 400)).toBe(nb("ролик 4.5 с из 15 · видео короче 0.5 с"));
+    expect(videoRoomLabel(4_500, 10_500, 0, 499)).toBe(nb("ролик 4.5 с из 15 · видео короче 0.5 с"));
+    expect(videoRoomLabel(4_500, 10_500, 0, 500)).toBe(nb("ролик 4.5 с из 15 · видео уже целиком в кадре"));
+    expect(videoTag("video-too-short", 400)).toBe("video-under-min");
+    expect(videoTag("video-too-short", 500)).toBe("video-too-short");
+    expect(videoTag("video-too-short", null)).toBe("video-too-short");
+    expect(videoTag("media-unavailable", 400)).toBe("media-unavailable");
+    expect(VIDEO_TAG_TEXTS["video-under-min"]).toBe(nb("Видео короче 0.5 с — в ролик его не поставить"));
+    expect(VIDEO_TAG_TEXTS["video-too-short"]).toBe(MONTAGE_ISSUE_MESSAGES_RU["video-too-short"]);
+    expect(VIDEO_TAG_TEXTS["media-unavailable"]).toBe(MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"]);
   });
 
   test("the clip block: «▶ видео» named by its file, or what the render refuses it for", () => {
@@ -288,6 +303,7 @@ describe("an own video clip (3f.3b)", () => {
     expect(clipAria(2, clip, null)).toBe(nb("Кадр 3: видео, 2.0 с"));
     expect(clipAria(2, clip, "video-too-short", "latte-pour.mov")).toBe(nb("Кадр 3: видео короче кадра, 2.0 с"));
     expect(clipAria(2, clip, "media-unavailable")).toBe(nb("Кадр 3: файла больше нет, 2.0 с"));
-    expect(VIDEO_PROBLEM_TAGS).toEqual({ "video-too-short": "⚠ видео короче кадра", "media-unavailable": "⚠ файла больше нет" });
+    expect(clipAria(2, clip, "video-under-min")).toBe(nb("Кадр 3: видео короче 0.5 с, 2.0 с"));
+    expect(VIDEO_PROBLEM_TAGS).toEqual({ "video-too-short": "⚠ видео короче кадра", "media-unavailable": "⚠ файла больше нет", "video-under-min": nb("⚠ видео короче 0.5 с") });
   });
 });

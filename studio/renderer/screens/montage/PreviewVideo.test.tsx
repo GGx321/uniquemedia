@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { act, render } from "@testing-library/react";
 import type { MontageDraft } from "../../../shared/engine";
 import { FRAME_H, FRAME_W, videoClipCrop } from "../../../shared/montage";
@@ -34,8 +34,10 @@ afterEach(() => {
 });
 
 /** The `<video>` with its media calls recorded: the test DOM plays nothing. */
-function recordVideo(element: HTMLVideoElement, options: { readyState?: number; refuse?: boolean } = {}) {
+function recordVideo(element: HTMLVideoElement, options: { readyState?: number; refuse?: boolean; abortFirst?: boolean } = {}) {
   const calls: string[] = [];
+  let aborts = options.abortFirst === true ? 1 : 0;
+  element.load = () => void calls.push("load");
   let time = 0;
   let paused = true;
   let seeking = false;
@@ -62,6 +64,11 @@ function recordVideo(element: HTMLVideoElement, options: { readyState?: number; 
     calls.push("play");
     if (options.refuse === true) return Promise.reject(new DOMException("no decoder for this file", "NotSupportedError"));
     paused = false;
+    // A pause that lands before the start does: the browser rejects that play() with AbortError.
+    if (aborts > 0) {
+      aborts -= 1;
+      return Promise.reject(new DOMException("The play() request was interrupted by a call to pause().", "AbortError"));
+    }
     return Promise.resolve();
   };
   element.pause = () => {
@@ -82,12 +89,20 @@ function recordVideo(element: HTMLVideoElement, options: { readyState?: number; 
   };
 }
 
-function mount(options: { client?: EngineClient; mediaId?: string; video?: VideoLookup; playhead?: PlayheadStore; window?: typeof CROP | null } = {}) {
+function mount(options: { client?: EngineClient; mediaId?: string; video?: VideoLookup; playhead?: PlayheadStore; window?: typeof CROP | null; spec?: MontageDraft; peekFrame?: number | null } = {}) {
   const playhead = options.playhead ?? new PlayheadStore(fakeFrameClock().clock);
   playhead.setTotal(4_000);
   const view = render(
     <EngineProvider client={options.client ?? windowClient()}>
-      <PreviewVideo spec={SPEC} playhead={playhead} mediaId={options.mediaId ?? MEDIA} video={options.video ?? KNOWN} window={options.window === undefined ? CROP : options.window} sourceFrame={54} />
+      <PreviewVideo
+        spec={options.spec ?? SPEC}
+        playhead={playhead}
+        mediaId={options.mediaId ?? MEDIA}
+        video={options.video ?? KNOWN}
+        window={options.window === undefined ? CROP : options.window}
+        sourceFrame={54}
+        peekFrame={options.peekFrame ?? null}
+      />
     </EngineProvider>,
   );
   mounted.push(() => view.unmount());
@@ -126,6 +141,7 @@ describe("the element", () => {
     const gone = mount({ video: { state: "gone" }, window: null });
     expect(gone.view.container.querySelector("video") === null).toBe(true);
     expect(gone.view.container.textContent).toContain("Файла больше нет");
+    expect(gone.view.container.textContent).toContain("Это видео удалили из «Моих» — уберите этот кадр.");
     const unknown = mount({ video: { state: "unknown" }, window: null });
     expect(unknown.view.container.querySelector("video") === null).toBe(true);
     expect(unknown.view.container.querySelector(".pv-video-ground") !== null).toBe(true);
@@ -181,7 +197,7 @@ describe("at rest: the exact stored frame", () => {
     const trimmed: MontageDraft = { ...SPEC, clips: [SPEC.clips[0] ?? photoClip(0, "photo-mia-0001"), { ...videoClip(1, 2_000, 3_000), mediaId: MEDIA }] };
     view.rerender(
       <EngineProvider client={windowClient()}>
-        <PreviewVideo spec={trimmed} playhead={playhead} mediaId={MEDIA} video={KNOWN} window={CROP} sourceFrame={90} />
+        <PreviewVideo spec={trimmed} playhead={playhead} mediaId={MEDIA} video={KNOWN} window={CROP} sourceFrame={90} peekFrame={null} />
       </EngineProvider>,
     );
     expect(video.calls).toEqual(["seek 54.5f", "seek 90.5f"]);
@@ -232,7 +248,7 @@ describe("playing", () => {
     expect(video.calls).toEqual(["seek 54.5f", "seek 54f", "play"]);
   });
 
-  test("the preview closing (the element going) stops it", () => {
+  test("the preview closing (the element going) stops it and lets its decoder go (fix round 1, L2: no source, loaded again)", () => {
     const fake = fakeFrameClock();
     const playhead = new PlayheadStore(fake.clock);
     const { view, element } = mount({ playhead });
@@ -240,6 +256,101 @@ describe("playing", () => {
     act(() => playhead.seek(2_000));
     act(() => playhead.toggle());
     view.unmount();
-    expect(video.calls.at(-1)).toBe("pause");
+    expect(video.calls.slice(-2)).toEqual(["pause", "load"]);
+    expect(videoOf(element).hasAttribute("src")).toBe(false);
+  });
+
+  test("a play() the clock's own pause interrupts (AbortError) is no refusal: the next play is tried, and at rest it still seeks (fix round 1, L5)", async () => {
+    const fake = fakeFrameClock();
+    const playhead = new PlayheadStore(fake.clock);
+    const { element } = mount({ playhead });
+    const video = recordVideo(videoOf(element), { abortFirst: true });
+    act(() => playhead.seek(2_000));
+    act(() => playhead.toggle());
+    act(() => playhead.toggle());
+    await act(async () => {
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    act(() => playhead.seek(2_400));
+    expect(video.calls.at(-1)).toBe("seek 66.5f");
+    act(() => playhead.toggle());
+    expect(video.calls.at(-1)).toBe("play");
+  });
+
+  test("a cut to a part that starts 0.2 s later in the video is a jump: the element is moved there at the cut (fix round 1, M2)", () => {
+    const fake = fakeFrameClock();
+    const playhead = new PlayheadStore(fake.clock);
+    // Two parts of the video: 0–2 s, then from 2.2 s.
+    const split: MontageDraft = draftSpec([{ ...videoClip(0, 2_000, 0), mediaId: MEDIA }, { ...videoClip(1, 2_000, 2_200), mediaId: MEDIA }]);
+    const { element } = mount({ playhead, spec: split });
+    const video = recordVideo(videoOf(element));
+    act(() => playhead.seek(1_500));
+    act(() => playhead.toggle());
+    // In step through A…
+    video.at(1.5 + 0.4);
+    act(() => fake.advance(400));
+    const before = video.calls.length;
+    // …and at B's first frame the element is still at A's 2.0 s: moved to 2.2 s, not nudged.
+    video.at(2.0);
+    act(() => fake.advance(100));
+    expect(video.calls.slice(before)).toEqual(["seek 66f"]);
+  });
+
+  test("a seek that took long while playing leads the next one by as much, so a slow decoder lands where the clock is (fix round 1, the open question)", () => {
+    let now = 1_000;
+    const clock = spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const fake = fakeFrameClock();
+      const playhead = new PlayheadStore(fake.clock);
+      const split: MontageDraft = draftSpec([{ ...videoClip(0, 2_000, 0), mediaId: MEDIA }, { ...videoClip(1, 2_000, 2_200), mediaId: MEDIA }]);
+      const { element } = mount({ playhead, spec: split });
+      const target = videoOf(element);
+      const video = recordVideo(target);
+      act(() => playhead.seek(1_500));
+      act(() => playhead.toggle());
+      // The start's seek, while playing, takes 340 ms.
+      video.hold();
+      act(() => {
+        target.dispatchEvent(new Event("seeking"));
+      });
+      now += 340;
+      video.land();
+      // At B's first frame the jump is sought 340 ms ahead of 2.2 s.
+      video.at(2.0);
+      act(() => fake.advance(500));
+      expect(video.calls.at(-1)).toBe("seek 76.2f");
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  test("the start of a slide or an edge being dragged in «Обрезка» is shown at once, whatever the playhead; let go, the playhead's frame is back (fix round 1, L8)", () => {
+    const playhead = new PlayheadStore(fakeFrameClock().clock);
+    const { view, element } = mount({ playhead });
+    const video = recordVideo(videoOf(element));
+    act(() => playhead.seek(2_000));
+    const peek = (frame: number | null): void =>
+      view.rerender(
+        <EngineProvider client={windowClient()}>
+          <PreviewVideo spec={SPEC} playhead={playhead} mediaId={MEDIA} video={KNOWN} window={CROP} sourceFrame={54} peekFrame={frame} />
+        </EngineProvider>,
+      );
+    peek(160);
+    expect(video.calls.at(-1)).toBe("seek 160.5f");
+    peek(null);
+    expect(video.calls.at(-1)).toBe("seek 54.5f");
+  });
+
+  test("an element that failed before its listener could hear it (a fast 404) is a stand-in, not a blank frame (fix round 1, L1)", () => {
+    const failed = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "error");
+    Object.defineProperty(HTMLMediaElement.prototype, "error", { configurable: true, get: () => ({ code: 4, message: "not found" }) });
+    try {
+      const { view } = mount();
+      expect(view.container.querySelector("video") === null).toBe(true);
+      expect(view.container.textContent).toContain("Видео не открылось");
+    } finally {
+      if (failed === undefined) Reflect.deleteProperty(HTMLMediaElement.prototype, "error");
+      else Object.defineProperty(HTMLMediaElement.prototype, "error", failed);
+    }
   });
 });

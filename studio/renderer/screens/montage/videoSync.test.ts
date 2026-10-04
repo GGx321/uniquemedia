@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HARD_DRIFT_MS, HAVE_FUTURE_DATA, NUDGE_RATE } from "./audioSync";
-import { HAVE_METADATA, storedFrames, videoCorrection, videoFrameAt, type VideoState, videoTarget } from "./videoSync";
+import { HAVE_METADATA, MAX_SEEK_LEAD_SEC, peekTarget, storedFrames, videoCorrection, videoFrameAt, type VideoState, videoTarget } from "./videoSync";
 import { draftSpec, photoClip, videoClip } from "./testkit";
 
 // 3f.3b: an own video clip in the preview. The `<video>` element of the clip's mezzanine follows the playhead clock, which is the master (3d.4):
@@ -28,7 +28,7 @@ describe("videoTarget: which stored frame the playhead asks for", () => {
 
   test("at rest on the clip's first frame: the trim's frame, sought to its middle", () => {
     // 1.8 s into the video is frame 54; the middle of it is 54.5 / 30 s.
-    expect(videoTarget(spec, rest(2_000), unknown)).toEqual({ clipId: "clip-002", mediaId: MEDIA, play: false, frame: 54, atSec: 54.5 / 30 });
+    expect(videoTarget(spec, rest(2_000), unknown)).toEqual({ clipId: "clip-002", mediaId: MEDIA, play: false, offsetMs: -200, frame: 54, atSec: 54.5 / 30 });
   });
 
   test("at rest inside the clip: the trim plus the frame's place in the clip, frame-exact", () => {
@@ -45,7 +45,7 @@ describe("videoTarget: which stored frame the playhead asks for", () => {
   });
 
   test("while playing: the continuous time in the video, and it plays", () => {
-    expect(videoTarget(spec, playing(2_416.5), unknown)).toEqual({ clipId: "clip-002", mediaId: MEDIA, play: true, frame: 54 + 12, atSec: (1_800 + 416.5) / 1000 });
+    expect(videoTarget(spec, playing(2_416.5), unknown)).toEqual({ clipId: "clip-002", mediaId: MEDIA, play: true, offsetMs: -200, frame: 54 + 12, atSec: (1_800 + 416.5) / 1000 });
   });
 
   test("a playback stopped by the end does not play", () => {
@@ -81,56 +81,140 @@ describe("storedFrames and videoFrameAt", () => {
     expect(videoFrameAt(61.999 / 30)).toBe(61);
     expect(videoFrameAt(2.0333333333333332)).toBe(61);
   });
+
+  test("every frame's own start reads as that frame, those whose n / 30 × 30 floats below n included (123, 245: the tolerance)", () => {
+    expect(Math.floor((123 / 30) * 30)).toBe(122);
+    expect(videoFrameAt(123 / 30)).toBe(123);
+    expect(videoFrameAt(245 / 30)).toBe(245);
+    const wrong: number[] = [];
+    // Three minutes of frames, the longest own video.
+    for (let n = 0; n < 5_400; n++) if (videoFrameAt(n / 30) !== n || videoFrameAt((n + 0.5) / 30) !== n) wrong.push(n);
+    expect(wrong).toEqual([]);
+  });
 });
 
 describe("videoCorrection: at rest, the exact frame", () => {
-  const target = { clipId: "clip-002", mediaId: MEDIA, play: false, frame: 66, atSec: 66.5 / 30 };
+  const target = { clipId: "clip-002", mediaId: MEDIA, play: false, frame: 66, offsetMs: -200, atSec: 66.5 / 30 };
 
   test("a playing element is paused and sought to the frame", () => {
-    expect(videoCorrection(target, element({ paused: false, currentTimeSec: 2.31 }))).toEqual({ play: false, seekSec: 66.5 / 30, rate: 1 });
+    expect(videoCorrection(target, element({ paused: false, currentTimeSec: 2.31 }))).toEqual({ play: false, seekSec: 66.5 / 30, rate: 1, anchorMs: -200 });
   });
 
   test("an element already showing that frame is left alone (no seek per frame of a held playhead)", () => {
-    expect(videoCorrection(target, element({ currentTimeSec: 66.5 / 30 }))).toEqual({ play: null, seekSec: null, rate: 1 });
-    expect(videoCorrection(target, element({ currentTimeSec: 66 / 30 }))).toEqual({ play: null, seekSec: null, rate: 1 });
+    expect(videoCorrection(target, element({ currentTimeSec: 66.5 / 30 }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
+    expect(videoCorrection(target, element({ currentTimeSec: 66 / 30 }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
   });
 
   test("another frame is sought, even one frame off", () => {
-    expect(videoCorrection(target, element({ currentTimeSec: 65.5 / 30 }))).toEqual({ play: null, seekSec: 66.5 / 30, rate: 1 });
-    expect(videoCorrection(target, element({ currentTimeSec: 67 / 30 }))).toEqual({ play: null, seekSec: 66.5 / 30, rate: 1 });
+    expect(videoCorrection(target, element({ currentTimeSec: 65.5 / 30 }))).toEqual({ play: null, seekSec: 66.5 / 30, rate: 1, anchorMs: -200 });
+    expect(videoCorrection(target, element({ currentTimeSec: 67 / 30 }))).toEqual({ play: null, seekSec: 66.5 / 30, rate: 1, anchorMs: -200 });
   });
 
   test("never a second seek while one is under way (its end asks again); a playing element is still paused", () => {
-    expect(videoCorrection(target, element({ seeking: true, currentTimeSec: 1 }))).toEqual({ play: null, seekSec: null, rate: 1 });
-    expect(videoCorrection(target, element({ seeking: true, paused: false, currentTimeSec: 1 }))).toEqual({ play: false, seekSec: null, rate: 1 });
+    expect(videoCorrection(target, element({ seeking: true, currentTimeSec: 1 }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
+    expect(videoCorrection(target, element({ seeking: true, paused: false, currentTimeSec: 1 }))).toEqual({ play: false, seekSec: null, rate: 1, anchorMs: -200 });
   });
 
   test("nothing is sought before the element knows the file (its metadata event asks again)", () => {
-    expect(videoCorrection(target, element({ readyState: HAVE_METADATA - 1, durationSec: Number.NaN }))).toEqual({ play: null, seekSec: null, rate: 1 });
-    expect(videoCorrection(target, element({ readyState: HAVE_METADATA, currentTimeSec: 0 }))).toEqual({ play: null, seekSec: 66.5 / 30, rate: 1 });
+    expect(videoCorrection(target, element({ readyState: HAVE_METADATA - 1, durationSec: Number.NaN }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
+    expect(videoCorrection(target, element({ readyState: HAVE_METADATA, currentTimeSec: 0 }))).toEqual({ play: null, seekSec: 66.5 / 30, rate: 1, anchorMs: -200 });
   });
 
   test("a nudged rate is put back at rest", () => {
-    expect(videoCorrection(target, element({ currentTimeSec: 66.5 / 30, rate: 1 + NUDGE_RATE }))).toEqual({ play: null, seekSec: null, rate: 1 });
+    expect(videoCorrection(target, element({ currentTimeSec: 66.5 / 30, rate: 1 + NUDGE_RATE }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
   });
 });
 
 describe("videoCorrection: playing, as the music is kept in step", () => {
   const at = 2.2165;
-  const target = { clipId: "clip-002", mediaId: MEDIA, play: true, frame: 66, atSec: at };
+  const target = { clipId: "clip-002", mediaId: MEDIA, play: true, frame: 66, offsetMs: -200, atSec: at };
 
   test("a paused element is moved to its place and started", () => {
-    expect(videoCorrection(target, element({ currentTimeSec: 0 }))).toEqual({ play: true, seekSec: at, rate: 1 });
+    expect(videoCorrection(target, element({ currentTimeSec: 0 }))).toEqual({ play: true, seekSec: at, rate: 1, anchorMs: -200 });
   });
 
   test("in step: nothing; a little behind: nudged faster; far off: moved", () => {
-    expect(videoCorrection(target, element({ paused: false, currentTimeSec: at + 0.005 }))).toEqual({ play: null, seekSec: null, rate: 1 });
-    expect(videoCorrection(target, element({ paused: false, currentTimeSec: at - 0.06 }))).toEqual({ play: null, seekSec: null, rate: 1 + NUDGE_RATE });
-    expect(videoCorrection(target, element({ paused: false, currentTimeSec: at - (HARD_DRIFT_MS + 1) / 1000 }))).toEqual({ play: null, seekSec: at, rate: 1 });
+    expect(videoCorrection(target, element({ paused: false, currentTimeSec: at + 0.005 }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
+    expect(videoCorrection(target, element({ paused: false, currentTimeSec: at - 0.06 }))).toEqual({ play: null, seekSec: null, rate: 1 + NUDGE_RATE, anchorMs: -200 });
+    expect(videoCorrection(target, element({ paused: false, currentTimeSec: at - (HARD_DRIFT_MS + 1) / 1000 }))).toEqual({ play: null, seekSec: at, rate: 1, anchorMs: -200 });
   });
 
   test("nothing is corrected while it seeks or waits for data", () => {
-    expect(videoCorrection(target, element({ paused: false, seeking: true, currentTimeSec: 0 }))).toEqual({ play: null, seekSec: null, rate: 1 });
-    expect(videoCorrection(target, element({ paused: false, readyState: HAVE_FUTURE_DATA - 1, currentTimeSec: 0 }))).toEqual({ play: null, seekSec: null, rate: 1 });
+    expect(videoCorrection(target, element({ paused: false, seeking: true, currentTimeSec: 0 }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
+    expect(videoCorrection(target, element({ paused: false, readyState: HAVE_FUTURE_DATA - 1, currentTimeSec: 0 }))).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: -200 });
+  });
+});
+
+describe("peekTarget: the frame «Обрезка» drags to (fix round 1, L8)", () => {
+  test("that frame of the video, at rest, sought to its middle; the clip and offset the playhead's own when it is on this video", () => {
+    const onScreen = videoTarget(spec, playing(2_400), unknown);
+    expect(peekTarget(onScreen, MEDIA, 160)).toEqual({ clipId: "clip-002", mediaId: MEDIA, play: false, offsetMs: -200, frame: 160, atSec: 160.5 / 30 });
+  });
+
+  test("the playhead elsewhere (a photo on screen): the frame all the same, for this video", () => {
+    expect(peekTarget(null, MEDIA, 12)).toEqual({ clipId: "", mediaId: MEDIA, play: false, offsetMs: 0, frame: 12, atSec: 12.5 / 30 });
+  });
+});
+
+describe("videoCorrection: a jump in the video's own time while playing (fix round 1, M2)", () => {
+  // The render shows a jump cut where the video's time jumps; rate catch-up (right for audio) would slide into it over seconds instead.
+  const frames = (): number => 420;
+
+  test("an A → B join where B starts 0.2 s later in the video: moved there at the cut, not nudged", () => {
+    const spec = draftSpec([videoClip(0, 2_000, 0), videoClip(1, 2_000, 2_200)]);
+    const a = videoTarget(spec, playing(1_990), frames);
+    const b = videoTarget(spec, playing(2_000), frames);
+    if (a === null || b === null) throw new Error("no target");
+    expect([a.offsetMs, b.offsetMs]).toEqual([0, 200]);
+    // The element played A on and is at 2.0 s in the video; B wants 2.2 s.
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.0 }), a.offsetMs)).toEqual({ play: null, seekSec: b.atSec, rate: 1, anchorMs: 200 });
+  });
+
+  test("a trim moved during playback (the window slid 0.1 s) is a jump too", () => {
+    const before = videoTarget(draftSpec([videoClip(0, 4_000, 1_000)]), playing(1_000), frames);
+    const after = videoTarget(draftSpec([videoClip(0, 4_000, 1_100)]), playing(1_000), frames);
+    if (before === null || after === null) throw new Error("no target");
+    expect([before.offsetMs, after.offsetMs]).toEqual([1_000, 1_100]);
+    expect(videoCorrection(after, element({ paused: false, currentTimeSec: before.atSec }), before.offsetMs)).toEqual({ play: null, seekSec: after.atSec, rate: 1, anchorMs: 1_100 });
+  });
+
+  test("the two parts of a plain split continue the video: no jump, so no seek at the cut (a little drift stays the nudge's)", () => {
+    const spec = draftSpec([videoClip(0, 2_000, 0), videoClip(1, 2_000, 2_000)]);
+    const a = videoTarget(spec, playing(1_990), frames);
+    const b = videoTarget(spec, playing(2_000), frames);
+    if (a === null || b === null) throw new Error("no target");
+    expect(b.offsetMs).toBe(a.offsetMs);
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.0 - 0.03 }), a.offsetMs)).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: 0 });
+  });
+
+  test("a jump the element already sits on (within half a frame) moves nothing", () => {
+    const b = { clipId: "clip-002", mediaId: MEDIA, play: true, frame: 66, offsetMs: 200, atSec: 2.2 };
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.2 + 0.01 }), 0)).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: 200 });
+  });
+
+  test("a jump while a seek is under way waits for it, keeping the old anchor so the jump is seen again", () => {
+    const b = { clipId: "clip-002", mediaId: MEDIA, play: true, frame: 66, offsetMs: 200, atSec: 2.2 };
+    expect(videoCorrection(b, element({ paused: false, seeking: true, currentTimeSec: 2.0 }), 0)).toEqual({ play: null, seekSec: null, rate: 1, anchorMs: 0 });
+  });
+
+  test("a slow decoder: a seek while playing is led by how long the last one took, so it lands where the clock will be, not behind it", () => {
+    const b = { clipId: "clip-002", mediaId: MEDIA, play: true, frame: 66, offsetMs: 200, atSec: 2.2 };
+    // Probed in Chrome at 6× CPU throttling: a seek took 340 ms, and the element landed that far behind the clock and was sought again.
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.0 }), 0, 0.34)).toMatchObject({ seekSec: 2.2 + 0.34 });
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 1.0 }), 200, 0.34)).toMatchObject({ seekSec: 2.2 + 0.34 });
+    expect(videoCorrection(b, element({ currentTimeSec: 0 }), null, 0.34)).toEqual({ play: true, seekSec: 2.2 + 0.34, rate: 1, anchorMs: 200 });
+    // Never more than a second, never past the file's end.
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.0 }), 0, 5)).toMatchObject({ seekSec: 2.2 + MAX_SEEK_LEAD_SEC });
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.0, durationSec: 2.4 }), 0, 0.34)).toMatchObject({ seekSec: 2.4 });
+    // At rest the frame is exact: no lead.
+    const rest = { ...b, play: false, atSec: 66.5 / 30 };
+    expect(videoCorrection(rest, element({ currentTimeSec: 0 }), 200, 0.34)).toMatchObject({ seekSec: 66.5 / 30 });
+    // Nudges are not seeks: untouched.
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.2 - 0.06 }), 200, 0.34)).toEqual({ play: null, seekSec: null, rate: 1 + NUDGE_RATE, anchorMs: 200 });
+  });
+
+  test("no anchor yet (the element's first sync) is no jump", () => {
+    const b = { clipId: "clip-002", mediaId: MEDIA, play: true, frame: 66, offsetMs: 200, atSec: 2.2 };
+    expect(videoCorrection(b, element({ paused: false, currentTimeSec: 2.0 }), null)).toEqual({ play: null, seekSec: null, rate: 1 + NUDGE_RATE, anchorMs: 200 });
   });
 });

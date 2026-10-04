@@ -168,6 +168,8 @@ describe("the preview", () => {
     await selectVideo();
     const cell = (): HTMLElement => within(preview()).getByRole("button", { name: "Кадр 2: своё видео" });
     expect(within(preview()).getByText("видео 9:16 · весь кадр")).toBeDefined();
+    // Nothing to move: no arrows are announced on it (fix round 1, L9).
+    expect(cell().hasAttribute("aria-keyshortcuts")).toBe(false);
     expect(within(props()).getByText("Видео уже 9:16 и занимает весь кадр — сдвигать нечего.")).toBeDefined();
     drag(cell(), 30, 36);
     fireEvent.keyDown(cell(), { key: "ArrowLeft" });
@@ -308,6 +310,204 @@ describe("the properties", () => {
     fireEvent.keyDown(edge, { key: "End" });
     fireEvent.keyUp(edge, { key: "End" });
     expect(videoOf(await nextSave(engine)).durationMs).toBe(1_000);
+  });
+});
+
+describe("fix round 1", () => {
+  const undoOff = (): boolean => screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled");
+  const standIn = (): string => preview().querySelector(".pv-video-facts")?.textContent ?? "";
+  const head = (): HTMLElement => within(timeline()).getByRole("slider", { name: "Плейхед" });
+  async function atClipStart(): Promise<void> {
+    fireEvent.keyDown(head(), { key: "Home" });
+    fireEvent.keyDown(head(), { key: "ArrowRight", shiftKey: true });
+    fireEvent.keyDown(head(), { key: "ArrowRight", shiftKey: true });
+    await flush();
+  }
+
+  test("L8: while the right edge of «Обрезка» is dragged the preview shows the frame at it; nothing is saved until it is let go", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
+    await selectVideo();
+    await atClipStart();
+    layOutStrip();
+    expect(standIn()).toBe("1080×608 · 0:01.8");
+    fireEvent.pointerDown(slider("Конец отрезка"), { pointerId: 61, button: 0, clientX: 100, clientY: 10 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 61, clientX: 131, clientY: 10, buttons: 1 }));
+    });
+    // The end at 5.4 s: its last frame, 161, is 0:05.3.
+    expect(standIn()).toBe("1080×608 · 0:05.3");
+    expect(undoOff()).toBe(true);
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 61, clientX: 131, clientY: 10 }));
+    });
+    expect(standIn()).toBe("1080×608 · 0:01.8");
+    expect(videoOf(await nextSave(engine)).durationMs).toBe(3_600);
+  });
+
+  test("L8: with the playhead on another clip, the preview shows the clip being trimmed while it is dragged, and goes back after a cancel", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
+    await selectVideo();
+    fireEvent.keyDown(head(), { key: "Home" });
+    await flush();
+    expect(within(preview()).getAllByRole("button")[0]?.getAttribute("aria-label")).toBe("Кадр 1");
+    layOutStrip();
+    fireEvent.pointerDown(slider("Отрезок видео"), { pointerId: 62, button: 0, clientX: 100, clientY: 10 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 62, clientX: 120, clientY: 10, buttons: 1 }));
+    });
+    // Slid 1 s later: its first frame is 2.8 s into the video.
+    expect(within(preview()).getAllByRole("button")[0]?.getAttribute("aria-label")).toBe("Кадр 2: своё видео");
+    expect(standIn()).toBe("1080×608 · 0:02.8");
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointercancel", { pointerId: 62, clientX: 120, clientY: 10 }));
+    });
+    expect(within(preview()).getAllByRole("button")[0]?.getAttribute("aria-label")).toBe("Кадр 1");
+    expect(undoOff()).toBe(true);
+  });
+
+  test("L6: the focus hint sits above the layers (a caption over the clip never covers it), for an own video and for a photo", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    const made = await makeDraft(client, MIA.avatarId, []);
+    const caption = { layerId: "layer-001", startMs: 0, endMs: 6_000, kind: "text" as const, value: "coffee first", font: "oswald" as const, style: "outline" as const, color: "#ffffff", x: 0.5, y: 0.42, scale: 1 };
+    const saved = await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: clipsWith(ownClip(mediaId)), layers: [caption] }, name: null }));
+    if (!saved.ok) throw new Error(saved.error.code);
+    await openDrafts();
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    await screen.findByRole("region", { name: "Таймлайн" });
+    await flush();
+    const above = (): boolean => {
+      const layer = preview().querySelector(".pv-layer");
+      const pill = preview().querySelector(".pv-face-pill");
+      if (layer === null || pill === null) throw new Error("no layer or no hint");
+      return (layer.compareDocumentPosition(pill) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0 && pill.closest(".pv-cell") === null;
+    };
+    await selectVideo();
+    await waitFor(() => expect(preview().querySelector(".pv-layer") !== null).toBe(true));
+    expect(above()).toBe(true);
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: / }));
+    await flush();
+    expect(within(preview()).getByText(/тяните/)).toBeDefined();
+    expect(above()).toBe(true);
+  });
+
+  test("L7: the timeline's left edge of a video clip moves its start in the video with its end kept, as «Обрезка»'s does", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
+    await selectVideo();
+    const edge = (): HTMLElement => within(timeline()).getByRole("slider", { name: "Длительность кадра 2: левый край" });
+    fireEvent.keyDown(edge(), { key: "ArrowLeft" });
+    fireEvent.keyUp(edge(), { key: "ArrowLeft" });
+    expect(videoOf(await nextSave(engine))).toMatchObject({ trimStartMs: 1_700, durationMs: 2_100 });
+    fireEvent.keyDown(edge(), { key: "Home" });
+    fireEvent.keyUp(edge(), { key: "Home" });
+    // The shortest: 0.5 s ending where it ended, 3.8 s into the video.
+    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 3_300, durationMs: 500 });
+    // Dragged left 14 px of the 1048 px lanes (about 0.2 s): earlier in the video, the end still at 3.8 s.
+    drag(edge(), -14, 71);
+    const dragged = videoOf(await nextSave(engine, 2));
+    expect(dragged.trimStartMs + dragged.durationMs).toBe(3_800);
+    expect(dragged.durationMs).toBe(700);
+  });
+
+  test("L9: a window too narrow for both edges is judged on the strip as laid out, not on the artboard's width", async () => {
+    // A 0.5 s clip of the 14 s video: 9.7 px of the artboard's 272 px strip, 71 px of a 2000 px one.
+    const real = globalThis.ResizeObserver;
+    const narrow = (): boolean => props().querySelector(".ed-trim")?.classList.contains("ed-trim-narrow") ?? false;
+    try {
+      const { client, engine } = await studio();
+      const mediaId = storeVideo(engine);
+      await openDraft(engine, client, clipsWith(ownClip(mediaId, 500, 1_800)));
+      await selectVideo();
+      expect(narrow()).toBe(true);
+      fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: / }));
+      await flush();
+      class Wide {
+        constructor(private readonly report: ResizeObserverCallback) {}
+        observe(target: Element): void {
+          this.report([{ target, contentRect: { width: 2_000 } } as unknown as ResizeObserverEntry], this as unknown as ResizeObserver);
+        }
+        unobserve(): void {}
+        disconnect(): void {}
+      }
+      globalThis.ResizeObserver = Wide as unknown as typeof ResizeObserver;
+      await selectVideo();
+      expect(narrow()).toBe(false);
+    } finally {
+      globalThis.ResizeObserver = real;
+    }
+  });
+
+  test("L5: a click on the window with a little jitter under the drag threshold changes nothing", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
+    await selectVideo();
+    layOutStrip();
+    drag(slider("Отрезок видео"), 2, 81);
+    await flush();
+    expect(undoOff()).toBe(true);
+    expect(slider("Отрезок видео").getAttribute("aria-valuenow")).toBe("1800");
+  });
+
+  test("L5: letting go of another key (Shift) does not end the held arrow's undo step", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
+    await selectVideo();
+    fireEvent.keyDown(slider("Отрезок видео"), { key: "ArrowRight" });
+    fireEvent.keyUp(slider("Отрезок видео"), { key: "Shift" });
+    fireEvent.keyDown(slider("Отрезок видео"), { key: "ArrowRight", repeat: true });
+    fireEvent.keyUp(slider("Отрезок видео"), { key: "ArrowRight" });
+    expect(videoOf(await nextSave(engine)).trimStartMs).toBe(2_000);
+    undo();
+    expect(videoOf(await nextSave(engine, 1)).trimStartMs).toBe(1_800);
+    expect(undoOff()).toBe(true);
+  });
+
+  test("L5: a crop drag whose clip went meanwhile (another window removed it) writes nothing into the clip that took its place, even of the same video", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    const second: MontageDraft["clips"][number] = { ...videoClip(2, 2_000, 6_000), mediaId };
+    await openDraft(engine, client, [photoClip(0, P1, 2_000), ownClip(mediaId), second]);
+    const montageId = callsOf(engine, "montages.get").at(-1)?.payload.montageId ?? "";
+    await selectVideo();
+    const crop = videoClipCrop(SOURCE, null);
+    const centred = `${(-crop.x / crop.w) * 100}`;
+    const left = (): string => String(Number.parseFloat(preview().querySelector<HTMLElement>(".pv-video-ground")?.style.left ?? ""));
+    const cell = within(preview()).getByRole("button", { name: "Кадр 2: своё видео" });
+    fireEvent.pointerDown(cell, { pointerId: 91, button: 0, clientX: 100, clientY: 100 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointermove", { pointerId: 91, clientX: 140, clientY: 100, buttons: 1 }));
+    });
+    // Another window removes the clip being dragged: the second clip of the same video takes its place.
+    const spec: MontageDraft = { schemaVersion: 1, avatarId: MIA.avatarId, clips: [photoClip(0, P1, 2_000), second], layers: [], music: null, seed: 1 };
+    await asAnotherWindow(() => client.request("montages.save", { montageId, spec, name: null }));
+    await waitFor(() => expect(within(timeline()).getAllByRole("button", { name: /^Кадр \d: / })).toHaveLength(2));
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 91, clientX: 140, clientY: 100 }));
+    });
+    await flush();
+    // The clip on screen now is the second one: its crop is where it was, not where the drag would have put the first one's.
+    expect(within(preview()).getByRole("button", { name: "Кадр 2: своё видео" })).toBeDefined();
+    expect(left()).toBe(String(Number.parseFloat(centred)));
+  });
+
+  test("L3: a video shorter than 0.5 s says so, never the contract's «сдвиньте начало фрагмента» it cannot follow", async () => {
+    const { client, engine } = await studio();
+    engine.seedOwnMedia([{ kind: "video", name: "blink.mov", bytes: 200_000, facts: { width: 1_080, height: 1_920, durationMs: 400, sourceFps: 30 } }]);
+    await openDraft(engine, client, clipsWith(ownClip("media-demo-0001", 500, 0)));
+    const block = within(timeline()).getByRole("button", { name: s("Кадр 2: видео короче 0.5 с, 0.5 с") });
+    expect(within(block).getByText("⚠ видео короче 0.5 с")).toBeDefined();
+    await selectVideo();
+    expect(within(props()).getByText("Видео короче 0.5 с — в ролик его не поставить")).toBeDefined();
+    expect(within(props()).queryByText(MONTAGE_ISSUE_MESSAGES_RU["video-too-short"]) === null).toBe(true);
+    expect(within(props()).getByText("ролик 4.5 с из 15 · видео короче 0.5 с")).toBeDefined();
   });
 });
 

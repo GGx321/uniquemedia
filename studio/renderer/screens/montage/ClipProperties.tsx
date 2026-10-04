@@ -9,6 +9,7 @@ import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerStepLab
 import { type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
+import type { TrimPeekStore } from "./trimPeek";
 import { usePlayheadRest } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 import { VideoClipBody } from "./VideoProperties";
@@ -70,9 +71,11 @@ export interface ClipPropertiesProps {
   /** 3f.3b: the own videos the draft's clips play, and what the render refuses each video clip for (by clip id). */
   readonly videos: OwnVideos;
   readonly videoProblems: ReadonlyMap<string, VideoProblem>;
+  /** Where «Обрезка» tells the preview which frame a drag is at (fix round 1, L8). */
+  readonly trimPeek: TrimPeekStore;
 }
 
-export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems }: ClipPropertiesProps) {
+export function ClipProperties({ session, spec, index, cell, avatarId, timeline, focusPending, dragPhoto, onFillCell, videos, videoProblems, trimPeek }: ClipPropertiesProps) {
   const commands = useSelectionCommands(session, timeline);
   const durationId = useId();
   // Where the playhead rests (3d.4): a playback does not re-render the panel.
@@ -248,7 +251,7 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
       )}
 
       {clip.kind === "video" ? (
-        <VideoClipBody session={session} spec={spec} index={index} video={videoLookup(videos, clip.mediaId)} problem={videoProblems.get(clip.clipId) ?? null} />
+        <VideoClipBody session={session} spec={spec} index={index} video={videoLookup(videos, clip.mediaId)} problem={videoProblems.get(clip.clipId) ?? null} trimPeek={trimPeek} />
       ) : (
         <div className="ed-pgroup ed-pgroup-tight">
           <div className="ed-prow ed-duration">

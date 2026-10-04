@@ -1,5 +1,5 @@
-import type { Clip, Montage, MontageDraft } from "../../../shared/engine";
-import { estimateBytes, FPS, FRAME_H, FRAME_W, FRAMES_PER_STEP, MAX_TOTAL_MS, staggerStepFrames } from "../../../shared/montage";
+import { type Clip, MONTAGE_ISSUE_MESSAGES_RU, type Montage, type MontageDraft } from "../../../shared/engine";
+import { estimateBytes, FPS, FRAME_H, FRAME_W, FRAMES_PER_STEP, MAX_TOTAL_MS, MIN_CLIP_MS, staggerStepFrames } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { countOf, NBSP } from "../../lib/format";
 import type { RenderControl } from "../../engine/renderJobs";
@@ -92,20 +92,36 @@ export const PHOTO_PROBLEM_TAGS: Record<PhotoProblem, string> = {
   unavailable: "⚠ фото недоступно",
 };
 
+/** What the editor says the render refuses an own video clip for: the engine's codes, and a video too short for any clip told apart (fix round 1, L3). */
+export type VideoTag = VideoProblem | "video-under-min";
+
 /** The tag on an own video clip's block that the render refuses (3f.3b), in the voice of the photo tags. */
-export const VIDEO_PROBLEM_TAGS: Record<VideoProblem, string> = {
+export const VIDEO_PROBLEM_TAGS: Record<VideoTag, string> = {
   "video-too-short": "⚠ видео короче кадра",
   "media-unavailable": "⚠ файла больше нет",
+  "video-under-min": `⚠ видео короче 0.5${NBSP}с`,
 };
 
-const isVideoProblem = (problem: PhotoProblem | VideoProblem): problem is VideoProblem => problem === "video-too-short" || problem === "media-unavailable";
+/** The properties' words for it: the contract's own, but for a video under the shortest clip, whose «сдвиньте начало» could not be followed. */
+export const VIDEO_TAG_TEXTS: Record<VideoTag, string> = {
+  "video-too-short": MONTAGE_ISSUE_MESSAGES_RU["video-too-short"],
+  "media-unavailable": MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"],
+  "video-under-min": `Видео короче 0.5${NBSP}с — в ролик его не поставить`,
+};
+
+/** `video-too-short` of a video under the shortest clip (0.5 s) is `video-under-min`: no trim can help it. */
+export function videoTag(problem: VideoProblem, sourceMs: number | null): VideoTag {
+  return problem === "video-too-short" && sourceMs !== null && sourceMs < MIN_CLIP_MS ? "video-under-min" : problem;
+}
+
+const isVideoTag = (problem: PhotoProblem | VideoTag): problem is VideoTag => problem === "video-too-short" || problem === "media-unavailable" || problem === "video-under-min";
 
 /**
  * A clip block's accessible name: «Кадр 2: коллаж 3, 3.2 с», «Кадр 1: фото отклонено, 2.4 с», «Кадр 3: видео latte-pour.mov, 2.0 с» (an own video by its
  * file's name once its record is known), «Кадр 3: видео короче кадра, 2.0 с».
  */
-export function clipAria(index: number, clip: Clip, problem: PhotoProblem | VideoProblem | null, videoName: string | null = null): string {
-  const tag = problem === null ? null : isVideoProblem(problem) ? VIDEO_PROBLEM_TAGS[problem] : PHOTO_PROBLEM_TAGS[problem];
+export function clipAria(index: number, clip: Clip, problem: PhotoProblem | VideoTag | null, videoName: string | null = null): string {
+  const tag = problem === null ? null : isVideoTag(problem) ? VIDEO_PROBLEM_TAGS[problem] : PHOTO_PROBLEM_TAGS[problem];
   const what = tag !== null ? tag.replace(/^⚠\s*/, "") : clip.kind === "video" && videoName !== null ? `видео ${videoName}` : clipKindLabel(clip);
   return `Кадр ${index + 1}: ${what}, ${secondsLabel(clip.durationMs)}`;
 }
@@ -136,13 +152,15 @@ export function videoFactsLabel(video: Pick<OwnVideo, "durationMs" | "width" | "
 
 /**
  * What is left of the 15 s for an own video clip (R14's line, held to its video): «ролик 9.6 с из 15 · кадр можно удлинить ещё на 5.4 с», or less when
- * the video ends first. `growMs` is how much longer the clip may get with both edges (`videoTrim.ts`).
+ * the video ends first. `growMs` is how much longer the clip may get with both edges (`videoTrim.ts`); `sourceMs` the video's length: one under the
+ * shortest clip cannot be in the montage at all (fix round 1, L3).
  */
-export function videoRoomLabel(totalMs: number, roomMs: number, growMs: number): string {
+export function videoRoomLabel(totalMs: number, roomMs: number, growMs: number, sourceMs: number): string {
   const head = `ролик ${secondsLabel(totalMs)} из ${MAX_TOTAL_SECONDS}`;
+  if (sourceMs < MIN_CLIP_MS) return `${head} · видео короче ${secondsLabel(MIN_CLIP_MS)}`;
   if (roomMs <= 0) return `${head} · длиннее кадр уже не станет`;
   if (growMs <= 0) return `${head} · видео уже целиком в кадре`;
-  return growMs < roomMs ? `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)} — дальше видео кончается` : `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)}`;
+  return growMs < roomMs ? `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)} — дальше видео заканчивается` : `${head} · кадр можно удлинить ещё на ${secondsLabel(growMs)}`;
 }
 
 /** Why a toolbar action is off, in its tooltip. */
