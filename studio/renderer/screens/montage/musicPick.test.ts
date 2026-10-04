@@ -204,6 +204,14 @@ describe("an own track from «Мои» (3f.6, M10–M11): from its start, never 
     expect(edit.ok && edit.spec).toBe(chosen);
   });
 
+  test("a track under 4 s is too short for any montage (round 2: the engine now refuses one at import, but older libraries still hold some)", () => {
+    const short = { ...OWN, durationMs: 3_900 };
+    const twoSeconds = draftSpec([photoClip(0, "photo-mia-0001", 2_000)]);
+    expect(ownTrackTooShort(short, 2_000)).toBe(true);
+    expect(pickOwnTrack(twoSeconds, short)).toEqual({ ok: false, reason: "too-short" });
+    expect(ownTrackTooShort({ durationMs: 4_000 }, 2_000)).toBe(false);
+  });
+
   test("a track shorter than the montage is refused (U10's rule for own tracks); exactly as long fits", () => {
     expect(pickOwnTrack(NINE_SIX, { ...OWN, durationMs: TOTAL - 1 })).toEqual({ ok: false, reason: "too-short" });
     expect(pickOwnTrack(NINE_SIX, { ...OWN, durationMs: TOTAL }).ok).toBe(true);

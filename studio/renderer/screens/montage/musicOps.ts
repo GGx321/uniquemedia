@@ -157,9 +157,12 @@ export function pickTrack(spec: MontageDraft, track: TrackFacts): MusicEdit | { 
   return { ok: true, spec: { ...spec, music: { source: "trending", trackId: track.trackId, startMs: pickStartMs(track, total) } } };
 }
 
-/** An own track is too short for the montage when it is shorter than the montage (U10's rule, the «Музыка» tab's own). */
+/**
+ * An own track is too short for the montage when it is shorter than the montage (U10's rule, the «Музыка» tab's own), and always when it is
+ * shorter than the shortest montage that renders (4 s): the engine refuses such a track at import now, but an older library may still hold one.
+ */
 export function ownTrackTooShort(track: { readonly durationMs: number }, totalMs: number): boolean {
-  return track.durationMs < totalMs;
+  return track.durationMs < Math.max(totalMs, MIN_TOTAL_MS);
 }
 
 /**

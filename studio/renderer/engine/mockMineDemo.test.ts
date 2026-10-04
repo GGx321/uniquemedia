@@ -17,8 +17,23 @@ describe("the dev build's own files", () => {
     expect(listed.result.total).toBe(mineDemoSeeds().length);
     for (const media of listed.result.media) expect(MediaSummary.safeParse(media).success).toBe(true);
     expect(new Set(listed.result.media.map((m) => m.kind))).toEqual(new Set(["photo", "video", "audio", "sticker"]));
-    // A track shorter than any montage the demo has (M10's dimmed row).
-    expect(listed.result.media.some((m) => m.kind === "audio" && (m.durationMs ?? 0) < 4_000)).toBe(true);
+    // A track shorter than the demo's 9.6 s montage (M10's dimmed row), and one the engine would still import (4 s at least, round 2).
+    const note = listed.result.media.find((m) => m.name === "voice-note.m4a");
+    expect(note?.durationMs).toBe(5_000);
+    expect(listed.result.media.every((m) => m.kind !== "audio" || (m.durationMs ?? 0) >= 4_000)).toBe(true);
+  });
+
+  test("the first scripted pick's video is prepared (M14): «Готовим street-walk.mp4 · HDR → SDR, 60 → 30 fps»", async () => {
+    const scheduler = new ManualScheduler();
+    const engine = new MockEngine({ scheduler });
+    const client = withMineDemo(engine, mockEngineClient(engine));
+    const seen: unknown[] = [];
+    client.subscribe((event) => {
+      if (event.type === "job.progress" && event.payload.kind === "import" && event.payload.stage === "prepare") seen.push(event.payload.prepare);
+    });
+    await client.request("media.pickImport", { kind: "any" });
+    for (let i = 0; i < 20 && seen.length === 0; i++) scheduler.next();
+    expect(seen[0]).toEqual({ hdrToSdr: true, fromFps: 60 });
   });
 
   test("each click on the drop zone gets the next scripted pick; a pick of one kind, and every other command, pass untouched", async () => {

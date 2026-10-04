@@ -14,7 +14,8 @@ export function mineDemoSeeds(): MockOwnSeed[] {
     { kind: "sticker", name: "new-badge.gif", bytes: 61_000, facts: { width: 240, height: 240, loopFrames: 8, delayFrames: [2, 2, 2, 2] }, createdAt: "2026-09-22T08:00:00.000Z" },
     { kind: "sticker", name: "underline.gif", bytes: 34_000, facts: { width: 320, height: 120, loopFrames: 6, delayFrames: [2, 2, 2] }, createdAt: "2026-09-22T08:01:00.000Z" },
     { kind: "sticker", name: "sparkle-loop.gif", bytes: 48_000, createdAt: "2026-09-22T08:02:00.000Z" },
-    { kind: "audio", name: "voice-note.m4a", bytes: 82_000, facts: { durationMs: 3_400 }, createdAt: "2026-09-22T08:03:00.000Z" },
+    // 5 s: shorter than the demo's 9.6 s montage (M10's dimmed row), and a track the engine imports (4 s at least).
+    { kind: "audio", name: "voice-note.m4a", bytes: 82_000, facts: { durationMs: 5_000 }, createdAt: "2026-09-22T08:03:00.000Z" },
     { kind: "audio", name: "summer-edit.mp3", bytes: 1_010_000, facts: { durationMs: 42_000 }, createdAt: "2026-09-22T08:04:00.000Z" },
     { kind: "photo", name: "croissant.jpg", bytes: 1_400_000, facts: { width: 1080, height: 1350 }, createdAt: "2026-09-22T08:05:00.000Z" },
     { kind: "photo", name: "IMG_2044.jpg", bytes: 2_100_000, facts: { width: 1080, height: 1440 }, createdAt: "2026-09-22T08:06:00.000Z" },
@@ -30,7 +31,8 @@ export function mineDemoSeeds(): MockOwnSeed[] {
 export function mineDemoPicks(): MockMediaPick[][] {
   return [
     [
-      { name: "street-walk.mp4", accept: { kind: "video", bytes: 120_000_000, facts: { width: 1080, height: 1920, durationMs: 12_000, sourceFps: 60, hdrToSdr: true } } },
+      // Copied, then prepared (M14): «Готовим street-walk.mp4 · HDR → SDR, 60 → 30 fps».
+      { name: "street-walk.mp4", accept: { kind: "video", bytes: 120_000_000, facts: { width: 1080, height: 1920, durationMs: 12_000, sourceFps: 60, hdrToSdr: true }, prepare: {} } },
       { name: "track.wma", reason: "format" },
       { name: "beach.jpg", accept: { kind: "photo", bytes: 2_600_000, facts: { width: 1080, height: 1440 } } },
     ],
