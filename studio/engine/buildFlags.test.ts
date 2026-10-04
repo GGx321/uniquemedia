@@ -112,15 +112,6 @@ describe("the E2E build flag", () => {
     expect(main).not.toContain("__STUDIO_E2E__");
   });
 
-  // 3f.1b: the stand-in photo importer that lets the packaged smoke drive a whole own-media import. A positive control beside the real check.
-  test("an E2E build carries the stand-in photo importer; a normal build has neither it nor its marker, in the entry or a shared chunk", async () => {
-    expect((await engineOf(e2eDir)) + (await chunksOf(e2eDir))).toContain("studio-e2e-photo-importer");
-    expect(productionEngineBundleProblems(await engineOf(e2eDir), await chunksOf(e2eDir))).toContain("a test-only photo importer is in the engine bundle");
-    const normal = (await engineOf(normalDir)) + (await chunksOf(normalDir));
-    expect(normal).not.toContain("studio-e2e-photo-importer");
-    expect(normal).not.toContain("createE2ePhotoImporter");
-  });
-
   test("a normal build folds the E2E-only data folder and identity guard away; an E2E build keeps them", async () => {
     const normal = await mainOf(normalDir);
     expect(normal).not.toContain("uniquemedia-studio-e2e-dev");

@@ -84,7 +84,7 @@ import { openLibrary } from "../engine/library";
 import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library/testing/sampleData";
 import { sceneSpec, videoRecordJson } from "../engine/library/testing/videoRecords";
 import { probeVideo } from "../engine/render/ffmpeg.testkit";
-import { MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
+import { jpegMetadataMarkers, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, mediaRecordFileProblems } from "./mediaSmoke";
 import { PEAK_RSS_BYTES } from "../engine/renderQueue/pool";
 import { verifyRenderedMp4 } from "../engine/verify";
 import { commitHoldPaths } from "../engine/videos/e2eCommitHold";
@@ -1368,8 +1368,8 @@ async function runImportScenario(target: Target): Promise<void> {
 /**
  * The own-media import in the real build, on both operating systems: main's dialog stand-in (`--studio-pick-media`) names ONE path; the
  * file there is rewritten between picks. A PNG goes through the whole job in the packaged engine (copy into `media/.staging`, the E2E
- * build's stand-in importer, the stored file and its record, written with the Windows retries and the fsyncs of the library's own
- * helpers), then the record is listed, survives an app restart and is deleted with its file. The other kinds are refused where the
+ * build's real photo importer (3f.2: WASM decode, upright, re-encoded as a JPEG without metadata), the stored file and its record, written with the Windows retries and the fsyncs of the library's own
+ * helpers), then the record is listed, survives an app restart and is deleted with its file. A 1x1 picture and an animated WebP fail inside their jobs (too-small, animated-webp). The other kinds are refused where the
  * engine says: no importer yet. Nothing is sent to the network.
  */
 async function runPackagedMediaScenario(target: Target): Promise<void> {
@@ -1436,22 +1436,37 @@ async function runPackagedMediaScenario(target: Target): Promise<void> {
     const first = field(listed, "result", "media", "0");
     check(
       "media scenario: media.list has the record: the photo's name, its size from the PNG, and the size of the stored file",
-      field(listed, "result", "total") === 1 && field(first, "mediaId") === mediaId && field(first, "kind") === MEDIA_SMOKE_STORED.kind && field(first, "name") === MEDIA_SMOKE_STORED.name && field(first, "width") === MEDIA_SMOKE_STORED.width && field(first, "height") === MEDIA_SMOKE_STORED.height && field(first, "bytes") === MEDIA_SMOKE_STORED.bytes,
+      field(listed, "result", "total") === 1 && field(first, "mediaId") === mediaId && field(first, "kind") === MEDIA_SMOKE_STORED.kind && field(first, "name") === MEDIA_SMOKE_STORED.name && field(first, "width") === MEDIA_SMOKE_STORED.width && field(first, "height") === MEDIA_SMOKE_STORED.height && typeof field(first, "bytes") === "number" && Number(field(first, "bytes")) > 0,
       listed,
     );
     check("media scenario: the record's JSON carries no path", !JSON.stringify(listed).includes(tmp), listed);
-    const problems = mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, "png");
+    const problems = mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, MEDIA_SMOKE_STORED.extension);
     check("media scenario: media/ holds the stored file and its record and nothing else", problems.length === 0, problems);
-    const storedBytes = new Uint8Array(await readFile(join(mediaDir, `${mediaId}.png`)));
-    check("media scenario: the stored file is the picked file, byte for byte", createHash("sha256").update(storedBytes).digest("hex") === createHash("sha256").update(photo.bytes).digest("hex"));
+    // 3f.2: the stored file is the importer's own JPEG (the PNG decoded by the engine's WASM codec, re-encoded by ffmpeg), never the picked bytes.
+    const storedBytes = new Uint8Array(await readFile(join(mediaDir, `${mediaId}.${MEDIA_SMOKE_STORED.extension}`)));
+    check("media scenario: the stored file is a JPEG the importer made, not the picked PNG", storedBytes[0] === 0xff && storedBytes[1] === 0xd8 && storedBytes[2] === 0xff && createHash("sha256").update(storedBytes).digest("hex") !== createHash("sha256").update(photo.bytes).digest("hex"));
+    check("media scenario: the stored JPEG holds no metadata segment (no JFIF, EXIF, comment or encoder string)", jpegMetadataMarkers(storedBytes).length === 0 && !Buffer.from(storedBytes).includes(Buffer.from("Lavc")), jpegMetadataMarkers(storedBytes));
     const recordText = await readFile(join(mediaDir, `${mediaId}.json`), "utf8");
-    check("media scenario: the record on disk names the file by its own name and the picked path nowhere", recordText.includes(`"file": "${mediaId}.png"`) && !recordText.includes(pickedDir), recordText);
+    check("media scenario: the record on disk names the file by its own name and the picked path nowhere", recordText.includes(`"file": "${mediaId}.${MEDIA_SMOKE_STORED.extension}"`) && !recordText.includes(pickedDir), recordText);
     check("media scenario: the staging folder is empty after the import", (await names(stagingDir)).length === 0, await names(stagingDir));
 
     // 3. Every other case, through the same dialog stand-in: the bytes decide, whatever the name.
     for (const file of MEDIA_SMOKE_FILES.filter((f) => f.label !== "photo")) {
       await Bun.write(pickedPath, file.bytes);
       const answer = await pick("any");
+      if ("failed" in file.expect) {
+        // The boundary takes the file (its bytes are a photo's); the photo importer turns it away INSIDE the job, with its reason.
+        const wantedReason = file.expect.failed;
+        const taken = field(answer, "result", "jobIds");
+        const failedId = Array.isArray(taken) && taken.length === 1 ? String(taken[0]) : "";
+        const failed = await waitFor(`the ${file.label} import job to end`, async () => (await snapshotJobs()).find((job) => field(job, "jobId") === failedId && field(job, "status") !== "running" && field(job, "status") !== "queued") ?? null, 30_000, 100);
+        check(
+          `media scenario: the ${file.label} file starts a job that fails as ${wantedReason}, and names no path`,
+          failedId !== "" && field(failed, "status") === "failed" && field(failed, "error", "code") === "MEDIA_UNSUPPORTED" && field(failed, "error", "mediaReason") === wantedReason && !JSON.stringify(failed).includes(tmp),
+          failed,
+        );
+        continue;
+      }
       const refused = field(answer, "result", "refused", "0");
       const wanted = "refused" in file.expect ? file.expect.refused : "";
       check(
@@ -1460,11 +1475,11 @@ async function runPackagedMediaScenario(target: Target): Promise<void> {
         answer,
       );
     }
-    check("media scenario: no refused file left anything in media/ or its staging folder", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, "png").length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
+    check("media scenario: no refused file left anything in media/ or its staging folder", mediaRecordFileProblems((await names(mediaDir)).filter((n) => n !== ".staging"), mediaId, MEDIA_SMOKE_STORED.extension).length === 0 && (await names(stagingDir)).length === 0, { media: await names(mediaDir), staging: await names(stagingDir) });
 
     // 4. The window cannot name a file, and the commands of a job that is over or never was.
     const withPath = await req(running.cdp, "media.pickImport", { kind: "photo", path: pickedPath });
-    check("media scenario: a pick that names a path is refused by the contract, and nothing is imported", field(withPath, "ok") === false && (await snapshotJobs()).filter((job) => field(job, "kind") === "import").length === 1, withPath);
+    check("media scenario: a pick that names a path is refused by the contract, and nothing is imported", field(withPath, "ok") === false && (await snapshotJobs()).filter((job) => field(job, "kind") === "import").length === MEDIA_SMOKE_FILES.filter((f) => "job" in f.expect || "failed" in f.expect).length, withPath);
     const cancelOver = await req(running.cdp, "media.cancelImport", { jobId });
     check("media scenario: media.cancelImport of a job that is over answers it as it ended, and changes nothing", field(cancelOver, "ok") === true && field(cancelOver, "result", "jobId") === jobId && (await req(running.cdp, "media.list", {}).then((r) => field(r, "result", "total"))) === 1, cancelOver);
     const cancelUnknown = await req(running.cdp, "media.cancelImport", { jobId: "job-00000404" });

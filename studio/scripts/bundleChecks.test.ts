@@ -269,14 +269,6 @@ describe("productionEngineProblems", () => {
     expect(productionEngineProblems(bundle(SHUT, 'const held = "studio-e2e-commit-hold.held";'))).toEqual(["a test-only commit hold is in the engine bundle"]);
   });
 
-  test("flags the E2E photo importer that made it into the engine bundle: it would accept a picture without decoding it", () => {
-    expect(productionEngineProblems(bundle(SHUT, 'Object.defineProperty(importer, "name", { value: "studio-e2e-photo-importer" });'))).toEqual(["a test-only photo importer is in the engine bundle"]);
-  });
-
-  test("flags the photo importer too when the bundler put it in a shared chunk beside the entry", () => {
-    expect(productionEngineBundleProblems(SHUT, 'const MARKER = "studio-e2e-photo-importer";')).toEqual(["a test-only photo importer is in the engine bundle"]);
-  });
-
   test("flags the commit hold when the bundler put it in a shared chunk beside the entry, which the entry's own text does not show", () => {
     const chunk = 'const held = "studio-e2e-commit-hold.held";';
     expect(productionEngineProblems(SHUT)).toEqual([]);
