@@ -104,6 +104,20 @@ export const MediaUnsupportedReason = z.enum([
 ]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
 
+/** The constant rate a stored video runs at (the mezzanine's), in frames per second. */
+export const MEZZANINE_FPS = 30;
+
+/** How far a source's rate may be from `MEZZANINE_FPS` and still be told as no conversion: the rounding of a 30 000 / 1001 camera (29.97) and of a `stts` table. */
+const SAME_RATE_TOLERANCE = 0.05;
+
+/**
+ * What an import's `prepare.fromFps` says (3f.6): the source's rate when it differs from the mezzanine's 30, else null. «60 → 30 fps» is worth saying; «29.97 → 30 fps»
+ * is not, so a rate within `SAME_RATE_TOLERANCE` of 30 is null.
+ */
+export function fromFpsOf(sourceFps: number): number | null {
+  return Math.abs(sourceFps - MEZZANINE_FPS) <= SAME_RATE_TOLERANCE ? null : sourceFps;
+}
+
 /** A file name as a person reads it (no folder): at most 120 characters, and no control or bidi characters. */
 export const MediaFileName = z
   .string()

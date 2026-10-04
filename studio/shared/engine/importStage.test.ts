@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MEDIA_REASONS_BY_KIND_RU, MEDIA_REASONS_RU, mediaReasonRu } from "./errorMessagesRu";
-import { MediaUnsupportedReason } from "./media";
+import { fromFpsOf, MediaUnsupportedReason } from "./media";
 import { JobCancelled, JobFailed, JobProgress, JobState } from "./state";
 
 // 3f.6 engine prep: the import's progress has a STAGE. `copy` counts bytes (what it always did; absent means copy), `prepare` counts the
@@ -65,6 +65,26 @@ describe("an import's progress stage", () => {
     const { done: _done, total: _total, ...ref } = progress;
     expect(JobFailed.safeParse({ ...ref, stage: "prepare", error: { code: "MEDIA_UNSUPPORTED", mediaReason: "failed" } }).success).toBe(false);
     expect(JobCancelled.safeParse({ ...ref, stage: "prepare" }).success).toBe(false);
+  });
+});
+
+describe("fromFpsOf: the source rate a window says it converts from", () => {
+  test("is the source's rate when it is not the mezzanine's 30", () => {
+    expect(fromFpsOf(60)).toBe(60);
+    expect(fromFpsOf(24)).toBe(24);
+    expect(fromFpsOf(25)).toBe(25);
+    expect(fromFpsOf(120)).toBe(120);
+  });
+
+  test("is null for 30, and for the rounding of a 30 000 / 1001 camera (29.97): no conversion worth a word", () => {
+    expect(fromFpsOf(30)).toBeNull();
+    expect(fromFpsOf(29.97)).toBeNull();
+    expect(fromFpsOf(30.03)).toBeNull();
+  });
+
+  test("a rate one step past the tolerance is told", () => {
+    expect(fromFpsOf(29.9)).toBe(29.9);
+    expect(fromFpsOf(30.1)).toBe(30.1);
   });
 });
 
