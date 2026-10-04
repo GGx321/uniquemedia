@@ -13,12 +13,9 @@ export interface StagingTimers {
 }
 
 const REAL_TIMERS: StagingTimers = {
-  set: (fn, ms) => {
-    const timer = setTimeout(fn, ms);
-    // A bound that nothing waits for must never keep the engine alive.
-    timer.unref();
-    return timer;
-  },
+  // Not `unref`ed: while a staging is stuck in a read that never returns, THIS timer is what the process is waiting for (an unref'd one let Bun on Windows idle for ever with
+  // the job's promise pending: the CI shard hung). It never outlives its job: `release` clears it on every way out of `execute` and of the runner.
+  set: (fn, ms) => setTimeout(fn, ms),
   clear: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
 };
 

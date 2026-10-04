@@ -174,7 +174,7 @@ describe("stagingBound.release", () => {
     await expect(bound.run(async () => 1)).rejects.toThrow();
   });
 
-  test("the real timer does not keep the process alive and is gone after release: a released bound with a short time never fires", async () => {
+  test("the real timer is gone after release: a released bound with a short time never fires", async () => {
     const bound = stagingBound(15, new AbortController().signal);
     await bound.run(async () => 1);
     bound.release();
