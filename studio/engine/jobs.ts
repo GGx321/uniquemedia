@@ -1,4 +1,4 @@
-import type { EngineError, FailedCandidateSlot, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
+import type { EngineError, FailedCandidateSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
 // The engine's jobs as `Snapshot.jobs` lists them. In memory only: avatar
@@ -105,6 +105,20 @@ export class JobRegistry {
     return { kind: "import", jobId, mediaKind, name, mediaId: null, done, total, ...(state.status === "queued" ? { queued: true } : {}) };
   }
 
+  /**
+   * A running import's copy is over and the importer's own work begins (3f.6): `done / total` now count the importer's units (`total` of them,
+   * at least one), from zero, and `prepare` is what its probe judged (a video's). The `job.progress` payload to announce, or null for any
+   * other job or state, one already in its prepare stage (it begins once), or a total that is not a positive count (the job stays in its copy).
+   */
+  beginImportPrepare(jobId: string, total: number, prepare?: ImportPrepare): JobProgress | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.kind !== "import" || entry.state.status !== "running" || entry.state.stage === "prepare") return null;
+    if (!Number.isSafeInteger(total) || total < 1) return null;
+    entry.state = { ...entry.state, stage: "prepare", done: 0, total, ...(prepare === undefined ? {} : { prepare }) };
+    const { mediaKind, name } = entry.state;
+    return { kind: "import", jobId, mediaKind, name, mediaId: null, done: 0, total, stage: "prepare", ...(prepare === undefined ? {} : { prepare }) };
+  }
+
   /** How many imports are queued or running: what a library switch must wait for (the copy and the record write into the library, and a queued one holds its file open). */
   activeImports(): number {
     let n = 0;
@@ -148,7 +162,10 @@ export class JobRegistry {
     if (entry === undefined || entry.state.status !== "running") return null;
     // A count that is not a number changes nothing (it would poison `done` for good); a fraction is floored.
     const counted = Number.isFinite(reported) ? Math.floor(reported) : entry.state.done;
-    const done = entry.state.kind === "render" || entry.state.kind === "import" ? Math.min(entry.state.total, Math.max(entry.state.done, counted)) : counted;
+    // A render's `done` is clamped to its total; an import's too, and in its prepare stage to one under it: the last unit belongs to the job's
+    // end (the record is stored), so a window never sees a full bar of a job that is still working.
+    const ceiling = entry.state.kind === "import" && entry.state.stage === "prepare" ? entry.state.total - 1 : entry.state.total;
+    const done = entry.state.kind === "render" || entry.state.kind === "import" ? Math.min(ceiling, Math.max(entry.state.done, counted)) : counted;
     entry.state = { ...entry.state, done };
     const { total } = entry.state;
     switch (entry.state.kind) {
@@ -158,8 +175,20 @@ export class JobRegistry {
         return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total, ...(entry.state.saving === true ? { saving: true } : {}) };
       case "avatar.candidates":
         return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
-      case "import":
-        return { kind: "import", jobId, mediaKind: entry.state.mediaKind, name: entry.state.name, mediaId: null, done, total };
+      case "import": {
+        const { stage, prepare } = entry.state;
+        return {
+          kind: "import",
+          jobId,
+          mediaKind: entry.state.mediaKind,
+          name: entry.state.name,
+          mediaId: null,
+          done,
+          total,
+          ...(stage === undefined ? {} : { stage }),
+          ...(prepare === undefined ? {} : { prepare }),
+        };
+      }
     }
   }
 
@@ -234,8 +263,9 @@ export class JobRegistry {
   finishImport(jobId: string, end: ImportJobEnd): JobState | null {
     const entry = this.#jobs.get(jobId);
     if (entry === undefined || (entry.state.status !== "running" && entry.state.status !== "queued") || entry.state.kind !== "import") return null;
-    const { kind, mediaKind, name, done, total } = entry.state;
-    const common = { kind, jobId, mediaKind, name, total };
+    const { kind, mediaKind, name, done, total, stage, prepare } = entry.state;
+    // The job ends in the stage it was in, with what its probe judged: a snapshot of a finished import says how it was prepared.
+    const common = { kind, jobId, mediaKind, name, total, ...(stage === undefined ? {} : { stage }), ...(prepare === undefined ? {} : { prepare }) };
     switch (end.status) {
       case "done":
         entry.state = { ...common, mediaId: end.result.mediaId, status: "done", done: total, result: end.result };
