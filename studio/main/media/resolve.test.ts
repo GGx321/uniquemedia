@@ -490,16 +490,24 @@ describe("media/<mediaId>: an own upload, resolved through its RECORD (3f.2)", (
   });
 
   test("a record whose file is not <its id>.<the extension of its format> is not served", async () => {
+    // The file the record names EXISTS in each case, with the right size and bytes, so a null can only come from the name check.
+    await put(mediaFile("jpg", "elsewhere"), JPEG);
     await store("jpg", JPEG, "photo", "jpeg", MEDIA, { file: "elsewhere.jpg" });
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
-    await store("jpg", JPEG, "photo", "jpeg", MEDIA, { file: "../../secret.jpg" });
+    await put(join(w.libraryRoot, "secret.jpg"), JPEG);
+    await store("jpg", JPEG, "photo", "jpeg", MEDIA, { file: "../secret.jpg" });
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
   });
 
   test("a record filed under another media id than its own is not served", async () => {
-    await store("jpg", JPEG, "photo", "jpeg");
+    // The record under MEDIA's name is media-000009's own, and the file it names (media-000009.jpg) exists: only the id check can refuse.
+    await put(mediaFile("jpg", "media-000009"), JPEG);
     await put(recordFile(), JSON.stringify(recordOf("media-000009", "photo", "jpeg", "jpg", JPEG.length)));
+    await put(mediaFile("jpg"), JPEG);
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+    // The same record under its own name is served: the file, the size and the shape were all good.
+    await put(recordFile("media-000009"), JSON.stringify(recordOf("media-000009", "photo", "jpeg", "jpg", JPEG.length)));
+    expect(await get({ route: "media", mediaId: "media-000009" })).toEqual({ type: "image/jpeg", bytes: JPEG });
   });
 
   test("a record that cannot be read, from a newer Studio, or of the wrong shape is not served", async () => {
@@ -513,6 +521,12 @@ describe("media/<mediaId>: an own upload, resolved through its RECORD (3f.2)", (
   test("a file of another size than its record says is not served: it was replaced", async () => {
     await store("jpg", JPEG, "photo", "jpeg");
     await put(mediaFile("jpg"), Buffer.concat([JPEG, Buffer.from([0])]));
+    expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
+  });
+
+  test("a file SHORTER than its record says is not served either", async () => {
+    await store("jpg", JPEG, "photo", "jpeg");
+    await put(mediaFile("jpg"), JPEG.subarray(0, JPEG.length - 1));
     expect(await get({ route: "media", mediaId: MEDIA })).toBeNull();
   });
 
