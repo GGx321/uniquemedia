@@ -197,6 +197,43 @@ describe("the music element", () => {
     expect(audio.calls.at(-1)).toBe("pause");
   });
 
+  test("an OWN track plays by its media id through main's media route, from its start plus the playhead, never by a path (3f.4)", async () => {
+    const fake = fakeFrameClock();
+    const playhead = new PlayheadStore(fake.clock);
+    playhead.setTotal(8_000);
+    const spec = draftSpec(4, { music: { source: "own", mediaId: "media-00000007", startMs: 5_000 } });
+    const view = render(
+      <EngineProvider client={windowClient()}>
+        <PreviewAudio spec={spec} playhead={playhead} />
+      </EngineProvider>,
+    );
+    const element = view.container.querySelector("audio");
+    if (element === null) throw new Error("no audio element");
+    expect(element.getAttribute("src")).toBe("studio-media://media/media-00000007");
+    const audio = recordAudio(element);
+    playhead.seek(1_000);
+    act(() => playhead.toggle());
+    expect(audio.calls).toEqual(["seek 6", "play"]);
+  });
+
+  test("an own track gets no element on the dev mock (it stores no audio), and none when its id breaks the contract", () => {
+    const playhead = new PlayheadStore(fakeFrameClock().clock);
+    const own = draftSpec(4, { music: { source: "own", mediaId: "media-00000007", startMs: 0 } });
+    const mock = render(
+      <EngineProvider client={mockEngineClient(new MockEngine({ scheduler: new ManualScheduler() }))}>
+        <PreviewAudio spec={own} playhead={playhead} />
+      </EngineProvider>,
+    );
+    expect(mock.container.querySelector("audio") === null).toBe(true);
+    // Not an id: the contract refuses such a spec, so this is a draft that was corrupted on its way; the preview does not build an address from it.
+    const odd = render(
+      <EngineProvider client={windowClient()}>
+        <PreviewAudio spec={{ ...own, music: { source: "own", mediaId: "../../etc/passwd", startMs: 0 } }} playhead={playhead} />
+      </EngineProvider>,
+    );
+    expect(odd.container.querySelector("audio") === null).toBe(true);
+  });
+
   test("a slow start (too little data yet) is not moved again on every frame", async () => {
     const fake = fakeFrameClock();
     const playhead = new PlayheadStore(fake.clock);

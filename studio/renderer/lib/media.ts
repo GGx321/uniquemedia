@@ -66,6 +66,16 @@ export function trackUrl(client: Pick<EngineClient, "kind">, trackId: string): s
   return `studio-media://track/${trackId}`;
 }
 
+/**
+ * An own track's audio (3f.4: the preview's music), served by main as `studio-media://media/<mediaId>` THROUGH ITS RECORD, with byte ranges for seeking.
+ * The window sends an id and nothing else: it never sees, and never supplies, a path. Only on the real client (the dev mock stores no audio, so its preview
+ * is silent); null for an id that breaks the contract.
+ */
+export function ownTrackUrl(client: Pick<EngineClient, "kind">, mediaId: string): string | null {
+  if (client.kind !== "window" || !Id.safeParse(mediaId).success) return null;
+  return `studio-media://media/${mediaId}`;
+}
+
 // Neutral placeholder gradients (warm and cool greys, as in the mockup) for
 // the mock engine, which has no real images.
 const PLACEHOLDERS = [
