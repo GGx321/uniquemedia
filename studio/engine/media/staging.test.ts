@@ -897,6 +897,56 @@ describe("the cleanup never removes a copy this staging still owns", () => {
   });
 });
 
+describe("a work file for an importer's output", () => {
+  test("it is a fresh name inside the staging folder with the shape of ours, and nothing is there until the importer writes", async () => {
+    const s = staging();
+    const work = await s.workFile();
+    expect(work.path.startsWith(stagingDir())).toBe(true);
+    expect(work.path).toMatch(/[a-z0-9-]{8,64}\.media$/);
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("two work files are two names", async () => {
+    const s = staging();
+    expect((await s.workFile()).path).not.toBe((await s.workFile()).path);
+  });
+
+  test("a cleanup leaves a held work file alone, and release removes it", async () => {
+    const s = staging();
+    const work = await s.workFile();
+    await writeFile(work.path, "normalised bytes");
+    await s.sweep();
+    expect(await leftovers()).toHaveLength(1);
+    await work.release();
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("releasing twice is harmless, and a work file that was never written is released without a word", async () => {
+    const warned: string[] = [];
+    const s = staging({ warn: (text) => warned.push(text) });
+    const work = await s.workFile();
+    await work.release();
+    await work.release();
+    expect(warned).toEqual([]);
+  });
+
+  test("a work file that was moved away (stored) leaves nothing to release", async () => {
+    const s = staging();
+    const work = await s.workFile();
+    await writeFile(work.path, "bytes");
+    await rename(work.path, join(libraryRoot(), "moved.bin"));
+    await work.release();
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("a staging folder that is a link gives no work file: nothing would be written outside the library", async () => {
+    const other = await victim();
+    await mkdir(join(libraryRoot(), "media"), { recursive: true });
+    if (!(await tryLink(other, stagingDir()))) return;
+    await expect(staging().workFile()).rejects.toThrow();
+  });
+});
+
 describe("open and copy are two steps over one handle", () => {
   async function opened(s: TestStaging, name: string, bytes: Buffer, extra: Partial<Parameters<TestStaging["open"]>[0]> = {}): Promise<Awaited<ReturnType<TestStaging["open"]>>> {
     const path = await put(name, bytes);
@@ -950,6 +1000,24 @@ describe("open and copy are two steps over one handle", () => {
     await result.opened.close();
     expect(refusal(await result.opened.copy())).toBe("unreadable");
     expect(await leftovers()).toEqual([]);
+  });
+
+  test("an open that is cancelled while the file is being opened is refused as cancelled, and the handle is closed", async () => {
+    const controller = new AbortController();
+    let handle: FileHandle | null = null;
+    const ops: OpenRegularOps = {
+      lstat: (p) => lstat(p, { bigint: true }),
+      open: async (p, flags) => {
+        handle = await open(p, flags);
+        controller.abort();
+        return handle;
+      },
+    };
+    const path = await put("a.jpg", jpeg(300));
+    const result = await staging({ ops }).open({ path, kind: "photo", expected: await identityOf(path) }, controller.signal);
+    expect(result.ok ? "ok" : result.reason).toBe("cancelled");
+    // A closed handle refuses every read.
+    await expect((handle as unknown as FileHandle).stat()).rejects.toThrow();
   });
 
   test("an open that is already cancelled is refused before the file is touched", async () => {

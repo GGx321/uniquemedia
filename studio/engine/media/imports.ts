@@ -1,19 +1,40 @@
 import type { MediaKind, MediaPickKind, MediaUnsupportedReason, PickedFileIdentity } from "../../shared/engine";
-import { MediaStaging, type MediaStagingOptions, type StagedMedia } from "./staging";
+import type { MediaFacts } from "../library/mediaRecords";
+import type { MediaFormat } from "./sniff";
+import type { StagedMedia, WorkFile } from "./staging";
 
-// The hand-off from the import boundary to the per-kind importers (3f.2 photos, 3f.3a video, 3f.4 music, 3f.5 stickers).
+// The hand-off from the import job to the per-kind importers (3f.2 photos, 3f.3a video, 3f.4 music, 3f.5 stickers).
 //
-// An importer is `(request) => outcome`. It gets the STAGED copy of the picked file (`request.staged`: a file inside the library's own
-// staging folder, its size, its sha256 and its first bytes) and the file's display name. It never gets the picked path, and it must read
-// the staged copy only. On `{ ok: true, jobId }` the importer OWNS the staged copy and disposes of it when it is done (a crash leaves it
-// to the staging folder's sweep at the next start); on `{ ok: false, reason }` or a throw, the boundary disposes of it.
+// The job (`service.ts`) opens the picked file, copies it into the library's staging folder with progress, and calls the kind's importer
+// with that STAGED copy (`request.staged`: a file inside the staging folder, its size, its sha256, its first bytes, the container its
+// bytes are). The importer never gets the picked path and reads the staged copy only. It answers what it learned of the file (`facts`)
+// and, when it made a new file (a normalised video, a re-encoded photo), that file; with no `output` the staged copy itself is stored
+// as it is. The JOB stores the file and writes the record, and removes the staged copy and every work file whatever happens: the
+// importer owns nothing and removes nothing of its own beyond what it made for itself outside the staging folder.
+//
+// The importer runs INSIDE the job, so it may take as long as a 3 minute video takes. What it owes the job is the SIGNAL: when
+// `request.signal` fires (the owner's cancel, the engine stopping) it stops within seconds and stops writing. An answer it gives
+// after the signal is thrown away, and its work files are released.
 
 export interface MediaImportRequest {
   readonly staged: StagedMedia;
-  /** The picked file's base name, for display; the importer decides what the library stores it as. */
+  /** The picked file's base name, for display; the library stores it as the record's name. */
   readonly name: string;
+  /** Fires on `media.cancelImport` and when the engine stops. */
+  readonly signal: AbortSignal;
+  /** A fresh, held name inside the staging folder for a file the importer makes; hand the same `WorkFile` back in `output`. */
+  readonly workFile: () => Promise<WorkFile>;
 }
-export type MediaImportOutcome = { ok: true; jobId: string } | { ok: false; reason: MediaUnsupportedReason };
+
+export type MediaImportOutcome =
+  | {
+      ok: true;
+      /** What the importer learned of the file it answers with; which fields a kind has is the contract's (`MediaSummary`). */
+      facts: MediaFacts;
+      /** The file the importer made, from `workFile()`. Absent: the staged copy is stored as it is. */
+      output?: { file: WorkFile; format: MediaFormat; sha256?: string };
+    }
+  | { ok: false; reason: MediaUnsupportedReason };
 export type MediaImporter = (request: MediaImportRequest) => Promise<MediaImportOutcome>;
 export type MediaImporters = Partial<Record<MediaKind, MediaImporter>>;
 
@@ -26,63 +47,5 @@ export interface MediaImportCall {
   readonly expected: PickedFileIdentity;
 }
 
+/** The answer to `media.import`: a job that has started (its copy has not been made yet), or the file's refusal. */
 export type MediaImportResult = { ok: true; jobId: string } | { ok: false; reason: MediaUnsupportedReason; detail: string };
-
-export interface MediaImportsOptions {
-  readonly newId: () => string;
-  readonly importers?: MediaImporters | undefined;
-  readonly staging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps"> | undefined;
-}
-
-export class MediaImports {
-  readonly #options: MediaImportsOptions;
-  /** One staging area per library root, for the engine's life: the first use of each sweeps what a crash left in it. */
-  readonly #areas = new Map<string, MediaStaging>();
-
-  constructor(options: MediaImportsOptions) {
-    this.#options = options;
-  }
-
-  #stagingFor(libraryRoot: string): MediaStaging {
-    let area = this.#areas.get(libraryRoot);
-    if (area === undefined) {
-      const importers = this.#options.importers ?? {};
-      area = new MediaStaging({
-        ...this.#options.staging,
-        root: libraryRoot,
-        newId: this.#options.newId,
-        supports: (kind) => importers[kind] !== undefined,
-      });
-      this.#areas.set(libraryRoot, area);
-    }
-    return area;
-  }
-
-  /** Removes what a crash left in `libraryRoot`'s staging folder. Never rejects. */
-  async sweep(libraryRoot: string): Promise<void> {
-    await this.#stagingFor(libraryRoot).sweep();
-  }
-
-  /** Stages the picked file in `libraryRoot`'s staging area and hands the staged copy to its kind's importer. Never rejects for a bad file; a file's refusal is a result. */
-  async importFile(libraryRoot: string, call: MediaImportCall, signal?: AbortSignal): Promise<MediaImportResult> {
-    const result = await this.#stagingFor(libraryRoot).stage({ path: call.path, kind: call.pick, expected: call.expected, signal });
-    if (!result.ok) return { ok: false, reason: result.reason, detail: result.detail };
-    const { staged } = result;
-    const importer = this.#options.importers?.[staged.kind];
-    if (importer === undefined) {
-      await staged.dispose();
-      return { ok: false, reason: "not-yet-supported", detail: `${staged.kind} files cannot be imported yet` };
-    }
-    let outcome: Awaited<ReturnType<MediaImporter>>;
-    try {
-      outcome = await importer({ staged, name: call.name });
-    } catch {
-      // The importer's own message may name its working files: only the fact travels.
-      await staged.dispose();
-      return { ok: false, reason: "failed", detail: "the importer failed" };
-    }
-    if (outcome.ok) return { ok: true, jobId: outcome.jobId };
-    await staged.dispose();
-    return { ok: false, reason: outcome.reason, detail: `the file was refused: ${outcome.reason}` };
-  }
-}

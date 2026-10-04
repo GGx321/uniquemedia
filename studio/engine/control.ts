@@ -108,8 +108,9 @@ export const HostControl = z.discriminatedUnion("type", [
   z.strictObject({ kind: z.literal("control"), type: z.literal("settings.update"), settings: EngineSettings }),
   /**
    * 3f.1: main gives up on the `media.import` it sent as `callId` (its own deadline passed, or the window that asked closed): the engine
-   * stops that copy, removes what it copied and releases the library. There is no reply; the import's own reply (reason `cancelled`) is
-   * the answer. An abort for a call that is not running changes nothing.
+   * stops opening that file and releases the library. There is no reply; the import's own reply (reason `cancelled`) is the answer. An
+   * abort for a call that is not running changes nothing. It does NOT stop an import JOB that has already started: that is
+   * `media.cancelImport`, and a job outlives the window that asked for it.
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("media.abortImport"), callId: Id }),
 ]);
@@ -125,13 +126,13 @@ export type HostControl = z.infer<typeof HostControl>;
 export const MAX_IMPORT_PHOTO_BYTES = 20 * 1024 * 1024;
 
 /**
- * How long main waits for `media.import`: the call answers once the picked file is COPIED into staging, and a 2 GB video from a slow
- * external drive takes minutes. The copy is bounded by the kind's cap, so the wait is bounded too. The ordinary 30 s would give up on a
- * healthy copy and leave main telling the owner the import failed while it went on.
+ * How long main waits for `media.import`. Since 3f.1b the call answers once the file is OPENED and its job started (the copy runs inside
+ * the job), so it is short in practice; the long bound stays as a backstop for a hung open (a stale network drive), and the engine's own
+ * deadline below ends it sooner, with a TIMEOUT main can read.
  */
 export const MEDIA_IMPORT_DEADLINE_MS = 10 * 60_000;
 
-/** The engine gives up on a copy a little BEFORE main does, so its own answer (a TIMEOUT) is the one main reads, and the copy and its hold on the library end with it. */
+/** The engine gives up on an open a little BEFORE main does, so its own answer (a TIMEOUT) is the one main reads, and the open and its hold on the library end with it. */
 export const MEDIA_IMPORT_ENGINE_DEADLINE_MS = MEDIA_IMPORT_DEADLINE_MS - 15_000;
 
 /** A question main asks the engine; the engine answers with an `EngineReply` carrying the same `callId`. */
@@ -197,9 +198,11 @@ export const HostCall = z.discriminatedUnion("type", [
    * 3f.1 (invariant 34, K29): the owner picked `path` in main's own dialog as an own file to import. The window never names it. Main has
    * already looked at the file (a plain file, not a link; within the kind's cap) and sends the identity it saw (`expected`: device, inode, size and
    * times as exact unsigned decimal strings), so the engine can tell a file that was replaced since. The engine opens the path ONCE, with no
-   * symlink following, judges the file from its OPEN handle and its first bytes, copies at most the kind's cap into its own staging
-   * area and hands that copy, never the path, to the kind's importer. The reply is `mediaJobId`, or `error` (VALIDATION) with
-   * `mediaReason` for a file the boundary or the importer turned away, or an error of its own (IN_FLIGHT, LIBRARY_UNAVAILABLE, INTERNAL).
+   * symlink following, judges the file from its OPEN handle and its first bytes (identity, size, the kind, the kind's cap, an importer for
+   * the kind), and STARTS AN IMPORT JOB (3f.1b); the reply is its `mediaJobId`. The job copies at most the kind's cap into the engine's own
+   * staging area, hands that copy, never the path, to the kind's importer, and stores the file and its record, with progress events and
+   * a cancel (`media.cancelImport`). The reply is `error` (VALIDATION) with `mediaReason` for a file the boundary turned away (an importer's
+   * refusal comes later, as the job's `MEDIA_UNSUPPORTED`), or an error of its own (IN_FLIGHT, LIBRARY_UNAVAILABLE, INTERNAL).
    * `name` is the file's base name, for display only.
    */
   z.strictObject({

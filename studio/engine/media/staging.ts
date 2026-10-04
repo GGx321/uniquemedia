@@ -63,6 +63,17 @@ export interface StageRequest {
   readonly onProgress?: ((copied: number, total: number) => void) | undefined;
 }
 
+/**
+ * A name inside the staging folder for the file an importer MAKES (a normalised video, a re-encoded photo). It is held by this staging
+ * (a cleanup leaves it alone) until `release`, which removes it if it is still there. Storing it (`MediaRecords.commit`) moves it away,
+ * and the release then has nothing to remove.
+ */
+export interface WorkFile {
+  readonly path: string;
+  /** Removes the file if it is there and lets the name go; harmless when repeated, never throws. */
+  release(): Promise<void>;
+}
+
 /** What `open` needs: the picked file and the identity main saw. The copy's own signal and progress belong to `copy`. */
 export type OpenRequest = Omit<StageRequest, "signal" | "onProgress">;
 
@@ -279,9 +290,29 @@ export class MediaStaging {
     return this.#ready;
   }
 
+  /** A fresh, held name in the staging folder for an importer's output. Refused (it throws) when the staging folder is not the library's own. */
+  async workFile(): Promise<WorkFile> {
+    const id = this.#options.newId();
+    if (!Id.safeParse(id).success) throw new Error("no staging name could be made");
+    await this.#prepare();
+    await this.#safeDir(true);
+    const name = `${id}.media`;
+    const path = join(this.#dir, name);
+    this.#owned.add(name);
+    return {
+      path,
+      release: async () => {
+        await this.#removeQuietly(path);
+        this.#owned.delete(name);
+      },
+    };
+  }
+
   /** Opens the picked path once and judges it; the copy is a separate step (`OpenedMedia.copy`). */
   async open(request: OpenRequest, signal?: AbortSignal): Promise<OpenResult> {
-    if (signal?.aborted === true) return refuse("cancelled", "the import was cancelled");
+    // A function, so that TypeScript does not read the first answer as the answer for the whole open.
+    const aborted = (): boolean => signal?.aborted === true;
+    if (aborted()) return refuse("cancelled", "the import was cancelled");
     if (isUnsafePickedPath(request.path, this.#options.platform ?? process.platform)) return refuse("not-a-file", "the picked path is not a regular file");
     let handle: FileHandle;
     try {
@@ -296,10 +327,15 @@ export class MediaStaging {
       await handle.close().catch(() => undefined);
     };
     try {
-      const judged = await this.#judge(handle, request);
-      if (!judged.ok) {
+      // A cancel that landed while the file was being opened is honoured before anything else is done with the handle.
+      if (aborted()) {
         await close();
-        return judged;
+        return refuse("cancelled", "the import was cancelled");
+      }
+      const judged = await this.#judge(handle, request);
+      if (!judged.ok || aborted()) {
+        await close();
+        return judged.ok ? refuse("cancelled", "the import was cancelled") : judged;
       }
       const { kind, size, cap, head } = judged;
       const opened: OpenedMedia = {

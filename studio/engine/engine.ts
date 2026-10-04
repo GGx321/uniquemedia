@@ -93,7 +93,9 @@ import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
-import { MediaImports, type MediaImporters } from "./media/imports";
+import type { MediaImporters } from "./media/imports";
+import { MediaService } from "./media/service";
+import { MediaDiskError } from "./library/mediaRecords";
 import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { VideoService, type VideoServiceDeps } from "./videos/service";
@@ -155,13 +157,14 @@ export interface EngineDeps {
    */
   musicTracks?: RenderTrackSource;
   /**
-   * The importers of own media, by kind (3f.1): each takes the STAGED copy of a picked file and answers a job id, or turns the file away.
+   * The importers of own media, by kind (3f.1, 3f.1b): each takes the STAGED copy of a picked file, inside the import job, and answers what
+   * it learned of it (and the file it made, if it made one), or turns the file away. The job stores the file and writes the record.
    * 3f.2 to 3f.5 pass theirs. A kind with none is refused as `not-yet-supported`, before its file is copied.
    */
   mediaImporters?: MediaImporters;
   /** Test knob: the disk calls, `O_NOFOLLOW`, chunk size and caps of the staging copy. */
   mediaStaging?: Pick<MediaStagingOptions, "ops" | "noFollow" | "chunkBytes" | "caps" | "freeBytes" | "freeMarginBytes" | "fs" | "warn">;
-  /** Test knob: how long the engine lets one `media.import` copy run; `MEDIA_IMPORT_ENGINE_DEADLINE_MS` unless a test says otherwise. */
+  /** Test knob: how long the engine lets one `media.import` call take to open the file (the job's copy is not bound by it); `MEDIA_IMPORT_ENGINE_DEADLINE_MS` unless a test says otherwise. */
   mediaImportDeadlineMs?: number;
   /** Where library folders' identities are read; the real filesystem unless a test plays another volume. */
   folderFs?: FolderFs;
@@ -523,8 +526,8 @@ export class Engine {
   readonly #openRouterBaseUrl: string;
   /** The flashapi list and its quota (3c.3). */
   readonly #music: MusicService;
-  /** Own media's import boundary (3f.1): the staging copy of a picked file and the hand-off to its kind's importer. */
-  readonly #mediaImports: MediaImports;
+  /** Own media (3f.1, 3f.1b): the import job (copy, importer, record), the records and their commands. */
+  readonly #media: MediaService;
   /** Aborted by `shutdown`, so a copy in flight stops with the engine. */
   readonly #mediaAbort = new AbortController();
   /** The `media.import` calls running, by `callId`: main's `media.abortImport` stops one. */
@@ -652,7 +655,16 @@ export class Engine {
     this.#preflightTimeoutMs = deps.preflightTimeoutMs ?? PREFLIGHT_TIMEOUT_MS;
     this.#liveLibraryIdentityTimeoutMs = deps.liveLibraryIdentityTimeoutMs ?? LIVE_LIBRARY_IDENTITY_TIMEOUT_MS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
-    this.#mediaImports = new MediaImports({ newId: deps.newId, importers: deps.mediaImporters, staging: deps.mediaStaging });
+    this.#media = new MediaService({
+      jobs: this.#jobs,
+      emit: (event) => this.#emit(event),
+      withLibrary: (work) => this.#withLiveLibrary(work),
+      newId: deps.newId,
+      now: () => new Date(deps.clock()),
+      importers: deps.mediaImporters,
+      staging: deps.mediaStaging,
+      log: (line) => console.warn(`studio engine: ${line}`),
+    });
     this.#settings = init.settings;
     this.#renders = new RenderQueue({
       jobs: this.#jobs,
@@ -814,8 +826,14 @@ export class Engine {
     if (this.#internalNoticeTimer !== null) clearTimeout(this.#internalNoticeTimer);
     this.#internalNoticeTimer = null;
     // A music request in flight is aborted (its send stays counted); the renders get their bounded wait.
-    const [, renders] = await Promise.all([this.#music.stop(), this.#videos.shutdown(waitMs)]);
+    // Imports are cancelled and have cleaned up (their staged copies and work files) when `stop` returns.
+    const [, renders] = await Promise.all([this.#music.stop(), this.#videos.shutdown(waitMs), this.#media.stop()]);
     return renders;
+  }
+
+  /** Resolves once the open library's own-media recovery and every running import (with its cleanup) are done. Tests wait on it; nothing else does. */
+  mediaSettled(): Promise<void> {
+    return this.#media.settled();
   }
 
   /** After start: finishes the music downloads a stopped or crashed refresh left pending (no quota, no request to flashapi). Never rejects. */
@@ -1041,21 +1059,22 @@ export class Engine {
   }
 
   /**
-   * `media.import` (3f.1, invariant 34): stages the file main's dialog picked and hands the staged copy to its kind's importer. Counted as a
-   * small write of the live library (the staging folder is inside it), so a library switch waits for it, like every library write.
-   * A refusal carries its reason and no path.
+   * `media.import` (3f.1, invariant 34; 3f.1b): opens the file main's dialog picked (identity, size, the kind its bytes name, the kind's
+   * cap, an importer for the kind) and STARTS ITS JOB; the answer is the job's id. The copy, the importer and the record run inside the
+   * job, with progress and a cancel (`media.cancelImport`). This call is short and is counted as a small write of the live library only
+   * while it opens the file; the job holds the library on its own (`#busy()`). A refusal carries its reason and no path.
    */
   async #importMedia(call: Extract<HostCall, { type: "media.import" }>): Promise<Pick<EngineReply, "error" | "mediaJobId" | "mediaReason">> {
-    // The copy ends on main's `media.abortImport`, on the engine's own deadline (a little shorter than main's) and on shutdown. It gives
-    // the library back when it ends, whichever way it ended.
+    // Opening the file ends on main's `media.abortImport`, on the engine's own deadline (a little shorter than main's: a hung open of a
+    // dead network drive must not hold the library) and on shutdown. The job that follows is stopped by `media.cancelImport`, not by these.
     const stop = new AbortController();
     this.#mediaCalls.set(call.callId, stop);
     const deadline = AbortSignal.timeout(this.#deps.mediaImportDeadlineMs ?? MEDIA_IMPORT_ENGINE_DEADLINE_MS);
     const signal = AbortSignal.any([stop.signal, this.#mediaAbort.signal, deadline]);
     try {
-      const result = await this.#withLiveLibrary((library) => this.#mediaImports.importFile(library.root, call, signal));
+      const result = await this.#media.import(call, signal);
       if (result.ok) return { mediaJobId: result.jobId };
-      if (result.reason === "cancelled") return { error: { code: deadline.aborted ? "TIMEOUT" : "INTERNAL", detail: deadline.aborted ? "the copy took too long" : result.detail }, mediaReason: "cancelled" };
+      if (result.reason === "cancelled") return { error: { code: deadline.aborted ? "TIMEOUT" : "INTERNAL", detail: deadline.aborted ? "the file took too long to open" : result.detail }, mediaReason: "cancelled" };
       if (result.reason === "failed") return { error: { code: "INTERNAL", detail: result.detail }, mediaReason: "failed" };
       return { error: { code: "VALIDATION", detail: result.detail }, mediaReason: result.reason };
     } catch (error) {
@@ -1068,16 +1087,16 @@ export class Engine {
 
   /** Removes what a crash left in the staging folder of a library that has just become the live one. In the background; never rejects. */
   #sweepMediaStaging(library: Library): void {
-    void this.#mediaImports.sweep(library.root).catch(() => undefined);
+    this.#media.libraryOpened(library);
   }
 
-  /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, or a render is queued or running (invariant 25): a library switch must be refused. */
+  /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, an own-media import is running, or a render is queued or running (invariant 25): a library switch must be refused. */
   #busy(): boolean {
-    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || this.#renders.active() > 0 || this.#videos.preparing > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
+    return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || this.#renders.active() > 0 || this.#jobs.activeImports() > 0 || this.#videos.preparing > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
   }
 
   #inFlightRefusal(): EngineError {
-    return { code: "IN_FLIGHT", detail: "paid requests, a pick or archive, a reject mark, a video render or delete are in flight; change the library folder when they end" };
+    return { code: "IN_FLIGHT", detail: "paid requests, a pick or archive, a reject mark, an own-media import, a video render or delete are in flight; change the library folder when they end" };
   }
 
   /**
@@ -1258,7 +1277,7 @@ export class Engine {
       case "avatars.cancel": {
         const { jobId } = command.payload;
         // A render is not an avatar's job: it is stopped through the render queue, and here it is as good as unknown.
-        if (this.#jobs.stateOf(jobId)?.kind === "render" || !this.#jobs.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no job ${jobId} in this engine` });
+        if (this.#jobs.stateOf(jobId)?.kind === "render" || this.#jobs.stateOf(jobId)?.kind === "import" || !this.#jobs.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no job ${jobId} in this engine` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { jobId } };
       }
       case "avatars.pick":
@@ -1388,6 +1407,25 @@ export class Engine {
           return { result: { quarantined }, avatarIds };
         });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId, ...outcome } };
+      }
+      case "media.list":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#media.list(command.payload.kind) };
+      case "media.delete": {
+        const { mediaId } = command.payload;
+        let removed: boolean;
+        try {
+          removed = await this.#media.delete(mediaId);
+        } catch (error) {
+          if (error instanceof MediaDiskError) throw new EngineFailure({ code: "INTERNAL", detail: error.message });
+          throw error;
+        }
+        if (!removed) throw new EngineFailure({ code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { mediaId } };
+      }
+      case "media.cancelImport": {
+        const { jobId } = command.payload;
+        if (!this.#media.cancel(jobId)) throw new EngineFailure({ code: "NOT_FOUND", detail: `no import job ${jobId} in this engine` });
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { jobId } };
       }
       case "videos.get":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { video: await this.#videos.get(command.payload.videoId) } };
