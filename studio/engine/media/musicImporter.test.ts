@@ -20,6 +20,8 @@ useNativeGlobals();
 
 const tmp = tempDirFor({ beforeEach, afterEach }, "studio-music-importer-");
 const signal = (): AbortSignal => new AbortController().signal;
+/** Which child (0-based) is the encode: the probe is the first, then five selection checks (one per kind of stream that must be absent); the check of the output comes after. */
+const ENCODE_AT = 6;
 
 const importerWith = (extra: MusicImporterDeps = {}): ReturnType<typeof createMusicImporter> => createMusicImporter(extra);
 
@@ -308,7 +310,7 @@ describe("ffmpeg is pinned to what was judged", () => {
     const probe = recorded.argvs[0] ?? [];
     expect(probe).toEqual(expect.arrayContaining(["-protocol_whitelist", "file", "-f", "mp3", "-nostdin"]));
     expect(probe[probe.indexOf("-codec_whitelist") + 1]?.split(",")).not.toContain("mjpeg");
-    const decode = recorded.argvs.find((argv) => argv.includes("aac") && argv.includes("-map")) ?? [];
+    const decode = recorded.argvs.find((argv) => argv.includes("-frames:a")) ?? [];
     const pair = (flag: string, value: string): void => expect(decode.slice(decode.indexOf(flag), decode.indexOf(flag) + 2)).toEqual([flag, value]);
     pair("-protocol_whitelist", "file");
     pair("-f", "mp3");
@@ -340,7 +342,7 @@ describe("ffmpeg is pinned to what was judged", () => {
   ])("%s is decoded by the %s demuxer with the %s decoder, from the sniffed container and the probe's codec", async (name, demuxer, decoder) => {
     const recorded = recordingSpawner();
     await accepted(await runFixture(name, { spawner: recorded.spawner }));
-    const decode = recorded.argvs.find((argv) => argv.includes("-map")) ?? [];
+    const decode = recorded.argvs.find((argv) => argv.includes("-frames:a")) ?? [];
     const before = decode.slice(0, decode.indexOf("-i"));
     expect(before.slice(before.indexOf("-f"), before.indexOf("-f") + 2)).toEqual(["-f", demuxer]);
     expect(before.slice(before.indexOf("-codec_whitelist"), before.indexOf("-codec_whitelist") + 2)).toEqual(["-codec_whitelist", decoder]);
@@ -379,7 +381,7 @@ describe("ffmpeg is pinned to what was judged", () => {
     const spawner: FfmpegSpawner = (command, args, options) => {
       calls++;
       // The third call is the check of the output: it is made to report 44.1 kHz.
-      if (calls === 3) return printingChild(1, "  Duration: 00:00:00.60, bitrate: 1 kb/s\n  Stream #0:0[0x1](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp\n");
+      if (calls === ENCODE_AT + 2) return printingChild(1, "  Duration: 00:00:00.60, bitrate: 1 kb/s\n  Stream #0:0[0x1](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp\n");
       return real.spawner(command, args, options);
     };
     expect(reasonOf((await run(fixtureBytes("mp3"), "mp3", { spawner })).outcome)).toBe("failed");
@@ -393,14 +395,14 @@ describe("a cancel and the clock", () => {
     const hand = await handoff(tmp(), wavOf(150 * 8000), { format: "wav", kind: "audio" });
     const running = importerWith({ spawner: recorded.spawner })(hand.request);
     // The probe is the first child; the encode is the second.
-    while (recorded.argvs.length < 2) await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    while (!recorded.argvs.some((argv) => argv.includes("-frames:a"))) await new Promise<void>((resolve) => setTimeout(resolve, 5));
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
     hand.controller.abort();
     expect(await running).toEqual({ ok: false, reason: "cancelled" });
     for (const pid of recorded.pids) expect(isAlive(pid)).toBe(false);
     // The probe ended by itself; the encode did not: it was KILLED, not waited for (a run that was left to finish would have an exit code of 0).
     expect(recorded.exits[0]?.signal).toBeNull();
-    expect(recorded.exits[1]?.signal).toBe("SIGKILL");
+    expect(recorded.exits[ENCODE_AT]?.signal).toBe("SIGKILL");
     const listing = async (): Promise<string> => {
       const names = (await readdir(tmp())).sort();
       return (await Promise.all(names.map(async (name) => `${name}:${(await stat(join(tmp(), name))).size}`))).join(",");
@@ -445,7 +447,7 @@ describe("a cancel and the clock", () => {
     const real = recordingSpawner();
     const hung = hangingChild();
     let calls = 0;
-    const spawner: FfmpegSpawner = (command, args, options) => (calls++ === 1 ? hung.child : real.spawner(command, args, options));
+    const spawner: FfmpegSpawner = (command, args, options) => (calls++ === ENCODE_AT ? hung.child : real.spawner(command, args, options));
     const { outcome } = await run(fixtureBytes("mp3"), "mp3", { spawner, encodeTimeoutMs: 25 });
     expect(reasonOf(outcome)).toBe("failed");
     expect(hung.killed()).toEqual(["SIGKILL"]);
@@ -463,7 +465,7 @@ describe("a cancel and the clock", () => {
   test("an ffmpeg that fails says nothing of what it printed: the reason only", async () => {
     const real = recordingSpawner();
     let calls = 0;
-    const spawner: FfmpegSpawner = (command, args, options) => (calls++ === 1 ? printingChild(1, "Error opening /Users/secret/music/private.mp3: Invalid data found") : real.spawner(command, args, options));
+    const spawner: FfmpegSpawner = (command, args, options) => (calls++ === ENCODE_AT ? printingChild(1, "Error opening /Users/secret/music/private.mp3: Invalid data found") : real.spawner(command, args, options));
     const { outcome } = await run(fixtureBytes("mp3"), "mp3", { spawner });
     expect(outcome).toEqual({ ok: false, reason: "format" });
     expect(JSON.stringify(outcome)).not.toContain("secret");
@@ -552,15 +554,19 @@ describe("the encode is bounded by what it writes, not by what the file says (3f
 });
 
 describe("a stored file has a size ceiling of its own (3f.4 review M1)", () => {
-  test("a track that would store larger than the ceiling is refused as too-large, and the encode stopped at it (-fs)", async () => {
-    // Eight seconds of audio is about 256 KB at 256 kbit/s; the ceiling here is 30 KB and the length limit is far away.
-    const ceiling = 30_000;
+  test("a track that would store larger than the ceiling is refused as too-large, and nothing of it is kept", async () => {
+    // Eight seconds of audio is about 200 KB at 256 kbit/s; the ceiling here is 30 KB and the length limit is far away. (Measured on ffmpeg 6.0: the mov
+    // muxer applies `-fs` late, a 30 KB ceiling gave 152 KB, so the frame count is what bounds the work and this check is what holds the ceiling.)
     const hand = await handoff(tmp(), wavOf(8 * 8000), { format: "wav", kind: "audio" });
-    const outcome = await importerWith({ maxDurationMs: 60_000, maxStoredBytes: ceiling })(hand.request);
+    const outcome = await importerWith({ maxDurationMs: 60_000, maxStoredBytes: 30_000 })(hand.request);
     expect(reasonOf(outcome)).toBe("too-large");
-    const size = (await stat(hand.works[0]?.path ?? "")).size;
-    // `-fs` ends the write after the ceiling is passed: a little over it, never the 256 KB.
-    expect(size).toBeLessThan(ceiling + 40_000);
+  });
+
+  test("the ceiling is looked at on the file the encode made: a ceiling one byte under its size refuses it, one at its size takes it", async () => {
+    const stored = await accepted(await runFixture("mp3"));
+    const size = stored.bytes.length;
+    expect(reasonOf((await runFixture("mp3", { maxStoredBytes: size - 1 })).outcome)).toBe("too-large");
+    await accepted(await runFixture("mp3", { maxStoredBytes: size }));
   });
 
   test("a track under the ceiling is stored", async () => {
@@ -585,8 +591,8 @@ describe("an mp3's decoder priming does not make a track of the limit too long (
     expect(reasonOf((await runFixture("nolameMp3", { maxDurationMs: 7_800 })).outcome)).toBe("too-long");
   });
 
-  test("the allowance is an mp3's alone: a WAV of the limit plus the same milliseconds is too-long", async () => {
-    const samples = 8 * 8000 + Math.round((MP3_PRIMING_MS * 8000) / 1000);
+  test("the allowance is an mp3's alone: a WAV that is over the limit by HALF of it is too-long", async () => {
+    const samples = 8 * 8000 + Math.round((MP3_PRIMING_MS / 2 * 8000) / 1000);
     expect(reasonOf((await run(wavOf(samples, 8000), "wav", { maxDurationMs: 8_000 })).outcome)).toBe("too-long");
   });
 

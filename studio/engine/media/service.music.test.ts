@@ -248,12 +248,12 @@ describe("a cancel", () => {
     const r = rig({ spawner: recorded.spawner });
     const jobId = await startedJob(r, await callFor("long.wav", wavOf(150 * 8000), "audio"));
     // The probe is the first child, the encode the second.
-    while (recorded.argvs.length < 2) await new Promise<void>((resolve) => setTimeout(resolve, 5));
+    while (!recorded.argvs.some((argv) => argv.includes("-frames:a"))) await new Promise<void>((resolve) => setTimeout(resolve, 5));
     await new Promise<void>((resolve) => setTimeout(resolve, 100));
     expect(r.service.cancel(jobId)).toBe(true);
     await r.service.settled();
     expect(r.jobs.stateOf(jobId)?.status).toBe("cancelled");
-    expect(recorded.exits[1]?.signal).toBe("SIGKILL");
+    expect(recorded.exits[6]?.signal).toBe("SIGKILL");
     for (const pid of recorded.pids) expect(isAlive(pid)).toBe(false);
     expect(await stored()).toEqual([]);
     expect(await staged()).toEqual([]);

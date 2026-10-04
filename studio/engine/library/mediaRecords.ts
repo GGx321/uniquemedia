@@ -8,6 +8,7 @@ import type { MediaFormat } from "../media/sniff";
 import { MAX_ENVELOPE_STEPS } from "../music/trackRecord";
 import { fsyncDir, fsyncFile, hasErrorCode, isTempName, writeJsonAtomic } from "./durableFs";
 import { isFromNewerVersion, MEDIA_DIR, MEDIA_RECORD_SCHEMA_VERSION, MEDIA_STAGING_DIR } from "./layout";
+import { openRegularNoFollow, type OpenRegularOps } from "./openRegular";
 import { renameWithRetry } from "./renameRetry";
 import { unlinkWithRetry } from "./unlinkRetry";
 
@@ -179,6 +180,8 @@ export interface MediaRecordsOptions {
   readonly now: () => Date;
   /** Where a failure that stops nothing is told (never with a path). */
   readonly warn?: (text: string) => void;
+  /** The disk calls a record is opened with when its waveform is read (`openRegularNoFollow`); the real ones by default. A test plays a swap or a handle that lies. */
+  readonly ops?: OpenRegularOps;
   /** The disk calls of removal and the platform their retries are for, for a test that plays Windows' held handles. */
   readonly fs?: {
     readonly unlink?: (path: string) => Promise<void>;
@@ -447,7 +450,9 @@ export class MediaRecords {
   /**
    * A track's waveform, read from its record on disk, or undefined: an id the library does not hold, a media that is not a track, a record
    * with none, one that is gone, a link, one too large to be a record, one that names another media, or a waveform that is not what the commit wrote
-   * (a list of integers 0 to 1000). The record is read by the name the id makes, never followed through a link; nothing here throws for a file.
+   * (a list of integers 0 to 1000). The record is opened as the staging opens a file (`openRegularNoFollow`: a link, a folder or a FIFO is refused by the
+   * name, and the handle must be the file the name led to) and read FROM THE HANDLE, at most its bound plus one byte (3f.4 review L1: a check by path and a
+   * read by path have a gap between them and no bound); nothing here throws for a file.
    */
   async waveformOf(mediaId: string): Promise<number[] | undefined> {
     const held = this.#index.get(mediaId);
@@ -455,9 +460,23 @@ export class MediaRecords {
     const path = join(this.#dir, `${held.id}.json`);
     try {
       if ((await this.#dirState()) !== "ok") return undefined;
-      const info = await lstat(path);
-      if (!info.isFile() || info.size > MAX_RECORD_FILE_BYTES) return undefined;
-      const parsed = RecordWaveform.safeParse(JSON.parse(await readFile(path, "utf8")));
+      const handle = await openRegularNoFollow(path, this.#options.ops === undefined ? {} : { ops: this.#options.ops });
+      let text: string;
+      try {
+        if ((await handle.stat()).size > MAX_RECORD_FILE_BYTES) return undefined;
+        const buffer = Buffer.alloc(MAX_RECORD_FILE_BYTES + 1);
+        let filled = 0;
+        while (filled < buffer.length) {
+          const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+          if (bytesRead === 0) break;
+          filled += bytesRead;
+        }
+        if (filled > MAX_RECORD_FILE_BYTES) return undefined;
+        text = buffer.subarray(0, filled).toString("utf8");
+      } finally {
+        await handle.close();
+      }
+      const parsed = RecordWaveform.safeParse(JSON.parse(text));
       return parsed.success && parsed.data.id === held.id ? parsed.data.waveform : undefined;
     } catch {
       return undefined;

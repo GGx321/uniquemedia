@@ -3,6 +3,7 @@ import { isAbsolute } from "node:path";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 import { configuredFfmpegEnv } from "../../node/ffmpegEnv";
 import type { FfmpegSpawner } from "../../node/runFfmpeg";
+import { parseStreamLine } from "../music/decodeCheck";
 import type { MediaFormat } from "./sniff";
 
 // What ffmpeg says a track is (Stage 3, 3f.4), read from its input dump: the streams the file holds, the codec of the audio one, and the length
@@ -59,24 +60,25 @@ const EXACT_LENGTH: Readonly<Record<AudioDemuxer, boolean>> = { mp3: false, aac:
 /** Every decoder the importer takes, for the probe's whitelist: nothing else is opened while the file is looked at. */
 export const PROBE_CODEC_WHITELIST: string = [...new Set(Object.values(DECODERS).flatMap((row) => Object.values(row)))].join(",");
 
-// `Stream #0:1[0x2](und): Audio: ...`: an index, an optional hex id and language in either order, then the kind and a colon.
-const STREAM_LINE = /^\s*Stream #0:(\d+)(?:\[[^\]\n]*\]|\([^)\n]*\))*:\s*([A-Za-z]+):/;
-const AUDIO_CODEC = /^\s*Stream #0:\d+(?:\[[^\]\n]*\]|\([^)\n]*\))*:\s*Audio:\s*([a-z0-9_]+)/;
+// The stream line's grammar is `parseStreamLine`'s (decodeCheck.ts: strict, because a language is text the file writes). What follows the kind is read here.
+const CODEC_OF_REST = /^\s*([a-z0-9_]+)/;
+/** `(attached pic)` marks a cover picture only at the END of a line (a few parenthesised words, such as `(default)`, may follow it). */
+const ATTACHED_PICTURE_AT_END = /\(attached pic\)(?:\s*\([A-Za-z ]+\))*\s*$/;
 const DURATION_LINE = /^ {2}Duration: (\d+):(\d{2}):(\d{2})\.(\d{2})(?:,|$)/;
 
 export interface StreamLine {
   readonly index: number;
   readonly kind: string;
-  /** The whole line, as printed. */
-  readonly line: string;
+  /** What follows the kind and its colon (the codec and what is said of it). */
+  readonly rest: string;
 }
 
 /** The stream lines of a dump, in the order printed. */
 export function streamLinesOf(dump: string): StreamLine[] {
   const streams: StreamLine[] = [];
   for (const line of dump.split("\n")) {
-    const match = STREAM_LINE.exec(line);
-    if (match?.[1] !== undefined && match[2] !== undefined) streams.push({ index: Number(match[1]), kind: match[2], line });
+    const parsed = parseStreamLine(line);
+    if (parsed !== null) streams.push(parsed);
   }
   return streams;
 }
@@ -107,7 +109,7 @@ function numberedInOrder(streams: readonly StreamLine[]): boolean {
   return streams.every((stream, position) => stream.index === position);
 }
 
-const isAttachedPicture = (stream: StreamLine): boolean => stream.kind === "Video" && stream.line.includes("(attached pic)");
+const isAttachedPicture = (stream: StreamLine): boolean => stream.kind === "Video" && ATTACHED_PICTURE_AT_END.test(stream.rest);
 
 export type SourceVerdict =
   | {
@@ -134,7 +136,7 @@ export function judgeDump(dump: string, demuxer: AudioDemuxer): SourceVerdict {
   const audio = streams.filter((stream) => stream.kind === "Audio");
   if (audio.length !== 1) return { ok: false, reason: "format" };
   if (streams.some((stream) => stream.kind !== "Audio" && !isAttachedPicture(stream))) return { ok: false, reason: "format" };
-  const codec = AUDIO_CODEC.exec(audio[0]?.line ?? "")?.[1];
+  const codec = CODEC_OF_REST.exec(audio[0]?.rest ?? "")?.[1];
   const decoder = codec === undefined ? undefined : Object.hasOwn(DECODERS[demuxer], codec) ? DECODERS[demuxer][codec] : undefined;
   if (codec === undefined || decoder === undefined) return { ok: false, reason: "codec" };
   return { ok: true, codec, decoder, headerMs: durationMsOf(dump), exactLength: EXACT_LENGTH[demuxer] };
@@ -150,8 +152,8 @@ export function judgeStoredDump(dump: string): { ok: true; headerMs: number } | 
   if (streams.length === 0) return { ok: false, empty: true };
   const only = streams[0];
   if (streams.length !== 1 || only === undefined || only.index !== 0 || only.kind !== "Audio") return { ok: false, empty: false };
-  const line = only.line;
-  if (AUDIO_CODEC.exec(line)?.[1] !== "aac" || !/Audio:\s*aac \(LC\)/.test(line)) return { ok: false, empty: false };
+  const line = only.rest;
+  if (CODEC_OF_REST.exec(line)?.[1] !== "aac" || !/^\s*aac \(LC\)/.test(line)) return { ok: false, empty: false };
   if (!/, 48000 Hz, stereo,/.test(line)) return { ok: false, empty: false };
   const headerMs = durationMsOf(dump);
   return headerMs === null ? { ok: false, empty: false } : { ok: true, headerMs };
@@ -164,11 +166,6 @@ const MAX_DUMP_BYTES = 256 * 1024;
 const PROBE_TIMEOUT_MS = 15_000;
 /** One allocation may take at most this much: far above what a real track needs and far below a container bomb. */
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
-
-// STUB (red step): replaced below.
-export async function selectionHasNoExtraStreams(_options: ProbeOptions): Promise<boolean> {
-  return true;
-}
 
 export type ProbeFailureKind = "spawn" | "timeout" | "aborted" | "dump-too-large";
 
@@ -207,19 +204,52 @@ export function probeArgv(options: Pick<ProbeOptions, "path" | "demuxer" | "whit
   return ["-nostdin", "-hide_banner", "-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file", "-codec_whitelist", options.whitelist ?? PROBE_CODEC_WHITELIST, "-f", options.demuxer, "-i", options.path];
 }
 
+/** What a child of ffmpeg printed on stderr (cut at the dump's bound) and how it exited. */
+interface Captured {
+  readonly stderr: string;
+  readonly code: number | null;
+}
+
 /**
  * ffmpeg's input dump for a file, from a child process that is killed (and waited for) on a cancel or a time-out. Rejects with a
  * `ProbeError`; a file that ffmpeg cannot read is simply a dump with no streams.
  */
 export function probeDump(options: ProbeOptions): Promise<string> {
   if (!isAbsolute(options.path)) return Promise.reject(new TypeError("probeDump: the path must be absolute"));
+  return capture(probeArgv(options), options).then((captured) => captured.stderr);
+}
+
+/** The selectors that must match NOTHING in a file the importer takes: a second audio stream, a real video (an attached picture is not one), a subtitle, a data and an attachment stream. */
+export const EXTRA_STREAM_SELECTORS: readonly string[] = ["0:a:1", "0:V", "0:s", "0:d", "0:t"];
+
+/**
+ * The check that parses NO TEXT: ffmpeg's own stream selection is the authority on whether the file holds more than the one audio stream the encode maps
+ * (`-map 0:a:0`). Each of `EXTRA_STREAM_SELECTORS` is asked in a process of its own, and must FAIL with `Stream map '<selector>' matches no streams`. Anything
+ * else (ffmpeg went on and exited 0; it failed for another reason, such as a decoder that is not allowed for a stream that IS there; it named another
+ * selector) means a stream is there, or that it cannot be proven there is none: false. Stops at the first selector that is not proven empty.
+ */
+export async function selectionHasNoExtraStreams(options: ProbeOptions): Promise<boolean> {
+  if (!isAbsolute(options.path)) throw new TypeError("selectionHasNoExtraStreams: the path must be absolute");
+  for (const selector of EXTRA_STREAM_SELECTORS) {
+    const argv = [...probeArgv(options), "-v", "error", "-map", selector, "-t", "0.05", "-f", "null", "-"];
+    const { stderr, code } = await capture(argv, options);
+    if (code === 0 || code === null || !stderr.includes(`Stream map '${selector}' matches no streams.`)) return false;
+  }
+  return true;
+}
+
+/**
+ * Runs ffmpeg with `argv` and captures its stderr, from a child process that is killed (and waited for) on a cancel or a time-out. Rejects with a `ProbeError`
+ * (`dump-too-large` when it prints more than a real file's dump); the exit code is told, never judged here.
+ */
+function capture(argv: readonly string[], options: Pick<ProbeOptions, "signal" | "timeoutMs" | "spawner">): Promise<Captured> {
   if (options.signal.aborted) return Promise.reject(new ProbeError("aborted"));
   const timeoutMs = Math.min(options.timeoutMs ?? PROBE_TIMEOUT_MS, PROBE_TIMEOUT_MS);
   const spawner = options.spawner ?? nodeSpawner;
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<Captured>((resolve, reject) => {
     let child: ReturnType<FfmpegSpawner>;
     try {
-      child = spawner(ffmpegPath(), probeArgv(options), { cwd: undefined, env: configuredFfmpegEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+      child = spawner(ffmpegPath(), argv, { cwd: undefined, env: configuredFfmpegEnv(), windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     } catch {
       return reject(new ProbeError("spawn"));
     }
@@ -242,11 +272,11 @@ export function probeDump(options: ProbeOptions): Promise<string> {
     });
     child.stdout?.on("data", () => undefined);
     child.on("error", () => stop(new ProbeError("spawn")));
-    child.on("close", () => {
+    child.on("close", (code) => {
       clearTimeout(timer);
       options.signal.removeEventListener("abort", onAbort);
       if (failure !== null) return reject(failure);
-      resolve(dump);
+      resolve({ stderr: dump, code });
     });
   });
 }

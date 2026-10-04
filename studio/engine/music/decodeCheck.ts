@@ -197,14 +197,28 @@ function decodeNow(options: DecodeOptions): Promise<DecodeResult> {
 const MAX_DUMP_BYTES = 256 * 1024;
 const INSPECT_TIMEOUT_MS = 15_000;
 // `Stream #0:1[0x2](und): Audio: ...`: an index, an optional hex id and language in either order, then the kind and a colon.
-const STREAM_LINE = /^\s*Stream #0:(\d+)(?:\[[^\]\n]*\]|\([^)\n]*\))*:\s*([A-Za-z]+):/;
+//
+// THE LANGUAGE IS TEXT THE FILE WRITES. A mov's comes from `mdhd` (three letters), but an Ogg's or an mp3's is a tag printed verbatim, and `x): Video: png
+// (attached pic` in it turns the line into `Stream #0:0(x): Video: png (attached pic): Audio: vorbis...`. So the grammar is strict: a language is a short word
+// (letters, digits, `_` and `-`: no bracket, no colon, no space), a stream id is hex, and a line that carries a SECOND `: <Kind>:` after its own is no stream
+// at all (it leaves a gap in the numbering, which the callers refuse). This reading is shared by the track store, the render and the own-music probe.
+const STREAM_LINE = /^\s*Stream #0:(\d+)(?:\[0x[0-9a-fA-F]+\])?(?:\([A-Za-z0-9_-]+\))?(?:\[0x[0-9a-fA-F]+\])?:\s*(Audio|Video|Subtitle|Data|Attachment|[A-Za-z]+):(.*)$/;
+const SECOND_KIND = /:\s*(?:Audio|Video|Subtitle|Data|Attachment)\s*:/;
+
+/** One stream line of ffmpeg's dump: its number, its kind, and what follows the kind's colon. Null for a line that is not exactly this grammar. */
+export function parseStreamLine(line: string): { index: number; kind: string; rest: string } | null {
+  const match = STREAM_LINE.exec(line);
+  if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return null;
+  if (SECOND_KIND.test(match[3])) return null;
+  return { index: Number(match[1]), kind: match[2], rest: match[3] };
+}
 
 /** The index and kind of each stream line in ffmpeg's input dump, in the order printed. */
 export function streamsOf(dump: string): { index: number; kind: string }[] {
   const streams: { index: number; kind: string }[] = [];
   for (const line of dump.split("\n")) {
-    const match = STREAM_LINE.exec(line);
-    if (match?.[1] !== undefined && match[2] !== undefined) streams.push({ index: Number(match[1]), kind: match[2] });
+    const parsed = parseStreamLine(line);
+    if (parsed !== null) streams.push({ index: parsed.index, kind: parsed.kind });
   }
   return streams;
 }
