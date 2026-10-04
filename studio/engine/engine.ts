@@ -745,7 +745,8 @@ export class Engine {
         }
         return held;
       },
-      // 3f.3b: the own videos a draft names, with their stored lengths: what `ownVideoFactsOf` says a render could read (video, with a size and a length, stored as the importer's MP4).
+      // 3f.3b: the own videos a draft names, with their stored lengths: what `ownVideoFactsOf` says a render could read (kind video, stored as the importer's MP4, with a size and a
+      // length, and within the stored-video cap the render's copy holds it to).
       ownVideos: async (mediaIds) => {
         const held = new Map<string, { readonly durationMs: number }>();
         for (const mediaId of mediaIds) {

@@ -6,7 +6,7 @@ import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { fakeSpawner, outputOf, type SpawnCall } from "../../node/fakeFfmpeg.testkit";
 import { LAYER_FILE_BYTES_PER_FRAME, RenderGraphError } from "../render";
-import { renderTimeoutMs } from "./progress";
+import { renderTimeoutMs, stagingTimeoutMs } from "./progress";
 import { RenderFailure } from "./queue";
 import { runRenderJob, type RenderRunInput, type RenderRunDeps } from "./runner";
 import { scrubber } from "./scrubber";
@@ -1212,8 +1212,23 @@ describe("runRenderJob: own video clips (3f.3b)", () => {
     expect(calls).toHaveLength(3);
   });
 
-  test("a scripted ffmpeg that reports no frames at all is not judged (only a real ffmpeg always reports them)", async () => {
+  test("an ffmpeg that reports NO frames for a video clip fails the job closed (L-1): a real ffmpeg always reports them, and a count nobody saw is not a count", async () => {
     const r = videoRig();
+    const { deps, calls } = depsWith((call) => {
+      writeFileSync(outputOf(call.args), "data");
+      call.child.exit(0);
+    });
+
+    const error = await runRenderJob(r.input, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(RenderFailure);
+    expect(error instanceof RenderFailure && error.engineError.code).toBe("RENDER_FAILED");
+    expect(String(error)).not.toContain(r.tmpRoot);
+    expect(calls).toHaveLength(1);
+  });
+
+  test("a photo job whose scripted ffmpeg reports no frames is still fine: only a video clip's count is held to ffmpeg's report", async () => {
+    const r = rig();
     const { deps, calls } = depsWith((call) => {
       writeFileSync(outputOf(call.args), "data");
       call.child.exit(0);
@@ -1222,6 +1237,68 @@ describe("runRenderJob: own video clips (3f.3b)", () => {
     await runRenderJob(r.input, deps);
 
     expect(calls).toHaveLength(3);
+  });
+
+  test("the ffmpeg budget starts AFTER the copies are made: a copy that takes longer than the whole budget leaves ffmpeg its full time (M-2)", async () => {
+    const r = videoRig();
+    let clock = 0;
+    const { deps, calls } = depsWith(goodFfmpeg, { now: () => clock });
+
+    await runRenderJob(
+      {
+        ...r.input,
+        stageOwnVideos: async () => {
+          clock += 10 * renderTimeoutMs(60);
+        },
+      },
+      deps,
+    );
+
+    expect(calls).toHaveLength(3);
+  });
+
+  test("and the budget is still the budget once ffmpeg runs: a call after the copies that outlives it is a timeout", async () => {
+    const r = videoRig();
+    let clock = 0;
+    const { deps } = depsWith(
+      (call) => {
+        clock += 10 * renderTimeoutMs(60);
+        goodFfmpeg(call);
+      },
+      { now: () => clock },
+    );
+
+    await expect(runRenderJob({ ...r.input, stageOwnVideos: async () => void (clock += 5) }, deps)).rejects.toBeInstanceOf(FfmpegTimeoutError);
+  });
+
+  test("the copies report their progress: the job's own progress moves during staging, before ffmpeg, never backwards and never to the total (M-2)", async () => {
+    const r = videoRig();
+    let atFirstCall: number[] | null = null;
+    const { deps } = depsWith((call) => {
+      atFirstCall ??= [...r.progress];
+      goodFfmpeg(call);
+    });
+
+    await runRenderJob(
+      {
+        ...r.input,
+        stageOwnVideos: async (_dir, progress) => {
+          progress(25, 100);
+          progress(50, 100);
+          progress(100, 100);
+        },
+      },
+      deps,
+    );
+
+    const before: number[] = atFirstCall ?? [];
+    expect(before.length).toBeGreaterThan(0);
+    expect(before).toEqual([...before].sort((a, b) => a - b));
+    expect(Math.max(...before)).toBeLessThan(60);
+    expect(Math.min(...before)).toBeGreaterThan(0);
+    // The copies fill a third of pass 1's slice and no more: 60 frames, 0.3 of them, 35 % of that.
+    expect(Math.max(...before)).toBe(6);
+    expect(r.progress).toEqual([...r.progress].sort((a, b) => a - b));
   });
 
   test("a photo clip is not judged this way: its frames are checked by pass 2 and the verifier, as before", async () => {
@@ -1235,6 +1312,141 @@ describe("runRenderJob: own video clips (3f.3b)", () => {
     await runRenderJob(r.input, deps);
 
     expect(calls).toHaveLength(3);
+  });
+});
+
+describe("runRenderJob: the staging of the own videos has a time bound of its own (M-B)", () => {
+  const videoClip = (clipId: string, durationMs: number): Clip => ({ clipId, durationMs, transitionIn: "cut", kind: "video", mediaId: "media-0000001", trimStartMs: 0, focus: null });
+  const hungRig = (over: Partial<RenderRunInput> = {}): Rig => {
+    const r = rig();
+    const copy = join(r.jobDir, "own-media-0000001.mp4");
+    return { ...r, input: { ...r.input, clips: [videoClip("v", 1000), clip("b", 1000)], resolveVideo: () => ({ path: copy, width: 1080, height: 570 }), stagingBytes: 10 * 1024 * 1024, ...over } };
+  };
+
+  test("the bound is 60 s and the bytes at 5 MiB a second", () => {
+    expect(stagingTimeoutMs(0)).toBe(60_000);
+    expect(stagingTimeoutMs(5 * 1024 * 1024)).toBe(61_000);
+    expect(stagingTimeoutMs(2 * 1024 * 1024 * 1024)).toBe(60_000 + 410 * 1000 - 0);
+    expect(stagingTimeoutMs(100)).toBeGreaterThan(stagingTimeoutMs(0));
+  });
+
+  test("a staging that never answers ends the job with a TIMEOUT within the bound, though nothing it was given ever settles: no ffmpeg ran, and the job folder is gone", async () => {
+    const r = hungRig();
+    const { deps, calls } = depsWith(goodFfmpeg, { stagingTimeoutMs: () => 40 });
+    let given: AbortSignal | undefined;
+
+    const started = performance.now();
+    const error = await runRenderJob({ ...r.input, stageOwnVideos: (_dir, _progress, signal) => ((given = signal), new Promise<void>(() => undefined)) }, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegTimeoutError);
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(calls).toHaveLength(0);
+    expect(existsSync(r.jobDir)).toBe(false);
+    // The copy is told to stop: it sees the abort when its read returns.
+    expect(given?.aborted).toBe(true);
+  });
+
+  test("the bound is sized from the bytes the job was given: a staging that takes longer than a SMALL job's bound fails, one within a LARGE job's is fine", async () => {
+    const small = hungRig({ stagingBytes: 0 });
+    const asked: number[] = [];
+    const { deps } = depsWith(goodFfmpeg, { stagingTimeoutMs: (bytes) => (asked.push(bytes), bytes === 0 ? 30 : 2_000) });
+    await expect(runRenderJob({ ...small.input, stageOwnVideos: () => new Promise<void>(() => undefined) }, deps)).rejects.toBeInstanceOf(FfmpegTimeoutError);
+    const large = hungRig({ stagingBytes: 7 });
+    await runRenderJob({ ...large.input, stageOwnVideos: async () => new Promise<void>((resolve) => setTimeout(resolve, 80)) }, deps);
+    expect(asked).toEqual([0, 7]);
+  });
+
+  test("a staging that finishes in time is not cut: the job goes on to its ffmpeg calls", async () => {
+    const r = hungRig();
+    const { deps, calls } = depsWith(goodFfmpeg, { stagingTimeoutMs: () => 5_000 });
+
+    await runRenderJob({ ...r.input, stageOwnVideos: async () => undefined }, deps);
+
+    expect(calls).toHaveLength(3);
+  });
+
+  test("a cancel while the staging is stuck ends the job at once with the cancel's reason, not when the read returns", async () => {
+    const controller = new AbortController();
+    const r = hungRig({ signal: controller.signal });
+    const { deps } = depsWith(goodFfmpeg, { stagingTimeoutMs: () => 60_000 });
+    const stop = new Error("cancelled by the owner");
+
+    const running = runRenderJob({ ...r.input, stageOwnVideos: () => new Promise<void>(() => undefined) }, deps).catch((e: unknown) => e);
+    setTimeout(() => controller.abort(stop), 20);
+
+    expect(await running).toBe(stop);
+    expect(existsSync(r.jobDir)).toBe(false);
+  });
+
+  test("EVERY kind of staging is under the bound: a hung own-photo copy and a hung layer staging end the job TIMEOUT too (round 3)", async () => {
+    const overlay = { path: "/x/text-00.png", format: "png" as const, box: { x: 100, y: 300, w: 880, h: 200 }, resize: false, startFrame: 0, endFrame: 30 };
+    for (const hung of [{ stageOwnPhotos: () => new Promise<void>(() => undefined) }, { stageOwnVideos: () => new Promise<void>(() => undefined) }, { overlays: [overlay], stageLayers: () => new Promise<void>(() => undefined) }]) {
+      const r = hungRig();
+      const { deps, calls } = depsWith(goodFfmpeg, { stagingTimeoutMs: () => 30 });
+
+      const error = await runRenderJob({ ...r.input, ...hung }, deps).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(FfmpegTimeoutError);
+      expect(calls).toHaveLength(0);
+      expect(existsSync(r.jobDir)).toBe(false);
+    }
+  });
+
+  test("the steps share ONE bound: three stagings that each take 40 ms together outlive a bound of 100 ms", async () => {
+    const r = hungRig();
+    const { deps } = depsWith(goodFfmpeg, { stagingTimeoutMs: () => 100 });
+    const slow = (): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, 40));
+
+    const error = await runRenderJob({ ...r.input, stageOwnPhotos: slow, stageOwnVideos: slow, overlays: [{ path: "/x/t.png", format: "png", box: { x: 100, y: 300, w: 880, h: 200 }, resize: false, startFrame: 0, endFrame: 30 }], stageLayers: slow }, deps).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(FfmpegTimeoutError);
+  });
+
+  test("the bound is sized from the bytes the job names, and is the one `execute` may hand over", async () => {
+    const r = hungRig({ stagingBytes: 12_345 });
+    const asked: number[] = [];
+    const { deps } = depsWith(goodFfmpeg, { stagingTimeoutMs: (bytes) => (asked.push(bytes), 5_000) });
+
+    await runRenderJob({ ...r.input, stageOwnVideos: async () => undefined }, deps);
+
+    expect(asked).toEqual([12_345]);
+  });
+
+  test("a bound handed over by the caller is used as it is, and the runner releases it when the staging is over (its clock must not run on through ffmpeg)", async () => {
+    const r = hungRig();
+    const { stagingBound } = await import("./stagingBound");
+    const set: unknown[] = [];
+    const cleared: unknown[] = [];
+    const given = stagingBound(60_000, r.input.signal, { set: (fn, ms) => (set.push(ms), { fn }), clear: (handle) => void cleared.push(handle) });
+    const { deps, calls } = depsWith(goodFfmpeg, { stagingTimeoutMs: () => { throw new Error("the caller's bound is the one in use"); } });
+    let clearedAtFirstCall = -1;
+    const probe = depsWith((call) => {
+      if (clearedAtFirstCall < 0) clearedAtFirstCall = cleared.length;
+      goodFfmpeg(call);
+    }, { stagingTimeoutMs: () => { throw new Error("the caller's bound is the one in use"); } });
+
+    await runRenderJob({ ...r.input, staging: given, stageOwnVideos: async () => undefined }, probe.deps);
+
+    expect(clearedAtFirstCall).toBe(1);
+    expect(calls).toHaveLength(0);
+    expect(deps).toBeDefined();
+  });
+
+  test("a staging that fails after the job has timed out is no unhandled rejection", async () => {
+    const r = hungRig();
+    const { deps } = depsWith(goodFfmpeg, { stagingTimeoutMs: () => 20 });
+    let fail: (error: Error) => void = () => undefined;
+
+    const error = await runRenderJob({ ...r.input, stageOwnVideos: () => new Promise<void>((_resolve, reject) => (fail = reject)) }, deps).catch((e: unknown) => e);
+    const seen: unknown[] = [];
+    const watch = (reason: unknown): void => void seen.push(reason);
+    process.on("unhandledRejection", watch);
+    fail(new Error("the read returned late"));
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    process.off("unhandledRejection", watch);
+
+    expect(error).toBeInstanceOf(FfmpegTimeoutError);
+    expect(seen).toEqual([]);
   });
 });
 

@@ -2236,7 +2236,13 @@ export class MockEngine implements EngineBridge {
     const advance = (step: number): void => {
       job.timers.push(
         this.scheduler.schedule(this.stepMs, () => {
-          // An encode failure stops the job at its first step, before it reports anything.
+          // An own video is COPIED into the job's folder before ffmpeg starts, and the engine's job reports that on the bar (a share of pass 1's slice) once the job is running,
+          // before anything ffmpeg does: so before a first-step failure too (3f.3b).
+          if (step === 1 && job.spec.clips.some((clip) => clip.kind === "video")) {
+            job.done = Math.floor((Math.floor(0.3 * job.total) * 35) / 100);
+            this.emitRenderProgress(job);
+          }
+          // An encode failure stops the job at its first step, before it reports anything of its own.
           if (step === 1 && this.nextRenderFailure?.at === "encode") {
             const { error } = this.nextRenderFailure;
             this.nextRenderFailure = null;

@@ -24,6 +24,14 @@ export const MEDIA_BYTE_CAPS: Readonly<Record<MediaKind, number>> = {
   sticker: 5 * 1024 * 1024,
 };
 
+/**
+ * The largest STORED video (the importer's mezzanine) there is, in bytes. ONE number for every reader: the importer refuses a mezzanine over it (`too-large`, after the encode,
+ * which is itself bounded to it), the render's streamed copy refuses a record over it, and a draft's verdict (`ownVideoFactsOf`) holds a library video to it, so a draft and a
+ * render never disagree on what an own video is. It is the source cap: a mezzanine is bigger than its source only for a grainy one at CRF 16, and such a clip is
+ * refused clearly rather than imported, listed, previewed and then never rendered.
+ */
+export const MAX_STORED_VIDEO_BYTES: number = MEDIA_BYTE_CAPS.video;
+
 /** The cap a pick of `kind` is held to before its bytes are read; `any` is held to the largest until the bytes name the kind. */
 export function mediaByteCap(kind: MediaPickKind): number {
   return kind === "any" ? Math.max(...Object.values(MEDIA_BYTE_CAPS)) : MEDIA_BYTE_CAPS[kind];

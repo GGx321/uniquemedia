@@ -9,6 +9,7 @@ import {
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
+  RENDER_TIMEOUT_DETAIL_PREFIX,
   renderQueueFullDetail,
 } from "../../shared/engine";
 import { errorSettingsFocus, errorText, settingsLinkLabel } from "./errors";
@@ -24,6 +25,31 @@ test("AGE_CHECK_FAILED with the free re-pick's own detail gets its own Russian t
   const text = errorText({ code: "AGE_CHECK_FAILED", detail: AGE_CHECK_ALREADY_REFUSED_DETAIL });
   expect(text).toContain("уже не подтвердило возраст");
   expect(text).not.toContain("оплачена только проверка возраста");
+});
+
+// 3f.3b round 3: a render that ran past its time limit (a dead library disk, a stuck ffmpeg) is free and local; the general TIMEOUT text is about a paid OpenRouter request.
+
+test("a render's TIMEOUT says the render ran out of time, that nothing was spent, and what to check: not OpenRouter and not the worst price", () => {
+  const text = errorText({ code: "TIMEOUT", detail: `${RENDER_TIMEOUT_DETAIL_PREFIX} of 60 s` });
+  expect(text).toContain("Рендер не уложился во время");
+  expect(text).toContain("Ничего не потрачено");
+  expect(text).toContain("внешнем диске");
+  expect(text).not.toContain("OpenRouter");
+  expect(text).not.toContain("цене");
+});
+
+test("the prefix is what the render queue says: its TIMEOUT detail starts with it", () => {
+  expect(RENDER_TIMEOUT_DETAIL_PREFIX).toBe("the render ran past its time limit");
+});
+
+test("a paid request's TIMEOUT keeps the OpenRouter text, with no detail and with any other", () => {
+  expect(errorText({ code: "TIMEOUT" })).toBe(ERROR_MESSAGES_RU.TIMEOUT);
+  expect(errorText({ code: "TIMEOUT", detail: "the request to OpenRouter timed out" })).toBe(ERROR_MESSAGES_RU.TIMEOUT);
+  expect(ERROR_MESSAGES_RU.TIMEOUT).toContain("OpenRouter не ответил вовремя");
+});
+
+test("only a TIMEOUT with the render's detail gets the render's text: another code with it keeps its own", () => {
+  expect(errorText({ code: "NETWORK", detail: `${RENDER_TIMEOUT_DETAIL_PREFIX} of 60 s` })).toBe(ERROR_MESSAGES_RU.NETWORK);
 });
 
 test("AGE_CHECK_FAILED with any other detail (the ordinary, paid refusal) keeps the ordinary text", () => {

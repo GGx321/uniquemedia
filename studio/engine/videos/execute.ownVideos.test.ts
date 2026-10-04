@@ -8,9 +8,11 @@ import type { MontageDraft } from "../../shared/engine/montage";
 import type { RunFfmpegArgvOptions } from "../../node/runFfmpeg";
 import { JobRegistry } from "../jobs";
 import { RenderQueue } from "../renderQueue/queue";
+import { NODE_OPEN_OPS, type OpenRegularOps } from "../library/openRegular";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { ownVideoCopyName, type OwnVideoSource } from "./ownVideos";
 import type { VideoRecord } from "./record";
+import { reportVideoClipFrames } from "./testing/serviceKit";
 import { acceptingVerify, exportFiles, fakeVideoBytes, libraryVideoFiles, specOf, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
 
@@ -26,6 +28,7 @@ const MEZZANINE = Uint8Array.from({ length: 5_000 }, (_, i) => (i * 7 + (i >> 5)
 
 const writingRun = (calls: string[][], onFirst?: (opts: RunFfmpegArgvOptions) => Promise<void>) => async (opts: RunFfmpegArgvOptions): Promise<void> => {
   calls.push([...opts.argv]);
+  reportVideoClipFrames(opts);
   if (calls.length === 1) await onFirst?.(opts);
   await mkdir(dirname(opts.output), { recursive: true });
   await writeFile(opts.output, OUT);
@@ -59,10 +62,12 @@ afterEach(async () => {
 });
 
 function rig(
-  options: { clips?: { trimStartMs: number; durationMs: number; mediaId?: string }[]; durationMs?: number; withoutOwn?: boolean; io?: VideoRenderDeps["ownVideoIo"]; onFirst?: (opts: RunFfmpegArgvOptions) => Promise<void> } = {},
+  options: { clips?: { trimStartMs: number; durationMs: number; mediaId?: string }[]; second?: string; durationMs?: number; withoutOwn?: boolean; io?: VideoRenderDeps["ownVideoIo"]; runDeps?: Partial<NonNullable<VideoRenderDeps["runDeps"]>>; onFirst?: (opts: RunFfmpegArgvOptions) => Promise<void> } = {},
 ): Rig {
   const w = world();
   const source: OwnVideoSource = { mediaId: MEDIA_ID, path: libraryFile, sha256: sha(MEZZANINE), bytes: MEZZANINE.length, width: 1080, height: 570, durationMs: options.durationMs ?? 6_000 };
+  const secondSource: OwnVideoSource | null =
+    options.second === undefined ? null : { ...source, mediaId: options.second, path: join(dirname(libraryFile), `${options.second}.mp4`) };
   const tracker = new CommitTracker();
   const ffmpeg: string[][] = [];
   const records: VideoRecord[] = [];
@@ -73,7 +78,7 @@ function rig(
     caseProbe: { isCaseInsensitive: async () => false },
     now: () => new Date(2026, 9, 4, 10, 0, 0),
     verify: async (path) => acceptingVerify(path),
-    runDeps: { run: writingRun(ffmpeg, options.onFirst) },
+    runDeps: { run: writingRun(ffmpeg, options.onFirst), ...options.runDeps },
     onCommitted: (record) => void records.push(record),
     ...(options.io === undefined ? { ownVideoIo: { freeBytes: async () => null } } : { ownVideoIo: options.io }),
   };
@@ -88,7 +93,7 @@ function rig(
     spec: videoSpec(w, options.clips ?? [{ trimStartMs: 1_000, durationMs: 4_000 }]),
     resolvePhoto: () => undefined,
     audio: { kind: "silent" },
-    ...(options.withoutOwn === true ? {} : { ownVideos: [source] }),
+    ...(options.withoutOwn === true ? {} : { ownVideos: secondSource === null ? [source] : [source, secondSource] }),
     montageId: null,
     title: null,
     videoKind: "mix",
@@ -300,6 +305,72 @@ describe("a render job with an own video that does not pass", () => {
     await r.queue.idle();
     expect(r.states()[0]).toMatchObject({ status: "cancelled" });
     await expectNothingLeft(r);
+  });
+});
+
+describe("which clip is flagged when a copy fails (M-3)", () => {
+  const clipsABA = [
+    { trimStartMs: 0, durationMs: 1_000 },
+    { trimStartMs: 0, durationMs: 1_000, mediaId: "media-0000008" },
+    { trimStartMs: 1_000, durationMs: 1_000 },
+  ];
+
+  test("clips [A, B, A] with B's bytes swapped: only B's clip is marked, not A's two, and not all of them", async () => {
+    await writeFile(libraryFile, MEZZANINE);
+    const second = join(dirname(libraryFile), "media-0000008.mp4");
+    await writeFile(second, Uint8Array.from(MEZZANINE).reverse());
+    const r = rig({ clips: clipsABA, second: "media-0000008" });
+    expect(await r.run()).toMatchObject({ status: "failed", error: { code: "MONTAGE_INVALID", issues: [{ code: "media-unavailable", path: ["clips", 1] }] } });
+  });
+
+  test("clips [A, B, A] with A's bytes swapped: both of A's clips are marked, in order, and B's is not", async () => {
+    await writeFile(libraryFile, Uint8Array.from(MEZZANINE).reverse());
+    await writeFile(join(dirname(libraryFile), "media-0000008.mp4"), MEZZANINE);
+    const r = rig({ clips: clipsABA, second: "media-0000008" });
+    expect(await r.run()).toMatchObject({ status: "failed", error: { issues: [{ code: "media-unavailable", path: ["clips", 0] }, { code: "media-unavailable", path: ["clips", 2] }] } });
+  });
+});
+
+describe("a read that never returns (M-B): a library on a dead disk does not hold the render slot for ever", () => {
+  test("the job ends TIMEOUT within the staging bound, the slot is free, and once the read finally returns the abandoned copy removes what it made", async () => {
+    await writeFile(libraryFile, MEZZANINE);
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    let reads = 0;
+    const hanging: OpenRegularOps = {
+      lstat: (path) => NODE_OPEN_OPS.lstat(path),
+      open: async (path, flags) => {
+        const real = await NODE_OPEN_OPS.open(path, flags);
+        return new Proxy(real, {
+          get(target, property) {
+            if (property === "read") {
+              return async (buffer: Uint8Array, offset: number, length: number, position: number) => {
+                if (++reads === 2) await gate;
+                return target.read(buffer, offset, length, position);
+              };
+            }
+            const value: unknown = Reflect.get(target, property);
+            return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+          },
+        });
+      },
+    };
+    const r = rig({ io: { freeBytes: async () => null, chunkBytes: 1_000, open: hanging }, runDeps: { stagingTimeoutMs: () => 150 } });
+
+    const started = performance.now();
+    const state = await r.run();
+
+    expect(performance.now() - started).toBeLessThan(10_000);
+    expect(state).toMatchObject({ status: "failed", error: { code: "TIMEOUT" } });
+    expect(r.ffmpeg).toEqual([]);
+    // The slot is free: the queue is idle, and nothing is left in the export folder or the record list.
+    expect(r.records).toEqual([]);
+    expect(await exportFiles(r.w)).toEqual([]);
+
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(await readdir(r.w.renderTmp)).toEqual([]);
+    expect(reads).toBeLessThanOrEqual(3);
   });
 });
 

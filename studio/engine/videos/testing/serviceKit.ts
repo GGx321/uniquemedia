@@ -16,8 +16,21 @@ import { acceptingVerify, fakeVideoBytes, type World } from "./kit";
 
 export const BYTES = fakeVideoBytes(4096, 11);
 
+/**
+ * What a real ffmpeg reports for the pass-1 call of an own video clip: exactly the frames its graph stops at (`trim=end_frame=N`). The runner holds a video clip to the count ffmpeg
+ * REPORTS (and fails closed when none is), so a fake that writes the file must say it. True when the call was a video clip's (and its count was reported).
+ */
+export function reportVideoClipFrames(opts: Pick<RunFfmpegArgvOptions, "argv" | "onFrames">): boolean {
+  const graph = opts.argv[opts.argv.indexOf("-filter_complex") + 1] ?? "";
+  const stop = /^\[0:v:0\]trim=end_frame=(\d+),/.exec(graph);
+  if (stop === null) return false;
+  opts.onFrames?.(Number(stop[1]));
+  return true;
+}
+
 /** A fake ffmpeg: every call writes its output file, as a successful one would. */
 export const writingRun = async (opts: RunFfmpegArgvOptions): Promise<void> => {
+  reportVideoClipFrames(opts);
   await mkdir(dirname(opts.output), { recursive: true });
   await writeFile(opts.output, BYTES);
 };

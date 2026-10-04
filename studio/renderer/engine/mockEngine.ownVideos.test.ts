@@ -57,6 +57,32 @@ describe("videos.render: an own video clip", () => {
     expect(mock.events.some((e) => e.type === "job.done" && e.payload.jobId === jobId)).toBe(true);
   });
 
+  test("a render with an own video reports the progress of its copy when it runs, before any step of its own, as the engine's job does (M-2)", async () => {
+    const mock = makeMock();
+    const mediaId = await storeVideo(mock);
+    const { jobId } = await unwrap(render(mock, specWith(mediaId)));
+    const progress = (): number[] => mock.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "render" && e.payload.jobId === jobId ? [e.payload.done] : []));
+
+    expect(progress()).toEqual([0]);
+    mock.scheduler.runAll();
+
+    // Announced at zero, then the copy: a share of the bar that is more than nothing and far from the end, then the steps.
+    expect(progress().length).toBeGreaterThan(2);
+    expect(progress()[0]).toBe(0);
+    expect(progress()[1]).toBeGreaterThan(0);
+    expect(progress()[1]).toBeLessThan(40);
+  });
+
+  test("a render with no own video has no copy to report: its first progress is its first step", async () => {
+    const mock = makeMock();
+    const reply = await unwrap(render(mock, { ...specWith("media-x"), clips: [{ clipId: "clip-00000001", kind: "photo", cell: { photo: scene(PHOTO_IDS[0] ?? ""), focus: null }, motion: "static", durationMs: 2_000, transitionIn: "cut" }, { clipId: "clip-00000002", kind: "photo", cell: { photo: scene(PHOTO_IDS[1] ?? ""), focus: null }, motion: "static", durationMs: 2_000, transitionIn: "cut" }] }));
+    const first = mock.events.filter((e) => e.type === "job.progress" && e.payload.kind === "render" && e.payload.jobId === reply.jobId);
+    expect(first).toHaveLength(1);
+    mock.scheduler.runAll();
+    const steps = mock.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "render" && e.payload.jobId === reply.jobId ? [e.payload.done] : []));
+    expect(steps[1]).toBeGreaterThanOrEqual(steps[0] ?? 0);
+  });
+
   test("the finished video is a mix: a video clip is not a photo", async () => {
     const mock = makeMock();
     const mediaId = await storeVideo(mock);
@@ -190,6 +216,28 @@ describe("montages.get: an own video clip", () => {
     const mediaId = await storeVideo(mock);
 
     expect((await issuesOf(mock, specWith(mediaId))).map((i) => i.code)).not.toContain("not-yet-supported");
+  });
+});
+
+describe("the mock holds a video as the engine does: with a size and a length (L-6)", () => {
+  test.each([
+    ["no width", { width: null }],
+    ["no height", { height: null }],
+    ["no length", { durationMs: null }],
+  ])("a stored video with %s is not one a render can read: media-unavailable at its clip", async (_name, facts) => {
+    const mock = makeMock();
+    mock.engine.seedOwnMedia([{ kind: "video", name: "odd.mov", bytes: 1_000, facts }]);
+
+    const reply = await render(mock, specWith("media-demo-0001"));
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "media-unavailable", path: ["clips", 1] }] } });
+  });
+
+  test("the same video with all three is held and renders", async () => {
+    const mock = makeMock();
+    mock.engine.seedOwnMedia([{ kind: "video", name: "ok.mov", bytes: 1_000, facts: { width: 100, height: 200, durationMs: 9_000 } }]);
+
+    expect((await render(mock, specWith("media-demo-0001"))).ok).toBe(true);
   });
 });
 

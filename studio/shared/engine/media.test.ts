@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { STICKER_LIMITS } from "../stickers/apng";
 import {
   MAX_PICKED_FILES,
+  MAX_STORED_VIDEO_BYTES,
   MEDIA_BYTE_CAPS,
   MediaFileName,
   MediaKind,
@@ -13,6 +14,12 @@ import {
 } from "./media";
 
 // The own-media import boundary's contract (3f.1, invariant 34): the window names a KIND and nothing else.
+
+describe("the stored video's cap (3f.3b)", () => {
+  test("is one number, the video cap: a mezzanine is held to what a source is, by the importer, the render's copy and a draft's verdict alike", () => {
+    expect(MAX_STORED_VIDEO_BYTES).toBe(MEDIA_BYTE_CAPS.video);
+  });
+});
 
 describe("media.pickImport payload", () => {
   test("takes a kind and nothing else", () => {

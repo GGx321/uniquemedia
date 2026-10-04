@@ -42,9 +42,23 @@ function raw(width: number, height: number, frames: number, luma: PlaneFill, cb:
 export const rampFrames = (width: number, height: number, frames: number): RawVideo =>
   raw(width, height, frames, (f, x) => (Math.floor(f / 2 ** Math.floor((x * 8) / width)) % 2 === 1 ? 235 : 16), () => 128, () => 128);
 
-/** The frame number each frame of `path` carries (see `rampFrames`), read from eight columns of its luma at a threshold of 125. */
-export function frameNumbersOf(path: string): number[] {
-  return lumaGrid(path, 8, 2).map((frame) => frame.slice(0, 8).reduce((sum, luma, bit) => sum + (luma > 125 ? 2 ** bit : 0), 0));
+/**
+ * `rampFrames` with the number only in the MIDDLE THIRD of the picture and busy, different noise everywhere else, so the encoder has real motion to predict (B-frames, a
+ * pyramid) and a wrong frame cannot hide in a flat picture. Read it with `frameNumbersOf(path, true)`.
+ */
+export const bandFrames = (width: number, height: number, frames: number): RawVideo =>
+  raw(
+    width,
+    height,
+    frames,
+    (f, x, y) => (y >= height / 3 && y < (2 * height) / 3 ? (Math.floor(f / 2 ** Math.floor((x * 8) / width)) % 2 === 1 ? 235 : 16) : 16 + ((x * 3 + y * 5 + ((x * y) % 17) + f * 7) % 200)),
+    () => 128,
+    () => 128,
+  );
+
+/** The frame number each frame of `path` carries (see `rampFrames`), read from eight columns of its luma at a threshold of 125; `band`: only the middle strip is read (`bandFrames`). */
+export function frameNumbersOf(path: string, band = false): number[] {
+  return lumaGrid(path, 8, 2, band ? "crop=iw:ih/24:0:ih/2-ih/48," : "").map((frame) => frame.slice(0, 8).reduce((sum, luma, bit) => sum + (luma > 125 ? 2 ** bit : 0), 0));
 }
 
 /** A flat colour in Y, Cb, Cr for every frame. */
@@ -114,10 +128,10 @@ export async function mezzanineOf(dir: string, mediaId: string, video: RawVideo)
  * and a gradient reads as its bands. `-fps_mode passthrough`: a Matroska clip keeps its times in milliseconds, and ffmpeg 6.1's default constant-rate output would duplicate and
  * drop frames to fit 33.3 ms steps into them (seen on Windows CI), which is not what is under test.
  */
-export function lumaGrid(path: string, cols: number, rows: number): number[][] {
+export function lumaGrid(path: string, cols: number, rows: number, prefilter = ""): number[][] {
   const run = spawnSync(
     ffmpegPath(),
-    ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vf", `scale=${cols}:${rows}:flags=area`, "-fps_mode", "passthrough", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1"],
+    ["-hide_banner", "-loglevel", "error", "-nostdin", "-i", path, "-vf", `${prefilter}scale=${cols}:${rows}:flags=area`, "-fps_mode", "passthrough", "-pix_fmt", "yuv420p", "-f", "rawvideo", "pipe:1"],
     { maxBuffer: 1 << 28 },
   );
   if (run.status !== 0) throw new Error(`ffmpeg could not read the frames: ${run.stderr.toString()}`);

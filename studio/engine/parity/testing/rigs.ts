@@ -27,7 +27,7 @@ import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../li
 import { RenderFailure } from "../../renderQueue/queue";
 import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../../testing/engineHarness";
 import { acceptingVerify } from "../../videos/testing/kit";
-import { writingRun } from "../../videos/testing/serviceKit";
+import { reportVideoClipFrames, writingRun } from "../../videos/testing/serviceKit";
 import type { Answer, Recorded } from "./transcript";
 
 // The two engines the parity suite runs a scenario against (Stage 3, 3d.1b), behind ONE interface: the mock on a manual clock,
@@ -134,6 +134,9 @@ async function writeVideoMedia(folder: string, bad: boolean): Promise<string[]> 
   return [join(folder, name)];
 }
 
+/** The stand-in mezzanine of the rig's video importer (3f.3b): an `isom` MP4 head and filler, `PARITY_VIDEO_BYTES` long. */
+const PARITY_MEZZANINE = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom"), Buffer.alloc(4), Buffer.from("isom"), Buffer.alloc(PARITY_VIDEO_BYTES - 24, 5)]);
+
 /** The one good photo of the `good` pick (3f.1b): accepted by the rigs' importer, and `PARITY_PHOTO_BYTES` long. */
 const GOOD_PHOTO = "lake.jpg";
 export const PARITY_PHOTO_BYTES = 120;
@@ -186,8 +189,6 @@ const LONG_TRACK = "long.mp3";
 const trackHead = (fill: number): Buffer => Buffer.concat([Buffer.from([0x49, 0x44, 0x33, 3, 0, 0, 0, 0, 0, 0]), Buffer.alloc(PARITY_TRACK_BYTES - 10, fill)]);
 
 /** An M4A's first bytes (brand `M4A `): what the rigs' music importer "makes", so the stored track is one the render's chain could read. */
-/** The stand-in mezzanine of the rig's video importer (3f.3b): an `isom` MP4 head and filler, `PARITY_VIDEO_BYTES` long. */
-const PARITY_MEZZANINE = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from("ftypisom"), Buffer.alloc(4), Buffer.from("isom"), Buffer.alloc(PARITY_VIDEO_BYTES - 24, 5)]);
 const PARITY_M4A = Buffer.from([0, 0, 0, 0x14, 0x66, 0x74, 0x79, 0x70, 0x4d, 0x34, 0x41, 0x20, 0, 0, 2, 0, 0x6d, 0x70, 0x34, 0x32]);
 
 /** Writes the `track` pick's file into `folder` and returns its path. */
@@ -582,8 +583,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     }
     // A layer file (3f.5: the first parity render with a layer) is checked against the timeline's frames; this ffmpeg is not there to count them, so it
     // reports none for it, which the runner reads as a scripted ffmpeg that said nothing. Every other call reports far more than it has, as before.
-    // The same for the clip file of an own video (3f.3b): the runner holds it to its exact frame count, and this ffmpeg cuts nothing from the stand-in mezzanine.
-    if (!basename(opts.output).startsWith("layers-") && !opts.argv.includes("-codec_whitelist")) opts.onFrames?.(1_000_000);
+    // The clip file of an own video (3f.3b) is held to its exact frame count, and this ffmpeg cuts nothing from the stand-in mezzanine: it reports the count its graph stops at,
+    // as a real one does. Every other call reports far more than it has, as before.
+    if (!reportVideoClipFrames(opts) && !basename(opts.output).startsWith("layers-")) opts.onFrames?.(1_000_000);
     await atGate(2, opts.signal);
     await writingRun(opts);
   };

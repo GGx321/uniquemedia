@@ -55,7 +55,12 @@ export const PHOTO_INPUT_ARGS: readonly string[] = ["-protocol_whitelist", "file
  * (neither the extension nor the content picks another), the one decoder the mezzanine needs (it is always H.264) and nothing else opened, and the STORED
  * orientation (`-noautorotate`; the mezzanine is upright already and carries an identity matrix, so this changes nothing but also lets nothing turn it).
  */
-export const VIDEO_INPUT_ARGS: readonly string[] = ["-protocol_whitelist", "file", "-codec_whitelist", "h264", "-noautorotate", "-c:v", "h264", "-f", "mov"];
+export const VIDEO_INPUT_ARGS: readonly string[] = [
+  "-protocol_whitelist", "file", "-codec_whitelist", "h264", "-noautorotate",
+  // A second line of defence behind the sha check: one allocation of at most 256 MiB, and no decoded picture bigger than the frame with the decoder's stride alignment on top (a mezzanine is within 1080 x 1920; ffmpeg checks the ALIGNED size, and a 1080 x 1920 picture failed an exact cap).
+  "-max_alloc", String(256 * 1024 * 1024), "-max_pixels", String((FRAME_W + 64) * (FRAME_H + 64)),
+  "-c:v", "h264", "-f", "mov",
+];
 
 function refKey(ref: NonNullable<Cell["photo"]>): string {
   return ref.source === "scene" ? `scene:${ref.photoId}` : `own:${ref.mediaId}`;

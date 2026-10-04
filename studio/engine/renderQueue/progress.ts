@@ -58,6 +58,14 @@ export class ProgressFold {
 }
 
 /**
+ * How long the copies of a job's own videos may take (3f.3b): 60 s and the bytes at 5 MiB a second (a slow external disk under an antivirus). A copy that outlives it is
+ * abandoned and the job ends TIMEOUT, so a read that never returns cannot hold a render slot for ever.
+ */
+export function stagingTimeoutMs(bytes: number): number {
+  return 60_000 + Math.ceil(Math.max(0, bytes) / (5 * 1024 * 1024)) * 1000;
+}
+
+/**
  * A render job's whole timeout: `max(90 s, 30 × the video's seconds)`. At 30
  * fps `30 × frames / 30` seconds is just `frames` seconds, so a 15 s render
  * (450 frames) gets 450 s against 15.7 s measured (SP1).

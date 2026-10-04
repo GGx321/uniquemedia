@@ -1191,7 +1191,7 @@ const OWN_PHOTO_SCENARIOS: readonly Scenario[] = [
       await t.call("videos.render", { spec: ownPhotoSpec(w.avatarId, "media-00000404") });
       t.note("a spec with a structural issue is refused for that alone, whatever its media");
       await t.call("videos.render", { spec: { ...ownPhotoSpec(w.avatarId, "media-00000404"), clips: [{ ...(clipsOf(ownPhotoSpec(w.avatarId, "media-00000404"), 1_000)[0] ?? {}) }] } });
-      t.note("an own video clip is still not supported yet");
+      t.note("an own video clip is judged like any own media: one nobody holds is media-unavailable");
       await t.call("videos.render", {
         spec: { schemaVersion: 1, avatarId: w.avatarId, layers: [], music: null, seed: 7, clips: [{ clipId: "clip-0000001", kind: "video", mediaId: "media-00000404", trimStartMs: 0, focus: null, durationMs: 4_000, transitionIn: "cut" }] },
       });

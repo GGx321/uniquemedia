@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MEDIA_REASONS_BY_KIND_RU, MEDIA_REASONS_RU, mediaReasonRu } from "./errorMessagesRu";
+
+// (3f.3b, M-A: the video's own «слишком большой» is in the same table: see the end of this file.)
 import { MediaUnsupportedReason } from "./media";
 
 const STICKER_REASONS_RU = MEDIA_REASONS_BY_KIND_RU.sticker ?? {};

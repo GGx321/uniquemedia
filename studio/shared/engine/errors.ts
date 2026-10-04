@@ -345,6 +345,12 @@ export const OWN_PHOTO_NOT_FOUND_DETAIL = "own photos are not available yet";
 export const OWN_MUSIC_NOT_FOUND_DETAIL = "own music is not available yet";
 
 /** The start of the detail main gives a command the engine did not answer in time (`the engine did not answer within 30 s`): the command may still have been carried out. */
+/**
+ * What a render's TIMEOUT detail starts with (the render queue writes `... of N s` after it): a render that ran past its time limit, in ffmpeg or in the staging of its
+ * files. The window keys its own text on it, since the general TIMEOUT text is about a paid OpenRouter request.
+ */
+export const RENDER_TIMEOUT_DETAIL_PREFIX = "the render ran past its time limit";
+
 export const NO_ANSWER_DETAIL_PREFIX = "the engine did not answer within ";
 
 /** `RENDER_QUEUE_FULL`'s detail: it names the limit, which `renderQueueLimitOf` reads back for the window's text. */
