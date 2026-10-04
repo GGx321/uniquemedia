@@ -56,6 +56,13 @@ export const musicFixtures = {
   spoofTwoOpus: fixture("spoof-two-opus.opus", { bytes: 4207, sha256: "3979f675907b795643f5e759321c40777f375b618192f6b6e2dde1ec280a972f", format: "ogg", codec: "opus", sampleRate: 48000, channels: 1, durationMs: 410 }),
   /** A Vorbis stream whose language forges a cover-art line, and a REAL Theora video behind it. */
   spoofTheora: fixture("spoof-theora.ogg", { bytes: 8688, sha256: "08f1ddc6299f02dd8fc33aef2161709d4ad0f2eb9559db7017bc66b2a5d9d167", format: "ogg", codec: "vorbis", sampleRate: 44100, channels: 1, durationMs: 400 }),
+  /** An m4a whose video track's language is `~~~`: its stream line must be read, not dropped (round 2). */
+  videoTildeLang: fixture("video-tilde-lang.m4a", { bytes: 4297, sha256: "20a5dc0394b5aabb5e6c8b9f4cb922a9894aeaf98cb458d3e7d9b8c9c3a595fd", format: "m4a", codec: "aac", sampleRate: 44100, channels: 2, durationMs: 400 }),
+  /** A legitimate Ogg whose comment names a language with a space, and one in Cyrillic. */
+  langSpaced: fixture("lang-spaced.ogg", { bytes: 4221, sha256: "cd8555f5a55df270da548b38972052a1124835842575d601236e6c31212fdf36", format: "ogg", codec: "vorbis", sampleRate: 44100, channels: 1, durationMs: 400 }),
+  langRussian: fixture("lang-russian.ogg", { bytes: 4230, sha256: "7786d91de4dbcfcc28ee8cbfd075ffb5351131bb06109128e1b217fcabab58c2", format: "ogg", codec: "vorbis", sampleRate: 44100, channels: 1, durationMs: 400 }),
+  /** Chained Ogg: a second link of two multiplexed Vorbis streams follows a plain one. */
+  chainVorbisThenTwo: fixture("chain-vorbis-then-two.ogg", { bytes: 12612, sha256: "2ac2a583db5d0baac20dbdd06702d1f71f483bfd88be592f41421eb769a1c9b4", format: "ogg", codec: "vorbis", sampleRate: 44100, channels: 1, durationMs: 400 }),
 } as const satisfies Record<string, MusicFixture>;
 
 export type MusicFixtureName = keyof typeof musicFixtures;

@@ -94,6 +94,35 @@ export function lieAboutTimestamps(file: Uint8Array, tailSeconds: number): Uint8
   return bytes;
 }
 
+
+/** The m4a with the media language of its `trakIndex`-th track set to a packed code (`0x7BDE` is `~~~`: three letters of 5 bits, each 0x60 plus its value). */
+export function setMediaLanguage(file: Uint8Array, trakIndex: number, packed: number): Uint8Array {
+  const bytes = Uint8Array.from(file);
+  const view = new DataView(bytes.buffer);
+  const text = (at: number): string => String.fromCharCode(...bytes.subarray(at, at + 4));
+  let trak = -1;
+  let patched = false;
+  const walk = (start: number, end: number): void => {
+    for (let at = start; at + 8 <= end; ) {
+      const size = view.getUint32(at);
+      const type = text(at + 4);
+      if (size < 8) return;
+      if (type === "trak") trak++;
+      if (type === "mdhd" && trak === trakIndex) {
+        // version 0: 4 (version, flags) + 4 + 4 + 4 + 4 before the language; version 1: 4 + 8 + 8 + 4 + 8.
+        const version = bytes[at + 8];
+        view.setUint16(at + 8 + (version === 1 ? 32 : 20), packed);
+        patched = true;
+      }
+      if (CONTAINERS.has(type)) walk(at + 8, at + size);
+      at += size;
+    }
+  };
+  walk(0, bytes.length);
+  if (!patched) throw new Error("no mdhd to patch");
+  return bytes;
+}
+
 export const ENTRIES: readonly Entry[] = [
   { file: "tone.mp3", make: (out) => ffmpeg([...sine(440, 44100, 0.6), "-ac", "2", "-c:a", "libmp3lame", "-b:a", "48k", ...BITEXACT, out]) },
   { file: "tone.m4a", make: (out) => ffmpeg([...sine(440, 44100, 0.6), "-ac", "2", "-c:a", "aac", "-b:a", "48k", ...BITEXACT, "-f", "ipod", out]) },
@@ -139,6 +168,23 @@ export const ENTRIES: readonly Entry[] = [
   { file: "spoof-two-vorbis.ogg", make: (out) => ffmpeg([...sine(440, 44100, 0.4), ...sine(3000, 44100, 0.4), "-map", "0:a", "-map", "1:a", "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", ...SPOOF_LANGUAGE, ...BITEXACT, out]) },
   { file: "spoof-two-opus.opus", make: (out) => ffmpeg([...sine(440, 48000, 0.4), ...sine(3000, 48000, 0.4), "-map", "0:a", "-map", "1:a", "-ac", "1", "-c:a", "libopus", "-b:a", "32k", ...SPOOF_LANGUAGE, ...BITEXACT, out]) },
   { file: "spoof-theora.ogg", make: (out) => ffmpeg([...sine(440, 44100, 0.4), "-f", "lavfi", "-i", "testsrc=s=64x64:r=5:d=0.4", "-map", "0:a", "-map", "1:v", "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", "-c:v", "libtheora", "-q:v", "3", ...SPOOF_LANGUAGE, ...BITEXACT, out]) },
+  // The probe must not drop a stream line it cannot read (3f.4 review, round 2): the video track's language is `~~~` (a packed 0x7BDE, which ffmpeg prints as `(~~~)`).
+  { file: "video-tilde-lang.m4a", make: (out) => {
+      ffmpeg([...sine(440, 44100, 0.4), "-f", "lavfi", "-i", "testsrc=s=32x32:r=5:d=0.4", "-map", "0:a", "-map", "1:v", "-ac", "2", "-c:a", "aac", "-b:a", "48k", "-c:v", "mpeg4", "-q:v", "10", ...BITEXACT, "-brand", "M4A ", "-f", "ipod", out]);
+      writeFileSync(out, setMediaLanguage(readFileSync(out), 1, 0x7bde));
+    } },
+  // A language an Ogg's comment may legitimately hold: a space, and non-ASCII letters (the spoof defence is that `(`, `)` and `:` stay out of it).
+  { file: "lang-spaced.ogg", make: (out) => ffmpeg([...sine(440, 44100, 0.4), "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", "-metadata:s:a:0", "language=en US", ...BITEXACT, out]) },
+  { file: "lang-russian.ogg", make: (out) => ffmpeg([...sine(440, 44100, 0.4), "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", "-metadata:s:a:0", "language=Русский", ...BITEXACT, out]) },
+  // Chained Ogg (3f.4 review, round 2): a second link of TWO multiplexed Vorbis streams follows a plain one in the same file; ffmpeg cannot add the stream
+  // in the middle of the demux and says so on stderr.
+  { file: "chain-vorbis-then-two.ogg", make: (out, scratch) => {
+      const first = join(scratch, "chain-c.ogg");
+      const second = join(scratch, "chain-d.ogg");
+      ffmpeg([...sine(440, 44100, 0.4), "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", ...BITEXACT, first]);
+      ffmpeg([...sine(880, 44100, 0.4), ...sine(3000, 44100, 0.4), "-map", "0:a", "-map", "1:a", "-ac", "1", "-c:a", "libvorbis", "-q:a", "0", ...BITEXACT, second]);
+      writeFileSync(out, Buffer.concat([readFileSync(first), readFileSync(second)]));
+    } },
   { file: "adpcm.wav", make: (out) => ffmpeg([...sine(440, 8000, 0.3), "-ac", "1", "-c:a", "adpcm_ms", ...BITEXACT, out]) },
 ];
 
