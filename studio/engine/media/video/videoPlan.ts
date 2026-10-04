@@ -11,12 +11,17 @@ import { longerThan, type ProbeRefusal, type VideoCodec, type VideoColour, type 
 //
 // THE COLOUR. Every frame is TAGGED from what the walker read (`setparams`) before anything converts it: `zscale` fails on untagged input
 // (SP3), and ffmpeg's own reading of a clip's tags is a second opinion nobody asked for. Then:
-// - HDR (PQ or HLG, Dolby Vision 8.x by its base layer): `zscale` to linear light (`npl=100`), to BT.709 primaries, `tonemap=hable` with
-//   `desat=0` (a hue-preserving curve), then BT.709 matrix and range. Measured on the HLG chart fixture against a model of this chain
-//   (its formulas the standards', its three constants fitted to ffmpeg's output): every patch within 1 code value (invariant 36 allows 2; see
-//   `videoImporter.ffmpeg.test.ts`);
+// - HDR (PQ or HLG, Dolby Vision 8.x by its base layer): `zscale` to RGB as 16-bit integers (the signal is clipped to the RGB cube), to linear
+//   light (`npl=100`), to BT.709 primaries, `tonemap=hable` with `desat=0` (a hue-preserving curve), the light clipped as 16-bit integers, then
+//   the BT.709 gamma, matrix and range. Measured on the HLG chart fixture against a model of this chain (its formulas the standards', its three
+//   constants fitted to ffmpeg's output): every patch within 1 code value (invariant 36 allows 2; see `videoImporter.ffmpeg.test.ts`);
 // - SDR that is already BT.709 limited range: tagged and put in 4:2:0, nothing else;
-// - any other SDR (BT.601, Display P3, full range, sRGB): converted to BT.709 limited by `zscale`.
+// - SDR in other primaries (BT.601, Display P3, BT.2020): the same two clips, signal then light, around the primaries conversion;
+// - any other SDR (BT.709 primaries with full range, an sRGB transfer or another matrix): converted to BT.709 limited by one `zscale`.
+//
+// NO TRANSFER FUNCTION SEES A FLOAT THAT CAN BE NEGATIVE. zimg's approximate gamma is not defined there and is CPU-dependent (one CI runner's
+// CPU made a patch 47 codes off). YUV outside the RGB cube and colour outside BT.709's gamut are the two ways to a negative, and each is clipped
+// through a 16-bit integer frame first. `videoImporter.colour.ffmpeg.test.ts` pins the colours, the ordering, and the cost in the shadows.
 //
 // THE ORDER. 30 fps first (a frame that will not survive is not tone-mapped), then the scale in the STORED orientation (the quarter turn
 // is then done on the small picture), then the turn, then the colour. The rotation is applied here from the walker's reading
@@ -164,11 +169,31 @@ export function videoFilterGraph(plan: VideoPlan): string {
     `setparams=colorspace=${nameOf(MATRICES, colour.matrix)}:color_primaries=${nameOf(PRIMARIES, colour.primaries)}:color_trc=${nameOf(TRANSFERS, colour.transfer)}:range=${colour.fullRange ? "pc" : "tv"}`,
   );
   if (plan.hdrToSdr) {
-    // `zscale=t=linear ... format=gbrp16le` clips the light to 0..1 as 16-bit integers BEFORE the gamma step: a colour outside BT.709's gamut is
-    // negative in one channel after the primaries conversion, and the gamma of a negative float is undefined (on one CI runner's CPU it made
-    // garbage, 47 codes off, where the others clipped at zero). Same result as the clip where it worked, and the same on every CPU.
-    chain.push("zscale=t=linear:npl=100", "format=gbrpf32le", "zscale=p=bt709", "tonemap=tonemap=hable:desat=0", "zscale=t=linear:p=bt709:m=bt709:r=pc", "format=gbrp16le", "zscale=t=bt709:m=bt709:r=tv");
-  } else if (colour.primaries !== 1 || colour.transfer !== 1 || colour.matrix !== 1 || colour.fullRange) {
+    // A transfer function never sees a float that can be negative; it sees 16-bit integers, which saturate and are the same on every CPU. zimg's
+    // approximate gamma (SIMD tables) is not defined on a negative float, and on one CI runner's CPU it made garbage of one (a patch 47 codes off)
+    // where the others clipped at zero. Two places make a negative:
+    // - YUV outside the RGB cube is a negative R'G'B'. `zscale` (no option) only converts the matrix to RGB with the transfer untouched, into
+    //   16-bit integers, so the signal is clipped to the cube BEFORE the inverse HLG curve;
+    // - a colour outside BT.709's gamut is a negative linear channel after the primaries conversion: `format=gbrp16le` after the tone map clips
+    //   the light to 0..1 BEFORE the BT.709 gamma. (The clip costs up to 2 codes at 10-bit Y 66 to 70: a 16-bit step of linear light is about 2.5
+    //   codes of gamma at the bottom. `videoImporter.colour.ffmpeg.test.ts` pins the bound.)
+    chain.push(
+      "zscale",
+      "format=gbrp16le",
+      "zscale=t=linear:npl=100",
+      "format=gbrpf32le",
+      "zscale=p=bt709",
+      "tonemap=tonemap=hable:desat=0",
+      "zscale=t=linear:p=bt709:m=bt709:r=pc",
+      "format=gbrp16le",
+      "zscale=t=bt709:m=bt709:r=tv",
+    );
+  } else if (colour.primaries !== 1) {
+    // SDR in other primaries (BT.601, Display P3, BT.2020): the same two places, the same two splits. The signal is clipped to the cube, then
+    // taken to linear light in BT.709's primaries and clipped to 0..1 (what is outside BT.709's gamut), then the BT.709 gamma.
+    chain.push("zscale", "format=gbrp16le", "zscale=t=linear:p=bt709:m=bt709:r=pc", "format=gbrp16le", "zscale=t=bt709:m=bt709:r=tv");
+  } else if (colour.transfer !== 1 || colour.matrix !== 1 || colour.fullRange) {
+    // BT.709 primaries: no primaries conversion, so no negative light of that kind.
     chain.push("zscale=p=bt709:t=bt709:m=bt709:r=tv");
   }
   chain.push("format=yuv420p");
