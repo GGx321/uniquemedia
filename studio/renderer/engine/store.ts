@@ -17,6 +17,7 @@ import {
   type UnreadableAvatar,
 } from "../../shared/engine";
 import type { EngineClient } from "./client";
+import { applyImportCancelled, applyImportDone, applyImportFailed, applyImportProgress, failActiveImports, importsFromSnapshot, type ImportView, markImportCancelling } from "./importJobs";
 import { applyVideoChanged, nextRenderBatch } from "./renderJobs";
 
 export type JobStatus = JobState["status"];
@@ -29,7 +30,7 @@ export type JobStatus = JobState["status"];
  */
 export interface JobView {
   readonly jobId: string;
-  /** An own-media import (3f.1b) is not an avatar's job: the store keeps it out of this list (3f.6's «Мои» tab brings its own view of imports). */
+  /** An own-media import (3f.1b) is not an avatar's job: the store keeps it out of this list, in `EngineView.imports` (3f.6). */
   readonly kind: Exclude<JobState["kind"], "import">;
   readonly avatarId: string;
   /** A run job's own run; null exactly for a candidates job. */
@@ -82,6 +83,11 @@ export interface EngineView {
   readonly unreadableTotal: number;
   readonly jobs: readonly JobView[];
   /**
+   * The own-media imports (3f.6, the «Мои» tab's tiles and status card), in the order this window first heard of them: from the snapshot,
+   * then the `job.*` events of kind `import` (importJobs.ts). The finished ones stay (the newest few) until the owner dismisses them.
+   */
+  readonly imports: readonly ImportView[];
+  /**
    * The renders the sidebar's «Рендер a / b» counts: those submitted since the queue was last empty (AM4). Empty while no render is
    * queued or running. Kept by `update()` from the jobs (`nextRenderBatch`).
    */
@@ -127,6 +133,7 @@ const INITIAL: EngineView = {
   unreadableAvatars: [],
   unreadableTotal: 0,
   jobs: [],
+  imports: [],
   renderBatch: new Set(),
   engineError: null,
   notices: [],
@@ -203,6 +210,15 @@ export type VideoChange = Extract<EventMessage, { type: "video.changed" }>["payl
 /** What the video listeners hear: each `video.changed`, and `resynced` after a snapshot taken again (the records are listed on demand). */
 export type VideoSignal = VideoChange | { readonly change: "resynced" };
 
+/** What `media.changed` carries: an own-media record stored, or removed (3f.6). */
+export type MediaStoreChange = Extract<EventMessage, { type: "media.changed" }>["payload"];
+
+/** What the media listeners hear (3f.6): each `media.changed`, and `resynced` after a snapshot taken again (the records are listed on demand). */
+export type MediaSignal = MediaStoreChange | { readonly change: "resynced" };
+
+/** Dismissed imports remembered at most (so a snapshot does not bring them back); the oldest is forgotten first. */
+const MAX_DISMISSED_IMPORTS = 200;
+
 /**
  * Adds `notice` to `notices`, deduped by `noticeId` (an exact repeat delivery
  * changes nothing) and by `code` (only one of each kind is shown, so e.g. two
@@ -273,6 +289,9 @@ export class EngineStore {
   private readonly listeners = new Set<() => void>();
   private readonly montageListeners = new Set<(signal: MontageSignal) => void>();
   private readonly videoListeners = new Set<(signal: VideoSignal) => void>();
+  private readonly mediaListeners = new Set<(signal: MediaSignal) => void>();
+  /** The imports the owner dismissed (3f.6): a snapshot that still lists one does not bring it back. Insertion-ordered, capped. */
+  private readonly dismissedImports = new Set<string>();
   private held: EventMessage[] = [];
   private syncing = false;
   private queuedSnapshot = false;
@@ -345,6 +364,17 @@ export class EngineStore {
     this.videoListeners.add(listener);
     return () => {
       this.videoListeners.delete(listener);
+    };
+  };
+
+  /**
+   * `media.changed` as the store applies it (3f.6), the videos' way: in seq order, once each, and `resynced` after a snapshot taken
+   * again (any change in the gap is lost). The records are not kept in the view: the «Мои» tab lists them on demand and listens here.
+   */
+  readonly subscribeMedia = (listener: (signal: MediaSignal) => void): (() => void) => {
+    this.mediaListeners.add(listener);
+    return () => {
+      this.mediaListeners.delete(listener);
     };
   };
 
@@ -440,6 +470,22 @@ export class EngineStore {
       const done = isFinished(job) ? Math.max(job.done, job.status === "done" ? size : ended) : job.done || ended;
       return { ...job, total: size, done };
     });
+  }
+
+  /** 3f.6: this window asked to cancel the import `jobId` (`media.cancelImport` answered): marked until its real end comes. */
+  markImportCancelling(jobId: string): void {
+    const imports = markImportCancelling(this.view.imports, jobId);
+    if (imports !== this.view.imports) this.update({ imports });
+  }
+
+  /** 3f.6: the owner closed an import's outcome (a refusal, say): it leaves the view, and a later snapshot does not bring it back. */
+  dismissImport(jobId: string): void {
+    this.dismissedImports.add(jobId);
+    for (const old of this.dismissedImports) {
+      if (this.dismissedImports.size <= MAX_DISMISSED_IMPORTS) break;
+      this.dismissedImports.delete(old);
+    }
+    if (this.view.imports.some((i) => i.jobId === jobId)) this.update({ imports: this.view.imports.filter((i) => i.jobId !== jobId) });
   }
 
   markJobCancelled(jobId: string): void {
@@ -674,6 +720,7 @@ export class EngineStore {
       phase: "offline",
       failure,
       jobs: goneForGood ? this.view.jobs.map((job) => (isActiveJob(job) ? { ...job, status: "failed", saving: false, error: failure } : job)) : this.view.jobs,
+      imports: goneForGood ? failActiveImports(this.view.imports, failure) : this.view.imports,
     });
     this.held = [];
     this.unconfirmedBoots.clear();
@@ -788,12 +835,18 @@ export class EngineStore {
       unreadableAvatars: s.unreadableAvatars,
       unreadableTotal: s.unreadableTotal,
       jobs: s.jobs.flatMap((j) => (j.kind === "import" ? [] : [jobFromState(j)])),
+      imports: importsFromSnapshot(
+        this.view.imports,
+        s.jobs.flatMap((j) => (j.kind === "import" ? [j] : [])),
+        this.dismissedImports,
+      ),
       engineError: null,
       notices: s.notices.reduce(mergeNotice, [] as readonly EngineNotice[]),
     });
     // Not for the first load: nothing was shown, so nothing was missed.
     if (again) for (const listener of [...this.montageListeners]) listener({ change: "resynced" });
     if (again) for (const listener of [...this.videoListeners]) listener({ change: "resynced" });
+    if (again) for (const listener of [...this.mediaListeners]) listener({ change: "resynced" });
     // The snapshot carries no music status: one that was shown may have missed its events, or describe a refresh of an engine
     // that has since restarted (no event will ever end it), so it is asked again.
     if (again && this.view.music !== null) void this.refreshMusic();
@@ -803,9 +856,9 @@ export class EngineStore {
     const lastSeq = event.seq;
     switch (event.type) {
       case "job.progress": {
-        // An import (3f.1b) is no avatar's job and has no row in `jobs`: the seq moves and nothing else does.
+        // An import (3f.1b) is no avatar's job: it has no row in `jobs`, its own in `imports` (3f.6).
         if (event.payload.kind === "import") {
-          this.update({ lastSeq });
+          this.update({ lastSeq, imports: applyImportProgress(this.view.imports, event.payload) });
           return;
         }
         const { done, total } = event.payload;
@@ -825,7 +878,7 @@ export class EngineStore {
       case "job.done": {
         const { jobId, result } = event.payload;
         if (result.kind === "import") {
-          this.update({ lastSeq });
+          this.update({ lastSeq, imports: applyImportDone(this.view.imports, jobId, result) });
           return;
         }
         // L9: total from the result itself when nothing (no job.progress,
@@ -871,7 +924,7 @@ export class EngineStore {
       case "job.failed": {
         const { error } = event.payload;
         if (event.payload.kind === "import") {
-          this.update({ lastSeq });
+          this.update({ lastSeq, imports: applyImportFailed(this.view.imports, event.payload) });
           return;
         }
         this.patchJob(event.payload, (job) => ({ ...job, status: "failed", saving: false, error }), lastSeq);
@@ -898,7 +951,7 @@ export class EngineStore {
         return;
       case "job.cancelled":
         if (event.payload.kind === "import") {
-          this.update({ lastSeq });
+          this.update({ lastSeq, imports: applyImportCancelled(this.view.imports, event.payload) });
           return;
         }
         this.patchJob(event.payload, (job) => (isActiveJob(job) ? { ...job, status: "cancelled", saving: false } : job), lastSeq);
@@ -931,8 +984,9 @@ export class EngineStore {
         for (const listener of [...this.videoListeners]) listener(event.payload);
         return;
       case "media.changed":
-        // Own media are listed on demand (`media.list`, 3f.6's «Мои» tab): the view keeps only the seq.
+        // Own media are listed on demand (`media.list`, 3f.6's «Мои» tab): the view keeps only the seq, and the listeners hear the change.
         this.update({ lastSeq });
+        for (const listener of [...this.mediaListeners]) listener(event.payload);
         return;
       case "montage.changed":
         // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.
