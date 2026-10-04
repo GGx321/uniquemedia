@@ -410,7 +410,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
                   const own = ownVideos.get(mediaId);
                   return own === undefined ? undefined : { path: join(jobDir, ownVideoCopyName(mediaId)), width: own.width, height: own.height };
                 },
-                stageOwnVideos: (dir: string, progress: (copied: number, total: number) => void) => stageOwnVideos(plan, [...ownVideos.values()], dir, context.signal, progress),
+                stageOwnVideos: (dir: string, progress: (copied: number, total: number) => void, signal: AbortSignal) => stageOwnVideos(plan, [...ownVideos.values()], dir, signal, progress),
+                ownVideoBytes: [...ownVideos.values()].reduce((sum, own) => sum + own.bytes, 0),
               }),
           overlays: layers === undefined ? [] : layers.overlays,
           ...(layers === undefined ? {} : { stageLayers: layers.stage }),

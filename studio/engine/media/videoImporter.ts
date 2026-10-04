@@ -35,6 +35,8 @@ export interface VideoImporterOptions {
   readonly timeoutMs?: number;
   /** The largest mezzanine stored; `MAX_STORED_VIDEO_BYTES` by default (a test lowers it). */
   readonly maxStoredBytes?: number;
+  /** How far above the cap the encode's `-fs` stops it; `STORED_STOP_SLACK_BYTES` (64 MiB) by default (a test makes it small so that a real encode reaches it quickly). */
+  readonly stopSlackBytes?: number;
 }
 
 /** Whether what ffmpeg wrote is what the plan asked for; the walker's reading of it, never ffmpeg's. */
@@ -93,7 +95,7 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     };
     try {
       await run({
-        argv: videoArgs(staged.path, plan, work.path, maxStoredBytes),
+        argv: videoArgs(staged.path, plan, work.path, maxStoredBytes, options.stopSlackBytes),
         output: work.path,
         signal,
         timeoutMs: options.timeoutMs ?? plan.timeoutMs,
@@ -101,7 +103,11 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       });
     } catch {
       // ffmpeg's own words (a path, a string the file wrote) stay here: the owner is told a reason, never a message.
-      return fail(signal.aborted ? "cancelled" : "failed");
+      if (signal.aborted) return fail("cancelled");
+      // When `-fs` fires ffmpeg does not finish: it says "Error muxing a packet" and exits with an error (187 on 6.0). A work file that reached the cap is the cap's doing, and it is
+      // told as that; the limit stops the file AT its headroom above the cap, so a stopped file is never under it, and any other failure leaves a smaller one.
+      const stopped = await stat(work.path).then((info) => info.size, () => 0);
+      return fail(stopped >= maxStoredBytes ? "too-large" : "failed");
     }
     if (signal.aborted) return fail("cancelled");
 

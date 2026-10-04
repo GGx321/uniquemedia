@@ -209,7 +209,7 @@ export function videoFilterGraph(plan: VideoPlan): string {
  * (`render/musicChain.ts`): the file protocol only, the demuxer forced, an allocation cap and a pixel cap, no stdin; one video stream mapped
  * and nothing else; no metadata; the output cut at three minutes whatever the headers claimed.
  */
-export function videoArgs(input: string, plan: VideoPlan, output: string, maxStoredBytes: number = MAX_STORED_VIDEO_BYTES): string[] {
+export function videoArgs(input: string, plan: VideoPlan, output: string, maxStoredBytes: number = MAX_STORED_VIDEO_BYTES, stopSlackBytes: number = STORED_STOP_SLACK_BYTES): string[] {
   if (!isAbsolute(input) || !isAbsolute(output)) throw new TypeError("videoArgs: the paths must be absolute");
   return [
     "-nostdin",
@@ -290,7 +290,7 @@ export function videoArgs(input: string, plan: VideoPlan, output: string, maxSto
     // The encode is bounded by what it WRITES, not by time: a grainy three minutes at CRF 16 can be several GiB. The muxer applies `-fs` late (it can overshoot), so the limit has
     // room above the cap, and the importer refuses anything over the cap itself (`too-large`, judged by size before structure, so a file this limit cut is told as that).
     "-fs",
-    String(maxStoredBytes + STORED_STOP_SLACK_BYTES),
+    String(maxStoredBytes + stopSlackBytes),
     "-movflags",
     "+faststart",
     "-f",

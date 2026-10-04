@@ -9,7 +9,7 @@ import { buildLayerPass, buildMusicMeasure, buildPass1, buildPass2, musicGainDb,
 import { clipFrames } from "../render/durations";
 import { TRACK_FILE_NAME } from "../render/names";
 import { measureTruePeak } from "./musicMeasure";
-import { ProgressFold, renderTimeoutMs } from "./progress";
+import { ProgressFold, renderTimeoutMs, stagingTimeoutMs } from "./progress";
 import { RenderFailure } from "./queue";
 import { scrubber, scrubStderrTail, type ScrubInput } from "./scrubber";
 
@@ -70,9 +70,12 @@ export interface RenderRunInput {
    * Writes the private copies of the own videos the clips name into the job folder (3f.3b; `resolveVideo` already points at those names): each mezzanine is STREAMED
    * in, checked against its record as it goes. Called once, after `stageOwnPhotos` and before the layers are staged or anything is run; the same rules for what it throws.
    * `progress(copied, total)` says how many bytes of all the copies are made: the job's own progress moves with it (a copy of hundreds of MiB must not look frozen), and the
-   * ffmpeg budget starts only when the staging has ended (the copies' time is the disk's, not ffmpeg's).
+   * ffmpeg budget starts only when the staging has ended (the copies' time is the disk's, not ffmpeg's). The staging has a bound of its own (`stagingTimeoutMs` of `ownVideoBytes`):
+   * past it the job ends TIMEOUT even while a read is stuck, and the `signal` given (the job's cancel, or that bound) tells the abandoned copy to stop and remove itself when its read returns.
    */
-  readonly stageOwnVideos?: (dir: string, progress: (copied: number, total: number) => void) => Promise<void>;
+  readonly stageOwnVideos?: (dir: string, progress: (copied: number, total: number) => void, signal: AbortSignal) => Promise<void>;
+  /** The bytes of all the own videos' copies (the sum of their records' sizes): what the staging's own time bound is sized from. */
+  readonly ownVideoBytes?: number;
   /**
    * Silence, or one stored track as the VERIFIED BYTES the track store handed over (never a path: a file on disk can change
    * between the store's check and ffmpeg's read). The runner writes them to `<job folder>/track.m4a`, has `check` look at that
@@ -105,6 +108,8 @@ export interface RenderRunDeps {
    * checks it against what its files can take, and a volume that does not say is not refused.
    */
   readonly freeBytes?: (dir: string) => Promise<number | null>;
+  /** How long the own videos' staging may take for this many bytes; `stagingTimeoutMs` by default. */
+  readonly stagingTimeoutMs?: (bytes: number) => number;
   /** Monotonic ms for the job's deadline. */
   readonly now?: () => number;
   /** Removes the job folder, tolerating one that is not there. A rejection is reported, never thrown. */
@@ -220,6 +225,31 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     return copy;
   };
 
+  /**
+   * The own videos' staging under a bound of its own, raced: the job ends the moment the bound passes or the owner cancels, whatever the copy is stuck in (an abort is only seen
+   * between two chunks, and a `read` on a dead disk never returns). The copy is handed a signal that carries both reasons; it removes what it made when it wakes. A late
+   * failure of the abandoned copy is swallowed: the job has ended.
+   */
+  const stageVideosBounded = async (work: NonNullable<RenderRunInput["stageOwnVideos"]>, dir: string, progress: (copied: number, total: number) => void): Promise<void> => {
+    const ms = (deps.stagingTimeoutMs ?? stagingTimeoutMs)(input.ownVideoBytes ?? 0);
+    const bound = new AbortController();
+    const timer = setTimeout(() => bound.abort(new FfmpegTimeoutError(ms, "")), ms);
+    const given = AbortSignal.any([signal, bound.signal]);
+    const ended = new Promise<never>((_resolve, reject) => {
+      const stop = (): void => reject(given.reason);
+      if (given.aborted) stop();
+      else given.addEventListener("abort", stop, { once: true });
+    });
+    ended.catch(() => undefined);
+    const copying = work(dir, progress, given);
+    copying.catch(() => undefined);
+    try {
+      await Promise.race([copying, ended]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
   const reportStage = (doneFrames: number): void => report(fold.pass1(Math.floor((doneFrames * timelineFrames) / stageFrames)));
 
   /** Staging the layers: the engine's own answer (a `RenderFailure`) reaches the job as it is, anything else is scrubbed like a file-system error. */
@@ -228,7 +258,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
       await work;
     } catch (error) {
       // The cancel's own reason is not a file-system error and comes out as it is (the queue ends the job as cancelled).
-      if (error instanceof Error && !(error instanceof RenderFailure) && !(signal.aborted && error === signal.reason)) throw scrubbedCopy(error);
+      if (error instanceof Error && !(error instanceof RenderFailure) && !(error instanceof FfmpegTimeoutError) && !(signal.aborted && error === signal.reason)) throw scrubbedCopy(error);
       throw error;
     }
   };
@@ -290,7 +320,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     if (input.stageOwnPhotos !== undefined) await stage(input.stageOwnPhotos(clipDir));
     if (input.stageOwnVideos !== undefined) {
       // The copies share the start of the bar with pass 1: up to a third of pass 1's own slice, so it moves but never reaches what pass 1 will report.
-      await stage(input.stageOwnVideos(clipDir, (copied, total) => report(total > 0 ? fold.pass1(Math.floor((Math.min(copied, total) / total) * COPY_SHARE * timelineFrames)) : null)));
+      await stage(stageVideosBounded(input.stageOwnVideos, clipDir, (copied, total) => report(total > 0 ? fold.pass1(Math.floor((Math.min(copied, total) / total) * COPY_SHARE * timelineFrames)) : null)));
     }
     if (input.stageLayers !== undefined && input.overlays.length > 0) await stage(input.stageLayers(clipDir));
     deadline = now() + budgetMs;
