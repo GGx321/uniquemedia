@@ -561,6 +561,39 @@ describe("an own file deleted while its draft is open (fix round 1, M1)", () => 
     expect(block.closest(".ed-blk-flagged") !== null).toBe(true);
   });
 
+  test("fix round 2: a file the draft came to name after it was opened (another window placed it) is followed too", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    const made = await makeDraft(client, MIA.avatarId, []);
+    const first = await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: [photoClip(0, P1, 2_000), photoClip(1, P2, 2_000)] }, name: null }));
+    if (!first.ok) throw new Error(first.error.code);
+    await openDrafts();
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    await screen.findByRole("region", { name: "Таймлайн" });
+    await flush();
+    // Another window puts the video in.
+    await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: clipsWith(ownClip(mediaId)) }, name: null }));
+    await waitFor(() => expect(within(timeline()).getByRole("button", { name: s("Кадр 2: видео street-walk.mp4, 2.0 с") })).toBeDefined());
+    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
+    const before = gets(engine);
+    await asAnotherWindow(() => client.request("media.delete", { mediaId }));
+    await waitFor(() => expect(within(timeline()).getByRole("button", { name: s("Кадр 2: файла больше нет, 2.0 с") })).toBeDefined());
+    expect(gets(engine)).toBe(before + 1);
+  });
+
+  test("fix round 2: a burst of changes to the draft's files reads the verdict once", async () => {
+    const { client, engine } = await studio();
+    engine.seedOwnMedia([1, 2, 3].map((n) => ({ kind: "video" as const, name: `clip-${n}.mov`, bytes: 4_000_000, facts: { width: 1_080, height: 1_920, durationMs: 6_000, sourceFps: 30 } })));
+    const own = (n: number): MontageDraft["clips"][number] => ({ ...videoClip(n, 1_000, 0), mediaId: `media-demo-000${n + 1}` });
+    await openDraft(engine, client, [own(0), own(1), own(2), photoClip(3, P1, 2_000)]);
+    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
+    const before = gets(engine);
+    await asAnotherWindow(() => Promise.all([1, 2, 3].map((n) => client.request("media.delete", { mediaId: `media-demo-000${n}` }))));
+    await waitFor(() => expect(why()).toBe("Кадр 1: файла больше нет"));
+    await flush();
+    expect(gets(engine)).toBe(before + 1);
+  });
+
   test("a change to a file the draft does not name reads nothing again", async () => {
     const { client, engine } = await studio();
     const mediaId = storeVideo(engine);

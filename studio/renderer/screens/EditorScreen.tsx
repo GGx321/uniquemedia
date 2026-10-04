@@ -401,13 +401,18 @@ function DraftEditor({
   const [mediaTick, setMediaTick] = useState(0);
   const draftMedia = useRef<ReadonlySet<string>>(new Set());
   draftMedia.current = draftMediaIds(state.spec);
-  useEffect(
-    () =>
-      client.subscribe((event) => {
-        if (event.type === "media.changed" && changeTouches(event.payload, draftMedia.current)) setMediaTick((tick) => tick + 1);
-      }),
-    [client],
-  );
+  useEffect(() => {
+    // A burst (several files deleted at once) is one read: the changes heard before the microtask runs are coalesced into one tick (fix round 2).
+    let queued = false;
+    return client.subscribe((event) => {
+      if (event.type !== "media.changed" || !changeTouches(event.payload, draftMedia.current) || queued) return;
+      queued = true;
+      queueMicrotask(() => {
+        queued = false;
+        setMediaTick((tick) => tick + 1);
+      });
+    });
+  }, [client]);
   useEffect(() => {
     if (gone) return;
     let alive = true;
