@@ -225,6 +225,34 @@ describe("the prepare stage of an import job", () => {
     expect(r.jobs.stateOf(result.jobId)).toMatchObject({ status: "cancelled", done: 0 });
   });
 
+  test("a begin after the cancel is dropped: a job that was told to stop starts no stage", async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let paused: () => void = () => undefined;
+    const reached = new Promise<void>((resolve) => {
+      paused = resolve;
+    });
+    const r = rig(
+      reporting(async (prepare) => {
+        paused();
+        await gate;
+        prepare.begin(900);
+      }),
+    );
+    const result = await r.service.import(await callFor());
+    if (!result.ok) throw new Error("refused");
+    await reached;
+    r.service.cancel(result.jobId);
+    const before = r.events.length;
+    release();
+    await r.service.settled();
+    expect(progressOf(r.events.slice(before))).toEqual([]);
+    expect(r.jobs.stateOf(result.jobId)).toMatchObject({ status: "cancelled" });
+    expect(r.jobs.stateOf(result.jobId)).not.toHaveProperty("stage");
+  });
+
   test("every progress it sends fits the contract and no stage goes back to the copy", async () => {
     const { progress } = await run(
       reporting((prepare) => {

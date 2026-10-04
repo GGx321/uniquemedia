@@ -78,7 +78,8 @@ export function mediaKindsOf(head: Uint8Array): readonly MediaKind[] {
 /**
  * The kind of file this pick takes it for, or null when the bytes are not what the pick asks for. A pick of one kind needs bytes
  * that could be that kind. `any` takes the bytes' own kind: a PNG with an animation chunk is a sticker, a still one a photo, and an
- * ISO box file without an audio brand a video.
+ * ISO box file without an audio brand a video. (That last one is the HEAD's word only: the staging then reads the file's TRACKS and sends a file with a sound
+ * track and no video track to the audio importer, `isoRoute.ts`, 3f.6.)
  */
 export function resolveMediaKind(pick: MediaPickKind, head: Uint8Array): MediaKind | null {
   const kinds = mediaKindsOf(head);

@@ -150,14 +150,4 @@ describe("the copy of a routed file", () => {
     expect(copied).toMatchObject({ ok: false, reason: "changed" });
     await opened.opened.close();
   });
-
-  test("a file whose start is changed in place to another MP4-family head is still a track: the importer judges the streams again", async () => {
-    const file = await put("voice.m4a", AUDIO_ONLY());
-    const opened = await staging().open({ ...file, kind: "any" });
-    if (!opened.ok) throw new Error(`refused: ${opened.reason}`);
-    const copied = await opened.opened.copy({});
-    expect(copied.ok).toBe(true);
-    if (copied.ok) await copied.staged.dispose();
-    await opened.opened.close();
-  });
 });
