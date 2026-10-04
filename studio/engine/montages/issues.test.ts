@@ -216,14 +216,22 @@ describe("draftIssues: what a render refuses for a part whose slice has not land
     expect(issuesOf(w, spec)).toEqual([{ code: "not-yet-supported", path: ["layers", 1] }]);
   });
 
-  test("an own track and an own video clip are too (a trending track no longer is: 3c.5; an own photo no longer is: 3f.2)", () => {
+  test("an own video clip is too (a trending track no longer is: 3c.5; an own photo no longer is: 3f.2; an own track no longer is: 3f.4)", () => {
+    const w = world();
+    const video = { clipId: "clip-003", kind: "video" as const, mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), video] });
+
+    expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([["not-yet-supported", ["clips", 1]]]);
+  });
+
+  test("an own track is no longer not-yet-supported: with no media store wired it is media-unavailable at the music, after the clip's own refusal", () => {
     const w = world();
     const video = { clipId: "clip-003", kind: "video" as const, mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" as const };
     const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0)), video], music: { source: "own", mediaId: "media-0000003", startMs: 0 } });
 
     expect(issuesOf(w, spec).map((i) => [i.code, i.path])).toEqual([
       ["not-yet-supported", ["clips", 1]],
-      ["not-yet-supported", ["music"]],
+      ["media-unavailable", ["music"]],
     ]);
   });
 
@@ -329,5 +337,57 @@ describe("draftIssues: a trending track against the track store (3c.5)", () => {
     const w = world();
 
     expect(withTracks(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: trending(4_001) }), holds(8_000))).toEqual([{ code: "track-too-short", path: ["music"] }]);
+  });
+});
+
+describe("draftIssues: an own track against the library's media (3f.4)", () => {
+  const own = (startMs: number, mediaId = "media-0000001"): MontageDraft["music"] => ({ source: "own", mediaId, startMs });
+  const holdsOwn = (durationMs: number) => (mediaId: string) => (mediaId === "media-0000001" ? { durationMs } : null);
+  const withOwnTrack = (w: World, spec: MontageDraft, ownTrack: ((mediaId: string) => { durationMs: number } | null) | undefined) =>
+    draftIssues(w.library, spec, (line) => void logs.push(line), undefined, undefined, undefined, ownTrack);
+
+  test("a track the library holds, long enough, has no issue", () => {
+    const w = world();
+
+    expect(withOwnTrack(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: own(1_000) }), holdsOwn(8_000))).toEqual([]);
+  });
+
+  test("a track the library does not hold is media-unavailable at music", () => {
+    const w = world();
+
+    expect(withOwnTrack(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: own(0, "media-0000404") }), holdsOwn(8_000))).toEqual([{ code: "media-unavailable", path: ["music"] }]);
+  });
+
+  test("with no media store wired no track is held, so any own track is media-unavailable", () => {
+    const w = world();
+
+    expect(withOwnTrack(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: own(0) }), undefined)).toEqual([{ code: "media-unavailable", path: ["music"] }]);
+  });
+
+  test("a track shorter than startMs plus the montage is track-too-short at music; one exactly as long is not", () => {
+    const w = world();
+    const spec = (startMs: number) => draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: own(startMs) });
+
+    expect(withOwnTrack(w, spec(4_001), holdsOwn(8_000))).toEqual([{ code: "track-too-short", path: ["music"] }]);
+    expect(withOwnTrack(w, spec(4_000), holdsOwn(8_000))).toEqual([]);
+  });
+
+  test("a trending track is never asked of the media store, and an own track never of the track store", () => {
+    const w = world();
+    const asked: string[] = [];
+    const ownTrack = (mediaId: string): null => (asked.push(mediaId), null);
+    const trending = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: { source: "trending", trackId: "4199287736976977", startMs: 0 } });
+    draftIssues(w.library, trending, () => undefined, undefined, { stored: () => ({ decodedMs: 8_000 }) }, undefined, ownTrack);
+    expect(asked).toEqual([]);
+    const storeAsked: string[] = [];
+    draftIssues(w.library, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], music: own(0) }), () => undefined, undefined, { stored: (id) => (storeAsked.push(id), null) }, undefined, holdsOwn(8_000));
+    expect(storeAsked).toEqual([]);
+  });
+
+  test("the issues keep their order: photos, then stickers, then the track", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, "photo-nobody-1")], layers: [], music: own(0, "media-0000404") });
+
+    expect(withOwnTrack(w, spec, holdsOwn(8_000)).map((i) => i.code)).toEqual(["photo-unavailable", "media-unavailable"]);
   });
 });

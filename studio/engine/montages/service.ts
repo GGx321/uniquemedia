@@ -48,6 +48,11 @@ export interface MontageServiceDeps {
    * and `montages.focus` of an own photo asks it first. Absent: no own media is held, as a render with none says.
    */
   readonly ownPhotos?: (mediaIds: readonly string[]) => Promise<ReadonlySet<string>>;
+  /**
+   * Which of these media ids the library holds as own TRACKS a render can read (3f.4), with each one's decoded length in ms: a draft's own music is judged
+   * against it (`media-unavailable`, `track-too-short`). One question per `get` and per `list`. Absent: no own track is held, as a render with none says.
+   */
+  readonly ownTracks?: (mediaIds: readonly string[]) => Promise<ReadonlyMap<string, { readonly durationMs: number }>>;
   /** What the track store holds (3c.5): a draft's trending track is judged against it. Absent: no track is held. */
   readonly tracks?: TrackLookup;
   readonly newId: () => string;
@@ -224,7 +229,23 @@ export class MontageService {
     if (found.read.kind !== "ok") throw unreadable(found.read, montageId);
     const { montage } = found.read;
     const held = await this.#heldOwnPhotos([montage.spec]);
-    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, this.#availabilityOf(library, montage.spec.avatarId), this.#deps.tracks, (mediaId) => held.has(mediaId)) };
+    const tracks = await this.#heldOwnTracks([montage.spec]);
+    return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, this.#availabilityOf(library, montage.spec.avatarId), this.#deps.tracks, (mediaId) => held.has(mediaId), (mediaId) => tracks.get(mediaId) ?? null) };
+  }
+
+  /**
+   * The own tracks of `specs` that the library holds, with their lengths, from ONE question to the media store (3f.4). Nothing is asked when no draft
+   * names an own track; with no store wired, or one that fails, nothing is held (the draft is still answered, and the log says why).
+   */
+  async #heldOwnTracks(specs: readonly MontageDraft[]): Promise<ReadonlyMap<string, { readonly durationMs: number }>> {
+    const ids = [...new Set(specs.flatMap((spec) => (spec.music?.source === "own" ? [spec.music.mediaId] : [])))];
+    if (ids.length === 0 || this.#deps.ownTracks === undefined) return new Map();
+    try {
+      return await this.#deps.ownTracks(ids);
+    } catch (error) {
+      this.#deps.log(`the own tracks of a draft could not be looked up (${kindOf(error)})`);
+      return new Map();
+    }
   }
 
   /**
@@ -267,6 +288,7 @@ export class MontageService {
     const availability = new Map<string, Availability>();
     const shown = listing.montages.slice(0, MAX_LISTED_MONTAGES);
     const held = await this.#heldOwnPhotos(shown.map((montage) => montage.spec));
+    const tracks = await this.#heldOwnTracks(shown.map((montage) => montage.spec));
     const items = shown.map((montage) => {
       const owner = montage.spec.avatarId;
       let known = availability.get(owner);
@@ -274,7 +296,7 @@ export class MontageService {
         known = this.#availabilityOf(library, owner);
         availability.set(owner, known);
       }
-      return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks, (mediaId) => held.has(mediaId)), videoCount: library.videoCountForMontage(owner, montage.montageId) };
+      return { montage, issues: draftIssues(library, montage.spec, this.#deps.log, known, this.#deps.tracks, (mediaId) => held.has(mediaId), (mediaId) => tracks.get(mediaId) ?? null), videoCount: library.videoCountForMontage(owner, montage.montageId) };
     });
     return { items, total: listing.montages.length, skippedTotal: listing.skipped };
   }

@@ -48,9 +48,16 @@ function photoCells(spec: Pick<MontageDraft, "clips">): PhotoCell[] {
 /**
  * The referential issues of a draft, in order: photos (clips, then cells: a scene photo that is not usable, an own photo the library does
  * not hold), then stickers (layers), then the music track. Not bounded here. `holdsOwnPhoto` says whether the library holds a media as a
- * photo; absent, none is held (an engine with no media store refuses an own photo the way a render does).
+ * photo; absent, none is held (an engine with no media store refuses an own photo the way a render does). `ownTrack` says whether it holds a
+ * media as a track a render can read, and how long it is (3f.4); absent, none is held.
  */
-export function referentialIssues(spec: MontageDraft, availability: Availability, tracks?: TrackLookup, holdsOwnPhoto?: (mediaId: string) => boolean): MontageIssue[] {
+export function referentialIssues(
+  spec: MontageDraft,
+  availability: Availability,
+  tracks?: TrackLookup,
+  holdsOwnPhoto?: (mediaId: string) => boolean,
+  ownTrack?: (mediaId: string) => { readonly durationMs: number } | null,
+): MontageIssue[] {
   const issues: MontageIssue[] = [];
   for (const cell of photoCells(spec)) {
     if (cell.photo.source === "scene") {
@@ -60,7 +67,7 @@ export function referentialIssues(spec: MontageDraft, availability: Availability
     }
   }
   issues.push(...stickerIssues(spec));
-  issues.push(...trackIssues(spec, tracks === undefined ? undefined : (trackId) => tracks.stored(trackId)));
+  issues.push(...trackIssues(spec, tracks === undefined ? undefined : (trackId) => tracks.stored(trackId), ownTrack));
   return issues;
 }
 
@@ -68,7 +75,15 @@ export function referentialIssues(spec: MontageDraft, availability: Availability
  * Every issue of `spec` as the engine sees it now: what a render would refuse first (structure, then N9), then the referential ones, cut at `MAX_MONTAGE_ISSUES`. `availability`
  * is the avatar's photo state (`photoAvailability`); a caller judging many drafts of one avatar asks it once.
  */
-export function draftIssues(library: Library, spec: MontageDraft, log: (line: string) => void, availability?: Availability, tracks?: TrackLookup, holdsOwnPhoto?: (mediaId: string) => boolean): MontageIssue[] {
+export function draftIssues(
+  library: Library,
+  spec: MontageDraft,
+  log: (line: string) => void,
+  availability?: Availability,
+  tracks?: TrackLookup,
+  holdsOwnPhoto?: (mediaId: string) => boolean,
+  ownTrack?: (mediaId: string) => { readonly durationMs: number } | null,
+): MontageIssue[] {
   const known = availability ?? photoAvailability(library, spec.avatarId, log);
-  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known, tracks, holdsOwnPhoto)].slice(0, MAX_MONTAGE_ISSUES);
+  return [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...referentialIssues(spec, known, tracks, holdsOwnPhoto, ownTrack)].slice(0, MAX_MONTAGE_ISSUES);
 }
