@@ -301,6 +301,9 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     runs-on: windows-latest
+    # The suite step is bounded (60), the steps before it are not: a hung install or models fetch would hold each of the four jobs for
+    # GitHub's 360 minutes. 75 = that step's 60 plus the setup.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@v4
       # Same pin as the build job (see the comment there).

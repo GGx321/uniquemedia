@@ -614,6 +614,9 @@ describe("the Electron-Node steps' bounds", () => {
     expect(String(job?.name)).toContain(`/${count})`);
     // One shard per job: its step covers every attempt of one shard, not of all of them.
     expect(Number(command?.[2])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
+    // The job itself is bounded too, above the suite step's own limit, so a hung install cannot hold a job for GitHub's 360 minutes.
+    expect(Number(job?.["timeout-minutes"])).toBeGreaterThan(Number(command?.[2]));
+    expect(Number(job?.["timeout-minutes"])).toBeLessThanOrEqual(120);
     // The same suite, the same models: the jobs hold the steps a shard needs.
     const steps = (job?.steps ?? []) as { run?: string; uses?: string }[];
     expect(steps.some((step) => step.run === "bun install")).toBe(true);
