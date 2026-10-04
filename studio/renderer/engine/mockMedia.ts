@@ -1,4 +1,4 @@
-import { MAX_LISTED_MEDIA, PROTOCOL_VERSION, type EngineError, type ImportResult, type JobState, type MediaKind, type MediaSummary, type UnsequencedEvent } from "../../shared/engine";
+import { MAX_LISTED_MEDIA, PROTOCOL_VERSION, type EngineError, type ImportResult, type JobState, type MediaKind, type MediaSummary, type MediaUnsupportedReason, type UnsequencedEvent } from "../../shared/engine";
 import type { Scheduler } from "./scheduler";
 
 // The mock's own media (3f.1b): the engine's import jobs and records, on the mock's clock. The mock copies nothing and keeps no path: the
@@ -23,6 +23,11 @@ export interface MockMediaAccept {
   kind: MediaKind;
   bytes: number;
   facts?: Partial<MockMediaFacts>;
+  /**
+   * 3f.3a: the kind's importer refuses the file AFTER its copy (a codec, a length, a size): the job runs to its total and then ends failed with
+   * MEDIA_UNSUPPORTED and this reason, and nothing is stored. Absent: the importer takes the file.
+   */
+  refuse?: MediaUnsupportedReason;
 }
 
 const NO_FACTS: MockMediaFacts = { width: null, height: null, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null };
@@ -153,6 +158,15 @@ export class MockOwnMedia {
     }
     job.done = job.total;
     this.#event("job.progress", { ...ref, done: job.total, total: job.total });
+    if (job.accept.refuse !== undefined) {
+      // As the engine's job: the importer's refusal is the job's end, with the reason and the engine's own words for it; nothing is stored.
+      const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: job.accept.refuse, detail: `the file was refused: ${job.accept.refuse}` };
+      job.status = "failed";
+      job.error = error;
+      this.#event("job.failed", { ...ref, error });
+      this.#promote();
+      return;
+    }
     const summary: MediaSummary = {
       mediaId: this.#deps.nextId("media"),
       kind: job.mediaKind,
