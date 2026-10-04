@@ -24,6 +24,7 @@ import { useTrackSummary } from "./montage/MusicTrack";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
 import { StickerTab, type StickerTabProps } from "./montage/StickerTab";
+import { TextPreviewsProvider } from "./montage/textPreviews";
 import { TextTab, type TextTabProps } from "./montage/TextTab";
 import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto, totalMs } from "./montage/clipOps";
 import { PreviewSlot, PropertiesSlot } from "./montage/EditorSlots";
@@ -677,260 +678,261 @@ function DraftEditor({
   }
 
   return (
-    <div className="editor">
-      <EditorHeader
-        session={session}
-        title={{ avatar: avatar?.name ?? null }}
-        fresh={created && state.saved.updatedAt === initial.updatedAt && renderJob === null}
-        control={control}
-        revealing={revealing}
-        leaving={leaving}
-        onBack={() => navigate({ name: "photos", avatarId })}
-        onDrafts={() => navigate({ name: "montages" })}
-        onRender={() => void submitRender()}
-        onCancel={() => void cancelRender()}
-        onReveal={(videoId) => void revealVideo(videoId)}
-      />
-      {lost !== null && (
-        <div className="ed-notices">
-          <Notice
-            tone="warn"
-            title="Последнее изменение не сохранилось"
-            actions={
-              <button type="button" className="btn btn-s" onClick={() => setLost(null)}>
-                Понятно
-              </button>
-            }
-          >
-            {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
-          </Notice>
-        </div>
-      )}
-      {verdictFailed && verdictError !== null && (
-        <div className="ed-notices">
-          <ErrorNotice
-            error={verdictError}
-            actions={
-              <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
-                Повторить
-              </button>
-            }
-          />
-        </div>
-      )}
-      {(gone || state.save.kind === "failed" || renderError !== null) && (
-        <div className="ed-notices">
-          {gone ? (
+    <TextPreviewsProvider client={client} avatarId={avatarId}>
+      <div className="editor">
+        <EditorHeader
+          session={session}
+          title={{ avatar: avatar?.name ?? null }}
+          fresh={created && state.saved.updatedAt === initial.updatedAt && renderJob === null}
+          control={control}
+          revealing={revealing}
+          leaving={leaving}
+          onBack={() => navigate({ name: "photos", avatarId })}
+          onDrafts={() => navigate({ name: "montages" })}
+          onRender={() => void submitRender()}
+          onCancel={() => void cancelRender()}
+          onReveal={(videoId) => void revealVideo(videoId)}
+        />
+        {lost !== null && (
+          <div className="ed-notices">
             <Notice
               tone="warn"
-              title="Черновик удалён"
+              title="Последнее изменение не сохранилось"
               actions={
-                <button type="button" className="btn btn-s" onClick={() => navigate({ name: "montages" })}>
-                  К черновикам
+                <button type="button" className="btn btn-s" onClick={() => setLost(null)}>
+                  Понятно
                 </button>
               }
             >
-              Его удалили на экране черновиков или в другом окне. Изменения здесь больше не сохраняются.
+              {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
             </Notice>
-          ) : state.save.kind === "failed" ? (
+          </div>
+        )}
+        {verdictFailed && verdictError !== null && (
+          <div className="ed-notices">
             <ErrorNotice
-              error={state.save.error}
+              error={verdictError}
               actions={
-                quitRefused ? (
-                  <>
-                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                      Сохранить ещё раз
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-s btn-d"
-                      onClick={() => {
-                        allowClose.current = true;
-                        quitWithoutSaving();
-                      }}
-                    >
-                      Выйти без сохранения
-                    </button>
-                  </>
-                ) : closeRefused ? (
-                  <>
-                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                      Сохранить ещё раз
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-s btn-d"
-                      onClick={() => {
-                        allowClose.current = true;
-                        window.close();
-                      }}
-                    >
-                      Закрыть без сохранения
-                    </button>
-                  </>
-                ) : blockedLeave === null ? (
-                  <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                    Сохранить ещё раз
-                  </button>
-                ) : (
-                  <>
-                    {/* The guard saves again on the way out: saved, the window goes where the owner was going. */}
-                    <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
-                      Сохранить и перейти
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-s btn-d"
-                      onClick={() => {
-                        leftBehind.current = true;
-                        navigate(blockedLeave, { force: true });
-                      }}
-                    >
-                      Уйти без сохранения
-                    </button>
-                  </>
-                )
-              }
-            />
-          ) : (
-            renderError !== null && (
-              <ErrorNotice
-                error={renderError}
-                actions={
-                  <button type="button" className="btn btn-s" onClick={() => setRenderError(null)}>
-                    Закрыть
-                  </button>
-                }
-              />
-            )
-          )}
-        </div>
-      )}
-      {(control.kind === "failed" || revealError !== null) && (
-        <div className="ed-notices">
-          {control.kind === "failed" && renderJob !== null && (
-            <ErrorNotice
-              error={control.error}
-              actions={
-                <button type="button" className="btn btn-s" onClick={() => setDismissed(renderJob.jobId)}>
-                  Закрыть
+                <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
+                  Повторить
                 </button>
               }
             />
-          )}
-          {revealError !== null &&
-            (revealError.code === "NOT_FOUND" ? (
+          </div>
+        )}
+        {(gone || state.save.kind === "failed" || renderError !== null) && (
+          <div className="ed-notices">
+            {gone ? (
               <Notice
                 tone="warn"
+                title="Черновик удалён"
                 actions={
-                  <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
-                    Закрыть
+                  <button type="button" className="btn btn-s" onClick={() => navigate({ name: "montages" })}>
+                    К черновикам
                   </button>
                 }
               >
-                Файла нет в папке «Готовые видео»: его удалили или переместили.
+                Его удалили на экране черновиков или в другом окне. Изменения здесь больше не сохраняются.
               </Notice>
-            ) : (
+            ) : state.save.kind === "failed" ? (
               <ErrorNotice
-                error={revealError}
+                error={state.save.error}
                 actions={
-                  <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                  quitRefused ? (
+                    <>
+                      <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                        Сохранить ещё раз
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-s btn-d"
+                        onClick={() => {
+                          allowClose.current = true;
+                          quitWithoutSaving();
+                        }}
+                      >
+                        Выйти без сохранения
+                      </button>
+                    </>
+                  ) : closeRefused ? (
+                    <>
+                      <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                        Сохранить ещё раз
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-s btn-d"
+                        onClick={() => {
+                          allowClose.current = true;
+                          window.close();
+                        }}
+                      >
+                        Закрыть без сохранения
+                      </button>
+                    </>
+                  ) : blockedLeave === null ? (
+                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                      Сохранить ещё раз
+                    </button>
+                  ) : (
+                    <>
+                      {/* The guard saves again on the way out: saved, the window goes where the owner was going. */}
+                      <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
+                        Сохранить и перейти
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-s btn-d"
+                        onClick={() => {
+                          leftBehind.current = true;
+                          navigate(blockedLeave, { force: true });
+                        }}
+                      >
+                        Уйти без сохранения
+                      </button>
+                    </>
+                  )
+                }
+              />
+            ) : (
+              renderError !== null && (
+                <ErrorNotice
+                  error={renderError}
+                  actions={
+                    <button type="button" className="btn btn-s" onClick={() => setRenderError(null)}>
+                      Закрыть
+                    </button>
+                  }
+                />
+              )
+            )}
+          </div>
+        )}
+        {(control.kind === "failed" || revealError !== null) && (
+          <div className="ed-notices">
+            {control.kind === "failed" && renderJob !== null && (
+              <ErrorNotice
+                error={control.error}
+                actions={
+                  <button type="button" className="btn btn-s" onClick={() => setDismissed(renderJob.jobId)}>
                     Закрыть
                   </button>
                 }
               />
-            ))}
-        </div>
-      )}
-      <div className="ed-body">
-        <MediaPanel tab={tab} onTab={setTab} focusTick={tabFocus}>
-          {tab === "photos" ? (
-            <PhotoBin
-              avatarName={avatar?.name ?? "Аватар"}
-              avatarId={avatarId}
-              spec={state.spec}
-              photos={photos}
-              filter={binFilter}
-              onFilter={setBinFilter}
-              onPick={pickPhoto}
-              fillTarget={fillTarget}
-              addBlock={addRefusal(state.spec)}
-              onDragPhoto={setDragPhoto}
-            />
-          ) : tab === "music" ? (
-            <MusicTab spec={state.spec} status={view.music} onPick={pickMusic} />
-          ) : tab === "gif" ? (
-            <StickerTabAtPlayhead
-              timeline={timeline}
-              spec={state.spec}
-              current={currentSticker}
-              replacing={replaceLive ? layerName(state.spec, replacingIndex) : null}
-              onCancelReplace={() => setReplacing(null)}
-              onPick={pickSticker}
-            />
-          ) : (
-            <TextTabAtPlayhead
-              timeline={timeline}
-              spec={state.spec}
-              selected={selectedLayer?.kind === "text" ? selectedLayer.layerId : null}
-              onAdd={(preset) => void commands.addText(preset)}
-              onSelect={selectLayer}
-            />
-          )}
-        </MediaPanel>
-        <PreviewSlot spec={state.spec} playhead={timeline.playhead} />
-        {selected?.kind === "clip" ? (
-          <ClipProperties
-            session={session}
-            spec={state.spec}
-            index={selected.index}
-            cell={selected.cell}
-            avatarId={avatarId}
-            timeline={timeline}
-            focusPending={focus.pending}
-            dragPhoto={dragPhoto}
-            onFillCell={fillCell}
-          />
-        ) : selected?.kind === "layer" ? (
-          <LayerProperties
-            session={session}
-            spec={state.spec}
-            index={selected.index}
-            timeline={timeline}
-            avatarId={avatarId}
-            onReplaceSticker={(layerId) => {
-              setReplacing(layerId);
-              openTab("gif");
-            }}
-          />
-        ) : selected?.kind === "music" ? (
-          <MusicProperties session={session} spec={state.spec} timeline={timeline} lookup={musicLookup} listVersion={view.music?.listFetchedAt ?? null} verdict={musicVerdict} onReplace={() => openTab("music")} />
-        ) : (
-          <PropertiesSlot empty={state.spec.clips.length === 0} />
+            )}
+            {revealError !== null &&
+              (revealError.code === "NOT_FOUND" ? (
+                <Notice
+                  tone="warn"
+                  actions={
+                    <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                      Закрыть
+                    </button>
+                  }
+                >
+                  Файла нет в папке «Готовые видео»: его удалили или переместили.
+                </Notice>
+              ) : (
+                <ErrorNotice
+                  error={revealError}
+                  actions={
+                    <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                      Закрыть
+                    </button>
+                  }
+                />
+              ))}
+          </div>
         )}
+        <div className="ed-body">
+          <MediaPanel tab={tab} onTab={setTab} focusTick={tabFocus}>
+            {tab === "photos" ? (
+              <PhotoBin
+                avatarName={avatar?.name ?? "Аватар"}
+                avatarId={avatarId}
+                spec={state.spec}
+                photos={photos}
+                filter={binFilter}
+                onFilter={setBinFilter}
+                onPick={pickPhoto}
+                fillTarget={fillTarget}
+                addBlock={addRefusal(state.spec)}
+                onDragPhoto={setDragPhoto}
+              />
+            ) : tab === "music" ? (
+              <MusicTab spec={state.spec} status={view.music} onPick={pickMusic} />
+            ) : tab === "gif" ? (
+              <StickerTabAtPlayhead
+                timeline={timeline}
+                spec={state.spec}
+                current={currentSticker}
+                replacing={replaceLive ? layerName(state.spec, replacingIndex) : null}
+                onCancelReplace={() => setReplacing(null)}
+                onPick={pickSticker}
+              />
+            ) : (
+              <TextTabAtPlayhead
+                timeline={timeline}
+                spec={state.spec}
+                selected={selectedLayer?.kind === "text" ? selectedLayer.layerId : null}
+                onAdd={(preset) => void commands.addText(preset)}
+                onSelect={selectLayer}
+              />
+            )}
+          </MediaPanel>
+          <PreviewSlot spec={state.spec} playhead={timeline.playhead} />
+          {selected?.kind === "clip" ? (
+            <ClipProperties
+              session={session}
+              spec={state.spec}
+              index={selected.index}
+              cell={selected.cell}
+              avatarId={avatarId}
+              timeline={timeline}
+              focusPending={focus.pending}
+              dragPhoto={dragPhoto}
+              onFillCell={fillCell}
+            />
+          ) : selected?.kind === "layer" ? (
+            <LayerProperties
+              session={session}
+              spec={state.spec}
+              index={selected.index}
+              timeline={timeline}
+              onReplaceSticker={(layerId) => {
+                setReplacing(layerId);
+                openTab("gif");
+              }}
+            />
+          ) : selected?.kind === "music" ? (
+            <MusicProperties session={session} spec={state.spec} timeline={timeline} lookup={musicLookup} listVersion={view.music?.listFetchedAt ?? null} verdict={musicVerdict} onReplace={() => openTab("music")} />
+          ) : (
+            <PropertiesSlot empty={state.spec.clips.length === 0} />
+          )}
+        </div>
+        <Timeline
+          session={session}
+          spec={state.spec}
+          avatarId={avatarId}
+          flagged={clipProblems}
+          highlighted={block?.clips ?? refusedClips}
+          flaggedLayers={flaggedLayers}
+          musicLookup={musicLookup}
+          musicListVersion={view.music?.listFetchedAt ?? null}
+          musicVerdict={musicVerdict}
+          timeline={timeline}
+          dragPhoto={dragPhoto}
+          onInsertPhoto={(photoId, boundary) => {
+            setDragPhoto(null);
+            placePhoto(photoId, boundary);
+          }}
+          onAddClip={() => openTab("photos")}
+          onAddMusic={() => openTab("music")}
+          onAddSticker={() => openTab("gif")}
+          onSelectClip={(index) => selectClipAt(index)}
+        />
       </div>
-      <Timeline
-        session={session}
-        spec={state.spec}
-        avatarId={avatarId}
-        flagged={clipProblems}
-        highlighted={block?.clips ?? refusedClips}
-        flaggedLayers={flaggedLayers}
-        musicLookup={musicLookup}
-        musicListVersion={view.music?.listFetchedAt ?? null}
-        musicVerdict={musicVerdict}
-        timeline={timeline}
-        dragPhoto={dragPhoto}
-        onInsertPhoto={(photoId, boundary) => {
-          setDragPhoto(null);
-          placePhoto(photoId, boundary);
-        }}
-        onAddClip={() => openTab("photos")}
-        onAddMusic={() => openTab("music")}
-        onAddSticker={() => openTab("gif")}
-        onSelectClip={(index) => selectClipAt(index)}
-      />
-    </div>
+    </TextPreviewsProvider>
   );
 }
 

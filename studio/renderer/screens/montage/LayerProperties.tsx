@@ -166,8 +166,7 @@ const FONTS: readonly { id: TextFont; label: string }[] = [
 /** The artboard's emoji chips (R27); the engine's verdict says if the font lacks one. */
 const EMOJI = ["☀️", "☕", "✨", "💛", "🌿", "📍", "🥐"] as const;
 
-function TextFields({ session, layer, avatarId }: { session: DraftSession; layer: TextLayer; avatarId: string }) {
-  const { client } = useEngine();
+function TextFields({ session, layer }: { session: DraftSession; layer: TextLayer }) {
   const area = useRef<HTMLTextAreaElement>(null);
   const fieldId = useId();
   const hintId = useId();
@@ -176,7 +175,7 @@ function TextFields({ session, layer, avatarId }: { session: DraftSession; layer
   const colorId = useId();
   /** Text the field holds but the draft does not: the contract or the layout refuses it, so it never reached the engine. */
   const [typed, setTyped] = useState<{ text: string; reason: CaptionRefusal } | null>(null);
-  const check = useCaptionCheck(client, avatarId, layer);
+  const check = useCaptionCheck(layer);
   // The draft's caption moved under the field (an undo, another window): the field shows it again.
   useEffect(() => setTyped(null), [layer.value]);
   const value = typed?.text ?? layer.value;
@@ -433,12 +432,11 @@ export interface LayerPropertiesProps {
   readonly spec: MontageDraft;
   readonly index: number;
   readonly timeline: TimelineState;
-  readonly avatarId: string;
   /** «Заменить стикер»: the «GIF» tab, set to swap this layer's sticker. */
   readonly onReplaceSticker: (layerId: string) => void;
 }
 
-export function LayerProperties({ session, spec, index, timeline, avatarId, onReplaceSticker }: LayerPropertiesProps) {
+export function LayerProperties({ session, spec, index, timeline, onReplaceSticker }: LayerPropertiesProps) {
   const commands = useSelectionCommands(session, timeline);
   const onKeyDown = deleteKeyHandler(commands.remove);
   // Where the playhead rests (3d.4): a playback does not re-render the panel.
@@ -469,7 +467,7 @@ export function LayerProperties({ session, spec, index, timeline, avatarId, onRe
       </div>
 
       {layer.kind === "text" ? (
-        <TextFields key={layer.layerId} session={session} layer={layer} avatarId={avatarId} />
+        <TextFields key={layer.layerId} session={session} layer={layer} />
       ) : (
         <StickerFields key={layer.layerId} session={session} layer={layer} onReplace={() => onReplaceSticker(layer.layerId)} />
       )}

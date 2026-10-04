@@ -1,5 +1,5 @@
 import { CAPTION_ISSUES_RU, type CaptionIssue, type EngineError } from "../../../shared/engine";
-import type { TextPreviewOutcome } from "../../engine/textPreview";
+import type { LayerPreview } from "../../engine/textPreviewQueue";
 import { errorText } from "../../lib/errors";
 import type { CaptionRefusal } from "./textOps";
 
@@ -7,7 +7,9 @@ import type { CaptionRefusal } from "./textOps";
 // pending plan note: a caption that broke the rules was refused only at render time, so the panel now asks the ENGINE about every
 // caption it commits (`montages.textPreview`, which runs the shared technical caption rules) and shows TEXT_INVALID's
 // `captionIssue` as you type. The answer to the newest ask is the verdict; `superseded` (a newer ask of the same layer replaced it
-// in the engine's queue) is no answer at all and changes nothing. The words are the shared `CAPTION_ISSUES_RU`.
+// in the engine's queue) is no answer at all and changes nothing. 3d.4: the asks go through the window's one per-layer queue
+// (engine/textPreviewQueue.ts), which the preview shares; the panel reads the layer's state from it. The words are the shared
+// `CAPTION_ISSUES_RU`.
 
 export type CaptionVerdict = { readonly kind: "ok" } | { readonly kind: "invalid"; readonly issue: CaptionIssue } | { readonly kind: "failed"; readonly error: EngineError };
 
@@ -19,18 +21,13 @@ export interface CaptionCheck {
 
 export const NO_CHECK: CaptionCheck = { asked: 0, shown: null };
 
-/** A new ask: its number, larger than every earlier one. */
-export function askCaption(check: CaptionCheck): { check: CaptionCheck; ask: number } {
-  const ask = check.asked + 1;
-  return { check: { ...check, asked: ask }, ask };
-}
-
-/** The engine's answer to ask `ask`. Superseded changes nothing; an answer older than the one shown is dropped. */
-export function answerCaption(check: CaptionCheck, ask: number, outcome: TextPreviewOutcome): CaptionCheck {
-  if (outcome.kind === "superseded") return check;
-  if (check.shown !== null && ask <= check.shown.ask) return check;
-  const verdict: CaptionVerdict = outcome.kind === "picture" ? { kind: "ok" } : outcome.kind === "invalid" ? { kind: "invalid", issue: outcome.captionIssue } : { kind: "failed", error: outcome.error };
-  return { ...check, shown: { ask, verdict } };
+/** The panel's verdict, from the layer's state in the window's one preview queue (3d.4: which answer counts is the queue's rule). */
+export function captionCheckOf(preview: LayerPreview): CaptionCheck {
+  const { shown } = preview;
+  if (shown === null) return preview.asked === 0 ? NO_CHECK : { asked: preview.asked, shown: null };
+  const { answer } = shown;
+  const verdict: CaptionVerdict = answer.kind === "picture" ? { kind: "ok" } : answer.kind === "invalid" ? { kind: "invalid", issue: answer.captionIssue } : { kind: "failed", error: answer.error };
+  return { asked: preview.asked, shown: { ask: shown.ask, verdict } };
 }
 
 export interface CaptionNotice {
