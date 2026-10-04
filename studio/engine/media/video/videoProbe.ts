@@ -637,7 +637,20 @@ async function readExactly(source: ByteSource, position: number, length: number)
   return got.byteLength === length ? got : got.subarray(0, length);
 }
 
-async function walk(source: ByteSource): Promise<VideoInfo> {
+interface Movie {
+  readonly brand: string;
+  readonly m: Uint8Array;
+  readonly view: DataView;
+  readonly budget: Budget;
+  readonly top: readonly BoxRef[];
+  readonly traks: readonly BoxRef[];
+}
+
+/**
+ * The file's boxes down to its tracks: the top level (one `moov`, no `trak` outside it), `moov` read whole (bounded) and its children listed. A FRAGMENTED file (`moof`,
+ * `sidx`, `mfra` at the top, `mvex` in `moov`) is refused unless `allowFragments`, which only the light look at the tracks (`soundAndPictureTracks`) says.
+ */
+async function openMovie(source: ByteSource, allowFragments: boolean): Promise<Movie> {
   if (source.size < 8) throw new Refusal("no-ftyp");
   let moov: BoxRef | undefined;
   let brand = "";
@@ -650,7 +663,7 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
     // `boxAt` is given the header alone: `limit` is what is left of the file, the offsets are the file's.
     const box = boxAt(header, new DataView(header.buffer, header.byteOffset, header.byteLength), 0, remaining, at, true);
     if (at === 0 && box.type !== "ftyp") throw new Refusal("no-ftyp");
-    if (box.type === "moof" || box.type === "sidx" || box.type === "mfra") throw new Refusal("fragmented");
+    if (!allowFragments && (box.type === "moof" || box.type === "sidx" || box.type === "mfra")) throw new Refusal("fragmented");
     // ffmpeg reads a `trak` wherever it finds one, so a track outside `moov` is a stream the walker would never judge.
     if (box.type === "trak") throw new Refusal("stray-track");
     if (box.type === "ftyp") {
@@ -671,39 +684,70 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
   const view = new DataView(m.buffer, m.byteOffset, m.byteLength);
   const budget: Budget = { visited: 0, listed: new Map() };
   const top = childrenOf(m, view, 0, m.byteLength, budget);
-  if (top.some((box) => box.type === "mvex")) throw new Refusal("fragmented");
+  if (!allowFragments && top.some((box) => box.type === "mvex")) throw new Refusal("fragmented");
+  const traks = top.filter((box) => box.type === "trak");
+  if (traks.length > MAX_TRACKS) throw new Refusal("too-many-tracks");
+  return { brand, m, view, budget, top, traks };
+}
+
+/** What the walker reads of a track before it knows what it is: every refusal that does not depend on the kind (hidden handlers, stray stream parts, outside data). */
+interface TrackParts {
+  readonly parts: readonly BoxRef[];
+  readonly inMdia: readonly BoxRef[];
+  readonly handler: string;
+  readonly tables: readonly BoxRef[] | undefined;
+  readonly entryType: string | undefined;
+}
+
+/** The parts of one `trak`, or undefined for one with no `mdia` (which makes no stream: `checkHandlers` has refused any stream part it hides elsewhere). */
+function readTrackParts(movie: Movie, trak: BoxRef): TrackParts | undefined {
+  const { m, view, budget } = movie;
+  const parts = childrenOf(m, view, trak.body, trak.end, budget);
+  checkHandlers(m, view, trak, budget);
+  const mdia = onlyOf(parts, "mdia");
+  if (mdia === undefined) return undefined;
+  const inMdia = childrenOf(m, view, mdia.body, mdia.end, budget);
+  const hdlr = onlyOf(inMdia, "hdlr");
+  const minf = onlyOf(inMdia, "minf");
+  const handler = hdlr !== undefined && payloadLength(hdlr) >= 12 ? latin1(m, hdlr.body + 8, hdlr.body + 12) : "";
+  const inMinf = minf === undefined ? [] : childrenOf(m, view, minf.body, minf.end, budget);
+  // `checkHandlers` took the data handler of `minf`; a second one is a repeat (ffmpeg would read the last).
+  onlyOf(inMinf, "hdlr");
+  checkDataReferences(m, view, inMinf, budget);
+  const stbl = onlyOf(inMinf, "stbl");
+  const tables = stbl === undefined ? undefined : childrenOf(m, view, stbl.body, stbl.end, budget);
+  const stsd = tables === undefined ? undefined : onlyOf(tables, "stsd");
+  const entryType = stsd !== undefined && payloadLength(stsd) >= 16 ? latin1(m, stsd.body + 12, stsd.body + 16) : undefined;
+  return { parts, inMdia, handler, tables, entryType };
+}
+
+/**
+ * What a track is: a SOUND track whatever its codec is called (ffmpeg never makes a video stream of a `soun` track: the video tag lookup is skipped once the handler has said
+ * audio, and no decoder but the pinned one is opened; the track has no other `hdlr` but a data handler, so a sound handler cannot hide another); a PICTURE (a video candidate) by
+ * its handler OR by its sample entry (see NON_VIDEO_ENTRIES); anything else (timecode, metadata, text) `other`.
+ */
+function trackKind(handler: string, entryType: string | undefined): "sound" | "picture" | "other" {
+  if (handler === "soun") return "sound";
+  if (handler !== "vide" && (entryType === undefined || NON_VIDEO_ENTRIES.has(entryType))) return "other";
+  return "picture";
+}
+
+async function walk(source: ByteSource): Promise<VideoInfo> {
+  const movie = await openMovie(source, false);
+  const { m, view, budget, top, traks, brand } = movie;
   const mvhd = onlyOf(top, "mvhd");
   if (mvhd === undefined) throw new Refusal("bad-header");
   const movieTimes = readTimes(m, view, mvhd);
-  const traks = top.filter((box) => box.type === "trak");
-  if (traks.length > MAX_TRACKS) throw new Refusal("too-many-tracks");
 
   let video: VideoTrackInfo | undefined;
   let audioTracks = 0;
   for (const trak of traks) {
-    const parts = childrenOf(m, view, trak.body, trak.end, budget);
-    checkHandlers(m, view, trak, budget);
-    const mdia = onlyOf(parts, "mdia");
-    if (mdia === undefined) continue;
-    const inMdia = childrenOf(m, view, mdia.body, mdia.end, budget);
-    const hdlr = onlyOf(inMdia, "hdlr");
-    const minf = onlyOf(inMdia, "minf");
-    const handler = hdlr !== undefined && payloadLength(hdlr) >= 12 ? latin1(m, hdlr.body + 8, hdlr.body + 12) : "";
-    const inMinf = minf === undefined ? [] : childrenOf(m, view, minf.body, minf.end, budget);
-    // `checkHandlers` took the data handler of `minf`; a second one is a repeat (ffmpeg would read the last).
-    onlyOf(inMinf, "hdlr");
-    checkDataReferences(m, view, inMinf, budget);
-    const stbl = onlyOf(inMinf, "stbl");
-    const tables = stbl === undefined ? undefined : childrenOf(m, view, stbl.body, stbl.end, budget);
-    const stsd = tables === undefined ? undefined : onlyOf(tables, "stsd");
-    const entryType = stsd !== undefined && payloadLength(stsd) >= 16 ? latin1(m, stsd.body + 12, stsd.body + 16) : undefined;
-    if (handler === "soun") audioTracks++;
-    // A sound track is a sound track whatever its codec is called: ffmpeg never makes a video stream of a `soun` track (the video tag lookup is
-    // skipped once the handler has said audio), and no decoder but the pinned one is opened. The track has no other `hdlr` but a data handler
-    // (`checkHandlers`: ffmpeg reads them all and the last one wins), so a sound handler cannot hide another. Otherwise: a video track by its
-    // handler OR by its sample entry (see NON_VIDEO_ENTRIES).
-    if (handler === "soun") continue;
-    if (handler !== "vide" && (entryType === undefined || NON_VIDEO_ENTRIES.has(entryType))) continue;
+    const read = readTrackParts(movie, trak);
+    if (read === undefined) continue;
+    const { parts, inMdia, handler, tables, entryType } = read;
+    const kind = trackKind(handler, entryType);
+    if (kind === "sound") audioTracks++;
+    if (kind !== "picture") continue;
     // ONE video track only. ffmpeg silently drops a track it cannot use (no samples, a broken table), so with two the stream it maps as the
     // first video could be the one this walker never judged.
     if (video !== undefined) throw new Refusal("several-video-tracks");
@@ -712,6 +756,31 @@ async function walk(source: ByteSource): Promise<VideoInfo> {
   if (video === undefined) throw new Refusal("no-video-track", audioTracks);
 
   return { brand, durationMs: Math.round((video.presentation.ticks * 1000) / video.presentation.timescale), mvhd: movieTimes, video, audioTracks };
+}
+
+/**
+ * How many SOUND tracks and how many PICTURE tracks (video candidates) a file has, read in a light bounded pass that also takes a FRAGMENTED file (an empty `moov` and `moof`
+ * boxes: what Safari's MediaRecorder writes) and judges no length, size or colour: for the one drop zone to send a file with sound and no picture to the audio importer
+ * (3f.6 review, M1). It keeps every refusal that does not depend on the kind (hidden handlers, stray stream parts, outside data, too many boxes), and null says the file is
+ * not one it can vouch for. Rejects only when `source.read` does.
+ */
+export async function soundAndPictureTracks(source: ByteSource): Promise<{ readonly sound: number; readonly picture: number } | null> {
+  try {
+    const movie = await openMovie(source, true);
+    let sound = 0;
+    let picture = 0;
+    for (const trak of movie.traks) {
+      const read = readTrackParts(movie, trak);
+      if (read === undefined) continue;
+      const kind = trackKind(read.handler, read.entryType);
+      if (kind === "sound") sound++;
+      if (kind === "picture") picture++;
+    }
+    return { sound, picture };
+  } catch (error) {
+    if (error instanceof Refusal || error instanceof RangeError) return null;
+    throw error;
+  }
 }
 
 /** Reads the facts of an MP4 or MOV, or says why it is not one this importer takes. Rejects only when `source.read` does. */

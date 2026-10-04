@@ -94,7 +94,7 @@ describe("too-short", () => {
   });
 
   test("a video is told the 0.5 s of the shortest clip, in the video's own words", () => {
-    expect(mediaReasonRu("too-short", "video")).toBe("Видео короче 0.5 с — в ролик его не поставить");
+    expect(mediaReasonRu("too-short", "video")).toBe("Видео короче 0.5 с — в ролик его не поставить.");
   });
 
   test("a track is told it is shorter than the shortest montage (4 s), in the track's own words", () => {

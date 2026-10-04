@@ -116,8 +116,10 @@ export const MEDIA_REASONS_BY_KIND_RU: Partial<Record<MediaKind, Partial<Record<
     dimensions: "Видео больше 4K. Уменьшите разрешение до 4096 × 2160 и добавьте снова.",
     "too-small": "Кадр видео слишком маленький: каждая сторона должна быть не меньше 2 пикселей.",
     structure: "Видео устроено необычно, и добавить его нельзя: например, в нём несколько видеодорожек, нестандартный поворот или цвет, или оно собрано из частей. Пересохраните ролик обычным способом и добавьте снова.",
-    // The shortest clip is 0.5 s (`MIN_CLIP_MS`).
-    "too-short": "Видео короче 0.5 с — в ролик его не поставить",
+    // The shortest clip is 0.5 s (`MIN_CLIP_MS`). The dot in «0.5» is the editor's (its own text for a short video says «0.5 с» too).
+    "too-short": "Видео короче 0.5 с — в ролик его не поставить.",
+    // A file with sound that the video importer cannot read (an audio track beside a video track with no frames, say) is what the owner meant as music, most likely.
+    format: "Это не видео, которое читает Studio: нужен MP4 или MOV с одной видеодорожкой. Если в файле только звук, добавьте как музыку.",
   },
   // 3f.5: what an own sticker is turned away for, in the sticker's own words (it takes a GIF or an APNG, not a photo).
   sticker: {
