@@ -34,6 +34,7 @@ import {
   type MusicQuotaLog,
   type MusicStatus,
   OkResponse,
+  OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
   type PhotoSummary,
   PROTOCOL_VERSION,
@@ -1945,7 +1946,7 @@ export class MockEngine implements EngineBridge {
     // 3f.2: an own photo must be one the library holds as a photo (NOT_FOUND otherwise: PHOTO_UNAVAILABLE lists scene photos only); its focus is
     // the face's point when the script says the detector would find one, and none when it would not.
     if (photo.source === "own") {
-      if (!this.ownMedia.holdsPhoto(photo.mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own photo ${photo.mediaId} in the open library` });
+      if (!this.ownMedia.holdsPhoto(photo.mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: OWN_PHOTO_NOT_FOUND_DETAIL });
       return this.ok(c, { focus: this.ownMedia.hasFace(photo.mediaId) ? { ...MOCK_FOCUS } : null });
     }
     const known = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photo.photoId);

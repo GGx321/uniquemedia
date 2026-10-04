@@ -407,12 +407,12 @@ describe("montages.focus", () => {
     expect(reply).toEqual({ ok: false, error: { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] } });
   });
 
-  test("refuses an own photo the library does not hold with NOT_FOUND (3f.2: the store exists; the held ones are in mockEngine.ownPhotos.test.ts)", async () => {
+  test("refuses an own upload with NOT_FOUND: there is no such store yet", async () => {
     const mock = makeMock();
 
     const reply = await mock.client.request("montages.focus", { avatarId: MIA.avatarId, photo: { source: "own", mediaId: "media-own-0001" } });
 
-    expect(reply).toEqual({ ok: false, error: { code: "NOT_FOUND", detail: "no own photo media-own-0001 in the open library" } });
+    expect(reply).toEqual({ ok: false, error: { code: "NOT_FOUND", detail: "own photos are not available yet" } });
   });
 
   test("refuses an unknown avatar and an archived one with NOT_FOUND", async () => {

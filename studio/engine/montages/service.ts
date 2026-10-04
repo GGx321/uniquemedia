@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, OWN_PHOTO_NOT_FOUND_DETAIL, PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { defaultSpec, ownPhotoCells } from "../../shared/montage";
 import { EngineFailure } from "../engineFailure";
@@ -376,7 +376,7 @@ export class MontageService {
    */
   async #focusOwn(library: Library, mediaId: string, entered: number): Promise<CommandResult<"montages.focus">> {
     if (!(await this.#heldMedia([mediaId])).has(mediaId)) {
-      throw new EngineFailure({ code: "NOT_FOUND", detail: `no own photo ${mediaId} in the open library` });
+      throw new EngineFailure({ code: "NOT_FOUND", detail: OWN_PHOTO_NOT_FOUND_DETAIL });
     }
     const resolver = this.#deps.focus(library);
     const stop = new AbortController();

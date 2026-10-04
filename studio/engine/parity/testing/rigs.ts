@@ -107,13 +107,24 @@ export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | 
  * The owner's pick in main's own-media dialog (3f.1): nothing (`cancel`), or seven files at once, each a different way for the boundary to
  * turn it away (`mixed`, see MIXED_MEDIA). The real rig makes the files on disk; the mock is told the verdict for each name, and holds no path.
  */
-export type MediaDialog = "cancel" | "mixed" | "good";
+export type MediaDialog = "cancel" | "mixed" | "good" | "tiny";
 
 /** The one good photo of the `good` pick (3f.1b): accepted by the rigs' importer, and `PARITY_PHOTO_BYTES` long. */
 const GOOD_PHOTO = "lake.jpg";
 export const PARITY_PHOTO_BYTES = 120;
 /** What the real rig's photo importer says of any photo it takes, and what the mock is told to say. */
 export const PARITY_PHOTO_FACTS = { width: 100, height: 200, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null } as const;
+
+/** The one picture of the `tiny` pick (3f.2): the boundary takes it (its bytes are a photo's) and the photo importer refuses it inside the job. */
+const TINY_PHOTO = "dot.jpg";
+
+/** Writes the `tiny` pick's file into `folder` and returns its path. */
+async function writeTinyMedia(folder: string): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(PARITY_PHOTO_BYTES - 4, 3)]);
+  await writeFile(join(folder, TINY_PHOTO), jpeg);
+  return [join(folder, TINY_PHOTO)];
+}
 
 /** Writes the `good` pick's file into `folder` and returns its path. */
 async function writeGoodMedia(folder: string): Promise<string[]> {
@@ -285,7 +296,9 @@ export function mockRig(options: RigOptions = {}): ParityRig {
             : answer === "good"
               ? // With an importer the good photo is accepted; without one (the app until 3f.2) it is turned away before it is copied.
                 [options.ownMedia === true ? { name: GOOD_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, facts: PARITY_PHOTO_FACTS } } : { name: GOOD_PHOTO, reason: "not-yet-supported" }]
-              : MIXED_MEDIA,
+              : answer === "tiny"
+                ? [options.ownMedia === true ? { name: TINY_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, failWith: "too-small" } } : { name: TINY_PHOTO, reason: "not-yet-supported" }]
+                : MIXED_MEDIA,
         ),
       holdImports: (held) => engine.holdImports(held),
       // The mock answers main's own key command itself, as the dev build does.
@@ -522,7 +535,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       });
     } else letImportsGo();
   };
-  const parityPhotoImporter: MediaImporter = async () => ({ ok: true, facts: PARITY_PHOTO_FACTS });
+  // The importer takes every photo, except the 1 px picture of the `tiny` pick (3f.2: the real importer refuses it as `too-small`, inside its job).
+  const parityPhotoImporter: MediaImporter = async ({ name }) => (name === TINY_PHOTO ? { ok: false, reason: "too-small" } : { ok: true, facts: PARITY_PHOTO_FACTS });
   const { engine, events, posted } = await startEngine(dir, {
     init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
     deps: {
@@ -732,7 +746,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       },
       mediaDialog: async (answer) => {
         const folder = join(dir, `picked-media-${++dialogs}`);
-        nextMedia = answer === "cancel" ? null : answer === "good" ? await writeGoodMedia(folder) : await writeMixedMedia(folder);
+        nextMedia = answer === "cancel" ? null : answer === "good" ? await writeGoodMedia(folder) : answer === "tiny" ? await writeTinyMedia(folder) : await writeMixedMedia(folder);
       },
       holdImports,
       // Main's half of «Сохранить»: the key is stored, then handed to the engine as the owner's (a key line in the quota log).
