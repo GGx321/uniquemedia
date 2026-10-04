@@ -1552,7 +1552,28 @@ const OWN_VIDEO_CLIP_SCENARIOS: readonly Scenario[] = [
 ];
 
 /** Every scenario, in the order the golden transcripts were made: new ones are appended, never inserted. */
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS];
+// ---------- 3f.6: the import's prepare stage ----------
+
+/** Appended after the 3f.3b scenarios: the golden transcripts above are append-only. */
+const OWN_IMPORT_STAGE_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "own media: an import has two stages, the copy in bytes and then the importer's own work in its own units, which says what the probe judged and never reaches its total before the record",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      t.note("a clip whose importer reports its work is picked, held before its first byte so the answer comes with the job running");
+      control.holdImports(true);
+      await control.mediaDialog("preparedVideo");
+      await t.call("media.pickImport", { kind: "video" });
+      t.note("the job goes on: the copy to its total, then the prepare from zero of its own total (with what the probe judged), its steps, the record, media.changed, job.done");
+      control.holdImports(false);
+      await t.settle();
+      await t.call("media.list", { kind: "video" });
+      await t.call("engine.snapshot", {});
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

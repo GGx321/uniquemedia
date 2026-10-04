@@ -1,4 +1,4 @@
-import { MAX_LISTED_MEDIA, PROTOCOL_VERSION, type EngineError, type ImportResult, type JobState, type MediaKind, type MediaSummary, type MediaUnsupportedReason, type UnsequencedEvent } from "../../shared/engine";
+import { fromFpsOf, MAX_LISTED_MEDIA, MEZZANINE_FPS, PROTOCOL_VERSION, type EngineError, type ImportPrepare, type ImportResult, type JobState, type MediaKind, type MediaSummary, type MediaUnsupportedReason, type UnsequencedEvent } from "../../shared/engine";
 import type { Scheduler } from "./scheduler";
 
 // The mock's own media (3f.1b): the engine's import jobs and records, on the mock's clock. The mock copies nothing and keeps no path: the
@@ -18,6 +18,19 @@ export interface MockMediaFacts {
   delayFrames: number[] | null;
 }
 
+/**
+ * The importer's own work, as the script says the mock plays it (3f.6). With none the job is a copy and its end, as it was in 3f.1b (the parity
+ * suite's older stories hold that); with one the copy is followed by the prepare stage: `total` units from zero, `steps` announcements each a step of the
+ * mock's clock apart, never full before the record. Every field is optional: with `{}` the mock counts in the engine's own units (a video's output frames at 30 fps,
+ * a track's output milliseconds, three coarse steps for a photo and a sticker), says what the probe would have judged of a video from its facts, and takes up to four steps.
+ */
+export interface MockMediaPrepare {
+  total?: number;
+  steps?: number;
+  /** What the probe judged (a video's). With none the mock reads it from the facts: `hdrToSdr` and the source rate when it is not 30. A photo, a track and a sticker say none. */
+  judged?: ImportPrepare;
+}
+
 /** A file the script accepts: its kind, its size in bytes (the job's `total`) and, when the story cares, the facts of its record. */
 export interface MockMediaAccept {
   kind: MediaKind;
@@ -30,6 +43,8 @@ export interface MockMediaAccept {
   face?: boolean;
   /** The kind's importer turns the file away INSIDE the job (3f.2: `too-small`, `dimensions`, `animated-webp`, `format`...): the job fails with MEDIA_UNSUPPORTED and stores nothing. */
   failWith?: MediaUnsupportedReason;
+  /** The importer's own work after the copy (3f.6); absent: none is played. */
+  prepare?: MockMediaPrepare;
   /**
    * A track's waveform (3f.4): one value per 50 ms, each 0 to 1000, as the importer's record keeps it. The record carries no such field in the contract; the
    * mock keeps it beside the record. With none, the mock makes a stable one of the track's own length (`defaultWaveform`).
@@ -89,6 +104,10 @@ interface ImportJob {
   readonly total: number;
   readonly accept: MockMediaAccept;
   done: number;
+  /** The units `done` counts: the file's bytes (`total` above), then (in the prepare stage) the importer's units (`units`). */
+  stage: "copy" | "prepare";
+  units: number;
+  judged: ImportPrepare | undefined;
   status: "queued" | "running" | "done" | "failed" | "cancelled";
   mediaId: string | null;
   result: ImportResult | undefined;
@@ -139,6 +158,9 @@ export class MockOwnMedia {
       total: accept.bytes,
       accept,
       done: 0,
+      stage: "copy",
+      units: accept.bytes,
+      judged: undefined,
       status: "running",
       mediaId: null,
       result: undefined,
@@ -179,7 +201,61 @@ export class MockOwnMedia {
   }
 
   #scheduleEnd(job: ImportJob): void {
-    job.cancelTimers.push(this.#deps.scheduler.schedule(this.#deps.stepMs, () => this.#end(job)));
+    const { prepare } = job.accept;
+    if (prepare === undefined) {
+      job.cancelTimers.push(this.#deps.scheduler.schedule(this.#deps.stepMs, () => this.#end(job)));
+      return;
+    }
+    // The copy is one step, then the importer's work (3f.6): its begin, its steps, and the end.
+    job.cancelTimers.push(this.#deps.scheduler.schedule(this.#deps.stepMs, () => this.#prepare(job, prepare)));
+  }
+
+  /** The units of a kind's own work, as the engine counts them: a video's output frames, a track's output milliseconds, three coarse steps for a picture. */
+  #unitsOf(job: ImportJob, prepare: MockMediaPrepare): number {
+    if (prepare.total !== undefined) return prepare.total;
+    const facts = { ...DEFAULT_FACTS[job.mediaKind], ...job.accept.facts };
+    if (job.mediaKind === "video") return Math.max(1, Math.round(((facts.durationMs ?? 0) * MEZZANINE_FPS) / 1000));
+    if (job.mediaKind === "audio") return Math.max(1, facts.durationMs ?? 0);
+    return 3;
+  }
+
+  /** What the probe would have judged: only a video has anything to say. */
+  #judgedOf(job: ImportJob, prepare: MockMediaPrepare): ImportPrepare | undefined {
+    if (prepare.judged !== undefined) return prepare.judged;
+    if (job.mediaKind !== "video") return undefined;
+    const facts = { ...DEFAULT_FACTS.video, ...job.accept.facts };
+    return { hdrToSdr: facts.hdrToSdr, fromFps: fromFpsOf(facts.sourceFps ?? MEZZANINE_FPS) };
+  }
+
+  /** The copy is over: it is announced whole, the prepare stage begins at zero of its own total, and its steps follow, each a step of the clock apart. */
+  #prepare(job: ImportJob, prepare: MockMediaPrepare): void {
+    if (job.status !== "running" || !this.#jobs.includes(job)) return;
+    const ref = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: null };
+    if (job.cancelRequested) {
+      this.#end(job);
+      return;
+    }
+    job.done = job.total;
+    this.#event("job.progress", { ...ref, done: job.total, total: job.total });
+    const units = this.#unitsOf(job, prepare);
+    const steps = Math.max(0, Math.min(prepare.steps ?? 4, units - 1));
+    const judged = this.#judgedOf(job, prepare);
+    job.stage = "prepare";
+    job.units = units;
+    job.judged = judged;
+    const announce = (done: number): void => {
+      job.done = done;
+      this.#event("job.progress", { ...ref, done, total: units, stage: "prepare", ...(judged === undefined ? {} : { prepare: judged }) });
+    };
+    announce(0);
+    for (let step = 1; step <= steps; step++) {
+      job.cancelTimers.push(
+        this.#deps.scheduler.schedule(this.#deps.stepMs * step, () => {
+          if (job.status === "running" && !job.cancelRequested && this.#jobs.includes(job)) announce(Math.floor((units * step) / (steps + 1)));
+        }),
+      );
+    }
+    job.cancelTimers.push(this.#deps.scheduler.schedule(this.#deps.stepMs * (steps + 1), () => this.#end(job)));
   }
 
   /** While held, a job that starts waits for the let-go; letting go (false) sets every waiting job going. */
@@ -198,8 +274,11 @@ export class MockOwnMedia {
       this.#promote();
       return;
     }
-    job.done = job.total;
-    this.#event("job.progress", { ...ref, done: job.total, total: job.total });
+    // A job with a prepare stage announced its copy whole before it; the end of one without announces the copy's last step now.
+    if (job.accept.prepare === undefined) {
+      job.done = job.total;
+      this.#event("job.progress", { ...ref, done: job.total, total: job.total });
+    }
     if (job.accept.failWith !== undefined) {
       // The copy is done and the importer turns the file away: the job fails with its reason, nothing is stored, the next job takes its turn.
       const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: job.accept.failWith, detail: `the file was refused: ${job.accept.failWith}` };
@@ -223,6 +302,8 @@ export class MockOwnMedia {
     if (summary.kind === "audio") this.#waveforms.set(summary.mediaId, job.accept.waveform ?? defaultWaveform(summary.durationMs ?? 0));
     this.#event("media.changed", { change: "upserted", media: summary });
     job.status = "done";
+    // A finished job counts a full stage, in the units of the stage it ended in (as the engine's registry does).
+    job.done = job.stage === "prepare" ? job.units : job.total;
     job.mediaId = summary.mediaId;
     job.result = { kind: "import", mediaId: summary.mediaId, media: summary };
     this.#event("job.done", { jobId: job.jobId, result: job.result });
@@ -352,7 +433,8 @@ export class MockOwnMedia {
   /** The import jobs as a snapshot lists them. */
   jobStates(): JobState[] {
     return this.#jobs.map((job): JobState => {
-      const common = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: job.mediaId, done: job.done, total: job.total };
+      const staged = job.stage === "prepare" ? { stage: "prepare" as const, total: job.units, ...(job.judged === undefined ? {} : { prepare: job.judged }) } : { total: job.total };
+      const common = { kind: "import" as const, jobId: job.jobId, mediaKind: job.mediaKind, name: job.name, mediaId: job.mediaId, done: job.done, ...staged };
       if (job.status === "done" && job.result !== undefined) return { ...common, status: "done", result: job.result };
       if (job.status === "failed" && job.error !== undefined) return { ...common, status: "failed", error: job.error };
       return { ...common, status: job.status === "cancelled" ? "cancelled" : job.status === "queued" ? "queued" : "running" };

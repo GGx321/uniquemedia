@@ -178,6 +178,13 @@ try {
   writeFileSync(join(work, "track-meta.mp4"), withTrackMeta(readFileSync(join(work, "plain.mp4")), "mdta"));
   emit("h264-track-meta-mdta.mp4", join(work, "track-meta.mp4"));
 
+  // 17. A coded size an owner's phone would only DISPLAY at an odd one (3f.6 review, round 3): HEVC 4:2:0 crops to even sizes, so Apple writes 459 x 940 in `stsd` and `tkhd` over a
+  // bitstream of 460 x 940, and ffmpeg's stream line says 460 x 940. This is the coded 460 x 940 (flat grey, BT.709 SDR, three frames); a test makes the display size by
+  // `withClaimedSize` (what Apple's boxes say), which is all that differs.
+  const flat460 = new Uint8Array(460 * 940 + 2 * 230 * 470).fill(110);
+  ffmpeg(["-f", "rawvideo", "-pix_fmt", "yuv420p", "-s", "460x940", "-r", "30", "-i", "-", ...x265(), "-pix_fmt", "yuv420p", ...sdrTags, "-an", join(work, "odd.mp4")], repeat(flat460, 3));
+  emit("hevc-sdr-460x940.mp4", join(work, "odd.mp4"));
+
   console.log(JSON.stringify(out, null, 2));
 } finally {
   rmSync(work, { recursive: true, force: true });

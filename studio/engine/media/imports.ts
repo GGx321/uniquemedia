@@ -1,4 +1,4 @@
-import type { MediaKind, MediaPickKind, MediaUnsupportedReason, PickedFileIdentity } from "../../shared/engine";
+import type { ImportPrepare, MediaKind, MediaPickKind, MediaUnsupportedReason, PickedFileIdentity } from "../../shared/engine";
 import type { MediaFacts } from "../library/mediaRecords";
 import type { MediaFormat } from "./sniff";
 import type { StagedMedia, WorkFile } from "./staging";
@@ -16,6 +16,46 @@ import type { StagedMedia, WorkFile } from "./staging";
 // `request.signal` fires (the owner's cancel, the engine stopping) it stops within seconds and stops writing. An answer it gives
 // after the signal is thrown away, and its work files are released.
 
+/**
+ * How an importer tells the job how far its own work has got (3f.6), so the window shows a percent while a video is being normalised and not a
+ * bar stuck at the end of the copy. The units are the importer's: output frames for a video, output milliseconds for a track, coarse steps for a
+ * photo and a sticker. The job owns what it makes of it: the stage's own total, a percent at a time, never a full bar before the record is stored,
+ * nothing from an importer that is early (before `begin`) or late (after the job ended), and a `total` that is no positive count is no stage.
+ * An importer that never calls it leaves the job as it was before the stage existed.
+ */
+export interface PrepareReporter {
+  /** The importer's work begins: `total` units of it (at least one), and, for a video, what the probe judged. Once per job; a second call is ignored. */
+  begin(total: number, judged?: ImportPrepare): void;
+  /** `done` units are finished. Monotonic by the job's own clamp; the importer need not throttle, the job announces a percent at a time. */
+  report(done: number): void;
+}
+
+const NO_PREPARE: PrepareReporter = { begin: () => undefined, report: () => undefined };
+
+/**
+ * A reporter an importer may call without a thought (3f.6): a throw of the job's reporter is absorbed here, once, for every importer (a reporter is an observer: its
+ * failure is never the import's, and in an ffmpeg's `onFrames` it would kill the encode), and no reporter at all is one that does nothing.
+ */
+export function observer(prepare: PrepareReporter | undefined): PrepareReporter {
+  if (prepare === undefined) return NO_PREPARE;
+  return {
+    begin: (total, judged) => {
+      try {
+        prepare.begin(total, judged);
+      } catch {
+        // Ignored: see above.
+      }
+    },
+    report: (done) => {
+      try {
+        prepare.report(done);
+      } catch {
+        // Ignored: see above.
+      }
+    },
+  };
+}
+
 export interface MediaImportRequest {
   readonly staged: StagedMedia;
   /** The picked file's base name, for display; the library stores it as the record's name. */
@@ -24,6 +64,8 @@ export interface MediaImportRequest {
   readonly signal: AbortSignal;
   /** A fresh, held name inside the staging folder for a file the importer makes; hand the same `WorkFile` back in `output`. */
   readonly workFile: () => Promise<WorkFile>;
+  /** The job's progress reporter. Absent in a test that does not watch progress (and for a caller that has none); an importer calls it as `request.prepare?.begin(...)`. */
+  readonly prepare?: PrepareReporter | undefined;
 }
 
 export type MediaImportOutcome =

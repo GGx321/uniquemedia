@@ -6,7 +6,8 @@ import { ffmpegPath } from "../../node/ffmpegBinary";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
 import { requestFor, stage } from "./video/testing/importKit";
-import { createVideoImporter } from "./videoImporter";
+// The committed clips are a few frames long, shorter than the shortest clip (3f.6): these tests are about what the importer does with the file, so they take any length.
+import { createVideoImporterForShortClips as createVideoImporter } from "./video/testing/importKit";
 useNativeGlobals();
 setDefaultTimeout(120_000);
 

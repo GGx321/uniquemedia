@@ -5,12 +5,20 @@ import { join } from "node:path";
 import { ffmpegPath } from "../../../../node/ffmpegBinary";
 import type { MediaImportRequest } from "../../imports";
 import { formatOf, SNIFF_HEAD_BYTES } from "../../sniff";
+import { createVideoImporter } from "../../videoImporter";
 import type { StagedMedia, WorkFile } from "../../staging";
 import { CHART, CHART_PATCHES, patchRect } from "./chart";
 import { FIXTURES, type VideoFixtureName } from "./fixtures/index";
 
 // Test-only: what the importer's tests share (a request as the import job makes one, a decoded frame, the mean of a chart patch). Production
 // code never imports this file.
+
+/**
+ * The real video importer with the shortest-clip bound off (`minDurationMs: 0`), for a test whose clip is a few frames long (the committed fixtures are 3 to 14 frames, under the
+ * 0.5 s a clip must have, 3f.6): such a test is about something else, and an option the caller gives still wins. The bound itself is tested with the real default
+ * (`videoImporter.short.test.ts`).
+ */
+export const createVideoImporterForShortClips = (options: Parameters<typeof createVideoImporter>[0] = {}): ReturnType<typeof createVideoImporter> => createVideoImporter({ minDurationMs: 0, ...options });
 
 /** A staged copy of `bytes` (or of a fixture) in `dir`, as the import job's staging would have made it. */
 export async function stage(dir: string, source: VideoFixtureName | Uint8Array, name = "staged.media"): Promise<StagedMedia> {

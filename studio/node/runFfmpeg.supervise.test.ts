@@ -191,6 +191,85 @@ describe("runFfmpegArgv: progress in frames", () => {
   });
 });
 
+describe("runFfmpegArgv: progress in output time (3f.6, for a track's import)", () => {
+  /** One report that says only how far the output's time has got, as an audio-only encode prints it (`frame` stays 0). */
+  const timed = (us: string): string => `frame=0\nout_time_us=${us}\nprogress=continue\n`;
+  const run = (script: (child: FakeFfmpegChild) => void, seen: number[]): Promise<void> => {
+    const { spawner } = fakeSpawner((c) => {
+      script(c.child);
+      c.child.exit(0);
+    });
+    return runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {}, onOutTimeMs: (ms) => seen.push(ms) });
+  };
+
+  test("reports the output time in whole milliseconds, in order", async () => {
+    const seen: number[] = [];
+    await run((child) => {
+      child.stdout.write(timed("1500000"));
+      child.stdout.write(timed("2500999"));
+    }, seen);
+    expect(seen).toEqual([1500, 2500]);
+  });
+
+  test("never reports a repeated or smaller time", async () => {
+    const seen: number[] = [];
+    await run((child) => {
+      child.stdout.write(timed("1000000"));
+      child.stdout.write(timed("1000000"));
+      child.stdout.write(timed("400000"));
+      child.stdout.write(timed("1200000"));
+    }, seen);
+    expect(seen).toEqual([1000, 1200]);
+  });
+
+  test("ignores a time ffmpeg has not got yet (N/A) and a negative one (the encoder's priming)", async () => {
+    const seen: number[] = [];
+    await run((child) => {
+      child.stdout.write(timed("N/A"));
+      child.stdout.write(timed("-21333"));
+      child.stdout.write(timed("500000"));
+    }, seen);
+    expect(seen).toEqual([500]);
+  });
+
+  test("sees every report when ffmpeg flushes several in one write, and one split in two", async () => {
+    const seen: number[] = [];
+    await run((child) => {
+      child.stdout.write("out_time_us=1000000\nprogress=continue\nout_time_us=2000000\nprogress=continue\nout_time_us=30");
+      child.stdout.write("00000\nprogress=continue\n");
+    }, seen);
+    expect(seen).toEqual([1000, 2000, 3000]);
+  });
+
+  test("a report with no output time says nothing, and a call with no listener is as before", async () => {
+    const seen: number[] = [];
+    await run((child) => child.report(10), seen);
+    expect(seen).toEqual([333]);
+    const { spawner } = fakeSpawner((c) => succeed(c.child));
+    await runFfmpegArgv({ argv: ARGV, output: OUT, spawner, env: {} });
+  });
+
+  test("kills the child and rejects with the listener's own error when it throws", async () => {
+    const boom = new Error("listener broke");
+    const { spawner, calls } = fakeSpawner((c) => c.child.stdout.write(timed("1000000")));
+    // `outcomeOf`, not `.rejects`: a listener that is never called leaves this child running, and Bun would wait on `.rejects` for ever.
+    const outcome = await outcomeOf(
+      runFfmpegArgv({
+        argv: ARGV,
+        output: OUT,
+        spawner,
+        env: {},
+        onOutTimeMs: () => {
+          throw boom;
+        },
+      }),
+    );
+    expect(outcome).toBe(boom);
+    expect(calls[0]?.child.killedWith).toEqual(["SIGKILL"]);
+    calls[0]?.child.exit(null, "SIGKILL");
+  });
+});
+
 describe("runFfmpegArgv: how it ends", () => {
   test("onStderr sees what ffmpeg printed, in order, also when it exits 0", async () => {
     const seen: string[] = [];

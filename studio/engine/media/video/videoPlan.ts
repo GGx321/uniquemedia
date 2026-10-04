@@ -1,5 +1,5 @@
 import { isAbsolute } from "node:path";
-import { MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../../shared/engine";
+import { MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, MEZZANINE_FPS, type MediaUnsupportedReason } from "../../../shared/engine";
 import { longerThan, type ProbeRefusal, type VideoCodec, type VideoColour, type VideoInfo, type VideoProbe } from "./videoProbe";
 
 // From what the walker read (`videoProbe.ts`) to what is refused and what ffmpeg is asked to do (Stage 3 plan, 3f.3a). Pure: it starts nothing
@@ -38,7 +38,7 @@ export const VIDEO_LIMITS = {
   /** The mezzanine is fitted inside this box. */
   fitWidth: 1080,
   fitHeight: 1920,
-  fps: 30,
+  fps: MEZZANINE_FPS,
 } as const;
 
 /** Frames of slack either way in `expectedFrames`: the rounding of the first and the last. */

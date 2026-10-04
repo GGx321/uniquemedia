@@ -1,10 +1,11 @@
 import { stat } from "node:fs/promises";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
-import { MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS } from "../../shared/engine";
-import type { MediaImporter } from "./imports";
+import { fromFpsOf, MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, MIN_CLIP_MS, SAME_RATE_TOLERANCE } from "../../shared/engine";
+import { observer, type MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
 import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
 import { probeVideo, type VideoInfo } from "./video/videoProbe";
+import { checkVideoStreams } from "./video/videoStreams";
 
 // The own-video importer (Stage 3 plan, 3f.3a). It turns an owner's MP4 or MOV into the mezzanine the render and the preview read: H.264 at
 // CRF 16, 4:2:0, a constant 30 fps, BT.709 limited range, inside 1080 x 1920, upright, with no sound and no metadata.
@@ -23,8 +24,6 @@ import { probeVideo, type VideoInfo } from "./video/videoProbe";
 
 /** A 30 fps clip of this many frames is the longest the mezzanine can be; a bit over, for the rounding of the last frame. */
 const MAX_OUTPUT_FRAMES = VIDEO_LIMITS.maxSeconds * VIDEO_LIMITS.fps + 1;
-/** The rate the mezzanine is written at; its own `stts` may round it a little. */
-const RATE_TOLERANCE = 0.05;
 
 export interface VideoImporterOptions {
   /** Starts ffmpeg; Node's `spawn` by default (a test injects a wrapper). */
@@ -33,6 +32,17 @@ export interface VideoImporterOptions {
   readonly run?: typeof runFfmpegArgv;
   /** Overrides the plan's wall-clock limit (a test). */
   readonly timeoutMs?: number;
+  /**
+   * The shortest clip taken, in ms; `MIN_CLIP_MS` (0.5 s) by default. A clip shorter than this can never be put in a montage, so it is refused `too-short`: before the
+   * encode when the walker's own count of the samples (and the edit) says it cannot reach it, and after it from the frames the encode MADE. A test knob: most committed
+   * fixtures are a few frames, and 0 takes any length.
+   */
+  readonly minDurationMs?: number;
+  /**
+   * Asks ffmpeg how many video streams the staged copy has and whether the one is the clip the walker judged (`checkVideoStreams`, by default). A test with a FAKE ffmpeg
+   * (a file of synthetic boxes no real ffmpeg reads) injects an answer; a test of the check itself uses the real one.
+   */
+  readonly streamCheck?: typeof checkVideoStreams;
   /** The largest mezzanine stored; `MAX_STORED_VIDEO_BYTES` by default (a test lowers it). */
   readonly maxStoredBytes?: number;
   /** How far above the cap the encode's `-fs` stops it; `STORED_STOP_SLACK_BYTES` (64 MiB) by default (a test makes it small so that a real encode reaches it quickly). */
@@ -55,7 +65,7 @@ function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
     video.colour.matrix === 1 &&
     !video.colour.fullRange &&
     !video.variableFrameRate &&
-    Math.abs(video.sourceFps - VIDEO_LIMITS.fps) <= RATE_TOLERANCE &&
+    Math.abs(video.sourceFps - VIDEO_LIMITS.fps) <= SAME_RATE_TOLERANCE &&
     video.samples >= 1 &&
     video.samples <= MAX_OUTPUT_FRAMES &&
     // The decode must be the clip that was judged: its frame count is what ffmpeg makes of the samples AND the edit list the walker read (see
@@ -68,7 +78,8 @@ function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
 
 export function createVideoImporter(options: VideoImporterOptions = {}): MediaImporter {
   const run = options.run ?? runFfmpegArgv;
-  return async ({ staged, signal, workFile }) => {
+  const minFrames = Math.ceil(((options.minDurationMs ?? MIN_CLIP_MS) * VIDEO_LIMITS.fps) / 1000);
+  return async ({ staged, signal, workFile, prepare }) => {
     if (signal.aborted) return { ok: false, reason: "cancelled" };
     // The container is the BYTES' (the staging sniffed it); only MP4 and MOV walk here. A WebM never gets this far: its bytes are no MP4.
     if (staged.format !== "mp4" && staged.format !== "mov") return { ok: false, reason: "format" };
@@ -85,16 +96,41 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     }
     if (!judged.ok) return { ok: false, reason: judged.reason };
     const { plan } = judged;
+    // Too short for any montage, judged from the walker's count of the SAMPLES and the edit (`expectedFrames`), never a header's claimed length: even with its two frames of
+    // slack the clip cannot reach the shortest clip. Nothing is encoded, announced or made. The one that is close is the encode's to decide, below.
+    const planned = expectedFrames(plan.info);
+    if (planned.max < minFrames) return { ok: false, reason: "too-short" };
     const maxStoredBytes = options.maxStoredBytes ?? MAX_STORED_VIDEO_BYTES;
     if (signal.aborted) return { ok: false, reason: "cancelled" };
 
+    // ffmpeg is the authority for how many video streams the staged copy has (3f.6 review, H1): the walker judged one clip, but `-map 0:V:0` takes the first video stream ffmpeg
+    // MADE, and a parser can hide another before it. Two or more is a file of several videos (`structure`); one that is not the clip judged (its codec, its size) is a file whose
+    // boxes disagree with its bitstream (`failed`, as a lying header is); a probe that cannot run proves nothing and fails the import.
+    try {
+      const verdict = await (options.streamCheck ?? checkVideoStreams)({
+        path: staged.path,
+        expected: { codec: plan.info.video.codec, width: plan.info.video.width, height: plan.info.video.height },
+        signal,
+      });
+      if (verdict === "several") return { ok: false, reason: "structure" };
+      if (verdict === "mismatch") return { ok: false, reason: "failed" };
+    } catch {
+      return { ok: false, reason: signal.aborted ? "cancelled" : "failed" };
+    }
+    if (signal.aborted) return { ok: false, reason: "cancelled" };
+
     const work = await workFile();
-    const fail = async (reason: "failed" | "cancelled" | "too-large"): Promise<{ ok: false; reason: "failed" | "cancelled" | "too-large" }> => {
+    const fail = async (reason: "failed" | "cancelled" | "too-large" | "too-short"): Promise<{ ok: false; reason: "failed" | "cancelled" | "too-large" | "too-short" }> => {
       await work.release();
       return { ok: false, reason };
     };
+    // The job's progress (3f.6): the output's frames as ffmpeg writes them, against the frames the walker planned (the middle of its range), and what the probe judged.
+    // A reporter is an observer (`observer`): a throw of its is not the encode's failure, and in `onFrames` it would kill the encode.
+    const progress = observer(prepare);
+    progress.begin(Math.max(1, Math.round((planned.min + planned.max) / 2)), { hdrToSdr: plan.hdrToSdr, fromFps: fromFpsOf(plan.info.video.sourceFps) });
     try {
       await run({
+        onFrames: (frames) => progress.report(frames),
         argv: videoArgs(staged.path, plan, work.path, maxStoredBytes, options.stopSlackBytes),
         output: work.path,
         signal,
@@ -127,6 +163,9 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       await written.close();
     }
     if (made === undefined || !isPlannedOutput(made, plan)) return fail("failed");
+    // The frames the encode MADE are the clip's length (30 fps, constant): under the shortest clip it is of no use to a montage. The plan's range let it through because it
+    // is within two frames of the bound.
+    if (made.video.samples < minFrames) return fail("too-short");
     if (!(writtenBytes > 0)) return fail("failed");
 
     return {

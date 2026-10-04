@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../../shared/engine";
+import { fromFpsOf, MEDIA_BYTE_CAPS, MEZZANINE_FPS, SAME_RATE_TOLERANCE, type MediaUnsupportedReason } from "../../../shared/engine";
 import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { expectedFrames, judgeVideo, VIDEO_LIMITS, videoArgs, videoFilterGraph, type VideoPlan } from "./videoPlan";
 import { buildMp4, MATRIX, trackBox, type ColrSpec, type Mp4Spec, type TrackSpec, type VideoEntrySpec } from "./testing/mp4VideoBuilder";
@@ -7,6 +7,17 @@ import { bytesSource, probeVideo } from "./videoProbe";
 useNativeGlobals();
 
 // 3f.3a: from what the walker read to what is refused and what ffmpeg is asked to do. All pure: no file and no ffmpeg here.
+
+describe("one source of truth for the mezzanine's rate (3f.6 review)", () => {
+  test("the plan's 30 fps is the contract's, the one a window's «60 → 30 fps» and the mock count with", () => {
+    expect(VIDEO_LIMITS.fps).toBe(MEZZANINE_FPS);
+  });
+
+  test("the importer's rate tolerance is the contract's, the one `fromFpsOf` says «no conversion» by", () => {
+    expect(fromFpsOf(MEZZANINE_FPS + SAME_RATE_TOLERANCE / 2)).toBeNull();
+    expect(fromFpsOf(MEZZANINE_FPS + SAME_RATE_TOLERANCE * 2)).not.toBeNull();
+  });
+});
 
 const entry = (over: Partial<VideoEntrySpec> = {}): VideoEntrySpec => ({ fourcc: "avc1", width: 1920, height: 1080, ...over });
 const nclx = (primaries: number, transfer: number, matrix: number, fullRange = false): ColrSpec => ({ type: "nclx", primaries, transfer, matrix, fullRange });

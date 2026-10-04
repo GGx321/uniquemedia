@@ -6,7 +6,7 @@ import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import type { FaceGateImage } from "../face";
 import { imageSize } from "../library/media";
 import { readOrientation, type ExifContainer } from "./exif";
-import type { MediaImporter, MediaImportRequest } from "./imports";
+import { observer, type MediaImporter, type MediaImportRequest } from "./imports";
 import { orientedRgb } from "./orient";
 import type { MediaFormat } from "./sniff";
 import { webpInfo } from "./webp";
@@ -32,6 +32,9 @@ import { webpInfo } from "./webp";
 export const MAX_PHOTO_SIDE = 4096;
 /** The smallest side a photo may have: `coverCrop` cannot make a 1 px side even (3a.3). */
 export const MIN_PHOTO_SIDE = 2;
+
+/** The units of a photo's prepare stage (3f.6): decode, encode, and the job's own end. */
+const PREPARE_STEPS = 3;
 
 /** One allocation of ffmpeg may take at most this much: above the largest frame (50 megapixels, RGBA is 200 MB), far below a container bomb. */
 const MAX_ALLOC_BYTES = 512 * 1024 * 1024;
@@ -112,6 +115,10 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
     // The orientation is the ORIGINAL file's: ffmpeg's PNG of a WebP carries none.
     const orientation = readOrientation(bytes, container);
 
+    // The job's progress (3f.6), in three coarse steps: decoded (1), encoded (2) and the job's own end (3, the record). A file turned away above never begins.
+    const progress = observer(request.prepare);
+    progress.begin(PREPARE_STEPS);
+
     let pictureBytes = bytes;
     if (container === "webp") {
       const info = webpInfo(bytes);
@@ -145,6 +152,7 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
     }
     signal.throwIfAborted();
     if (decoded.width !== header.width || decoded.height !== header.height) throw new Refused("format");
+    progress.report(1);
 
     const upright = orientedRgb(decoded.data, decoded.width, decoded.height, orientation);
     const raw = await request.workFile();
@@ -176,6 +184,7 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
     const stored = new Uint8Array(await readFile(out.path, { signal }));
     const storedHeader = imageSize(stored);
     if (storedHeader === null || storedHeader.width !== target.width || storedHeader.height !== target.height) throw new Refused("failed");
+    progress.report(2);
     return {
       ok: true,
       facts: { width: target.width, height: target.height, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null },

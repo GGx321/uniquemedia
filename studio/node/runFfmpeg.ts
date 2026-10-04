@@ -95,6 +95,12 @@ export interface RunFfmpegArgvOptions extends SupervisionOptions {
   argv: readonly string[];
   /** The path ffmpeg writes; asserted to be `argv`'s last element, so the two cannot drift apart. */
   output: string;
+  /**
+   * How far the OUTPUT has got in time, in whole milliseconds, from `out_time_us` of each `-progress` report: strictly increasing, at most once
+   * per report, and never for a time ffmpeg has not got yet (`N/A`) or a negative one (an encoder's priming). For an audio-only run, whose
+   * `frame` stays 0 (3f.6). A throw kills the child and rejects the call with that error, as `onFrames`'s does.
+   */
+  onOutTimeMs?: (ms: number) => void;
 }
 
 export class FfmpegError extends Error {
@@ -163,6 +169,15 @@ function parseProgressFrames(report: string): number | null {
   const matches = [...report.matchAll(/^frame=(\d+)\s*$/gm)];
   const last = matches.at(-1)?.[1];
   return last === undefined ? null : Number(last);
+}
+
+/** The `out_time_us` of a report in whole milliseconds, or null when it has none, has not got one yet (`N/A`) or is negative. */
+function parseProgressOutTimeMs(report: string): number | null {
+  const matches = [...report.matchAll(/^out_time_us=(-?\d+)\s*$/gm)];
+  const last = matches.at(-1)?.[1];
+  if (last === undefined) return null;
+  const us = Number(last);
+  return Number.isSafeInteger(us) && us >= 0 ? Math.floor(us / 1000) : null;
 }
 
 /** Invokes onProgress, converting a thrown error into a tagged result instead
@@ -469,15 +484,22 @@ export async function runFfmpegArgv(opts: RunFfmpegArgvOptions): Promise<void> {
   validateSupervision(opts);
   const args = buildArgvArgs(opts.argv, opts.output);
   let lastFrames = -1;
+  let lastOutTimeMs = -1;
 
   return supervise({
     ...opts,
     args,
     onReport: (report) => {
       const frames = parseProgressFrames(report);
-      if (frames === null || frames <= lastFrames) return;
-      lastFrames = frames;
-      opts.onFrames?.(frames);
+      if (frames !== null && frames > lastFrames) {
+        lastFrames = frames;
+        opts.onFrames?.(frames);
+      }
+      const outTimeMs = parseProgressOutTimeMs(report);
+      if (outTimeMs !== null && outTimeMs > lastOutTimeMs) {
+        lastOutTimeMs = outTimeMs;
+        opts.onOutTimeMs?.(outTimeMs);
+      }
     },
     onFailure: () => Promise.resolve(),
     onExitOk: () => Promise.resolve(),

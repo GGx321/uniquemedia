@@ -100,11 +100,11 @@ describe("the smoke's own-media files", () => {
 });
 
 describe("the smoke's own track (3f.4)", () => {
-  test("is a WAV of a quarter of a second that the boundary takes for audio by its bytes, and is small", () => {
+  test("is a WAV of 4.5 s (the shortest track the library keeps is 4 s) that the boundary takes for audio by its bytes, and is small", () => {
     expect(resolveMediaKind("any", MEDIA_SMOKE_TRACK.bytes)).toBe("audio");
     expect(resolveMediaKind("audio", MEDIA_SMOKE_TRACK.bytes)).toBe("audio");
     expect(formatOf(MEDIA_SMOKE_TRACK.bytes)).toBe("wav");
-    expect(MEDIA_SMOKE_TRACK.bytes.length).toBeLessThan(4 * 1024);
+    expect(MEDIA_SMOKE_TRACK.bytes.length).toBeLessThan(40 * 1024);
   });
 
   test("the music importer turns it into an M4A of the length the smoke expects, with its waveform", async () => {

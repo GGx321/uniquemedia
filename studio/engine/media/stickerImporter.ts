@@ -9,7 +9,7 @@ import { quantiseByAccumulatedTime, type FrameDuration } from "../../shared/stic
 import { MAX_ANIMATION_LOOP_PIXELS } from "../render/layerPass";
 import { EncodeTooLargeError } from "../stickers/encodeErrors";
 import type { StickerEncodeJob } from "../stickers/encodeGate";
-import type { MediaImporter, MediaImportRequest } from "./imports";
+import { observer, type MediaImporter, type MediaImportRequest } from "./imports";
 
 // The own-sticker importer (Stage 3, 3f.5). One staged GIF or APNG in, one APNG out: the canvas of the source, every frame a full RGBA picture, every
 // delay a whole number of 30 fps frames, the loop at most 300 of them, and nothing else (no colour chunk, no palette, no text).
@@ -33,6 +33,9 @@ import type { MediaImporter, MediaImportRequest } from "./imports";
 //
 // Every ffmpeg call: the container named, `-protocol_whitelist file`, `-max_alloc`, `-max_pixels`, `-nostdin`, one thread, a time limit, and the kill of
 // `runFfmpegArgv` on a cancel (it settles only once the child is gone). Nothing of stderr leaves this module: a failure is a reason.
+
+/** The units of a sticker's prepare stage (3f.6): decode, encode, and the job's own end. */
+const PREPARE_STEPS = 3;
 
 /** One allocation of ffmpeg may take at most this much: far above a 720 x 720 frame (2 MB), far below a container bomb. */
 const MAX_ALLOC_BYTES = 256 * 1024 * 1024;
@@ -259,6 +262,10 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     const keptSlots = slots.filter((n) => n > 0);
     if (keptSlots.length < 2) throw new Refused("not-animated");
 
+    // The job's progress (3f.6), in three coarse steps: decoded (1), encoded (2) and the job's own end (3, the record). A file turned away above never begins.
+    const progress = observer(request.prepare);
+    progress.begin(PREPARE_STEPS);
+
     // What ffmpeg reads is what was judged, literally: the judged bytes (for a GIF, the copy with its delays and background as they are played,
     // `decoderCopy`) go into a file of the job's own, made new, and both decodes read that file. The staged copy is never handed to ffmpeg, so nothing
     // that changes it after the judging can reach the decoder.
@@ -297,6 +304,7 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     signal.throwIfAborted();
     // What was decoded is exactly the frames the reader counted, at the canvas it saw.
     if ((await fileSize(raw.path)) !== rawBytes) throw new Refused("format");
+    progress.report(1);
 
     // 5. ENCODE off the engine's loop, then write what came back.
     let apng: Uint8Array;
@@ -316,6 +324,7 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     if (info.width !== source.width || info.height !== source.height || delays.length !== keptSlots.length || delays.some((delay, i) => delay !== keptSlots[i])) {
       throw new Refused("failed");
     }
+    progress.report(2);
     const out = await request.workFile();
     signal.throwIfAborted();
     // `wx`: the name is the job's own and new; a file or a link already at it is refused, never written through.

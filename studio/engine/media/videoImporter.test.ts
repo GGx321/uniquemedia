@@ -6,7 +6,8 @@ import { tempDirFor } from "../../testing/tempDir";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { requestFor, stage } from "./video/testing/importKit";
 import { FIXTURES } from "./video/testing/fixtures/index";
-import { createVideoImporter } from "./videoImporter";
+// The committed clips are a few frames long, shorter than the shortest clip (3f.6): these tests are about what the importer does with the file, so they take any length.
+import { createVideoImporterForShortClips as createVideoImporter } from "./video/testing/importKit";
 useNativeGlobals();
 
 // 3f.3a: the importer's own decisions, with ffmpeg replaced by a fake that writes what a test says. What it checks of the file ffmpeg wrote,

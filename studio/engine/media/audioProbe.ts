@@ -109,7 +109,7 @@ function numberedInOrder(streams: readonly StreamLine[]): boolean {
   return streams.every((stream, position) => stream.index === position);
 }
 
-const isAttachedPicture = (stream: StreamLine): boolean => stream.kind === "Video" && ATTACHED_PICTURE_AT_END.test(stream.rest);
+export const isAttachedPicture = (stream: StreamLine): boolean => stream.kind === "Video" && ATTACHED_PICTURE_AT_END.test(stream.rest);
 
 export type SourceVerdict =
   | {
@@ -244,7 +244,7 @@ export async function selectionHasNoExtraStreams(options: ProbeOptions): Promise
  * Runs ffmpeg with `argv` and captures its stderr, from a child process that is killed (and waited for) on a cancel or a time-out. Rejects with a `ProbeError`
  * (`dump-too-large` when it prints more than a real file's dump); the exit code is told, never judged here.
  */
-function capture(argv: readonly string[], options: Pick<ProbeOptions, "signal" | "timeoutMs" | "spawner">): Promise<Captured> {
+export function capture(argv: readonly string[], options: Pick<ProbeOptions, "signal" | "timeoutMs" | "spawner">): Promise<Captured> {
   if (options.signal.aborted) return Promise.reject(new ProbeError("aborted"));
   const timeoutMs = Math.min(options.timeoutMs ?? PROBE_TIMEOUT_MS, PROBE_TIMEOUT_MS);
   const spawner = options.spawner ?? nodeSpawner;

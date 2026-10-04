@@ -71,6 +71,8 @@ export const MAX_PICKED_FILES = 20;
  * - `loop-too-long` (3f.5): a sticker whose loop, on the 30 fps grid, is over 300 frames (10 s), or that has more than 300 source frames.
  *   (A sticker's side over 720 px is `dimensions`, under 2 px `too-small`, a file over 5 MB or an animation that re-encodes past 5 MB `too-large`,
  *   and a file that is not a GIF or an APNG the decoder reads the way the validator did is `format`.)
+ * - `too-short` (3f.6): a clip or a track that no montage can use, judged from what the importer made and not from a header: a video under
+ *   `MIN_CLIP_MS` (0.5 s, the shortest clip), a track under `MIN_TOTAL_MS` (4 s, the shortest montage, which a track must cover from its start).
  */
 export const MediaUnsupportedReason = z.enum([
   "not-a-file",
@@ -97,8 +99,24 @@ export const MediaUnsupportedReason = z.enum([
   // 3f.5, one per line and at the END.
   "not-animated",
   "loop-too-long",
+  // 3f.6, one per line and at the END.
+  "too-short",
 ]);
 export type MediaUnsupportedReason = z.infer<typeof MediaUnsupportedReason>;
+
+/** The constant rate a stored video runs at (the mezzanine's), in frames per second. */
+export const MEZZANINE_FPS = 30;
+
+/** How far a source's rate may be from `MEZZANINE_FPS` and still be told as no conversion: the rounding of a 30 000 / 1001 camera (29.97) and of a `stts` table. */
+export const SAME_RATE_TOLERANCE = 0.05;
+
+/**
+ * What an import's `prepare.fromFps` says (3f.6): the source's rate when it differs from the mezzanine's 30, else null. «60 → 30 fps» is worth saying; «29.97 → 30 fps»
+ * is not, so a rate within `SAME_RATE_TOLERANCE` of 30 is null.
+ */
+export function fromFpsOf(sourceFps: number): number | null {
+  return Math.abs(sourceFps - MEZZANINE_FPS) <= SAME_RATE_TOLERANCE ? null : sourceFps;
+}
 
 /** A file name as a person reads it (no folder): at most 120 characters, and no control or bidi characters. */
 export const MediaFileName = z

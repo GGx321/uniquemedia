@@ -48,7 +48,8 @@ function rig(importer: MusicImporterDeps = {}): { service: MediaService; jobs: J
     withLibrary: (work) => work({ root: libraryRoot() }),
     newId: () => `id-${String(++counter).padStart(8, "0")}`,
     now: () => new Date("2026-10-04T10:00:00.000Z"),
-    importers: { audio: createMusicImporter(importer) },
+    // The committed tones are under the shortest track the library keeps (3f.6); these tests are about what the JOB does with the importer's answer.
+    importers: { audio: createMusicImporter({ minDurationMs: 0, ...importer }) },
     log: () => undefined,
   };
   return { service: new MediaService(deps), jobs, events };

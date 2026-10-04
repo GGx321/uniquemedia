@@ -105,3 +105,9 @@ Measured on macOS arm64, ffmpeg 6.0 (the worst patch, then the mean over the 24)
 
 The bar is 2 codes. Patches whose BT.709 light would be negative (green, cyan, red and others lie outside BT.709's gamut) are clipped at zero in
 both the chain and the model, and agree.
+
+And the one of the odd-size follow-up (review round 3 of 3f.6).
+
+| File | What | Used for |
+| --- | --- | --- |
+| `hevc-sdr-460x940.mp4` | HEVC Main, `hvc1`, BT.709 SDR, flat grey, a coded 460 x 940, three frames | HEVC 4:2:0 crops to even sizes, so Apple writes the DISPLAY size (459 x 940) in `stsd` and `tkhd` over a bitstream of 460 x 940, and ffmpeg's stream line says 460 x 940; a test makes the odd boxes with `withClaimedSize`. The stream check (`videoStreams.ts`) must take it, and must still refuse a lie of 16 pixels or more |

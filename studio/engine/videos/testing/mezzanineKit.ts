@@ -86,7 +86,8 @@ export async function importAsMezzanine(dir: string, mediaId: string, source: Ui
   const workDir = join(dir, `import-${mediaId}`);
   await mkdir(workDir, { recursive: true });
   const rig = requestFor(workDir, await stage(workDir, source));
-  const outcome = await createVideoImporter({})(rig.request);
+  // This makes a fixture for the render's tests, whatever its length: the shortest-clip bound (3f.6) is the importer's own tests' business.
+  const outcome = await createVideoImporter({ minDurationMs: 0 })(rig.request);
   if (!outcome.ok || outcome.output === undefined) throw new Error(`the importer refused the source: ${outcome.ok ? "no output" : outcome.reason}`);
   const { width, height, durationMs } = outcome.facts;
   if (width === null || height === null || durationMs === null) throw new Error("the importer's facts have no size or length");
