@@ -460,6 +460,26 @@ const renderJobRef = { kind: z.literal("render"), jobId: Id, videoId: Id, avatar
  * normalisation, the record) holds `done` at `total`.
  */
 const importJobRef = { kind: z.literal("import"), jobId: Id, mediaKind: MediaKind, name: MediaFileName, mediaId: Id.nullable() };
+
+/**
+ * Which part of an import `done / total` are counting (3f.6): `copy` is the copy of the picked file, in BYTES (what it was before the field
+ * existed, so an absent stage is a copy and an older bundle's message stays valid); `prepare` is the importer's own work, in the importer's own
+ * units: output frames for a video, output milliseconds of audio for a track, and coarse steps for a photo and a sticker. A window shows only
+ * `done / total` as a percent, and the two stages have their own `total`: a job's `total` is constant WITHIN a stage and changes once, at the
+ * move from copy to prepare, where `done` is back at zero. Never the other way round.
+ */
+export const ImportStage = z.enum(["copy", "prepare"]);
+export type ImportStage = z.infer<typeof ImportStage>;
+
+/**
+ * What the probe judged of a video, told once it has judged it, in the first `prepare` progress («HDR → SDR, 60 → 30 fps»): `hdrToSdr` when the
+ * clip is tone-mapped, `fromFps` the source's rate when it differs from the 30 the mezzanine runs at, else null. It rides every later `prepare`
+ * progress too, so a window that joins late has it. Only a video has it.
+ */
+export const ImportPrepare = z.strictObject({ hdrToSdr: z.boolean(), fromFps: z.number().positive().max(1000).nullable() });
+export type ImportPrepare = z.infer<typeof ImportPrepare>;
+
+const importStage = { stage: ImportStage.optional(), prepare: ImportPrepare.optional() };
 const progressCounts = { done: Count, total: Count };
 /**
  * The «сохранение» phase of a render: the commit has passed its point of no return (the video's name is claimed),
@@ -479,16 +499,20 @@ export const JobProgress = z
     z.strictObject({ ...candidatesJobRef, ...progressCounts }),
     z.strictObject({ ...runJobRef, ...progressCounts }),
     z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving, ...renderQueued }),
-    z.strictObject({ ...importJobRef, ...progressCounts, ...renderQueued }),
+    z.strictObject({ ...importJobRef, ...progressCounts, ...renderQueued, ...importStage }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
   .refine((p) => !(p.kind === "render" && p.queued === true) || (p.done === 0 && p.saving !== true), {
     message: "a queued render is announced at zero and is not saving",
     path: ["queued"],
   })
-  .refine((p) => !(p.kind === "import" && p.queued === true) || p.done === 0, {
-    message: "a queued import is announced at zero",
+  .refine((p) => !(p.kind === "import" && p.queued === true) || (p.done === 0 && p.stage !== "prepare"), {
+    message: "a queued import is announced at zero, before its copy",
     path: ["queued"],
+  })
+  .refine((p) => p.kind !== "import" || p.prepare === undefined || p.stage === "prepare", {
+    message: "what the probe judged belongs to the prepare stage only",
+    path: ["prepare"],
   });
 
 /** `job.failed`'s payload: the job's identity (see `JobProgress`) and why it failed. */
@@ -599,11 +623,16 @@ export const JobState = z
     }),
     z.strictObject({
       ...importJobRef,
+      ...importStage,
       ...jobCommon,
       result: ImportResult.optional(),
     }),
   ])
   .refine(doneWithinTotal.check, doneWithinTotal.params)
+  .refine((j) => j.kind !== "import" || j.prepare === undefined || j.stage === "prepare", {
+    message: "what the probe judged belongs to the prepare stage only",
+    path: ["prepare"],
+  })
   .refine((j) => (j.status === "done") === (j.result !== undefined), {
     message: "result must be present exactly when the job is done",
     path: ["result"],
