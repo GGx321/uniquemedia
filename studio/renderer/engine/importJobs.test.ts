@@ -8,29 +8,24 @@ import {
   applyImportProgress,
   failActiveImports,
   importPercent,
-  importStageOf,
   importsFromSnapshot,
   isActiveImport,
   markImportCancelling,
   MAX_FINISHED_IMPORTS,
-  prepareFactsOf,
   unmarkImportCancelling,
   type ImportProgress,
   type ImportView,
 } from "./importJobs";
 
 // 3f.6: the window's view of own-media imports, as pure data (the «Мои» tab's tiles and its status card read it; the store keeps it
-// from the snapshot and the `job.*` events). An import is no avatar's job, so it is kept apart from `jobs`. The engine branch adds an
-// optional `stage` ("copy" | "prepare") to an import's progress and, while preparing a video, `prepare: {hdrToSdr, fromFps}`: both are
-// read defensively, so the view works whether the contract carries them or not.
+// from the snapshot and the `job.*` events). An import is no avatar's job, so it is kept apart from `jobs`. An import's progress says its
+// `stage` (the contract's `ImportStage`: absent is the copy) and, while a video is prepared, what the probe judged (`ImportPrepare`).
 
 const JOB = "job-import-0001";
 const OTHER = "job-import-0002";
 
-function progress(patch: Partial<ImportProgress> = {}, extra: Record<string, unknown> = {}): ImportProgress {
-  // The engine branch's fields ride beside the contract's: the reader must take them from a plain object.
-  const base: ImportProgress = { kind: "import", jobId: JOB, mediaKind: "video", name: "street-walk.mp4", mediaId: null, done: 0, total: 1_000, ...patch };
-  return Object.assign(base, extra);
+function progress(patch: Partial<ImportProgress> = {}): ImportProgress {
+  return { kind: "import", jobId: JOB, mediaKind: "video", name: "street-walk.mp4", mediaId: null, done: 0, total: 1_000, ...patch };
 }
 
 function summary(mediaId: string): MediaSummary {
@@ -46,28 +41,20 @@ function only(imports: readonly ImportView[]): ImportView {
   return first;
 }
 
-describe("the stage and the normalising facts are read defensively (the engine branch's optional fields)", () => {
-  test("no stage reads copy; prepare reads prepare; anything else reads copy", () => {
-    expect(importStageOf(progress())).toBe("copy");
-    expect(importStageOf(progress({}, { stage: "prepare" }))).toBe("prepare");
-    expect(importStageOf(progress({}, { stage: "copy" }))).toBe("copy");
-    expect(importStageOf(progress({}, { stage: "PREPARE" }))).toBe("copy");
-    expect(importStageOf(progress({}, { stage: 1 }))).toBe("copy");
+describe("the percent a tile and the card show, across the two stages (round 2, L8: never backwards)", () => {
+  test("the copy fills the first part, the prepare the rest; the move from one to the other never goes back", () => {
+    const copy = (done: number) => importPercent(only(applyImportProgress([], progress({ done, total: 1_000 }))));
+    const prepare = (done: number, total = 100) => importPercent(only(applyImportProgress([], progress({ done, total, stage: "prepare" }))));
+    expect([copy(0), copy(500), copy(1_000)]).toEqual([0, 15, 30]);
+    expect([prepare(0), prepare(50), prepare(99)]).toEqual([30, 65, 99]);
+    const sequence = [copy(0), copy(400), copy(1_000), prepare(0), prepare(10), prepare(90), prepare(99)];
+    expect(sequence.every((p, i) => i === 0 || p >= (sequence[i - 1] ?? 0))).toBe(true);
   });
 
-  test("the facts of a video being prepared: HDR → SDR and the source rate, each only when the engine says so", () => {
-    expect(prepareFactsOf(progress({}, { stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 } }))).toEqual({ hdrToSdr: true, fromFps: 60 });
-    expect(prepareFactsOf(progress({}, { stage: "prepare", prepare: { hdrToSdr: false, fromFps: null } }))).toEqual({ hdrToSdr: false, fromFps: null });
-    // No `prepare` at all, or not an object: nothing is claimed.
-    expect(prepareFactsOf(progress({}, { stage: "prepare" }))).toBe(null);
-    expect(prepareFactsOf(progress({}, { stage: "prepare", prepare: "hdr" }))).toBe(null);
-    expect(prepareFactsOf(progress({}, { stage: "prepare", prepare: null }))).toBe(null);
-  });
-
-  test("a rate that is not a positive finite number is not a rate; a flag that is not true is false", () => {
-    for (const fromFps of [0, -30, Number.NaN, Number.POSITIVE_INFINITY, "60", undefined]) {
-      expect(prepareFactsOf(progress({}, { prepare: { hdrToSdr: "yes", fromFps } }))).toEqual({ hdrToSdr: false, fromFps: null });
-    }
+  test("a job without a total yet reads 0; a done one reads 100; a prepare never reads 100 before the end", () => {
+    expect(importPercent(only(applyImportProgress([], progress({ done: 0, total: 0 }))))).toBe(0);
+    expect(importPercent(only(applyImportProgress([], progress({ done: 0, total: 0, stage: "prepare" }))))).toBe(30);
+    expect(importPercent(only(applyImportDone(applyImportProgress([], progress({ done: 3 })), JOB, result("media-0000001"))))).toBe(100);
   });
 });
 
@@ -86,12 +73,13 @@ describe("progress: announced, queued, running, the stage", () => {
     expect(only(applyImportProgress(running, progress({ queued: true, done: 0 }))).status).toBe("running");
   });
 
-  test("the copy moves on to prepare with its facts; prepare's units replace the bytes", () => {
+  test("the copy moves on to prepare with what the probe judged; prepare's units replace the bytes", () => {
     const copying = applyImportProgress([], progress({ done: 1_000 }));
-    const preparing = applyImportProgress(copying, progress({ done: 40, total: 100 }, { stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 } }));
+    expect(only(copying)).toMatchObject({ stage: "copy", prepare: null });
+    const preparing = applyImportProgress(copying, progress({ done: 40, total: 100, stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 } }));
     expect(only(preparing)).toMatchObject({ stage: "prepare", done: 40, total: 100, prepare: { hdrToSdr: true, fromFps: 60 } });
-    // A prepare step without its facts keeps none: nothing is guessed.
-    expect(only(applyImportProgress(copying, progress({ done: 1, total: 2 }, { stage: "prepare" }))).prepare).toBe(null);
+    // A prepare step without what was judged (a photo, a track, the probe not done yet) claims nothing.
+    expect(only(applyImportProgress(copying, progress({ done: 1, total: 2, stage: "prepare" }))).prepare).toBe(null);
   });
 
   test("a late progress never brings a finished import back", () => {
@@ -208,8 +196,7 @@ describe("a snapshot: the engine's list of import jobs replaces the view", () =>
   };
 
   test("each job as the engine holds it, in its order; one gone from the snapshot is gone from the view", () => {
-    const before = applyImportProgress([], progress({ jobId: "job-import-gone" }));
-    const after = importsFromSnapshot(before, [state({ status: "running", done: 250 }), state({ jobId: OTHER, status: "queued" })], new Set());
+    const after = importsFromSnapshot([state({ status: "running", done: 250 }), state({ jobId: OTHER, status: "queued" })], new Set());
     expect(after.map((i) => [i.jobId, i.status, i.done])).toEqual([
       [JOB, "running", 250],
       [OTHER, "queued", 0],
@@ -217,26 +204,26 @@ describe("a snapshot: the engine's list of import jobs replaces the view", () =>
   });
 
   test("a job the owner dismissed stays dismissed", () => {
-    const after = importsFromSnapshot([], [state({ status: "failed" }), state({ jobId: OTHER, status: "running" })], new Set([JOB]));
+    const after = importsFromSnapshot([state({ status: "failed" }), state({ jobId: OTHER, status: "running" })], new Set([JOB]));
     expect(after.map((i) => i.jobId)).toEqual([OTHER]);
   });
 
-  test("a snapshot that does not say the stage keeps a running prepare as it was (its facts too), and this window's cancel mark", () => {
-    const preparing = markImportCancelling(applyImportProgress([], progress({ done: 40, total: 100 }, { stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 } })), JOB);
-    const after = only(importsFromSnapshot(preparing, [state({ status: "running", done: 45, total: 100 })], new Set()));
-    expect(after).toMatchObject({ stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 }, done: 45, cancelRequested: true });
-    expect(only(importsFromSnapshot(preparing, [state({ status: "cancelled" })], new Set())).cancelRequested).toBe(true);
-    // A cancel asked for an import this window held no view of yet is put on it too.
-    expect(only(importsFromSnapshot([], [state({ status: "running" })], new Set(), new Set([JOB]))).cancelRequested).toBe(true);
-    // One that does say it is taken at its word.
-    const said = Object.assign(state({ status: "running", done: 10, total: 1_000 }), { stage: "copy" });
-    expect(only(importsFromSnapshot(preparing, [said], new Set())).stage).toBe("copy");
+  test("each job's stage and what the probe judged, as the snapshot says them (absent is the copy)", () => {
+    const preparing = only(importsFromSnapshot([state({ status: "running", done: 45, total: 100, stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 } })], new Set()));
+    expect(preparing).toMatchObject({ stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 }, done: 45 });
+    expect(only(importsFromSnapshot([state({ status: "running", done: 10 })], new Set()))).toMatchObject({ stage: "copy", prepare: null });
+  });
+
+  test("this window's cancel asks are put on the jobs they name, whatever the snapshot", () => {
+    expect(only(importsFromSnapshot([state({ status: "running" })], new Set(), new Set([JOB]))).cancelRequested).toBe(true);
+    expect(only(importsFromSnapshot([state({ status: "cancelled" })], new Set(), new Set([JOB]))).cancelRequested).toBe(true);
+    expect(only(importsFromSnapshot([state({ status: "running" })], new Set())).cancelRequested).toBe(false);
   });
 });
 
 describe("the percent the tile and the card show", () => {
-  test("floor of done over total, 0 with no total, 100 once done", () => {
-    expect(importPercent(only(applyImportProgress([], progress({ done: 399, total: 1_000 }))))).toBe(39);
+  test("floor of its share of the bar, 0 with no total, 100 once done", () => {
+    expect(importPercent(only(applyImportProgress([], progress({ done: 399, total: 1_000 }))))).toBe(11);
     expect(importPercent(only(applyImportProgress([], progress({ done: 0, total: 0 }))))).toBe(0);
     expect(importPercent(only(applyImportDone(applyImportProgress([], progress({ done: 3 })), JOB, result("media-0000001"))))).toBe(100);
   });

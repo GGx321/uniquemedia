@@ -1,23 +1,12 @@
-import type { EngineError, EventMessage, ImportResult, JobProgress, JobState, MediaKind } from "../../shared/engine";
-import { percentOf } from "./renderJobs";
+import type { EngineError, EventMessage, ImportPrepare, ImportResult, ImportStage, JobProgress, JobState, MediaKind } from "../../shared/engine";
 
 // The own-media import model (3f.6, K29): pure logic, no screen. An import is no avatar's job, so the store keeps it apart from `jobs`
 // (`EngineView.imports`): from the snapshot, then from `job.progress` / `job.done` / `job.failed` / `job.cancelled` of kind `import`.
 // The «Мои» tab's tiles and its status card (M6, M14) read an import from here.
 //
-// The engine branch (`feat/studio-mine-engine`) adds two OPTIONAL fields to an import's progress: `stage` ("copy" | "prepare"; absent
-// means copy) and, while a video is prepared, `prepare: {hdrToSdr, fromFps}`. `done / total` count bytes in the copy and the importer's
-// own units in prepare, so only the percent is ever shown. Both fields are read defensively (`importStageOf`, `prepareFactsOf`): the
-// view works the same whether the contract carries them or not, and never trusts a value it does not recognise.
-
-export type ImportStage = "copy" | "prepare";
-
-/** What normalising an own video changes, as the engine says it while it prepares one (M14: «HDR → SDR, 60 → 30 fps»). */
-export interface PrepareFacts {
-  readonly hdrToSdr: boolean;
-  /** The source's frame rate when the importer changes it to the montage's 30 fps; null when it does not say. */
-  readonly fromFps: number | null;
-}
+// An import's progress says its `stage` (the contract's `ImportStage`: absent is the copy) and, while a video is prepared, what the probe judged
+// (`ImportPrepare`, «HDR → SDR, 60 → 30 fps»). `done / total` count bytes in the copy and the importer's own units in prepare, from zero again:
+// the window shows one bar over both stages (`importPercent`), which never goes back.
 
 export type ImportStatus = JobState["status"];
 
@@ -32,8 +21,8 @@ export interface ImportView {
   readonly stage: ImportStage;
   readonly done: number;
   readonly total: number;
-  /** While a video is prepared: what is changed; null otherwise, and when the engine does not say. */
-  readonly prepare: PrepareFacts | null;
+  /** While a video is prepared: what the probe judged it changes; null otherwise, and until the probe has judged. */
+  readonly prepare: ImportPrepare | null;
   /** The stored record's id once the import is done. */
   readonly mediaId: string | null;
   /** Why it failed (MEDIA_UNSUPPORTED carries its `mediaReason`). */
@@ -57,25 +46,18 @@ export function isActiveImport(view: Pick<ImportView, "status">): boolean {
   return view.status === "queued" || view.status === "running";
 }
 
-/** The stage an import's progress (or state) says: "prepare" only when it says exactly that; absent or anything else is the copy. */
-export function importStageOf(progress: object): ImportStage {
-  return "stage" in progress && progress.stage === "prepare" ? "prepare" : "copy";
-}
+/**
+ * The share of the bar the copy fills (round 2, L8): the copy runs 0 to 30, the prepare 30 to 99, the end 100. The two stages count different units
+ * from zero each, so a bar of either alone would fall back from full to empty at the move; one bar over both never goes back. The prepare's last
+ * unit is the job's own end (the contract), so a job still working never reads 100.
+ */
+export const COPY_SHARE = 30;
 
-/** The normalising facts a progress carries (`prepare`), or null when it carries none; a flag that is not `true` is false, a rate that is not a positive finite number is none. */
-export function prepareFactsOf(progress: object): PrepareFacts | null {
-  if (!("prepare" in progress)) return null;
-  const facts: unknown = progress.prepare;
-  if (typeof facts !== "object" || facts === null) return null;
-  const hdrToSdr = "hdrToSdr" in facts && facts.hdrToSdr === true;
-  const rate = "fromFps" in facts ? facts.fromFps : null;
-  const fromFps = typeof rate === "number" && Number.isFinite(rate) && rate > 0 ? rate : null;
-  return { hdrToSdr, fromFps };
-}
-
-/** «40 %»: floor of done over total; a done import is whole. */
-export function importPercent(view: Pick<ImportView, "status" | "done" | "total">): number {
-  return view.status === "done" ? 100 : percentOf(view.done, view.total);
+/** «40 %»: the import's place on one bar over its copy and its prepare; a done import is whole. */
+export function importPercent(view: Pick<ImportView, "status" | "stage" | "done" | "total">): number {
+  if (view.status === "done") return 100;
+  const part = (share: number): number => (view.total > 0 ? Math.floor((Math.min(view.done, view.total) * share) / view.total) : 0);
+  return view.stage === "prepare" ? Math.min(99, COPY_SHARE + part(100 - COPY_SHARE)) : part(COPY_SHARE);
 }
 
 function fresh(ref: { readonly jobId: string; readonly mediaKind: MediaKind; readonly name: string }): ImportView {
@@ -104,7 +86,7 @@ function patchImport(imports: readonly ImportView[], ref: Parameters<typeof fres
 export function applyImportProgress(imports: readonly ImportView[], progress: ImportProgress): readonly ImportView[] {
   const known = imports.find((i) => i.jobId === progress.jobId);
   if (known !== undefined && !isActiveImport(known)) return imports;
-  const stage = importStageOf(progress);
+  const stage = progress.stage ?? "copy";
   return patchImport(imports, progress, (view) => ({
     ...view,
     // A queued announcement is the job waiting for its turn; a job that already runs is never taken back.
@@ -112,7 +94,7 @@ export function applyImportProgress(imports: readonly ImportView[], progress: Im
     stage,
     done: progress.done,
     total: progress.total,
-    prepare: stage === "prepare" ? prepareFactsOf(progress) : null,
+    prepare: stage === "prepare" ? (progress.prepare ?? null) : null,
   }));
 }
 
@@ -167,19 +149,14 @@ export function failActiveImports(imports: readonly ImportView[], error: EngineE
 }
 
 /**
- * The view after a snapshot: the engine's import jobs in its order, minus the ones the owner dismissed. A snapshot that does not say the
- * stage keeps a running import's prepare as this window last heard it (and its facts); this window's cancel mark is kept.
+ * The view after a snapshot: the engine's import jobs in its order (each with the stage and what was judged as the snapshot says them), minus the
+ * ones the owner dismissed; this window's cancel asks (`asked`) are put on the jobs they name.
  */
-export function importsFromSnapshot(previous: readonly ImportView[], states: readonly ImportState[], dismissed: ReadonlySet<string>, asked: ReadonlySet<string> = new Set()): readonly ImportView[] {
-  const before = new Map(previous.map((i) => [i.jobId, i]));
+export function importsFromSnapshot(states: readonly ImportState[], dismissed: ReadonlySet<string>, asked: ReadonlySet<string> = new Set()): readonly ImportView[] {
   const views = states
     .filter((state) => !dismissed.has(state.jobId))
     .map((state): ImportView => {
-      const was = before.get(state.jobId);
-      const active = state.status === "queued" || state.status === "running";
-      const says = "stage" in state;
-      const keepPrepare = !says && active && was !== undefined && was.stage === "prepare";
-      const stage = keepPrepare ? "prepare" : importStageOf(state);
+      const stage = state.stage ?? "copy";
       return {
         jobId: state.jobId,
         mediaKind: state.mediaKind,
@@ -188,10 +165,10 @@ export function importsFromSnapshot(previous: readonly ImportView[], states: rea
         stage,
         done: state.done,
         total: state.total,
-        prepare: stage !== "prepare" ? null : keepPrepare ? (was?.prepare ?? null) : prepareFactsOf(state),
+        prepare: stage === "prepare" ? (state.prepare ?? null) : null,
         mediaId: state.mediaId,
         error: state.error ?? null,
-        cancelRequested: was?.cancelRequested === true || asked.has(state.jobId),
+        cancelRequested: asked.has(state.jobId) && (state.status === "queued" || state.status === "running" || state.status === "cancelled"),
       };
     });
   return capFinished(views);

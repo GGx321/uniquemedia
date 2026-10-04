@@ -871,7 +871,6 @@ export class EngineStore {
       unreadableTotal: s.unreadableTotal,
       jobs: s.jobs.flatMap((j) => (j.kind === "import" ? [] : [jobFromState(j)])),
       imports: importsFromSnapshot(
-        this.view.imports,
         s.jobs.flatMap((j) => (j.kind === "import" ? [j] : [])),
         this.dismissedImports,
         this.cancelAsked,

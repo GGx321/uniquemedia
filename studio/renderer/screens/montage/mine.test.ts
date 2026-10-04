@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ERROR_MESSAGES_RU, type EngineError, type MediaSummary, mediaReasonRu } from "../../../shared/engine";
 import type { ImportView } from "../../engine/importJobs";
+import { ManualScheduler } from "../../engine/scheduler";
 import { NBSP } from "../../lib/format";
 import {
   applyLibraryChange,
@@ -14,6 +15,8 @@ import {
   isFileDrag,
   livePosters,
   MAX_LIVE_POSTERS,
+  POSTER_REPORT_MS,
+  PosterZones,
   importFailure,
   importTileLabel,
   type MineLibrary,
@@ -211,16 +214,17 @@ describe("the words on the tiles and rows", () => {
 describe("an import on its way (M6, M14): the tile's word, and the status card's line", () => {
   test("queued, copying, preparing (with what is changed, when the engine says), cancelling", () => {
     expect(importTileLabel(importing({ jobId: "j-0000001", name: "a.mp4", mediaKind: "video", status: "queued" }))).toBe("в очереди");
-    expect(importTileLabel(importing({ jobId: "j-0000001", name: "a.mp4", mediaKind: "video" }))).toBe(s("40 %"));
+    // 400 of 1000 bytes copied: the copy is the first 30 % of one bar over both stages (L8).
+    expect(importTileLabel(importing({ jobId: "j-0000001", name: "a.mp4", mediaKind: "video" }))).toBe(s("12 %"));
     expect(importTileLabel(importing({ jobId: "j-0000001", name: "a.mp4", mediaKind: "video", cancelRequested: true }))).toBe("отменяем");
 
     const copy = importCard(importing({ jobId: "j-0000001", name: "street-walk.mp4", mediaKind: "video" }), 0);
-    expect(copy).toEqual({ title: "Копируем street-walk.mp4", detail: s("40 %"), percent: 40 });
+    expect(copy).toEqual({ title: "Копируем street-walk.mp4", detail: s("12 %"), percent: 12 });
     const prepare = importCard(importing({ jobId: "j-0000001", name: "street-walk.mp4", mediaKind: "video", stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 } }), 2);
-    expect(prepare).toEqual({ title: "Готовим street-walk.mp4", detail: s("HDR → SDR, 60 → 30 fps · 40 % · ещё 2 в очереди"), percent: 40 });
-    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", stage: "prepare", prepare: { hdrToSdr: false, fromFps: 59.94 } }), 0).detail).toBe(s("59.94 → 30 fps · 40 %"));
-    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", stage: "prepare", prepare: null }), 0).detail).toBe(s("40 %"));
-    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", cancelRequested: true }), 0)).toEqual({ title: "Отменяем a.mov", detail: "ничего не сохранится", percent: 40 });
+    expect(prepare).toEqual({ title: "Готовим street-walk.mp4", detail: s("HDR → SDR, 60 → 30 fps · 58 % · ещё 2 в очереди"), percent: 58 });
+    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", stage: "prepare", prepare: { hdrToSdr: false, fromFps: 59.94 } }), 0).detail).toBe(s("59.94 → 30 fps · 58 %"));
+    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", stage: "prepare", prepare: null }), 0).detail).toBe(s("58 %"));
+    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", cancelRequested: true }), 0)).toEqual({ title: "Отменяем a.mov", detail: "ничего не сохранится", percent: 12 });
   });
 
   test("a refusal inside the job is told in the KIND's words (mediaReasonRu with the job's kind); another failure by its error", () => {
@@ -295,20 +299,66 @@ describe("one track plays at a time (M9)", () => {
   });
 });
 
-describe("video posters (round 1, M1): a live <video> only for tiles near the view, at most MAX_LIVE_POSTERS", () => {
-  const ids = Array.from({ length: 40 }, (_, i) => `media-video-${String(i).padStart(4, "0")}`);
+describe("video posters (rounds 1 and 2, M1): every VISIBLE tile is live; the tiles near the view fill the rest up to MAX_LIVE_POSTERS", () => {
+  const ids = Array.from({ length: 80 }, (_, i) => `media-video-${String(i).padStart(4, "0")}`);
+  const range = (from: number, to: number): string[] => ids.slice(from, to);
 
-  test("the tiles near the view, in the list's order, up to the cap; the rest draw the film placeholder", () => {
-    const near = new Set(ids.slice(5, 12));
-    expect([...livePosters(ids, near, MAX_LIVE_POSTERS)]).toEqual(ids.slice(5, 12));
-    expect([...livePosters(ids, new Set(ids), MAX_LIVE_POSTERS)]).toEqual(ids.slice(0, MAX_LIVE_POSTERS));
+  test("scrolled to the middle: the visible tiles are all live, whatever lies above them; the nearest of the margins fill the rest", () => {
+    // 20 visible (30–49), a screen of margin above (10–29) and below (50–69).
+    const visible = new Set(range(30, 50));
+    const near = new Set(range(10, 70));
+    const live = livePosters(ids, visible, near, MAX_LIVE_POSTERS);
+    expect(range(30, 50).every((id) => live.has(id))).toBe(true);
+    expect(live.size).toBe(MAX_LIVE_POSTERS);
+    // The 4 left go to the margin tiles nearest the view: 28, 29 above and 50, 51 below, never 10 or 69.
+    expect([...live].filter((id) => !visible.has(id)).sort()).toEqual([ids[28], ids[29], ids[50], ids[51]].sort());
     expect(MAX_LIVE_POSTERS).toBe(24);
   });
 
+  test("more visible tiles than the cap: every visible one is still live (the cap yields to what is seen)", () => {
+    const visible = new Set(range(0, 30));
+    expect(livePosters(ids, visible, new Set(range(0, 50)), MAX_LIVE_POSTERS).size).toBe(30);
+  });
+
+  test("nothing visible yet (the observer has not reported): the near tiles, nearest first in the list's order, up to the cap", () => {
+    expect([...livePosters(ids, new Set(), new Set(range(5, 12)), MAX_LIVE_POSTERS)]).toEqual(range(5, 12));
+    expect(livePosters(ids, new Set(), new Set(ids), MAX_LIVE_POSTERS).size).toBe(MAX_LIVE_POSTERS);
+  });
+
+  test("the observers' reports are coalesced (round 2): one tick's reports land together at once, and a fast scroll's flood lands once at the end of each 150 ms", async () => {
+    const scheduler = new ManualScheduler();
+    const applied: [string[], string[]][] = [];
+    const zones = new PosterZones(scheduler, (visible, near) => applied.push([[...visible].sort(), [...near].sort()]));
+    zones.report("visible", [{ id: "a", isIntersecting: true }]);
+    zones.report("near", [{ id: "a", isIntersecting: true }, { id: "b", isIntersecting: true }]);
+    expect(applied).toHaveLength(0);
+    await Promise.resolve();
+    expect(applied).toEqual([[["a"], ["a", "b"]]]);
+    // A flood while cooling down: nothing more until the 150 ms are over, then the latest state, once.
+    for (const id of ["c", "d", "e"]) zones.report("visible", [{ id, isIntersecting: true }]);
+    zones.report("visible", [{ id: "a", isIntersecting: false }]);
+    await Promise.resolve();
+    expect(applied).toHaveLength(1);
+    expect(POSTER_REPORT_MS).toBe(150);
+    scheduler.next();
+    expect(applied.at(-1)).toEqual([["c", "d", "e"], ["a", "b"]]);
+    expect(applied).toHaveLength(2);
+    // Quiet again: the cool-down ends with nothing to apply, and the next report lands at once.
+    scheduler.runAll();
+    expect(applied).toHaveLength(2);
+    zones.report("near", [{ id: "b", isIntersecting: false }]);
+    await Promise.resolve();
+    expect(applied.at(-1)).toEqual([["c", "d", "e"], ["a"]]);
+    zones.dispose();
+    zones.report("near", [{ id: "z", isIntersecting: true }]);
+    await Promise.resolve();
+    scheduler.runAll();
+    expect(applied).toHaveLength(3);
+  });
+
   test("a tile that left the zone lets go of its poster; an id the list does not hold is never live", () => {
-    expect(livePosters(ids, new Set(), MAX_LIVE_POSTERS).size).toBe(0);
-    expect([...livePosters(ids.slice(0, 2), new Set(["media-gone-0001", ids[1] ?? ""]), MAX_LIVE_POSTERS)]).toEqual([ids[1]]);
-    expect(livePosters(ids, new Set(ids), 0).size).toBe(0);
+    expect(livePosters(ids, new Set(), new Set(), MAX_LIVE_POSTERS).size).toBe(0);
+    expect([...livePosters(range(0, 2), new Set(["media-gone-0001"]), new Set(["media-gone-0002", ids[1] ?? ""]), MAX_LIVE_POSTERS)]).toEqual([ids[1]]);
   });
 });
 

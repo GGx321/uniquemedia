@@ -28,6 +28,7 @@ import {
   mineSections,
   nextListening,
   type PickOutcome,
+  PosterZones,
   pickOutcomeText,
   type StickerTile,
   stickerAria,
@@ -39,6 +40,7 @@ import {
   visualAria,
   visualTitle,
 } from "./mine";
+import { realScheduler } from "../../engine/scheduler";
 import type { PlayheadStore } from "./playhead";
 
 // 3f.6: the «Мои» tab (EditorMine.dc.html, the components sheet's drop zone and its import, normalising and refusal states; the
@@ -150,6 +152,8 @@ function VisualPicture({ media, live }: { media: MediaSummary; live: boolean }) 
   const { client } = useEngine();
   const [failed, setFailed] = useState(false);
   const url = media.kind === "photo" ? ownPhotoUrl(client, media.mediaId) : live ? ownVideoUrl(client, media.mediaId) : null;
+  // A new source (a poster given back to a tile that left the view) is tried again (round 2).
+  useEffect(() => setFailed(false), [url]);
   if (url === null || failed) {
     return (
       <span className={media.kind === "video" ? "mine-pic mine-pic-video" : "mine-pic"} style={media.kind === "photo" ? { background: placeholderGradient(media.mediaId) } : undefined} aria-hidden="true">
@@ -339,39 +343,44 @@ function StickerTileView({ tile, blocked, why, onPick, onDelete, onCancel }: { t
 }
 
 /**
- * The video tiles near the view (round 1, M1), by an IntersectionObserver on the tab's own scroll area with about a screen's margin: only
- * those may hold a live poster (`livePosters`, at most `MAX_LIVE_POSTERS`). Where nothing reports (no observer), every tile counts as near and
- * the cap alone holds.
+ * Where the video tiles are (rounds 1 and 2, M1): two IntersectionObservers on the tab's own scroll area, one for what is seen (no margin) and one
+ * for a screen of margin around it, their reports coalesced (`PosterZones`: at most one update per 150 ms while scrolling). `livePosters` then
+ * gives every visible tile a poster and the nearest margin tiles the rest. Where nothing reports (no observer), every tile counts as visible.
  */
-function useNearPosters(root: { readonly current: HTMLElement | null }, ids: readonly string[]): ReadonlySet<string> {
-  const [near, setNear] = useState<ReadonlySet<string>>(() => new Set());
+function usePosterZones(root: { readonly current: HTMLElement | null }, ids: readonly string[]): { visible: ReadonlySet<string>; near: ReadonlySet<string> } {
+  const [zones, setZones] = useState<{ visible: ReadonlySet<string>; near: ReadonlySet<string> }>(() => ({ visible: new Set(), near: new Set() }));
   const key = ids.join("\n");
   useEffect(() => {
     const scroller = root.current;
     if (scroller === null) return;
     if (typeof IntersectionObserver === "undefined") {
-      setNear(new Set(key === "" ? [] : key.split("\n")));
+      const all = new Set(key === "" ? [] : key.split("\n"));
+      setZones({ visible: all, near: all });
       return;
     }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        setNear((now) => {
-          const next = new Set(now);
-          for (const entry of entries) {
-            const id = entry.target.getAttribute("data-poster");
-            if (id === null) continue;
-            if (entry.isIntersecting) next.add(id);
-            else next.delete(id);
-          }
-          return next;
-        });
-      },
-      { root: scroller, rootMargin: "100% 0px" },
-    );
-    for (const tile of scroller.querySelectorAll("[data-poster]")) observer.observe(tile);
-    return () => observer.disconnect();
+    const posterZones = new PosterZones(realScheduler, (visible, near) => setZones({ visible, near }));
+    const observe = (zone: "visible" | "near", rootMargin: string): IntersectionObserver => {
+      const observer = new IntersectionObserver(
+        (entries) =>
+          posterZones.report(
+            zone,
+            entries.flatMap((entry) => {
+              const id = entry.target.getAttribute("data-poster");
+              return id === null ? [] : [{ id, isIntersecting: entry.isIntersecting }];
+            }),
+          ),
+        { root: scroller, rootMargin },
+      );
+      for (const tile of scroller.querySelectorAll("[data-poster]")) observer.observe(tile);
+      return observer;
+    };
+    const observers = [observe("visible", "0px"), observe("near", "100% 0px")];
+    return () => {
+      for (const observer of observers) observer.disconnect();
+      posterZones.dispose();
+    };
   }, [root, key]);
-  return near;
+  return zones;
 }
 
 export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, selectedSticker, onPickVisual, onDragVisual, onPickTrack, onPickSticker }: MineTabProps) {
@@ -519,8 +528,8 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
   const confirmText = confirm === null ? null : deleteConfirmText(confirm.media, spec);
   // M1: the video tiles near the view hold a live poster, at most MAX_LIVE_POSTERS of them.
   const videoIds = sections.visual.flatMap((t) => (t.kind === "record" && t.media.kind === "video" ? [t.media.mediaId] : []));
-  const near = useNearPosters(scroller, videoIds);
-  const live = livePosters(videoIds, near, MAX_LIVE_POSTERS);
+  const zones = usePosterZones(scroller, videoIds);
+  const live = livePosters(videoIds, zones.visible, zones.near, MAX_LIVE_POSTERS);
 
   return (
     <div ref={scroller} className="mine">

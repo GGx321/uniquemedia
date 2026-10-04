@@ -1,5 +1,6 @@
 import { Id, MAX_LISTED_MEDIA, MAX_PICKED_FILES, type EngineError, type MediaKind, type MediaRefusal, type MediaSummary, type MontageDraft, mediaReasonRu } from "../../../shared/engine";
 import { FPS, MIN_CLIP_MS } from "../../../shared/montage";
+import type { Scheduler } from "../../engine/scheduler";
 import type { MediaStoreChange } from "../../engine/store";
 import { type ImportView, importPercent, isActiveImport } from "../../engine/importJobs";
 import { errorText } from "../../lib/errors";
@@ -322,14 +323,89 @@ export function nextListening(current: string | null, mediaId: string): string |
  */
 export const MAX_LIVE_POSTERS = 24;
 
-/** The video tiles that may hold a live poster: those near the view (`near`), in the list's order, at most `cap`. */
-export function livePosters(order: readonly string[], near: ReadonlySet<string>, cap: number): ReadonlySet<string> {
-  const live = new Set<string>();
-  for (const id of order) {
+/**
+ * The video tiles that hold a live poster (round 2): EVERY visible tile (`visible`), even past the cap, since a blank tile in view is a bug; then
+ * the tiles in the margins (`near`), nearest to the visible ones first (by their places in the list; the list's order breaks a tie), until `cap`.
+ * With nothing visible yet, the margins alone, from the top of the list.
+ */
+export function livePosters(order: readonly string[], visible: ReadonlySet<string>, near: ReadonlySet<string>, cap: number): ReadonlySet<string> {
+  const live = new Set(order.filter((id) => visible.has(id)));
+  const seen = order.flatMap((id, i) => (visible.has(id) ? [i] : []));
+  const first = seen[0] ?? 0;
+  const last = seen.at(-1) ?? 0;
+  const distance = (i: number): number => (seen.length === 0 ? i : i < first ? first - i : i > last ? i - last : 0);
+  const margin = order.flatMap((id, i) => (near.has(id) && !visible.has(id) ? [{ id, i }] : [])).sort((a, b) => distance(a.i) - distance(b.i) || a.i - b.i);
+  for (const { id } of margin) {
     if (live.size >= cap) break;
-    if (near.has(id)) live.add(id);
+    live.add(id);
   }
   return live;
+}
+
+/** How long the poster zones wait after applying a report before they apply the next (round 2): a fast scroll does not churn players. */
+export const POSTER_REPORT_MS = 150;
+
+/** One observer's word on one tile: inside its zone or not. */
+export interface ZoneEntry {
+  readonly id: string;
+  readonly isIntersecting: boolean;
+}
+
+/**
+ * The two zones the poster observers report (round 2): `visible` (the tab's own view) and `near` (a screen of margin around it). The reports of
+ * one tick land together at once (a microtask); after that, the reports of the next `POSTER_REPORT_MS` wait and land once, as the latest state, at
+ * its end, so a fast scroll mounts and drops players at most every 150 ms rather than on every frame.
+ */
+export class PosterZones {
+  readonly #scheduler: Scheduler;
+  readonly #apply: (visible: ReadonlySet<string>, near: ReadonlySet<string>) => void;
+  readonly #visible = new Set<string>();
+  readonly #near = new Set<string>();
+  #queued = false;
+  #cooling = false;
+  #dirty = false;
+  #disposed = false;
+  #cancel: () => void = () => undefined;
+
+  constructor(scheduler: Scheduler, apply: (visible: ReadonlySet<string>, near: ReadonlySet<string>) => void) {
+    this.#scheduler = scheduler;
+    this.#apply = apply;
+  }
+
+  report(zone: "visible" | "near", entries: readonly ZoneEntry[]): void {
+    if (this.#disposed) return;
+    const set = zone === "visible" ? this.#visible : this.#near;
+    for (const entry of entries) {
+      if (entry.isIntersecting) set.add(entry.id);
+      else set.delete(entry.id);
+    }
+    if (this.#cooling) {
+      this.#dirty = true;
+      return;
+    }
+    if (this.#queued) return;
+    this.#queued = true;
+    queueMicrotask(() => {
+      this.#queued = false;
+      this.#flush();
+    });
+  }
+
+  #flush(): void {
+    if (this.#disposed) return;
+    this.#dirty = false;
+    this.#apply(new Set(this.#visible), new Set(this.#near));
+    this.#cooling = true;
+    this.#cancel = this.#scheduler.schedule(POSTER_REPORT_MS, () => {
+      this.#cooling = false;
+      if (this.#dirty) this.#flush();
+    });
+  }
+
+  dispose(): void {
+    this.#disposed = true;
+    this.#cancel();
+  }
 }
 
 // ---------- files dropped from Finder or Explorer (M13, round 2) ----------

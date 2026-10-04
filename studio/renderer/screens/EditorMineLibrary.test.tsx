@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { MontageDraft } from "../../shared/engine";
 import type { EngineClient } from "../engine/client";
 import { callsOf, flush } from "../testing";
+import { POSTER_REPORT_MS } from "./montage/mine";
 import { PosterVideo } from "./montage/MineTab";
 import {
   heldListings,
@@ -261,36 +262,93 @@ describe("one sound at a time across the editor (round 1, L5)", () => {
   });
 });
 
-describe("video posters (round 1, M1)", () => {
+describe("video posters (rounds 1 and 2, M1)", () => {
   const original: unknown = Reflect.get(globalThis, "IntersectionObserver");
   afterEach(() => {
     Reflect.set(globalThis, "IntersectionObserver", original);
   });
 
-  /** An observer that reports every observed tile as near the view, as soon as it is observed (happy-dom's never reports). */
-  function everythingNear(): void {
-    class Near {
-      readonly #callback: (entries: { target: Element; isIntersecting: boolean }[]) => void;
-      constructor(callback: (entries: { target: Element; isIntersecting: boolean }[]) => void) {
-        this.#callback = callback;
+  /**
+   * Observers as a scrolled list reports them (happy-dom's never report): the tile at place `i` among the video tiles is visible when `visible(i)`
+   * and in the margin observer's zone when `near(i)`, judged by each observer's own margin. `move` says it again for a new scroll.
+   */
+  function scrolled(visible: (i: number) => boolean, near: (i: number) => boolean) {
+    const all: { margin: string; targets: Element[]; callback: (entries: { target: Element; isIntersecting: boolean }[]) => void }[] = [];
+    let view = { visible, near };
+    const place = (target: Element): number => [...document.querySelectorAll("[data-poster]")].indexOf(target);
+    const judge = (margin: string, target: Element): boolean => (margin === "0px" ? view.visible(place(target)) : view.near(place(target)));
+    class Scrolled {
+      readonly #me: (typeof all)[number];
+      constructor(callback: (entries: { target: Element; isIntersecting: boolean }[]) => void, options: { rootMargin?: string }) {
+        this.#me = { margin: options.rootMargin ?? "0px", targets: [], callback };
+        all.push(this.#me);
       }
       observe(target: Element): void {
-        queueMicrotask(() => this.#callback([{ target, isIntersecting: true }]));
+        this.#me.targets.push(target);
+        queueMicrotask(() => this.#me.callback([{ target, isIntersecting: judge(this.#me.margin, target) }]));
       }
       unobserve(): void {}
-      disconnect(): void {}
+      disconnect(): void {
+        this.#me.targets = [];
+      }
     }
-    Reflect.set(globalThis, "IntersectionObserver", Near);
+    Reflect.set(globalThis, "IntersectionObserver", Scrolled);
+    return {
+      move(next: { visible: (i: number) => boolean; near: (i: number) => boolean }): void {
+        view = next;
+        for (const observer of all) observer.callback(observer.targets.map((target) => ({ target, isIntersecting: judge(observer.margin, target) })));
+      },
+    };
   }
 
-  test("at most 24 video tiles hold a live <video>; the rest draw the film placeholder", async () => {
-    everythingNear();
+  /** The places `from` (included) to `to` (excluded). */
+  const within = (from: number, to: number) => (i: number): boolean => i >= from && to > i;
+  const seedVideos = (engine: Parameters<typeof seedMine>[0], n: number): void =>
+    engine.seedOwnMedia(Array.from({ length: n }, (_, i) => ({ kind: "video" as const, name: `v${String(i).padStart(2, "0")}.mov`, bytes: 1_000, facts: { width: 1080, height: 1920, durationMs: 6_000, sourceFps: 30 } })));
+  const tiles = (): Element[] => [...section("Фото и видео").querySelectorAll("[data-poster]")];
+  const isLive = (tile: Element): boolean => tile.querySelector("video") !== null;
+
+  test("scrolled to the middle of 80 videos: every visible tile holds its poster, and the nearest margin tiles the rest of the 24", async () => {
+    scrolled(within(30, 50), within(10, 70));
     const { engine, client } = await mineStudio(asWindow);
-    engine.seedOwnMedia(Array.from({ length: 30 }, (_, i) => ({ kind: "video" as const, name: `v${i}.mov`, bytes: 1_000, facts: { width: 1080, height: 1920, durationMs: 6_000, sourceFps: 30 } })));
+    seedVideos(engine, 80);
     await openMine(engine, client);
     await flush();
-    expect(section("Фото и видео").querySelectorAll("video")).toHaveLength(24);
-    expect(section("Фото и видео").querySelectorAll(".mine-pic-video")).toHaveLength(6);
+    const all = tiles();
+    expect(all).toHaveLength(80);
+    expect(all.slice(30, 50).every(isLive)).toBe(true);
+    expect(all.filter(isLive)).toHaveLength(24);
+    expect([28, 29, 50, 51].every((i) => isLive(all[i] ?? document.body))).toBe(true);
+    expect(isLive(all[10] ?? document.body)).toBe(false);
+  });
+
+  test("more tiles in view than the cap: each of them still holds its poster", async () => {
+    scrolled(within(0, 30), within(0, 50));
+    const { engine, client } = await mineStudio(asWindow);
+    seedVideos(engine, 40);
+    await openMine(engine, client);
+    await flush();
+    expect(tiles().filter(isLive)).toHaveLength(30);
+  });
+
+  test("a poster that failed is tried again when its tile comes back into view (a new source)", async () => {
+    const view = scrolled(() => true, () => true);
+    const { engine, client } = await mineStudio(asWindow);
+    seedVideos(engine, 2);
+    await openMine(engine, client);
+    await flush();
+    const first = (): Element => tiles()[0] ?? document.body;
+    const video = first().querySelector("video");
+    if (video === null) throw new Error("no poster");
+    fireEvent.error(video);
+    await flush();
+    expect(isLive(first())).toBe(false);
+    // The tile scrolls out of the zones; reports are coalesced (one update per POSTER_REPORT_MS), so the move lands once that spell is over.
+    await act(async () => view.move({ visible: (i) => i !== 0, near: (i) => i !== 0 }));
+    await act(async () => new Promise<void>((resolve) => setTimeout(resolve, POSTER_REPORT_MS * 2)));
+    expect(first().querySelector(".mine-pic-video") === null).toBe(false);
+    await act(async () => view.move({ visible: () => true, near: () => true }));
+    await waitFor(() => expect(isLive(first())).toBe(true), { timeout: 2_000 });
   });
 
   test("a poster lets go of its file when its tile goes: paused, no source, loaded again", () => {
