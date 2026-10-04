@@ -1,13 +1,13 @@
-import { dataUrlBytes } from "../../lib/dataUrl";
+import type { EngineClient } from "../../engine/client";
 
 // 3d.4: a sticker's frames for the preview's canvas, decoded by WebCodecs `ImageDecoder` (the 3b.5 hand-off):
 // - created with `colorSpaceConversion: "none"`: Chrome applies a PNG's gAMA / iCCP by default and ffmpeg ignores them; measured,
 //   the pixels then match the render;
 // - frames are picked by the 30 fps tick and the loop stored with the sticker (previewFrame.ts `stickerFrameIndex`), never by the
 //   decoder's own frame durations (Chrome reports 1/30 s as 33 000 µs, which drifts);
-// - the bytes come from main's `studio-media://sticker/<id>` (a secure, CORS-enabled scheme; the CSP lets script read that route
-//   only) or, in the dev mock, from the stand-in's data URL;
-// - one decoder per picture, shared by every layer that shows it, closed when the last one lets go (`StickerFrameCache`): a
+// - the bytes come from MAIN over IPC (`stickers.bytes`, the verified built-in set; review round 1): the media scheme stays closed
+//   to script reads, since a CORS-enabled scheme would let any page in the session read any route;
+// - one decoder per sticker, shared by every layer that shows it, closed when the last one lets go (`StickerFrameCache`): a
 //   decoder holds the file and its frame buffers, and a decoded frame is closed as soon as it is drawn.
 
 /** A decoded frame, to be closed once drawn. */
@@ -24,26 +24,15 @@ export interface StickerFrames {
   close(): void;
 }
 
-/** Opens a picture's frames; null when this window cannot decode it (no `ImageDecoder`, a type it does not take, no bytes). */
-export type OpenStickerFrames = (url: string) => Promise<StickerFrames | null>;
+/** Opens a sticker's frames; null when this window cannot decode it (no `ImageDecoder`, no PNG decoding, no bytes for it). */
+export type OpenStickerFrames = (stickerId: string) => Promise<StickerFrames | null>;
 
-async function bytesOf(url: string): Promise<{ type: string; bytes: Uint8Array } | null> {
-  const inline = dataUrlBytes(url);
-  if (inline !== null) return inline;
-  const response = await fetch(url);
-  if (!response.ok) return null;
-  return { type: response.headers.get("Content-Type") ?? "image/png", bytes: new Uint8Array(await response.arrayBuffer()) };
-}
-
-/** The window's own decoder: `ImageDecoder` over the picture's bytes, colours untouched. */
-export async function openWithImageDecoder(url: string): Promise<StickerFrames | null> {
+/** The window's own decoder: `ImageDecoder` over an APNG's bytes, colours untouched. */
+export async function openWithImageDecoder(bytes: Uint8Array): Promise<StickerFrames | null> {
   if (typeof ImageDecoder === "undefined") return null;
-  const source = await bytesOf(url).catch(() => null);
-  if (source === null) return null;
   // An APNG is a PNG to the decoder.
-  const type = source.type === "image/apng" ? "image/png" : source.type;
-  if (!(await ImageDecoder.isTypeSupported(type))) return null;
-  const decoder = new ImageDecoder({ data: source.bytes, type, colorSpaceConversion: "none" });
+  if (!(await ImageDecoder.isTypeSupported("image/png"))) return null;
+  const decoder = new ImageDecoder({ data: bytes, type: "image/png", colorSpaceConversion: "none" });
   try {
     await decoder.tracks.ready;
     await decoder.completed;
@@ -70,6 +59,23 @@ export async function openWithImageDecoder(url: string): Promise<StickerFrames |
       closed = true;
       decoder.close();
     },
+  };
+}
+
+/** Base64 (the contract's form of the bytes: every message survives JSON) back into bytes. */
+function bytesOfBase64(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+/** The editor's opener: a built-in sticker's verified bytes from main (`stickers.bytes`), decoded by the window's `ImageDecoder`. */
+export function stickerFramesFrom(client: Pick<EngineClient, "request">): OpenStickerFrames {
+  return async (stickerId) => {
+    const reply = await client.request("stickers.bytes", { stickerId });
+    if (!reply.ok) return null;
+    return openWithImageDecoder(bytesOfBase64(reply.result.apngBase64));
   };
 }
 

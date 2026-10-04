@@ -3,11 +3,15 @@ import type { StickerFrameCache, StickerFrames } from "./stickerFrames";
 
 // 3d.4: a sticker in the preview is drawn on a canvas, one decoded frame at a time: the frame the playhead's 30 fps tick picks on the
 // loop stored with the sticker (previewFrame.ts), so it stays in phase with the playhead and the render. The decoder is the
-// editor's, shared per picture (stickerFrames.ts), and released when the canvas goes; each decoded frame is closed once drawn.
-// Where the window cannot decode the picture (no `ImageDecoder`), the picture itself is shown, playing on its own clock.
+// editor's, shared per sticker and fed by main's `stickers.bytes` (stickerFrames.ts), and released when the canvas goes; each
+// decoded frame is closed once drawn. Where the window cannot decode it (no `ImageDecoder`), the picture itself is shown, from
+// `studio-media://sticker/<id>` as an element, playing on its own clock.
 
 export interface StickerCanvasProps {
   readonly cache: StickerFrameCache;
+  /** The built-in sticker: what the decoder is opened for. */
+  readonly stickerId: string;
+  /** Its picture as an element shows it (the fallback where nothing decodes). */
   readonly url: string;
   /** The frame of the picture to show (stickerFrameIndex). */
   readonly frameIndex: number;
@@ -15,7 +19,7 @@ export interface StickerCanvasProps {
   readonly side: number;
 }
 
-export function StickerCanvas({ cache, url, frameIndex, side }: StickerCanvasProps) {
+export function StickerCanvas({ cache, stickerId, url, frameIndex, side }: StickerCanvasProps) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [frames, setFrames] = useState<StickerFrames | null | "opening">("opening");
   /** The newest frame asked for: an older decode that lands late is not drawn over it. */
@@ -24,14 +28,14 @@ export function StickerCanvas({ cache, url, frameIndex, side }: StickerCanvasPro
   useEffect(() => {
     let alive = true;
     setFrames("opening");
-    void cache.acquire(url).then((opened) => {
+    void cache.acquire(stickerId).then((opened) => {
       if (alive) setFrames(opened);
     });
     return () => {
       alive = false;
-      cache.release(url);
+      cache.release(stickerId);
     };
-  }, [cache, url]);
+  }, [cache, stickerId]);
 
   useLayoutEffect(() => {
     if (frames === "opening" || frames === null) return;

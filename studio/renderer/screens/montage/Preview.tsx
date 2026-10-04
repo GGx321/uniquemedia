@@ -15,7 +15,7 @@ import { PreviewAudio } from "./PreviewAudio";
 import { resolveSelection } from "./selection";
 import type { DraftSession } from "./session";
 import { StickerCanvas } from "./StickerCanvas";
-import { openWithImageDecoder, StickerFrameCache } from "./stickerFrames";
+import { StickerFrameCache, stickerFramesFrom } from "./stickerFrames";
 import { setStickerSize } from "./stickerOps";
 import { setTextScale } from "./textOps";
 import { useLayerPreview, usePrefetchTextPreviews, useTextPreviews } from "./textPreviews";
@@ -114,7 +114,9 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
   const frameRef = useRef<HTMLDivElement>(null);
   const [zones, setZones] = useState(true);
   const [bars, setBars] = useState(true);
-  const [cache] = useState(() => new StickerFrameCache(openWithImageDecoder));
+  const { client } = useEngine();
+  // One decoder per built-in sticker, fed by main over IPC (`stickers.bytes`): the media scheme stays closed to script reads.
+  const [cache] = useState(() => new StickerFrameCache(stickerFramesFrom(client)));
   useEffect(() => () => cache.closeAll(), [cache]);
   // Every caption's picture is asked for up front, so it is there before the playhead reaches it.
   usePrefetchTextPreviews(spec.layers.filter((l): l is TextLayer => l.kind === "text"));
@@ -636,7 +638,7 @@ function StickerLayerView({ layer, frame, cache, url, ...view }: LayerViewProps 
   }
   return (
     <LayerBox box={box} kind="sticker" {...view}>
-      <StickerCanvas cache={cache} url={url} side={entry.size} frameIndex={stickerFrameIndex(frame, layerRange(layer).startFrame, entry.loopFrames)} />
+      <StickerCanvas cache={cache} stickerId={entry.id} url={url} side={entry.size} frameIndex={stickerFrameIndex(frame, layerRange(layer).startFrame, entry.loopFrames)} />
     </LayerBox>
   );
 }

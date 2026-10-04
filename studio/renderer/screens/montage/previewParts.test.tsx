@@ -64,14 +64,14 @@ describe("the sticker canvas", () => {
     const { drawn } = recordCanvas();
     const decoder = fakeDecoder();
     const cache = new StickerFrameCache(() => Promise.resolve(decoder.frames));
-    const view = render(<StickerCanvas cache={cache} url="data:sticker" frameIndex={3} side={320} />);
+    const view = render(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={3} side={320} />);
     await settle();
     expect(decoder.asked.map((a) => a.index)).toEqual([3]);
     act(() => decoder.asked[0]?.resolve());
     await settle();
     expect(drawn).toEqual([{ index: 3 }]);
     expect(decoder.asked[0]?.frame.closed).toBe(true);
-    view.rerender(<StickerCanvas cache={cache} url="data:sticker" frameIndex={4} side={320} />);
+    view.rerender(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={4} side={320} />);
     await settle();
     expect(decoder.asked.map((a) => a.index)).toEqual([3, 4]);
     expect(view.container.querySelector("canvas")?.getAttribute("data-frame")).toBe("4");
@@ -81,9 +81,9 @@ describe("the sticker canvas", () => {
     const { drawn } = recordCanvas();
     const decoder = fakeDecoder();
     const cache = new StickerFrameCache(() => Promise.resolve(decoder.frames));
-    const view = render(<StickerCanvas cache={cache} url="data:sticker" frameIndex={5} side={320} />);
+    const view = render(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={5} side={320} />);
     await settle();
-    view.rerender(<StickerCanvas cache={cache} url="data:sticker" frameIndex={6} side={320} />);
+    view.rerender(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={6} side={320} />);
     await settle();
     act(() => decoder.asked[1]?.resolve());
     await settle();
@@ -97,8 +97,8 @@ describe("the sticker canvas", () => {
     recordCanvas();
     const decoder = fakeDecoder();
     const cache = new StickerFrameCache(() => Promise.resolve(decoder.frames));
-    const one = render(<StickerCanvas cache={cache} url="data:sticker" frameIndex={0} side={320} />);
-    const two = render(<StickerCanvas cache={cache} url="data:sticker" frameIndex={0} side={320} />);
+    const one = render(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={0} side={320} />);
+    const two = render(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:sticker" frameIndex={0} side={320} />);
     await settle();
     one.unmount();
     expect(decoder.closedCount()).toBe(0);
@@ -108,7 +108,7 @@ describe("the sticker canvas", () => {
 
   test("where the window cannot decode the picture, the picture itself is shown", async () => {
     const cache = new StickerFrameCache(() => Promise.resolve(null));
-    const view = render(<StickerCanvas cache={cache} url="data:image/png;base64,AA==" frameIndex={0} side={320} />);
+    const view = render(<StickerCanvas cache={cache} stickerId="heart-pulse" url="data:image/png;base64,AA==" frameIndex={0} side={320} />);
     await settle();
     expect(view.container.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,AA==");
     expect(view.container.querySelector("canvas") === null).toBe(true);
