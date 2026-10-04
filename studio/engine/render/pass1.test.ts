@@ -237,6 +237,58 @@ describe("buildPass1: a photo clip", () => {
   });
 });
 
+describe("buildPass1: the largest own photo the library keeps (3f.2: 4096 px on a side)", () => {
+  const own = (mediaId: string): Cell => ({ photo: { source: "own", mediaId }, focus: { x: 0.5, y: 0.4 } });
+  const ownClip = (clipId: string, motion: "kenburns" | "pan"): Clip => ({ clipId, durationMs: 1000, transitionIn: "cut", kind: "photo", cell: own("media-big"), motion });
+
+  test.each([["kenburns" as const], ["pan" as const]])("a 4096 by 4096 own photo in a full-frame %s clip is scaled to the 2880 by 5120 canvas, not to 4x its crop", (motion) => {
+    sizes.set("media-big", { w: 4096, h: 4096 });
+    try {
+      const graph = graphOf(first(build([ownClip("big", motion)])).argv);
+      // The cover crop of a 9:16 cell out of a square is 2304 by 4096; four times that (9216 by 16384) is what the cap exists to stop.
+      expect(graph).toContain("scale=2880:5120:flags=lanczos");
+      expect(graph).not.toContain("scale=9216:16384");
+      expect(() => assertSafeFilterGraph(graph)).not.toThrow();
+    } finally {
+      sizes.delete("media-big");
+    }
+  });
+
+  test("a 4096 by 2 own photo, the thinnest the importer can keep, builds a graph (the crop is made even, never 1 px)", () => {
+    sizes.set("media-big", { w: 4096, h: 2 });
+    try {
+      expect(() => build([ownClip("thin", "kenburns")])).not.toThrow();
+    } finally {
+      sizes.delete("media-big");
+    }
+  });
+
+  test("a 2 by 2 own photo, the smallest, builds a graph for every motion", () => {
+    sizes.set("media-big", { w: 2, h: 2 });
+    try {
+      for (const motion of ["kenburns", "pan"] as const) expect(() => build([ownClip(`tiny-${motion}`, motion)])).not.toThrow();
+    } finally {
+      sizes.delete("media-big");
+    }
+  });
+
+  test("an own photo in a collage cell is scaled to its own capped canvas too", () => {
+    sizes.set("media-big", { w: 4096, h: 4096 });
+    try {
+      const clip: Clip = { clipId: "collage", durationMs: 1000, transitionIn: "cut", kind: "collage", layout: "collage2", cells: [own("media-big"), own("media-big")], motion: "kenburns", stagger: false };
+      const graph = graphOf(first(build([clip])).argv);
+      const canvases = [...graph.matchAll(/scale=(\d+):(\d+):flags=lanczos/g)].map((m) => [Number(m[1]), Number(m[2])] as const);
+      expect(canvases.length).toBeGreaterThan(0);
+      for (const [w, h] of canvases) {
+        expect(w).toBeLessThanOrEqual(2880);
+        expect(h).toBeLessThanOrEqual(5120);
+      }
+    } finally {
+      sizes.delete("media-big");
+    }
+  });
+});
+
 describe("buildPass1: a collage clip", () => {
   test("lays a black base of the frame's size and the clip's length under the cells", () => {
     const graph = graphOf(first(build([collageClip("a", "collage3", 3100, "kenburns", true)])).argv);
