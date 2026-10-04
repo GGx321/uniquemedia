@@ -33,6 +33,11 @@ export type MediaImportOutcome =
       facts: MediaFacts;
       /** The file the importer made, from `workFile()`. Absent: the staged copy is stored as it is. */
       output?: { file: WorkFile; format: MediaFormat; sha256?: string };
+      /**
+       * A track's waveform (3f.4): one value per 50 ms, each an integer 0 to 1000 (the track store's envelope), kept in the record for
+       * `music.peaks`. Only an audio importer gives one.
+       */
+      waveform?: readonly number[];
     }
   | { ok: false; reason: MediaUnsupportedReason };
 export type MediaImporter = (request: MediaImportRequest) => Promise<MediaImportOutcome>;

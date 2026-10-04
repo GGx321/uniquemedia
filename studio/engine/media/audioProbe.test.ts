@@ -192,15 +192,20 @@ describe("judging the file the importer made", () => {
     ["ALAC", stored.replace("aac (LC)", "alac")],
     ["mp3", stored.replace("aac (LC)", "mp3")],
   ])("refuses %s", (_label, text) => {
-    expect(judgeStoredDump(text)).toEqual({ ok: false });
+    expect(judgeStoredDump(text)).toEqual({ ok: false, empty: false });
   });
 
   test("refuses a second stream, even an attached picture: what is stored is audio and nothing else", () => {
-    expect(judgeStoredDump(dump(stored, "  Stream #0:1: Video: mjpeg, none, 90k tbr, 90k tbn (attached pic)"))).toEqual({ ok: false });
-    expect(judgeStoredDump(dump(stored, "  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp"))).toEqual({ ok: false });
+    expect(judgeStoredDump(dump(stored, "  Stream #0:1: Video: mjpeg, none, 90k tbr, 90k tbn (attached pic)"))).toEqual({ ok: false, empty: false });
+    expect(judgeStoredDump(dump(stored, "  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp"))).toEqual({ ok: false, empty: false });
+  });
+
+  test("a dump with no stream at all is an EMPTY result: the source had no audio that decodes, which is not our own output failing", () => {
+    expect(judgeStoredDump(dump("Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'out.m4a':", "  Duration: N/A, bitrate: N/A"))).toEqual({ ok: false, empty: true });
+    expect(judgeStoredDump("")).toEqual({ ok: false, empty: true });
   });
 
   test("refuses a dump with no duration: there is nothing to hold the decode to", () => {
-    expect(judgeStoredDump(stored.replace("  Duration: 00:00:00.60,", "  Duration: N/A,"))).toEqual({ ok: false });
+    expect(judgeStoredDump(stored.replace("  Duration: 00:00:00.60,", "  Duration: N/A,"))).toEqual({ ok: false, empty: false });
   });
 });

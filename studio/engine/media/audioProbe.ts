@@ -142,17 +142,19 @@ export function judgeDump(dump: string, demuxer: AudioDemuxer): SourceVerdict {
 
 /**
  * Judges the dump of the file the importer MADE: one stream, audio, AAC-LC, 48 kHz, stereo, and a header length to hold the decode to. Nothing
- * else is allowed there, not even an attached picture: what is stored is audio and nothing else.
+ * else is allowed there, not even an attached picture: what is stored is audio and nothing else. `empty` says there was no stream at all, which is
+ * what an encode of a source with no audio that decodes leaves (ffmpeg writes no track); any other failure is our own output not being what was asked.
  */
-export function judgeStoredDump(dump: string): { ok: true; headerMs: number } | { ok: false } {
+export function judgeStoredDump(dump: string): { ok: true; headerMs: number } | { ok: false; empty: boolean } {
   const streams = streamLinesOf(dump);
+  if (streams.length === 0) return { ok: false, empty: true };
   const only = streams[0];
-  if (streams.length !== 1 || only === undefined || only.index !== 0 || only.kind !== "Audio") return { ok: false };
+  if (streams.length !== 1 || only === undefined || only.index !== 0 || only.kind !== "Audio") return { ok: false, empty: false };
   const line = only.line;
-  if (AUDIO_CODEC.exec(line)?.[1] !== "aac" || !/Audio:\s*aac \(LC\)/.test(line)) return { ok: false };
-  if (!/, 48000 Hz, stereo,/.test(line)) return { ok: false };
+  if (AUDIO_CODEC.exec(line)?.[1] !== "aac" || !/Audio:\s*aac \(LC\)/.test(line)) return { ok: false, empty: false };
+  if (!/, 48000 Hz, stereo,/.test(line)) return { ok: false, empty: false };
   const headerMs = durationMsOf(dump);
-  return headerMs === null ? { ok: false } : { ok: true, headerMs };
+  return headerMs === null ? { ok: false, empty: false } : { ok: true, headerMs };
 }
 
 // ---------- asking ffmpeg ----------
