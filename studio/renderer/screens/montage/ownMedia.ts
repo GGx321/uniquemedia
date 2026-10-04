@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import type { MediaKind, MediaSummary } from "../../../shared/engine";
+import type { MediaKind, MediaSummary, MontageDraft } from "../../../shared/engine";
+import { ownPhotoCells, ownStickerCells, ownVideoClips } from "../../../shared/montage";
 import type { EngineClient } from "../../engine/client";
 
 // The editor's picture of the owner's own files its draft names (3f.5 for stickers, 3f.3b for videos): the records it needs, asked for BY ID
@@ -20,6 +21,18 @@ export interface MediaRecords<T> {
 }
 
 export const NO_RECORDS: MediaRecords<never> = { held: new Map<string, never>(), answered: new Set<string>() };
+
+/** Every own file the draft names (3f.3b fix round 1, M1): the own photos in its cells, its own video clips, its own sticker layers and an own track. */
+export function draftMediaIds(spec: MontageDraft): ReadonlySet<string> {
+  const ids = [...ownPhotoCells(spec), ...ownVideoClips(spec), ...ownStickerCells(spec)].map((cell) => cell.mediaId);
+  if (spec.music?.source === "own") ids.push(spec.music.mediaId);
+  return new Set(ids);
+}
+
+/** Whether a `media.changed` is about one of `ids` (removed or stored again): the engine's verdict on a draft naming it may have changed. */
+export function changeTouches(change: MediaChange, ids: ReadonlySet<string>): boolean {
+  return ids.has(change.change === "removed" ? change.mediaId : change.media.mediaId);
+}
 
 /** The held map after one change; the same map when the change is not about this kind or about a record it never held. Never edits the map it is given. */
 export function applyHeldChange<T extends { readonly mediaId: string }>(held: ReadonlyMap<string, T>, change: MediaChange, viewOf: (summary: MediaSummary) => T | null): ReadonlyMap<string, T> {

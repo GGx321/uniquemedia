@@ -9,7 +9,7 @@ import { callsOf, flush } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { dragFocus } from "./montage/previewDrag";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, paidMusicCalls, studio as openStudio } from "./montage/screenKit";
-import { photoClip, videoClip } from "./montage/testkit";
+import { photoClip, stickerLayer, videoClip } from "./montage/testkit";
 
 // 3f.3b: an own video clip in the editor (EditorMine.dc.html, `sel = c3`). The preview shows the clip's video cropped as the render crops it (in the
 // dev mock, which has no picture, a stand-in of the same place); the properties show «Обрезка» (the window over the whole video: slide it, or move
@@ -117,7 +117,7 @@ describe("the preview", () => {
     expect(Number.parseFloat(ground?.style.left ?? "")).toBeCloseTo((-crop.x / crop.w) * 100, 6);
     expect(preview().textContent).toContain("street-walk.mp4");
     expect(preview().textContent).toContain("1080×608 · 0:01.8");
-    expect(within(cell).getByText("тяните, чтобы сдвинуть")).toBeDefined();
+    expect(within(preview()).getByText("тяните, чтобы сдвинуть")).toBeDefined();
   });
 
   test("the selected clip's video drags by its focus: one edit when let go, undone in one step; a cancelled drag changes nothing", async () => {
@@ -167,7 +167,7 @@ describe("the preview", () => {
     await openDraft(engine, client, clipsWith(ownClip("media-demo-0001")));
     await selectVideo();
     const cell = (): HTMLElement => within(preview()).getByRole("button", { name: "Кадр 2: своё видео" });
-    expect(within(cell()).getByText("видео 9:16 · весь кадр")).toBeDefined();
+    expect(within(preview()).getByText("видео 9:16 · весь кадр")).toBeDefined();
     expect(within(props()).getByText("Видео уже 9:16 и занимает весь кадр — сдвигать нечего.")).toBeDefined();
     drag(cell(), 30, 36);
     fireEvent.keyDown(cell(), { key: "ArrowLeft" });
@@ -308,6 +308,72 @@ describe("the properties", () => {
     fireEvent.keyDown(edge, { key: "End" });
     fireEvent.keyUp(edge, { key: "End" });
     expect(videoOf(await nextSave(engine)).durationMs).toBe(1_000);
+  });
+});
+
+describe("an own file deleted while its draft is open (fix round 1, M1)", () => {
+  const renderButton = (): HTMLElement => screen.getByRole("button", { name: "Рендер" });
+  const isDisabled = (el: HTMLElement): boolean => el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true";
+  const why = (): string => document.querySelector(".ed-render-why")?.textContent ?? "";
+  const gets = (engine: MockEngine): number => callsOf(engine, "montages.get").length;
+
+  test("a video clip whose video is deleted after a clean verdict is flagged, and «Рендер» is blocked", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
+    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
+    await asAnotherWindow(() => client.request("media.delete", { mediaId }));
+    await waitFor(() => expect(within(timeline()).getByRole("button", { name: s("Кадр 2: файла больше нет, 2.0 с") })).toBeDefined());
+    expect(isDisabled(renderButton())).toBe(true);
+    expect(why()).toBe("Кадр 2: файла больше нет");
+    await selectVideo();
+    expect(within(props()).getByText(MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"])).toBeDefined();
+  });
+
+  test("an own photo in a cell deleted after a clean verdict blocks «Рендер» with its frame", async () => {
+    const { client, engine } = await studio();
+    engine.seedOwnMedia([{ kind: "photo", name: "lake.jpg", bytes: 120_000 }]);
+    const photo: MontageDraft["clips"][number] = { ...photoClip(1, P1, 2_000), cell: { photo: { source: "own", mediaId: "media-demo-0001" }, focus: { x: 0.5, y: 0.5 } } };
+    await openDraft(engine, client, [photoClip(0, P2, 2_000), photo]);
+    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
+    await asAnotherWindow(() => client.request("media.delete", { mediaId: "media-demo-0001" }));
+    await waitFor(() => expect(why()).toBe("Кадр 2: файла больше нет"));
+    expect(isDisabled(renderButton())).toBe(true);
+  });
+
+  test("an own sticker deleted after a clean verdict marks its layer and blocks «Рендер»", async () => {
+    const { client, engine } = await studio();
+    engine.seedOwnMedia([{ kind: "sticker", name: "party.gif", bytes: 48_000 }]);
+    const made = await makeDraft(client, MIA.avatarId, []);
+    const layers: MontageDraft["layers"] = [{ ...stickerLayer(0, 0, 2_000), sticker: { source: "own", mediaId: "media-demo-0001" } }];
+    const saved = await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: [photoClip(0, P1, 2_000), photoClip(1, P2, 2_000)], layers }, name: null }));
+    if (!saved.ok) throw new Error(saved.error.code);
+    await openDrafts();
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    await screen.findByRole("region", { name: "Таймлайн" });
+    await flush();
+    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
+    await asAnotherWindow(() => client.request("media.delete", { mediaId: "media-demo-0001" }));
+    await waitFor(() => expect(why()).toBe("Стикер 1: файла больше нет"));
+    expect(isDisabled(renderButton())).toBe(true);
+    // The layer's block is marked (3d.3b's refusal of a layer, by its id).
+    const block = within(timeline()).getByRole("button", { name: /^Стикер 1.*, файла больше нет$/ });
+    expect(block.closest(".ed-blk-flagged") !== null).toBe(true);
+  });
+
+  test("a change to a file the draft does not name reads nothing again", async () => {
+    const { client, engine } = await studio();
+    const mediaId = storeVideo(engine);
+    engine.seedOwnMedia([{ kind: "photo", name: "other.jpg", bytes: 120_000 }]);
+    await openDraft(engine, client, clipsWith(ownClip(mediaId)));
+    await waitFor(() => expect(isDisabled(renderButton())).toBe(false));
+    const before = gets(engine);
+    await asAnotherWindow(() => client.request("media.delete", { mediaId: "media-demo-0002" }));
+    await flush();
+    expect(gets(engine)).toBe(before);
+    // …and one the draft names does.
+    await asAnotherWindow(() => client.request("media.delete", { mediaId }));
+    await waitFor(() => expect(gets(engine)).toBe(before + 1));
   });
 });
 

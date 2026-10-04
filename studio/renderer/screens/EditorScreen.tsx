@@ -22,6 +22,7 @@ import { MusicProperties } from "./montage/MusicCard";
 import { musicVerdictOf, pickTrack, type TrackVerdict } from "./montage/musicOps";
 import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
+import { changeTouches, draftMediaIds } from "./montage/ownMedia";
 import { useOwnVideos, videoProblems } from "./montage/ownVideos";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
@@ -394,6 +395,18 @@ function DraftEditor({
   // a montage.changed, so a save this window missed (a resync gap, a hidden window) is picked up here.
   const gone = state.save.kind === "gone";
   const savedAt = state.saved.updatedAt;
+  // 3f.3b fix round 1 (M1): a `media.changed` about one of the draft's own files (an own photo, video, sticker or track deleted in «Мои» or
+  // replaced) reads the verdict again: `media.delete` announces nothing else, and a clean verdict on the same spec would otherwise stand.
+  const [mediaTick, setMediaTick] = useState(0);
+  const draftMedia = useRef<ReadonlySet<string>>(new Set());
+  draftMedia.current = draftMediaIds(state.spec);
+  useEffect(
+    () =>
+      client.subscribe((event) => {
+        if (event.type === "media.changed" && changeTouches(event.payload, draftMedia.current)) setMediaTick((tick) => tick + 1);
+      }),
+    [client],
+  );
   useEffect(() => {
     if (gone) return;
     let alive = true;
@@ -413,8 +426,8 @@ function DraftEditor({
       alive = false;
     };
     // `savedAt` moves when the engine's state of the draft does (not when the same state is heard again, which would
-    // read it again in a loop); `avatar` on each avatar.changed.
-  }, [client, session, montageId, avatarId, savedAt, avatar, focusTick, renderKey, gone]);
+    // read it again in a loop); `avatar` on each avatar.changed; `mediaTick` on a change to one of the draft's own files.
+  }, [client, session, montageId, avatarId, savedAt, avatar, focusTick, renderKey, gone, mediaTick]);
 
   // The avatar's photos: the bin, and why the engine refuses a photo.
   useEffect(() => {
