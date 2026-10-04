@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { MontageDraft } from "../engine/montage";
 import { notYetSupportedIssues } from "./notYetSupported";
-import { trackIssues } from "./trackIssues";
+import { ownTrackIssues, trackIssues, trendingTrackIssues } from "./trackIssues";
 
 // 3c.5: N9 is lifted for a trending track, and the engine's referential answer for it is `track-unavailable` or
 // `track-too-short`: ONE function, used by the engine and by the mock, so the two cannot say it differently.
@@ -22,8 +22,8 @@ describe("notYetSupportedIssues and music (N9)", () => {
     expect(notYetSupportedIssues({ ...spec(trending(0)), layers: [] })).toEqual([]);
   });
 
-  test("still refuses an own track, until 3f.4", () => {
-    expect(notYetSupportedIssues({ ...spec({ source: "own", mediaId: "media-0000001", startMs: 0 }), layers: [] })).toEqual([{ code: "not-yet-supported", path: ["music"] }]);
+  test("no longer refuses an own track (3f.4)", () => {
+    expect(notYetSupportedIssues({ ...spec({ source: "own", mediaId: "media-0000001", startMs: 0 }), layers: [] })).toEqual([]);
   });
 
   test("says nothing for a montage with no music", () => {
@@ -62,8 +62,11 @@ describe("trackIssues", () => {
     expect(trackIssues(spec(trending(0)), undefined)).toEqual([{ code: "track-unavailable", path: ["music"] }]);
   });
 
-  test("is nothing for an own track: that is still N9's, and no track store holds it", () => {
-    expect(trackIssues(spec({ source: "own", mediaId: "media-0000001", startMs: 0 }), undefined)).toEqual([]);
+  test("an own track is judged by the own-track question, never by the track store's", () => {
+    const asked: string[] = [];
+    const stored = (id: string): null => (asked.push(id), null);
+    expect(trackIssues(spec({ source: "own", mediaId: "media-0000001", startMs: 0 }), stored, () => ({ durationMs: 8000 }))).toEqual([]);
+    expect(asked).toEqual([]);
   });
 
   test("measures the montage by the clips' own lengths", () => {
@@ -74,5 +77,61 @@ describe("trackIssues", () => {
     const asked: string[] = [];
     trackIssues(spec(null), (id) => (asked.push(id), null));
     expect(asked).toEqual([]);
+  });
+});
+
+describe("trackIssues for an own track (3f.4)", () => {
+  const own = (startMs: number, mediaId = "media-0000001"): MontageDraft["music"] => ({ source: "own", mediaId, startMs });
+  const holdsOwn = (durationMs: number) => (mediaId: string) => (mediaId === "media-0000001" ? { durationMs } : null);
+
+  test("is nothing for an own track that the library holds and that is long enough", () => {
+    expect(trackIssues(spec(own(0)), undefined, holdsOwn(8000))).toEqual([]);
+  });
+
+  test("is nothing for an own track exactly as long as startMs plus the montage", () => {
+    expect(trackIssues(spec(own(4000)), undefined, holdsOwn(8000))).toEqual([]);
+  });
+
+  test("is track-too-short for an own track one millisecond short of startMs plus the montage", () => {
+    expect(trackIssues(spec(own(4001)), undefined, holdsOwn(8000))).toEqual([{ code: "track-too-short", path: ["music"] }]);
+  });
+
+  test("is track-too-short for a start beyond the end of the track", () => {
+    expect(trackIssues(spec(own(600_000)), undefined, holdsOwn(8000))).toEqual([{ code: "track-too-short", path: ["music"] }]);
+  });
+
+  test("is media-unavailable, at the music, for an own track the library does not hold", () => {
+    expect(trackIssues(spec(own(0, "media-0000404")), undefined, holdsOwn(8000))).toEqual([{ code: "media-unavailable", path: ["music"] }]);
+  });
+
+  test("is media-unavailable for every own track when no media store is wired", () => {
+    expect(trackIssues(spec(own(0)), undefined, undefined)).toEqual([{ code: "media-unavailable", path: ["music"] }]);
+  });
+
+  test("never asks about an own track when the music is trending or absent", () => {
+    const asked: string[] = [];
+    const ownTrack = (id: string): null => (asked.push(id), null);
+    trackIssues(spec(trending(0)), () => ({ decodedMs: 8000 }), ownTrack);
+    trackIssues(spec(null), undefined, ownTrack);
+    expect(asked).toEqual([]);
+  });
+
+  test("measures the montage by the clips' own lengths", () => {
+    expect(trackIssues(spec(own(0), [photoClip(1, 3000), photoClip(2, 3000), photoClip(3, 3000)]), undefined, holdsOwn(8000))).toEqual([{ code: "track-too-short", path: ["music"] }]);
+  });
+});
+
+describe("the two halves of the judgement apart (the render asks them at different moments)", () => {
+  test("trendingTrackIssues says nothing about an own track, even one nothing holds", () => {
+    expect(trendingTrackIssues(spec({ source: "own", mediaId: "media-0000404", startMs: 0 }), undefined)).toEqual([]);
+  });
+
+  test("ownTrackIssues says nothing about a trending track, even one nothing holds", () => {
+    expect(ownTrackIssues(spec(trending(0)), undefined)).toEqual([]);
+  });
+
+  test("they add up to trackIssues", () => {
+    const own = spec({ source: "own", mediaId: "media-0000404", startMs: 0 });
+    expect([...trendingTrackIssues(own, undefined), ...ownTrackIssues(own, undefined)]).toEqual(trackIssues(own, undefined, undefined));
   });
 });

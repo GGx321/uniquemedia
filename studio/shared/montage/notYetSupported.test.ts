@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { MontageDraft } from "../engine/montage";
 import { notYetSupportedIssues } from "./notYetSupported";
 
-// N9: the parts of a montage whose slice has not landed are REFUSED, never rendered without them. 3f.2 lifts it for exactly one thing: an
-// own photo in a photo or collage cell (`source: "own"`). An own video, an own sticker and an own track stay refused until their slices.
+// N9: the parts of a montage whose slice has not landed are REFUSED, never rendered without them. 3f.2 lifted it for an
+// own photo in a photo or collage cell (`source: "own"`) and 3f.4 for an own track. An own video and an own sticker stay refused until their slices.
 
 type Clip = MontageDraft["clips"][number];
 type Cell = Extract<Clip, { kind: "photo" }>["cell"];
@@ -35,6 +35,16 @@ describe("notYetSupportedIssues: own photos are supported (3f.2)", () => {
   });
 });
 
+describe("notYetSupportedIssues: an own track is supported (3f.4)", () => {
+  test("an own track is no issue: the engine judges it with media-unavailable and track-too-short", () => {
+    expect(notYetSupportedIssues(spec([photoClip(1, own(1))], { music: { source: "own", mediaId: "media-4", startMs: 0 } }))).toEqual([]);
+  });
+
+  test("an own track next to an own video clip leaves only the clip refused", () => {
+    expect(notYetSupportedIssues(spec([videoClip(1)], { music: { source: "own", mediaId: "media-4", startMs: 0 } }))).toEqual([{ code: "not-yet-supported", path: ["clips", 0] }]);
+  });
+});
+
 describe("notYetSupportedIssues: the rest of own media stays refused", () => {
   test("an own video clip is refused where it is, even next to an own photo", () => {
     expect(notYetSupportedIssues(spec([photoClip(1, own(1)), videoClip(2)]))).toEqual([{ code: "not-yet-supported", path: ["clips", 1] }]);
@@ -45,9 +55,5 @@ describe("notYetSupportedIssues: the rest of own media stays refused", () => {
       { kind: "sticker", layerId: "layer-1", startMs: 0, endMs: 1000, x: 0.5, y: 0.5, size: 0.3, sticker: { source: "own", mediaId: "media-3" } },
     ];
     expect(notYetSupportedIssues(spec([photoClip(1, own(1))], { layers }))).toEqual([{ code: "not-yet-supported", path: ["layers", 0] }]);
-  });
-
-  test("an own track is refused where it is", () => {
-    expect(notYetSupportedIssues(spec([photoClip(1, own(1))], { music: { source: "own", mediaId: "media-4", startMs: 0 } }))).toEqual([{ code: "not-yet-supported", path: ["music"] }]);
   });
 });
