@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { readFile } from "node:fs/promises";
 import { PNG_1X1 } from "../engine/library/testing/sampleData";
 import { SMOKE_TEST_PNG } from "../engine/decode/realBackend";
+import { openFileSource } from "../engine/media/video/fileSource";
+import { FIXTURES } from "../engine/media/video/testing/fixtures/index";
+import { judgeVideo } from "../engine/media/video/videoPlan";
+import { probeVideo } from "../engine/media/video/videoProbe";
 import { webpInfo } from "../engine/media/webp";
 import { formatOf, resolveMediaKind, unfitReason } from "../engine/media/sniff";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -9,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMusicImporter } from "../engine/media/musicImporter";
 import { handoff } from "../engine/media/photoFixtures.testkit";
-import { jpegMetadataMarkers, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, MEDIA_SMOKE_TRACK, mediaRecordFileProblems } from "./mediaSmoke";
+import { jpegMetadataMarkers, MEDIA_SMOKE_CLIP, MEDIA_SMOKE_FILES, MEDIA_SMOKE_STORED, MEDIA_SMOKE_TRACK, mediaRecordFileProblems } from "./mediaSmoke";
 useNativeGlobals();
 
 // The packaged smoke's own-media files (3f.1b): one tiny file per kind, picked through `--studio-pick-media` with `any`. The table is
@@ -43,10 +48,17 @@ describe("the smoke's own-media files", () => {
     expect(animated?.expect).toEqual({ failed: "animated-webp" });
   });
 
-  test("a video and a sticker are what their kind says, and no importer takes them yet", () => {
+  test("a video, a track and a sticker are what their kind says", () => {
     const kinds = Object.fromEntries(MEDIA_SMOKE_FILES.map((f) => [f.label, resolveMediaKind("any", f.bytes)]));
-    expect(kinds).toMatchObject({ video: "video", sticker: "sticker" });
-    for (const label of ["video", "sticker"]) expect(MEDIA_SMOKE_FILES.find((f) => f.label === label)?.expect).toEqual({ refused: "not-yet-supported" });
+    expect(kinds).toMatchObject({ video: "video", audio: "audio", sticker: "sticker" });
+  });
+
+  test("no importer takes a sticker yet", () => {
+    expect(MEDIA_SMOKE_FILES.find((f) => f.label === "sticker")?.expect).toEqual({ refused: "not-yet-supported" });
+  });
+
+  test("a video has an importer (3f.3a): a bare header is accepted into a job that fails as a format", () => {
+    expect(MEDIA_SMOKE_FILES.find((f) => f.label === "video")?.expect).toEqual({ failed: "format" });
   });
 
   test("an M4A head with no stream in it is audio by its bytes; the music importer (3f.4) takes it into a job and turns it away inside, as a format", () => {
@@ -118,6 +130,24 @@ describe("jpegMetadataMarkers", () => {
 
   test("a buffer that is not a JPEG has no markers to name", () => {
     expect(jpegMetadataMarkers(Uint8Array.from([1, 2, 3]))).toEqual([]);
+  });
+});
+
+describe("the real clip the smoke imports (3f.3a)", () => {
+  test("is what the smoke expects of it: HEVC HLG, variable rate, a quarter turn, and a plan of 96 x 192", async () => {
+    const opened = await openFileSource(FIXTURES[MEDIA_SMOKE_CLIP.fixture].file);
+    try {
+      const probe = await probeVideo(opened.source);
+      if (!probe.ok) throw new Error(`the smoke's clip is refused: ${probe.reason}`);
+      expect([probe.info.video.codec, probe.info.video.dynamicRange, probe.info.video.variableFrameRate, probe.info.video.rotation]).toEqual(["hevc", "hlg", true, 90]);
+      expect(resolveMediaKind("any", new Uint8Array(await readFile(FIXTURES[MEDIA_SMOKE_CLIP.fixture].file)))).toBe("video");
+      const judged = judgeVideo(probe, FIXTURES[MEDIA_SMOKE_CLIP.fixture].bytes);
+      if (!judged.ok) throw new Error(`the smoke's clip is refused: ${judged.reason}`);
+      expect([judged.plan.outWidth, judged.plan.outHeight, judged.plan.hdrToSdr]).toEqual([MEDIA_SMOKE_CLIP.width, MEDIA_SMOKE_CLIP.height, MEDIA_SMOKE_CLIP.hdrToSdr]);
+      expect(probe.info.video.sourceFps).toBeCloseTo(19.091, 2);
+    } finally {
+      await opened.close();
+    }
   });
 });
 

@@ -107,7 +107,31 @@ export type ExportDialog = "cancel" | "fresh" | "first" | "moved" | "missing" | 
  * The owner's pick in main's own-media dialog (3f.1): nothing (`cancel`), or seven files at once, each a different way for the boundary to
  * turn it away (`mixed`, see MIXED_MEDIA). The real rig makes the files on disk; the mock is told the verdict for each name, and holds no path.
  */
-export type MediaDialog = "cancel" | "mixed" | "good" | "tiny" | "track" | "long-track";
+export type MediaDialog = "cancel" | "mixed" | "good" | "tiny" | "video" | "badVideo" | "track" | "long-track";
+
+/**
+ * The video picks (3f.3a), for a rig with `ownMedia`: one clip the rigs' video importer takes (`video`), and one it refuses after its copy as
+ * a codec it does not read (`badVideo`). The real rig's importer is a stand-in that decides from the bytes (the real one needs ffmpeg and has its
+ * own tests): what the suite holds side by side is the JOB's behaviour around an importer's answer, in the engine and in the mock.
+ */
+const GOOD_VIDEO = "walk.mov";
+const BAD_VIDEO = "clip.mov";
+export const PARITY_VIDEO_BYTES = 200;
+/** What the real rig's video importer says of a clip it takes, and what the mock is told to say. */
+export const PARITY_VIDEO_FACTS = { width: 1080, height: 1920, durationMs: 6400, sourceFps: 29.97, hdrToSdr: true, loopFrames: null, delayFrames: null } as const;
+/** A clip with this in its first bytes is the one the real rig's video importer refuses as a `codec`. */
+const PARITY_UNSUPPORTED_CODEC = "vp09";
+
+/** Writes a clip (an ISO box file's `ftyp` and a body) into `folder`; the bad one carries the codec the importer refuses. */
+async function writeVideoMedia(folder: string, bad: boolean): Promise<string[]> {
+  await mkdir(folder, { recursive: true });
+  const name = bad ? BAD_VIDEO : GOOD_VIDEO;
+  const head = Buffer.concat([Buffer.from([0, 0, 0, 24]), Buffer.from("ftypqt  "), Buffer.alloc(4), Buffer.from("qt  "), Buffer.from("mp41")]);
+  const body = Buffer.alloc(PARITY_VIDEO_BYTES - head.length, 3);
+  if (bad) body.write(PARITY_UNSUPPORTED_CODEC, 0, "latin1");
+  await writeFile(join(folder, name), Buffer.concat([head, body]));
+  return [join(folder, name)];
+}
 
 /** The one good photo of the `good` pick (3f.1b): accepted by the rigs' importer, and `PARITY_PHOTO_BYTES` long. */
 const GOOD_PHOTO = "lake.jpg";
@@ -330,6 +354,10 @@ export function mockRig(options: RigOptions = {}): ParityRig {
                 [options.ownMedia === true ? { name: GOOD_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, facts: PARITY_PHOTO_FACTS } } : { name: GOOD_PHOTO, reason: "not-yet-supported" }]
               : answer === "tiny"
                 ? [options.ownMedia === true ? { name: TINY_PHOTO, accept: { kind: "photo", bytes: PARITY_PHOTO_BYTES, failWith: "too-small" } } : { name: TINY_PHOTO, reason: "not-yet-supported" }]
+                : answer === "video"
+                  ? [{ name: GOOD_VIDEO, accept: { kind: "video", bytes: PARITY_VIDEO_BYTES, facts: PARITY_VIDEO_FACTS } }]
+                  : answer === "badVideo"
+                    ? [{ name: BAD_VIDEO, accept: { kind: "video", bytes: PARITY_VIDEO_BYTES, failWith: "codec" } }]
                 : answer === "track"
                   ? [options.ownMedia === true ? { name: GOOD_TRACK, accept: { kind: "audio", bytes: PARITY_TRACK_BYTES, facts: PARITY_TRACK_FACTS, waveform: [...PARITY_TRACK_WAVEFORM] } } : { name: GOOD_TRACK, reason: "not-yet-supported" }]
                   : answer === "long-track"
@@ -573,6 +601,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   };
   // The importer takes every photo, except the 1 px picture of the `tiny` pick (3f.2: the real importer refuses it as `too-small`, inside its job).
   const parityPhotoImporter: MediaImporter = async ({ name }) => (name === TINY_PHOTO ? { ok: false, reason: "too-small" } : { ok: true, facts: PARITY_PHOTO_FACTS });
+  // 3f.3a: a stand-in for the video importer: it takes a clip and refuses the one that carries the codec it does not read, after the copy.
+  const parityVideoImporter: MediaImporter = async ({ staged }) =>
+    Buffer.from(staged.head).toString("latin1").includes(PARITY_UNSUPPORTED_CODEC) ? { ok: false, reason: "codec" } : { ok: true, facts: PARITY_VIDEO_FACTS };
   // 3f.4: the music importer takes every track, except the `long-track` pick (the real importer refuses a track over ten minutes as `too-long`, inside its
   // job). What it stores is an M4A (a stand-in: the rig's ffmpeg is not there, so the render's stream check and true-peak pass are scripted below).
   const parityTrackImporter: MediaImporter = async ({ name, workFile }) => {
@@ -587,7 +618,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       musicSink: store,
       musicTracks: store,
       text: { gate: textLane },
-      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, audio: parityTrackImporter } } : {}),
+      ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, video: parityVideoImporter, audio: parityTrackImporter } } : {}),
       mediaStaging: {
         fs: {
           openOut: async (path) => {
@@ -799,6 +830,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
               ? await writeGoodMedia(folder)
               : answer === "tiny"
                 ? await writeTinyMedia(folder)
+                : answer === "video" || answer === "badVideo"
+                  ? await writeVideoMedia(folder, answer === "badVideo")
                 : answer === "track"
                   ? await writeGoodTrack(folder)
                   : answer === "long-track"

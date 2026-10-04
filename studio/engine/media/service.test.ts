@@ -17,6 +17,15 @@ useNativeGlobals();
 // 3f.1b: the import job. `media.import` validates the open and starts a job; the copy of up to 2 GiB, the importer and the record all run
 // INSIDE the job, with byte progress and a cancel that works at every phase and leaves nothing behind.
 
+// Every rig's service is stopped after its test, BEFORE the temp dir is removed (hooks run in the order they are registered): a test
+// that timed out leaves a job holding a staged file, and on Windows the folder cannot be removed under an open handle. `stop` is bounded
+// (`stopWaitMs`), so a hung importer costs seconds, not the shard.
+const rigs: MediaService[] = [];
+afterEach(async () => {
+  const opened = rigs.splice(0);
+  await Promise.all(opened.map((service) => service.stop()));
+});
+
 const tmp = tempDirFor({ beforeEach, afterEach }, "studio-media-service-");
 const libraryRoot = (): string => join(tmp(), "library");
 const mediaDir = (): string => join(libraryRoot(), "media");
@@ -76,6 +85,7 @@ function rig(extra: Partial<MediaServiceDeps> = {}): Rig {
     log: () => undefined,
     ...extra,
   });
+  rigs.push(service);
   return { service, jobs, events, holds, closeAll: () => service.stop() };
 }
 
@@ -632,7 +642,7 @@ describe("imports run one after another", () => {
     const running = await started(r, await callFor("one.jpg", jpeg(200)));
     const waiting = await started(r, await callFor("two.jpg", jpeg(210)));
     r.service.cancel(waiting);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await waitFor(() => r.jobs.stateOf(waiting)?.status === "cancelled");
     expect(r.jobs.stateOf(waiting)).toMatchObject({ status: "cancelled", done: 0 });
     release();
     await r.service.settled();
@@ -794,6 +804,12 @@ const deferred = (): { promise: Promise<void>; resolve: () => void } => {
   return { promise, resolve };
 };
 
+/** Waits until `check` holds, in turns of 10 ms and for at most 5 s: a phase a job reaches on its own, not a time the test guesses. */
+async function waitFor(check: () => boolean): Promise<void> {
+  for (let turn = 0; turn < 500 && !check(); turn++) await new Promise((resolve) => setTimeout(resolve, 10));
+  expect(check()).toBe(true);
+}
+
 describe("a delete between the commit and the job's end (L-1, probe P2)", () => {
   test("the window is told upserted, then removed, never the other way round: no ghost tile", async () => {
     const reached = deferred();
@@ -869,13 +885,14 @@ describe("a media that a queued or running render uses (M-3)", () => {
 
 describe("an importer that ignores its signal (M-4)", () => {
   test("is given a grace window after the cancel; then its answer is dropped, the job is cancelled and the turn is released", async () => {
-    let first = true;
+    const reached = deferred();
     const r = rig({
       importerGraceMs: 30,
       importers: {
-        photo: async () => {
-          if (first) {
-            first = false;
+        photo: async ({ name }) => {
+          // The job that hangs is chosen by its file, not by who calls first: the cancel may land before a slow copy reaches its importer.
+          if (name === "a.jpg") {
+            reached.resolve();
             // Never settles, and never looks at its signal.
             return new Promise(() => undefined);
           }
@@ -885,7 +902,7 @@ describe("an importer that ignores its signal (M-4)", () => {
     });
     const hung = await started(r, await callFor("a.jpg", jpeg(300)));
     const next = await started(r, await callFor("b.jpg", jpeg(310)));
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await reached.promise;
     r.service.cancel(hung);
     await r.service.settled();
     expect(r.jobs.stateOf(hung)).toMatchObject({ status: "cancelled" });
@@ -895,10 +912,12 @@ describe("an importer that ignores its signal (M-4)", () => {
   });
 
   test("one that answers within the grace window is still thrown away: the cancel stands", async () => {
+    const reached = deferred();
     const r = rig({
       importerGraceMs: 500,
       importers: {
         photo: async ({ signal }) => {
+          reached.resolve();
           await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
           await new Promise((resolve) => setTimeout(resolve, 20));
           return { ok: true, facts: PHOTO_FACTS };
@@ -906,7 +925,7 @@ describe("an importer that ignores its signal (M-4)", () => {
       },
     });
     const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await reached.promise;
     r.service.cancel(jobId);
     await r.service.settled();
     expect(r.jobs.stateOf(jobId)).toMatchObject({ status: "cancelled" });
@@ -931,9 +950,19 @@ describe("an importer that ignores its signal (M-4)", () => {
 
 describe("stopping with a job that will not stop (L-6)", () => {
   test("stop returns within its bound even when an importer ignores its signal for good", async () => {
-    const r = rig({ importerGraceMs: 60_000, stopWaitMs: 60, importers: { photo: () => new Promise(() => undefined) } });
+    const reached = deferred();
+    const r = rig({
+      importerGraceMs: 60_000,
+      stopWaitMs: 60,
+      importers: {
+        photo: () => {
+          reached.resolve();
+          return new Promise(() => undefined);
+        },
+      },
+    });
     await started(r, await callFor("a.jpg", jpeg(300)));
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await reached.promise;
     const began = Date.now();
     await r.service.stop();
     expect(Date.now() - began).toBeLessThan(5_000);
@@ -945,10 +974,12 @@ describe("opening a file waits for the library's recovery, but not past a cancel
     await mkdir(stagingDir(), { recursive: true });
     await writeFile(join(stagingDir(), "old-00000001.media"), "left by a crash");
     const never = deferred();
+    const recovering = deferred();
     const r = rig({
       staging: {
         fs: {
           unlink: async (path) => {
+            recovering.resolve();
             await never.promise;
             await fsUnlink(path);
           },
@@ -958,7 +989,7 @@ describe("opening a file waits for the library's recovery, but not past a cancel
     });
     const controller = new AbortController();
     const pending = r.service.import(await callFor("a.jpg", jpeg(300)), controller.signal);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await recovering.promise;
     controller.abort();
     expect(await pending).toMatchObject({ ok: false, reason: "cancelled" });
     expect(r.jobs.states()).toEqual([]);
@@ -1104,7 +1135,7 @@ describe("a full queue (the review's queue items)", () => {
     const b = await started(r, await callFor("b.jpg", jpeg(310)));
     expect(r.jobs.activeImports()).toBe(2);
     r.service.cancel(b);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await waitFor(() => r.jobs.stateOf(b)?.status === "cancelled");
     expect(r.jobs.stateOf(b)).toMatchObject({ status: "cancelled" });
     expect(r.jobs.activeImports()).toBe(1);
     h.release();
@@ -1182,14 +1213,13 @@ describe("a render that reserves a media while it is being deleted (fix round 3,
 describe("a hung importer's late work file (fix round 3, M2)", () => {
   test("after the job ended, workFile throws: nothing is created that no cleanup would ever take", async () => {
     const late = deferred();
+    const reached = deferred();
     let lateOutcome = "not tried";
-    let first = true;
     const r = rig({
       importerGraceMs: 20,
       importers: {
         photo: async ({ workFile }) => {
-          if (!first) return { ok: true, facts: PHOTO_FACTS };
-          first = false;
+          reached.resolve();
           // Ignores the cancel; wakes up long after the job was dropped and asks for a file to write a mezzanine in.
           await late.promise;
           try {
@@ -1204,7 +1234,7 @@ describe("a hung importer's late work file (fix round 3, M2)", () => {
       },
     });
     const hung = await started(r, await callFor("a.jpg", jpeg(300)));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await reached.promise;
     r.service.cancel(hung);
     await r.service.settled();
     expect(r.jobs.stateOf(hung)).toMatchObject({ status: "cancelled" });

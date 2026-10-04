@@ -32,6 +32,7 @@ import { createDecodeGate } from "./decode/decodeGate";
 import { createDecodeWorkerSpawner } from "./decode/spawn";
 import { createMusicImporter } from "./media/musicImporter";
 import { createPhotoImporter, MAX_PHOTO_PIXELS } from "./media/photoImporter";
+import { createVideoImporter } from "./media/videoImporter";
 import { createCommitHold } from "./videos/e2eCommitHold";
 
 const parentPort = process.parentPort;
@@ -263,8 +264,10 @@ parentPort.once("message", (event) => {
       // 3f.2: the own-photo importer. JPEG and PNG are decoded by the WASM codecs in their own worker thread (fix round 1: ended on a
       // cancel, a time limit and when idle, so the engine thread stays free and the memory goes back); a WebP is decoded by ffmpeg in a child
       // process; the stored file is a JPEG without metadata.
+      // 3f.3a: the own-video importer, beside it: ffmpeg in a child process under the walker's verdict, a mezzanine H.264 clip out.
       mediaImporters: {
         photo: createPhotoImporter({ decode: createDecodeGate({ spawnWorker: createDecodeWorkerSpawner(PHOTO_DECODE_WORKER_URL, { nodeModulesDir: NODE_MODULES_DIR, maxPixels: MAX_PHOTO_PIXELS }), idleRecycleMs: PHOTO_DECODE_IDLE_RECYCLE_MS, timeoutMs: PHOTO_DECODE_TIMEOUT_MS }).decode }),
+        video: createVideoImporter(),
         // 3f.4: the own-music importer. Every step that touches the file is a child process of the bundled ffmpeg (probe, pinned encode, check of the output);
         // the engine's thread parses nothing of it. The stored file is an AAC-LC 48 kHz stereo M4A with no tag, at most ten minutes.
         audio: createMusicImporter(),
