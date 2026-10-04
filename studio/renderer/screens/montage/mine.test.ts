@@ -1,0 +1,286 @@
+import { describe, expect, test } from "bun:test";
+import { ERROR_MESSAGES_RU, type EngineError, type MediaSummary, mediaReasonRu } from "../../../shared/engine";
+import type { ImportView } from "../../engine/importJobs";
+import { NBSP } from "../../lib/format";
+import {
+  applyLibraryChange,
+  deleteConfirmText,
+  deleteRefusalText,
+  dragKey,
+  importCard,
+  importFailure,
+  importTileLabel,
+  type MineLibrary,
+  mineHint,
+  mineSections,
+  nextListening,
+  parseDragKey,
+  pickOutcomeText,
+  stickerAria,
+  trackRowAria,
+  trackRowNote,
+  visualAria,
+  visualTitle,
+} from "./mine";
+import { collageClip, draftSpec, photoClip, videoClip } from "./testkit";
+
+// 3f.6: the «Мои» tab (EditorMine.dc.html; the reconciliation's M1–M12, M14, M15) as pure data: the owner's own files in three sections
+// (photos and videos, music, stickers), each with its state in this draft and what a click does, the imports on their way, the result of
+// a pick, a refusal in the kind's own words (`mediaReasonRu(reason, kind)`, never the neutral table directly), and deleting a file.
+
+/** Russian typography: a number keeps its unit on the same line (a no-break space between them). */
+const s = (text: string): string => text.replace(/(\d) (с|%|fps|файл|файла|файлов|раз|раза)(?=[\s.,)]|$)/g, `$1${NBSP}$2`);
+
+let n = 0;
+function media(kind: MediaSummary["kind"], name: string, patch: Partial<MediaSummary> = {}): MediaSummary {
+  n += 1;
+  const base = { mediaId: `media-${kind}-${String(n).padStart(4, "0")}`, kind, name, bytes: 1_000, createdAt: "2026-10-04T10:00:00.000Z", width: null, height: null, durationMs: null, sourceFps: null, hdrToSdr: false, loopFrames: null, delayFrames: null };
+  if (kind === "photo") return { ...base, width: 1080, height: 1440, ...patch };
+  if (kind === "video") return { ...base, width: 1080, height: 1920, durationMs: 6_400, sourceFps: 60, ...patch };
+  if (kind === "audio") return { ...base, durationMs: 42_000, ...patch };
+  return { ...base, width: 240, height: 240, loopFrames: 6, delayFrames: [2, 2, 2], ...patch };
+}
+
+function importing(patch: Partial<ImportView> & Pick<ImportView, "jobId" | "name" | "mediaKind">): ImportView {
+  return { status: "running", stage: "copy", done: 400, total: 1_000, prepare: null, mediaId: null, error: null, cancelRequested: false, ...patch };
+}
+
+const PHOTO = media("photo", "croissant.jpg");
+const VIDEO = media("video", "latte-pour.mov");
+const BLINK = media("video", "blink.mov", { durationMs: 499 });
+const SONG = media("audio", "summer-edit.mp3");
+const NOTE = media("audio", "voice-note.m4a", { durationMs: 5_000 });
+const STICKER = media("sticker", "underline.gif");
+const LIBRARY: MineLibrary = { media: [STICKER, NOTE, SONG, BLINK, VIDEO, PHOTO], total: 6 };
+
+/** 9.6 s: the video in clip 3 (as the artboard draws it). */
+const SPEC = draftSpec([photoClip(0, "photo-mia-0001", 2_400), photoClip(1, "photo-mia-0002", 2_400), { ...videoClip(2, 2_400), mediaId: VIDEO.mediaId }, photoClip(3, "photo-mia-0003", 2_400)]);
+
+const NO_TARGET = { fillTarget: null, addBlock: null, selectedSticker: null } as const;
+
+describe("the library listing, kept current by media.changed", () => {
+  test("a new record goes first (newest first) and counts; a stored one is replaced in place", () => {
+    const fresh = media("photo", "new.jpg");
+    const added = applyLibraryChange(LIBRARY, { change: "upserted", media: fresh });
+    expect(added.media.map((m) => m.name)[0]).toBe("new.jpg");
+    expect(added.total).toBe(7);
+    const renamed = applyLibraryChange(added, { change: "upserted", media: { ...PHOTO, bytes: 9 } });
+    expect(renamed.total).toBe(7);
+    expect(renamed.media.find((m) => m.mediaId === PHOTO.mediaId)?.bytes).toBe(9);
+    expect(renamed.media.at(-1)?.mediaId).toBe(PHOTO.mediaId);
+  });
+
+  test("a removed record leaves and the count drops; one not listed drops the count only when the listing was cut", () => {
+    const removed = applyLibraryChange(LIBRARY, { change: "removed", mediaId: SONG.mediaId });
+    expect(removed.media.some((m) => m.mediaId === SONG.mediaId)).toBe(false);
+    expect(removed.total).toBe(5);
+    expect(applyLibraryChange(LIBRARY, { change: "removed", mediaId: "media-unknown-01" })).toBe(LIBRARY);
+    const cut: MineLibrary = { media: LIBRARY.media, total: 900 };
+    expect(applyLibraryChange(cut, { change: "removed", mediaId: "media-unknown-01" }).total).toBe(899);
+  });
+
+  test("the listing never holds more than the 500 newest", () => {
+    const full: MineLibrary = { media: Array.from({ length: 500 }, (_, i) => ({ ...PHOTO, mediaId: `media-full-${String(i).padStart(4, "0")}` })), total: 500 };
+    const after = applyLibraryChange(full, { change: "upserted", media: media("photo", "501.jpg") });
+    expect(after.media).toHaveLength(500);
+    expect(after.media[0]?.name).toBe("501.jpg");
+    expect(after.total).toBe(501);
+  });
+});
+
+describe("the sections (M2, M8, M12): newest first, the imports on their way at the front of their kind's section", () => {
+  test("photos and videos together, then music, then stickers; the counts include what is on its way", () => {
+    const imports = [importing({ jobId: "job-imp-0001", name: "street-walk.mp4", mediaKind: "video" }), importing({ jobId: "job-imp-0002", name: "beat.mp3", mediaKind: "audio", status: "queued" })];
+    const sections = mineSections(LIBRARY, imports, SPEC, NO_TARGET);
+    expect(sections.visual.map((t) => (t.kind === "import" ? `↻ ${t.view.name}` : t.media.name))).toEqual(["↻ street-walk.mp4", "blink.mov", "latte-pour.mov", "croissant.jpg"]);
+    expect(sections.tracks.map((t) => (t.kind === "import" ? `↻ ${t.view.name}` : t.media.name))).toEqual(["↻ beat.mp3", "voice-note.m4a", "summer-edit.mp3"]);
+    expect(sections.stickers.map((t) => (t.kind === "import" ? `↻ ${t.view.name}` : t.media.name))).toEqual(["underline.gif"]);
+    expect(sections.counts).toEqual({ visual: 4, tracks: 3, stickers: 1 });
+  });
+
+  test("finished imports are not tiles: a done one is its record, a refused one is told apart", () => {
+    const imports = [importing({ jobId: "job-imp-0001", name: "a.jpg", mediaKind: "photo", status: "done", mediaId: "media-x-000001" }), importing({ jobId: "job-imp-0002", name: "b.jpg", mediaKind: "photo", status: "failed" })];
+    expect(mineSections(LIBRARY, imports, SPEC, NO_TARGET).visual.some((t) => t.kind === "import")).toBe(false);
+  });
+
+  test("a tile's badge is the clip holding it (M5); what a click does follows the bin's rules (P12)", () => {
+    const { visual } = mineSections(LIBRARY, [], SPEC, NO_TARGET);
+    const byName = new Map(visual.flatMap((t) => (t.kind === "record" ? [[t.media.name, t] as const] : [])));
+    expect(byName.get("latte-pour.mov")).toMatchObject({ slot: 3, action: "select" });
+    expect(byName.get("croissant.jpg")).toMatchObject({ slot: null, action: "append" });
+    // A video under 0.5 s on the grid is never placed (M7: the engine refuses it at import; this holds anyway).
+    expect(byName.get("blink.mov")).toMatchObject({ slot: null, action: "too-short" });
+  });
+
+  test("an empty cell waiting: a photo fills it, a video (no cells) is still a new clip at the end; full: neither adds", () => {
+    const withCell = draftSpec([collageClip(0, ["photo-mia-0001", null])]);
+    const fill = mineSections(LIBRARY, [], withCell, { fillTarget: { clip: 0, cell: 1 }, addBlock: null, selectedSticker: null }).visual;
+    const action = (name: string, tiles: typeof fill) => tiles.flatMap((t) => (t.kind === "record" && t.media.name === name ? [t.action] : []))[0];
+    expect(action("croissant.jpg", fill)).toBe("fill");
+    expect(action("latte-pour.mov", fill)).toBe("append");
+    const full = mineSections(LIBRARY, [], withCell, { fillTarget: null, addBlock: "clip-cap", selectedSticker: null }).visual;
+    expect(action("croissant.jpg", full)).toBe("full");
+    expect(action("latte-pour.mov", full)).toBe("full");
+  });
+
+  test("a track: in this montage, or shorter than the montage (dimmed, not selectable: M10)", () => {
+    const withSong = { ...SPEC, music: { source: "own" as const, mediaId: SONG.mediaId, startMs: 0 } };
+    const { tracks } = mineSections(LIBRARY, [], withSong, NO_TARGET);
+    const rows = tracks.flatMap((t) => (t.kind === "record" ? [[t.media.name, t.inDraft, t.tooShort]] : []));
+    expect(rows).toEqual([
+      ["voice-note.m4a", false, true],
+      ["summer-edit.mp3", true, false],
+    ]);
+  });
+
+  test("a sticker: how often this montage uses it, and the ring on the selected layer's", () => {
+    const layer = (i: number) => ({ layerId: `layer-00${i}`, startMs: 0, endMs: 1_000, kind: "sticker" as const, sticker: { source: "own" as const, mediaId: STICKER.mediaId }, x: 0.5, y: 0.5, size: 0.2 });
+    const spec = { ...SPEC, layers: [layer(1), layer(2)] };
+    const [tile] = mineSections(LIBRARY, [], spec, { fillTarget: null, addBlock: null, selectedSticker: STICKER.mediaId }).stickers;
+    expect(tile?.kind === "record" && [tile.uses, tile.on]).toEqual([2, true]);
+  });
+});
+
+describe("the words on the tiles and rows", () => {
+  test("a photo or video tile's name says what it is, how long a video runs, where it stands and what a click does", () => {
+    const { visual } = mineSections(LIBRARY, [], SPEC, NO_TARGET);
+    const labels = visual.flatMap((t) => (t.kind === "record" ? [visualAria(t, null)] : []));
+    expect(labels).toEqual([s("Видео blink.mov, 0:00: короче 0.5 с, в ролик не поставить"), "Видео latte-pour.mov, 0:06 · в кадре 3: выбрать кадр 3", "Фото croissant.jpg: добавить кадр в конец ролика"]);
+    const fill = mineSections(LIBRARY, [], draftSpec([collageClip(0, ["photo-mia-0001", null])]), { fillTarget: { clip: 0, cell: 1 }, addBlock: null, selectedSticker: null }).visual;
+    const [photo] = fill.flatMap((t) => (t.kind === "record" && t.media.kind === "photo" ? [t] : []));
+    expect(photo === undefined ? "" : visualAria(photo, { clip: 0, cell: 1 })).toBe("Фото croissant.jpg: в ячейку 2 кадра 1");
+  });
+
+  test("a track row: «0:42 · свой трек», «✓ в ролике», «короче ролика», and the reason in its name", () => {
+    const withSong = { ...SPEC, music: { source: "own" as const, mediaId: SONG.mediaId, startMs: 0 } };
+    const { tracks } = mineSections(LIBRARY, [], withSong, NO_TARGET);
+    const [note, song] = tracks;
+    if (note?.kind !== "record" || song?.kind !== "record") throw new Error("rows");
+    expect(trackRowNote(note)).toBe("0:05 · короче ролика");
+    expect(trackRowNote(song)).toBe("0:42 · ✓ в ролике");
+    expect(trackRowNote({ ...song, inDraft: false })).toBe("0:42 · свой трек");
+    expect(trackRowAria(note, 9_600)).toBe(s("voice-note.m4a, 0:05, свой трек, короче ролика (9.6 с), не выбрать"));
+    expect(trackRowAria(song, 9_600)).toBe("summer-edit.mp3, 0:42, свой трек, в ролике");
+  });
+
+  test("a sticker tile's name", () => {
+    const [tile] = mineSections(LIBRARY, [], SPEC, NO_TARGET).stickers;
+    if (tile?.kind !== "record") throw new Error("tile");
+    expect(stickerAria(tile)).toBe("Стикер underline.gif: в плейхед");
+    expect(stickerAria({ ...tile, uses: 2, on: true })).toBe("Стикер underline.gif: в плейхед, в ролике 2, у выбранного слоя");
+  });
+
+  test("the hint under the photos and videos says what a click does now", () => {
+    expect(mineHint(null, null)).toBe("Клик — кадр в конец ролика. Перетащите на «Кадры», чтобы вставить между кадрами.");
+    expect(mineHint({ clip: 0, cell: 1 }, null)).toBe("Клик — фото в ячейку 2 кадра 1, видео — в конец. Перетащите на «Кадры», чтобы вставить между кадрами.");
+    expect(mineHint(null, "clip-cap")).toBe("Не больше 20 кадров в одном видео. Клик по фото в панели ничего не добавит.");
+  });
+
+  test("a tile's tooltip says how much of a video a click puts in", () => {
+    const { visual } = mineSections(LIBRARY, [], SPEC, NO_TARGET);
+    const titles = visual.flatMap((t) => (t.kind === "record" ? [visualTitle(t)] : []));
+    expect(titles).toEqual([s("Видео короче 0.5 с — в ролик не поставить"), "Уже в кадре 3 — клик выберет его", "Клик — кадр в конец ролика"]);
+    const fresh = mineSections({ media: [media("video", "fresh.mov")], total: 1 }, [], SPEC, NO_TARGET).visual[0];
+    expect(fresh?.kind === "record" ? visualTitle(fresh) : "").toBe(s("Клик — видео с начала, до 2 с, в конец ролика"));
+  });
+});
+
+describe("an import on its way (M6, M14): the tile's word, and the status card's line", () => {
+  test("queued, copying, preparing (with what is changed, when the engine says), cancelling", () => {
+    expect(importTileLabel(importing({ jobId: "j-0000001", name: "a.mp4", mediaKind: "video", status: "queued" }))).toBe("в очереди");
+    expect(importTileLabel(importing({ jobId: "j-0000001", name: "a.mp4", mediaKind: "video" }))).toBe(s("40 %"));
+    expect(importTileLabel(importing({ jobId: "j-0000001", name: "a.mp4", mediaKind: "video", cancelRequested: true }))).toBe("отменяем");
+
+    const copy = importCard(importing({ jobId: "j-0000001", name: "street-walk.mp4", mediaKind: "video" }), 0);
+    expect(copy).toEqual({ title: "Копируем street-walk.mp4", detail: s("40 %"), percent: 40 });
+    const prepare = importCard(importing({ jobId: "j-0000001", name: "street-walk.mp4", mediaKind: "video", stage: "prepare", prepare: { hdrToSdr: true, fromFps: 60 } }), 2);
+    expect(prepare).toEqual({ title: "Готовим street-walk.mp4", detail: s("HDR → SDR, 60 → 30 fps · 40 % · ещё 2 в очереди"), percent: 40 });
+    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", stage: "prepare", prepare: { hdrToSdr: false, fromFps: 59.94 } }), 0).detail).toBe(s("59.94 → 30 fps · 40 %"));
+    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", stage: "prepare", prepare: null }), 0).detail).toBe(s("40 %"));
+    expect(importCard(importing({ jobId: "j-0000001", name: "a.mov", mediaKind: "video", cancelRequested: true }), 0)).toEqual({ title: "Отменяем a.mov", detail: "ничего не сохранится", percent: 40 });
+  });
+
+  test("a refusal inside the job is told in the KIND's words (mediaReasonRu with the job's kind); another failure by its error", () => {
+    const codec: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: "codec", detail: "x" };
+    expect(importFailure(importing({ jobId: "j-0000001", name: "clip.webm", mediaKind: "video", status: "failed", error: codec }))).toEqual({ title: "clip.webm не подходит", body: mediaReasonRu("codec", "video") });
+    expect(importFailure(importing({ jobId: "j-0000001", name: "song.ogg", mediaKind: "audio", status: "failed", error: { ...codec } }))?.body).toBe(mediaReasonRu("codec", "audio"));
+    const internal: EngineError = { code: "INTERNAL" };
+    expect(importFailure(importing({ jobId: "j-0000001", name: "a.jpg", mediaKind: "photo", status: "failed", error: internal }))).toEqual({ title: "Не удалось добавить a.jpg", body: ERROR_MESSAGES_RU.INTERNAL });
+    // Cancelled by the engine (the window was not asked): said; the owner's own cancel: nothing to tell.
+    expect(importFailure(importing({ jobId: "j-0000001", name: "a.jpg", mediaKind: "photo", status: "cancelled" }))).toEqual({ title: "a.jpg не добавлен", body: mediaReasonRu("cancelled", "photo") });
+    expect(importFailure(importing({ jobId: "j-0000001", name: "a.jpg", mediaKind: "photo", status: "cancelled", cancelRequested: true }))).toBeNull();
+    expect(importFailure(importing({ jobId: "j-0000001", name: "a.jpg", mediaKind: "photo" }))).toBeNull();
+  });
+});
+
+describe("a pick's result (M15): a refused file is said with its reason, the skipped are said, never dropped", () => {
+  const jobs = ["job-imp-0001", "job-imp-0002"];
+  const running = jobs.map((jobId) => importing({ jobId, name: jobId, mediaKind: "photo" }));
+  const done = running.map((v) => ({ ...v, status: "done" as const }));
+
+  test("one file refused, two on their way, then added", () => {
+    const outcome = { refused: [{ name: "track.wma", reason: "format" as const }], skipped: 0, jobIds: jobs };
+    expect(pickOutcomeText(outcome, running)).toEqual({ title: "track.wma не подходит", lines: [mediaReasonRu("format")], rest: s("Остальные 2 файла добавляем.") });
+    expect(pickOutcomeText(outcome, done)?.rest).toBe(s("Остальные 2 файла добавлены."));
+    expect(pickOutcomeText({ ...outcome, jobIds: ["job-imp-0001"] }, done)?.rest).toBe("Другой файл добавлен.");
+    const mixed = [importing({ jobId: "job-imp-0001", name: "a.jpg", mediaKind: "photo", status: "done" }), importing({ jobId: "job-imp-0002", name: "b.mov", mediaKind: "video", status: "failed" })];
+    expect(pickOutcomeText(outcome, mixed)?.rest).toBe("Из остальных 2 добавлено: 1.");
+    expect(pickOutcomeText({ ...outcome, jobIds: ["job-imp-0002"] }, mixed)?.rest).toBe("Другой файл не добавлен.");
+    // A job this window no longer knows (dismissed, or dropped from the newest finished) is not counted as added.
+    expect(pickOutcomeText(outcome, [])?.rest).toBe("Из остальных 2 добавлено: 0.");
+  });
+
+  test("several refused: each by name, the reason after a colon; the skipped files with the 20-file rule", () => {
+    const outcome = { refused: [{ name: "IMG_2041.heic", reason: "heic" as const }, { name: "track.wma", reason: "format" as const }], skipped: 3, jobIds: [] };
+    const text = pickOutcomeText(outcome, []);
+    expect(text?.title).toBe(s("5 файлов не добавлено"));
+    expect(text?.lines).toEqual([
+      "IMG_2041.heic: формат HEIC не читается — сохраните как JPEG и добавьте снова.",
+      `track.wma: ${mediaReasonRu("format").replace(/^Ф/, "ф")}`,
+      `${s("Ещё 3 файла не просмотрены.")} ${mediaReasonRu("too-many")}`,
+    ]);
+    expect(text?.rest).toBeNull();
+  });
+
+  test("nothing refused and nothing skipped: no card", () => {
+    expect(pickOutcomeText({ refused: [], skipped: 0, jobIds: jobs }, running)).toBeNull();
+  });
+});
+
+describe("deleting a file", () => {
+  test("the confirmation names the file, says the owner's original stays, and what this montage loses", () => {
+    expect(deleteConfirmText(PHOTO, SPEC)).toEqual({ title: "Удалить «croissant.jpg»?", body: "Удалится копия в Studio, ваш исходный файл останется." });
+    expect(deleteConfirmText(VIDEO, SPEC).body).toBe("Удалится копия в Studio, ваш исходный файл останется. В этом ролике он в кадре 3 — кадр будет помечен, пока его не замените.");
+    const withSong = { ...SPEC, music: { source: "own" as const, mediaId: SONG.mediaId, startMs: 0 } };
+    expect(deleteConfirmText(SONG, withSong).body).toBe("Удалится копия в Studio, ваш исходный файл останется. Это музыка ролика — она будет помечена, пока её не замените.");
+    const layer = { layerId: "layer-001", startMs: 0, endMs: 1_000, kind: "sticker" as const, sticker: { source: "own" as const, mediaId: STICKER.mediaId }, x: 0.5, y: 0.5, size: 0.2 };
+    expect(deleteConfirmText(STICKER, { ...SPEC, layers: [layer] }).body).toBe(s("Удалится копия в Studio, ваш исходный файл останется. В ролике он стоит 1 раз — слой будет помечен, пока его не замените."));
+  });
+
+  test("a refusal is said honestly: in a render's use nothing is deleted; gone already; anything else by its error", () => {
+    expect(deleteRefusalText({ code: "IN_FLIGHT", detail: "x" }, "latte-pour.mov")).toBe("«latte-pour.mov» используется в рендере — его нельзя удалить, пока рендер не закончится. Ничего не удалено.");
+    expect(deleteRefusalText({ code: "NOT_FOUND" }, "a.jpg")).toBe("«a.jpg» уже нет в библиотеке.");
+    expect(deleteRefusalText({ code: "INTERNAL" }, "a.jpg")).toBe(ERROR_MESSAGES_RU.INTERNAL);
+  });
+});
+
+describe("one track plays at a time (M9)", () => {
+  test("a row starts its own track (stopping another); the same row again stops it", () => {
+    expect(nextListening(null, "media-a-000001")).toBe("media-a-000001");
+    expect(nextListening("media-a-000001", "media-b-000001")).toBe("media-b-000001");
+    expect(nextListening("media-b-000001", "media-b-000001")).toBeNull();
+  });
+});
+
+describe("what a drag out of the panel carries", () => {
+  test("a scene photo is its id (as the «Фото» tab has it); an own photo or video says so, and a video its length", () => {
+    expect(dragKey({ source: "scene", photoId: "photo-mia-0001" })).toBe("photo-mia-0001");
+    const photo = { source: "own" as const, kind: "photo" as const, mediaId: PHOTO.mediaId };
+    const video = { source: "own" as const, kind: "video" as const, mediaId: VIDEO.mediaId, durationMs: 6_400 };
+    for (const drag of [photo, video, { source: "scene" as const, photoId: "photo-mia-0001" }]) expect(parseDragKey(dragKey(drag))).toEqual(drag);
+  });
+
+  test("a key that is not one of ours is nothing", () => {
+    for (const key of ["", "own-photo:", "own-video:media-x-000001", "own-video:media-x-000001:abc", "own-video:media-x-000001:-5", "own-sound:media-x-000001", "a b"]) expect(parseDragKey(key)).toBeNull();
+  });
+});

@@ -619,14 +619,15 @@ describe("a draft that cannot be opened", () => {
 });
 
 describe("the shell's slots", () => {
-  test("the media tabs: «Фото» with the avatar's photos, «Мои» «Скоро» until 3f; the draft's photos carry their clip number", async () => {
+  test("the media tabs: «Фото» with the avatar's photos, every tab open (3f.6 opened «Мои»); the draft's photos carry their clip number", async () => {
     const { client } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
     const tabs = within(screen.getByRole("tablist", { name: "Тип медиа" })).getAllByRole("tab");
     expect(tabs.map((t) => t.textContent)).toEqual(["Фото", "Мои", "Музыка", "GIF", "Текст"]);
-    // 3d.5 opened «Музыка», «GIF» and «Текст».
-    expect(tabs.map((t) => t.hasAttribute("disabled"))).toEqual([false, true, false, false, false]);
+    // 3d.5 opened «Музыка», «GIF» and «Текст»; 3f.6 «Мои». None says «Скоро» any more.
+    expect(tabs.map((t) => t.hasAttribute("disabled"))).toEqual([false, false, false, false, false]);
+    expect(tabs.some((t) => t.getAttribute("title") === "Свои файлы — скоро")).toBe(false);
     const bin = await screen.findByRole("list", { name: "Фото аватара" });
     expect(within(bin).getAllByRole("listitem")).toHaveLength(6);
     expect(within(bin).getByRole("listitem", { name: /в кадре 1/ })).toBeDefined();
