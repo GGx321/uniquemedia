@@ -4,7 +4,7 @@ import { readFile, stat } from "node:fs/promises";
 import { useNativeGlobals } from "../../../../testing/nativeGlobals";
 import { openFileSource } from "../../../media/video/fileSource";
 import { probeVideo } from "../../../media/video/videoProbe";
-import { lumaGrid, rampIndexOf } from "../mezzanineKit";
+import { frameNumbersOf } from "../mezzanineKit";
 import { RAMP } from "./index";
 useNativeGlobals();
 
@@ -30,8 +30,6 @@ describe("the ramp mezzanine", () => {
   });
 
   test("frame i reads back as i, for all 90 frames (the property every trim test stands on)", () => {
-    const frames = lumaGrid(RAMP.file, 2, 2);
-    expect(frames).toHaveLength(RAMP.frames);
-    expect(frames.map((frame) => rampIndexOf(frame[0] ?? 0))).toEqual(Array.from({ length: RAMP.frames }, (_, i) => i));
+    expect(frameNumbersOf(RAMP.file)).toEqual(Array.from({ length: RAMP.frames }, (_, i) => i));
   });
 });

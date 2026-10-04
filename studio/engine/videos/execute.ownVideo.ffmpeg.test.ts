@@ -12,7 +12,7 @@ import { RenderQueue } from "../renderQueue/queue";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan } from "./execute";
 import type { OwnVideoSource } from "./ownVideos";
 import { RAMP } from "./testing/fixtures/index";
-import { lumaGrid, rampIndexOf } from "./testing/mezzanineKit";
+import { frameNumbersOf } from "./testing/mezzanineKit";
 import { exportFiles, jpegWithArtist, specOf, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
 setDefaultTimeout(120_000);
@@ -81,9 +81,7 @@ describe("a real render of a scene photo and an own video clip", () => {
     expect((await probeVideo(file)).streams.find((s) => s.codec_type === "video")).toMatchObject({ codec_name: "h264", width: 1080, height: 1920 });
     expect(await videoFrames(file)).toBe(60);
     // The video clip is the second second: frames 30 to 59 of the output are frames 30 to 59 of the mezzanine (trim 1.0 s = frame 30).
-    const played = lumaGrid(file, 2, 2)
-      .slice(30)
-      .map((frame) => rampIndexOf(frame[0] ?? 0));
+    const played = frameNumbersOf(file).slice(30);
     expect(played).toEqual(Array.from({ length: 30 }, (_, i) => 30 + i));
   });
 

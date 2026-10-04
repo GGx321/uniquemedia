@@ -5,7 +5,7 @@ import type { Clip, Focus } from "../../shared/engine/montage";
 import { ownVideoIssues } from "../../shared/montage";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { RAMP } from "../videos/testing/fixtures/index";
-import { firstFrameMeans, flatFrames, gradientFrames, importAsMezzanine, lumaGrid, mezzanineOf, rampFrames, rampIndexOf, type Mezzanine } from "../videos/testing/mezzanineKit";
+import { firstFrameMeans, flatFrames, gradientFrames, importAsMezzanine, frameNumbersOf, lumaGrid, mezzanineOf, rampFrames, type Mezzanine } from "../videos/testing/mezzanineKit";
 import { probeVideo, videoFrames } from "./ffmpeg.testkit";
 import { buildPass1 } from "./pass1";
 import { makeWorkDir, removeDir, runPass1 } from "./render.testkit";
@@ -71,18 +71,17 @@ describe("an own video clip on real ffmpeg: which frames it plays", () => {
     { trimStartMs: 0, durationMs: 3_000, from: 0, frames: 90 },
   ])("a clip of $durationMs ms from $trimStartMs ms plays exactly frames $from to $from + $frames of the mezzanine, in order", async ({ trimStartMs, durationMs, from, frames }) => {
     const { output } = await render(ramp, videoClip(ramp, durationMs, trimStartMs));
-    const played = lumaGrid(output, 2, 2).map((frame) => rampIndexOf(frame[0] ?? 0));
-    expect(played).toEqual(Array.from({ length: frames }, (_, i) => from + i));
+    expect(frameNumbersOf(output)).toEqual(Array.from({ length: frames }, (_, i) => from + i));
   });
 
   test("a trim of 0 starts at the mezzanine's very first frame", async () => {
     const { output } = await render(ramp, videoClip(ramp, 500, 0));
-    expect(rampIndexOf(lumaGrid(output, 2, 2)[0]?.[0] ?? -99)).toBe(0);
+    expect(frameNumbersOf(output)[0]).toBe(0);
   });
 
   test("a trim that ends EXACTLY at the mezzanine's end plays its last frame, and not a frame more", async () => {
     const { output, frames } = await render(ramp, videoClip(ramp, 1_000, 2_000));
-    const played = lumaGrid(output, 2, 2).map((frame) => rampIndexOf(frame[0] ?? 0));
+    const played = frameNumbersOf(output);
     expect(frames).toBe(30);
     expect(played[0]).toBe(60);
     expect(played.at(-1)).toBe(RAMP.frames - 1);
@@ -92,7 +91,7 @@ describe("an own video clip on real ffmpeg: which frames it plays", () => {
   test("a clip never plays frames from before its trim: the first frame is the trim's, whatever keyframe it was cut from", async () => {
     // The mezzanine's keyframes are every 30 frames, so a trim of frame 33 is 3 frames after a keyframe.
     const { output } = await render(ramp, videoClip(ramp, 500, 1_100));
-    expect(rampIndexOf(lumaGrid(output, 2, 2)[0]?.[0] ?? -99)).toBe(33);
+    expect(frameNumbersOf(output)[0]).toBe(33);
   });
 });
 

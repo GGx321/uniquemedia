@@ -38,11 +38,14 @@ function raw(width: number, height: number, frames: number, luma: PlaneFill, cb:
   return { width, height, frames, bytes };
 }
 
-/** Frame `i` is a flat grey of luma `16 + 2 * i`: a frame's number can be read back from any pixel of it (`lumaOf`), up to 109 frames. */
-export const rampFrames = (width: number, height: number, frames: number): RawVideo => raw(width, height, frames, (f) => 16 + 2 * f, () => 128, () => 128);
+/** Eight vertical stripes carry the frame's number in binary (bit 0 at the left; a set bit is white, 235, a clear one black, 16): the number survives any lossy encode (`frameNumbersOf`). */
+export const rampFrames = (width: number, height: number, frames: number): RawVideo =>
+  raw(width, height, frames, (f, x) => (Math.floor(f / 2 ** Math.floor((x * 8) / width)) % 2 === 1 ? 235 : 16), () => 128, () => 128);
 
-/** The frame number a decoded luma stands for in `rampFrames` (nearest). */
-export const rampIndexOf = (luma: number): number => Math.round((luma - 16) / 2);
+/** The frame number each frame of `path` carries (see `rampFrames`), read from eight columns of its luma at a threshold of 125. */
+export function frameNumbersOf(path: string): number[] {
+  return lumaGrid(path, 8, 2).map((frame) => frame.slice(0, 8).reduce((sum, luma, bit) => sum + (luma > 125 ? 2 ** bit : 0), 0));
+}
 
 /** A flat colour in Y, Cb, Cr for every frame. */
 export const flatFrames = (width: number, height: number, frames: number, y: number, cb: number, cr: number): RawVideo => raw(width, height, frames, () => y, () => cb, () => cr);

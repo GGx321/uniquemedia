@@ -1,8 +1,8 @@
 // Regenerates the mezzanine fixture of Stage 3's 3f.3b: `bun --no-env-file studio/engine/videos/testing/fixtures/generate.ts`.
 //
 // `ramp-96x192-90f.mp4` is a MEZZANINE, a file as the library stores an own video: made by 3f.3a's REAL importer (`createVideoImporter`), from 90 raw frames written here, so its
-// content is exact. Frame `i` is a flat grey of luma `16 + 2 * i` (and flat 128 chroma), which H.264 CRF 16 stores without any visible error; a test reads a frame's number back
-// from its luma (`rampIndexOf`), and so can tell exactly WHICH frames a clip of it plays. 96 x 192 (a 1:2 portrait), 3 s, constant 30 fps, H.264 BT.709 limited, no audio.
+// content is exact. Frame `i` carries its number in binary as eight vertical stripes, black or white (`rampFrames`), which survives any lossy encode; a test reads a frame's number back
+// (`frameNumbersOf`), and so can tell exactly WHICH frames a clip of it plays. 96 x 192 (a 1:2 portrait), 3 s, constant 30 fps, H.264 BT.709 limited, no audio.
 // The bytes are pinned by size and sha256 in `index.ts`; run this on the machine that made them only when the importer's encode changes, and update `index.ts`.
 
 import { createHash } from "node:crypto";

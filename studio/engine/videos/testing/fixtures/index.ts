@@ -14,11 +14,11 @@ export interface MezzanineFixture {
   readonly durationMs: number;
 }
 
-/** 96 x 192, 90 frames, 3 s: frame `i` is a flat grey of luma `16 + 2 * i` (see `generate.ts`). */
+/** 96 x 192, 90 frames, 3 s: frame `i` carries its number in binary as eight vertical stripes (see `generate.ts`). */
 export const RAMP: MezzanineFixture = {
   file: fileURLToPath(new URL("ramp-96x192-90f.mp4", import.meta.url)),
-  bytes: 4273,
-  sha256: "97e46623e2488f84c8dd36aa271c56d520eab6a53d4d4856a3172de993678735",
+  bytes: 6541,
+  sha256: "61cff8123dcd92d06ff48a7cc9c2c19742d1713df36cf1696eb67935e95dfb8f",
   width: 96,
   height: 192,
   frames: 90,
