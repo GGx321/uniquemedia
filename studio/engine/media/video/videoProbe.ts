@@ -534,8 +534,9 @@ function checkHandlers(m: Uint8Array, view: DataView, trak: BoxRef, budget: Budg
     for (const kid of kids) {
       // The parts that make a STREAM (3f.6 review, H1): ffmpeg's parse table does not look at how deep they are, so `minf/stbl/stsd` directly in a `trak` is a stream that no
       // `mdia` and no `hdlr` introduced (the codec of its sample entry says it is a video). Each is where the walker reads it or nowhere.
+      // Judged AFTER what is inside it (a handler hidden in such a box is still told as a hidden handler).
       const home = STREAM_PART_HOMES[kid.type];
-      if (home !== undefined && !inMeta && path !== home) throw new Refusal("hidden-track-box");
+      const stray = home !== undefined && !inMeta && path !== home;
       if (kid.type === "hdlr") {
         const allowed = inMeta ? !isMediaHandler(m, kid) : path === "trak/mdia" || (path === "trak/mdia/minf" && isDataHandler(m, kid));
         if (!allowed) throw new Refusal("hidden-handler");
@@ -547,6 +548,7 @@ function checkHandlers(m: Uint8Array, view: DataView, trak: BoxRef, budget: Budg
         const list = !inMeta && STRICT_PATHS.has(next) ? childrenOf(m, view, kid.body, kid.end, budget) : lenientChildren(m, view, kid.body, kid.end, budget);
         visit(list, next, inMeta, depth + 1);
       }
+      if (stray) throw new Refusal("hidden-track-box");
     }
   };
   visit(childrenOf(m, view, trak.body, trak.end, budget), "trak", false, 0);
