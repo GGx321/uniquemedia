@@ -55,7 +55,7 @@ import {
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
-import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, totalFrames, trackIssues } from "../../shared/montage";
+import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, totalFrames, trackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
 import { mockStickerBytes, mockStickerUrl } from "./mockStickers";
@@ -450,6 +450,8 @@ interface MockRenderJob {
   /** The job keeps the spec it was queued with: a later save or delete of the draft does not reach it. */
   spec: MontageDraft;
   photoIds: string[];
+  /** The own media the spec names (3f.2): held against `media.delete` while the job is queued or running. */
+  mediaIds: string[];
   status: JobState["status"];
   done: number;
   total: number;
@@ -1364,9 +1366,14 @@ export class MockEngine implements EngineBridge {
       }
       case "media.list":
         return this.ok(c, this.ownMedia.list(c.payload.kind));
-      case "media.delete":
-        if (!this.ownMedia.delete(c.payload.mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${c.payload.mediaId} in the open library` });
-        return this.ok(c, { mediaId: c.payload.mediaId });
+      case "media.delete": {
+        const { mediaId } = c.payload;
+        if (!this.ownMedia.has(mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
+        // The engine asks the render queue's reserved set after it knows the media is there: a queued or running render that names it refuses.
+        if (this.renderJobs.some((job) => isActive(job) && job.mediaIds.includes(mediaId))) return this.fail(c, { code: "IN_FLIGHT", detail: "a queued or running render uses this media; delete it when the render ends" });
+        this.ownMedia.delete(mediaId);
+        return this.ok(c, { mediaId });
+      }
       case "media.cancelImport":
         if (!this.ownMedia.cancel(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no import job ${c.payload.jobId} in this engine` });
         return this.ok(c, { jobId: c.payload.jobId });
@@ -1839,14 +1846,14 @@ export class MockEngine implements EngineBridge {
   /** The engine's `draftIssues`: what a render refuses (structure, then the parts whose slice has not landed), then the referential issues, cut at 64. */
   private draftIssues(spec: MontageDraft): MontageIssue[] {
     const referential: MontageIssue[] = [];
+    // Photos in clip order and cell order, each in its own words: a scene photo that is not usable, an own photo the library does not hold (3f.2).
+    const judge = (photo: { source: "scene"; photoId: string } | { source: "own"; mediaId: string } | null | undefined, path: (string | number)[]): void => {
+      if (photo?.source === "scene" && !this.photoUsable(spec.avatarId, photo.photoId)) referential.push({ code: "photo-unavailable", path });
+      if (photo?.source === "own" && !this.ownMedia.holdsPhoto(photo.mediaId)) referential.push({ code: "media-unavailable", path });
+    };
     spec.clips.forEach((clip, i) => {
-      if (clip.kind === "photo") {
-        if (clip.cell.photo?.source === "scene" && !this.photoUsable(spec.avatarId, clip.cell.photo.photoId)) referential.push({ code: "photo-unavailable", path: ["clips", i, "cell"] });
-      } else if (clip.kind === "collage") {
-        clip.cells.forEach((cell, j) => {
-          if (cell.photo?.source === "scene" && !this.photoUsable(spec.avatarId, cell.photo.photoId)) referential.push({ code: "photo-unavailable", path: ["clips", i, "cells", j] });
-        });
-      }
+      if (clip.kind === "photo") judge(clip.cell.photo, ["clips", i, "cell"]);
+      else if (clip.kind === "collage") clip.cells.forEach((cell, j) => judge(cell.photo, ["clips", i, "cells", j]));
     });
     // The set is in the build: the engine's own function, so the mock and the engine name the same stickers.
     referential.push(...stickerIssues(spec));
@@ -1935,7 +1942,12 @@ export class MockEngine implements EngineBridge {
     const { avatarId, photo } = payload;
     const refusal = this.libraryGate() ?? this.activeAvatarRefusal(avatarId);
     if (refusal) return this.fail(c, refusal);
-    if (photo.source === "own") return this.fail(c, { code: "NOT_FOUND", detail: "own photos are not available yet" });
+    // 3f.2: an own photo must be one the library holds as a photo (NOT_FOUND otherwise: PHOTO_UNAVAILABLE lists scene photos only); its focus is
+    // the face's point when the script says the detector would find one, and none when it would not.
+    if (photo.source === "own") {
+      if (!this.ownMedia.holdsPhoto(photo.mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own photo ${photo.mediaId} in the open library` });
+      return this.ok(c, { focus: this.ownMedia.hasFace(photo.mediaId) ? { ...MOCK_FOCUS } : null });
+    }
     const known = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photo.photoId);
     if (known === undefined || !known.eligible) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
     return this.ok(c, { focus: this.focusOf(avatarId, photo.photoId) });
@@ -2069,6 +2081,10 @@ export class MockEngine implements EngineBridge {
       MAX_MONTAGE_ISSUES,
     );
     if (issues.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues });
+    // 3f.2: then each own photo is looked up (and held) before the export folder is asked: one that is not there is `media-unavailable`
+    // at each of its cells, through the same function the engine's admission uses.
+    const missing = ownPhotoIssues(spec, (mediaId) => this.ownMedia.holdsPhoto(mediaId)).slice(0, MAX_MONTAGE_ISSUES);
+    if (missing.length > 0) return this.fail(c, { code: "MONTAGE_INVALID", issues: missing });
     const reason = this.checkExport(estimateBytesUpper(spec.clips));
     if (reason !== null) return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: reason });
     const refusal = this.libraryGate() ?? this.activeAvatarRefusal(spec.avatarId);
@@ -2088,6 +2104,7 @@ export class MockEngine implements EngineBridge {
       title,
       spec,
       photoIds: cells.map((cell) => cell.photoId),
+      mediaIds: [...new Set(ownPhotoCells(spec).map((cell) => cell.mediaId))],
       status: "queued",
       done: 0,
       total: totalFrames(spec.clips),
