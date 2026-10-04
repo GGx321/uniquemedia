@@ -118,6 +118,9 @@ async function wired() {
     mediaImport: async () => {
       throw new Error("not used");
     },
+    stickerBytes: async () => {
+      throw new Error("not used");
+    },
     engine: (c) => engine.handle(c),
   };
   const ask = async (type: string, payload: unknown = {}) => {

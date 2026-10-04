@@ -34,6 +34,8 @@ import { handleMediaPickCommand } from "./mediaImportFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
 import { createStickerLookup } from "./media/stickers";
+import { handleStickerBytesCommand } from "./stickerBytesFlow";
+import { createStickerAssets } from "../engine/videos/stickerAssets";
 import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES } from "./mediaProtocol";
 import { HostNotices } from "./notices";
 import { appMenuTemplate } from "./appMenu";
@@ -354,6 +356,9 @@ async function startStudio(): Promise<void> {
     sticker: createStickerLookup(STICKER_DIR),
   };
   protocol.handle(MEDIA_SCHEME, (request) => handleMediaRequest(request, mediaDeps));
+  // 3d.4: the preview's sticker decoder reads a built-in sticker's bytes over IPC (`stickers.bytes`), from the catalogue the render
+  // trusts; the media scheme above stays closed to script reads.
+  const stickerAssets = createStickerAssets(STICKER_DIR);
 
   ipcMain.handle(CH.request, (event, raw: unknown) =>
     handleRendererRequest(raw, senderFrameOf(event), TRUSTED, {
@@ -418,6 +423,7 @@ async function startStudio(): Promise<void> {
           newId: randomUUID,
           platform: process.platform,
         }),
+      stickerBytes: (command) => handleStickerBytesCommand(command, { stickers: stickerAssets }),
       engine: (command) => engine.request(command),
     }),
   );

@@ -15,6 +15,7 @@ import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import { isRevealCommand, isRevealFolderCommand, type RevealCommand, type RevealFolderCommand } from "./revealFlow";
 import { isSettingsCommand, type SettingsCommand } from "./settingsFlow";
+import { isStickerBytesCommand, type StickerBytesCommand } from "./stickerBytesFlow";
 
 /** What main knows about the frame an IPC message came from (from `event.senderFrame`). */
 export interface SenderFrame {
@@ -106,6 +107,11 @@ export interface RequestRoutes {
    * over the control channel; the window sends a kind and is never told a path.
    */
   mediaImport(command: MediaPickCommand): Promise<ResponseMessage>;
+  /**
+   * 3d.4 (review round 1): `stickers.bytes {stickerId}`. A built-in sticker's verified bytes for the preview's decoder, from main's
+   * own catalogue, so the media scheme never has to open to script reads; the window names an id and is never told a path.
+   */
+  stickerBytes(command: StickerBytesCommand): Promise<ResponseMessage>;
   /** Everything else, forwarded to the engine. */
   engine(command: EngineCommandMessage): Promise<ResponseMessage>;
 }
@@ -124,6 +130,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
     if (isExportFolderCommand(message)) return routes.exportFolder(message);
     if (isRevealCommand(message)) return routes.reveal(message);
     if (isRevealFolderCommand(message)) return routes.revealFolder(message);
+    if (isStickerBytesCommand(message)) return routes.stickerBytes(message);
     return errorResponseFor(message, { code: "INTERNAL", detail: `${message.type} has no handler in main` });
   }
   if (isSettingsCommand(message)) return routes.settings(message);

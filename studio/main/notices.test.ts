@@ -116,6 +116,9 @@ async function harness() {
         mediaImport: async () => {
           throw new Error("not used");
         },
+        stickerBytes: async () => {
+          throw new Error("not used");
+        },
         engine: (c) => {
           if (engine === null) throw new Error("the engine is not started");
           return engine.handle(c);

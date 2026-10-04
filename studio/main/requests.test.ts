@@ -7,6 +7,7 @@ import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
 import type { RevealCommand, RevealFolderCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
+import type { StickerBytesCommand } from "./stickerBytesFlow";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -34,6 +35,7 @@ function routesSpy() {
   const reveal: RevealCommand[] = [];
   const revealFolder: RevealFolderCommand[] = [];
   const mediaImport: MediaPickCommand[] = [];
+  const stickerBytes: StickerBytesCommand[] = [];
   const engine: EngineCommandMessage[] = [];
   const routes: RequestRoutes = {
     mainOnly: async (command) => {
@@ -68,12 +70,16 @@ function routesSpy() {
       mediaImport.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
     },
+    stickerBytes: async (command) => {
+      stickerBytes.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { stickerId: command.payload.stickerId, apngBase64: "iVBORw0KGgo=" } };
+    },
     engine: async (command) => {
       engine.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, mediaImport, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, mediaImport, stickerBytes, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -429,6 +435,9 @@ describe("handleRendererRequest", () => {
       mediaImport: async () => {
         throw new Error("unreachable");
       },
+      stickerBytes: async () => {
+        throw new Error("unreachable");
+      },
       engine: async () => {
         throw new Error("unreachable");
       },
@@ -500,5 +509,43 @@ describe("media.pickImport routing", () => {
     } finally {
       output.restore();
     }
+  });
+});
+
+// 3d.4 review round 1 (HIGH): the preview's sticker bytes come over IPC from main, never by reading the media scheme. The window
+// names a built-in sticker's id, behind the same trusted-sender check as every request.
+describe("stickers.bytes routing", () => {
+  test("is main's alone: it reaches the sticker route and is never forwarded to the engine", async () => {
+    const { routes, stickerBytes, mediaImport, engine } = routesSpy();
+    const response = await handleRendererRequest(command("stickers.bytes", { stickerId: "heart-pulse" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: true, type: "stickers.bytes", result: { stickerId: "heart-pulse" } });
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(stickerBytes.map((c) => c.payload)).toEqual([{ stickerId: "heart-pulse" }]);
+    expect([mediaImport, engine]).toEqual([[], []]);
+  });
+
+  test("a path, a file name or anything beside a contract id is refused before any route runs", async () => {
+    const { routes, stickerBytes, engine } = routesSpy();
+    for (const payload of [{ stickerId: "heart-pulse", path: "/etc/passwd" }, { stickerId: "../photos/x" }, { stickerId: "heart-pulse.apng" }, {}, "heart-pulse", null]) {
+      const response = await handleRendererRequest(command("stickers.bytes", payload), APP_FRAME, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([stickerBytes, engine]).toEqual([[], []]);
+  });
+
+  test("from a sender that is not the app's own top frame (another page, an iframe, no window) is refused before any route runs", async () => {
+    const { routes, stickerBytes, engine } = routesSpy();
+    const frames: SenderFrame[] = [
+      { url: "data:text/html,<p>x</p>", isTopFrame: true, isAppWindow: true },
+      { url: "https://example.com/", isTopFrame: true, isAppWindow: true },
+      { url: FILE_URL, isTopFrame: false, isAppWindow: true },
+      { url: FILE_URL, isTopFrame: true, isAppWindow: false },
+      { url: null, isTopFrame: true, isAppWindow: true },
+    ];
+    for (const frame of frames) {
+      const response = await handleRendererRequest(command("stickers.bytes", { stickerId: "heart-pulse" }), frame, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([stickerBytes, engine]).toEqual([[], []]);
   });
 });
