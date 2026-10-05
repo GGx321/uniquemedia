@@ -659,6 +659,7 @@ export class MockEngine implements EngineBridge {
   private readonly masterPreflight = new Map<string, EngineError>();
   private focusAvailable = true;
   private skippedDrafts = 0;
+  private notListedDrafts = 0;
   /** The montage drafts, in the order they were made; they outlive a restart, as the real engine's files do. */
   private montages = new Map<string, Montage>();
   /** Drafts deleted in this engine's life: a video's record stops naming them. */
@@ -1161,6 +1162,11 @@ export class MockEngine implements EngineBridge {
   /** `count` draft files could not be read: `montages.list` reports them as `skippedTotal` and leaves them out, never fails. */
   setSkippedDrafts(count: number): void {
     this.skippedDrafts = Math.max(0, count);
+  }
+
+  /** `count` draft files were not even read (there were more than a listing reads): `montages.list` reports them as `notListedTotal`, only when above 0. */
+  setNotListedDrafts(count: number): void {
+    this.notListedDrafts = Math.max(0, count);
   }
 
   /**
@@ -2051,7 +2057,7 @@ export class MockEngine implements EngineBridge {
       issues: this.draftIssues(montage.spec),
       videoCount: this.videos.filter((v) => v.montageId === montage.montageId).length,
     }));
-    return this.ok(c, { items, total: drafts.length, skippedTotal: this.skippedDrafts });
+    return this.ok(c, { items, total: drafts.length, skippedTotal: this.skippedDrafts, ...(this.notListedDrafts > 0 ? { notListedTotal: this.notListedDrafts } : {}) });
   }
 
   private montagesSave(c: CommandMessage, payload: { montageId: string; spec: MontageDraft; name: string | null }): ResponseMessage {

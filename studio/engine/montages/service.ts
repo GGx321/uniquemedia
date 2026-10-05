@@ -350,7 +350,7 @@ export class MontageService {
         videoCount: library.videoCountForMontage(owner, montage.montageId),
       };
     });
-    return { items, total: listing.montages.length, skippedTotal: listing.skipped };
+    return { items, total: listing.montages.length, skippedTotal: listing.skipped, ...(listing.notRead > 0 ? { notListedTotal: listing.notRead } : {}) };
   }
 
   /**

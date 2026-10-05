@@ -405,7 +405,7 @@ describe("DraftStore.list", () => {
     const { library, avatarIds } = await openWithAvatars();
     const [avatarId = ""] = avatarIds;
 
-    expect(await storeOf().list(library, avatarId)).toEqual({ montages: [], skipped: 0, truncated: false });
+    expect(await storeOf().list(library, avatarId)).toEqual({ montages: [], skipped: 0, notRead: 0, truncated: false });
   });
 
   test("a corrupt draft is skipped and counted, and the rest are listed", async () => {
@@ -493,7 +493,9 @@ describe("DraftStore.list", () => {
     const listed = new Set(listing.montages.map((m) => m.montageId));
     for (let n = MAX_DRAFT_FILES_READ; n < total; n++) expect(listed.has(name(n))).toBe(true);
     expect(listing.truncated).toBe(true);
-    expect(listing.skipped).toBe(3); // the files left unread are counted with the skipped ones
+    // The files left unread are NOT unreadable: they are counted apart, so the window never calls a sound draft «не читается».
+    expect(listing.skipped).toBe(0);
+    expect(listing.notRead).toBe(3);
     expect(logs.join("\n")).toMatch(/more draft files than/);
   });
 
@@ -510,7 +512,8 @@ describe("DraftStore.list", () => {
     const listing = await storeOf().list(library);
 
     expect(listing.montages).toHaveLength(MAX_DRAFT_FILES_READ);
-    expect(listing.skipped).toBe(2);
+    expect(listing.skipped).toBe(0);
+    expect(listing.notRead).toBe(2);
     expect(listing.truncated).toBe(true);
     expect(listing.montages.every((m) => m.spec.avatarId === first)).toBe(true);
   });
