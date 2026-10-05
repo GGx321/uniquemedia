@@ -583,9 +583,10 @@ function DraftEditor({
   /**
    * The selection a placement made (the clip a click just added, the cell a click just filled), as the very object `timeline.select` got: a cell
    * selected that way is not a click's target for a REPLACE, so clicking photo after photo keeps adding clips. Any selection the owner makes is a
-   * new object (slice review 5-M5).
+   * new object (slice review 5-M5). A resumed editor starts from the selection it left, a placement's still if it was one (review r1 MEDIUM-1):
+   * the timeline starts from that very object, so the two compare equal again.
    */
-  const [placedSelection, setPlacedSelection] = useState<Selection | null>(null);
+  const [placedSelection, setPlacedSelection] = useState<Selection | null>(() => (kept?.place.placed === true ? kept.place.selection : null));
   // Where a click on a photo goes: the selected cell when it is empty (it is filled), or when the owner selected it (its photo is replaced, one
   // undo step); otherwise a new clip at the end.
   const fillTarget =
@@ -597,12 +598,13 @@ function DraftEditor({
   const commands = useSelectionCommands(session, timeline);
   const [tab, setTab] = useState<MediaTab>(kept?.place.tab ?? "photos");
   // Closing, the editor leaves its session and its place with the window, for the next editor of this draft here (slice review 5-M2).
-  const place = useRef({ tab, timeline });
-  place.current = { tab, timeline };
+  const place = useRef({ tab, timeline, placedSelection });
+  place.current = { tab, timeline, placedSelection };
   useEffect(
     () => () => {
-      const { tab: lastTab, timeline: last } = place.current;
-      sessions.keep(montageId, { session, place: { tab: lastTab, selection: last.selection, playheadMs: playheadStep(last), zoom: last.zoom } });
+      const { tab: lastTab, timeline: last, placedSelection: placedBy } = place.current;
+      const placed = last.selection !== null && last.selection === placedBy;
+      sessions.keep(montageId, { session, place: { tab: lastTab, selection: last.selection, placed, playheadMs: playheadStep(last), zoom: last.zoom } });
     },
     [sessions, montageId, session],
   );

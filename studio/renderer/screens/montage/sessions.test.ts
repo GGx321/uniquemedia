@@ -12,7 +12,7 @@ function rig(montageId = "montage-0000001") {
   const scheduler = new ManualScheduler();
   const saves = manualSaves();
   const session = new DraftSession({ montage: { ...montageOf(version(0)), montageId }, send: saves.send, scheduler });
-  const kept: KeptDraft = { session, place: { tab: "music", selection: { kind: "music" }, playheadMs: 1_200, zoom: 2 } };
+  const kept: KeptDraft = { session, place: { tab: "music", selection: { kind: "music" }, placed: false, playheadMs: 1_200, zoom: 2 } };
   return { scheduler, saves, session, kept };
 }
 
@@ -32,7 +32,7 @@ describe("the editors kept by the window", () => {
     const resumed = sessions.resume("montage-0000001");
     expect(resumed?.session).toBe(session);
     expect(resumed?.session.state.canUndo).toBe(true);
-    expect(resumed?.place).toEqual({ tab: "music", selection: { kind: "music" }, playheadMs: 1_200, zoom: 2 });
+    expect(resumed?.place).toEqual({ tab: "music", selection: { kind: "music" }, placed: false, playheadMs: 1_200, zoom: 2 });
     // Resuming does not use it up: a second editor of the same draft (StrictMode's remount) finds it too.
     expect(sessions.resume("montage-0000001")?.session).toBe(session);
   });

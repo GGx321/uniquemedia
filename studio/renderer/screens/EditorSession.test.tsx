@@ -96,6 +96,32 @@ describe("from the editor to Settings and back", () => {
     expect(undoButton().hasAttribute("disabled")).toBe(false);
   });
 
+  test("review r1 MEDIUM-1: a clip a click just added stays a placement's selection across the trip: the next click adds another clip", async () => {
+    const { client } = await studio();
+    await openDraft(client);
+    const bin = (): HTMLElement => screen.getByRole("list", { name: "Фото аватара" });
+    const freeTile = (): HTMLElement => {
+      const item = within(bin()).getAllByRole("listitem").find((li) => (li.getAttribute("aria-label") ?? "").endsWith("не использовано"));
+      const button = item === undefined ? undefined : within(item).getAllByRole("button")[0];
+      if (button === undefined) throw new Error("no free photo in the bin");
+      return button;
+    };
+    fireEvent.click(freeTile());
+    await flush();
+    expect(clipCount()).toBe(5);
+    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
+    await screen.findByRole("heading", { level: 1, name: "Настройки" });
+    fireEvent.click(screen.getByRole("button", { name: /^К черновику/ }));
+    await screen.findByRole("region", { name: "Таймлайн" });
+    await flush();
+    // The clip just added is still selected, and still not a target for a replace.
+    expect(within(timeline()).getByRole("button", { name: /^Кадр 5/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(freeTile().getAttribute("aria-label")).toMatch(/: добавить кадр в конец ролика$/);
+    fireEvent.click(freeTile());
+    await flush();
+    expect(clipCount()).toBe(6);
+  });
+
   test("Settings opened from anywhere else has no way back to a draft", async () => {
     await studio();
     fireEvent.click(screen.getByRole("button", { name: "Настройки" }));

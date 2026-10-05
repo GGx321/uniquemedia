@@ -19,6 +19,8 @@ export const KEPT_DRAFTS = 8;
 export interface EditorPlace {
   readonly tab: MediaTab;
   readonly selection: Selection | null;
+  /** The selection is a placement's (the clip a click just added, the cell a click just filled): a click in the media panel adds, not replaces. */
+  readonly placed: boolean;
   readonly playheadMs: number;
   readonly zoom: number;
 }
