@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import { link, lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
@@ -357,14 +358,56 @@ export class MediaRecords {
     if ((await lstat(from).then((info) => info.size, () => -1)) !== bytes) return false;
     // A copy is hashed only while the budget lasts and the recover is not stopped: a slow disk must not hold every open (and every listing behind it) for minutes.
     if (signal?.aborted === true || bytes > budget.left) return false;
+    // Charged before the read: a copy that cannot be read is charged on every open (accepted; see the plan's backlog).
     budget.left -= bytes;
-    const found = await (this.#options.fs?.hash ?? hashFile)(from, signal).catch(() => null);
-    if (found === null) return false;
+    let found: string;
+    let identity: BigIntStats | undefined;
+    try {
+      const seam = this.#options.fs?.hash;
+      if (seam === undefined) {
+        // Read from an opened handle, so that what was hashed and what is named later are one file or are known to differ.
+        const read = await hashCopy(from, signal, this.#options.ops);
+        found = read.sha256;
+        identity = read.identity;
+      } else {
+        identity = await lstat(from, { bigint: true }).catch(() => undefined);
+        found = await seam(from, signal);
+      }
+    } catch {
+      return false;
+    }
     if (found === sha256) return true;
-    // Read to the end and not the record's file: set aside under another name (never deleted; the name is one no scan looks up), so that no later open hashes it again and
-    // spends its budget on it.
-    await this.#rename(from, `${from}.mismatch`).catch(() => undefined);
+    await this.#setMismatchAside(from, identity);
     return false;
+  }
+
+  /**
+   * A copy that was read to the end and is not the record's file is set aside under a free `.mismatch` name (never deleted, never over another: the name is one no scan looks
+   * up), so that no later open hashes it again and spends its budget on it. Only if it is still the file that was read: a sync client may have renamed another over it meanwhile,
+   * and that one is left for the next open to judge.
+   */
+  async #setMismatchAside(from: string, read: BigIntStats | undefined): Promise<void> {
+    if (read === undefined) return;
+    const now = await lstat(from, { bigint: true }).catch(() => null);
+    if (now === null || now.dev !== read.dev || now.ino !== read.ino || now.size !== read.size || now.mtimeNs !== read.mtimeNs) return;
+    for (let n = 0; n < 1000; n++) {
+      const target = n === 0 ? `${from}.mismatch` : `${from}.mismatch-${n}`;
+      try {
+        await (this.#options.fs?.link ?? link)(from, target);
+        await this.#unlink(from).catch(() => undefined);
+        return;
+      } catch (error) {
+        if (hasErrorCode(error, "EEXIST")) continue;
+        // No hard links here: a look, then a rename, only to a name that is free.
+        const taken = await lstat(target).then(
+          () => true,
+          () => false,
+        );
+        if (taken) continue;
+        await this.#rename(from, target).catch(() => undefined);
+        return;
+      }
+    }
   }
 
   /**
@@ -529,19 +572,22 @@ export class MediaRecords {
     // right size with the wrong content, and a record that cannot be trusted are each skipped, and the next copy is tried.
     // `stopped` is not `none`: a recover that was stopped did not find that there is no copy, and must not act as if it had (an orphan file would be set aside while its record
     // sits in the quarantine, and the pair never meet again).
-    const bringBack = async (name: string, fits: (from: string) => Promise<boolean>): Promise<"restored" | "none" | "stopped"> => {
+    // `kept` is not `none` either: a copy EXISTS but was not brought back (it did not fit, could not be read for a moment, or the move was refused by a lock or a sync client, or the
+    // name is taken already). Only «no copy at all» lets an orphan file be set aside; with a copy in the quarantine the file stays in `media/` and the next open tries again.
+    const bringBack = async (name: string, fits: (from: string) => Promise<boolean>): Promise<"restored" | "none" | "kept" | "stopped"> => {
       const copies = (held ??= await this.#quarantinedMedia());
       for (const from of copies.get(name) ?? []) {
-        if (signal?.aborted === true) return "stopped";
+        if (stopped()) return "stopped";
         const fitted = await fits(from);
         if (stopped()) return "stopped";
         if (!fitted) continue;
-        if (!(await this.#restore(from, name))) return "none";
+        if (!(await this.#restore(from, name))) return "kept";
         copies.set(name, (copies.get(name) ?? []).filter((path) => path !== from));
         restored++;
         return "restored";
       }
-      return signal?.aborted === true ? "stopped" : "none";
+      if (stopped()) return "stopped";
+      return (copies.get(name)?.length ?? 0) > 0 ? "kept" : "none";
     };
     const enterJudged = async (recordName: string): Promise<void> => {
       const again = await this.#judge(recordName);
@@ -554,7 +600,7 @@ export class MediaRecords {
     }
     // In the order of their names, so that what a restart lists never depends on the disk's own listing order.
     for (const entry of [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
-      if (signal?.aborted === true) break;
+      if (stopped()) break;
       const match = RECORD_NAME.exec(entry.name);
       if (match === null || !entry.isFile()) continue;
       const judged = await this.#judge(entry.name);
@@ -566,14 +612,14 @@ export class MediaRecords {
     // go first, so that the hashing budget is spent on the most records; a record the budget did not reach stays `missing-file` and the next open carries on.
     dangling.sort((a, b) => a.bytes - b.bytes || (a.recordName < b.recordName ? -1 : a.recordName > b.recordName ? 1 : 0));
     for (const item of dangling) {
-      if (signal?.aborted === true) break;
+      if (stopped()) break;
       const outcome = await bringBack(item.file, (from) => this.#fitsFile(from, item.bytes, item.sha256, budget, signal));
       if (outcome === "stopped") break;
       if (outcome === "restored") await enterJudged(item.recordName);
       else problems.push({ file: item.recordName, reason: "missing-file" });
     }
     for (const entry of entries) {
-      if (signal?.aborted === true) break;
+      if (stopped()) break;
       if (!entry.isFile() || !ORPHAN_NAME.test(entry.name)) continue;
       const id = entry.name.slice(0, entry.name.lastIndexOf("."));
       // Judged AFTER the listing: a commit that ended since has its record in the index now, and its file is no orphan.
@@ -586,6 +632,8 @@ export class MediaRecords {
         await enterJudged(`${id}.json`);
         continue;
       }
+      // A copy of its record exists and was not brought back (a lock, a name taken, a read that failed): the file stays beside the record it will meet.
+      if (found === "kept") continue;
       const outcome = await this.#setAside(quarantine, join(this.#dir, entry.name));
       if (outcome === "moved") quarantinedOrphans++;
       else if (outcome === "failed") notSetAside++;
@@ -686,22 +734,8 @@ export class MediaRecords {
     const path = join(this.#dir, `${held.id}.json`);
     try {
       if ((await this.#dirState()) !== "ok") return undefined;
-      const handle = await openRegularNoFollow(path, this.#options.ops === undefined ? {} : { ops: this.#options.ops });
-      let text: string;
-      try {
-        if ((await handle.stat()).size > MAX_RECORD_FILE_BYTES) return undefined;
-        const buffer = Buffer.alloc(MAX_RECORD_FILE_BYTES + 1);
-        let filled = 0;
-        while (filled < buffer.length) {
-          const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
-          if (bytesRead === 0) break;
-          filled += bytesRead;
-        }
-        if (filled > MAX_RECORD_FILE_BYTES) return undefined;
-        text = buffer.subarray(0, filled).toString("utf8");
-      } finally {
-        await handle.close();
-      }
+      const text = await this.#readRecordCopy(path);
+      if (text === undefined) return undefined;
       const parsed = RecordWaveform.safeParse(JSON.parse(text));
       return parsed.success && parsed.data.id === held.id ? parsed.data.waveform : undefined;
     } catch {
@@ -887,6 +921,29 @@ function compareStamps(a: string, b: string): number {
   if (right === null) return 1;
   if (left.base !== right.base) return left.base < right.base ? -1 : 1;
   return left.n - right.n;
+}
+
+/**
+ * The sha256 of a file read from an OPENED handle (a link, a folder or a FIFO is refused, and the handle must be the file the name led to), with that handle's identity, under
+ * `signal` (checked between chunks; an abort rejects with an AbortError).
+ */
+async function hashCopy(path: string, signal: AbortSignal | undefined, ops: OpenRegularOps | undefined): Promise<{ sha256: string; identity: BigIntStats }> {
+  const handle = await openRegularNoFollow(path, ops === undefined ? {} : { ops });
+  try {
+    const identity = await handle.stat({ bigint: true });
+    const hash = createHash("sha256");
+    const chunk = Buffer.alloc(1024 * 1024);
+    for (let at = 0; ; ) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(chunk, 0, chunk.length, at);
+      if (bytesRead === 0) break;
+      hash.update(chunk.subarray(0, bytesRead));
+      at += bytesRead;
+    }
+    return { sha256: hash.digest("hex"), identity };
+  } finally {
+    await handle.close();
+  }
 }
 
 /** The sha256 of a file, read as a stream under `signal` (an abort rejects the read with an AbortError). */

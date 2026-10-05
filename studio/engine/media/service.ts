@@ -156,7 +156,7 @@ export class MediaService {
 
   // ---------- the library's areas ----------
 
-  #newArea(root: string): Area {
+  #newArea(root: string, replaced?: Area): Area {
     const importers = this.#deps.importers ?? {};
     const staging = new MediaStaging({
       ...this.#deps.staging,
@@ -176,6 +176,9 @@ export class MediaService {
     // An area made after the service stopped is born stopped: nothing is hashed for it.
     if (this.#stopping) closing.abort();
     const ready = (async () => {
+      // The recovery of the area this one replaces was stopped (it is let go of in `libraryOpened`) and ends quickly: this one starts after it, so that two never read the
+      // quarantine, or rename a copy in it, at once.
+      await replaced?.ready.catch(() => undefined);
       await records.recover({ signal: closing.signal });
       await staging.sweep();
     })().catch(() => this.#deps.log("a library's own media could not be read at its opening"));
@@ -206,7 +209,7 @@ export class MediaService {
     }
     // The area that is replaced is let go: a recovery still hashing for it must not hold the disk for a library that is read afresh.
     known?.closing.abort();
-    this.#areas.set(library.root, this.#newArea(library.root));
+    this.#areas.set(library.root, this.#newArea(library.root, known));
   }
 
   // ---------- media.import ----------

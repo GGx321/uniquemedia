@@ -1330,3 +1330,127 @@ describe("the restore, stopped and starved (review round 6)", () => {
     expect(reopened.get(summary.mediaId)?.name).toBe("summer.jpg");
   });
 });
+
+describe("a copy that exists but was not brought back keeps its other half where it is (review round 7)", () => {
+  async function stamp(name: string, files: Record<string, string>): Promise<string> {
+    const folder = join(root(), "quarantine", name, "media");
+    await mkdir(folder, { recursive: true });
+    for (const [file, text] of Object.entries(files)) await writeFile(join(folder, file), text);
+    return folder;
+  }
+  const eperm = async (): Promise<void> => {
+    throw Object.assign(new Error("EPERM: operation not permitted"), { code: "EPERM" });
+  };
+  /** An orphan file in media/ whose record copy is in the quarantine. */
+  async function orphanWithQuarantinedRecord(): Promise<{ id: string; folder: string }> {
+    const summary = await records().commit(await photoInput());
+    const record = await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8");
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "gone.json"));
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [`${summary.mediaId}.json`]: record });
+    return { id: summary.mediaId, folder };
+  }
+
+  test("a record copy that cannot be brought back (a lock, a sync client: link and rename both refused) does not get its file set aside; a later open with a working link pairs them", async () => {
+    const { id, folder } = await orphanWithQuarantinedRecord();
+    const locked = records({ fs: { link: eperm, rename: eperm } });
+    const first = await locked.recover();
+    expect(first.quarantinedOrphans).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${id}.jpg`]);
+    expect(await readdir(folder)).toEqual([`${id}.json`]);
+    const later = records();
+    const second = await later.recover();
+    expect(second.restored).toBe(1);
+    expect(later.list().media.map((m) => m.mediaId)).toEqual([id]);
+  });
+
+  test("a record that is back in media/ already (the restore meets EEXIST) does not get its file set aside", async () => {
+    const { id } = await orphanWithQuarantinedRecord();
+    const reopened = records({
+      fs: {
+        link: async () => {
+          throw Object.assign(new Error("exists"), { code: "EEXIST" });
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.quarantinedOrphans).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${id}.jpg`]);
+  });
+
+  test("a record copy that cannot be read for a moment (the open is refused as changed) does not get its file set aside", async () => {
+    const { id } = await orphanWithQuarantinedRecord();
+    const reopened = records({
+      ops: {
+        lstat: (path) => lstat(path, { bigint: true }),
+        open: async (path, flags) => {
+          if (path.includes("quarantine")) throw Object.assign(new Error("busy"), { code: "EBUSY" });
+          return open(path, flags);
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.quarantinedOrphans).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${id}.jpg`]);
+  });
+
+  test("an orphan with no copy of its record anywhere is still set aside", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    const report = await records().recover();
+    expect(report.quarantinedOrphans).toBe(1);
+  });
+
+  test("a copy with the wrong hash is moved to a .mismatch name that is free: an earlier .mismatch is never overwritten", async () => {
+    const summary = await records().commit(await photoInput());
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "away.jpg"));
+    const file = `${summary.mediaId}.jpg`;
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [file]: "PHOTO BYTES", [`${file}.mismatch`]: "an earlier mismatch" });
+    await records().recover();
+    expect(await readFile(join(folder, `${file}.mismatch`), "utf8")).toBe("an earlier mismatch");
+    expect(await readFile(join(folder, `${file}.mismatch-1`), "utf8")).toBe("PHOTO BYTES");
+    expect(await readdir(folder)).not.toContain(file);
+  });
+
+  test("a copy that was replaced while it was hashed is not renamed: the new file is not the one that was read, and the next open judges it", async () => {
+    const summary = await records().commit(await photoInput());
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "away.jpg"));
+    const file = `${summary.mediaId}.jpg`;
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [file]: "PHOTO BYTES" });
+    const replacement = join(tmp(), "replacement.jpg");
+    await writeFile(replacement, "photo bytes");
+    const reopened = records({
+      fs: {
+        hash: async () => {
+          // A sync client renames a new file over the copy while it is being read.
+          await rename(replacement, join(folder, file));
+          return "0".repeat(64);
+        },
+      },
+    });
+    await reopened.recover();
+    expect(await readdir(folder)).toEqual([file]);
+    expect(await readFile(join(folder, file), "utf8")).toBe("photo bytes");
+    const later = records();
+    const report = await later.recover();
+    expect(report.restored).toBe(1);
+  });
+
+  test("a stop that comes while a copy is hashed leaves it in the quarantine even when the hash that comes back is the right one", async () => {
+    const summary = await records().commit(await photoInput());
+    const sha = (JSON.parse(await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8")) as { sha256: string }).sha256;
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "away.jpg"));
+    const file = `${summary.mediaId}.jpg`;
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [file]: "photo bytes" });
+    const controller = new AbortController();
+    const reopened = records({
+      fs: {
+        hash: async () => {
+          controller.abort();
+          return sha;
+        },
+      },
+    });
+    const report = await reopened.recover({ signal: controller.signal });
+    expect(report.restored).toBe(0);
+    expect(await readdir(folder)).toEqual([file]);
+  });
+});

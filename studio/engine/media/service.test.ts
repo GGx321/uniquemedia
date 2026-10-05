@@ -1255,6 +1255,41 @@ describe("a library's recovery can be stopped (review round 5)", () => {
     await r.service.settled();
   });
 
+  test("the recovery of a re-opened library starts only after the one it replaced has ended: two never read the quarantine at once", async () => {
+    await libraryNeedingAHash();
+    const events: string[] = [];
+    let calls = 0;
+    const r = rig({
+      records: {
+        fs: {
+          hash: (_path, signal) => {
+            const n = ++calls;
+            events.push(`start ${n}`);
+            if (n > 1) return Promise.resolve("0".repeat(64));
+            return new Promise<string>((_resolve, reject) =>
+              signal?.addEventListener(
+                "abort",
+                () => {
+                  // The old recovery takes a moment to let go of its read.
+                  setTimeout(() => {
+                    events.push("end 1");
+                    reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError", code: "ABORT_ERR" }));
+                  }, 40);
+                },
+                { once: true },
+              ),
+            );
+          },
+        },
+      },
+    });
+    r.service.libraryOpened({ root: libraryRoot() });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    r.service.libraryOpened({ root: libraryRoot() });
+    await r.service.settled();
+    expect(events).toEqual(["start 1", "end 1", "start 2"]);
+  });
+
   test("a library opened after the service stopped gets a recovery that is already stopped: nothing is hashed", async () => {
     await libraryNeedingAHash();
     let hashed = 0;
