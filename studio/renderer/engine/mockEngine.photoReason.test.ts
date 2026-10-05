@@ -34,6 +34,28 @@ describe("PHOTO_UNAVAILABLE photoReason", () => {
     expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "pending-video" } });
   });
 
+  test("videos.render: the reason is judged over EVERY refused cell, not only the 64 the answer lists (the engine's commonPhotoReason)", async () => {
+    // 68 photos: the first 64 are in a video, the last 4 are rejected. The answer lists 64 cells (all in-video), but the causes differ, so there is no single reason.
+    const photos = Array.from({ length: 68 }, (_, i) => (i < 64 ? scenePhoto(i + 1, { used: true, usedIn: ["video-seeded-0001"] }) : scenePhoto(i + 1, { rejected: true, eligible: false })));
+    const mock = makeMock({ photos });
+    const clips = Array.from({ length: 17 }, (_, c) => ({
+      clipId: `clip-${String(c + 1).padStart(8, "0")}`,
+      kind: "collage" as const,
+      layout: "collage4" as const,
+      cells: [0, 1, 2, 3].map((j) => ({ photo: { source: "scene" as const, photoId: photos[c * 4 + j]?.photoId ?? "" }, focus: null })),
+      motion: "static" as const,
+      stagger: false,
+      durationMs: 800,
+      transitionIn: "cut" as const,
+    }));
+
+    const reply = await mock.client.request("videos.render", { spec: { schemaVersion: 1, avatarId: MIA.avatarId, layers: [], music: null, seed: 7, clips } });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE" } });
+    expect(reply.ok ? 0 : reply.error.issues?.length).toBe(64);
+    expect(reply.ok ? "ok" : reply.error.photoReason).toBeUndefined();
+  });
+
   test("videos.render: a draft naming a photo only an unfinished video's intent holds is refused with pending-video", async () => {
     const mock = makeMock();
     const draft = await draftOf(mock, [P1, P2]);

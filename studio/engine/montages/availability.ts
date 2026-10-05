@@ -34,9 +34,10 @@ export function refusalReasonOf(state: PhotoState | undefined, onlyPending: bool
 export function photoAvailability(library: Library, avatarId: string, log?: (line: string) => void): Availability {
   try {
     const free = new Set(library.eligibleUnusedPhotos(avatarId).map((photo) => photo.id));
-    const states = library.photoStates(avatarId);
-    const pending = library.pendingVideoPhotos(avatarId);
-    return { state: "known", usable: (photoId) => free.has(photoId), why: (photoId) => refusalReasonOf(states.get(photoId), pending.has(photoId)) };
+    // The states and the pending holds are read only when a reason is asked for (a refusal), not for every listing that merely asks `usable`.
+    let held: { states: Map<string, PhotoState>; pending: ReadonlySet<string> } | undefined;
+    const holds = (): { states: Map<string, PhotoState>; pending: ReadonlySet<string> } => (held ??= { states: library.photoStates(avatarId), pending: library.pendingVideoPhotos(avatarId) });
+    return { state: "known", usable: (photoId) => free.has(photoId), why: (photoId) => refusalReasonOf(holds().states.get(photoId), holds().pending.has(photoId)) };
   } catch (error) {
     if (error instanceof LibraryError) {
       const none = (): boolean => false;

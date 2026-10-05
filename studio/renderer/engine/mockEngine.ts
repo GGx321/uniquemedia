@@ -1988,8 +1988,9 @@ export class MockEngine implements EngineBridge {
   }
 
   /** PHOTO_UNAVAILABLE for the refused photos of a sound avatar, with the reason they share (the engine's `commonPhotoReason`). */
-  private refusedPhotos(avatarId: string, refused: readonly { photoId: string; issue: MontageIssue }[]): EngineError {
-    const photoReason = commonPhotoReason(refused.map((r) => this.photoRefusalReason(avatarId, r.photoId)));
+  private refusedPhotos(avatarId: string, refused: readonly { photoId: string; issue: MontageIssue }[], all: readonly { photoId: string }[] = refused): EngineError {
+    // The reason is judged over every refused cell, as the engine does, though the answer lists at most MAX_MONTAGE_ISSUES of them.
+    const photoReason = commonPhotoReason(all.map((r) => this.photoRefusalReason(avatarId, r.photoId)));
     return { code: "PHOTO_UNAVAILABLE", issues: refused.map((r) => r.issue), ...(photoReason === undefined ? {} : { photoReason }) };
   }
 
@@ -2287,7 +2288,7 @@ export class MockEngine implements EngineBridge {
     const refusedCells = unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ photoId: cell.photoId, issue: { code: "photo-unavailable" as const, path: cell.path } }));
     const usageRefusal = this.usageRefusal(spec.avatarId, refusedCells.map((r) => r.issue));
     if (usageRefusal !== null) return this.fail(c, usageRefusal);
-    if (unavailable.length > 0) return this.fail(c, this.refusedPhotos(spec.avatarId, refusedCells));
+    if (unavailable.length > 0) return this.fail(c, this.refusedPhotos(spec.avatarId, refusedCells, unavailable));
     if (this.renderJobs.filter(isActive).length >= this.renderQueueLimit) {
       return this.fail(c, { code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(this.renderQueueLimit) });
     }
