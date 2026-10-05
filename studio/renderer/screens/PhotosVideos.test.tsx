@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { USAGE_UNKNOWN_REASONS_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll, setup, tick } from "../testing";
+import { callsOf, describeElement, flush, focusedLabel, runAll, setup, tick } from "../testing";
 
 // 3e.2: the Photos screen as the owner uses it: the header's counts from the avatar's summary (refreshed by `avatar.changed`),
 // the «использование неизвестно» state with its two recoveries, the gallery's filters with reject and restore, and the «Видео»
@@ -362,17 +362,17 @@ describe("the «Видео» tab", () => {
     watch.focus();
     fireEvent.click(watch);
     const close = within(screen.getByRole("dialog", { name: "пляж" })).getByRole("button", { name: "Закрыть" });
-    expect(document.activeElement).toBe(close);
+    expect(focusedLabel()).toBe(describeElement(close));
     // «Закрыть» is the only control (the dev mock plays no video): Tab either way keeps the focus on it.
     expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(false);
     expect(fireEvent.keyDown(close, { key: "Tab", shiftKey: true })).toBe(false);
-    expect(document.activeElement).toBe(close);
+    expect(focusedLabel()).toBe(describeElement(close));
     // A focus that strayed behind the dialog is brought back by the next Tab.
     watch.focus();
     expect(fireEvent.keyDown(watch, { key: "Tab" })).toBe(false);
-    expect(document.activeElement).toBe(close);
+    expect(focusedLabel()).toBe(describeElement(close));
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(document.activeElement).toBe(watch);
+    expect(focusedLabel()).toBe(describeElement(watch));
   });
 
   test("renders on their way are cards: running with its frames and «Отменить», queued «после 1 рендера» with «Убрать из очереди»", async () => {
