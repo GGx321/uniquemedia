@@ -1242,7 +1242,7 @@ describe("a library's recovery can be stopped (review round 5)", () => {
         fs: {
           hash: (_path, signal) => {
             seen = signal;
-            return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+            return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError", code: "ABORT_ERR" })), { once: true }));
           },
         },
       },
@@ -1255,6 +1255,16 @@ describe("a library's recovery can be stopped (review round 5)", () => {
     await r.service.settled();
   });
 
+  test("a library opened after the service stopped gets a recovery that is already stopped: nothing is hashed", async () => {
+    await libraryNeedingAHash();
+    let hashed = 0;
+    const r = rig({ records: { fs: { hash: async () => (hashed++, "x") } } });
+    await r.service.stop();
+    r.service.libraryOpened({ root: libraryRoot() });
+    await r.service.settled();
+    expect(hashed).toBe(0);
+  });
+
   test("a library that is opened again replaces the recovery of the old one, and the old one is stopped", async () => {
     await libraryNeedingAHash();
     const seen: AbortSignal[] = [];
@@ -1263,7 +1273,7 @@ describe("a library's recovery can be stopped (review round 5)", () => {
         fs: {
           hash: (_path, signal) => {
             if (signal !== undefined) seen.push(signal);
-            return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+            return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError", code: "ABORT_ERR" })), { once: true }));
           },
         },
       },

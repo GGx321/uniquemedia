@@ -221,6 +221,8 @@ export interface MediaRecordsOptions {
   readonly hooks?: {
     /** After the file is in its place and before the record is written. */
     readonly afterFileStored?: () => void | Promise<void>;
+    /** Before the quarantine's stamps are listed for a piece to bring back (a test stops the recover here). */
+    readonly beforeQuarantineScan?: () => void | Promise<void>;
     /** After the record's temp file is durable and before it is renamed into place (`writeFileAtomic`'s own seam). */
     readonly beforeRecordRename?: (finalPath: string) => void | Promise<void>;
     /** Says that an error is a crash: the commit then does not clean up after it, because a crash cannot (the disk is left as it is). Never set in the app. */
@@ -326,6 +328,7 @@ export class MediaRecords {
    * are read (`quarantine/` and each `<stamp>/media`: a link or a junction is refused, as `media/` is), and only plain files in them. Empty when there is none or it cannot be read.
    */
   async #quarantinedMedia(): Promise<Map<string, string[]>> {
+    await this.#options.hooks?.beforeQuarantineScan?.();
     const found = new Map<string, string[]>();
     const parent = join(this.#options.root, QUARANTINE_DIR);
     if (!(await this.#plainFolderInRoot(parent))) return found;
@@ -355,7 +358,34 @@ export class MediaRecords {
     // A copy is hashed only while the budget lasts and the recover is not stopped: a slow disk must not hold every open (and every listing behind it) for minutes.
     if (signal?.aborted === true || bytes > budget.left) return false;
     budget.left -= bytes;
-    return (await (this.#options.fs?.hash ?? hashFile)(from, signal).catch(() => null)) === sha256;
+    const found = await (this.#options.fs?.hash ?? hashFile)(from, signal).catch(() => null);
+    if (found === null) return false;
+    if (found === sha256) return true;
+    // Read to the end and not the record's file: set aside under another name (never deleted; the name is one no scan looks up), so that no later open hashes it again and
+    // spends its budget on it.
+    await this.#rename(from, `${from}.mismatch`).catch(() => undefined);
+    return false;
+  }
+
+  /**
+   * The text of a quarantined record copy, or undefined: opened as the staging opens a file (a link, a folder or a FIFO is refused, and the handle must be the file the
+   * name led to) and read FROM THE HANDLE, at most the record bound plus one byte, so that a file that grows after a look at its size cannot be read whole.
+   */
+  async #readRecordCopy(path: string): Promise<string | undefined> {
+    const handle = await openRegularNoFollow(path, this.#options.ops === undefined ? {} : { ops: this.#options.ops });
+    try {
+      if ((await handle.stat()).size > MAX_RECORD_FILE_BYTES) return undefined;
+      const buffer = Buffer.alloc(MAX_RECORD_FILE_BYTES + 1);
+      let filled = 0;
+      while (filled < buffer.length) {
+        const { bytesRead } = await handle.read(buffer, filled, buffer.length - filled, filled);
+        if (bytesRead === 0) break;
+        filled += bytesRead;
+      }
+      return filled > MAX_RECORD_FILE_BYTES ? undefined : buffer.subarray(0, filled).toString("utf8");
+    } finally {
+      await handle.close();
+    }
   }
 
   /**
@@ -365,9 +395,9 @@ export class MediaRecords {
    */
   async #fitsRecord(from: string, recordName: string): Promise<boolean> {
     try {
-      const info = await lstat(from);
-      if (!info.isFile() || info.size > MAX_RECORD_FILE_BYTES) return false;
-      const parsed = RecordShape.safeParse(JSON.parse(await readFile(from, "utf8")));
+      const text = await this.#readRecordCopy(from);
+      if (text === undefined) return false;
+      const parsed = RecordShape.safeParse(JSON.parse(text));
       if (!parsed.success || !this.#trusted(parsed.data, recordName)) return false;
       const size = await lstat(join(this.#dir, parsed.data.file)).then((info) => (info.isFile() ? info.size : -1), () => -1);
       return size === parsed.data.bytes;
@@ -465,6 +495,8 @@ export class MediaRecords {
    */
   async recover(options: { readonly signal?: AbortSignal } = {}): Promise<MediaRecoveryReport> {
     const signal = options.signal;
+    // A function, so that TypeScript does not read the first answer as the answer for the whole recover.
+    const stopped = (): boolean => signal?.aborted === true;
     const budget = { left: this.#options.hashBudgetBytes ?? RECOVER_HASH_BUDGET_BYTES };
     const empty: MediaRecoveryReport = { listed: 0, quarantinedOrphans: 0, restored: 0, problems: [], unusable: false };
     const state = await this.#dirState();
@@ -492,18 +524,24 @@ export class MediaRecords {
     let restored = 0;
     const quarantine = new Quarantine(this.#options.root, this.#options.now, this.#options.quarantineDurability);
     let held: Map<string, string[]> | undefined;
+    const dangling: { recordName: string; file: string; bytes: number; sha256: string }[] = [];
     // Brings a piece back from the quarantine: the newest copy that `fits` (see `#fitsRecord` and `#fitsFile`). A partial copy a sync left in a newer or older stamp, a copy of the
     // right size with the wrong content, and a record that cannot be trusted are each skipped, and the next copy is tried.
-    const bringBack = async (name: string, fits: (from: string) => Promise<boolean>): Promise<boolean> => {
-      for (const from of (held ??= await this.#quarantinedMedia()).get(name) ?? []) {
-        if (signal?.aborted === true) return false;
-        if (!(await fits(from))) continue;
-        if (!(await this.#restore(from, name))) return false;
-        held.set(name, (held.get(name) ?? []).filter((path) => path !== from));
+    // `stopped` is not `none`: a recover that was stopped did not find that there is no copy, and must not act as if it had (an orphan file would be set aside while its record
+    // sits in the quarantine, and the pair never meet again).
+    const bringBack = async (name: string, fits: (from: string) => Promise<boolean>): Promise<"restored" | "none" | "stopped"> => {
+      const copies = (held ??= await this.#quarantinedMedia());
+      for (const from of copies.get(name) ?? []) {
+        if (signal?.aborted === true) return "stopped";
+        const fitted = await fits(from);
+        if (stopped()) return "stopped";
+        if (!fitted) continue;
+        if (!(await this.#restore(from, name))) return "none";
+        copies.set(name, (copies.get(name) ?? []).filter((path) => path !== from));
         restored++;
-        return true;
+        return "restored";
       }
-      return false;
+      return signal?.aborted === true ? "stopped" : "none";
     };
     const enterJudged = async (recordName: string): Promise<void> => {
       const again = await this.#judge(recordName);
@@ -521,11 +559,18 @@ export class MediaRecords {
       if (match === null || !entry.isFile()) continue;
       const judged = await this.#judge(entry.name);
       if (judged.kind === "problem") problems.push({ file: entry.name, reason: judged.reason });
-      else if (judged.kind === "dangling") {
-        // Told, not moved: its file may be on its way. A file the quarantine holds under its name (an older open set it aside) is brought back to it.
-        if (await bringBack(judged.file, (from) => this.#fitsFile(from, judged.bytes, judged.sha256, budget, signal))) await enterJudged(entry.name);
-        else problems.push({ file: entry.name, reason: "missing-file" });
-      } else if (!this.#inFlight.has(judged.record.id)) this.#enter(judged.record);
+      else if (judged.kind === "dangling") dangling.push({ recordName: entry.name, file: judged.file, bytes: judged.bytes, sha256: judged.sha256 });
+      else if (!this.#inFlight.has(judged.record.id)) this.#enter(judged.record);
+    }
+    // Told, not moved: a dangling record's file may be on its way. A file the quarantine holds under its name (an older open set it aside) is brought back to it. The smallest
+    // go first, so that the hashing budget is spent on the most records; a record the budget did not reach stays `missing-file` and the next open carries on.
+    dangling.sort((a, b) => a.bytes - b.bytes || (a.recordName < b.recordName ? -1 : a.recordName > b.recordName ? 1 : 0));
+    for (const item of dangling) {
+      if (signal?.aborted === true) break;
+      const outcome = await bringBack(item.file, (from) => this.#fitsFile(from, item.bytes, item.sha256, budget, signal));
+      if (outcome === "stopped") break;
+      if (outcome === "restored") await enterJudged(item.recordName);
+      else problems.push({ file: item.recordName, reason: "missing-file" });
     }
     for (const entry of entries) {
       if (signal?.aborted === true) break;
@@ -534,7 +579,10 @@ export class MediaRecords {
       // Judged AFTER the listing: a commit that ended since has its record in the index now, and its file is no orphan.
       if (recordIds.has(id) || this.#inFlight.has(id) || this.#index.has(id) || this.#deleting.has(id)) continue;
       // Its record may be in the quarantine (an older open set it aside): the pair is brought back together, and the file stays.
-      if (await bringBack(`${id}.json`, (from) => this.#fitsRecord(from, `${id}.json`))) {
+      const found = await bringBack(`${id}.json`, (from) => this.#fitsRecord(from, `${id}.json`));
+      // A stop is not «no record found»: the file stays where it is, whatever else happens, and the next open looks again.
+      if (found === "stopped" || stopped()) break;
+      if (found === "restored") {
         await enterJudged(`${id}.json`);
         continue;
       }
@@ -841,7 +889,8 @@ function compareStamps(a: string, b: string): number {
   return left.n - right.n;
 }
 
-async function hashFile(path: string, signal?: AbortSignal): Promise<string> {
+/** The sha256 of a file, read as a stream under `signal` (an abort rejects the read with an AbortError). */
+export async function hashFile(path: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash("sha256");
   for await (const chunk of createReadStream(path, signal === undefined ? {} : { signal })) hash.update(chunk as Buffer);
   return hash.digest("hex");

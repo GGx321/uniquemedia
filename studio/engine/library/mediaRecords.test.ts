@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, symlink, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { MAX_LISTED_MEDIA, MediaSummary } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { tempDirFor } from "../../testing/tempDir";
-import { MediaCommitError, MediaRecords, type MediaCommitInput, type MediaRecordsOptions } from "./mediaRecords";
+import { hashFile, MediaCommitError, MediaRecords, type MediaCommitInput, type MediaRecordsOptions } from "./mediaRecords";
 import { SimulatedCrash, treatSimulatedCrash } from "./testing/mediaCrash";
 useNativeGlobals();
 
@@ -1163,7 +1163,7 @@ describe("the restore is bounded: it can be stopped, it has a hashing budget, an
       fs: {
         hash: (_path, signal) => {
           seen = signal;
-          return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+          return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(Object.assign(new Error("This operation was aborted"), { name: "AbortError", code: "ABORT_ERR" })), { once: true }));
         },
       },
     });
@@ -1214,5 +1214,119 @@ describe("the restore is bounded: it can be stopped, it has a hashing budget, an
     const reopened = records();
     await reopened.recover();
     expect(reopened.get(summary.mediaId)?.name).toBe("real.jpg");
+  });
+});
+
+describe("the restore, stopped and starved (review round 6)", () => {
+  async function commitOf(bytes: string, name: string): Promise<{ id: string; file: string }> {
+    const summary = await records().commit(await photoInput({ sourcePath: await staged(bytes), name }));
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), `away-${summary.mediaId}.jpg`));
+    return { id: summary.mediaId, file: `${summary.mediaId}.jpg` };
+  }
+  async function stamp(name: string, files: Record<string, string>): Promise<string> {
+    const folder = join(root(), "quarantine", name, "media");
+    await mkdir(folder, { recursive: true });
+    for (const [file, text] of Object.entries(files)) await writeFile(join(folder, file), text);
+    return folder;
+  }
+  const abortError = (): Error => Object.assign(new Error("This operation was aborted"), { name: "AbortError", code: "ABORT_ERR" });
+
+  test("a stop that arrives while the quarantine is being listed leaves an orphan file in media/: a stop is not «no copy was found»", async () => {
+    const summary = await records().commit(await photoInput());
+    const record = await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8");
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "gone.json"));
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [`${summary.mediaId}.json`]: record });
+    const controller = new AbortController();
+    const reopened = records({ hooks: { beforeQuarantineScan: () => controller.abort() } });
+    const report = await reopened.recover({ signal: controller.signal });
+    expect(report.quarantinedOrphans).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`]);
+    expect(await readdir(folder)).toEqual([`${summary.mediaId}.json`]);
+  });
+
+  test("a stop that arrives while the quarantine is being listed for a dangling record does not make it a missing-file problem or move anything", async () => {
+    const piece = await commitOf("photo bytes", "a.jpg");
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    const controller = new AbortController();
+    const report = await records({ hooks: { beforeQuarantineScan: () => controller.abort() } }).recover({ signal: controller.signal });
+    expect(report.restored).toBe(0);
+    expect(report.problems).toEqual([]);
+    expect(await readdir(folder)).toEqual([piece.file]);
+  });
+
+  test("a copy whose hash is not the record's is renamed to .mismatch in the quarantine, and the next open does not hash it again", async () => {
+    const piece = await commitOf("photo bytes", "a.jpg");
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "PHOTO BYTES" });
+    const first = await records().recover();
+    expect(first.restored).toBe(0);
+    expect((await readdir(folder)).sort()).toEqual([`${piece.file}.mismatch`]);
+    expect(await readFile(join(folder, `${piece.file}.mismatch`), "utf8")).toBe("PHOTO BYTES");
+    let hashed = 0;
+    await records({ fs: { hash: async () => (hashed++, "x") } }).recover();
+    expect(hashed).toBe(0);
+  });
+
+  test("a mismatching copy that is renamed does not hold the budget back from the records after it: they are restored over the next opens", async () => {
+    const bad = await commitOf("photo bytes", "a.jpg");
+    const good = await commitOf("photo bytes", "b.jpg");
+    await stamp("2026-10-04T10-00-00-000Z", { [bad.file]: "PHOTO BYTES", [good.file]: "photo bytes" });
+    // One copy of 11 bytes is hashed per open.
+    const first = await records({ hashBudgetBytes: 11 }).recover();
+    expect(first.restored).toBe(0);
+    const second = records({ hashBudgetBytes: 11 });
+    const again = await second.recover();
+    expect(again.restored).toBe(1);
+    expect(second.get(good.id)?.name).toBe("b.jpg");
+  });
+
+  test("within one recover the smaller copies are hashed first, so a large one cannot spend the budget that several small ones would fit in", async () => {
+    const large = await commitOf("a much larger photo bytes", "large.jpg");
+    const small = await commitOf("photo bytes", "small.jpg");
+    await stamp("2026-10-04T10-00-00-000Z", { [large.file]: "a much larger photo bytes", [small.file]: "photo bytes" });
+    const reopened = records({ hashBudgetBytes: "a much larger photo bytes".length });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(reopened.get(small.id)?.name).toBe("small.jpg");
+  });
+
+  test("the real hash is read under the signal: an already stopped one is refused, not read", async () => {
+    const path = join(tmp(), "real.bin");
+    await writeFile(path, "some bytes");
+    const controller = new AbortController();
+    controller.abort();
+    await expect(hashFile(path, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
+    expect(await hashFile(path)).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  test("a record copy is read from the handle with a bound: one that grows past it after the look at its size is skipped", async () => {
+    const summary = await records().commit(await photoInput());
+    const good = await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8");
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "gone.json"));
+    await stamp("2026-10-04T10-00-00-000Z", { [`${summary.mediaId}.json`]: good });
+    await stamp("2026-10-04T11-00-00-000Z", { [`${summary.mediaId}.json`]: good.replace(/"name": ?"[^"]+"/, '"name": "grows.jpg"') });
+    const reopened = records({
+      ops: {
+        lstat: (path) => lstat(path, { bigint: true }),
+        open: async (path, flags) => {
+          const handle = await open(path, flags);
+          if (!path.includes("11-00-00")) return handle;
+          // The file looks small to `stat` and then keeps giving bytes: a read without a bound would take them all.
+          return new Proxy(handle, {
+            get(target, prop) {
+              if (prop === "read") {
+                return async (buffer: Buffer, offset: number, length: number) => {
+                  buffer.fill(32, offset, offset + length);
+                  return { bytesRead: length, buffer };
+                };
+              }
+              const value: unknown = Reflect.get(target, prop);
+              return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+            },
+          }) as FileHandle;
+        },
+      },
+    });
+    await reopened.recover();
+    expect(reopened.get(summary.mediaId)?.name).toBe("summer.jpg");
   });
 });

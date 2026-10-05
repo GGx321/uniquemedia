@@ -173,6 +173,8 @@ export class MediaService {
     });
     // Settled in the background; a copy or a listing waits for it. Neither part throws for a file.
     const closing = new AbortController();
+    // An area made after the service stopped is born stopped: nothing is hashed for it.
+    if (this.#stopping) closing.abort();
     const ready = (async () => {
       await records.recover({ signal: closing.signal });
       await staging.sweep();
