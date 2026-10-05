@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, OWN_PHOTO_NOT_FOUND_DETAIL, PROTOCOL_VERSION, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, LIBRARY_TOO_NEW_DETAIL, OWN_PHOTO_NOT_FOUND_DETAIL, PROTOCOL_VERSION, usageUntrustedDetail, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { defaultSpec, ownPhotoCells, ownStickerCells, ownVideoClips } from "../../shared/montage";
 import { EngineFailure } from "../engineFailure";
@@ -200,13 +200,13 @@ export class MontageService {
    */
   #assertPhotosFree(library: Library, avatarId: string, photoIds: readonly string[]): void {
     const availability = photoAvailability(library, avatarId);
-    if (availability.state === "too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: "a video record of this avatar was written by a newer version of Studio" });
+    if (availability.state === "too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL });
     const issues: MontageIssue[] = [];
     photoIds.forEach((photoId, i) => {
       if (availability.state !== "known" || !availability.usable(photoId)) issues.push({ code: "photo-unavailable", path: ["photoIds", i] });
     });
     if (issues.length === 0) return;
-    const detail = availability.state === "untrusted" ? `the usage of this avatar's photos cannot be trusted right now (${availability.reason})` : undefined;
+    const detail = availability.state === "untrusted" ? usageUntrustedDetail(availability.reason) : undefined;
     throw new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues, ...(detail === undefined ? {} : { detail }) });
   }
 

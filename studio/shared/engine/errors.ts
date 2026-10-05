@@ -316,6 +316,20 @@ export const EXPORT_CHANGING_DETAIL = "the export folder is being changed; try t
 export const RENDER_NOT_QUEUED_DETAIL = "the render request ran out of time before it could be queued; nothing was queued";
 
 /**
+ * `EngineError.detail` of LIBRARY_TOO_NEW from `montages.create` and `videos.render` for an avatar with a video record a newer Studio
+ * wrote (its photo usage cannot be judged). One text for the engine and the mock.
+ */
+export const LIBRARY_TOO_NEW_DETAIL = "a video record of this avatar was written by a newer version of Studio";
+
+/**
+ * `EngineError.detail` of a PHOTO_UNAVAILABLE refused because the avatar's photo usage cannot be trusted right now (a stale used
+ * index, or a record or reject log that needs repair): every photo of the avatar is refused. The reason is the library's own code.
+ */
+export function usageUntrustedDetail(reason: "index-stale" | "log-needs-repair"): string {
+  return `the usage of this avatar's photos cannot be trusted right now (${reason})`;
+}
+
+/**
  * `EngineError.detail` of the NOT_FOUND `montages.focus` answers for an own photo the library does not hold (3f.2). The text is the one the
  * answer had before the media store existed, kept word for word because the parity suite's golden transcript names it (the goldens are
  * append-only); the engine and the mock both use THIS constant. The renderer shows a Russian text by code, never this detail.

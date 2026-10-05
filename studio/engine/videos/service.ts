@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, UnsequencedEvent } from "../../shared/engine";
-import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail } from "../../shared/engine";
+import { EXPORT_CHANGING_DETAIL, LIBRARY_TOO_NEW_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail, usageUntrustedDetail } from "../../shared/engine";
 import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
@@ -620,10 +620,10 @@ export class VideoService {
       free = new Set(library.eligibleUnusedPhotos(avatarId).map((photo) => photo.id));
     } catch (error) {
       if (error instanceof LibraryError) {
-        if (error.code === "library-too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: "a video record of this avatar was written by a newer version of Studio" });
+        if (error.code === "library-too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL });
         if (error.code === "index-stale" || error.code === "log-needs-repair") {
           // The library's message names a record file; the code is what the owner's window may be told.
-          throw unavailable(cells, `the usage of this avatar's photos cannot be trusted right now (${error.code})`);
+          throw unavailable(cells, usageUntrustedDetail(error.code));
         }
       }
       throw error;

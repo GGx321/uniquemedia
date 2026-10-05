@@ -23,6 +23,7 @@ import {
   type ImportPhotoPicked,
   type JobResult,
   type JobState,
+  LIBRARY_TOO_NEW_DETAIL,
   type LedgerUnavailable,
   MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
@@ -53,6 +54,7 @@ import {
   type UnreadableAvatar,
   type UnsequencedEvent,
   type UsageUnknownReason,
+  usageUntrustedDetail,
   type VideoSummary,
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
@@ -1892,15 +1894,44 @@ export class MockEngine implements EngineBridge {
   private photoView(photo: PhotoSummary): PhotoSummary {
     const usedIn = [...new Set([...photo.usedIn, ...this.videos.filter((v) => v.summary.avatarId === photo.avatarId && v.photoIds.includes(photo.photoId)).map((v) => v.summary.videoId)])];
     const reserved = photo.reserved || this.renderJobs.some((j) => isActive(j) && j.avatarId === photo.avatarId && j.photoIds.includes(photo.photoId));
-    return { ...photo, used: usedIn.length > 0, usedIn, reserved };
+    // The library's `photoStates` fails closed: while an avatar's reject marks cannot be read, no photo of it is eligible.
+    const eligible = photo.eligible && !this.usageReasonsOf(photo.avatarId).includes("rejects-unreadable");
+    return { ...photo, eligible, used: usedIn.length > 0, usedIn, reserved };
   }
 
-  /** The engine's `photoAvailability(...).usable`: an eligible scene photo of the avatar that is in no video and held by no render. */
+  /** The reasons an avatar's photo usage cannot be trusted (none for a sound or an unknown avatar). */
+  private usageReasonsOf(avatarId: string): readonly UsageUnknownReason[] {
+    const usage = this.avatars.find((a) => a.avatarId === avatarId)?.usage;
+    return usage?.state === "unknown" ? usage.reasons : [];
+  }
+
+  /**
+   * The engine's `photoAvailability` (engine/montages/availability.ts), from the usage the avatar was seeded with: a record from a newer
+   * Studio is `too-new` (it wins), a stale index is `untrusted` as `index-stale`, and any other reason (a record or the reject marks that
+   * cannot be read) is `untrusted` as `log-needs-repair`. The mock has no disk to read the index again from, so a stale index stays stale.
+   */
+  private availabilityOf(avatarId: string): { state: "known" } | { state: "too-new" } | { state: "untrusted"; reason: "index-stale" | "log-needs-repair" } {
+    const reasons = this.usageReasonsOf(avatarId);
+    if (reasons.includes("library-too-new")) return { state: "too-new" };
+    if (reasons.includes("index-stale")) return { state: "untrusted", reason: "index-stale" };
+    return reasons.length === 0 ? { state: "known" } : { state: "untrusted", reason: "log-needs-repair" };
+  }
+
+  /** The engine's `photoAvailability(...).usable`: an eligible scene photo of the avatar that is in no video and held by no render, while its usage can be trusted. */
   private photoUsable(avatarId: string, photoId: string): boolean {
+    if (this.availabilityOf(avatarId).state !== "known") return false;
     const photo = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId);
     if (photo === undefined) return false;
     const view = this.photoView(photo);
     return view.eligible && !view.used && !view.reserved;
+  }
+
+  /** What an avatar whose usage is unknown answers a command that names photos: LIBRARY_TOO_NEW, or PHOTO_UNAVAILABLE for `issues` with the untrusted detail; null when its usage is sound or nothing is refused. */
+  private usageRefusal(avatarId: string, issues: readonly MontageIssue[]): EngineError | null {
+    const availability = this.availabilityOf(avatarId);
+    if (availability.state === "known") return null;
+    if (availability.state === "too-new") return { code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL };
+    return issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues: [...issues], detail: usageUntrustedDetail(availability.reason) };
   }
 
   private avatarKnown(avatarId: string): boolean {
@@ -1921,7 +1952,9 @@ export class MockEngine implements EngineBridge {
     photoIds.forEach((photoId, i) => {
       if (!this.photoUsable(avatarId, photoId)) issues.push({ code: "photo-unavailable", path: ["photoIds", i] });
     });
-    return issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues };
+    // `montages.create` judges nothing for an empty pick, whatever the avatar's usage.
+    if (photoIds.length === 0) return null;
+    return this.usageRefusal(avatarId, issues) ?? (issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues });
   }
 
   private focusOf(avatarId: string, photoId: string): Focus | null {
@@ -2191,7 +2224,10 @@ export class MockEngine implements EngineBridge {
     if (refusal) return this.fail(c, refusal);
     const cells = sceneCells(spec);
     const unavailable = cells.filter((cell) => !this.photoUsable(spec.avatarId, cell.photoId));
-    if (unavailable.length > 0) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable" as const, path: cell.path })) });
+    const unavailableIssues = unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable" as const, path: cell.path }));
+    const usageRefusal = this.usageRefusal(spec.avatarId, unavailableIssues);
+    if (usageRefusal !== null) return this.fail(c, usageRefusal);
+    if (unavailable.length > 0) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: unavailableIssues });
     if (this.renderJobs.filter(isActive).length >= this.renderQueueLimit) {
       return this.fail(c, { code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(this.renderQueueLimit) });
     }
@@ -2438,9 +2474,11 @@ export class MockEngine implements EngineBridge {
     if (cleared) {
       const [first, ...rest] = reasons.filter((r) => r !== reason);
       const usage: AvatarSummary["usage"] = first === undefined ? { state: "ok" } : { state: "unknown", reasons: [first, ...rest] };
+      // The reason goes first: a photo's eligibility (`photoView`) follows the avatar's reasons.
+      this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, usage } : a));
       // Trusted again: the photos a montage may use count once more (eligible, in no video and no render).
       const eligibleUnusedCount = usage.state === "ok" ? this.photos.filter((p) => p.avatarId === avatarId).map((p) => this.photoView(p)).filter((p) => p.eligible && !p.used && !p.reserved).length : 0;
-      this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, usage, eligibleUnusedCount } : a));
+      this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, eligibleUnusedCount } : a));
       this.announceAvatar(avatarId);
     }
     return this.ok(c, { avatarId, ...answer(cleared) });
