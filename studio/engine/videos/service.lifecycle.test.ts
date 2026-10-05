@@ -458,6 +458,50 @@ describe("an intent recovery deferred (stage 3 review 3-M3: one photo, one video
   });
 });
 
+describe("the hold of a pending intent does not wait on a disk that fails or hangs (review round 2, M2)", () => {
+  const boom = (): Error => new Error("the disk broke after the intent");
+  const refusing = () => {
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    return fs;
+  };
+  const refused = (r: ReturnType<typeof serviceRig>, w: World): Promise<string> =>
+    r.service.render({ spec: specFor(w) }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+
+  test.each([
+    ["an lstat that fails (EIO)", () => Promise.reject(errnoError("EIO")), undefined],
+    ["an lstat that never answers", () => new Promise<never>(() => undefined), 50],
+  ] as const)("%s: the job fails and the photos stay held", async (_name, intentLstat, stepDeadlineMs) => {
+    const w = world();
+    const r = serviceRig(w, {
+      size: 2,
+      deps: { intentLstat, renderOverrides: { fs: refusing(), ...(stepDeadlineMs === undefined ? {} : { stepDeadlineMs }), hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } } },
+    });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.reserved).toBe(true);
+    expect(await refused(r, w)).toBe("PHOTO_UNAVAILABLE");
+  });
+
+  test("recovery that hangs on the export root at the start still holds the photos: the library is read before the root is asked (the start-up window)", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const library = await w.reopen();
+    const r = serviceRig(w, { library, deps: { checkExport: () => new Promise<never>(() => undefined) } });
+
+    r.service.libraryOpened(library);
+    await until(() => library.photoStates(w.avatar.id).get(photoId(w, 0))?.reserved === true, "the photos to be held");
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).not.toContain(photoId(w, 0));
+  });
+});
+
 describe("a cancel while the commit scans the numbers (review round 2, M1)", () => {
   test("the job ends cancelled, not failed with a library error", async () => {
     const w = world();
@@ -491,6 +535,21 @@ describe("holds that a recovery made are announced (review round 1, L3)", () => 
     await r.service.settled();
 
     expect(library.eligibleUnusedCount(w.avatar.id)).toBe(before - 1);
+    expect(r.announced).toContain(w.avatar.id);
+  });
+
+  test("a hold that does not move the free count is announced too: the photo was already out of reach, but its state is «reserved» now (review round 2, N5)", async () => {
+    const w = world();
+    await w.library.setRejected(w.avatar.id, photoId(w, 0), true);
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const library = await w.reopen();
+    const r = serviceRig(w, { library });
+    const before = library.eligibleUnusedCount(w.avatar.id);
+
+    r.service.startup(library, { ok: false, reason: "missing" });
+    await r.service.settled();
+
+    expect(library.eligibleUnusedCount(w.avatar.id)).toBe(before);
     expect(r.announced).toContain(w.avatar.id);
   });
 

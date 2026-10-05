@@ -134,6 +134,8 @@ export interface VideoServiceDeps {
   readonly listBudgetMs?: number;
   /** How long the probe of the export volume's case rule may take in `#freshRoot`; `CASE_PROBE_TIMEOUT_MS` when absent. */
   readonly caseProbeTimeoutMs?: number;
+  /** How the commit intent's file is looked at before a settle; `lstat` when absent (a test plays a disk that fails or does not answer). */
+  readonly intentLstat?: (path: string) => Promise<unknown>;
   /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
   readonly readRecordFiles?: typeof readVideoRecordFiles;
 }
@@ -964,12 +966,23 @@ export class VideoService {
 
   async #recover(library: Library, signal: AbortSignal, options: { exportCheck?: ExportRootCheck; only?: { videoIds: readonly string[] } }): Promise<void> {
     const deps = this.#deps;
+    // What each avatar's photos looked like (which are held, how many are free) before recovery held or freed any: what is announced is what moved.
+    const before = this.#heldKeys(library);
+    // The library's pending intents are read and their photos held FIRST, before the export root is asked anything: a slow or hung root must not leave the
+    // photos free at the start. A step of its own, so a test's stand-in for the whole recovery is not called twice.
+    if (options.only === undefined) {
+      try {
+        await recoverVideos({ library, exportRoot: null, live: deps.tracker, signal, holdOnly: true }, { log: deps.log, ...deps.recover?.deps });
+      } catch (error) {
+        deps.log(`recovery: the pending intents' photos could not be held first (${kindOf(error)})`);
+      }
+      if (signal.aborted) return;
+      this.#announceHeldChanges(library, before);
+    }
     // A FRESH look at the root, and the SAME tracker the renders register in: a live commit is never taken for a crash's leftover.
     const exportRoot = await this.#freshRoot(options.exportCheck);
     if (signal.aborted) return;
     const run = deps.recover?.run ?? recoverVideos;
-    // What each avatar's count of free photos was: recovery holds (and releases) the photos of pending intents, which moves it.
-    const freeBefore = new Map(library.listAvatars().map((manifest) => [manifest.id, library.eligibleUnusedCount(manifest.id)]));
     const report = await run({ library, exportRoot, live: deps.tracker, signal, ...(options.only === undefined ? {} : { only: options.only }) }, { log: deps.log, ...deps.recover?.deps });
     // Counts only, and only when there was something to settle: a clean open is silent.
     if (report.adopted.length + report.dropped.length + report.deferred.length + report.left.length + report.skipped.length > 0) {
@@ -982,11 +995,31 @@ export class VideoService {
         const avatarId = await this.#announceAdopted(library, videoId);
         if (avatarId !== null) avatars.add(avatarId);
       }
-      // Their photos are used now: the avatars' counts moved. So did the count of an avatar whose photos recovery held or freed.
-      for (const manifest of library.listAvatars()) if (library.eligibleUnusedCount(manifest.id) !== freeBefore.get(manifest.id)) avatars.add(manifest.id);
+      // Their photos are used now: the avatars' counts moved. So did those of an avatar whose photos recovery held or freed.
       for (const avatarId of avatars) this.#announce(library, avatarId);
+      this.#announceHeldChanges(library, before, avatars);
     }
     if (options.only === undefined) for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);
+  }
+
+  /** Per avatar, the photos that are held (reserved) and how many are free: a change in either is something the windows have not been told. */
+  #heldKeys(library: Library): Map<string, string> {
+    return new Map(
+      library.listAvatars().map((manifest) => {
+        const held = [...library.photoStates(manifest.id)].filter(([, state]) => state.reserved).map(([photoId]) => photoId).sort();
+        return [manifest.id, `${held.join(",")}|${library.eligibleUnusedCount(manifest.id)}`];
+      }),
+    );
+  }
+
+  /** Announces the avatars whose held photos or free count differ from `before` (and were not announced already), then `before` is brought up to date. */
+  #announceHeldChanges(library: Library, before: Map<string, string>, already: ReadonlySet<string> = new Set()): void {
+    if (this.#deps.openLibrary() !== library) return;
+    const now = this.#heldKeys(library);
+    for (const [avatarId, key] of now) {
+      if (before.get(avatarId) !== key && !already.has(avatarId)) this.#announce(library, avatarId);
+      before.set(avatarId, key);
+    }
   }
 
   /** The avatar the adopted record belongs to (announced), or null when it could not be read back. */
@@ -1015,15 +1048,16 @@ export class VideoService {
    * The job is told apart from the others so that its own intent is not "live"; the commit is over, so the lock is free.
    */
   async #settleLeftover(library: Library, input: SettleInput, signal: AbortSignal): Promise<VideoRecord | null> {
+    // Held FIRST: this settle may fail, hang (it is cut by its bound) or never get to its recovery, and the intent is on the disk until something says otherwise.
+    // Only an intent the disk says is gone (ENOENT) ends the hold; any other answer leaves the photos held.
+    library.holdPendingPhotos(input.avatarId, input.videoId, input.photoIds);
     try {
-      await lstat(videoPaths(library.root, input.avatarId).intent(input.videoId));
+      await (this.#deps.intentLstat ?? lstat)(videoPaths(library.root, input.avatarId).intent(input.videoId));
     } catch (error) {
-      if (!hasErrorCode(error, "ENOENT")) this.#deps.log(`the commit intent of ${input.videoId} could not be looked at (${kindOf(error)})`);
+      if (hasErrorCode(error, "ENOENT")) library.releasePendingPhotos(input.videoId);
+      else this.#deps.log(`the commit intent of ${input.videoId} could not be looked at (${kindOf(error)}); its photos stay held`);
       return null;
     }
-    // The intent is pending from here: its photos are held BEFORE the settle runs, so a settle that is cut by its bound, errors or never answers (a hung export
-    // root) leaves them held after the job has failed. The settle itself releases them when it adopts or drops the intent.
-    library.holdPendingPhotos(input.avatarId, input.videoId, input.photoIds);
     const tracker = this.#deps.tracker;
     const live: LiveCommits = { hasJob: (id) => id !== input.jobId && tracker.hasJob(id), hasTemp: (p) => tracker.hasTemp(p), hasPlaceholder: (p) => tracker.hasPlaceholder(p) };
     const run = this.#deps.recover?.run ?? recoverVideos;

@@ -8,7 +8,7 @@ import { NODE_COMMIT_FS } from "./commitFs";
 import { CommitTracker } from "./execute";
 import { commitIntent, writeIntent } from "./intents";
 import { partNameOf, videoPaths } from "./record";
-import { recoverVideos, type ExportRootRef } from "./recovery";
+import { NODE_LIBRARY_READ_FS, recoverVideos, type ExportRootRef } from "./recovery";
 import {
   acceptingVerify,
   CrashError,
@@ -148,14 +148,30 @@ describe("the photos of a pending intent are held until recovery resolves it (st
     expect(photo(w, library)).toMatchObject({ reserved: true, usedIn: [] });
   });
 
-  test("an export root whose look fails with an error holds the photos the same way", async () => {
+  test("a transient read error of the intent (it reads as `unreadable`) keeps the hold it had: nothing is known about it (review round 2, M2)", async () => {
     const w = world();
-    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
     const library = await w.reopen();
-    const fs = faultyFs();
-    fs.override({ realpath: () => Promise.reject(errnoError("EIO")) });
+    library.holdPendingPhotos(w.avatar.id, record.id, [w.photos[0]?.id ?? ""]);
+    const libraryFs = { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => Promise.reject(errnoError("EIO")) };
 
-    await recoverVideos({ library, exportRoot: rootRef(w) }, { fs });
+    const report = await recoverVideos({ library, exportRoot: rootRef(w), only: { videoIds: [record.id] } }, { libraryFs });
+
+    expect(report.left).toEqual([{ file: `avatars/${w.avatar.id}/videos/.pending/${record.id}.json`, reason: "unreadable" }]);
+    expect(photo(w, library)?.reserved).toBe(true);
+  });
+
+  test("an intent a live job owns keeps the hold that was made for it: recovery neither makes nor drops it", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const library = await w.reopen();
+    library.holdPendingPhotos(w.avatar.id, record.id, [w.photos[0]?.id ?? ""]);
+    const tracker = new CommitTracker();
+    tracker.addJob(record.jobId, record.id);
+
+    await recoverVideos({ library, exportRoot: rootRef(w), live: tracker });
 
     expect(photo(w, library)?.reserved).toBe(true);
   });

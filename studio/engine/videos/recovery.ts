@@ -73,6 +73,11 @@ export interface RecoverInput {
    * instead of leaving its photos free until the next open.
    */
   readonly only?: { readonly videoIds: readonly string[] };
+  /**
+   * Only reads the library's `.pending` and holds the photos of the intents (`holdPendingPhotos`), then ends: the export root is not looked at and no lock is taken.
+   * The service runs it first, so the holds exist even while a slow export root is still being checked at the start.
+   */
+  readonly holdOnly?: boolean;
 }
 
 export interface RecoverDeps {
@@ -115,7 +120,7 @@ export interface LibraryReadFs {
   readFile(path: string): Promise<string>;
 }
 
-const NODE_LIBRARY_READ_FS: LibraryReadFs = {
+export const NODE_LIBRARY_READ_FS: LibraryReadFs = {
   readdir: async (path) => (await readdir(path, { withFileTypes: true })).map((e) => ({ name: e.name, isFile: e.isFile() })),
   readFile: (path) => readFile(path, "utf8"),
 };
@@ -291,6 +296,8 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
 
   if (signal.aborted) return finished();
   const live = input.live;
+  /** Intents whose file was gone when the settle looked: consumed by a commit that finished, so nothing is pending any more. */
+  const gone = new Set<string>();
   // The library is read FIRST, with no lock held and before the export root is looked at: it reads the library only, and it is what holds the pending intents'
   // photos (`loadPending`). A root that hangs or errors must not end the run before the holds are made, or the photos would look free all session.
   // A library that does not answer ends the run here, having blocked nobody.
@@ -302,6 +309,8 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     return finished();
   }
   if (signal.aborted) return finished();
+  // A run that only holds: the library's pending intents are read and their photos held, and nothing else is looked at (no export root, no lock).
+  if (input.holdOnly === true) return finished();
 
   let root: UsableRoot | null;
   try {
@@ -396,7 +405,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     try {
       await fs.lstat(intentPath);
     } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) return;
+      if (hasErrorCode(error, "ENOENT")) return void gone.add(videoId);
       throw error;
     }
 
@@ -482,12 +491,12 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         continue;
       }
       try {
-        const deferredBefore = report.deferred.length;
         await settleIntent(file, avatarIds);
-        // Adopted (its record makes the photos used), dropped, gone, or a live job's: the hold ends. Deferred for anything else, it stays;
-        // a settle that failed stays held too (the catch below), since nothing is known about the intent.
-        const deferred = report.deferred.slice(deferredBefore).find((entry) => entry.videoId === file.videoId);
-        if (file.videoId !== undefined && (deferred === undefined || deferred.reason === "live")) input.library.releasePendingPhotos(file.videoId);
+        // The hold ends only when the intent is RESOLVED: adopted (its record makes the photos used), dropped, or gone from the disk. An intent that was deferred,
+        // that could not be read (`left`: nothing is known about it, and a transient error is no verdict), that a live job owns, or whose settle failed (the catch
+        // below) keeps whatever hold it has.
+        const id = file.videoId;
+        if (id !== undefined && (report.adopted.includes(id) || report.dropped.some((entry) => entry.videoId === id) || gone.has(id))) input.library.releasePendingPhotos(id);
       } catch (error) {
         if (signal.aborted) return;
         skip("intent", error);
