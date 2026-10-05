@@ -153,14 +153,15 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
       const info = webpInfo(bytes);
       if (info === null) throw new Refused("format");
       if (info.animated) throw new Refused("animated-webp");
-      judgeSize(info);
-      // The PNG is as large as its decoded pixels, up to the ceiling that is checked after it is written.
-      await needRoom(request, deps.maxDecodedPngBytes ?? MAX_DECODED_PNG_BYTES);
+      // The PNG is about as large as its decoded pixels (4 bytes each, a filter byte a row, 1 MiB of chunks), never over the ceiling that is checked after it is written. There is no
+      // `-fs` on this call: a single frame is one packet, which `-fs` never cuts (measured: `-fs 1001` wrote 1.4 MB), so the bounds are `-max_pixels` and that check.
+      const size = judgeSize(info);
+      await needRoom(request, Math.min(deps.maxDecodedPngBytes ?? MAX_DECODED_PNG_BYTES, size.width * size.height * 4 + size.height + 1024 * 1024));
       const png = await request.workFile();
       signal.throwIfAborted();
       await ffmpeg(
         request,
-        [...HARDENED_HEAD, "-f", "webp_pipe", "-max_pixels", String(WEBP_MAX_PIXELS), "-c:v", "webp", "-noautorotate", "-i", staged.path, "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-map_metadata", "-1", "-c:v", "png", "-fs", String((deps.maxDecodedPngBytes ?? MAX_DECODED_PNG_BYTES) + 1), "-f", "image2pipe"],
+        [...HARDENED_HEAD, "-f", "webp_pipe", "-max_pixels", String(WEBP_MAX_PIXELS), "-c:v", "webp", "-noautorotate", "-i", staged.path, "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-map_metadata", "-1", "-c:v", "png", "-f", "image2pipe"],
         png.path,
       );
       // What ffmpeg made is looked at before it is read whole: a header that lied about its size cannot make the engine read a bomb.

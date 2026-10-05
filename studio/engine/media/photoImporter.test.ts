@@ -602,6 +602,8 @@ describe("the photo importer: room for what it writes (M1 of the Stage 3 review)
   });
 });
 
+const MARGIN_FOR_PNG = 50;
+
 describe("the photo importer: the WebP decode is bounded like the other importers' (L2 of the security review)", () => {
   const recording = (calls: string[][]): FfmpegSpawner => (command, args, options) => {
     calls.push([...args]);
@@ -621,13 +623,24 @@ describe("the photo importer: the WebP decode is bounded like the other importer
     expect(argv.indexOf("-max_pixels")).toBeLessThan(argv.indexOf("-i"));
   });
 
-  test("the WebP to PNG call stops writing one byte past the largest PNG the importer accepts, as an output option", async () => {
+  test("the WebP to PNG call has no -fs: it is one packet, so the limit never fires, and the bound is -max_pixels and the size looked at after the write", async () => {
     const picture = await quadrantPicture(tmp(), "p", 32, 32, "webp");
     const calls: string[][] = [];
-    await accepted(await runWith(picture, "webp", { spawner: recording(calls), maxDecodedPngBytes: 10_000_000 }));
-    const argv = calls[0] ?? [];
-    expect(Number(argOf(argv, "-fs"))).toBe(10_000_001);
-    expect(argv.indexOf("-fs")).toBeGreaterThan(argv.indexOf("-i"));
+    await accepted(await runWith(picture, "webp", { spawner: recording(calls) }));
+    expect(calls[0]).not.toContain("-fs");
+  });
+
+  test("the room asked for the PNG is what its header's pixels need (4 bytes a pixel, a filter byte a row, 1 MiB), not the 200 MB ceiling", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 48, 32, "webp");
+    const need = 48 * 32 * 4 + 32 + 1024 * 1024 + MARGIN_FOR_PNG;
+    const calls: string[][] = [];
+    const refused = await runWith(picture, "webp", { spawner: recording(calls), freeBytes: async () => need - 1, freeMarginBytes: MARGIN_FOR_PNG });
+    expect(refused.outcome).toEqual({ ok: false, reason: "no-space" });
+    expect(calls).toHaveLength(0);
+    // Exactly that much for the PNG is enough (the later raw file and JPEG have room).
+    const answers = [need];
+    const { outcome } = await runWith(picture, "webp", { freeBytes: async () => answers.shift() ?? 1e12, freeMarginBytes: MARGIN_FOR_PNG });
+    expect(outcome.ok).toBe(true);
   });
 });
 
