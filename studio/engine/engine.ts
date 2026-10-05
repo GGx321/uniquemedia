@@ -2869,8 +2869,8 @@ export class Engine {
   }
 
   /**
-   * T6c review round 2, M4: bounds one import downscale (the age check's own
-   * size, or the describe call's own larger one) at #importDownscaleTimeoutMs.
+   * T6c review round 2, M4: bounds the import's one downscale (the describe
+   * call's own size) at #importDownscaleTimeoutMs.
    * timeoutSignal(), not AbortSignal.timeout() — the same reason as
    * #preflightDownscale's own doc comment just above. untilAborted is what
    * settles this call even if the injected downscaler ignores its own
