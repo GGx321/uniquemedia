@@ -228,12 +228,12 @@ describe("buildPass2: refusals", () => {
     expect(() => build({ clips: [{ clipId: "a", durationMs: 2050 }] })).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
   });
 
-  test.each([0, 100, MIN_CLIP_MS - 100])("refuses a clip of %d ms, below the 500 ms minimum", (ms) => {
+  test.each([0, MIN_CLIP_MS - 10, MIN_CLIP_MS / 2])("refuses a clip of %d ms, below the 100 ms minimum", (ms) => {
     expect(() => build({ clips: [{ clipId: "a", durationMs: ms }] })).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
   });
 
-  test("accepts a clip of exactly the minimum, 500 ms", () => {
-    expect(build({ clips: [{ clipId: "a", durationMs: MIN_CLIP_MS }] }).totalFrames).toBe(15);
+  test("accepts a clip of exactly the minimum, 100 ms", () => {
+    expect(build({ clips: [{ clipId: "a", durationMs: MIN_CLIP_MS }] }).totalFrames).toBe(3);
   });
 
   test("names the code of a refusal", () => {

@@ -30,7 +30,7 @@ export function seedMine(engine: MockEngine): void {
     { kind: "audio", name: "summer-edit.mp3", bytes: 1_000_000, facts: { durationMs: 42_000 }, createdAt: "2026-10-01T10:02:00.000Z" },
     { kind: "audio", name: "voice-note.m4a", bytes: 90_000, facts: { durationMs: 5_000 }, createdAt: "2026-10-01T10:03:00.000Z" },
     { kind: "sticker", name: "underline.gif", bytes: 40_000, createdAt: "2026-10-01T10:04:00.000Z" },
-    { kind: "video", name: "blink.mov", bytes: 300_000, facts: { width: 1080, height: 1920, durationMs: 400, sourceFps: 30 }, createdAt: "2026-10-01T10:05:00.000Z" },
+    { kind: "video", name: "blink.mov", bytes: 300_000, facts: { width: 1080, height: 1920, durationMs: 90, sourceFps: 30 }, createdAt: "2026-10-01T10:05:00.000Z" },
   ]);
 }
 

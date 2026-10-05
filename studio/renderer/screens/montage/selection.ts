@@ -25,7 +25,7 @@ export type Resolved =
  * - `nothing-selected`;
  * - `photo-split`: a photo or collage clip is never split (CF4: its photo would repeat);
  * - `playhead-outside`: the playhead is not strictly inside the selected item;
- * - `too-short`: a part would be under its minimum (0.5 s for a clip, 0.3 s for a layer);
+ * - `too-short`: a part would be under its minimum (0.1 s for a clip, 0.3 s for a layer);
  * - `clip-cap` / `no-room` / `layer-cap`: no place for a copy (`Refusal`'s meaning);
  * - `music`: the one track is neither split nor copied;
  * - `not-a-layer`: only a text or a sticker has a place in the z-order;

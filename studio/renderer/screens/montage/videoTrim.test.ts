@@ -4,7 +4,7 @@ import { durationLimitMs, growMs, slideTrim, sourceEndMs, trimEndTo, trimLimits,
 import { draftSpec, photoClip, photoClips, videoClip } from "./testkit";
 
 // 3f.3b: «Обрезка», the own video clip's trim (EditorMine.dc.html, R16): which part of the stored video the clip plays. Pure, on the contract's grid:
-// `trimStartMs` and the clip's length are whole 100 ms steps (the engine refuses anything else), the clip is at least 0.5 s, the montage at most 15 s,
+// `trimStartMs` and the clip's length are whole 100 ms steps (the engine refuses anything else), the clip is at least 0.1 s, the montage at most 15 s,
 // and the clip never reaches past the stored video's end (`video-too-short`). The window slides (the length kept), its left edge moves the start (the
 // end kept, as dragging a film's head does) and its right edge the end (the start kept).
 
@@ -40,14 +40,14 @@ describe("trimView: the strip", () => {
 });
 
 describe("trimLimits", () => {
-  test("the artboard's clip: slide 0–4.4 s, the start 0–3.3 s (its end kept), the end 2.3–6.4 s (its start kept)", () => {
-    expect(trimLimits(artboard, 2, SOURCE)).toEqual({ slide: { min: 0, max: 4_400 }, start: { min: 0, max: 3_300 }, end: { min: 2_300, max: 6_400 } });
+  test("the artboard's clip: slide 0–4.4 s, the start 0–3.7 s (its end kept), the end 1.9–6.4 s (its start kept)", () => {
+    expect(trimLimits(artboard, 2, SOURCE)).toEqual({ slide: { min: 0, max: 4_400 }, start: { min: 0, max: 3_700 }, end: { min: 1_900, max: 6_400 } });
   });
 
   test("the 15 s cap holds the edges: a clip may grow only by the montage's room", () => {
     // 13 s of photos and a 1 s clip 5 s into a 14 s video: 1 s of room.
     const tight = draftSpec([...photoClips(13, 1_000), videoClip(13, 1_000, 5_000)]);
-    expect(trimLimits(tight, 13, 14_000)).toEqual({ slide: { min: 0, max: 13_000 }, start: { min: 4_000, max: 5_500 }, end: { min: 5_500, max: 7_000 } });
+    expect(trimLimits(tight, 13, 14_000)).toEqual({ slide: { min: 0, max: 13_000 }, start: { min: 4_000, max: 5_900 }, end: { min: 5_100, max: 7_000 } });
   });
 
   test("a clip already longer than the video can only slide to its start", () => {
@@ -87,8 +87,9 @@ describe("trimStartTo: the left edge, the clip's end in the video kept", () => {
     expect(clip(trimStartTo(artboard, 2, 2_740, SOURCE), 2)).toMatchObject({ trimStartMs: 2_700, durationMs: 1_100 });
   });
 
-  test("never under 0.5 s, never before the video's start, never past 15 s in all", () => {
-    expect(clip(trimStartTo(artboard, 2, 3_700, SOURCE), 2)).toMatchObject({ trimStartMs: 3_300, durationMs: 500 });
+  test("never under 0.1 s, never before the video's start, never past 15 s in all", () => {
+    expect(clip(trimStartTo(artboard, 2, 3_700, SOURCE), 2)).toMatchObject({ trimStartMs: 3_700, durationMs: 100 });
+    expect(clip(trimStartTo(artboard, 2, 3_900, SOURCE), 2)).toMatchObject({ trimStartMs: 3_700, durationMs: 100 });
     expect(clip(trimStartTo(artboard, 2, -1_000, SOURCE), 2)).toMatchObject({ trimStartMs: 0, durationMs: 3_800 });
     const tight = draftSpec([...photoClips(13, 1_000), videoClip(13, 1_000, 5_000)]);
     expect(clip(trimStartTo(tight, 13, 0, 14_000), 13)).toMatchObject({ trimStartMs: 4_000, durationMs: 2_000 });
@@ -105,8 +106,9 @@ describe("trimEndTo: the right edge, the clip's start kept", () => {
     expect(clip(trimEndTo(artboard, 2, 2_600, SOURCE), 2)).toMatchObject({ trimStartMs: 1_800, durationMs: 800 });
   });
 
-  test("never under 0.5 s, never past the video's end, never past 15 s in all", () => {
-    expect(clip(trimEndTo(artboard, 2, 1_900, SOURCE), 2).durationMs).toBe(500);
+  test("never under 0.1 s, never past the video's end, never past 15 s in all", () => {
+    expect(clip(trimEndTo(artboard, 2, 1_900, SOURCE), 2).durationMs).toBe(100);
+    expect(clip(trimEndTo(artboard, 2, 1_000, SOURCE), 2).durationMs).toBe(100);
     expect(clip(trimEndTo(artboard, 2, 9_000, SOURCE), 2).durationMs).toBe(4_600);
     // A file of 6.43 s: the clip ends by 6.4 s, the last whole step inside it.
     expect(clip(trimEndTo(artboard, 2, 9_000, 6_433), 2).durationMs).toBe(4_600);
@@ -120,10 +122,12 @@ describe("trimEndTo: the right edge, the clip's start kept", () => {
 });
 
 describe("how long the clip may get", () => {
-  test("durationLimitMs: from its trim to the video's end on the grid, never under 0.5 s (the timeline's handles)", () => {
+  test("durationLimitMs: from its trim to the video's end on the grid, never under 0.1 s (the timeline's handles)", () => {
     expect(durationLimitMs(clip(artboard, 2), SOURCE)).toBe(4_600);
     expect(durationLimitMs(clip(artboard, 2), 6_433)).toBe(4_600);
-    expect(durationLimitMs(clip(draftSpec([videoClip(0, 2_000, 6_200)]), 0), SOURCE)).toBe(500);
+    expect(durationLimitMs(clip(draftSpec([videoClip(0, 2_000, 6_200)]), 0), SOURCE)).toBe(200);
+    expect(durationLimitMs(clip(draftSpec([videoClip(0, 2_000, 6_300)]), 0), SOURCE)).toBe(100);
+    expect(durationLimitMs(clip(draftSpec([videoClip(0, 2_000, 6_400)]), 0), SOURCE)).toBe(100);
   });
 
   test("growMs: by both edges together, within the room and the video", () => {

@@ -99,17 +99,17 @@ export type VideoTag = VideoProblem | "video-under-min";
 export const VIDEO_PROBLEM_TAGS: Record<VideoTag, string> = {
   "video-too-short": "⚠ видео короче кадра",
   "media-unavailable": "⚠ файла больше нет",
-  "video-under-min": `⚠ видео короче 0.5${NBSP}с`,
+  "video-under-min": `⚠ видео короче ${secondsLabel(MIN_CLIP_MS)}`,
 };
 
 /** The properties' words for it: the contract's own, but for a video under the shortest clip, whose «сдвиньте начало» could not be followed. */
 export const VIDEO_TAG_TEXTS: Record<VideoTag, string> = {
   "video-too-short": MONTAGE_ISSUE_MESSAGES_RU["video-too-short"],
   "media-unavailable": MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"],
-  "video-under-min": `Видео короче 0.5${NBSP}с — в ролик его не поставить`,
+  "video-under-min": `Видео короче ${secondsLabel(MIN_CLIP_MS)} — в ролик его не поставить`,
 };
 
-/** `video-too-short` of a video under the shortest clip (0.5 s) is `video-under-min`: no trim can help it. */
+/** `video-too-short` of a video under the shortest clip (`MIN_CLIP_MS`, 0.1 s) is `video-under-min`: no trim can help it. */
 export function videoTag(problem: VideoProblem, sourceMs: number | null): VideoTag {
   return problem === "video-too-short" && sourceMs !== null && sourceMs < MIN_CLIP_MS ? "video-under-min" : problem;
 }
@@ -177,7 +177,7 @@ export function actionWhyLabel(why: ActionBlock): string {
     case "clip-cap":
       return "Не больше 20 кадров в одном видео";
     case "no-room":
-      return "До 15 с осталось меньше 0.5 с — укоротите кадр";
+      return "В ролике уже 15 с — укоротите кадр";
     case "layer-cap":
       return "Не больше 10 слоёв одного вида";
     case "music":
@@ -306,7 +306,7 @@ export function musicAria(music: NonNullable<MontageDraft["music"]>, name: strin
 export function addBlockedLabel(why: AddRefusal): string {
   return why === "clip-cap"
     ? "Не больше 20 кадров в одном видео. Клик по фото в панели ничего не добавит."
-    : "Ролик почти 15 с: на новый кадр нет и 0.5 с. Укоротите кадр, чтобы добавить фото.";
+    : "В ролике уже 15 с: на новый кадр нет места. Укоротите кадр, чтобы добавить фото.";
 }
 
 /** «0.3 с»: a collage's stagger step (`staggerStepFrames`), with two decimals when it is not a whole 100 ms. */
@@ -315,6 +315,12 @@ export function staggerStepLabel(durationMs: number, cellCount: number): string 
   const seconds = frames / FPS;
   // Three frames are exactly 100 ms; anything else is a third of a step and needs the second decimal.
   return `${frames % FRAMES_PER_STEP === 0 ? seconds.toFixed(1) : seconds.toFixed(2)}${NBSP}с`;
+}
+
+/** The stagger row's text: the step when there is one, and the plain fact when the clip is too short for any (100 ms with 3 or 4 cells). */
+export function staggerRowLabel(durationMs: number, cellCount: number): string {
+  if (staggerStepFrames(durationMs, cellCount) === 0) return "Ячейки по очереди: клип слишком короткий, ячейки сразу";
+  return `Ячейки по очереди, шаг ${staggerStepLabel(durationMs, cellCount)}`;
 }
 
 const MONTHS = ["янв.", "февр.", "марта", "апр.", "мая", "июня", "июля", "авг.", "сент.", "окт.", "нояб.", "дек."] as const;

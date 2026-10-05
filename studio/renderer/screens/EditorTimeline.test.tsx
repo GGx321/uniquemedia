@@ -228,7 +228,7 @@ describe("the caps", () => {
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await asAnotherWindow(() => client.request("montages.save", { montageId: made.montageId, spec: { ...made.spec, clips: made.spec.clips.map((c) => ({ ...c, durationMs: 15_000 })) }, name: null }));
     await openEditor();
-    expect(screen.getByText(/на новый кадр нет и 0\.5 с/)).toBeDefined();
+    expect(screen.getByText(/на новый кадр нет места/)).toBeDefined();
     fireEvent.click(clipButtons()[0] ?? document.body);
     const handle = within(timeline()).getByRole("slider", { name: "Длительность кадра 1: правый край" });
     expect(handle.getAttribute("aria-valuemax")).toBe("15000");
@@ -312,7 +312,7 @@ describe("selecting and acting on a clip", () => {
     expect(timeline().querySelector(".ed-clip-lifted") === null).toBe(true);
   });
 
-  test("the right handle trims by 0.1 s per arrow (⇧: 1 s), never under 0.5 s; a held key is one undo step", async () => {
+  test("the right handle trims by 0.1 s per arrow (⇧: 1 s), never under 0.1 s; a held key is one undo step", async () => {
     const { client, engine } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
@@ -325,9 +325,9 @@ describe("selecting and acting on a clip", () => {
     expect(plain(clipButtons()[0]?.getAttribute("aria-label"))).toBe("Кадр 1: 1 фото, 9.1 с");
     fireEvent.keyDown(handle, { key: "Home" });
     fireEvent.keyUp(handle, { key: "Home" });
-    expect(handle.getAttribute("aria-valuenow")).toBe("500");
+    expect(handle.getAttribute("aria-valuenow")).toBe("100");
     const saved = await nextSave(engine, 0);
-    expect(saved.clips[0]?.durationMs).toBe(500);
+    expect(saved.clips[0]?.durationMs).toBe(100);
     fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
     expect(plain(clipButtons()[0]?.getAttribute("aria-label"))).toBe("Кадр 1: 1 фото, 9.1 с");
   });

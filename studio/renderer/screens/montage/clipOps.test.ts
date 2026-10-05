@@ -30,7 +30,7 @@ import {
 import { collageClip, draftSpec, photoClip, photoClips, stickerLayer, textLayer, videoClip } from "./testkit";
 
 // 3d.3a: the clip track's edits, pure over a draft. Every result must still be a draft the contract takes
-// (`MontageDraft`), never pass 15 s, never hold a clip under 0.5 s, and never repeat a scene photo.
+// (`MontageDraft`), never pass 15 s, never hold a clip under 0.1 s, and never repeat a scene photo.
 
 const FACE = { x: 0.5, y: 0.35 } as const;
 
@@ -80,7 +80,7 @@ describe("ids", () => {
   });
 });
 
-describe("adding a photo clip (AM7: min(2.0 s, room), refused below 0.5 s of room)", () => {
+describe("adding a photo clip (AM7: min(2.0 s, room), refused when no room is left)", () => {
   test("into an empty draft: a 2.0 s Ken Burns photo clip with the given focus", () => {
     const spec = ok(appendPhotoClip(draftSpec([]), "photo-mia-0009", FACE));
     expect(spec.clips).toEqual([
@@ -114,15 +114,19 @@ describe("adding a photo clip (AM7: min(2.0 s, room), refused below 0.5 s of roo
     expect(appendPhotoClip(twenty, "photo-mia-0098")).toEqual({ ok: false, reason: "clip-cap" });
   });
 
-  test("the room: 13.0 s takes 2.0 s, 13.1 s takes 1.9 s, 14.5 s takes 0.5 s", () => {
+  test("the room: 13.0 s takes 2.0 s, 13.1 s takes 1.9 s, 14.5 s takes 0.5 s, 14.9 s takes the last 0.1 s", () => {
     const at = (ms: number): MontageDraft => draftSpec([photoClip(0, "photo-mia-0001", ms)]);
     expect(ok(appendPhotoClip(at(13_000), "photo-mia-0009")).clips[1]?.durationMs).toBe(2_000);
     expect(ok(appendPhotoClip(at(13_100), "photo-mia-0009")).clips[1]?.durationMs).toBe(1_900);
     expect(ok(appendPhotoClip(at(14_500), "photo-mia-0009")).clips[1]?.durationMs).toBe(500);
+    const last = ok(appendPhotoClip(at(14_900), "photo-mia-0009"));
+    expect(last.clips[1]?.durationMs).toBe(100);
+    expect(totalMs(last)).toBe(15_000);
+    expect(addRefusal(at(14_900))).toBeNull();
   });
 
-  test("refused with under 0.5 s of room: 14.6 s, exactly 15 s, and a draft already past 15 s", () => {
-    for (const ms of [14_600, 15_000, 15_100]) {
+  test("refused with no room left: exactly 15 s, and a draft already past 15 s", () => {
+    for (const ms of [15_000, 15_100]) {
       const spec = draftSpec([photoClip(0, "photo-mia-0001", ms)]);
       expect(addRefusal(spec)).toBe("no-room");
       expect(appendPhotoClip(spec, "photo-mia-0009")).toEqual({ ok: false, reason: "no-room" });
@@ -163,7 +167,7 @@ describe("removing and moving clips", () => {
   });
 });
 
-describe("trimming a clip (100 ms steps, at least 0.5 s, the total at most 15 s)", () => {
+describe("trimming a clip (100 ms steps, at least 0.1 s, the total at most 15 s)", () => {
   test("snaps to the nearest 100 ms", () => {
     const spec = draftSpec(2);
     expect(clampDuration(spec, 0, 2_449)).toBe(2_400);
@@ -171,10 +175,18 @@ describe("trimming a clip (100 ms steps, at least 0.5 s, the total at most 15 s)
     expect(clampDuration(spec, 0, 3_000)).toBe(3_000);
   });
 
-  test("never under 0.5 s: 499 and 450 become 500, 449 too, 0 and a negative too", () => {
+  test("never under 0.1 s: 99 and 90 become 100, 49 and 0 too, a negative too", () => {
     const spec = draftSpec(2);
-    for (const wanted of [500, 499, 450, 449, 0, -800]) expect(clampDuration(spec, 0, wanted)).toBe(500);
-    expect(clampDuration(spec, 0, 600)).toBe(600);
+    for (const wanted of [100, 99, 90, 50, 49, 0, -800]) expect(clampDuration(spec, 0, wanted)).toBe(100);
+    expect(clampDuration(spec, 0, 200)).toBe(200);
+  });
+
+  test("a clip may be trimmed down to exactly 100 ms: setDuration keeps it, a draft the contract takes", () => {
+    const spec = draftSpec(2);
+    const trimmed = setDuration(spec, 0, 100);
+    expect(trimmed.clips[0]?.durationMs).toBe(100);
+    expect(MontageDraft.safeParse(trimmed).success).toBe(true);
+    expect(setDuration(trimmed, 0, 0)).toBe(trimmed);
   });
 
   test("never past 15 s: a clip grows by the room at most, exactly to 15.0 s and not to 15.1 s", () => {
@@ -262,11 +274,20 @@ describe("splitting at the playhead (CF4: own video clips only; photo and collag
     expect(totalMs(split)).toBe(totalMs(spec));
   });
 
-  test("each part keeps at least 0.5 s: 0.5 s from either end splits, 0.4 s does not", () => {
+  test("each part keeps at least 0.1 s: one step from either end splits", () => {
     expect(durations(ok(splitClipAt(spec, 1, 1_500)))).toEqual([1_000, 500, 1_500]);
     expect(durations(ok(splitClipAt(spec, 1, 2_500)))).toEqual([1_000, 1_500, 500]);
-    expect(splitClipAt(spec, 1, 1_400)).toEqual({ ok: false, reason: "too-short" });
-    expect(splitClipAt(spec, 1, 2_600)).toEqual({ ok: false, reason: "too-short" });
+    expect(durations(ok(splitClipAt(spec, 1, 1_100)))).toEqual([1_000, 100, 1_900]);
+    expect(durations(ok(splitClipAt(spec, 1, 2_900)))).toEqual([1_000, 1_900, 100]);
+  });
+
+  test("a point less than one step from an edge snaps onto the edge, so it is no split (no part under 0.1 s can be made)", () => {
+    for (const at of [1_040, 2_960]) expect(splitClipAt(spec, 1, at)).toEqual({ ok: false, reason: "not-splittable" });
+  });
+
+  test("a 100 ms video clip cannot be split: both halves would be under a step", () => {
+    const tiny = draftSpec([videoClip(0, 100, 300)]);
+    for (const at of [0, 50, 100]) expect(splitClipAt(tiny, 0, at)).toEqual({ ok: false, reason: "not-splittable" });
   });
 
   test("a point on the clip's edges or outside it is not a split", () => {
@@ -321,12 +342,14 @@ describe("duplicating a clip (CF4: a photo or collage copy keeps its shape, not 
     expect(video.clips[1]).toMatchObject({ kind: "video", mediaId: "media-own-0001", trimStartMs: 700, durationMs: 2_000 });
   });
 
-  test("the copy is cut to the room, and refused under 0.5 s of room or at 20 clips", () => {
+  test("the copy is cut to the room, down to 0.1 s, and refused with no room or at 20 clips", () => {
     const tight = draftSpec([photoClip(0, "photo-mia-0001", 3_000), photoClip(1, "photo-mia-0002", 10_000)]);
     expect(ok(duplicateClip(tight, 0)).clips[1]?.durationMs).toBe(2_000);
     const edge = draftSpec([photoClip(0, "photo-mia-0001", 3_000), photoClip(1, "photo-mia-0002", 11_500)]);
     expect(ok(duplicateClip(edge, 0)).clips[1]?.durationMs).toBe(500);
-    const none = draftSpec([photoClip(0, "photo-mia-0001", 3_000), photoClip(1, "photo-mia-0002", 11_600)]);
+    const last = draftSpec([photoClip(0, "photo-mia-0001", 3_000), photoClip(1, "photo-mia-0002", 11_900)]);
+    expect(ok(duplicateClip(last, 0)).clips[1]?.durationMs).toBe(100);
+    const none = draftSpec([photoClip(0, "photo-mia-0001", 3_000), photoClip(1, "photo-mia-0002", 12_000)]);
     expect(duplicateClip(none, 0)).toEqual({ ok: false, reason: "no-room" });
     expect(duplicateClip(draftSpec(photoClips(20, 500)), 0)).toEqual({ ok: false, reason: "clip-cap" });
   });
