@@ -199,6 +199,40 @@ describe("videos.list, what can go wrong around it", () => {
     );
   });
 
+  test("the whole listing has ONE budget: once it is spent the remaining records read `unchecked` without a look at the disk (stage 3 review 4-M4)", async () => {
+    const w = world();
+    const checker = new FileStateChecker();
+    let looked = 0;
+    const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, {
+      check: (): Promise<FileState> => (looked++, new Promise<FileState>(() => undefined)),
+    });
+    const r = serviceRig(w, { deps: { checker: stuck, recordCheckTimeoutMs: 60, listBudgetMs: 150 } });
+    for (let i = 1; i <= 10; i++) {
+      const n = String(i).padStart(2, "0");
+      await committed(w, { videoId: `video-000000${n}`, jobId: `job-000000${n}`, relPath: `Mia/2026-09-29_photo_0${n}.mp4` });
+    }
+
+    const started = performance.now();
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos).toHaveLength(10);
+    expect(videos.every((v) => v.fileState === "unchecked")).toBe(true);
+    // 10 records at 60 ms each would be 600 ms; the budget cuts the listing at about 150 ms.
+    expect(performance.now() - started).toBeLessThan(450);
+    expect(looked).toBeLessThan(10);
+  });
+
+  test("a listing inside its budget is unchanged: every record is checked", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { listBudgetMs: 60_000 } });
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+    await committed(w, { videoId: "video-0000000b", jobId: "job-0000000b", relPath: "Mia/2026-09-29_photo_002.mp4" });
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.fileState)).toEqual(["present", "present"]);
+  });
+
   test("a stale used index is read again on demand before the list is answered", async () => {
     const w = world();
     let reloads = 0;

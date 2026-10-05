@@ -38,7 +38,7 @@ import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./lis
 import type { CommitTracker, LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
-import { DELETE_TIMEOUT_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
+import { DELETE_TIMEOUT_MS, LIST_BUDGET_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
 
 // The command layer of the video pipeline (Stage 3 plan, 3a.8b.2): `videos.render`, `videos.cancel`, `videos.list` and
 // `videos.delete`, the render queue's events as the contract's `job.*` and `video.changed`, and what happens around a
@@ -130,6 +130,8 @@ export interface VideoServiceDeps {
   readonly deleteTimeoutMs?: number;
   /** How long one record's file check may take in a listing; `RECORD_CHECK_TIMEOUT_MS` when absent. */
   readonly recordCheckTimeoutMs?: number;
+  /** The one budget of a whole `videos.list`, from its entry; `LIST_BUDGET_MS` when absent. */
+  readonly listBudgetMs?: number;
 }
 
 /** Waits before the background retries of a stale used index; the last one repeats until the records are read. */
@@ -629,6 +631,7 @@ export class VideoService {
   // ---------- videos.list ----------
 
   async list(avatarId: string): Promise<VideoSummary[]> {
+    const enteredAt = performance.now();
     const library = this.#deps.openLibrary();
     if (library?.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
     await this.#readIndexAgain(library, avatarId);
@@ -648,14 +651,24 @@ export class VideoService {
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
     const drafts = new Map<string, boolean>();
+    const listBudgetMs = this.#deps.listBudgetMs ?? LIST_BUDGET_MS;
+    let spentLogged = false;
     for (const record of read.records.slice(0, MAX_LISTED_VIDEOS)) {
       let state: FileState;
-      try {
-        state = await within(checkMs, () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
-      } catch (error) {
-        // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
-        this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
+      // The listing's own budget, from its entry: a record looked at after it is spent is `unchecked` without a call to the disk, and one in flight is cut at what is left.
+      const remainingMs = listBudgetMs - (performance.now() - enteredAt);
+      if (remainingMs <= 0) {
+        if (!spentLogged) this.#deps.log(`videos.list: the listing's budget of ${listBudgetMs} ms is spent; the remaining files of avatar ${avatarId} are left unchecked`);
+        spentLogged = true;
         state = "unchecked";
+      } else {
+        try {
+          state = await within(Math.min(checkMs, remainingMs), () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
+        } catch (error) {
+          // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
+          this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
+          state = "unchecked";
+        }
       }
       summaries.push(videoSummaryOf(await this.#withLiveDraft(library, record, drafts), state));
     }
