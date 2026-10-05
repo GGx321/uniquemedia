@@ -659,7 +659,13 @@ export class VideoService {
     if (read.skipped > 0) this.#deps.log(`videos.list: ${read.skipped} record file(s) of avatar ${avatarId} could not be used and are left out`);
     if (read.truncated) this.#deps.log(`videos.list: avatar ${avatarId} has more record files than one listing reads; the newest are listed`);
     // One fresh look at the export root, one hash budget for the whole listing.
-    const root = await this.#freshRoot();
+    // The look at the export root is inside the listing's budget too: a root that does not answer is "cannot judge" (null), and every record reads `unchecked`.
+    let root: ExportRootRef | null = null;
+    try {
+      root = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#freshRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
+    } catch (error) {
+      this.#deps.log(`videos.list: the export folder could not be looked at in time (${kindOf(error)}); the files are left unchecked`);
+    }
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];

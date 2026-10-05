@@ -504,6 +504,8 @@ describe("request deadline", () => {
   test("videos.list: the engine's own listing budget ends well before main's default deadline, so a slow export volume gets «Не проверен» and not NO_ANSWER (stage 3 review 4-M4)", () => {
     expect(COMMAND_DEADLINE_MS["videos.list"]).toBeUndefined();
     expect(LIST_BUDGET_MS + RECORD_CHECK_TIMEOUT_MS).toBeLessThanOrEqual(REQUEST_TIMEOUT_MS);
+    // The look at the export root (its check, then the case probe) is part of the budget: a root that answers within its own bounds leaves room for the records.
+    expect(EXPORT_CHECK_TIMEOUT_MS + CASE_PROBE_TIMEOUT_MS).toBeLessThan(LIST_BUDGET_MS);
   });
 
   test("the estimates wait for a price load that times out, so the fallback estimate is not lost to main's deadline", () => {

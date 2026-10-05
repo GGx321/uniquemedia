@@ -257,6 +257,18 @@ describe("videos.list, what can go wrong around it", () => {
     expect(looked).toBe(0);
   });
 
+  test("an export check that never answers is cut by the listing's budget: the records come back `unchecked`, not main's NO_ANSWER (review round 2, L7)", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: () => new Promise<never>(() => undefined), listBudgetMs: 80 } });
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+
+    const started = performance.now();
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.fileState)).toEqual(["unchecked"]);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
   test("a listing inside its budget is unchanged: every record is checked", async () => {
     const w = world();
     const r = serviceRig(w, { deps: { listBudgetMs: 60_000 } });
