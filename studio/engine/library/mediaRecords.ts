@@ -99,6 +99,9 @@ const Waveform = z.array(z.number().int().min(0).max(1000)).min(1).max(MAX_ENVEL
 /** The largest record file `waveformOf` reads: a record is a few KiB of JSON, plus a waveform of up to 20000 values (about 100 KiB). */
 export const MAX_RECORD_FILE_BYTES = 1024 * 1024;
 
+/** The most bytes one `recover()` hashes to pair quarantined copies with their records; past it the rest stay `missing-file` and the next open carries on. */
+export const RECOVER_HASH_BUDGET_BYTES = 8 * 1024 * 1024 * 1024;
+
 /** What `waveformOf` needs of a record on disk: whose it is, what it is, and the waveform. */
 const RecordWaveform = z.looseObject({ id: Id, kind: z.literal("audio"), waveform: Waveform });
 
@@ -192,6 +195,8 @@ export interface MediaRecordsOptions {
   readonly root: string;
   readonly newId: () => string;
   readonly now: () => Date;
+  /** The most bytes one `recover()` hashes; `RECOVER_HASH_BUDGET_BYTES` by default. */
+  readonly hashBudgetBytes?: number;
   /** How the quarantine flushes a folder; its own by default. A test plays a flush that fails. */
   readonly quarantineDurability?: QuarantineDurability;
   /** Where a failure that stops nothing is told (never with a path). */
@@ -206,6 +211,8 @@ export interface MediaRecordsOptions {
     readonly rename?: (from: string, to: string) => Promise<void>;
     /** A hard link, which fails when the name is taken (how a piece is brought back from the quarantine without ever overwriting); `link` by default. */
     readonly link?: (from: string, to: string) => Promise<void>;
+    /** The sha256 of a file, read under a signal; the real one by default. A test plays a slow or stopped read. */
+    readonly hash?: (path: string, signal?: AbortSignal) => Promise<string>;
     readonly platform?: string;
     readonly sleep?: (ms: number) => Promise<void>;
     readonly delaysMs?: readonly number[];
@@ -343,17 +350,23 @@ export class MediaRecords {
   }
 
   /** Whether a quarantined copy of a record's FILE is that file: the size the record names, and the hash it names (a same-size copy a sync zero-filled is not it). */
-  async #fitsFile(from: string, bytes: number, sha256: string): Promise<boolean> {
+  async #fitsFile(from: string, bytes: number, sha256: string, budget: { left: number }, signal: AbortSignal | undefined): Promise<boolean> {
     if ((await lstat(from).then((info) => info.size, () => -1)) !== bytes) return false;
-    return (await hashFile(from).catch(() => null)) === sha256;
+    // A copy is hashed only while the budget lasts and the recover is not stopped: a slow disk must not hold every open (and every listing behind it) for minutes.
+    if (signal?.aborted === true || bytes > budget.left) return false;
+    budget.left -= bytes;
+    return (await (this.#options.fs?.hash ?? hashFile)(from, signal).catch(() => null)) === sha256;
   }
 
   /**
-   * Whether a quarantined copy of a RECORD can be brought back to `recordName`: it reads as a record of this version, is trusted under that name, and the file in `media/` that
-   * it names is the size it says (a truncated or altered copy is not the record of the file that is there).
+   * Whether a quarantined copy of a RECORD can be brought back to `recordName`: it is no larger than a record may be, reads as a record of this version, is trusted under that
+   * name, and the file in `media/` that it names is the size it says (a truncated or altered copy is not the record of the file that is there). Only the SIZE of that file is
+   * checked here: its sha256 is checked by every reader (`integrityOf`) when the file is read, and hashing up to 2 GiB for each record would be the cost the hashing budget bounds.
    */
   async #fitsRecord(from: string, recordName: string): Promise<boolean> {
     try {
+      const info = await lstat(from);
+      if (!info.isFile() || info.size > MAX_RECORD_FILE_BYTES) return false;
       const parsed = RecordShape.safeParse(JSON.parse(await readFile(from, "utf8")));
       if (!parsed.success || !this.#trusted(parsed.data, recordName)) return false;
       const size = await lstat(join(this.#dir, parsed.data.file)).then((info) => (info.isFile() ? info.size : -1), () => -1);
@@ -450,7 +463,9 @@ export class MediaRecords {
    * from the quarantine when its other half is in `media/`, and lists the sound records. A record whose file is gone stays and is a `missing-file` problem. Additive: records already committed by this instance stay. A record that cannot be read, was
    * written by a newer Studio, or whose file is not the size it names is neither listed nor removed. Never throws for a file.
    */
-  async recover(): Promise<MediaRecoveryReport> {
+  async recover(options: { readonly signal?: AbortSignal } = {}): Promise<MediaRecoveryReport> {
+    const signal = options.signal;
+    const budget = { left: this.#options.hashBudgetBytes ?? RECOVER_HASH_BUDGET_BYTES };
     const empty: MediaRecoveryReport = { listed: 0, quarantinedOrphans: 0, restored: 0, problems: [], unusable: false };
     const state = await this.#dirState();
     if (state === "absent") return empty;
@@ -481,6 +496,7 @@ export class MediaRecords {
     // right size with the wrong content, and a record that cannot be trusted are each skipped, and the next copy is tried.
     const bringBack = async (name: string, fits: (from: string) => Promise<boolean>): Promise<boolean> => {
       for (const from of (held ??= await this.#quarantinedMedia()).get(name) ?? []) {
+        if (signal?.aborted === true) return false;
         if (!(await fits(from))) continue;
         if (!(await this.#restore(from, name))) return false;
         held.set(name, (held.get(name) ?? []).filter((path) => path !== from));
@@ -500,17 +516,19 @@ export class MediaRecords {
     }
     // In the order of their names, so that what a restart lists never depends on the disk's own listing order.
     for (const entry of [...entries].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))) {
+      if (signal?.aborted === true) break;
       const match = RECORD_NAME.exec(entry.name);
       if (match === null || !entry.isFile()) continue;
       const judged = await this.#judge(entry.name);
       if (judged.kind === "problem") problems.push({ file: entry.name, reason: judged.reason });
       else if (judged.kind === "dangling") {
         // Told, not moved: its file may be on its way. A file the quarantine holds under its name (an older open set it aside) is brought back to it.
-        if (await bringBack(judged.file, (from) => this.#fitsFile(from, judged.bytes, judged.sha256))) await enterJudged(entry.name);
+        if (await bringBack(judged.file, (from) => this.#fitsFile(from, judged.bytes, judged.sha256, budget, signal))) await enterJudged(entry.name);
         else problems.push({ file: entry.name, reason: "missing-file" });
       } else if (!this.#inFlight.has(judged.record.id)) this.#enter(judged.record);
     }
     for (const entry of entries) {
+      if (signal?.aborted === true) break;
       if (!entry.isFile() || !ORPHAN_NAME.test(entry.name)) continue;
       const id = entry.name.slice(0, entry.name.lastIndexOf("."));
       // Judged AFTER the listing: a commit that ended since has its record in the index now, and its file is no orphan.
@@ -815,13 +833,16 @@ function compareStamps(a: string, b: string): number {
   };
   const left = split(a);
   const right = split(b);
-  if (left === null || right === null) return a < b ? -1 : a > b ? 1 : 0;
+  // Total: every real stamp is after every name that is not one, and the names that are not stamps are ordered among themselves as text.
+  if (left === null && right === null) return a < b ? -1 : a > b ? 1 : 0;
+  if (left === null) return -1;
+  if (right === null) return 1;
   if (left.base !== right.base) return left.base < right.base ? -1 : 1;
   return left.n - right.n;
 }
 
-async function hashFile(path: string): Promise<string> {
+async function hashFile(path: string, signal?: AbortSignal): Promise<string> {
   const hash = createHash("sha256");
-  for await (const chunk of createReadStream(path)) hash.update(chunk as Buffer);
+  for await (const chunk of createReadStream(path, signal === undefined ? {} : { signal })) hash.update(chunk as Buffer);
   return hash.digest("hex");
 }

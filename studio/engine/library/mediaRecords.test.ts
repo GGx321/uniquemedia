@@ -1127,3 +1127,92 @@ describe("bringing a piece back from the quarantine is judged, confined and neve
     expect(lines[0]).not.toContain("media-0000");
   });
 });
+
+describe("the restore is bounded: it can be stopped, it has a hashing budget, and it reads no unbounded record (review round 5)", () => {
+  async function recordWithoutFile(name = "summer.jpg"): Promise<{ id: string; file: string }> {
+    const summary = await records().commit(await photoInput({ name }));
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), `away-${summary.mediaId}.jpg`));
+    return { id: summary.mediaId, file: `${summary.mediaId}.jpg` };
+  }
+  async function stamp(name: string, files: Record<string, string>): Promise<string> {
+    const folder = join(root(), "quarantine", name, "media");
+    await mkdir(folder, { recursive: true });
+    for (const [file, text] of Object.entries(files)) await writeFile(join(folder, file), text);
+    return folder;
+  }
+
+  test("a recover that is already stopped brings nothing back and reads no file", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    const controller = new AbortController();
+    controller.abort();
+    let hashed = 0;
+    const reopened = records({ fs: { hash: async () => (hashed++, "x") } });
+    const report = await reopened.recover({ signal: controller.signal });
+    expect(report.restored).toBe(0);
+    expect(hashed).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${piece.id}.json`]);
+  });
+
+  test("a stop that comes while a copy is being hashed reaches the read, ends the recover, and leaves the copy in the quarantine", async () => {
+    const piece = await recordWithoutFile();
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    const controller = new AbortController();
+    let seen: AbortSignal | undefined;
+    const reopened = records({
+      fs: {
+        hash: (_path, signal) => {
+          seen = signal;
+          return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+        },
+      },
+    });
+    const running = reopened.recover({ signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    controller.abort();
+    const report = await running;
+    expect(seen).toBe(controller.signal);
+    expect(report.restored).toBe(0);
+    expect(await readdir(folder)).toEqual([piece.file]);
+  });
+
+  test("past the hashing budget the remaining records stay missing-file, and the next open carries on", async () => {
+    const first = await recordWithoutFile("one.jpg");
+    const second = await recordWithoutFile("two.jpg");
+    await stamp("2026-10-04T10-00-00-000Z", { [first.file]: "photo bytes", [second.file]: "photo bytes" });
+    // Each copy is 11 bytes: a budget of 20 hashes one.
+    const reopened = records({ hashBudgetBytes: 20 });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(report.problems).toHaveLength(1);
+    expect(report.problems[0]?.reason).toBe("missing-file");
+    const later = records({ hashBudgetBytes: 20 });
+    const again = await later.recover();
+    expect(again.restored).toBe(1);
+    expect(later.list().total).toBe(2);
+  });
+
+  test("a quarantined record copy over the record size limit is skipped unread, and an older good copy is brought back", async () => {
+    const summary = await records().commit(await photoInput());
+    const good = await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8");
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "gone.json"));
+    await stamp("2026-10-04T10-00-00-000Z", { [`${summary.mediaId}.json`]: good });
+    await stamp("2026-10-04T11-00-00-000Z", { [`${summary.mediaId}.json`]: good.replace(/"name": ?"[^"]+"/, '"name": "huge.jpg"') + " ".repeat(2 * 1024 * 1024) });
+    const reopened = records();
+    await reopened.recover();
+    expect(reopened.get(summary.mediaId)?.name).toBe("summer.jpg");
+  });
+
+  test("stamp names that are not stamps are tried after every real one, whatever their text: the order is total", async () => {
+    const summary = await records().commit(await photoInput());
+    const good = await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8");
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "gone.json"));
+    const named = (name: string): string => good.replace(/"name": ?"[^"]+"/, `"name": "${name}.jpg"`);
+    await stamp("zzz", { [`${summary.mediaId}.json`]: named("zzz") });
+    await stamp("2026-10-04T10-00-00-000Z-5x", { [`${summary.mediaId}.json`]: named("five-x") });
+    await stamp("2026-10-04T10-00-00-000Z", { [`${summary.mediaId}.json`]: named("real") });
+    const reopened = records();
+    await reopened.recover();
+    expect(reopened.get(summary.mediaId)?.name).toBe("real.jpg");
+  });
+});

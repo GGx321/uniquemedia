@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { appendFileSync } from "node:fs";
-import { lstat, mkdir, open, readdir, readFile, rm, unlink as fsUnlink, writeFile, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, readFile, rename, rm, unlink as fsUnlink, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { JobProgress, JobResult, JobState, MediaSummary, type EngineError, type PickedFileIdentity, type UnsequencedEvent } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -1216,6 +1216,64 @@ describe("the owner's file is let go after the copy (L2 of the Stage 3 review)",
     gate.resolve();
     await r.service.settled();
     expect(counting.open()).toBe(0);
+  });
+});
+
+describe("a library's recovery can be stopped (review round 5)", () => {
+  /** A library with a record whose file is only in the quarantine, so that opening it hashes a copy. */
+  async function libraryNeedingAHash(): Promise<void> {
+    const { MediaRecords } = await import("../library/mediaRecords");
+    const store = new MediaRecords({ root: libraryRoot(), newId: () => "media-00000001", now: () => new Date("2026-10-04T10:00:00.000Z"), warn: () => undefined });
+    await mkdir(stagingDir(), { recursive: true });
+    const stagedPath = join(stagingDir(), "staged-00000001.media");
+    await writeFile(stagedPath, jpeg(300));
+    await store.commit({ sourcePath: stagedPath, kind: "photo", format: "jpeg", name: "a.jpg", facts: PHOTO_FACTS });
+    const folder = join(libraryRoot(), "quarantine", "2026-10-04T10-00-00-000Z", "media");
+    await mkdir(folder, { recursive: true });
+    await rename(join(mediaDir(), "media-00000001.jpg"), join(folder, "media-00000001.jpg"));
+  }
+
+  test("stopping the service stops the hashing a library's recovery is in, and the recovery ends", async () => {
+    await libraryNeedingAHash();
+    let seen: AbortSignal | undefined;
+    const r = rig({
+      stopWaitMs: 2000,
+      records: {
+        fs: {
+          hash: (_path, signal) => {
+            seen = signal;
+            return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+          },
+        },
+      },
+    });
+    r.service.libraryOpened({ root: libraryRoot() });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(seen).toBeDefined();
+    await r.service.stop();
+    expect(seen?.aborted).toBe(true);
+    await r.service.settled();
+  });
+
+  test("a library that is opened again replaces the recovery of the old one, and the old one is stopped", async () => {
+    await libraryNeedingAHash();
+    const seen: AbortSignal[] = [];
+    const r = rig({
+      records: {
+        fs: {
+          hash: (_path, signal) => {
+            if (signal !== undefined) seen.push(signal);
+            return new Promise<string>((_resolve, reject) => signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+          },
+        },
+      },
+    });
+    r.service.libraryOpened({ root: libraryRoot() });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    r.service.libraryOpened({ root: libraryRoot() });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(seen[0]?.aborted).toBe(true);
+    await r.service.stop();
   });
 });
 
