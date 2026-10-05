@@ -15,7 +15,7 @@ import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
 import { formatUsd } from "./lib/money";
-import { EngineNotices } from "./ui/EngineNotices";
+import { dismissalKey, EngineNotices } from "./ui/EngineNotices";
 import { RenderNotices } from "./ui/RenderNotices";
 import { Icon } from "./ui/Icon";
 import { ScreenTitle } from "./ui/ScreenTitle";
@@ -138,10 +138,14 @@ function screenKey(route: Route): string {
   }
 }
 
-/** Engine-wide notices belong above every screen, not one of them: useEngineView needs the provider, which App sits outside of. */
+/**
+ * Engine-wide notices belong above every screen, not one of them: useEngineView needs the provider, which App sits outside of. The ones the
+ * owner closed are kept here, by the window, for as long as it runs (slice review 5, L1).
+ */
 function EngineNoticesBar() {
   const view = useEngineView();
-  return <EngineNotices notices={view.notices} />;
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  return <EngineNotices notices={view.notices} dismissed={dismissed} onDismiss={(notice) => setDismissed((now) => new Set(now).add(dismissalKey(notice)))} />;
 }
 
 const TASK_FORMS = ["задача", "задачи", "задач"] as const;

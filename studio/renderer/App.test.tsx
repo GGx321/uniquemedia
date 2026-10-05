@@ -76,6 +76,26 @@ test("an engine notice shows on whatever screen is open, deduped by code, with r
   expect(screen.getAllByText("Движок перезапускался")).toHaveLength(1);
 });
 
+// Slice review 5, L1: the contract has no command to dismiss an engine notice, so it stayed for the whole session. «Понятно» closes it in this
+// window, on every screen; the same notice again (a repeat: its count moves) is news and shows again.
+test("an engine notice closes with «Понятно» for the window, and comes back only when it happens again", async () => {
+  const { engine } = setup({ preset: "demo" });
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+  inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+  const notice = (await screen.findByText("Движок перезапускался")).closest(".notice") as HTMLElement;
+  fireEvent.click(within(notice).getByRole("button", { name: "Понятно" }));
+  await flush();
+  expect(screen.queryByText("Движок перезапускался") === null).toBe(true);
+
+  fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
+  await screen.findByRole("heading", { level: 1, name: "Настройки" });
+  expect(screen.queryByText("Движок перезапускался") === null).toBe(true);
+
+  inAct(() => engine.emitNotice({ noticeId: "notice-0002", code: "engine-restarted", at: "2026-09-24T10:05:00.000Z", count: 2 }));
+  await screen.findByText(/Повторилось 2 раза за эту сессию/);
+  expect(screen.getByText("Движок перезапускался")).toBeDefined();
+});
+
 test("an engine-restarted notice with open reserves does not repeat AccountBanner's reconcile call to action", async () => {
   const { engine } = setup({ preset: "demo" });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
