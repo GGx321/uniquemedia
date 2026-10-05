@@ -96,7 +96,14 @@ export function useNoticeDock(): (node: HTMLElement | null) => void {
 export function useNoticeRole(key: string | undefined, role: "alert" | "status"): "alert" | "status" {
   const dock = useContext(DockContext);
   const docked = useContext(DockedContext);
-  const [again] = useState(() => docked && key !== undefined && dock !== null && dock.seen.has(key));
+  const seenBefore = (k: string | undefined): boolean => docked && k !== undefined && dock !== null && dock.seen.has(k);
+  // Decided per key (review r2 LOW-1): a key that changes in place (the notice happened again) is judged anew, before it is marked seen.
+  const [judged, setJudged] = useState(() => ({ key, again: seenBefore(key) }));
+  let again = judged.again;
+  if (judged.key !== key) {
+    again = seenBefore(key);
+    setJudged({ key, again });
+  }
   useLayoutEffect(() => {
     if (docked && key !== undefined) dock?.seen.add(key);
   }, [dock, docked, key]);
