@@ -576,6 +576,8 @@ const EXPECTED_FUSES: Record<string, "Enabled" | "Disabled"> = {
   OnlyLoadAppFromAsar: "Enabled",
   EnableEmbeddedAsarIntegrityValidation: "Enabled",
   EnableCookieEncryption: "Enabled",
+  // The page is served from `studio-app://renderer` (studio/main/appProtocol.ts): no `file:` page gets more than a browser's.
+  GrantFileProtocolExtraPrivileges: "Disabled",
 };
 
 function checkPackage(target: Target): void {
@@ -621,7 +623,7 @@ function checkPackage(target: Target): void {
   check("app.asar contains resvg's wasm, the bundled fonts and their licences", textAssetProblems.length === 0, textAssetProblems);
   const fuses = spawnSync("bunx", ["@electron/fuses", "read", "--app", target.app], { encoding: "utf8" }).stdout;
   const wrong = Object.entries(EXPECTED_FUSES).filter(([fuse, state]) => !new RegExp(`${fuse} is ${state}`).test(fuses));
-  check("the Electron fuses are set (runAsNode, NODE_OPTIONS, --inspect off; asar-only with integrity; cookie encryption)", wrong.length === 0, { wrong, fuses });
+  check("the Electron fuses are set (runAsNode, NODE_OPTIONS, --inspect off; asar-only with integrity; cookie encryption; no extra file: privileges)", wrong.length === 0, { wrong, fuses });
 }
 
 /**
