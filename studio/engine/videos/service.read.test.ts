@@ -222,6 +222,41 @@ describe("videos.list, what can go wrong around it", () => {
     expect(looked).toBeLessThan(10);
   });
 
+  test("a read of the records that never returns fails the list within the budget with the engine's own INTERNAL, not main's NO_ANSWER (review round 1, L7)", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { readRecordFiles: () => new Promise(() => undefined), listBudgetMs: 80 } });
+
+    const started = performance.now();
+    const error = await failureOf(r.service.list(w.avatar.id));
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail).toContain("ETIMEDOUT");
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("once the budget is spent no draft is looked at any more: the record keeps the draft id as written", async () => {
+    const w = world();
+    let looked = 0;
+    const checker = new FileStateChecker();
+    const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, { check: (): Promise<FileState> => new Promise<FileState>(() => undefined) });
+    const drafts = {
+      find: async () => null,
+      exists: async () => (looked++, true),
+      wasRemoved: () => false,
+      exclusive: async <T>(_id: string, work: () => Promise<T>) => work(),
+    };
+    const r = serviceRig(w, { deps: { checker: stuck, recordCheckTimeoutMs: 60, listBudgetMs: 60, drafts } });
+    const record = sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, { ...record, montageId: "montage-00000001" });
+    await commitIntent(NODE_COMMIT_FS, w.libraryRoot, w.avatar.id, record.id);
+    await w.library.reloadVideoRecords(w.avatar.id);
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.montageId)).toEqual(["montage-00000001"]);
+    expect(looked).toBe(0);
+  });
+
   test("a listing inside its budget is unchanged: every record is checked", async () => {
     const w = world();
     const r = serviceRig(w, { deps: { listBudgetMs: 60_000 } });

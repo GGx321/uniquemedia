@@ -132,6 +132,8 @@ export interface VideoServiceDeps {
   readonly recordCheckTimeoutMs?: number;
   /** The one budget of a whole `videos.list`, from its entry; `LIST_BUDGET_MS` when absent. */
   readonly listBudgetMs?: number;
+  /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
+  readonly readRecordFiles?: typeof readVideoRecordFiles;
 }
 
 /** Waits before the background retries of a stale used index; the last one repeats until the records are read. */
@@ -632,12 +634,18 @@ export class VideoService {
 
   async list(avatarId: string): Promise<VideoSummary[]> {
     const enteredAt = performance.now();
+    const listBudgetMs = this.#deps.listBudgetMs ?? LIST_BUDGET_MS;
     const library = this.#deps.openLibrary();
     if (library?.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
     await this.#readIndexAgain(library, avatarId);
     let read;
     try {
-      read = await readVideoRecordFiles(library.root, avatarId);
+      // The library's disk is under the same budget: a read that never returns ends the list with the engine's own error, not main's NO_ANSWER.
+      read = await within(
+        listBudgetMs - (performance.now() - enteredAt),
+        () => (this.#deps.readRecordFiles ?? readVideoRecordFiles)(library.root, avatarId),
+        () => Object.assign(new Error("the records read did not answer"), { code: "ETIMEDOUT" }),
+      );
     } catch (error) {
       // A raw fs error names the library's absolute path, which `maskHome` cannot know for `/Volumes` or `/var`: only the code is told.
       this.#deps.log(`videos.list: the records of avatar ${avatarId} could not be read (${kindOf(error)})`);
@@ -651,7 +659,6 @@ export class VideoService {
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
     const drafts = new Map<string, boolean>();
-    const listBudgetMs = this.#deps.listBudgetMs ?? LIST_BUDGET_MS;
     let spentLogged = false;
     for (const record of read.records.slice(0, MAX_LISTED_VIDEOS)) {
       let state: FileState;
@@ -670,7 +677,9 @@ export class VideoService {
           state = "unchecked";
         }
       }
-      summaries.push(videoSummaryOf(await this.#withLiveDraft(library, record, drafts), state));
+      // The draft lookups are disk calls too: once the budget is spent the record keeps the draft id as written (the same answer as a lookup that failed).
+      const spent = performance.now() - enteredAt >= listBudgetMs;
+      summaries.push(videoSummaryOf(spent ? record : await this.#withLiveDraft(library, record, drafts), state));
     }
     return summaries;
   }
