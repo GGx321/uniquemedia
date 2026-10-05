@@ -1651,7 +1651,27 @@ function usageUnknownScenario(name: string, usage: NonNullable<RigOptions["usage
   };
 }
 
+/** A draft of only own files, for an avatar whose photo usage cannot be trusted: it names no scene photo, so only a newer record refuses its render. */
+function ownOnlyUsageScenario(name: string, usage: NonNullable<RigOptions["usage"]>): Scenario {
+  return {
+    name,
+    rig: { ownMedia: true, usage },
+    async run(t, w, control) {
+      const mediaId = await importedPhotoId(t, control);
+      const montageId = montageIdOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [] }));
+      await t.call("montages.save", { montageId, spec: ownPhotoSpec(w.avatarId, mediaId), name: "Свои фото" });
+      t.note("no scene photo is named, so nothing in the draft reads unavailable");
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+    },
+  };
+}
+
 const USAGE_UNKNOWN_SCENARIOS: readonly Scenario[] = [
+  ownOnlyUsageScenario("only own files, a record that cannot be read: the draft is judged clean and its render goes through", "record-unreadable"),
+  ownOnlyUsageScenario("only own files, a record from a newer Studio: the render is LIBRARY_TOO_NEW", "library-too-new"),
   usageUnknownScenario("an avatar with a record that cannot be read: its photos are refused for a pick, a draft and a render (the log needs repair)", "record-unreadable"),
   usageUnknownScenario("an avatar with a record from a newer Studio: a pick and a render are LIBRARY_TOO_NEW, and a draft's photos are unavailable", "library-too-new"),
   usageUnknownScenario("an avatar whose reject marks cannot be read: no photo is eligible, and a pick, a draft and a render refuse them", "rejects-unreadable"),

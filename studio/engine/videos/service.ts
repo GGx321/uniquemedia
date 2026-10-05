@@ -628,6 +628,8 @@ export class VideoService {
       if (error instanceof LibraryError) {
         if (error.code === "library-too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL });
         if (error.code === "index-stale" || error.code === "log-needs-repair") {
+          // A draft of only own files names no scene photo: there is no cell to refuse (an empty `issues` is not an error the contract has).
+          if (cells.length === 0) return;
           // The library's message names a record file; the code is what the owner's window may be told.
           throw unavailable(cells, usageUntrustedDetail(error.code), error.code);
         }
