@@ -463,13 +463,14 @@ const ENGINE_SPECS = [
   defineCommand("montages.get", z.strictObject({ montageId: Id }), z.strictObject({ montage: Montage, issues: MontageIssues })),
   // Drafts, newest `updatedAt` first, at most MAX_LISTED_MONTAGES; `total` counts every draft that was read and is readable,
   // `skippedTotal` the files that were read and could not be (they are left out, never a failed list). `notListedTotal` (additive:
-  // absent when 0) counts the draft files a listing did not even read because there were more than it reads (1000, the oldest by
-  // modification time are the ones left): they are not known to be bad, so they are never in `skippedTotal`. No `avatarId` = every
-  // avatar. `videoCount` = the videos rendered from the draft. NOT_FOUND for an `avatarId` the library does not have.
+  // absent when 0, never 0) counts the draft files a listing did not even read because there were more than it reads (1000): they
+  // are not known to be bad, so they are never in `skippedTotal`. The reading budget is spent avatar by avatar, in the library's
+  // order: within the avatar that runs it out the newest files by modification time are read, and every LATER avatar loses all its
+  // files, whatever their age. No `avatarId` = every avatar. `videoCount` = the videos rendered from the draft. NOT_FOUND for an `avatarId` the library does not have.
   defineCommand(
     "montages.list",
     z.strictObject({ avatarId: Id.optional() }),
-    z.strictObject({ items: z.array(MontageListItem).max(MAX_LISTED_MONTAGES), total: Count, skippedTotal: Count, notListedTotal: Count.optional() }),
+    z.strictObject({ items: z.array(MontageListItem).max(MAX_LISTED_MONTAGES), total: Count, skippedTotal: Count, notListedTotal: Count.min(1).optional() }),
   ),
   // Replaces a draft's spec and name. `spec.avatarId` must be the stored draft's (VALIDATION otherwise); nothing is checked
   // against the library (a draft may hold a photo that was rejected since), so a save never fails for a photo. NOT_FOUND for a
