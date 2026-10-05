@@ -1112,8 +1112,13 @@ export class MockEngine implements EngineBridge {
   }
 
   /** An unfinished video's pending intent holds these photos of the avatar (the engine's `holdPendingPhotos`): reserved, with no render behind it. */
-  holdPendingVideoPhotos(_avatarId: string, photoIds: readonly string[]): void {
-    for (const photoId of photoIds) this.pendingVideoPhotos.add(photoId);
+  holdPendingVideoPhotos(avatarId: string, photoIds: readonly string[]): void {
+    // The photos stop being free: the avatar's unused count follows and the avatar is announced, as the engine does when its holds change.
+    const before = this.avatars.find((a) => a.avatarId === avatarId)?.eligibleUnusedCount;
+    this.movingUsage(avatarId, photoIds, () => {
+      for (const photoId of photoIds) this.pendingVideoPhotos.add(photoId);
+    });
+    if (before !== this.avatars.find((a) => a.avatarId === avatarId)?.eligibleUnusedCount) this.announceAvatar(avatarId);
   }
 
   /**

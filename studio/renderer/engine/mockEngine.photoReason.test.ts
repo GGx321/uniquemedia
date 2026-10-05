@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { freePhotos, makeMock, MIA, PHOTO_IDS, renderDraft, draftOf, scenePhoto } from "./mockEngine.testkit";
+import { freePhotos, makeMock, MIA, PHOTO_IDS, renderDraft, draftOf, scenePhoto, unwrap } from "./mockEngine.testkit";
 
 // The mock names WHY a photo was refused (`photoReason`) as the engine does: a photo already in a video, a photo a queued or running render holds,
 // and none for a cause the owner cannot act on (a rejected photo) or for photos refused for different causes.
@@ -32,6 +32,28 @@ describe("PHOTO_UNAVAILABLE photoReason", () => {
     const reply = await mock.client.request("montages.create", { avatarId: MIA.avatarId, photoIds: [P1, P2] });
 
     expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "pending-video" } });
+  });
+
+  test("videos.render: a draft naming a photo only an unfinished video's intent holds is refused with pending-video", async () => {
+    const mock = makeMock();
+    const draft = await draftOf(mock, [P1, P2]);
+    mock.engine.holdPendingVideoPhotos(MIA.avatarId, [P2]);
+
+    const reply = await mock.client.request("videos.render", { montageId: draft.montageId });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "pending-video" } });
+  });
+
+  test("holding photos moves the avatar's unused count and announces the avatar, as the engine does when its holds change", async () => {
+    const mock = makeMock();
+    const before = (await unwrap(mock.client.request("avatars.list", {}))).avatars[0]?.eligibleUnusedCount ?? -1;
+    const mark = mock.events.length;
+
+    mock.engine.holdPendingVideoPhotos(MIA.avatarId, [P1, P2]);
+
+    const after = (await unwrap(mock.client.request("avatars.list", {}))).avatars[0]?.eligibleUnusedCount ?? -1;
+    expect(after).toBe(before - 2);
+    expect(mock.events.slice(mark).filter((e) => e.type === "avatar.changed")).toHaveLength(1);
   });
 
   test("montages.create: a photo a queued render also holds stays held-by-render", async () => {
