@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { MAX_CLIPS, type AvatarSummary, type EngineError, type PhotoSummary, type RunSummary } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
@@ -12,7 +12,7 @@ import { ScreenTitle } from "../ui/ScreenTitle";
 import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
-import { useMontagePicks } from "./photos/picks";
+import { usablePicks, useMontagePicks } from "./photos/picks";
 import { DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
 import { useMounted } from "./photos/shared";
@@ -96,6 +96,7 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   const picks = useMontagePicks();
   const [picked, setPicked] = useState<ReadonlySet<string>>(() => picks.get(avatarId));
   useEffect(() => picks.set(avatarId, picked), [picks, avatarId, picked]);
+  const picksChecked = useRef(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<EngineError | null>(null);
   /** The picked photos `montages.create` refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11). */
@@ -136,6 +137,11 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
       if (reply.ok) {
         setGallery({ photos: reply.result.photos, skippedTotal: reply.result.skippedTotal });
         setGalleryError(null);
+        // The picks the window kept from an earlier visit are checked once, against the first answer (review r1 LOW-6).
+        if (!picksChecked.current) {
+          picksChecked.current = true;
+          setPicked((current) => usablePicks(current, reply.result.photos));
+        }
       } else setGalleryError(reply.error);
     });
     return () => {

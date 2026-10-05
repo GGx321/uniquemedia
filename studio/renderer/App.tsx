@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { sidebarCounts } from "./engine/renderJobs";
@@ -154,6 +154,21 @@ function EngineNoticesBar() {
   );
 }
 
+/**
+ * A library switch (review r1 LOW-7): what the window keeps of the old library's drafts and photos (the closed editors' sessions, the picks for a
+ * montage) belongs to it, not to the new one, whose ids may be the same: `onSwitch` forgets it. The first folder heard is no switch.
+ */
+function ForgetOnLibrarySwitch({ onSwitch }: { onSwitch: () => void }) {
+  const libraryPath = useEngineView().settings?.libraryPath ?? null;
+  const last = useRef<string | null>(null);
+  useEffect(() => {
+    if (libraryPath === null) return;
+    if (last.current !== null && last.current !== libraryPath) onSwitch();
+    last.current = libraryPath;
+  }, [libraryPath, onSwitch]);
+  return null;
+}
+
 const TASK_FORMS = ["задача", "задачи", "задач"] as const;
 
 /**
@@ -227,6 +242,10 @@ export function App({ client }: { client: EngineClient }) {
   const [draftSessions] = useState(() => new DraftSessions());
   // The photos picked for a montage on each avatar's Photos screen, kept while the window runs (slice review 5-L3).
   const [montagePicks] = useState(() => new MontagePicks());
+  const forgetLibrary = useCallback(() => {
+    draftSessions.clear();
+    montagePicks.clear();
+  }, [draftSessions, montagePicks]);
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -248,6 +267,7 @@ export function App({ client }: { client: EngineClient }) {
 
   return (
     <EngineProvider client={client}>
+      <ForgetOnLibrarySwitch onSwitch={forgetLibrary} />
       <NavigationProvider value={navigation}>
         <NoticeDockProvider>
         <div className="shell">

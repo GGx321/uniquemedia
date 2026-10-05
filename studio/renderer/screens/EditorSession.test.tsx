@@ -124,6 +124,17 @@ describe("from the editor to Settings and back", () => {
     expect(clipCount()).toBe(6);
   });
 
+  test("review r1 LOW-7: after a library switch the same draft id opens as that library holds it, with no history", async () => {
+    const { client, engine } = await studio();
+    await openDraft(client);
+    await deleteSecondClip(engine);
+    fireEvent.click(screen.getByRole("button", { name: "Настройки" }));
+    await screen.findByRole("heading", { level: 1, name: "Настройки" });
+    await asAnotherWindow(() => client.request("settings.setLibraryPath", { path: "/Users/studio/Studio/library-2" }));
+    await openFromDrafts();
+    expect(undoButton().hasAttribute("disabled")).toBe(true);
+  });
+
   test("Settings opened from anywhere else has no way back to a draft", async () => {
     await studio();
     fireEvent.click(screen.getByRole("button", { name: "Настройки" }));

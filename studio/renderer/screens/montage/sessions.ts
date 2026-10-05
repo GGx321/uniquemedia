@@ -88,6 +88,12 @@ export class DraftSessions {
     this.#kept.delete(montageId);
     this.#taken.delete(montageId);
   }
+
+  /** Forgets every kept editor: the library was switched (review r1 LOW-7), its drafts are another library's. */
+  clear(): void {
+    this.#kept.clear();
+    this.#taken.clear();
+  }
 }
 
 const DraftSessionsContext = createContext<DraftSessions | null>(null);

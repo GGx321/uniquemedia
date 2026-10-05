@@ -88,6 +88,15 @@ describe("the editors kept by the window", () => {
     expect(sessions.peek(last)).not.toBeNull();
   });
 
+  test("review r1 LOW-7: a library switch forgets every kept editor", () => {
+    const sessions = new DraftSessions();
+    sessions.keep("montage-0000001", rig().kept);
+    sessions.keep("montage-0000002", rig("montage-0000002").kept);
+    sessions.clear();
+    expect(sessions.peek("montage-0000001")).toBeNull();
+    expect(sessions.peek("montage-0000002")).toBeNull();
+  });
+
   test("forget drops it (the draft opens as Studio holds it, or is gone)", () => {
     const sessions = new DraftSessions();
     sessions.keep("montage-0000001", rig().kept);
