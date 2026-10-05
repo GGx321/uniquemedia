@@ -5,7 +5,7 @@ import { useEngine } from "../../engine/react";
 import { photoUrl } from "../../lib/media";
 import { Icon, Spin } from "../../ui/Icon";
 import { PortraitPlaceholder } from "../../ui/Portrait";
-import { useModalDialog } from "../../ui/useModalDialog";
+import { FocusEdge, useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
 import { CATEGORY_LABEL } from "./runForm";
 import { viewerStep, type ViewerPlace } from "./viewerModel";
@@ -15,8 +15,9 @@ import { viewerStep, type ViewerPlace } from "./viewerModel";
 // `studio-media://photo/<avatarId>/<photoId>` route, as the tile shows it (the window names ids, never a path), fitted to the
 // window and never enlarged past its own pixels. Beside it the tile's facts and actions: «Фото N из M», the category, the
 // tile's badges, the pick for a montage and the reject mark, with the same handlers and the same refusals as the tile.
-// ← and → step through the gallery as its filter shows it, with no wrap. A dialog (useModalDialog): the focus stays inside,
-// Escape, «Закрыть» and the dark around it close it, and the focus goes back to the grid.
+// ← and → step through the gallery as its filter shows it, with no wrap. A dialog portalled to `body` (useModalDialog): the
+// rest of the window is inert, the focus stays inside, Escape, «Закрыть» and a press on the dark around it close it, and the
+// focus goes back to the grid.
 
 interface PhotoViewerProps {
   readonly place: ViewerPlace;
@@ -37,11 +38,14 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   const titleId = useId();
   const pickWhyId = useId();
   const markWhyId = useId();
+  const scrimRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
   const prevRef = useRef<HTMLButtonElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus: () => returnFocus(photo.photoId, index) });
+  // The dialog's empty band round the arrows looks like the dark around it, and closes like it.
+  const backdrop = useBackdropClose(onClose, [scrimRef, dialogRef]);
 
   // ← and →, wherever the focus is inside the viewer.
   useEffect(() => {
@@ -76,8 +80,9 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   const frame = ["viewer-frame", picked ? "viewer-frame-on" : "", refused ? "viewer-frame-refused" : ""].filter(Boolean).join(" ");
 
   return createPortal(
-    <div className="viewer-scrim" role="presentation" onClick={(event) => event.target === event.currentTarget && onClose()}>
+    <div ref={scrimRef} className="viewer-scrim" role="presentation" {...backdrop}>
       <div ref={dialogRef} className="viewer" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+        <FocusEdge edge="start" />
         <button ref={prevRef} type="button" className="viewer-nav" aria-label="Предыдущее фото" aria-keyshortcuts="ArrowLeft" disabled={prevId === null} onClick={() => prevId !== null && onShow(prevId)}>
           <Icon name="back" size={20} strokeWidth={2.2} />
         </button>
@@ -154,6 +159,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
         <button ref={nextRef} type="button" className="viewer-nav" aria-label="Следующее фото" aria-keyshortcuts="ArrowRight" disabled={nextId === null} onClick={() => nextId !== null && onShow(nextId)}>
           <Icon name="forward" size={20} strokeWidth={2.2} />
         </button>
+        <FocusEdge edge="end" />
       </div>
     </div>,
     document.body,

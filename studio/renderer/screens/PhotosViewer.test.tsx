@@ -43,6 +43,23 @@ const prev = (): HTMLElement => inViewer("Предыдущее фото");
 const next = (): HTMLElement => inViewer("Следующее фото");
 const montageCount = (): string => screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent ?? "";
 const press = (key: string, init: Partial<KeyboardEventInit> = {}): boolean => fireEvent.keyDown(document.activeElement ?? window, { key, ...init });
+function scrim(): Element {
+  const found = document.querySelector(".viewer-scrim");
+  if (found === null) throw new Error("no scrim");
+  return found;
+}
+/** A press and its release on the same element, as a mouse click is. */
+function pressOn(el: Element): void {
+  fireEvent.pointerDown(el);
+  fireEvent.pointerUp(el);
+  fireEvent.click(el);
+}
+/** Where the browser's own Tab lands past the dialog's last control (`end`) or before its first (`start`). */
+function focusEdge(edge: "start" | "end"): void {
+  const found = viewer().querySelector<HTMLElement>(`[data-focus-edge="${edge}"]`);
+  if (found === null) throw new Error(`no ${edge} edge`);
+  found.focus();
+}
 
 describe("opening a photo", () => {
   test("a click on a tile's photo opens it in a modal viewer: «Фото N из M», its category and the tile's badges, the photo large", async () => {
@@ -108,22 +125,44 @@ describe("closing", () => {
     expect(focusedLabel()).toBe(describeElement(openButton(3)));
   });
 
-  test("«Закрыть» closes it, and so does a click on the dark around it; a click on the viewer itself does not", async () => {
+  test("«Закрыть» closes it, and so does a press on the dark around it; a press on the photo or the facts does not", async () => {
     await openMia();
     fireEvent.click(openButton(1));
-    fireEvent.click(within(viewer()).getByRole("img", { name: "Фото 1 из 6: Дом" }));
-    fireEvent.click(viewer());
+    pressOn(within(viewer()).getByRole("img", { name: "Фото 1 из 6: Дом" }));
+    pressOn(within(viewer()).getByRole("heading", { level: 2 }));
     expect(closed()).toBe(false);
     fireEvent.click(inViewer("Закрыть"));
     expect(closed()).toBe(true);
     expect(focusedLabel()).toBe(describeElement(openButton(1)));
 
     fireEvent.click(openButton(4));
-    const scrim = document.querySelector(".viewer-scrim");
-    if (scrim === null) throw new Error("no scrim");
-    fireEvent.click(scrim);
+    pressOn(scrim());
     expect(closed()).toBe(true);
     expect(focusedLabel()).toBe(describeElement(openButton(4)));
+  });
+
+  test("the dialog's own empty band round the arrows looks like the dark and closes like it", async () => {
+    await openMia();
+    fireEvent.click(openButton(2));
+    pressOn(viewer());
+    expect(closed()).toBe(true);
+  });
+
+  test("a drag that starts inside the viewer (selecting the title) and ends over the dark does not close it", async () => {
+    await openMia();
+    fireEvent.click(openButton(2));
+    fireEvent.pointerDown(within(viewer()).getByRole("heading", { level: 2 }));
+    fireEvent.pointerUp(scrim());
+    fireEvent.click(scrim());
+    expect(closed()).toBe(false);
+    // Nor the other way round: pressed on the dark, let go on the photo (the click lands on what both share, the dark).
+    fireEvent.pointerDown(scrim());
+    fireEvent.pointerUp(within(viewer()).getByRole("img"));
+    fireEvent.click(scrim());
+    expect(closed()).toBe(false);
+    // The next real press on the dark still closes.
+    pressOn(scrim());
+    expect(closed()).toBe(true);
   });
 
   test("after stepping, closing gives the focus to the tile of the photo on screen: the grid keeps the owner's place", async () => {
@@ -135,26 +174,57 @@ describe("closing", () => {
     expect(focusedLabel()).toBe(describeElement(openButton(3)));
   });
 
-  test("the focus stays inside: Tab on the last control comes round to the first, Shift+Tab on the first to the last", async () => {
+  test("the focus stays inside: Tab moves as the browser moves it, and past either end it comes round", async () => {
     await openMia();
     fireEvent.click(openButton(2));
     const controls = Array.from(viewer().querySelectorAll<HTMLElement>("button:not([disabled])"));
     const [first, last] = [controls[0], controls.at(-1)];
     if (first === undefined || last === undefined || first === last) throw new Error("expected several controls in the viewer");
 
+    // Tab is never held back: inside a control with parts of its own (a video's controls) the browser walks them.
     last.focus();
-    // The browser's own move out of the dialog is stopped, and the focus goes round.
-    expect(press("Tab")).toBe(false);
-    expect(focusedLabel()).toBe(describeElement(first));
-    expect(press("Tab", { shiftKey: true })).toBe(false);
-    expect(focusedLabel()).toBe(describeElement(last));
-    // Between the two the browser moves it as usual.
-    first.focus();
     expect(press("Tab")).toBe(true);
-    // A focus that strayed out of the viewer is brought back by the next Tab.
-    openButton(5).focus();
-    expect(press("Tab")).toBe(false);
+    // Past the last control the browser lands on the dialog's end edge: the focus comes round to the first control.
+    focusEdge("end");
     expect(focusedLabel()).toBe(describeElement(first));
+    // Before the first, on its start edge: round to the last.
+    focusEdge("start");
+    expect(focusedLabel()).toBe(describeElement(last));
+  });
+
+  test("a focus that strays out of the viewer comes back: to the first control going forward, to the last after Shift+Tab", async () => {
+    await openMia();
+    fireEvent.click(openButton(2));
+    const controls = Array.from(viewer().querySelectorAll<HTMLElement>("button:not([disabled])"));
+    const [first, last] = [controls[0], controls.at(-1)];
+    if (first === undefined || last === undefined) throw new Error("no controls in the viewer");
+    // The grid behind is inert and cannot take it; something put on the page after the viewer opened is not.
+    openButton(5).focus();
+    expect(focusedLabel()).toBe(describeElement(inViewer("Закрыть")));
+    const stray = document.createElement("button");
+    stray.textContent = "later";
+    document.body.append(stray);
+    try {
+      stray.focus();
+      expect(focusedLabel()).toBe(describeElement(first));
+      press("Tab", { shiftKey: true });
+      stray.focus();
+      expect(focusedLabel()).toBe(describeElement(last));
+    } finally {
+      stray.remove();
+    }
+  });
+
+  test("while it is open everything outside the viewer is inert; closing gives it back", async () => {
+    await openMia();
+    fireEvent.click(openButton(2));
+    const dialog = viewer();
+    const outside = Array.from(document.body.children).filter((el) => !el.contains(dialog));
+    expect(outside.length).toBeGreaterThan(0);
+    expect(outside.every((el) => el.hasAttribute("inert"))).toBe(true);
+    expect(dialog.closest("[inert]") === null).toBe(true);
+    press("Escape");
+    expect(Array.from(document.body.children).some((el) => el.hasAttribute("inert"))).toBe(false);
   });
 });
 

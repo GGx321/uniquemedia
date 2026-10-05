@@ -353,7 +353,7 @@ describe("the «Видео» tab", () => {
     expect(screen.queryByRole("dialog") === null).toBe(true);
   });
 
-  test("the player holds the focus like the photo viewer: Tab stays inside it, and closing gives the focus back to «Смотреть»", async () => {
+  test("the player holds the focus like the photo viewer: Tab moves natively, comes round past either end, and closing gives the focus back to «Смотреть»", async () => {
     const h = await openMia({ tab: "videos" });
     await act(async () => {
       await rendered(h, [scenePhoto(1).photoId], "пляж");
@@ -361,17 +361,34 @@ describe("the «Видео» tab", () => {
     const watch = within(await screen.findByRole("article", { name: "пляж" })).getByRole("button", { name: "Смотреть видео «пляж»" });
     watch.focus();
     fireEvent.click(watch);
-    const close = within(screen.getByRole("dialog", { name: "пляж" })).getByRole("button", { name: "Закрыть" });
+    const dialog = screen.getByRole("dialog", { name: "пляж" });
+    const close = within(dialog).getByRole("button", { name: "Закрыть" });
+    const edge = (which: "start" | "end"): HTMLElement => {
+      const found = dialog.querySelector<HTMLElement>(`[data-focus-edge="${which}"]`);
+      if (found === null) throw new Error(`no ${which} edge`);
+      return found;
+    };
     expect(focusedLabel()).toBe(describeElement(close));
-    // «Закрыть» is the only control (the dev mock plays no video): Tab either way keeps the focus on it.
-    expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(false);
-    expect(fireEvent.keyDown(close, { key: "Tab", shiftKey: true })).toBe(false);
+    // Tab is never held back: a real video's own controls are walked by the browser.
+    expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(true);
+    // «Закрыть» is the only control (the dev mock plays no video): past either end the focus comes round to it.
+    edge("end").focus();
     expect(focusedLabel()).toBe(describeElement(close));
-    // A focus that strayed behind the dialog is brought back by the next Tab.
+    edge("start").focus();
+    expect(focusedLabel()).toBe(describeElement(close));
+    // Behind it the window is inert: the card's button cannot take the focus.
+    expect(watch.closest("[inert]") === null).toBe(false);
     watch.focus();
-    expect(fireEvent.keyDown(watch, { key: "Tab" })).toBe(false);
     expect(focusedLabel()).toBe(describeElement(close));
+    // A press that starts in the player and is let go on the dark does not close it; a press on the dark does.
+    const scrim = document.querySelector(".player-scrim");
+    if (scrim === null) throw new Error("no scrim");
+    fireEvent.pointerDown(within(dialog).getByRole("heading", { level: 2 }));
+    fireEvent.pointerUp(scrim);
+    fireEvent.click(scrim);
+    expect(screen.queryByRole("dialog") === null).toBe(false);
     fireEvent.keyDown(window, { key: "Escape" });
+    expect(watch.closest("[inert]") === null).toBe(true);
     expect(focusedLabel()).toBe(describeElement(watch));
   });
 

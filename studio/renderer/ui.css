@@ -16,6 +16,16 @@
   border: 0;
 }
 
+/* A modal dialog's focus edges (useModalDialog's FocusEdge): focusable, never seen, out of the dialog's own layout. */
+.focus-edge {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  outline: none;
+}
+
 .mono {
   font-family: var(--font-mono);
   font-size: 11px;
