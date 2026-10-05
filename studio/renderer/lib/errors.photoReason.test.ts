@@ -13,10 +13,12 @@ test("a photo already in a video says so, and says one photo goes into one video
   expect(text).toContain("одно фото");
 });
 
-test("a photo held by a render says the render is queued or running and tells to wait", () => {
+test("a photo held by a render says the render is queued or running, and that a finished render keeps the photo in its video", () => {
   const text = errorText({ code: "PHOTO_UNAVAILABLE", issues: PHOTO_ISSUES, photoReason: "held-by-render" });
   expect(text).toContain("рендер");
-  expect(text).toContain("Дождитесь");
+  expect(text).toContain("Отмените тот рендер");
+  expect(text).toContain("если он соберётся, фото останется в том видео");
+  expect(text).toContain("Выберите другое фото");
 });
 
 test.each(["index-stale", "log-needs-repair"] as const)("a refusal from an avatar whose records cannot be trusted (%s) says every photo of the avatar is refused, not one", (photoReason) => {
@@ -24,8 +26,11 @@ test.each(["index-stale", "log-needs-repair"] as const)("a refusal from an avata
   expect(text).toContain("все фото этого аватара");
 });
 
-test("a broken-records refusal points to the Photos screen where the way out is", () => {
-  expect(errorText({ code: "PHOTO_UNAVAILABLE", issues: PHOTO_ISSUES, photoReason: "log-needs-repair" })).toContain("«Фото»");
+test("a broken-records refusal points to the Photos screen, which says what happened, and promises no repair button (a record the disk will not open has none)", () => {
+  const text = errorText({ code: "PHOTO_UNAVAILABLE", issues: PHOTO_ISSUES, photoReason: "log-needs-repair" });
+  expect(text).toContain("«Фото»");
+  expect(text).toContain("там написано, что случилось и что можно сделать");
+  expect(text).not.toContain("убрать повреждённую запись");
 });
 
 test("a refusal with no reason lists what it can be, and never blames the age check", () => {
