@@ -27,6 +27,10 @@ function pending<T>(): Pending<T> {
 
 const tick = (ms = 0): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+// One full turn of the event loop: every pending microtask has run, and no timer that is not already due has. Unlike a wall-clock bound it cannot be tipped by a
+// stalled process (a GC pause, CPU starvation in a shard that runs thousands of tests): a stall delays the turn, it does not reorder what happens inside it.
+const nextTurn = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+
 async function reasonOf(promise: Promise<unknown>): Promise<string> {
   try {
     await promise;
@@ -94,9 +98,8 @@ describe("the disk gate", () => {
   test("an operation that outlasts the deadline is answered `timeout` without waiting for it", async () => {
     const gate = createDiskGate({ maxConcurrent: 2, deadlineMs: 30, maxQueued: 8 });
     const never = pending<void>();
-    const started = Date.now();
+    // `never` is never settled, so getting an answer at all proves the gate did not wait for the operation; no wall-clock bound is needed (nor safe under load).
     expect(await reasonOf(gate.run(() => never.promise))).toBe("timeout");
-    expect(Date.now() - started).toBeLessThan(500);
   });
 
   test("a timed-out operation keeps its slot until it really ends: the bound on threads holds while a share is dead", async () => {
@@ -140,13 +143,17 @@ describe("the disk gate", () => {
   });
 
   test("a full queue answers `busy` at once", async () => {
-    const gate = createDiskGate({ maxConcurrent: 1, deadlineMs: 5000, maxQueued: 2 });
+    // The deadline is far beyond the test: only the full queue can be what answers.
+    const gate = createDiskGate({ maxConcurrent: 1, deadlineMs: 60_000, maxQueued: 2 });
     const hold = pending<void>();
     const running = gate.run(() => hold.promise);
     const queued = [gate.run(async () => 1), gate.run(async () => 2)];
-    const started = Date.now();
-    expect(await reasonOf(gate.run(async () => 3))).toBe("busy");
-    expect(Date.now() - started).toBeLessThan(200);
+    const overflow = gate.run(async () => 3);
+    let answered = false;
+    overflow.then(() => (answered = true), () => (answered = true));
+    await nextTurn();
+    expect(answered).toBe(true);
+    expect(await reasonOf(overflow)).toBe("busy");
     expect(gate.queued).toBe(2);
     hold.resolve();
     await Promise.all([running, ...queued]);
