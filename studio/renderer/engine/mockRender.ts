@@ -58,15 +58,12 @@ export function mockFolderName(avatarName: string, avatarId: string): string {
 /**
  * `<folder>/<date>_<kind>_<NNN>.mp4`, like the engine's name claim: the counter starts above the highest number a record of that folder, day and kind
  * still names (`named`: the relative paths of the records, whatever became of their files, so a number is never refilled), then takes the first one no file holds.
- * The mock's export folder is case-sensitive (`caseInsensitive` is false) unless a caller says otherwise.
+ * The mock's export folder is case-sensitive (it never probes a volume), so letter case is compared as it is; the engine folds it on a case-insensitive root.
  */
-export function mockRelPath(folder: string, date: string, kind: string, taken: ReadonlySet<string>, named: Iterable<string> = [], caseInsensitive = false): string {
-  // On a case-insensitive root a name in another letter case is the same name, as in the engine's count.
-  const fold = (text: string): string => (caseInsensitive ? text.toLowerCase() : text);
-  const prefix = fold(`${folder}/${date}_${kind}_`);
+export function mockRelPath(folder: string, date: string, kind: string, taken: ReadonlySet<string>, named: Iterable<string> = []): string {
+  const prefix = `${folder}/${date}_${kind}_`;
   let highest = 0;
-  for (const original of named) {
-    const path = fold(original);
+  for (const path of named) {
     const digits = path.startsWith(prefix) && path.endsWith(".mp4") ? path.slice(prefix.length, -".mp4".length) : "";
     if (/^\d{3,}$/.test(digits)) highest = Math.max(highest, Number(digits));
   }

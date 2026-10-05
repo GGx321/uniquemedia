@@ -134,7 +134,7 @@ describe("the photos of a pending intent are held until recovery resolves it (st
     expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).not.toContain(w.photos[0]?.id);
   });
 
-  test("an export root that never answers (or errors) still leaves the intent's photos held: the library is read before the root is looked at (review round 1, M2)", async () => {
+  test("an export root that never answers still leaves the intent's photos held: the library is read before the root is looked at (review round 1, M2)", async () => {
     const w = world();
     const record = sampleRecord(w, {});
     await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mockRelPath } from "./mockRender";
 
 // The mock numbers export files like the engine's name claim (`engine/videos/exportNumbers.ts`): above the highest number a record still names, and on a
-// case-insensitive root a name in another letter case is the same name.
+// case-insensitive root a name in another letter case is the same name (the mock's folder is case-sensitive: it never probes a volume).
 
 describe("mockRelPath", () => {
   test("starts above the highest number a record names, whatever became of its file", () => {
@@ -17,10 +17,7 @@ describe("mockRelPath", () => {
     expect(mockRelPath("Mia", "2026-10-05", "photo", new Set(), ["Mia/2026-10-04_photo_009.mp4", "Mia/2026-10-05_mix_009.mp4", "Zoe/2026-10-05_photo_009.mp4"])).toBe("Mia/2026-10-05_photo_001.mp4");
   });
 
-  test("a name in another letter case counts only on a case-insensitive root", () => {
-    const named = ["mia/2026-10-05_PHOTO_005.mp4"];
-
-    expect(mockRelPath("Mia", "2026-10-05", "photo", new Set(), named, true)).toBe("Mia/2026-10-05_photo_006.mp4");
-    expect(mockRelPath("Mia", "2026-10-05", "photo", new Set(), named, false)).toBe("Mia/2026-10-05_photo_001.mp4");
+  test("the mock's folder is case-sensitive: a name in another letter case is another name", () => {
+    expect(mockRelPath("Mia", "2026-10-05", "photo", new Set(), ["mia/2026-10-05_photo_005.mp4"])).toBe("Mia/2026-10-05_photo_001.mp4");
   });
 });
