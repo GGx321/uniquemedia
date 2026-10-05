@@ -3,11 +3,9 @@ import { lstat, mkdir, readFile, readdir, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { z } from "zod";
 import { downscaleToJpeg } from "../../node/downscale";
-import { runFfmpeg } from "../../node/runFfmpeg";
 import {
   appendJsonLine,
   fsyncDir,
-  fsyncFile,
   hasErrorCode,
   readJsonFile,
   readJsonl,
@@ -67,8 +65,6 @@ export type { LogIssue } from "./survey";
 export interface LibraryDeps {
   now?: () => Date;
   newId?: () => string;
-  /** Renders `input` as a WebP thumbnail at `output`; defaults to the bundled ffmpeg. */
-  renderThumbnail?: (input: string, output: string) => Promise<void>;
   /** Test seam: called after each temp file or temp folder is durable and
    *  before it is renamed into place. Throwing simulates a crash there. */
   testHooks?: {
@@ -141,8 +137,6 @@ export interface NewPhotoMeta {
   qa?: PhotoQa;
 }
 
-const THUMB_WIDTH = 360;
-
 /**
  * The default `downscaleReference`'s longest side: the fixed decisions'
  * candidate portraits are already 1K (3:4), so this never upscales a real
@@ -214,9 +208,7 @@ export class Library {
   readonly #now: () => Date;
   readonly #newId: () => string;
   readonly #beforeRename: ((finalPath: string) => void | Promise<void>) | undefined;
-  readonly #renderThumbnail: (input: string, output: string) => Promise<void>;
   readonly #downscaleReference: (bytes: Uint8Array, signal?: AbortSignal) => Promise<Uint8Array>;
-  readonly #thumbRenders = new Map<string, Promise<string>>();
   readonly #avatars = new Map<string, AvatarManifest>();
   readonly #photos = new Map<string, PhotoSidecar>();
   readonly #reservedPhotos: (avatarId: string) => ReadonlySet<string>;
@@ -242,7 +234,6 @@ export class Library {
     this.#beforeRename = deps.testHooks?.beforeRename;
     this.#beforeReadVideoRecord = deps.testHooks?.beforeReadVideoRecord;
     this.#reservedPhotos = deps.reservedPhotos ?? (() => new Set<string>());
-    this.#renderThumbnail = deps.renderThumbnail ?? renderWebpThumbnail;
     this.#downscaleReference = deps.downscaleReference ?? ((bytes, signal) => downscaleToJpeg(bytes, { maxSide: REFERENCE_MAX_SIDE, signal }));
   }
 
@@ -1079,41 +1070,6 @@ export class Library {
     return { events: entries, torn };
   }
 
-  /**
-   * A 360 px wide WebP of the photo at `thumbs/<photoId>.webp`, rendered once
-   * and then served from disk. Rendered to a temp name, fsynced and renamed,
-   * so a non-empty file at the final path is complete. Concurrent requests
-   * for one thumbnail share a single render.
-   */
-  thumbnail(avatarId: string, photoId: string): Promise<string> {
-    const photo = this.#photos.get(photoId);
-    if (!photo || photo.avatarId !== avatarId) {
-      return Promise.reject(new LibraryError("photo-not-found", `avatar ${avatarId} has no photo ${photoId}`));
-    }
-    const output = join(this.#avatarDir(avatarId), THUMBS_DIR, `${photoId}.webp`);
-    const inFlight = this.#thumbRenders.get(output);
-    if (inFlight) return inFlight;
-
-    const task = this.#ensureThumbnail(join(this.#photosDir(avatarId), photo.file), output);
-    const forget = () => void this.#thumbRenders.delete(output);
-    task.then(forget, forget);
-    this.#thumbRenders.set(output, task);
-    return task;
-  }
-
-  async #ensureThumbnail(image: string, output: string): Promise<string> {
-    if (await isNonEmptyFile(output)) return output;
-    const thumbsDir = dirname(output);
-    await mkdir(thumbsDir, { recursive: true });
-    const temp = tempSiblingPath(output);
-    await this.#renderThumbnail(image, temp);
-    await fsyncFile(temp);
-    await this.#beforeRename?.(output);
-    await renameWithRetry(temp, output);
-    await fsyncDir(thumbsDir);
-    return output;
-  }
-
   #referenceProblem(avatarId: string, photoId: string): MasterIssue["reason"] | null {
     const photo = this.#photos.get(photoId);
     if (!photo) return "missing";
@@ -1166,27 +1122,6 @@ export class Library {
       if (hasErrorCode(error, "ENOENT")) return false;
       throw error;
     }
-  }
-}
-
-/** The bundled ffmpeg's libwebp encoder. `-f webp` because `output` is a
- *  `.tmp` name that says nothing about the format. */
-async function renderWebpThumbnail(input: string, output: string): Promise<void> {
-  await runFfmpeg({
-    inputs: [{ path: input }],
-    args: ["-vf", `scale=${THUMB_WIDTH}:-1`, "-frames:v", "1", "-c:v", "libwebp", "-quality", "80", "-f", "webp"],
-    output,
-    durationSec: 1,
-  });
-}
-
-async function isNonEmptyFile(path: string): Promise<boolean> {
-  try {
-    const info = await stat(path);
-    return info.isFile() && info.size > 0;
-  } catch (error) {
-    if (hasErrorCode(error, "ENOENT")) return false;
-    throw error;
   }
 }
 

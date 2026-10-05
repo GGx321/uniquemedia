@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { openLibrary, type LibraryDeps } from "./library";
 import { expectLibraryError, PNG_1X1, SAMPLE_AVATAR, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "./testing/helpers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -12,10 +12,6 @@ function deps(extra: LibraryDeps = {}): LibraryDeps {
   return {
     now: steppingClock(),
     newId: sequentialIds(),
-    renderThumbnail: async (_input, output) => {
-      await mkdir(dirname(output), { recursive: true });
-      await writeFile(output, "webp");
-    },
     ...extra,
   };
 }
@@ -52,15 +48,6 @@ describe("deletePhoto", () => {
 
     expect(reopened.library.photosByAvatar(draft.id).map((p) => p.id)).toEqual([keep.id]);
     expect(reopened.report.quarantined).toEqual([]);
-  });
-
-  test("removes the photo's thumbnail too", async () => {
-    const { library, draft, drop } = await draftWithCandidates();
-    const thumb = await library.thumbnail(draft.id, drop.id);
-
-    await library.deletePhoto(draft.id, drop.id);
-
-    expect(await readdir(dirname(thumb))).toEqual([]);
   });
 
   test("refuses a photo of another avatar and leaves it in place", async () => {
