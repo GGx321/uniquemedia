@@ -1115,6 +1115,86 @@ describe("what an unexpected failure logs (L-12)", () => {
   });
 });
 
+describe("the owner's file is let go after the copy (L2 of the Stage 3 review)", () => {
+  /** The real open, with a `close` that is counted: how many handles the service opened, and how many it has let go. */
+  function countingOps(): { ops: OpenRegularOps; open: () => number } {
+    let held = 0;
+    return {
+      open: () => held,
+      ops: {
+        lstat: (path) => lstat(path, { bigint: true }),
+        open: async (path, flags) => {
+          const handle = await open(path, flags);
+          held++;
+          let closed = false;
+          return new Proxy(handle, {
+            get(target, prop) {
+              if (prop === "close") {
+                return async () => {
+                  if (closed) return;
+                  closed = true;
+                  held--;
+                  await target.close();
+                };
+              }
+              const value: unknown = Reflect.get(target, prop);
+              return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+            },
+          }) as FileHandle;
+        },
+      },
+    };
+  }
+
+  test("by the time the importer runs, the picked file is no longer held open", async () => {
+    const counting = countingOps();
+    const heldDuringImport: number[] = [];
+    const r = rig({
+      staging: { ops: counting.ops },
+      importers: {
+        photo: async () => {
+          heldDuringImport.push(counting.open());
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(heldDuringImport).toEqual([0]);
+  });
+
+  test("a file that is turned away after it was opened is let go too", async () => {
+    const counting = countingOps();
+    const r = rig({ staging: { ops: counting.ops, freeBytes: async () => 10, freeMarginBytes: 5 } });
+    await started(r, await callFor("a.jpg", jpeg(500)));
+    await r.service.settled();
+    expect(counting.open()).toBe(0);
+  });
+
+  test("a job that is still waiting for its turn holds its file, and lets it go once it has been copied", async () => {
+    const counting = countingOps();
+    const gate = deferred();
+    let calls = 0;
+    const r = rig({
+      staging: { ops: counting.ops },
+      importers: {
+        photo: async () => {
+          if (++calls === 1) await gate.promise;
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await started(r, await callFor("b.jpg", jpeg(310)));
+    // A has copied and is inside its importer; B waits for the turn with its file open.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(counting.open()).toBe(1);
+    gate.resolve();
+    await r.service.settled();
+    expect(counting.open()).toBe(0);
+  });
+});
+
 describe("an event that cannot be sent never jams the queue (L1 of the Stage 3 review)", () => {
   const broken = (): Error => Object.assign(new Error("the event log is full"), { code: "EIO" });
   const within = async <T,>(work: Promise<T>, ms = 2000): Promise<T | "timed out"> => {

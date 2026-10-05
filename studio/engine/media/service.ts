@@ -394,6 +394,9 @@ export class MediaService {
           }
         },
       });
+      // The owner's file is let go as soon as the copy is verified: the importer reads the staged copy only, and a source held open through minutes of encoding keeps
+      // an SD card or a USB drive from being ejected. Idempotent: `#run` closes it again whatever happens.
+      await opened.close();
       if (!copy.ok) return copy.reason === "cancelled" ? { status: "cancelled" } : { status: "failed", reason: copy.reason, detail: copy.detail };
       staged = copy.staged;
 
