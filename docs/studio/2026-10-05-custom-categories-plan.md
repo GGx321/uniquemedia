@@ -249,11 +249,15 @@ One chat call, ≤ 2 attempts, bounded by a deadline in `control.ts` built the s
    - `locations` — 5..7, each with 1..3 `times` from the built-in vocabulary (morning, midday,
      golden hour, evening, night, studio lighting), 2..4 activities with `twoHanded`, `mirror`;
    - `outfits` — 3..6; `shotDeck` — exactly 5 shots.
-4. Validation = `PoolSchema` **as built** + technical bounds: ASCII printable for every text that
-   feeds a prompt; **place names, activities and outfits ≤ 48 chars** (the built-ins' longest is
-   44) so a full 25-slot writer chunk of a custom pool stays under `WRITER_CALL`'s 14K input ceiling
-   with the worst refusal (pinned by a test); the counts above. `label` goes through the same
-   `PromptText` rule as a place name. Hand mechanics: `twoHanded ||= isTwoHanded(text)`
+4. Validation = `PoolSchema` **as built** + technical bounds: every text that feeds a prompt is a
+   `PoolText` (shared contract: printable ASCII, **no `"` and no `\`**, no edge space, **≤ 35 chars** =
+   `POOL_TEXT_MAX`; a quote or a backslash costs two bytes once the slots go out as JSON, and the
+   reserve is priced on bytes) so a full 25-slot writer chunk of a custom pool stays at least 300
+   tokens under `WRITER_CALL`'s 14K input ceiling with the worst refusal (pinned by a test, 368
+   tokens of margin as built); `times` are `TimeOfDay` (same rule, ≤ 15 chars); the counts above.
+   `label` is a `CategoryLabel` (same rule, ≤ 24 chars). The pool call's JSON schema and
+   `readPoolAnswer` must apply these exact schemas (reuse `PoolText`, `TimeOfDay`, `CategoryLabel`;
+   do not re-declare them), and the salvage rule drops an item that fails them. Hand mechanics: `twoHanded ||= isTwoHanded(text)`
    (`writer.ts:263`), so an activity the model mislabels («with both hands») never lands on a
    selfie and burns both writer attempts — the phone-in-hand rule as built, not a content gate.
    Salvage, then retry (D4).
@@ -524,8 +528,9 @@ worst plausible prompt, with headroom — otherwise the reserve exceeds the acce
 job's own cap refuses it. Pins, parametrised the way `scenes/writer.test.ts` pins `WRITER_CALL`:
 
 - `POOL_CALL`: a 500-char **Cyrillic** description (2 bytes per char) + the worst pool feedback;
-- `WRITER_CALL`, phase 1: a full 25-slot chunk of a custom pool with every text at its 48-char
-  bound and the label at 24 + the worst refusal ≤ 14K;
+- `WRITER_CALL`, phase 1: a full 25-slot chunk of a custom pool with every text at its 35-char
+  bound (plain printable ASCII), the time of day at 15, the label at 24 + the worst refusal (words
+  clipped to 6 x 16 bytes) ≤ 14K minus a 300-token margin;
 - `WRITER_CALL`, phase 2: the worst review-time write — 5 own scenes each carrying a 500-char
   Cyrillic idea, or 5 redrawn custom slots — + the worst refusal ≤ 14K.
 
@@ -598,8 +603,8 @@ Tests first:
   (property test); the renderer's chip counts use it;
 - writer phase: every request body of a built-in run (messages, schema, ceilings, ids) is
   byte-identical to today's; a custom slot's message names the snapshot's label;
-- `WRITER_CALL` floor pin: a full 25-slot chunk of a custom pool at the 48/24-char bounds + the worst
-  refusal ≤ 14K input tokens;
+- `WRITER_CALL` floor pin: a full 25-slot chunk of a custom pool at the 35/24-char bounds + the worst
+  refusal ≤ 14K input tokens minus a 300-token margin;
 - schema: `main`'s `plan.json` fixture parses, folds and prices a resume unchanged; a plan naming a
   custom ref without a snapshot entry is refused;
 - assembler: built-in prompts byte-identical (existing pins); custom style used;
@@ -657,12 +662,32 @@ golden is untouched (CS.1 adds no command).
   and own by label, each shown by the label of its newest photo, each `{category, label, count}`) and `PhotoBin.tsx`.
   `GenerateCard.tsx` is untouched: its chips stay the five built-ins until CS.3. The mock's split is `splitCount`.
 
-Deviation from the plan, measured: **`POOL_TEXT_MAX` is 40, not 48**. The pin is built by hand for the worst chunk a custom
-category can send (25 slots, every place, activity and outfit at the bound, the widest time of day, an all-photographer deck,
-the widest pose label, a 24-char label, the worst refusal) and measures the prompt floor at 14494 tokens at 48 chars, 14194 at
-44 and 13894 at 40, against `WRITER_CALL.inputTokens` = 14000. Only 40 fits, with 106 tokens of headroom. `WRITER_CALL`,
-`estimate.ts` and `remaining.ts` are untouched. CS.2's pool validator must enforce `POOL_TEXT_MAX` and the 24-char label;
-section 4.1 step 4 above still says 48 and should be read as 40.
+Deviations from the plan, measured: **`POOL_TEXT_MAX` is 35, not 48.** The pin is built by hand for the worst chunk a custom
+category can send under the rules a pool and a plan are held to: 25 slots, every place, activity and outfit at the bound (plain
+printable ASCII, no `"` and no `\`, so one byte each and never escaped by the JSON the slots go out as), a 15-char time of day, an
+all-photographer deck, the widest pose label, a 24-char label, and the worst refusal (every reason, 160 distinct hostile words
+in four widest spellings, which the feedback clips). With the refusal words bounded to 6 words of 16 bytes each (case-insensitive
+dedupe, clipped on character boundaries) the floor is 13632 tokens at 35 chars: a margin of 368 tokens under
+`WRITER_CALL.inputTokens` = 14000. At 36 chars the margin is 293, below the 300 the pin requires, so 35 is the largest bound that
+keeps it (the pin asserts both). A first cut measured 40 as fitting with 106 tokens of headroom, but that pin was not the worst:
+a quote costs two bytes (a label of 24 quotes, or pool texts of quotes, went over the ceiling) and the refusal's words, the
+model's own text, were unbounded. `WRITER_CALL`, `estimate.ts` and `remaining.ts` are untouched.
+
+Behaviour change accepted with it: a re-ask after a rejected answer now tells at most 6 offending words, each clipped to 16
+bytes and each spelling told once (the first spelling seen), where it told every word as the model wrote it. The first attempt's
+messages, and every retry told only fixed reasons, are byte-identical to main (the fixtures cover them).
+
+Also as built: `PlanSlotSchema` holds a custom slot's `location`, `activity`, `outfit` to `PoolText` and its `timeOfDay` to
+`TimeOfDay`, so a hand-edited `plan.json` cannot grow the writer's prompt past its reserve on a resume (built-in slots are
+not held to it: their plans must keep parsing). `CategoryName` is held to the avatar name's rules (no control, invisible or
+bidi characters, not blank), and `photoSummaryFrom` drops a sidecar `categoryName` the contract would refuse (the photo stays
+listed). The sidecar field is `categoryName`: it holds the owner's name (`snapshot.name`), not the writer's English `label`.
+
+CS.2 requirements this adds: pool texts are `PoolText`, times `TimeOfDay` and labels `CategoryLabel` (see section 4.1 step 4);
+**category names are unique per library, compared case-insensitively after trim**, because two categories with one name are
+indistinguishable in the montage bin's filter (`montage/bin.ts` shows a category by its name). CS.3 requirement: the custom
+chips are in creation order, not in the order they were clicked (`runForm.ts` `runRequest` keeps the form's order for custom
+ids, and the form appends in click order, so the chips row must sort by creation order before it builds the form).
 
 Tests, all written first and run red for the intended reason: byte-identical built-in plans (a digest per subset of the five
 categories over 6 seeds x 5 counts x with and without poses and recent pairs, `scenes/fixtures/planner-main-3a9cd498.json`),
@@ -689,7 +714,7 @@ engine (deterministic pool from the name) + mock tests; free commands in the par
 with it.
 Tests first:
 - `readPoolAnswer`: valid → pool; salvageable → pool without the bad items; below minimums → refusal
-  with fixed reasons and our own words only; texts over 48 chars and non-ASCII refused or salvaged;
+  with fixed reasons and our own words only; texts over 35 chars, with a `"` or a `\`, or non-ASCII refused or salvaged;
   a «both hands» activity marked one-handed comes out `twoHanded: true`; a moderation refusal is
   final and free; an empty answer counts as answered; two rejections → `POOL_REJECTED`;
 - money: estimate = 2 × ceiling at today's prices; `PRICE_CHANGED` above the accepted worst; monthly
@@ -824,7 +849,7 @@ plus the review.
 | Risk | Where | Mitigation |
 |---|---|---|
 | A retried or resumed writer call is sent twice | compose/write after a crash | ids persisted in the set before the call; the writer phase skips ledger-reserved ids; crash tests |
-| A reserve exceeds the accepted worst, so the job's own cap refuses it | writer chunks of custom pools, pool and idea calls | pool texts ≤ 48 chars and label ≤ 24; every ceiling pinned against the worst `promptTokenFloor` (Cyrillic input, worst refusal) |
+| A reserve exceeds the accepted worst, so the job's own cap refuses it | writer chunks of custom pools, pool and idea calls | pool texts ≤ 35 plain chars (no `"`, no `\`) and label ≤ 24, refusal words clipped; every ceiling pinned against the worst `promptTokenFloor` (Cyrillic input, worst refusal) |
 | Built-in runs change behind the parametrised writer phase | CS.1 | byte-identical request-body pin for built-in runs |
 | An edit lands while an approval is under way, or two edits race | approve, edit | one mutex per set, revision on every mutation, re-read and compare right before `createRun` |
 | A set approved twice → two runs | approve | the run id is issued at compose; `createRun` refuses an existing folder under its own lock |
