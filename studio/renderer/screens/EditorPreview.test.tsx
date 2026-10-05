@@ -301,21 +301,23 @@ describe("a caption in the Reels zones (AM10: judged on the engine's box)", () =
   });
 });
 
-describe("«Послушать» (R49)", () => {
-  test("plays the montage from its start, the music with it; pressed again it stops", async () => {
+// R49's «Послушать» on the music card is gone (the owner's feedback, 2026-10-05): it only played the montage from its start. The music is heard
+// from the one playback the main ▶ (and Space) drive, from wherever the playhead rests.
+describe("the music plays with the montage (no player of the card's own)", () => {
+  test("with the music selected, the main ▶ plays from the playhead, not from the start; the card offers nothing to play", async () => {
     frames = manualFrames();
     const track = { trackId: "track-espresso-01", title: "Espresso", artist: "Sabrina Carpenter", durationMs: 60_000, explicit: false, highlightsMs: [30_000, 12_000], hasCover: false, peaks: Array.from({ length: 1_200 }, () => 500) };
     const { client, engine } = await studio({ music: { tracks: [track], list: { fetchedAt: "2026-10-02T11:02:00.000Z", trackCount: 1, bytesOnDisk: 1_000_000 } } });
     await openDraft(engine, client, { music: { source: "trending", trackId: track.trackId, startMs: 12_000 } });
     fireEvent.keyDown(within(timeline()).getByRole("slider", { name: "Плейхед" }), { key: "ArrowRight", shiftKey: true });
     fireEvent.click(within(timeline()).getByRole("button", { name: /^Музыка:/ }));
-    const listen = await within(props()).findByRole("button", { name: "Послушать" });
-    fireEvent.click(listen);
-    expect(clockText()).toBe("00:00.0 / 00:08.0");
-    frames.advance(1_000);
+    await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
+    expect(within(props()).queryByRole("button", { name: /Послушать|Остановить/ }) === null).toBe(true);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
     expect(clockText()).toBe("00:01.0 / 00:08.0");
-    expect(within(timeline()).getByRole("button", { name: "Пауза" })).toBeDefined();
-    fireEvent.click(within(props()).getByRole("button", { name: "Остановить" }));
+    frames.advance(1_000);
+    expect(clockText()).toBe("00:02.0 / 00:08.0");
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Пауза" }));
     expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
   });
 });

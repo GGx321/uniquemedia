@@ -1079,7 +1079,7 @@ function DraftEditor({
               }}
             />
           ) : selected?.kind === "music" ? (
-            <MusicProperties session={session} spec={state.spec} timeline={timeline} lookup={musicLookup} listVersion={view.music?.listFetchedAt ?? null} verdict={musicVerdict} onReplace={() => openTab("music")} />
+            <MusicProperties session={session} spec={state.spec} timeline={timeline} lookup={musicLookup} listVersion={view.music?.listFetchedAt ?? null} verdict={musicVerdict} onOpenTab={openTab} />
           ) : (
             <PropertiesSlot empty={state.spec.clips.length === 0} />
           )}

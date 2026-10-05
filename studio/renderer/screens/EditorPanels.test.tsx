@@ -470,13 +470,39 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     });
   });
 
-  test("«Заменить трек» opens the «Музыка» tab", async () => {
+  // The owner's feedback (2026-10-05): «Послушать» only played the montage from its start (the main ▶ and Space play it) and «Заменить трек»
+  // only opened the «Музыка» tab, which the left panel already shows. The card keeps the window, the picks and the range.
+  test("a usable track's card has no player and no «Заменить трек» of its own: the range stays, no link to the tabs", async () => {
     const { client, engine } = await studio({ music: MUSIC });
     await openDraft(engine, client, withMusic(12_000));
     selectBlock(/^Музыка:/);
-    fireEvent.click(within(props()).getByRole("button", { name: "Заменить трек" }));
+    await within(props()).findByRole("slider", { name: "Начало музыки в треке" });
+    for (const name of [/Послушать/, /Остановить/, /Заменить/, /Открыть вкладку/]) expect(within(props()).queryByRole("button", { name }) === null).toBe(true);
+    expect(plain(props().querySelector(".ed-hl-range")?.textContent)).toBe("0:12 → 0:20");
+  });
+
+  test("a track that cannot be used points to the tabs that hold another one; the chosen tab takes the focus", async () => {
+    const { client, engine } = await studio({ music: MUSIC });
+    await openDraft(engine, client, withMusic(12_000));
+    await flush();
+    engine.failNext("music.peaks", { code: "NOT_FOUND", detail: `track ${ESPRESSO.trackId} is not stored` });
+    selectBlock(/^Музыка:/);
+    await within(props()).findByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.");
+    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Мои»" }));
+    expect(tab("Мои").getAttribute("aria-selected")).toBe("true");
+    expect(document.activeElement === tab("Мои")).toBe(true);
+    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Музыка»" }));
     expect(tab("Музыка").getAttribute("aria-selected")).toBe("true");
     expect(document.activeElement === tab("Музыка")).toBe(true);
+  });
+
+  test("a track gone from the list (its length unknown) points to the tabs too", async () => {
+    const { client, engine } = await studio({ music: MUSIC });
+    await openDraft(engine, client, { music: { source: "trending", trackId: "track-gone-000001", startMs: 0 } });
+    selectBlock(/^Музыка:/);
+    await within(props()).findByText("Трек из прежнего списка");
+    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Музыка»" }));
+    expect(tab("Музыка").getAttribute("aria-selected")).toBe("true");
   });
 });
 

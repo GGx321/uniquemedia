@@ -3,24 +3,26 @@ import type { MontageDraft } from "../../../shared/engine";
 import { STEP_MS } from "../../../shared/montage";
 import { useEngine } from "../../engine/react";
 import { NBSP } from "../../lib/format";
-import { Icon, PauseIcon, PlayIcon } from "../../ui/Icon";
+import { Icon } from "../../ui/Icon";
 import { totalMs } from "./clipOps";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { trackClock } from "./labels";
 import { deleteKeyHandler } from "./LayerProperties";
+import type { MediaTab } from "./MediaPanel";
 import { clampMusicStart, highlightPicks, musicStartRange, musicWindow, setMusicStart, trackProblem, type TrackVerdict } from "./musicOps";
 import { Cover, trackLength } from "./MusicTab";
 import { type PlayableFacts, playableFacts, type TrackLookup, usePeaks } from "./MusicTrack";
 import type { DraftSession } from "./session";
-import { usePlaying } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // 3d.5: the music card (EditorMusic.dc.html, `sel = music`; R42–R51). The track's cover and facts, «Лучшая часть»: the WHOLE track's
 // waveform (`music.peaks`, 68 bars, free) with the highlights as ★ and a window as long as the montage where the music starts. The
 // window drags (and is a slider: ←/→ 0.1 s, ⇧ 1 s, Home/End) in 100 ms steps (AM8), never so late that the montage runs past the
 // track's end; the chips are quick picks, ascending with the likely `1500` default last (CF6), one undo step each. The copy follows
-// A5 (CF7): the level is the track's own, only peaks are lowered. «Заменить трек» opens the «Музыка» tab. The 3d.3b block on the
-// timeline moves the same start.
+// A5 (CF7): the level is the track's own, only peaks are lowered. The 3d.3b block on the timeline moves the same start.
+// The owner's feedback (2026-10-05) took R49's «Послушать» (it played the montage from its start, as the main ▶ and Space do) and
+// «Заменить трек» (it opened the «Музыка» tab the left panel already shows) off the card. Only a track that cannot be used (gone, too
+// short, out of the list) still points to the tabs that hold another one: «Музыка» and «Мои».
 
 /** The artboard's waveform: 68 bars over the whole track (K26). */
 const CARD_BARS = 68;
@@ -173,11 +175,31 @@ export interface MusicCardProps {
   readonly listVersion: string | null;
   /** The engine's verdict on the track for the spec on screen. */
   readonly verdict: TrackVerdict;
-  /** «Заменить трек»: the «Музыка» tab. */
-  readonly onReplace: () => void;
+  /** Opens a tab that holds another track (the focus goes to it): offered only while this one cannot be used. */
+  readonly onOpenTab: (tab: TrackTab) => void;
 }
 
-export function MusicProperties({ session, spec, timeline, lookup, listVersion, verdict, onReplace }: MusicCardProps) {
+/** The media panel's tabs that hold tracks: the trending list and the owner's own files. */
+export type TrackTab = Extract<MediaTab, "music" | "mine">;
+
+/** «Другой трек — во вкладке «Музыка» или «Мои»»: where another track is picked, said for a track that cannot be used. */
+function TrackSwap({ onOpenTab }: { onOpenTab: (tab: TrackTab) => void }) {
+  return (
+    <p className="faint ed-music-swap">
+      Другой трек — во вкладке{" "}
+      <button type="button" className="ed-link" aria-label="Открыть вкладку «Музыка»" onClick={() => onOpenTab("music")}>
+        «Музыка»
+      </button>{" "}
+      или{" "}
+      <button type="button" className="ed-link" aria-label="Открыть вкладку «Мои»" onClick={() => onOpenTab("mine")}>
+        «Мои»
+      </button>
+      .
+    </p>
+  );
+}
+
+export function MusicProperties({ session, spec, timeline, lookup, listVersion, verdict, onOpenTab }: MusicCardProps) {
   const { client } = useEngine();
   const commands = useSelectionCommands(session, timeline);
   const onKeyDown = deleteKeyHandler(commands.remove);
@@ -195,11 +217,12 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
           ? null
           : { trackId: track.trackId, startMs: 0, durationMs: track.durationMs, bars: CARD_BARS };
   const { peaks, missing } = usePeaks(client, ask, listVersion);
-  const playing = usePlaying(timeline.playhead);
   if (music === null) return null;
   const total = totalMs(spec);
   const problem = trackProblem({ missing: missing !== null, verdict, guessTooShort: facts !== null && music.startMs + total > facts.durationMs });
   const picks = facts === null ? [] : highlightPicks(facts.highlights, music.startMs, total, facts.durationMs);
+  // A track that cannot be used, or whose facts are no longer known, is replaced from a tab: the card says which.
+  const swap = problem !== null || lookup.state === "unlisted" || lookup.state === "own-gone";
 
   function pick(ms: number): void {
     if (facts === null) return;
@@ -245,10 +268,13 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
       </div>
 
       {problem !== null && (
-        <p className="ed-music-problem" role="status">
-          <Icon name="alert" size={14} />
-          {problem === "unavailable" ? "Трека больше нет в Studio: видео с ним не соберётся. Замените трек." : "Трек кончается раньше ролика: начните его раньше или замените трек."}
-        </p>
+        <div className="ed-music-trouble">
+          <p className="ed-music-problem" role="status">
+            <Icon name="alert" size={14} />
+            <span>{problem === "unavailable" ? "Трека больше нет в Studio: видео с ним не соберётся. Замените трек." : "Трек кончается раньше ролика: начните его раньше или замените трек."}</span>
+          </p>
+          <TrackSwap onOpenTab={onOpenTab} />
+        </div>
       )}
 
       {facts !== null ? (
@@ -278,37 +304,23 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
               ))}
             </div>
           )}
-          <div className="ed-prow ed-hl-listen">
+          <div className="ed-prow">
+            <span className="faint ed-props-sub">звучит в ролике</span>
             <span className="mono ed-hl-range">
               {trackClock(music.startMs)} → {trackClock(music.startMs + total)}
             </span>
-            {/* R49 «Послушать» (3d.4): the montage plays from its start, the music in step with the preview's clock. */}
-            <button
-              type="button"
-              className="btn btn-s"
-              aria-pressed={playing}
-              disabled={total === 0}
-              onClick={() => {
-                if (!playing) timeline.seek(0);
-                timeline.togglePlay();
-              }}
-            >
-              {playing ? <PauseIcon size={12} /> : <PlayIcon size={12} />}
-              {playing ? "Остановить" : "Послушать"}
-            </button>
           </div>
         </div>
       ) : (
         lookup.state === "unlisted" && <p className="faint ed-props-note">Длина и лучшие части этого трека неизвестны: выберите его снова во вкладке «Музыка» или замените.</p>
       )}
+      {/* Without a reason on screen (the verdict not in yet), a track out of the list or out of the library still says where another one is. */}
+      {problem === null && swap && <TrackSwap onOpenTab={onOpenTab} />}
 
       <p className="ed-music-copy">
         <Icon name="check" size={13} strokeWidth={2.6} />
         Громкость трека не меняется, при рендере приглушаются только пики. Трек длиннее ролика обрежется по его концу.
       </p>
-      <button type="button" className="btn btn-s ed-props-replace" onClick={onReplace}>
-        Заменить трек
-      </button>
     </aside>
   );
 }
