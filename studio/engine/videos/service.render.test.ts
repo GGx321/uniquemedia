@@ -171,7 +171,7 @@ describe("videos.render: N9 refuses nothing any more (3f.3b lifted the last part
     await expectNothingTouched(r);
   });
 
-  test("a caption of 61 graphemes and a third line are each refused at their own layer, a good caption between them is not", async () => {
+  test("a copyright sign and a third line are each refused at their own layer, a good caption between them is not", async () => {
     const w = world();
     const r = serviceRig(w);
     const copyright = { ...textLayer(1), value: `Acme ${String.fromCodePoint(0xa9)}` };

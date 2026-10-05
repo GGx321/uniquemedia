@@ -6,7 +6,8 @@ import { type LayerPreview, previewLook, TextPreviewQueue } from "../../engine/t
 import { refusedCaptionLayers } from "./captionCheck";
 
 // 3d.4: the editor's one per-layer queue of `montages.textPreview` asks (engine/textPreviewQueue.ts), handed to everything that
-// shows a caption: the preview (every text layer's picture) and the properties panel (the caption's verdict). One per open draft.
+// shows a caption: the preview (every text layer's picture), the properties panel (the caption's verdict) and, in DraftEditor, the
+// «Рендер» blocker and the layer blocks' marks (a refusal only the real emoji font can give). One per open draft.
 
 const TextPreviewsContext = createContext<TextPreviewQueue | null>(null);
 
