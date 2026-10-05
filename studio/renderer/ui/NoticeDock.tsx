@@ -46,7 +46,17 @@ export function NoticeDockProvider({ children }: { children: ReactNode }) {
   const [expanded, setExpanded] = useState(false);
   const register = useCallback((key: string) => {
     setOrder((now) => (now.includes(key) ? now : [...now, key]));
-    return () => setOrder((now) => now.filter((k) => k !== key));
+    return () => {
+      setOrder((now) => now.filter((k) => k !== key));
+      // A card that goes takes its fold with it (review r2 MEDIUM): its condition ended, so the same condition coming back is news, a card again. A
+      // folded card stays mounted as its chip, so folding never gets here.
+      setMinimized((now) => {
+        if (!now.has(key)) return now;
+        const next = new Set(now);
+        next.delete(key);
+        return next;
+      });
+    };
   }, []);
   const minimize = useCallback((key: string) => setMinimized((now) => new Set(now).add(key)), []);
   const restore = useCallback((key: string) => {

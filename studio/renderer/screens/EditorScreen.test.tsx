@@ -744,7 +744,7 @@ describe("notices in the editor float over the preview (slice review 5-L1)", () 
     expect(chip.closest(".ed-dock") !== null).toBe(true);
     expect(focusedLabel()).toBe(describeElement(chip));
 
-    // The same failure again keeps it folded; a failure of another code is news: the card is back.
+    // While the failure lasts it stays folded; a failure of another code is another condition: its card shows.
     engine.failNext("montages.save", { code: "INTERNAL" });
     fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
     await screen.findByText(ERROR_MESSAGES_RU.INTERNAL);
@@ -756,6 +756,32 @@ describe("notices in the editor float over the preview (slice review 5-L1)", () 
     fireEvent.click(screen.getByRole("button", { name: /^Развернуть уведомление: / }));
     await flush();
     expect(dockCards()).toHaveLength(1);
+  });
+
+  /** A rename that the engine refuses with `code` (a save failure card). */
+  async function failRename(engine: Awaited<ReturnType<typeof studio>>["engine"], code: "LIBRARY_UNAVAILABLE" | "INTERNAL", name: string): Promise<void> {
+    engine.failNext("montages.save", { code });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: name } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    await screen.findByText(ERROR_MESSAGES_RU[code]);
+  }
+  const chips = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".ed-dock .notice-chip")];
+
+  test("review r2 MEDIUM: a folded card whose condition ended is a card again when the same condition comes back", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "вечер");
+    fireEvent.click(within(dockCards()[0] ?? document.body).getByRole("button", { name: "Свернуть уведомление" }));
+    await flush();
+    expect([dockCards().length, chips().length]).toEqual([0, 1]);
+    // The save goes through: the condition ends, and its chip with it.
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await waitFor(() => expect(chips()).toHaveLength(0));
+    // The same failure again is news: a card, not a chip.
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "ночь");
+    expect([dockCards().length, chips().length]).toEqual([1, 0]);
   });
 
   test("review r1 LOW-3: closing a card hands the focus to the next card, then to the screen's title", async () => {
