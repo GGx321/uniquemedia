@@ -1,11 +1,13 @@
 import {
   AbsolutePath,
+  checkImageChoice,
   errorResponseFor,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
   type CommandMessage,
   type EngineCommandMessage,
   type EngineError,
+  type ImageModelCatalogue,
   type MusicKeyStatus,
   type ResponseMessage,
   type Settings,
@@ -16,7 +18,7 @@ import type { SettingsStore } from "./settingsStore";
 /** The settings commands main answers itself: it owns settings.json. */
 export type SettingsCommand = Extract<
   CommandMessage,
-  { type: "settings.setBudget" | "settings.setModels" | "settings.setConcurrency" | "settings.setLibraryPath" | "settings.setImageAgeCheck" }
+  { type: "settings.setBudget" | "settings.setModels" | "settings.setConcurrency" | "settings.setLibraryPath" | "settings.setImageAgeCheck" | "settings.setCameraRealism" }
 >;
 
 export function isSettingsCommand(command: CommandMessage): command is SettingsCommand {
@@ -25,7 +27,8 @@ export function isSettingsCommand(command: CommandMessage): command is SettingsC
     command.type === "settings.setModels" ||
     command.type === "settings.setConcurrency" ||
     command.type === "settings.setLibraryPath" ||
-    command.type === "settings.setImageAgeCheck"
+    command.type === "settings.setImageAgeCheck" ||
+    command.type === "settings.setCameraRealism"
   );
 }
 
@@ -67,12 +70,28 @@ async function nextSettings(command: SettingsCommand, deps: SettingsFlowDeps): P
   switch (command.type) {
     case "settings.setBudget":
       return { ok: true, settings: { ...current, monthlyBudgetMicros: command.payload.monthlyBudgetMicros } };
-    case "settings.setModels":
-      return { ok: true, settings: { ...current, imageModel: command.payload.imageModel, textModel: command.payload.textModel } };
+    case "settings.setModels": {
+      const { imageModel, imageQuality, textModel } = command.payload;
+      // The image model and its quality must come from the engine's catalogue (a model the owner could not have picked, or a
+      // quality it does not list, is refused with a Russian text). The model already set needs no catalogue to be saved again.
+      const unchanged = imageModel === current.imageModel && (imageQuality === undefined || imageQuality === current.imageQuality);
+      let catalogue: Pick<ImageModelCatalogue, "models"> = { models: [] };
+      if (!unchanged) {
+        const response = await deps.engine.request({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "command", type: "settings.imageModels", payload: {} });
+        if (!response.ok) return { ok: false, response: errorResponseFor(command, response.error) };
+        if (response.type !== "settings.imageModels") return { ok: false, response: errorResponseFor(command, { code: "INTERNAL", detail: "the engine answered the model list with something else" }) };
+        catalogue = response.result;
+      }
+      const choice = checkImageChoice(catalogue, current, { imageModel, imageQuality });
+      if (!choice.ok) return { ok: false, response: errorResponseFor(command, { code: "VALIDATION", detail: choice.detail }) };
+      return { ok: true, settings: { ...current, imageModel, imageQuality: choice.imageQuality, textModel } };
+    }
     case "settings.setConcurrency":
       return { ok: true, settings: { ...current, concurrency: { network: command.payload.network } } };
     case "settings.setImageAgeCheck":
       return { ok: true, settings: { ...current, imageAgeCheck: command.payload.imageAgeCheck } };
+    case "settings.setCameraRealism":
+      return { ok: true, settings: { ...current, cameraRealism: command.payload.cameraRealism } };
     case "settings.setLibraryPath": {
       // Never a path string from the renderer: the user picks the folder in
       // main's own dialog, which merely opens at the suggested path.
