@@ -594,6 +594,11 @@
   min-width: 0;
 }
 
+/* Hidden while the name is edited, but kept mounted (slice review 5-L2). */
+.ed-title-row[hidden] {
+  display: none;
+}
+
 /* The draft's name is the screen's h1, at the header's size. */
 .ed-head .screen-title {
   overflow: hidden;

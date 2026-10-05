@@ -129,27 +129,38 @@ function EditorHeader({
   /** Why the typed name was refused; the field stays open with it. */
   const [nameError, setNameError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const pencil = useRef<HTMLButtonElement>(null);
+  /** A rename ended by its key (Enter, Escape): the focus goes back to the pencil, not to the top of the window (slice review 5-L2). */
+  const [backToPencil, setBackToPencil] = useState(false);
   const nameErrorId = useId();
   const gone = state.save.kind === "gone";
 
   useEffect(() => {
     if (renaming) input.current?.select();
   }, [renaming]);
+  useEffect(() => {
+    if (!backToPencil || renaming) return;
+    pencil.current?.focus();
+    setBackToPencil(false);
+  }, [backToPencil, renaming]);
 
-  function commitName(): void {
+  /** Saves the typed name; true when the field closed. A blur (the owner clicked elsewhere) leaves the focus where the click put it. */
+  function commitName(): boolean {
     const value = input.current?.value ?? "";
     // The only name the contract refuses that the field lets through: one with a control character (a pasted tab).
     if (!session.rename(value)) {
       setNameError("В названии не может быть служебных символов (табуляции и других) — уберите их.");
-      return;
+      return false;
     }
     setNameError(null);
     setRenaming(false);
+    return true;
   }
 
   function cancelRename(): void {
     setNameError(null);
     setRenaming(false);
+    setBackToPencil(true);
   }
 
   return (
@@ -158,7 +169,7 @@ function EditorHeader({
         {leaving ? <Spin /> : <Icon name="back" size={16} strokeWidth={2.2} />}
       </button>
       <div className="ed-title">
-        {renaming ? (
+        {renaming && (
           <span className="ed-title-edit">
             <input
               ref={input}
@@ -169,10 +180,10 @@ function EditorHeader({
               defaultValue={state.name ?? ""}
               placeholder="без названия"
               maxLength={80}
-              onBlur={commitName}
+              onBlur={() => void commitName()}
               onKeyDown={(e) => {
                 // Enter that ends an input method's composition belongs to the composition, not to the rename.
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) commitName();
+                if (e.key === "Enter" && !e.nativeEvent.isComposing && commitName()) setBackToPencil(true);
                 if (e.key === "Escape") cancelRename();
               }}
             />
@@ -182,14 +193,14 @@ function EditorHeader({
               </span>
             )}
           </span>
-        ) : (
-          <span className="ed-title-row">
-            <ScreenTitle>{draftTitle(title.avatar, state.name)}</ScreenTitle>
-            <button type="button" className="ed-rename" aria-label="Переименовать черновик" disabled={gone} onClick={() => setRenaming(true)}>
-              <Icon name="pencil" size={12} strokeWidth={2.2} />
-            </button>
-          </span>
         )}
+        {/* Hidden while renaming, never unmounted: the screen's title takes the focus only when the screen opens (slice review 5-L2). */}
+        <span className="ed-title-row" hidden={renaming}>
+          <ScreenTitle>{draftTitle(title.avatar, state.name)}</ScreenTitle>
+          <button ref={pencil} type="button" className="ed-rename" aria-label="Переименовать черновик" disabled={gone} onClick={() => setRenaming(true)}>
+            <Icon name="pencil" size={12} strokeWidth={2.2} />
+          </button>
+        </span>
         <span className="mono faint ed-saved" role="status">
           {saveLabel(state.save, state.saved, { fresh })}
           {state.save.kind === "failed" && (

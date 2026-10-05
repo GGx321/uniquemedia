@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ENGINE_GONE_DETAIL, ERROR_MESSAGES_RU, type Montage } from "../../shared/engine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, flush, inAct, runAll, tick } from "../testing";
+import { callsOf, describeElement, flush, focusedLabel, inAct, runAll, tick } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
 
@@ -70,6 +70,35 @@ describe("the header", () => {
     await waitFor(() => expect(callsOf(engine, "montages.save")).toHaveLength(1));
     expect(callsOf(engine, "montages.save")[0]?.payload).toMatchObject({ montageId: made.montageId, name: "кафе и город" });
     await waitFor(() => expect(within(header()).getByText(/^черновик · сохранён \d\d:\d\d$/)).toBeDefined());
+  });
+
+  test("slice review 5-L2: a click on a clip while renaming keeps the focus there (Delete then acts on the clip); Enter or Escape give it back to the pencil", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    const clipList =(): HTMLElement => screen.getByRole("list", { name: "Кадры" });
+    const firstClip = (): HTMLElement => within(clipList()).getAllByRole("button", { name: /^Кадр 1/ })[0] ?? document.body;
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    screen.getByRole("textbox", { name: "Название черновика" }).focus();
+    // The owner clicks the clip: the field gives up the focus to it (the test DOM moves the focus only by `focus()`), and the name is kept.
+    act(() => firstClip().focus());
+    fireEvent.click(firstClip());
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(firstClip()));
+    fireEvent.keyDown(firstClip(), { key: "Delete" });
+    await flush();
+    // The only clip went: the draft is empty.
+    expect(screen.getByText("Ролик пока пуст")).toBeDefined();
+
+    const pencil = (): HTMLElement => screen.getByRole("button", { name: "Переименовать черновик" });
+    for (const key of ["Enter", "Escape"]) {
+      fireEvent.click(pencil());
+      const field = screen.getByRole("textbox", { name: "Название черновика" });
+      field.focus();
+      fireEvent.keyDown(field, { key });
+      await flush();
+      expect(focusedLabel()).toBe(describeElement(pencil()));
+    }
   });
 
   test("a name the draft cannot take is refused with the reason, and the field stays open", async () => {
