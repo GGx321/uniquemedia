@@ -218,6 +218,85 @@ describe("the splitter between the media panel and the stage", () => {
     expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe("500");
   });
 
+  // Follow-ups to review round 2: a HiDPI pointer jitters by fractions of a pixel, and a drag or a key at the narrow window's limit changes
+  // nothing on screen. Neither may overwrite the viewer's wider choice with the narrowed width.
+  test("a press that jitters by less than the drag threshold changes and keeps nothing", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "560");
+    const body = layOutBody(968);
+    await editor();
+    for (const [pointerId, dx] of [
+      [11, 0.5],
+      [12, -0.5],
+      [13, 3],
+    ] as const) {
+      fireEvent.pointerDown(splitter(), { pointerId, button: 0, clientX: 500, clientY: 300 });
+      act(() => {
+        window.dispatchEvent(new PointerEvent("pointermove", { pointerId, clientX: 500 + dx, clientY: 300, buttons: 1 }));
+        window.dispatchEvent(new PointerEvent("pointerup", { pointerId, clientX: 500 + dx, clientY: 300 }));
+      });
+    }
+    expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe("560");
+    body.resize(2_000);
+    expect(now()).toBe(560);
+  });
+
+  test("a drag that ends where the narrow window already holds the panel keeps nothing", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "560");
+    const body = layOutBody(968);
+    await editor();
+    dragBy(60, 14);
+    expect(now()).toBe(968 - PROPS_PX - STAGE_ROOM_PX);
+    expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe("560");
+    body.resize(2_000);
+    expect(now()).toBe(560);
+  });
+
+  test("a key that changes nothing at the limit keeps nothing; one that does is kept", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "560");
+    const body = layOutBody(968);
+    await editor();
+    const room = 968 - PROPS_PX - STAGE_ROOM_PX;
+    for (const key of [{ key: "ArrowRight" }, { key: "ArrowRight", shiftKey: true }, { key: "End" }]) {
+      expect(fireEvent.keyDown(splitter(), key)).toBe(false);
+      expect(now()).toBe(room);
+    }
+    expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe("560");
+    fireEvent.keyDown(splitter(), { key: "ArrowLeft" });
+    expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe(String(room - 16));
+    body.resize(2_000);
+    expect(now()).toBe(room - 16);
+  });
+
+  /** The editor's body laid out 968 px wide (as `getBoundingClientRect` reads it), with no ResizeObserver report yet. */
+  function bodyRectOnly(): void {
+    const rect = spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      return DOMRect.fromRect({ x: 0, y: 0, width: this.classList.contains("ed-body") ? 968 : 0, height: 0 });
+    });
+    restores.push(() => rect.mockRestore());
+  }
+
+  test("the panel's first frame is already held to the window: the body is measured before it is drawn, not only when the observer reports", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "560");
+    bodyRectOnly();
+    await editor();
+    expect(drawn()).toBe(`${968 - PROPS_PX - STAGE_ROOM_PX}px`);
+  });
+
+  test("so is the loading stand-in's", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "560");
+    bodyRectOnly();
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1, P2]);
+    await openDrafts();
+    await screen.findByRole("heading", { level: 3, name: /Mia/ });
+    engine.delayNext("montages.get", 60_000);
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    await flush();
+    const stub = document.querySelector(".editor-loading .ed-media");
+    if (!(stub instanceof HTMLElement)) throw new Error("no loading stand-in");
+    expect(stub.style.width).toBe(`${968 - PROPS_PX - STAGE_ROOM_PX}px`);
+  });
+
   test("while the draft loads, the panel's stand-in is already at the width it will be drawn at (held to the window)", async () => {
     localStorage.setItem(MEDIA_WIDTH_KEY, "560");
     layOutBody(968);

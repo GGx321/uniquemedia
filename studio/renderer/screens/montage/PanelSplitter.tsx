@@ -1,5 +1,5 @@
 import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { trackPointer } from "./gesture";
+import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { clampMediaWidth, keyedWidth, MEDIA_WIDTH, mediaWidthMax, storedMediaWidth, viewerStorage, writeMediaWidth } from "./panelWidth";
 
 // The owner's feedback (2026-10-05): the media panel is resized by the border between it and the stage. The border is a splitter, a focusable
@@ -40,11 +40,17 @@ export function useMediaWidth(): MediaWidth {
   };
 }
 
-/** The editor body `node` sits in (its row of panels), measured as it is laid out and on every resize: what sets the panel's room. */
+/**
+ * The editor body `node` sits in (its row of panels): what sets the panel's room. Measured at once, before the first frame is painted (an
+ * observer reports only after a layout, which drew one frame at the unheld width in a narrow window), and on every resize after.
+ */
 function useBodyWidth(node: RefObject<HTMLElement | null>, measured: (bodyPx: number | null) => void): void {
   useLayoutEffect(() => {
     const body = node.current?.parentElement;
-    if (body === null || body === undefined || typeof ResizeObserver === "undefined") return;
+    if (body === null || body === undefined) return;
+    const now = body.getBoundingClientRect().width;
+    if (now > 0) measured(now);
+    if (typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
       const px = entries[0]?.contentRect.width;
       if (px !== undefined) measured(px > 0 ? px : null);
@@ -87,29 +93,31 @@ export function PanelSplitter({ size, controls }: PanelSplitterProps) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.focus();
-    // The drag moves the panel from where it is DRAWN; what goes back on a cancel is the viewer's choice (review round 1, LOW 3), which a
-    // narrow window draws narrower.
+    // The drag moves the panel from where it is DRAWN; what goes back on a cancel, a press that never became a drag or a drag that changed
+    // nothing on screen is the viewer's choice (review rounds 1 and 2), which a narrow window draws narrower. A drag starts past the
+    // threshold, so a HiDPI pointer's sub-pixel jitter is no drag.
     const from = width;
     const before = chosen;
     const startX = event.clientX;
-    let moved = false;
+    let dragged = false;
+    const widthAt = (x: number): number => clampMediaWidth(from + x - startX, max);
     gesture.current?.();
     setDragging(true);
     document.documentElement.classList.add(RESIZING);
     gesture.current = trackPointer(
       event,
       (move) => {
-        if (move.clientX !== startX) moved = true;
-        if (moved) choose(clampMediaWidth(from + move.clientX - startX, max), false);
+        if (!dragged && Math.abs(move.clientX - startX) < DRAG_THRESHOLD_PX) return;
+        dragged = true;
+        choose(widthAt(move.clientX), false);
       },
       (end) => {
         gesture.current = null;
         setDragging(false);
         document.documentElement.classList.remove(RESIZING);
-        // The system took the pointer: the viewer's choice as it was, nothing kept.
-        if (end === null) choose(before, false);
-        // A press that never moved (a click, the first half of a double click) changes and keeps nothing.
-        else if (moved || end.clientX !== startX) choose(clampMediaWidth(from + end.clientX - startX, max), true);
+        const to = end === null || !dragged ? from : widthAt(end.clientX);
+        if (to === from) choose(before, false);
+        else choose(to, true);
       },
     );
   }
@@ -120,7 +128,9 @@ export function PanelSplitter({ size, controls }: PanelSplitterProps) {
     if (to === null) return;
     event.preventDefault();
     // Enter is the default again: nothing of the viewer's is kept.
-    choose(event.key === "Enter" ? null : to, true);
+    if (event.key === "Enter") choose(null, true);
+    // A key at the limit changes nothing on screen, so it keeps nothing either: the viewer's wider choice stays (review round 2).
+    else if (to !== width) choose(to, true);
   }
 
   return (
