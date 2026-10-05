@@ -166,7 +166,9 @@ export type ExportRootCheck =
       ok: false;
       reason: ExportUnavailableReason;
       /**
-       * The check did NOT ANSWER (its own bound passed, or it failed in a way it cannot classify): nothing is known about the folder. `reason` is then only what the
+       * The check did NOT ANSWER (the engine's bound around it passed, or it threw something it did not classify itself): nothing is known about the folder.
+       * NOT set for an I/O error the check classifies on its own (a stat, the probe's write or the marker's read failing fast with EIO and the like): that one
+       * is reported as a refusal («not-writable»), which `videos.list` reads as «elsewhere»; only a hang or an unclassified throw reads as `unchecked`. `reason` is then only what the
        * window's status says («not-writable»). Whoever judges FILES against the root reads this as «cannot tell» (`unchecked`), never as «another folder» (`elsewhere`),
        * which is what a folder that WAS looked at and refused says.
        */

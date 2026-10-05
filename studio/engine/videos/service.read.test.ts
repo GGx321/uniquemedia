@@ -448,7 +448,7 @@ describe("the export root that is refused and the one that did not answer are to
 
     const answer = await r.service.delete(record.id, "record");
 
-    expect(answer).toMatchObject({ fileDeleted: false });
+    expect(answer).toMatchObject({ fileDeleted: false, fileState: "unchecked" });
     expect(existsSync(path)).toBe(true);
   });
 });

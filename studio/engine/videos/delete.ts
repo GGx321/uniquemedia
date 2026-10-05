@@ -91,6 +91,8 @@ export interface DeleteVideoDeps {
   readonly library: Pick<Library, "root" | "listAvatars" | "removeVideoRecordFromIndex">;
   /** The current export root; null when the last check refused it (then only the record can go). */
   readonly exportRoot: ExportRootRef | null;
+  /** The export root did NOT ANSWER (it is not refused, it is unknown): a `record` delete then reports the file as `unchecked`, not «elsewhere». */
+  readonly rootUnanswered?: boolean;
   readonly checker: FileStateChecker;
   readonly fs?: CommitFs;
   /** Ids and states only. */
@@ -165,7 +167,7 @@ export async function deleteVideo(videoId: string, deps: DeleteVideoDeps): Promi
     // «Удалить запись» only reports what the file is (a cheap look; a look that fails reads `unchecked`, K15); «Удалить» judges it in full.
     let fileState: FileState;
     if (recordOnly) {
-      fileState = await deps.checker.check(record, deps.exportRoot, { verify: "cheap" }).catch(() => "unchecked" as const);
+      fileState = deps.rootUnanswered === true ? "unchecked" : await deps.checker.check(record, deps.exportRoot, { verify: "cheap" }).catch(() => "unchecked" as const);
     } else {
       fileState = await deps.checker.check(record, deps.exportRoot, { verify: "full" });
       // The file cannot be reached: the record alone would orphan it. Nothing has been removed yet.

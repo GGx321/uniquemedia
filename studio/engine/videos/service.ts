@@ -780,12 +780,15 @@ export class VideoService {
   async delete(videoId: string, mode: "video" | "record"): Promise<{ videoId: string; fileDeleted: boolean; fileState: FileState }> {
     return this.#deps.withLibrary(async (library) => {
       let root: ExportRootRef | null;
+      let rootUnanswered = false;
       if (mode === "video") {
         const check = await this.#deps.checkExport();
         if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
         root = await this.#freshRoot(check);
       } else {
-        root = await this.#freshRoot();
+        const look = await this.#lookRoot();
+        rootUnanswered = look.kind === "unanswered";
+        root = look.kind === "root" ? look.ref : null;
       }
       let outcome;
       try {
@@ -794,7 +797,7 @@ export class VideoService {
         // the next one finishes, and the answer says the outcome is not known.
         outcome = await within(
           this.#deps.deleteTimeoutMs ?? DELETE_TIMEOUT_MS,
-          () => deleteVideo(videoId, { mode, library, exportRoot: root, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log }),
+          () => deleteVideo(videoId, { mode, library, exportRoot: root, rootUnanswered, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log }),
           () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time; look at the video list before trying again" }),
         );
       } catch (error) {
