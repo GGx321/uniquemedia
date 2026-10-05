@@ -6,8 +6,8 @@ import { draftCaptionIssues } from "./draftCaptionIssues";
 // The caption half of a draft's issues: one `caption-invalid` per text layer whose caption breaks the SHARED caption rules, at the
 // layer's `value`. One function for `videos.render`, `montages.get` and the mock, so a render is refused before it is queued.
 
-/** "Privet" in Cyrillic: outside the charset, written as escapes so the file stays English. */
-const CYRILLIC = "Привет";
+/** "Privet" in Cyrillic: outside the charset, built from code points so that no Cyrillic letter sits in this file. */
+const CYRILLIC = String.fromCodePoint(0x41f, 0x440, 0x438, 0x432, 0x435, 0x442);
 const BAD_AT = (index: number): MontageIssue => ({ code: "caption-invalid", path: ["layers", index, "value"] });
 
 const textLayer = (layerId: string, value: string): TextLayer => ({
@@ -77,9 +77,36 @@ describe("draftCaptionIssues", () => {
     expect(draftCaptionIssues(spec(stickerLayer("layer-1")))).toEqual([]);
   });
 
-  test("judges a caption by the same rules the panel's check uses", () => {
-    const value = "a\nb\nc";
-    expect(captionIssue(value, { hasEmoji: () => true })).not.toBeNull();
-    expect(draftCaptionIssues(spec(textLayer("layer-1", value)))).toEqual([BAD_AT(0)]);
+  test("takes a well-formed emoji as drawable: the emoji font is the rasteriser's to ask", () => {
+    expect(draftCaptionIssues(spec(textLayer("layer-1", `sunday ${String.fromCodePoint(0x2600, 0xfe0f)}`)))).toEqual([]);
+  });
+
+  test("reports a lone regional indicator, which is no emoji whatever the font has", () => {
+    expect(draftCaptionIssues(spec(textLayer("layer-1", String.fromCodePoint(0x1f1fa))))).toEqual([BAD_AT(0)]);
+  });
+
+  test("accepts exactly two lines, with LF or CRLF", () => {
+    expect(draftCaptionIssues(spec(textLayer("layer-1", "a\nb"), textLayer("layer-2", "a\r\nb")))).toEqual([]);
+  });
+
+  test("accepts the typographic marks of the charset", () => {
+    const text = `It${String.fromCodePoint(0x2019)}s ${String.fromCodePoint(0x2014)} fine${String.fromCodePoint(0x2026)}`;
+    expect(draftCaptionIssues(spec(textLayer("layer-1", text)))).toEqual([]);
+  });
+
+  // The function adds nothing to the shared rules but the layer walk: on any caption it agrees with `captionIssue` (asked as the editor's own local check asks it).
+  test.each([
+    ["plain", "Hello"],
+    ["empty", ""],
+    ["cyrillic", CYRILLIC],
+    ["three lines", "a\nb\nc"],
+    ["61 graphemes", "a".repeat(61)],
+    ["a copyright sign", `Acme ${String.fromCodePoint(0xa9)}`],
+    ["a lone regional indicator", String.fromCodePoint(0x1f1fa)],
+    ["a variation selector 15 emoji", `x${String.fromCodePoint(0x2764, 0xfe0e)}`],
+    ["a control character", "a\u0007b"],
+  ])("agrees with the shared rules on %s", (_name, value) => {
+    const refused = captionIssue(value, { hasEmoji: () => true }) !== null;
+    expect(draftCaptionIssues(spec(textLayer("layer-1", value))).length > 0).toBe(refused);
   });
 });

@@ -442,13 +442,13 @@ describe("a layer's other actions and states", () => {
 });
 
 describe("a caption that breaks the caption rules", () => {
-  const badCaption = { ...textLayer(0, 0, 1_000), value: "Привет" };
+  const badCaption = { ...textLayer(0, 0, 1_000), value: String.fromCodePoint(0x41f, 0x440, 0x438, 0x432, 0x435, 0x442) };
   const renderButton = (): HTMLElement => screen.getByRole("button", { name: "Рендер" });
 
   test("is marked on its block with the engine's reason", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: [badCaption] });
-    await waitFor(() => expect(blockNames(texts())).toEqual(["Текст 1: «Привет», 0.0–1.0 с, надпись не проходит проверку"]));
+    await waitFor(() => expect(blockNames(texts())).toEqual([`Текст 1: «${badCaption.value}», 0.0–1.0 с, надпись не проходит проверку`]));
     expect(texts().querySelectorAll(".ed-blk-flagged").length).toBe(1);
   });
 
@@ -468,7 +468,7 @@ describe("a caption that breaks the caption rules", () => {
 });
 
 describe("the music track", () => {
-  const music =(startMs: number) => ({ music: { source: "trending" as const, trackId: TRACK.trackId, startMs } });
+  const music = (startMs: number) => ({ music: { source: "trending" as const, trackId: TRACK.trackId, startMs } });
 
   // 3d.5 (L24): the seam 3d.3b left «Скоро» opens the «Музыка» tab now.
   test("no music: «Добавить музыку» opens the «Музыка» tab and takes the focus there", async () => {
