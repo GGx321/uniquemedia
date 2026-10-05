@@ -112,6 +112,13 @@ export interface RecoveryReport {
   readonly removed: { placeholders: number; intentTemps: number; markerTemps: number; probes: number; partTemps: number };
   /** Steps a disk error stopped; they are retried at the next open. */
   readonly skipped: Array<{ what: string; code: string }>;
+  /**
+   * What stands between the owner and his photos, for the notice that tells him (counts only; a file the OS leaves in `.pending/` is neither):
+   * - `held`: intents (and `.pending/` folders that could not be listed) that may still be adopted but could not be read now, whose avatar's photos are held until a read works;
+   * - `damaged`: intents no version can adopt (broken JSON, a record that fails its schema, one under another id or avatar), SET ASIDE as `<name>.damaged`: they block nothing.
+   * A targeted settle counts and sets aside nothing.
+   */
+  readonly blocked: { held: number; damaged: number };
 }
 
 /** The two reads recovery makes of the library itself. */
@@ -238,7 +245,7 @@ export const SCRATCH_MIN_AGE_MS = 60_000;
 
 export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {}): Promise<RecoveryReport> {
   const log = deps.log ?? (() => undefined);
-  const report: RecoveryReport = { adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [] };
+  const report: RecoveryReport = { adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [], blocked: { held: 0, damaged: 0 } };
   const skip = (what: string, error: unknown): void => {
     report.skipped.push({ what, code: codeOf(error) });
     log(`recovery: ${what} skipped (${codeOf(error)})`);
@@ -333,20 +340,30 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
       const paths = videoPaths(input.library.root, avatar.id);
       let names: Array<{ name: string; isFile: boolean }>;
       const dirHold = `pending-dir:${avatar.id}`;
+      /** Which intents are in a folder that cannot be listed is unknown, so which photos they name is too: fail closed, all of the avatar's, until a listing works. */
+      const holdFolder = (): void => {
+        input.library.holdPendingPhotos(avatar.id, dirHold, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
+        report.blocked.held++;
+      };
       try {
         names = await lib.readdir(paths.pendingDir);
-        // The folder lists: whatever hold a failed listing made is over (the intents it holds are held one by one below).
-        input.library.releasePendingPhotos(dirHold);
+        // The folder lists: whatever hold a failed listing made is over (the intents it holds are held one by one below). Only a FULL run knows the folder's whole
+        // content: a targeted settle skips the intents that are not its own, so it must not release a hold that guards them.
+        if (only === null) input.library.releasePendingPhotos(dirHold);
       } catch (error) {
+        // A call that TIMED OUT ends the run (and the avatars after this one with it): the hold is made before it does.
+        if (hasErrorCode(error, "ETIMEDOUT")) {
+          if (only === null) holdFolder();
+          throw error;
+        }
         if (signal.aborted) throw error;
         if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) {
-          input.library.releasePendingPhotos(dirHold);
+          if (only === null) input.library.releasePendingPhotos(dirHold);
           continue;
         }
         skip("pending folder", error);
-        // Which intents are in a folder that cannot be listed is unknown, so which photos they name is too: fail closed, all of the avatar's, until a listing works.
         // (A targeted settle never widens a hold.)
-        if (only === null) input.library.holdPendingPhotos(avatar.id, dirHold, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
+        if (only === null) holdFolder();
         continue;
       }
       for (const { name, isFile } of names.sort((x, y) => (x.name < y.name ? -1 : 1))) {
@@ -371,14 +388,27 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         // closed, hold them ALL until a later read of it says which (the hold of the same video id is then replaced by the exact one) or it is gone. A targeted settle never
         // widens a hold (its own exact hold stands). An intent NO version can adopt (broken JSON, a record that fails its schema, one that names another id or avatar) is only
         // `left`, with no hold: nothing could ever release it, and the avatar would be locked for good.
-        const unreadable = (left: "unreadable" | "too-new", hold: boolean): void => {
+        const holdAll = (): void => {
+          input.library.holdPendingPhotos(avatar.id, videoId, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
+          report.blocked.held++;
+        };
+        const unreadable = async (left: "unreadable" | "too-new", hold: boolean): Promise<void> => {
           loaded.push({ ...base, left });
-          if (hold && only === null) input.library.holdPendingPhotos(avatar.id, videoId, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
+          if (only !== null) return;
+          if (hold) return holdAll();
+          // Damaged beyond any version's reading: set aside once, as `<name>.damaged` (reversible, and no longer an intent), so it is told once and never again.
+          try {
+            await fs.rename(paths.intent(videoId), `${paths.intent(videoId)}.damaged`);
+            report.blocked.damaged++;
+            log(`recovery: set aside a damaged intent (${videoId}) as .damaged`);
+          } catch (error) {
+            if (!hasErrorCode(error, "ENOENT")) skip("damaged intent", error);
+          }
         };
         try {
           const info = await fs.lstat(paths.intent(videoId));
           if (info.size > MAX_INTENT_BYTES || !info.isFile) {
-            unreadable("unreadable", true);
+            await unreadable("unreadable", true);
             continue;
           }
           let text: string;
@@ -387,22 +417,22 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           } catch (error) {
             if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked (a commit that finished linked it): nothing to settle, nothing to hold
             if (hasErrorCode(error, "ETIMEDOUT") || signal.aborted) throw error;
-            unreadable("unreadable", true);
+            await unreadable("unreadable", true);
             continue;
           }
           let value: unknown;
           try {
             value = JSON.parse(text);
           } catch {
-            unreadable("unreadable", false);
+            await unreadable("unreadable", false);
             continue;
           }
           if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) {
-            unreadable("too-new", true);
+            await unreadable("too-new", true);
             continue;
           }
           const parsed = VideoRecordSchema.safeParse(value);
-          if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) unreadable("unreadable", false);
+          if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) await unreadable("unreadable", false);
           else {
             loaded.push({ ...base, record: parsed.data });
             // Until this intent is adopted or dropped, its photos are held: its file may be adopted at any time, and a run that defers it
@@ -412,10 +442,15 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           }
         } catch (error) {
           if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked: nothing to settle
+          // A call that TIMED OUT ends the run: the intent is held like one that could not be read before it does.
+          if (hasErrorCode(error, "ETIMEDOUT")) {
+            if (only === null) holdAll();
+            throw error;
+          }
           if (signal.aborted) throw error;
           skip("intent", error);
           // The lstat (or another step) failed: nothing is known of the intent, so it is held like one that could not be read.
-          unreadable("unreadable", true);
+          await unreadable("unreadable", true);
         }
       }
     }

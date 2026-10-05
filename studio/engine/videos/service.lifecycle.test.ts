@@ -21,7 +21,7 @@ const world = useWorld();
 const photoId = (w: World, i: number): string => w.photos[i]?.id ?? "";
 const specFor = (w: World, i = 0): MontageDraft => specOf(w.avatar.id, [photoId(w, i)], 4_000);
 
-const EMPTY_REPORT: RecoveryReport = { adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [] };
+const EMPTY_REPORT: RecoveryReport = { adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [], blocked: { held: 0, damaged: 0 } };
 
 async function committedRecord(w: World, over: Parameters<typeof sampleRecord>[1] = {}): Promise<VideoRecord> {
   const record = sampleRecord(w, over);

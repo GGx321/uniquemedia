@@ -7,7 +7,7 @@ import { commitVideo, type CommitInput } from "./commit";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { CommitTracker } from "./execute";
 import { commitIntent, writeIntent } from "./intents";
-import { partNameOf, videoPaths } from "./record";
+import { partNameOf, videoPaths, type VideoRecord } from "./record";
 import { NODE_LIBRARY_READ_FS, recoverVideos, type ExportRootRef } from "./recovery";
 import {
   acceptingVerify,
@@ -206,6 +206,132 @@ describe("the photos of a pending intent are held until recovery resolves it (st
     await recoverVideos({ library, exportRoot: null });
 
     expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
+  });
+
+  const unlistable = { readFile: NODE_LIBRARY_READ_FS.readFile, readdir: (path: string) => (path.endsWith(".pending") ? Promise.reject(errnoError("EACCES")) : NODE_LIBRARY_READ_FS.readdir(path)) };
+
+  test("a targeted settle of another id leaves a folder hold alone: it neither releases nor makes one, whatever its own walk finds (round 2, M1)", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const library = await w.reopen();
+    await recoverVideos({ library, exportRoot: null }, { libraryFs: unlistable });
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+
+    // The folder lists now; the targeted run skips the intent that is not its own, and must not take the hold of the whole folder with it.
+    await recoverVideos({ library, exportRoot: rootRef(w), only: { videoIds: ["video-0000000b"] } });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+  });
+
+  test("a targeted settle whose own listing fails holds nothing new (it never widens)", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+
+    await recoverVideos({ library, exportRoot: null, only: { videoIds: ["video-00000001"] } }, { libraryFs: unlistable });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
+  });
+
+  test("a .pending folder that is gone altogether (ENOENT) releases the folder hold a failed listing made", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    await recoverVideos({ library, exportRoot: null }, { libraryFs: unlistable });
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+
+    rmSync(videoPaths(w.libraryRoot, w.avatar.id).pendingDir, { recursive: true, force: true });
+    await recoverVideos({ library, exportRoot: null });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
+  });
+
+  test("a disk call that TIMES OUT in the listing holds the avatar's photos before the run ends, so the avatars after it are not the only ones guarded (round 2, L4)", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    const hung = { readFile: NODE_LIBRARY_READ_FS.readFile, readdir: (path: string) => (path.endsWith(".pending") ? new Promise<never>(() => undefined) : NODE_LIBRARY_READ_FS.readdir(path)) };
+
+    const report = await recoverVideos({ library, exportRoot: null }, { libraryFs: hung, ioTimeoutMs: 50 });
+
+    expect(report.skipped.map((s) => s.code)).toContain("ETIMEDOUT");
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+  });
+
+  test("a read of an intent that TIMES OUT holds all the avatar's photos before the run ends", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    const hung = { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => new Promise<never>(() => undefined) };
+
+    await recoverVideos({ library, exportRoot: null }, { libraryFs: hung, ioTimeoutMs: 50 });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+  });
+
+  describe("what the owner is told about (report.blocked)", () => {
+    test("a valid intent beside the files the OS leaves in a folder (.DS_Store, Thumbs.db, desktop.ini, a subfolder) blocks nothing and counts nothing", async () => {
+      const w = world();
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+      const pending = videoPaths(w.libraryRoot, w.avatar.id).pendingDir;
+      for (const name of [".DS_Store", "Thumbs.db", "desktop.ini"]) writeFileSync(join(pending, name), "x");
+      mkdirSync(join(pending, "a-folder"));
+      const library = await w.reopen();
+
+      const report = await recoverVideos({ library, exportRoot: null });
+
+      expect(report.blocked).toEqual({ held: 0, damaged: 0 });
+    });
+
+    test.each([
+      ["a read error", { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => Promise.reject(errnoError("EBUSY")) }],
+      ["a folder that cannot be listed", unlistable],
+    ])("%s is counted as HELD (photos are blocked until it reads again)", async (_name, libraryFs) => {
+      const w = world();
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+      const library = await w.reopen();
+
+      const report = await recoverVideos({ library, exportRoot: null }, { libraryFs });
+
+      expect(report.blocked).toEqual({ held: 1, damaged: 0 });
+    });
+
+    test.each([
+      ["broken JSON", () => "{ not json"],
+      ["a record that fails its schema", () => JSON.stringify({ schemaVersion: 1, id: "video-00000001", nonsense: true })],
+      ["a record under another id", (record: VideoRecord) => JSON.stringify({ ...record, id: "video-0000000f" })],
+    ])("%s is set aside once as <name>.damaged (reversible), counted as DAMAGED, holds nothing, and is not counted again at the next start (round 2, M2)", async (_name, damage) => {
+      const w = world();
+      const record = sampleRecord(w, {});
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+      const paths = videoPaths(w.libraryRoot, w.avatar.id);
+      const text = damage(record);
+      writeFileSync(paths.intent(record.id), text);
+      const library = await w.reopen();
+
+      const first = await recoverVideos({ library, exportRoot: rootRef(w) });
+
+      expect(first.blocked).toEqual({ held: 0, damaged: 1 });
+      expect(existsSync(paths.intent(record.id))).toBe(false);
+      expect(readFileSync(`${paths.intent(record.id)}.damaged`, "utf8")).toBe(text);
+      expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
+      const second = await recoverVideos({ library, exportRoot: rootRef(w) });
+      expect(second.blocked).toEqual({ held: 0, damaged: 0 });
+    });
+
+    test("a targeted settle sets nothing aside and counts nothing", async () => {
+      const w = world();
+      const record = sampleRecord(w, {});
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+      const paths = videoPaths(w.libraryRoot, w.avatar.id);
+      writeFileSync(paths.intent(record.id), "{ not json");
+      const library = await w.reopen();
+
+      const report = await recoverVideos({ library, exportRoot: rootRef(w), only: { videoIds: [record.id] } });
+
+      expect(report.blocked).toEqual({ held: 0, damaged: 0 });
+      expect(existsSync(paths.intent(record.id))).toBe(true);
+    });
   });
 
   test.each([

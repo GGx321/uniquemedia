@@ -87,7 +87,7 @@ describe("the engine sweeps render-tmp when it starts (in the background, beside
       release = resolve;
     });
     // A background sweep that is still busy when the engine has already started answering
-    const { engine } = await startEngine(dir(), { init: { renderTmpDir: renderTmp() }, deps: { videos: { recover: { run: () => held.then(() => ({ adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [] })) } } } });
+    const { engine } = await startEngine(dir(), { init: { renderTmpDir: renderTmp() }, deps: { videos: { recover: { run: () => held.then(() => ({ adopted: [], dropped: [], deferred: [], left: [], removed: { placeholders: 0, intentTemps: 0, markerTemps: 0, probes: 0, partTemps: 0 }, skipped: [], blocked: { held: 0, damaged: 0 } })) } } } });
 
     expect(ok(await engine.handle(command("engine.snapshot"))).type).toBe("engine.snapshot");
     release();
