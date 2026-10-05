@@ -184,6 +184,20 @@ describe("export.choose: a folder the owner moved or renamed is the same folder"
     expect(statesOf(await listVideos(started, avatarId))).toEqual(["present", "present"]);
   });
 
+  test("a volume that stops answering reads `unchecked` in videos.list, not «elsewhere»: the folder was not judged, so nothing is claimed about any file", async () => {
+    const rootId = await markedFolder(exportDir());
+    const { avatarId } = await seedVideos(exportDir(), rootId, 2);
+    let hung = false;
+    const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: (path) => (hung ? new Promise<never>(() => undefined) : NODE_EXPORT_ROOT_FS.stat(path)) };
+    const started = await start({ deps: { exportRootFs, exportCheckTimeoutMs: 50 } });
+    await started.engine.settled();
+    expect(statesOf(await listVideos(started, avatarId))).toEqual(["present", "present"]);
+
+    hung = true;
+
+    expect(statesOf(await listVideos(started, avatarId))).toEqual(["unchecked", "unchecked"]);
+  });
+
   test.skipIf(process.platform === "linux")("a folder renamed only in letter case, on a disk that folds case, is the same folder", async () => {
     const rootId = await markedFolder(exportDir());
     await seedVideos(exportDir(), rootId, 1);

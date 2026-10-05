@@ -2105,7 +2105,7 @@ export class Engine {
       );
     } catch (error) {
       console.error(`studio engine: the export folder could not be checked (${errorKind(error)})`);
-      check = { ok: false, reason: "not-writable" };
+      check = { ok: false, reason: "not-writable", unanswered: true };
     } finally {
       timeout.clear();
     }

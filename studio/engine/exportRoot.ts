@@ -162,7 +162,16 @@ export async function publishFileExclusive(path: string, text: string, ops: Publ
 
 export type ExportRootCheck =
   | { ok: true; rootId: string; /** The folder as the settings name it. */ root: string }
-  | { ok: false; reason: ExportUnavailableReason };
+  | {
+      ok: false;
+      reason: ExportUnavailableReason;
+      /**
+       * The check did NOT ANSWER (its own bound passed, or it failed in a way it cannot classify): nothing is known about the folder. `reason` is then only what the
+       * window's status says («not-writable»). Whoever judges FILES against the root reads this as «cannot tell» (`unchecked`), never as «another folder» (`elsewhere`),
+       * which is what a folder that WAS looked at and refused says.
+       */
+      unanswered?: true;
+    };
 
 /** The snapshot's view of a check. */
 export function exportStatusOf(check: ExportRootCheck): ExportStatus {

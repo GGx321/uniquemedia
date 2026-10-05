@@ -658,17 +658,19 @@ export class VideoService {
     }
     if (read.skipped > 0) this.#deps.log(`videos.list: ${read.skipped} record file(s) of avatar ${avatarId} could not be used and are left out`);
     if (read.truncated) this.#deps.log(`videos.list: avatar ${avatarId} has more record files than one listing reads; the newest are listed`);
-    // One fresh look at the export root, one hash budget for the whole listing.
-    // The look at the export root is inside the listing's budget too: a root that does not answer is "cannot judge" (null), and every record reads `unchecked`.
+    // One fresh look at the export root, one hash budget for the whole listing. The look is inside the listing's budget too.
+    // A root that did not answer (the check's own bound, the listing's, or an error) says nothing about any file (K15): every record reads `unchecked`.
+    // «elsewhere» is only for a folder that WAS looked at and refused, or is another one.
     let root: ExportRootRef | null = null;
-    // A root that could not be judged in time says nothing about any file (K15): every record reads `unchecked`, never «elsewhere» (which is what a refused root says).
     let rootJudged = true;
     try {
-      root = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#freshRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
+      const look = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#lookRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
+      if (look.kind === "unanswered") rootJudged = false;
+      else root = look.kind === "root" ? look.ref : null;
     } catch (error) {
       rootJudged = false;
-      this.#deps.log(`videos.list: the export folder could not be looked at in time (${kindOf(error)}); the files are left unchecked`);
     }
+    if (!rootJudged) this.#deps.log(`videos.list: the export folder could not be looked at; the files are left unchecked`);
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
@@ -690,7 +692,8 @@ export class VideoService {
         } catch (error) {
           // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
           this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
-          if (remainingMs <= checkMs) cutByBudget = true;
+          // Only a look that TIMED OUT at what the budget had left spends the budget; a fast failure (EIO) does not.
+          if (hasErrorCode(error, "ETIMEDOUT") && remainingMs <= checkMs) cutByBudget = true;
           state = "unchecked";
         }
       }
@@ -722,9 +725,12 @@ export class VideoService {
       this.#deps.log(`videos.get: ${videoId} could not be read (${kindOf(error)})`);
       throw new EngineFailure({ code: "INTERNAL", detail: `the video's record could not be read (${codeOf(error)})` });
     }
-    const root = await this.#freshRoot();
+    const look = await this.#lookRoot();
     let state: FileState;
     try {
+      // A root that did not answer judges nothing: the file is `unchecked`, not «elsewhere».
+      if (look.kind === "unanswered") throw Object.assign(new Error("the export folder did not answer"), { code: "ETIMEDOUT" });
+      const root = look.kind === "root" ? look.ref : null;
       state = await within(
         this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS,
         () => this.#deps.checker.check(record, root, { verify: "cheap", budget: newHashBudget() }),
@@ -899,10 +905,19 @@ export class VideoService {
 
   // ---------- the export root ----------
 
-  /** The export root as it is right now (its marker read now), or null when it is unusable: what the file states, delete and recovery judge files against. */
+  /** The export root as it is right now (its marker read now), or null when it is unusable or did not answer: what delete and recovery judge files against. */
   async #freshRoot(known?: ExportRootCheck): Promise<ExportRootRef | null> {
+    const look = await this.#lookRoot(known);
+    return look.kind === "root" ? look.ref : null;
+  }
+
+  /**
+   * The look at the export root in THREE states: a root (usable), `refused` (it was looked at and is unusable: a file is in another folder for it), and
+   * `unanswered` (nothing is known: a file is unchecked). `videos.list` and `videos.get` tell the last two apart; delete and recovery only need the first.
+   */
+  async #lookRoot(known?: ExportRootCheck): Promise<{ kind: "root"; ref: ExportRootRef } | { kind: "refused" } | { kind: "unanswered" }> {
     const check = known ?? (await this.#deps.checkExport());
-    if (!check.ok) return null;
+    if (!check.ok) return check.unanswered === true ? { kind: "unanswered" } : { kind: "refused" };
     let caseInsensitive = true; // the cautious answer: it can only make comparisons stricter
     try {
       // The probe writes a file in the export folder: on a volume that has gone quiet it never returns, so it is bounded, and the cautious answer stands.
@@ -910,7 +925,7 @@ export class VideoService {
     } catch (error) {
       this.#deps.log(`the export folder's case rule could not be probed (${kindOf(error)}); the cautious one is used`);
     }
-    return { root: check.root, rootId: check.rootId, caseInsensitive };
+    return { kind: "root", ref: { root: check.root, rootId: check.rootId, caseInsensitive } };
   }
 
   // ---------- startup, recovery, stale index ----------
