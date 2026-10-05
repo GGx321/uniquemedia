@@ -23,7 +23,9 @@ A test that is a correctness test AND carries a tight time bound (`expect(elapse
 `perfTest` (bun) or a `[perf]` name (node:test), and checks the time with `assertBudget(elapsedMs, budgetMs, what)`.
 It runs in every tier. The perf run enforces `budgetMs` and prints the number; every other run enforces only a generous
 bound (the larger of 2 s and 4x the budget, or `{ blockingMs }` where the generous bound must stay under a number the
-budget cannot tell apart, such as a serial run's total), so a runaway still fails a push. A test that is only a measurement
+budget cannot tell apart, such as a serial run's total), so a runaway still fails a push. Time a short synchronous call with `medianElapsedMs(run)` (warm-up runs, then the median of 7), not with one `performance.now()`
+pair: a single cold call measures the runner's worst moment (a JIT warm-up, a GC pause) as much as the code.
+A test that is only a measurement
 (a deadline headroom over the runner's speed) is `perfOnlyTest` (bun) or registered inside
 `inTier("perf", ...)` (node:test): it exists in the perf run alone.
 

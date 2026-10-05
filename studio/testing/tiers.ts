@@ -81,6 +81,36 @@ export function budgetBound(budgetMs: number, options: BudgetOptions = {}): numb
   return options.blockingMs ?? Math.max(BLOCKING_FLOOR_MS, BLOCKING_FACTOR * budgetMs);
 }
 
+export interface MedianOptions {
+  /** Runs made and thrown away first: the first call of a function pays for compiling, lazy tables and cold caches, which is not what a budget is about. Default 2. */
+  warmups?: number;
+  /** Timed runs; the answer is their median. Default 7. */
+  runs?: number;
+  /** The clock in milliseconds; only a test of this helper replaces it. */
+  now?: () => number;
+}
+
+/**
+ * The median wall time of `run`, in milliseconds, after warm-up runs: the figure to hand `assertBudget`. One timed call measures
+ * the machine's worst moment as much as the code (a cold JIT, a GC pause, a neighbour on a shared runner), so a single-shot
+ * budget flakes. The median of several warmed runs ignores a few such moments, yet a code that is slow on EVERY run (a
+ * quadratic join) still shows in full.
+ */
+export function medianElapsedMs(run: () => void, options: MedianOptions = {}): number {
+  const { warmups = 2, runs = 7, now = () => performance.now() } = options;
+  if (runs < 1) throw new Error("medianElapsedMs needs at least one run");
+  for (let i = 0; i < warmups; i++) run();
+  const times: number[] = [];
+  for (let i = 0; i < runs; i++) {
+    const started = now();
+    run();
+    times.push(now() - started);
+  }
+  times.sort((a, b) => a - b);
+  const middle = Math.floor(times.length / 2);
+  return times.length % 2 === 1 ? (times[middle] ?? 0) : ((times[middle - 1] ?? 0) + (times[middle] ?? 0)) / 2;
+}
+
 /**
  * A wall-clock budget for a test that is also a correctness test. The tight `budgetMs` is a measurement of the machine as
  * much as of the code, so only the perf run (which does not block) enforces it, and prints the number. Every other run

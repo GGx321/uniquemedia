@@ -5,7 +5,7 @@ import { NODE_TEST_SUITES } from "../scripts/electronNodeTests";
 import { tierTestArgs } from "../scripts/realWorkerTests";
 import { inQuarantineRun, QUARANTINE, quarantineEntry, type QuarantineEntry } from "./quarantine";
 import { budgetsOutsidePerfTests, holdsTierTests, nameTags, quarantineIds } from "./tierSources";
-import { assertBudget, BLOCKING_FLOOR_MS, budgetBound, inTier, TIERS, tierMarkers, tierOf, tierPattern, tierTag } from "./tiers";
+import { assertBudget, BLOCKING_FLOOR_MS, budgetBound, inTier, medianElapsedMs, TIERS, tierMarkers, tierOf, tierPattern, tierTag } from "./tiers";
 
 const ROOT = resolve(import.meta.dir, "..", "..");
 const STUDIO = join(ROOT, "studio");
@@ -69,6 +69,41 @@ describe("assertBudget", () => {
     expect(budgetBound(1_000, { env: BLOCKING })).toBe(4_000);
     expect(budgetBound(1_000, { env: BLOCKING, blockingMs: 1_200 })).toBe(1_200);
     expect(budgetBound(1_000, { env: PERF, blockingMs: 1_200 })).toBe(1_000);
+  });
+});
+
+describe("medianElapsedMs", () => {
+  /** A clock that advances by the next scripted step on each read, so the measurement is exact and the test never waits. */
+  function scriptedClock(durations: readonly number[]): () => number {
+    let now = 0;
+    let reads = 0;
+    return () => {
+      // Reads come in pairs (before, after) around each timed run.
+      if (reads % 2 === 1) now += durations[(reads - 1) / 2] ?? 0;
+      reads += 1;
+      return now;
+    };
+  }
+
+  test("does not time the warm-up runs: a slow cold start is not the answer", () => {
+    let calls = 0;
+    // Three scripted durations, for the three timed runs: a helper that also timed its two warm-ups would use them up on those
+    // and see zeros for the rest, which makes a median of 4, not 5.
+    const median = medianElapsedMs(() => void (calls += 1), { warmups: 2, runs: 3, now: scriptedClock([5, 4, 6]) });
+    expect(calls).toBe(5);
+    expect(median).toBe(5);
+  });
+
+  test("answers the middle of an odd number of runs, not the mean: one slow outlier does not move it", () => {
+    expect(medianElapsedMs(() => undefined, { warmups: 0, runs: 5, now: scriptedClock([3, 3, 400, 3, 4]) })).toBe(3);
+  });
+
+  test("answers the mean of the two middle runs for an even number", () => {
+    expect(medianElapsedMs(() => undefined, { warmups: 0, runs: 4, now: scriptedClock([1, 2, 3, 100]) })).toBe(2.5);
+  });
+
+  test("refuses fewer than one run", () => {
+    expect(() => medianElapsedMs(() => undefined, { runs: 0 })).toThrow(/at least one run/);
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { perfTest } from "../../testing/bunTiers";
-import { assertBudget } from "../../testing/tiers";
+import { assertBudget, medianElapsedMs } from "../../testing/tiers";
 import { adultTextProblems, ageMentions, ageUpperBounds, DESCRIPTOR_MAX_CHARS, hardYouthWords, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
 
 describe("ageMentions", () => {
@@ -770,18 +770,18 @@ describe("an over-long descriptor is refused at once, whatever it holds", () => 
 
   perfTest("24,000 chars of single letters is refused in well under a frame", () => {
     const text = `25-year-old woman, ${Array.from({ length: 12_000 }, (_, i) => "abcdefghijklmnopqrstuvwxyz"[i % 26]).join(" ")}`;
-    const started = performance.now();
 
     expect(adultTextProblems(text, 25, "descriptor")).toEqual(["too-long"]);
-    assertBudget(performance.now() - started, 20, "adultTextProblems: 24,000 chars of single letters");
+    // The median of warmed runs: one timed cold call measures the runner's worst moment (26 ms on a shared ubuntu runner for a call that takes 3.4 ms warm).
+    assertBudget(medianElapsedMs(() => void adultTextProblems(text, 25, "descriptor")), 20, "adultTextProblems: 24,000 chars of single letters");
   });
 
   perfTest("a 600-char descriptor of spelled-out letters is checked quickly: the join is linear", () => {
     const text = `25-year-old woman, ${Array.from({ length: 290 }, (_, i) => "bcdfghjklmnpqrsvwxz"[i % 19]).join(" ")}`.slice(0, 600);
-    const started = performance.now();
 
-    adultTextProblems(text, 25, "descriptor");
-    assertBudget(performance.now() - started, 20, "adultTextProblems: 600 spelled-out letters");
+    // The median of warmed runs, not one cold call: the first call here takes 10 ms locally and 26 ms on a shared ubuntu runner, the next ones 3.4 ms.
+    // A join that went quadratic would be slow on every run and still fail this.
+    assertBudget(medianElapsedMs(() => void adultTextProblems(text, 25, "descriptor")), 20, "adultTextProblems: 600 spelled-out letters");
   });
 });
 

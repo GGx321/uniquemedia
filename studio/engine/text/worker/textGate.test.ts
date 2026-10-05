@@ -149,9 +149,16 @@ describe("the deadline", () => {
   });
 
   test("does not count the time a call waits behind another", async () => {
-    const h = harness({ renderTimeoutMs: 150 });
-    const results = await Promise.all([h.gate.render(req("slow:100")), h.gate.render(req("slow:100"))]);
-    expect(results).toHaveLength(2);
+    // The test lives between two bounds: each call (CALL_MS) must fit its budget, and the whole line (CALLS * CALL_MS) must not, so that a
+    // deadline counted from the moment a call was ASKED, not from the moment it gets the lane, would time the last ones out. With
+    // two calls and a 150 ms budget the gap to the first bound was 50 ms, which a loaded macOS runner's timers overran (254.9 ms,
+    // run 37259696262). More calls in the line widen the gap to the second bound instead of the first: 200 ms to each.
+    const CALL_MS = 100;
+    const CALLS = 5;
+    const BUDGET_MS = 300;
+    const h = harness({ renderTimeoutMs: BUDGET_MS });
+    const results = await Promise.all(Array.from({ length: CALLS }, () => h.gate.render(req(`slow:${CALL_MS}`))));
+    expect(results).toHaveLength(CALLS);
     expect(h.spawned()).toBe(1);
   });
 
