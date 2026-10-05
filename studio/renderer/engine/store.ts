@@ -311,6 +311,7 @@ export class EngineStore {
   private readonly montageListeners = new Set<(signal: MontageSignal) => void>();
   private readonly videoListeners = new Set<(signal: VideoSignal) => void>();
   private readonly mediaListeners = new Set<(signal: MediaSignal) => void>();
+  private readonly avatarRemovedListeners = new Set<(avatarId: string) => void>();
   /** The imports the owner dismissed (3f.6): a snapshot that still lists one does not bring it back. Insertion-ordered, capped. */
   private readonly dismissedImports = new Set<string>();
   /**
@@ -401,6 +402,17 @@ export class EngineStore {
     this.mediaListeners.add(listener);
     return () => {
       this.mediaListeners.delete(listener);
+    };
+  };
+
+  /**
+   * `avatar.removed` as the store applies it (an avatar was deleted: «Удалить аватар»), in seq order, once each, AFTER the view dropped the avatar:
+   * the editor open on one of the avatar's drafts closes with a notice. Not replayed after a snapshot: a screen reads the avatar list from the view.
+   */
+  readonly subscribeAvatarRemoved = (listener: (avatarId: string) => void): (() => void) => {
+    this.avatarRemovedListeners.add(listener);
+    return () => {
+      this.avatarRemovedListeners.delete(listener);
     };
   };
 
@@ -1013,6 +1025,24 @@ export class EngineStore {
       case "draft.changed":
         this.update({ ...this.draftPatch(event.payload.draft), lastSeq });
         return;
+      case "avatar.removed": {
+        // Deleted for good (its folder is in the system Trash): the avatar, a draft with its id and every job of it leave the view. Its photos, videos and
+        // drafts are listed on demand, so their listeners are told to read again (the avatar-specific reads now answer NOT_FOUND, the global ones lose its rows).
+        const { avatarId } = event.payload;
+        const paidInFlightAvatars = new Set(this.view.paidInFlightAvatars);
+        paidInFlightAvatars.delete(avatarId);
+        this.update({
+          avatars: this.view.avatars.filter((a) => a.avatarId !== avatarId),
+          drafts: this.view.drafts.filter((d) => d.avatarId !== avatarId),
+          jobs: this.view.jobs.filter((j) => j.avatarId !== avatarId),
+          paidInFlightAvatars,
+          lastSeq,
+        });
+        for (const listener of [...this.avatarRemovedListeners]) listener(avatarId);
+        for (const listener of [...this.montageListeners]) listener({ change: "resynced" });
+        for (const listener of [...this.videoListeners]) listener({ change: "resynced" });
+        return;
+      }
       case "engine.notice":
         this.update({ notices: mergeNotice(this.view.notices, event.payload.notice), lastSeq });
         return;

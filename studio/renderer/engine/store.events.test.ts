@@ -673,3 +673,87 @@ test("a video.changed after job.failed still reaches the listeners after the job
   expect(order).toEqual(["listener:done"]);
   h.stop();
 });
+
+// «Удалить аватар»: `avatar.removed` takes the avatar, a draft with that id and the jobs of the avatar out of the view at once, and tells the
+// listeners (the open editor, the videos and drafts lists) that what they show may be gone.
+const OTHER: AvatarSummary = { ...SAVED, avatarId: "avatar-other-0002", name: "Sofia" };
+
+test("avatar.removed drops the avatar from the list and keeps the others", async () => {
+  const h = await host({ avatars: [SAVED, OTHER] });
+  await h.emit({ type: "avatar.removed", payload: { avatarId: SAVED.avatarId } });
+
+  expect(h.store.getView().avatars).toEqual([OTHER]);
+  expect(h.store.getView().lastSeq).toBe(1);
+  expect(h.snapshots()).toBe(1);
+  h.stop();
+});
+
+test("avatar.removed drops a draft with that id", async () => {
+  const h = await host({ drafts: [DRAFT] });
+  await h.emit({ type: "avatar.removed", payload: { avatarId: DRAFT.avatarId } });
+
+  expect(h.store.getView().drafts).toEqual([]);
+  h.stop();
+});
+
+test("avatar.removed drops the jobs of the avatar, finished or not, and the paid-in-flight mark, and keeps another avatar's jobs", async () => {
+  const h = await host({ avatars: [SAVED, OTHER] });
+  await h.emit({ type: "job.progress", payload: { kind: "avatar.candidates", jobId: "job-00000001", avatarId: SAVED.avatarId, done: 1, total: 4 } });
+  await h.emit({ type: "job.progress", payload: { kind: "avatar.candidates", jobId: "job-00000002", avatarId: OTHER.avatarId, done: 1, total: 4 } });
+  h.store.setPaidInFlight(SAVED.avatarId, true);
+
+  await h.emit({ type: "avatar.removed", payload: { avatarId: SAVED.avatarId } });
+
+  expect(h.store.getView().jobs.map((j) => j.jobId)).toEqual(["job-00000002"]);
+  expect(h.store.getView().paidInFlightAvatars.has(SAVED.avatarId)).toBe(false);
+  h.stop();
+});
+
+test("avatar.removed for an avatar the store never listed changes nothing but the seq", async () => {
+  const h = await host({ avatars: [SAVED] });
+  await h.emit({ type: "avatar.removed", payload: { avatarId: "avatar-nobody-0009" } });
+
+  expect(h.store.getView().avatars).toEqual([SAVED]);
+  expect(h.store.getView().lastSeq).toBe(1);
+  h.stop();
+});
+
+test("avatar.removed reaches the avatar listeners once, with the id, and stops reaching one that unsubscribed", async () => {
+  const h = await host({ avatars: [SAVED, OTHER] });
+  const heard: string[] = [];
+  const stopListening = h.store.subscribeAvatarRemoved((avatarId) => heard.push(avatarId));
+
+  await h.emit({ type: "avatar.removed", payload: { avatarId: SAVED.avatarId } });
+  stopListening();
+  await h.emit({ type: "avatar.removed", payload: { avatarId: OTHER.avatarId } });
+
+  expect(heard).toEqual([SAVED.avatarId]);
+  h.stop();
+});
+
+test("avatar.removed tells the draft and video listeners to read again: the avatar's drafts and videos went with it", async () => {
+  const h = await host({ avatars: [SAVED] });
+  const montages: string[] = [];
+  const videos: string[] = [];
+  h.store.subscribeMontages((signal) => montages.push(signal.change));
+  h.store.subscribeVideos((signal) => videos.push(signal.change));
+
+  await h.emit({ type: "avatar.removed", payload: { avatarId: SAVED.avatarId } });
+
+  expect(montages).toEqual(["resynced"]);
+  expect(videos).toEqual(["resynced"]);
+  h.stop();
+});
+
+test("the avatar listeners hear the removal AFTER the view dropped the avatar", async () => {
+  const h = await host({ avatars: [SAVED] });
+  const listed: boolean[] = [];
+  h.store.subscribeAvatarRemoved(() => {
+    listed.push(h.store.getView().avatars.some((a) => a.avatarId === SAVED.avatarId));
+  });
+
+  await h.emit({ type: "avatar.removed", payload: { avatarId: SAVED.avatarId } });
+
+  expect(listed).toEqual([false]);
+  h.stop();
+});
