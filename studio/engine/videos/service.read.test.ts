@@ -375,6 +375,21 @@ describe("videos.get: one video by id (3e.2: «Открыть в папке» fo
   });
 });
 
+describe("videos.delete, the case probe", () => {
+  test("a case probe that never answers is cut at its bound and the cautious answer is used: the delete still goes through (review round 1, L9)", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { caseProbe: { isCaseInsensitive: () => new Promise<boolean>(() => undefined) }, caseProbeTimeoutMs: 60 } });
+    const { record, path } = await committed(w);
+
+    const started = performance.now();
+    const answer = await r.service.delete(record.id, "video");
+
+    expect(answer).toMatchObject({ videoId: record.id, fileDeleted: true });
+    expect(existsSync(path)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(3_000);
+  });
+});
+
 describe("videos.delete", () => {
   test("deletes a present file and its record, frees the photos, and announces the removal", async () => {
     const w = world();

@@ -38,7 +38,7 @@ import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./lis
 import type { CommitTracker, LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
-import { DELETE_TIMEOUT_MS, LIST_BUDGET_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
+import { CASE_PROBE_TIMEOUT_MS, DELETE_TIMEOUT_MS, LIST_BUDGET_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
 
 // The command layer of the video pipeline (Stage 3 plan, 3a.8b.2): `videos.render`, `videos.cancel`, `videos.list` and
 // `videos.delete`, the render queue's events as the contract's `job.*` and `video.changed`, and what happens around a
@@ -132,6 +132,8 @@ export interface VideoServiceDeps {
   readonly recordCheckTimeoutMs?: number;
   /** The one budget of a whole `videos.list`, from its entry; `LIST_BUDGET_MS` when absent. */
   readonly listBudgetMs?: number;
+  /** How long the probe of the export volume's case rule may take in `#freshRoot`; `CASE_PROBE_TIMEOUT_MS` when absent. */
+  readonly caseProbeTimeoutMs?: number;
   /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
   readonly readRecordFiles?: typeof readVideoRecordFiles;
 }
@@ -889,7 +891,8 @@ export class VideoService {
     if (!check.ok) return null;
     let caseInsensitive = true; // the cautious answer: it can only make comparisons stricter
     try {
-      caseInsensitive = await this.#deps.caseProbe.isCaseInsensitive(check.root);
+      // The probe writes a file in the export folder: on a volume that has gone quiet it never returns, so it is bounded, and the cautious answer stands.
+      caseInsensitive = await within(this.#deps.caseProbeTimeoutMs ?? CASE_PROBE_TIMEOUT_MS, () => this.#deps.caseProbe.isCaseInsensitive(check.root), () => Object.assign(new Error("the case probe did not answer"), { code: "ETIMEDOUT" }));
     } catch (error) {
       this.#deps.log(`the export folder's case rule could not be probed (${kindOf(error)}); the cautious one is used`);
     }
