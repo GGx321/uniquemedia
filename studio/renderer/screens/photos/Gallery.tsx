@@ -4,8 +4,8 @@ import { countOf } from "../../lib/format";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
 import { Portrait, Silhouette } from "../../ui/Portrait";
+import { heldLabel, montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
 import { CATEGORY_LABEL } from "./runForm";
-import { FACE_GATE_THRESHOLD } from "./shared";
 import { galleryPhotos, type GalleryFilter } from "./videosModel";
 
 /** What photos.list last answered: the photos it could list, and how many more it could not. */
@@ -28,44 +28,12 @@ const FILTERS: readonly { id: GalleryFilter; label: string }[] = [
   { id: "rejected", label: "Отклонённые" },
 ];
 
-/** "лицо 0.86": the similarity to the master portrait, rounded to what the badge shows. */
-function faceLabel(faceCos: number): string {
-  return `лицо ${faceCos.toFixed(2)}`;
-}
-
-/**
- * Why a photo cannot be picked for a montage, or null when it can: one photo goes into one video (the owner's Q1),
- * so a photo already in a video or held by a render in flight is not offered, nor a rejected or ineligible one.
- */
-export function montagePickRefusal(photo: PhotoSummary): string | null {
-  if (photo.rejected) return "Фото отклонено — в монтаж не попадает";
-  if (photo.used || photo.usedIn.length > 0) return "Фото уже в видео: одно фото — одно видео";
-  if (photo.reserved) return "Фото сейчас в рендере";
-  if (!photo.eligible) return "Это фото не подходит для видео";
-  return null;
-}
-
-/** The owner's own «do not use» mark (3e.2): what the tile's button does, and why it cannot when it cannot. */
-export interface MarkControl {
-  /** Photos whose mark is being set now. */
-  readonly marking: ReadonlySet<string>;
-  /** Why no mark can be set right now (the marks themselves cannot be read), or null. */
-  readonly blocked: string | null;
-  readonly onMark: (photo: PhotoSummary, rejected: boolean) => void;
-}
-
 function PhotoTile({ photo, position, picked, refused, onToggle, mark }: { photo: PhotoSummary; position: number; picked: boolean; refused: boolean; onToggle: (photoId: string) => void; mark: MarkControl }) {
   const label = CATEGORY_LABEL[photo.category];
-  const faceCos = photo.qa?.faceCos;
-  // Compared on the same rounded value the badge displays (L2): a raw score
-  // just under the line that rounds up to the line itself (0.549 shows
-  // «0.55») must read the same as the line, never as low.
-  const low = faceCos !== undefined && Number(faceCos.toFixed(2)) < FACE_GATE_THRESHOLD;
   // A photo picked before it became unusable can still be unpicked.
   const why = montagePickRefusal(photo);
   // One photo, one video (Q1): a photo a video or a render holds is dimmed with how it is held, as in the editor's bin.
-  const inVideos = photo.usedIn.length;
-  const held = inVideos > 0 ? `в ${inVideos} видео` : photo.used ? "в видео" : photo.reserved ? "в рендере" : null;
+  const held = heldLabel(photo);
   const marking = mark.marking.has(photo.photoId);
   const classes = [
     "ph",
@@ -94,13 +62,7 @@ function PhotoTile({ photo, position, picked, refused, onToggle, mark }: { photo
       </button>
       {refused && <span className="pill photo-refused">недоступно</span>}
       <div className="photo-badges">
-        {faceCos !== undefined ? (
-          <span className={low ? "pill mono photo-badge photo-face photo-face-low" : "pill mono photo-badge photo-face"}>{faceLabel(faceCos)}</span>
-        ) : (
-          <span className="pill mono photo-badge photo-face-none">лицо не проверялось</span>
-        )}
-        {held !== null && <span className="pill mono photo-badge photo-held">{held}</span>}
-        {photo.rejected && <span className="pill mono photo-badge photo-rejected">отклонено</span>}
+        <PhotoBadges photo={photo} />
       </div>
       <span className="pill photo-label">{label}</span>
       <button

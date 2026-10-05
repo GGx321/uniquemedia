@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { scenePhoto } from "../../engine/mockEngine.testkit";
-import { montagePickRefusal } from "./Gallery";
+import { montagePickRefusal } from "./photoState";
 
 // 3d.2: «Монтаж из выбранных» takes only photos the engine would take (K11): one photo goes into one video (the
 // owner's Q1), so a photo in a video or held by a render is not offered, nor a rejected or ineligible one.
