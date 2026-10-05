@@ -40,6 +40,7 @@ export function EngineNotices({ notices, dismissed, onDismiss }: { notices: read
       {shown.map((n) => (
         <Notice
           key={n.noticeId}
+          noticeKey={`engine:${dismissalKey(n)}`}
           tone="warn"
           title={NOTICE_TITLE[n.code]}
           actions={

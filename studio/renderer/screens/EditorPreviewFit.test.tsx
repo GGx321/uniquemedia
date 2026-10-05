@@ -163,6 +163,21 @@ describe("the preview fits the stage", () => {
     expect(drawn()).toEqual(["540px", "960px"]);
   });
 
+  test("review r1 MEDIUM-2: with room above the frame the notices' dock stays in it; a frame as tall as the stage leaves the dock over it", async () => {
+    pixelRatio(2);
+    const laid = layOut({ w: 800, h: 1_400 });
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    const area = (): HTMLElement | null => document.querySelector<HTMLElement>(".ed-preview");
+    // Held to 540 × 960 on a 2× screen: (1400 − 960) / 2 = 220 px above it.
+    expect(drawn()).toEqual(["540px", "960px"]);
+    expect(area()?.dataset.dock).toBe("above");
+    expect(area()?.style.getPropertyValue("--pv-room")).toBe("220px");
+    laid.stage = { w: 800, h: 600 };
+    laid.relayout();
+    expect(area()?.dataset.dock).toBe("over");
+  });
+
   // Review round 1 (LOW 4): every pixel of a splitter drag re-rendered the frame and every layer on it, even when the fitted size stayed.
   test("a resize that leaves the fitted size as it is re-renders nothing of the frame", async () => {
     pixelRatio(1);

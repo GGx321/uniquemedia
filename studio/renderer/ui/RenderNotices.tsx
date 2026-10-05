@@ -77,7 +77,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
         );
         if (notice.kind === "saving-stalled") {
           return (
-            <Notice key={notice.id} tone="warn" title="Сохранение идёт дольше обычного" actions={closeButton}>
+            <Notice key={notice.id} noticeKey={`render:${notice.id}`} tone="warn" title="Сохранение идёт дольше обычного" actions={closeButton}>
               {whose}видео записывается в «Готовые видео», но папка отвечает слишком долго. Не закрывайте Studio: видео сохранится, когда папка ответит. Если она отключена, подключите её.
             </Notice>
           );
@@ -88,6 +88,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
           return (
             <Notice
               key={notice.id}
+              noticeKey={`render:${notice.id}`}
               tone="danger"
               title="Рендер не удался"
               actions={
@@ -111,6 +112,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
         return (
           <Notice
             key={notice.id}
+            noticeKey={`render:${notice.id}`}
             tone="ok"
             title="Видео готово"
             actions={

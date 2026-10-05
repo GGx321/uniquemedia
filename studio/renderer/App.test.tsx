@@ -96,6 +96,23 @@ test("an engine notice closes with «Понятно» for the window, and comes 
   expect(screen.getByText("Движок перезапускался")).toBeDefined();
 });
 
+// Review r1 LOW-3: the button that closed a notice goes with it; the focus must not fall to the body (the next Tab would start at the top).
+test("closing an engine notice hands the focus to the next notice, then to the screen's title", async () => {
+  const { engine } = setup({ preset: "demo" });
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+  inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+  inAct(() => engine.emitNotice({ noticeId: "notice-0002", code: "settings-reset", at: "2026-09-24T10:01:00.000Z", count: 1 }));
+  await screen.findByText("Настройки сброшены");
+  const [first, second] = screen.getAllByRole("button", { name: "Понятно" });
+  first?.focus();
+  fireEvent.click(first ?? document.body);
+  await flush();
+  expect(focusedLabel()).toBe(describeElement(second ?? null));
+  fireEvent.click(second ?? document.body);
+  await flush();
+  expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1 })));
+});
+
 test("an engine-restarted notice with open reserves does not repeat AccountBanner's reconcile call to action", async () => {
   const { engine } = setup({ preset: "demo" });
   await screen.findByRole("heading", { level: 2, name: "Mia" });

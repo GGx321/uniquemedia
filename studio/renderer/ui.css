@@ -743,6 +743,11 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--panel);
 }
 
+/* A dock's card folded behind «Ещё N» (review r1 MEDIUM-2). */
+.notice[hidden] {
+  display: none;
+}
+
 /* A page-level notice (engine, render, «сохранён», the account banner) stops at the page width instead of running as one
    2256px line across a wide window; the editor's own edge-to-edge strip keeps its full width. */
 .content:not(:has(> .editor)) > .notice,

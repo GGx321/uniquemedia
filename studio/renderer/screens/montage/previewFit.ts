@@ -52,6 +52,11 @@ export function fitPreview({ stage, render, dpr, gutter }: PreviewFitInput): Siz
   return { w: units * aw, h: units * ah };
 }
 
+/** The room a `stageHeight` px stage leaves above a centred frame `frameHeight` px tall (review r1 MEDIUM-2: where the notices' dock can stay). */
+export function roomAboveFrame(stageHeight: number, frameHeight: number): number {
+  return Math.max(0, (stageHeight - frameHeight) / 2);
+}
+
 /** How much the overlays' artboard pixel sizes (pills, the face ring, the handles) scale on a preview `width` px wide. */
 export function previewScale(width: number): number {
   return width / PREVIEW_ARTBOARD_W;

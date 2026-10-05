@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FRAME_H, FRAME_W } from "../../../shared/montage";
-import { fitPreview, PREVIEW_ARTBOARD_W, PREVIEW_MIN_W, previewScale } from "./previewFit";
+import { fitPreview, PREVIEW_ARTBOARD_W, PREVIEW_MIN_W, previewScale, roomAboveFrame } from "./previewFit";
 
 // The owner's feedback (2026-10-05): the preview fits the stage (a maximised window no longer leaves it a small fixed island), keeps the
 // montage's aspect exactly (so a layer stored in montage coordinates lands on the same spot at any size), never overflows the stage, leaves the
@@ -103,5 +103,13 @@ describe("how much the overlays scale", () => {
     expect(previewScale(306)).toBe(1);
     expect(previewScale(612)).toBe(2);
     expect(previewScale(153)).toBe(0.5);
+  });
+});
+
+describe("the room above the frame (review r1 MEDIUM-2: where the notices dock stays)", () => {
+  test("half of what the stage leaves over a centred frame; none when the frame takes the whole height", () => {
+    expect(roomAboveFrame(900, 720)).toBe(90);
+    expect(roomAboveFrame(544, 544)).toBe(0);
+    expect(roomAboveFrame(500, 544)).toBe(0);
   });
 });

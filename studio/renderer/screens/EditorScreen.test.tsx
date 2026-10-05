@@ -677,7 +677,7 @@ describe("the engine away after the draft opened (slice review 5-M1)", () => {
     await flush();
     const notice = (await screen.findByText(/остановился и не будет перезапущен/)).closest(".notice") as HTMLElement;
     expect(within(notice).getByText("Движок не отвечает")).toBeDefined();
-    expect(within(notice).queryByRole("button") === null).toBe(true);
+    expect(within(notice).queryByRole("button", { name: "Повторить" }) === null).toBe(true);
   });
 });
 
@@ -703,6 +703,95 @@ describe("notices in the editor float over the preview (slice review 5-L1)", () 
     fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
     await screen.findByRole("heading", { level: 1, name: "Монтаж" });
     expect((await screen.findByText("Движок перезапускался")).closest(".notice")?.parentElement?.classList.contains("content")).toBe(true);
+  });
+
+  const dockCards = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".ed-dock .notice")];
+  const shownCards = (): string[] => dockCards().filter((card) => !card.hidden).map((card) => card.querySelector(".notice-title")?.textContent ?? card.querySelector(".notice-text")?.textContent ?? "");
+
+  test("review r1 MEDIUM-2: two notices stack as one, the newest, and «Ещё 1 уведомление» unfolds the rest", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(dockCards()).toHaveLength(2);
+    expect(shownCards()).toEqual([ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE]);
+    const more = screen.getByRole("button", { name: "Ещё 1 уведомление" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    await flush();
+    expect(shownCards()).toHaveLength(2);
+    const fold = screen.getByRole("button", { name: "Свернуть список уведомлений" });
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(fold);
+    await flush();
+    expect(shownCards()).toHaveLength(1);
+  });
+
+  test("review r1 MEDIUM-2: a notice that cannot be closed («не сохранён») folds to a chip until its code changes; nothing of it stays over the frame", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "вечер" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    const card = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice") as HTMLElement;
+    const minimise = within(card).getByRole("button", { name: "Свернуть уведомление" });
+    minimise.focus();
+    fireEvent.click(minimise);
+    await flush();
+    // Only a chip is left in the dock: no card over the frame, and the focus is on the chip.
+    expect(dockCards()).toHaveLength(0);
+    const chip = screen.getByRole("button", { name: /^Развернуть уведомление: / });
+    expect(chip.closest(".ed-dock") !== null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(chip));
+
+    // The same failure again keeps it folded; a failure of another code is news: the card is back.
+    engine.failNext("montages.save", { code: "INTERNAL" });
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await screen.findByText(ERROR_MESSAGES_RU.INTERNAL);
+    expect(dockCards()).toHaveLength(1);
+
+    // A chip unfolds its card on demand.
+    fireEvent.click(within(dockCards()[0] ?? document.body).getByRole("button", { name: "Свернуть уведомление" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^Развернуть уведомление: / }));
+    await flush();
+    expect(dockCards()).toHaveLength(1);
+  });
+
+  test("review r1 LOW-3: closing a card hands the focus to the next card, then to the screen's title", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    const refused = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice") as HTMLElement;
+    const close = within(refused).getByRole("button", { name: "Закрыть" });
+    close.focus();
+    fireEvent.click(close);
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Понятно" })));
+    fireEvent.click(screen.getByRole("button", { name: "Понятно" }));
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1 })));
+  });
+
+  test("review r1 LOW-2: a window notice moved into the dock is not an alert again; one that first shows there is", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    expect((await screen.findByText("Движок перезапускался")).closest(".notice")?.getAttribute("role")).toBe("alert");
+    await openEditor();
+    expect(screen.getByText("Движок перезапускался").closest(".notice")?.getAttribute("role")).toBe("status");
+    inAct(() => engine.emitNotice({ noticeId: "notice-0002", code: "settings-reset", at: "2026-09-24T10:01:00.000Z", count: 1 }));
+    expect((await screen.findByText("Настройки сброшены")).closest(".notice")?.getAttribute("role")).toBe("alert");
   });
 });
 
