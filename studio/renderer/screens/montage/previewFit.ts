@@ -61,11 +61,17 @@ export function roomAboveFrame(stageHeight: number, frameHeight: number): number
 export const DOCK_ROOM_MIN_PX = 40;
 
 /**
+ * How far below the stage's top the dock is drawn (and how far it keeps off its bottom). The preview writes it for the stylesheet
+ * (`--pv-dock-inset`, `.ed-dock`), so what is drawn is what `dockPlacement` counts (review r3 LOW-1).
+ */
+export const DOCK_INSET_PX = 10;
+
+/**
  * Where the notices' dock goes (review r2 LOW-3): in the room above the frame when the dock as drawn (its cards, «Ещё N», their gaps:
- * `dockHeight`) fits there, so it never covers the picture; else over the frame's top, folded as it is.
+ * `dockHeight`) fits there under its inset, so it never covers the picture; else over the frame's top, folded as it is.
  */
 export function dockPlacement(roomAbove: number, dockHeight: number): "above" | "over" {
-  return roomAbove >= DOCK_ROOM_MIN_PX && dockHeight <= roomAbove ? "above" : "over";
+  return roomAbove >= DOCK_ROOM_MIN_PX && dockHeight + DOCK_INSET_PX <= roomAbove ? "above" : "over";
 }
 
 /** How much the overlays' artboard pixel sizes (pills, the face ring, the handles) scale on a preview `width` px wide. */

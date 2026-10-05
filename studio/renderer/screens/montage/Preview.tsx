@@ -18,7 +18,7 @@ import { PreviewAudio } from "./PreviewAudio";
 import { PreviewVideo } from "./PreviewVideo";
 import { ownPhotoSize, useOwnPhotos } from "./ownPhotos";
 import { type OwnVideos, videoLookup } from "./ownVideos";
-import { dockPlacement, fitPreview, PREVIEW_ARTBOARD_W, previewScale, roomAboveFrame } from "./previewFit";
+import { DOCK_INSET_PX, dockPlacement, fitPreview, PREVIEW_ARTBOARD_W, previewScale, roomAboveFrame } from "./previewFit";
 import { storedFrames } from "./videoSync";
 import type { TrimPeekStore } from "./trimPeek";
 import { resolveSelection } from "./selection";
@@ -101,6 +101,8 @@ function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HT
 
 /** The frame's inline size and the overlays' scale; nothing while the stage is not laid out (the stylesheet's own size stands). */
 type FrameStyle = CSSProperties & { readonly "--pv-k": number };
+/** The dock's inset for the stylesheet, from the number its placement counts (review r3 LOW-1). */
+const AREA_STYLE: CSSProperties & { readonly "--pv-dock-inset": string } = { "--pv-dock-inset": `${DOCK_INSET_PX}px` };
 /** The dev mock has no pictures: its stand-ins are drawn at a scene photo's 9:16 size. */
 const MOCK_PHOTO: Size = { w: 768, h: 1344 };
 /** An arrow key moves a layer or a crop this many frame pixels (Shift: `BIG_STEP_PX`). */
@@ -210,7 +212,7 @@ export function Preview({ dock, session, spec, timeline, focusPending, dragPhoto
   const frameStyle: FrameStyle | undefined = size === null ? undefined : { width: size.w, height: size.h, "--pv-k": previewScale(size.w) };
 
   return (
-    <section ref={areaRef} className="ed-preview" aria-label="Превью">
+    <section ref={areaRef} className="ed-preview" aria-label="Превью" style={AREA_STYLE}>
       {dock}
       <div className="ed-frame" ref={frameRef} style={frameStyle}>
         {empty ? (

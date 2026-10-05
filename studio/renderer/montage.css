@@ -751,15 +751,16 @@
 
 /* Slice review 5-L1: every notice in the editor (its own and the window's, which join through the dock) floats over the top of the preview
    stage as a stack of cards, so none takes the frame's room (one used to squeeze it by a quarter at 1200 × 760). The stack ignores the pointer
-   between its cards; each card is opaque (the notice's tint over the panel) and lifted off the picture. */
+   between its cards; each card is opaque (the notice's tint over the panel) and lifted off the picture. Its inset from the stage's top and
+   bottom (`--pv-dock-inset`) is written by the preview from the number its placement counts (previewFit.ts, review r3 LOW-1). */
 .ed-dock {
   position: absolute;
-  top: 10px;
+  top: var(--pv-dock-inset);
   right: 12px;
   left: 12px;
   z-index: 30;
   display: flex;
-  max-height: calc(100% - 20px);
+  max-height: calc(100% - 2 * var(--pv-dock-inset));
   flex-direction: column;
   align-items: center;
   gap: 8px;
@@ -817,9 +818,9 @@
 }
 
 /* Review r1 MEDIUM-2: with room above the frame (a tall stage around a frame held to the render's pixels) the dock stays in it, scrolling
-   rather than covering the picture. */
+   rather than covering the picture: held to the room under its inset, so its bottom stays on the frame's top. */
 .ed-preview[data-dock="above"] > .ed-dock {
-  max-height: var(--pv-room);
+  max-height: calc(var(--pv-room) - var(--pv-dock-inset));
 }
 
 /* A card's «Свернуть»: in its corner, clear of the actions. */

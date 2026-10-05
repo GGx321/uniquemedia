@@ -178,6 +178,20 @@ describe("the preview fits the stage", () => {
     expect(area()?.dataset.dock).toBe("over");
   });
 
+  test("review r3 LOW-1: the dock's inset from the stage's top is the one its placement counts, and above the frame it is held to the room under it", async () => {
+    pixelRatio(2);
+    layOut({ w: 800, h: 1_400 });
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    // One number for both sides: the script writes the inset it counts (`dockPlacement`), the stylesheet draws the dock with it.
+    expect(document.querySelector<HTMLElement>(".ed-preview")?.style.getPropertyValue("--pv-dock-inset")).toBe("10px");
+    const css = await Bun.file(new URL("../montage.css", import.meta.url)).text();
+    const rule = (selector: string): string => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
+    expect(rule(".ed-dock")).toContain("top: var(--pv-dock-inset);");
+    expect(rule(".ed-dock")).toContain("max-height: calc(100% - 2 * var(--pv-dock-inset));");
+    expect(rule('.ed-preview[data-dock="above"] > .ed-dock')).toContain("max-height: calc(var(--pv-room) - var(--pv-dock-inset));");
+  });
+
   // Review round 1 (LOW 4): every pixel of a splitter drag re-rendered the frame and every layer on it, even when the fitted size stayed.
   test("a resize that leaves the fitted size as it is re-renders nothing of the frame", async () => {
     pixelRatio(1);

@@ -114,11 +114,13 @@ describe("the room above the frame (review r1 MEDIUM-2: where the notices dock s
   });
 });
 
-describe("where the notices dock goes (review r2 LOW-3)", () => {
-  test("above the frame only when the dock as drawn (its cards, «Ещё N», their gaps) fits the room there; else over the frame", () => {
+describe("where the notices dock goes (review r2 LOW-3, r3 LOW-1)", () => {
+  test("above the frame only when the dock as drawn (its cards, «Ещё N», their gaps) fits the room under its 10 px inset; else over the frame", () => {
     expect(dockPlacement(220, 150)).toBe("above");
-    expect(dockPlacement(150, 150)).toBe("above");
-    expect(dockPlacement(149, 150)).toBe("over");
+    expect(dockPlacement(160, 150)).toBe("above");
+    // Drawn 10 px below the stage's top, a dock of the room's own height would cover the frame's top 10 px.
+    expect(dockPlacement(159, 150)).toBe("over");
+    expect(dockPlacement(150, 150)).toBe("over");
     expect(dockPlacement(90, 0)).toBe("above");
     expect(dockPlacement(0, 0)).toBe("over");
     expect(dockPlacement(39, 0)).toBe("over");
