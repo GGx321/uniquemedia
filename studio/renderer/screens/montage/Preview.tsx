@@ -17,7 +17,7 @@ import { PreviewAudio } from "./PreviewAudio";
 import { PreviewVideo } from "./PreviewVideo";
 import { ownPhotoSize, useOwnPhotos } from "./ownPhotos";
 import { type OwnVideos, videoLookup } from "./ownVideos";
-import { fitPreview, PREVIEW_ARTBOARD_W, previewScale, roomAboveFrame } from "./previewFit";
+import { dockPlacement, fitPreview, PREVIEW_ARTBOARD_W, previewScale, roomAboveFrame } from "./previewFit";
 import { storedFrames } from "./videoSync";
 import type { TrimPeekStore } from "./trimPeek";
 import { resolveSelection } from "./selection";
@@ -55,8 +55,9 @@ const HINTS_GAP_PX = 12;
  * The frame's size fitted to the preview area as laid out (`fitPreview`), on every resize of the area or of the hints (which drop their words in
  * a narrow area) and on a new pixel ratio: the area's content box, and the hints' reach into it from the left (the frame keeps that much clear on
  * both sides, so it stays centred). Only a new FITTED size is news: a resize that fits the same frame (a splitter drag past a frame as tall as
- * the stage) re-renders nothing (review round 1, LOW 4). Null until the area is laid out. The room the frame leaves above it is written on the
- * area itself (`data-dock`, `--pv-room`; review r1 MEDIUM-2: the notices' dock stays in it when there is enough), so it re-renders nothing either.
+ * the stage) re-renders nothing (review round 1, LOW 4). Null until the area is laid out. Where the notices' dock goes is written on the area
+ * itself (`data-dock`, `--pv-room`), so it re-renders nothing either: in the room above the frame when the dock as drawn fits there (review r1
+ * MEDIUM-2, r2 LOW-3), measured again as its cards come, go or fold, and as the stage resizes.
  */
 function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HTMLElement | null>, withHints: boolean, ratio: number): Size | null {
   const [size, setSize] = useState<Size | null>(null);
@@ -64,6 +65,13 @@ function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HT
     const node = area.current;
     if (node === null || typeof ResizeObserver === "undefined") return;
     let content: { width: number; height: number } | null = null;
+    let room = 0;
+    const dock = node.querySelector<HTMLElement>(":scope > .ed-dock");
+    /** The dock's place for the room there is and the dock as it is drawn now (its content's height, whatever its box is held to). */
+    const place = (): void => {
+      node.dataset.dock = dockPlacement(room, dock?.scrollHeight ?? 0);
+      node.style.setProperty("--pv-room", `${Math.floor(room)}px`);
+    };
     const observer = new ResizeObserver((entries) => {
       const own = entries.find((entry) => entry.target === node);
       if (own !== undefined) content = { width: own.contentRect.width, height: own.contentRect.height };
@@ -72,22 +80,26 @@ function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HT
       const left = node.getBoundingClientRect().left + (Number.parseFloat(getComputedStyle(node).paddingLeft) || 0);
       const gutter = reach === undefined || reach.width <= 0 ? 0 : Math.max(0, reach.right + HINTS_GAP_PX - left);
       const next = fitPreview({ stage: { w: content.width, h: content.height }, render: { w: FRAME_W, h: FRAME_H }, dpr: ratio, gutter });
-      const room = next === null ? 0 : roomAboveFrame(content.height, next.h);
-      node.dataset.dock = room >= DOCK_ROOM_MIN_PX ? "above" : "over";
-      node.style.setProperty("--pv-room", `${Math.floor(room)}px`);
+      room = next === null ? 0 : roomAboveFrame(content.height, next.h);
+      place();
       setSize((now) => (now !== null && next !== null && now.w === next.w && now.h === next.h ? now : next));
     });
     observer.observe(node);
     if (withHints && hints.current !== null) observer.observe(hints.current);
-    return () => observer.disconnect();
+    if (dock !== null) observer.observe(dock);
+    // A card that comes, goes, folds or unfolds changes the dock's height without its box changing (it may be held to the room).
+    const cards = dock === null || typeof MutationObserver === "undefined" ? null : new MutationObserver(place);
+    if (dock !== null) cards?.observe(dock, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    return () => {
+      observer.disconnect();
+      cards?.disconnect();
+    };
   }, [area, hints, withHints, ratio]);
   return size;
 }
 
 /** The frame's inline size and the overlays' scale; nothing while the stage is not laid out (the stylesheet's own size stands). */
 type FrameStyle = CSSProperties & { readonly "--pv-k": number };
-/** The least room above the frame the dock is kept in (one compact card); with less it floats over the frame's top. */
-const DOCK_ROOM_MIN_PX = 72;
 /** The dev mock has no pictures: its stand-ins are drawn at a scene photo's 9:16 size. */
 const MOCK_PHOTO: Size = { w: 768, h: 1344 };
 /** An arrow key moves a layer or a crop this many frame pixels (Shift: `BIG_STEP_PX`). */

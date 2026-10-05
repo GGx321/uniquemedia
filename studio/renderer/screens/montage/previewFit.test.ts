@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FRAME_H, FRAME_W } from "../../../shared/montage";
-import { fitPreview, PREVIEW_ARTBOARD_W, PREVIEW_MIN_W, previewScale, roomAboveFrame } from "./previewFit";
+import { dockPlacement, fitPreview, PREVIEW_ARTBOARD_W, PREVIEW_MIN_W, previewScale, roomAboveFrame } from "./previewFit";
 
 // The owner's feedback (2026-10-05): the preview fits the stage (a maximised window no longer leaves it a small fixed island), keeps the
 // montage's aspect exactly (so a layer stored in montage coordinates lands on the same spot at any size), never overflows the stage, leaves the
@@ -111,5 +111,16 @@ describe("the room above the frame (review r1 MEDIUM-2: where the notices dock s
     expect(roomAboveFrame(900, 720)).toBe(90);
     expect(roomAboveFrame(544, 544)).toBe(0);
     expect(roomAboveFrame(500, 544)).toBe(0);
+  });
+});
+
+describe("where the notices dock goes (review r2 LOW-3)", () => {
+  test("above the frame only when the dock as drawn (its cards, «Ещё N», their gaps) fits the room there; else over the frame", () => {
+    expect(dockPlacement(220, 150)).toBe("above");
+    expect(dockPlacement(150, 150)).toBe("above");
+    expect(dockPlacement(149, 150)).toBe("over");
+    expect(dockPlacement(90, 0)).toBe("above");
+    expect(dockPlacement(0, 0)).toBe("over");
+    expect(dockPlacement(39, 0)).toBe("over");
   });
 });
