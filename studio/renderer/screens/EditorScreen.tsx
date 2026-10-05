@@ -302,6 +302,8 @@ function DraftEditor({
   // save changes nothing; a save made elsewhere meanwhile is taken, on top of the history).
   const sessions = useDraftSessions();
   const [kept] = useState(() => sessions.resume(montageId, initial));
+  /** The library this editor opened in: a switch while it is open (from another window too) means its session is not kept (review r2 LOW-5). */
+  const [openedIn] = useState(() => sessions.library);
   /** Review r1 LOW-1: the draft was saved in another window while this one was away; the first ⌘Z takes that save back, so it is said. */
   const [changedElsewhere, setChangedElsewhere] = useState(kept?.changedElsewhere === true);
   const [session] = useState(() => {
@@ -593,9 +595,9 @@ function DraftEditor({
     () => () => {
       const { tab: lastTab, timeline: last, placedSelection: placedBy } = place.current;
       const placed = last.selection !== null && last.selection === placedBy;
-      sessions.keep(montageId, { session, place: { tab: lastTab, selection: last.selection, placed, playheadMs: playheadStep(last), zoom: last.zoom } });
+      sessions.keep(montageId, { session, place: { tab: lastTab, selection: last.selection, placed, playheadMs: playheadStep(last), zoom: last.zoom } }, openedIn);
     },
-    [sessions, montageId, session],
+    [sessions, montageId, session, openedIn],
   );
   /** Bumped when the timeline's «+» or a «Заменить…» asks for a tab: the focus goes to it. */
   const [tabFocus, setTabFocus] = useState(0);

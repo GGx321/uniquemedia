@@ -135,6 +135,15 @@ describe("from the editor to Settings and back", () => {
     expect(undoButton().hasAttribute("disabled")).toBe(true);
   });
 
+  test("review r2 LOW-5: a library switched by another window while the editor is open: closing it keeps nothing of the old library", async () => {
+    const { client, engine } = await studio();
+    await openDraft(client);
+    await deleteSecondClip(engine);
+    await asAnotherWindow(() => client.request("settings.setLibraryPath", { path: "/Users/studio/Studio/library-2" }));
+    await openFromDrafts();
+    expect(undoButton().hasAttribute("disabled")).toBe(true);
+  });
+
   test("Settings opened from anywhere else has no way back to a draft", async () => {
     await studio();
     fireEvent.click(screen.getByRole("button", { name: "Настройки" }));

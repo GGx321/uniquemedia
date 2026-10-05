@@ -28,7 +28,7 @@ describe("the editors kept by the window", () => {
     const stored = saves.ok();
     await settle();
     const sessions = new DraftSessions();
-    sessions.keep("montage-0000001", kept);
+    sessions.keep("montage-0000001", kept, sessions.library);
     const resumed = sessions.resume("montage-0000001", stored);
     expect(resumed?.session).toBe(session);
     expect(resumed?.session.state.canUndo).toBe(true);
@@ -45,7 +45,7 @@ describe("the editors kept by the window", () => {
     const stored = saves.ok();
     await settle();
     const sessions = new DraftSessions();
-    sessions.keep("montage-0000001", kept);
+    sessions.keep("montage-0000001", kept, sessions.library);
     const elsewhere = { ...stored, spec: version(2), updatedAt: "2026-09-30T11:00:00.000Z" };
     const first = sessions.resume("montage-0000001", elsewhere);
     expect(first?.changedElsewhere).toBe(true);
@@ -68,7 +68,7 @@ describe("the editors kept by the window", () => {
     gone.session.receive({ change: "removed", montageId: "montage-0000003", avatarId: version(0).avatarId });
     const sessions = new DraftSessions();
     for (const [id, r] of [["montage-0000001", pending], ["montage-0000002", refused], ["montage-0000003", gone]] as const) {
-      sessions.keep(id, r.kept);
+      sessions.keep(id, r.kept, sessions.library);
       expect(sessions.resume(id, { ...montageOf(version(0)), montageId: id })).toBeNull();
       expect(sessions.peek(id)).toBeNull();
     }
@@ -77,12 +77,12 @@ describe("the editors kept by the window", () => {
   test("at most KEPT_DRAFTS are kept: the one left longest ago goes first; keeping one again makes it the newest", () => {
     const sessions = new DraftSessions();
     const ids = Array.from({ length: KEPT_DRAFTS + 1 }, (_, i) => `montage-${String(i + 1).padStart(7, "0")}`);
-    for (const id of ids.slice(0, KEPT_DRAFTS)) sessions.keep(id, rig(id).kept);
+    for (const id of ids.slice(0, KEPT_DRAFTS)) sessions.keep(id, rig(id).kept, sessions.library);
     // The first one is kept again (opened and left once more): now the second is the oldest.
     const first = ids[0] ?? "";
-    sessions.keep(first, rig(first).kept);
+    sessions.keep(first, rig(first).kept, sessions.library);
     const last = ids[KEPT_DRAFTS] ?? "";
-    sessions.keep(last, rig(last).kept);
+    sessions.keep(last, rig(last).kept, sessions.library);
     expect(sessions.peek(first)).not.toBeNull();
     expect(sessions.peek(ids[1] ?? "")).toBeNull();
     expect(sessions.peek(last)).not.toBeNull();
@@ -90,16 +90,27 @@ describe("the editors kept by the window", () => {
 
   test("review r1 LOW-7: a library switch forgets every kept editor", () => {
     const sessions = new DraftSessions();
-    sessions.keep("montage-0000001", rig().kept);
-    sessions.keep("montage-0000002", rig("montage-0000002").kept);
+    sessions.keep("montage-0000001", rig().kept, sessions.library);
+    sessions.keep("montage-0000002", rig("montage-0000002").kept, sessions.library);
     sessions.clear();
     expect(sessions.peek("montage-0000001")).toBeNull();
     expect(sessions.peek("montage-0000002")).toBeNull();
   });
 
+  test("review r2 LOW-5: an editor opened before a library switch keeps nothing when it closes after it", () => {
+    const sessions = new DraftSessions();
+    const openedIn = sessions.library;
+    sessions.clear();
+    sessions.keep("montage-0000001", rig().kept, openedIn);
+    expect(sessions.peek("montage-0000001")).toBeNull();
+    // One opened after it keeps its own.
+    sessions.keep("montage-0000001", rig().kept, sessions.library);
+    expect(sessions.peek("montage-0000001")).not.toBeNull();
+  });
+
   test("forget drops it (the draft opens as Studio holds it, or is gone)", () => {
     const sessions = new DraftSessions();
-    sessions.keep("montage-0000001", rig().kept);
+    sessions.keep("montage-0000001", rig().kept, sessions.library);
     sessions.forget("montage-0000001");
     expect(sessions.resume("montage-0000001", montageOf(version(0)))).toBeNull();
   });

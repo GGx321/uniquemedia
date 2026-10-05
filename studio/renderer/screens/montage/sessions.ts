@@ -45,8 +45,20 @@ export class DraftSessions {
   /** What the engine's copy did to a kept session when it was taken up (the copy's `updatedAt`), so asking twice changes nothing twice. */
   readonly #taken = new Map<string, { readonly updatedAt: string; readonly adopted: boolean }>();
 
-  /** The editor of `montageId` closed: its session and place are kept, as the newest; the oldest goes beyond `KEPT_DRAFTS`. */
-  keep(montageId: string, kept: KeptDraft): void {
+  /** Which library the window's drafts are of now: bumped by every `clear` (a library switch). */
+  #library = 0;
+
+  /** The library an editor opens in (review r2 LOW-5): what it hands `keep` when it closes, so a switch while it was open keeps nothing. */
+  get library(): number {
+    return this.#library;
+  }
+
+  /**
+   * The editor of `montageId` closed: its session and place are kept, as the newest; the oldest goes beyond `KEPT_DRAFTS`. `openedIn` is the
+   * `library` it opened in: when the library was switched since, the session is the old library's and nothing is kept.
+   */
+  keep(montageId: string, kept: KeptDraft, openedIn: number): void {
+    if (openedIn !== this.#library) return;
     this.#kept.delete(montageId);
     this.#taken.delete(montageId);
     this.#kept.set(montageId, kept);
@@ -93,6 +105,7 @@ export class DraftSessions {
   clear(): void {
     this.#kept.clear();
     this.#taken.clear();
+    this.#library += 1;
   }
 }
 
