@@ -1126,6 +1126,18 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
+   * A stored run photo's sidecar can no longer be read: `photos.list` leaves the photo out and counts it in `skippedTotal`, as
+   * the engine does (`engine.photos.test.ts`, "a corrupt sidecar … is skipped"). Nothing is announced: a window sees it at its
+   * next `photos.list`. Test support for a photo that disappears while a window shows it.
+   */
+  corruptPhotoSidecar(photoId: string): void {
+    const photo = this.photos.find((p) => p.photoId === photoId);
+    if (photo === undefined) return;
+    this.photos = this.photos.filter((p) => p !== photo);
+    this.skippedPhotos[photo.avatarId] = (this.skippedPhotos[photo.avatarId] ?? 0) + 1;
+  }
+
+  /**
    * The gates' own look at the master before a run is planned fails for this
    * avatar (`MASTER_FACE_UNUSABLE`: no usable face; `INTERNAL`: the gates
    * could not be prepared): runs.start refuses it free, after the price
