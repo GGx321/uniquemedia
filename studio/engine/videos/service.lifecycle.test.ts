@@ -353,6 +353,30 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
     expect(signal?.aborted).toBe(true);
   });
 
+  test("a settle cut by its bound leaves the photos HELD after job.failed: a re-render with them is refused (review round 1, M2)", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    const r = serviceRig(w, {
+      size: 2,
+      deps: {
+        renderOverrides: { fs, stepDeadlineMs: 50, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
+        recover: { run: () => new Promise<RecoveryReport>(() => undefined) },
+      },
+    });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))).toMatchObject({ reserved: true, usedIn: [] });
+    const again = await r.service.render({ spec: specFor(w) }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+    expect(again).toBe("PHOTO_UNAVAILABLE");
+  });
+
   test("the usual failure, whose rollback removed everything, starts no recovery at all", async () => {
     const w = world();
     let runs = 0;

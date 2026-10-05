@@ -290,6 +290,19 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
   };
 
   if (signal.aborted) return finished();
+  const live = input.live;
+  // The library is read FIRST, with no lock held and before the export root is looked at: it reads the library only, and it is what holds the pending intents'
+  // photos (`loadPending`). A root that hangs or errors must not end the run before the holds are made, or the photos would look free all session.
+  // A library that does not answer ends the run here, having blocked nobody.
+  let pending: PendingFile[];
+  try {
+    pending = await loadPending();
+  } catch (error) {
+    if (!signal.aborted) skip("library", error);
+    return finished();
+  }
+  if (signal.aborted) return finished();
+
   let root: UsableRoot | null;
   try {
     root = await io(() => usableRoot(fs, input.exportRoot, log));
@@ -297,7 +310,6 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     skip("export root", error);
     return finished();
   }
-  const live = input.live;
   /** A path under the real root, as the running jobs know it: through the root as the settings spell it. */
   const configured = (path: string): string => (root === null ? path : join(root.ref.root, nodePath.relative(root.real, path)));
 
@@ -627,16 +639,6 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     // 4. Studio's own scratch in the root
     await sweepRootScratch(ready);
   }
-
-  // The library is read first, with no lock held; a library that does not answer ends the run here, having blocked nobody.
-  let pending: PendingFile[];
-  try {
-    pending = await loadPending();
-  } catch (error) {
-    if (!signal.aborted) skip("library", error);
-    return finished();
-  }
-  if (signal.aborted) return finished();
 
   try {
     if (root === null) {

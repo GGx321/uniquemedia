@@ -134,6 +134,32 @@ describe("the photos of a pending intent are held until recovery resolves it (st
     expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).not.toContain(w.photos[0]?.id);
   });
 
+  test("an export root that never answers (or errors) still leaves the intent's photos held: the library is read before the root is looked at (review round 1, M2)", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const library = await w.reopen();
+    const fs = faultyFs();
+    fs.override({ realpath: () => new Promise<string>(() => undefined) });
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) }, { fs, ioTimeoutMs: 100 });
+
+    expect(report.skipped.map((s) => s.code)).toContain("ETIMEDOUT");
+    expect(photo(w, library)).toMatchObject({ reserved: true, usedIn: [] });
+  });
+
+  test("an export root whose look fails with an error holds the photos the same way", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    const fs = faultyFs();
+    fs.override({ realpath: () => Promise.reject(errnoError("EIO")) });
+
+    await recoverVideos({ library, exportRoot: rootRef(w) }, { fs });
+
+    expect(photo(w, library)?.reserved).toBe(true);
+  });
+
   test("an intent for another export root is held the same way", async () => {
     const w = world();
     const record = sampleRecord(w, { rootId: "11111111-2222-4333-8444-555555555555" });

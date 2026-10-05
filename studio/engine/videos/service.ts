@@ -1005,6 +1005,9 @@ export class VideoService {
       if (!hasErrorCode(error, "ENOENT")) this.#deps.log(`the commit intent of ${input.videoId} could not be looked at (${kindOf(error)})`);
       return null;
     }
+    // The intent is pending from here: its photos are held BEFORE the settle runs, so a settle that is cut by its bound, errors or never answers (a hung export
+    // root) leaves them held after the job has failed. The settle itself releases them when it adopts or drops the intent.
+    library.holdPendingPhotos(input.avatarId, input.videoId, input.photoIds);
     const tracker = this.#deps.tracker;
     const live: LiveCommits = { hasJob: (id) => id !== input.jobId && tracker.hasJob(id), hasTemp: (p) => tracker.hasTemp(p), hasPlaceholder: (p) => tracker.hasPlaceholder(p) };
     const run = this.#deps.recover?.run ?? recoverVideos;

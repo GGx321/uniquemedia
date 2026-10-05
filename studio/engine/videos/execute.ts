@@ -188,6 +188,8 @@ export interface SettleInput {
   readonly videoId: string;
   readonly jobId: string;
   readonly exportRoot: ExportRootRef;
+  /** The scene photos of the video's spec: held while the intent is pending, whatever the settle makes of it. */
+  readonly photoIds: readonly string[];
 }
 
 /** The settle, cut at `ms`: a settle that does not answer is told to stop and counts as nothing settled (the job fails; the next open settles it). Never throws. */
@@ -550,7 +552,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         // A deadline before the claim and a cancel leave nothing to settle.
         const cancelled = context.signal.aborted && error === context.signal.reason;
         if (deadlineFired || cancelled || deps.settleLeftover === undefined) throw error;
-        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive } }, stepMs, log);
+        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive }, photoIds: scenePhotoIds(plan.spec.clips) }, stepMs, log);
         if (adopted === null) throw error;
         // The video exists: the job is done, not failed.
         try {
