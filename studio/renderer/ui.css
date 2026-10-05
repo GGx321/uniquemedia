@@ -740,6 +740,14 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--panel);
 }
 
+/* A page-level notice (engine, render, «сохранён», the account banner) stops at the page width instead of running as one
+   2256px line across a wide window; the editor's own edge-to-edge strip keeps its full width. */
+.content:not(:has(> .editor)) > .notice,
+.page > .notice,
+.photos-panel > .notice {
+  max-width: var(--page-max);
+}
+
 .notice-icon {
   display: flex;
   flex-shrink: 0;
