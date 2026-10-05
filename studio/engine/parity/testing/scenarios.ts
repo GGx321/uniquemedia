@@ -1679,7 +1679,44 @@ const USAGE_UNKNOWN_SCENARIOS: readonly Scenario[] = [
   usageUnknownScenario("an avatar whose reject marks cannot be read: no photo is eligible, and a pick, a draft and a render refuse them", "rejects-unreadable"),
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS];
+// ---------- the shortest clip: 100 ms (one time step, 3 frames) ----------
+
+/** A montage of two scene photos with the given clip lengths: a Ken Burns photo and a collage of two, so both render paths run at the short length. */
+function shortClipSpec(w: World, firstMs: number, secondMs: number): Record<string, unknown> {
+  const cell = (n: number) => ({ photo: { source: "scene", photoId: photo(w, n) }, focus: null });
+  return {
+    schemaVersion: 1,
+    avatarId: w.avatarId,
+    layers: [],
+    music: null,
+    seed: 7,
+    clips: [
+      { clipId: "clip-0000001", kind: "photo", cell: cell(1), motion: "kenburns", durationMs: firstMs, transitionIn: "cut" },
+      { clipId: "clip-0000002", kind: "collage", layout: "collage2", cells: [cell(2), cell(3)], motion: "pan", stagger: true, durationMs: secondMs, transitionIn: "cut" },
+    ],
+  };
+}
+
+/** Appended after the scenarios above: the golden transcripts are append-only. */
+const MIN_CLIP_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "a clip of 100 ms, the shortest: it is saved, judged clean and rendered to the montage's full length; 90 ms and 0 are refused",
+    async run(t, w) {
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      t.note("a clip under 100 ms is refused by the contract, and the draft keeps what it had");
+      await t.call("montages.save", { montageId, spec: shortClipSpec(w, 90, 3_910), name: null });
+      await t.call("montages.save", { montageId, spec: shortClipSpec(w, 0, 4_000), name: null });
+      t.note("a clip of exactly 100 ms in a 4 s montage is saved, has no issue, and its render is queued and done");
+      await t.call("montages.save", { montageId, spec: shortClipSpec(w, 100, 3_900), name: "Short first clip" });
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {
