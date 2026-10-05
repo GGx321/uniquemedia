@@ -38,8 +38,10 @@ import { MediaStaging, type MediaStagingOptions, type OpenedMedia, type StagedMe
 //
 // RESTART. An import that a crash interrupted is CLEANED UP, never resumed: the picked path is kept nowhere (invariant 34), so there is
 // nothing to resume from. At a library opening the staging folder is swept (what a crash left, never a copy a running import owns) and
-// the records are recovered (an orphan stored file, a record's temp file and a dangling record go; a record that cannot be read or comes
-// from a newer Studio is left as it is). The owner picks the file again.
+// the records are recovered (a record's temp file goes; an orphan stored file is set aside in the library's quarantine; a dangling record stays in
+// `media/` as a `missing-file` problem, so that its file can still arrive; a record that cannot be read or comes from a newer Studio is left as it is).
+// While a dangling record stays, every open scans the quarantine's stamps for its file (nothing cleans the quarantine yet: see the plan's backlog). The owner picks the file
+// again.
 
 export interface MediaServiceDeps {
   readonly jobs: JobRegistry;
