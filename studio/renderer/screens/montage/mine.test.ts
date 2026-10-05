@@ -15,6 +15,7 @@ import {
   isFileDrag,
   livePosters,
   MAX_LIVE_POSTERS,
+  MAX_POSTERS,
   POSTER_REPORT_MS,
   PosterZones,
   importFailure,
@@ -299,7 +300,7 @@ describe("one track plays at a time (M9)", () => {
   });
 });
 
-describe("video posters (rounds 1 and 2, M1): every VISIBLE tile is live; the tiles near the view fill the rest up to MAX_LIVE_POSTERS", () => {
+describe("video posters (rounds 1–3, M1): the VISIBLE tiles are live up to MAX_POSTERS; the tiles near the view fill the rest up to MAX_LIVE_POSTERS", () => {
   const ids = Array.from({ length: 80 }, (_, i) => `media-video-${String(i).padStart(4, "0")}`);
   const range = (from: number, to: number): string[] => ids.slice(from, to);
 
@@ -307,7 +308,7 @@ describe("video posters (rounds 1 and 2, M1): every VISIBLE tile is live; the ti
     // 20 visible (30–49), a screen of margin above (10–29) and below (50–69).
     const visible = new Set(range(30, 50));
     const near = new Set(range(10, 70));
-    const live = livePosters(ids, visible, near, MAX_LIVE_POSTERS);
+    const live = livePosters(ids, visible, near, MAX_LIVE_POSTERS, MAX_POSTERS);
     expect(range(30, 50).every((id) => live.has(id))).toBe(true);
     expect(live.size).toBe(MAX_LIVE_POSTERS);
     // The 4 left go to the margin tiles nearest the view: 28, 29 above and 50, 51 below, never 10 or 69.
@@ -317,12 +318,28 @@ describe("video posters (rounds 1 and 2, M1): every VISIBLE tile is live; the ti
 
   test("more visible tiles than the cap: every visible one is still live (the cap yields to what is seen)", () => {
     const visible = new Set(range(0, 30));
-    expect(livePosters(ids, visible, new Set(range(0, 50)), MAX_LIVE_POSTERS).size).toBe(30);
+    expect(livePosters(ids, visible, new Set(range(0, 50)), MAX_LIVE_POSTERS, MAX_POSTERS).size).toBe(30);
+  });
+
+  test("a tall window (1180×2160: 73 tiles in view): the hard ceiling holds, the first 48 visible in the list's order are live, the rest are not", () => {
+    const live = livePosters(ids, new Set(range(0, 73)), new Set(ids), MAX_LIVE_POSTERS, MAX_POSTERS);
+    expect(MAX_POSTERS).toBe(48);
+    expect([...live]).toEqual(range(0, 48));
+    // Scrolled down the same tall window: still the first 48 of what is seen, from where the view starts.
+    expect([...livePosters(ids, new Set(range(20, 80)), new Set(ids), MAX_LIVE_POSTERS, MAX_POSTERS)]).toEqual(range(20, 68));
+    // Exactly at the ceiling every visible tile is live; one past it, the last one in the list waits.
+    expect(livePosters(ids, new Set(range(0, 48)), new Set(), MAX_LIVE_POSTERS, MAX_POSTERS).size).toBe(48);
+    expect(livePosters(ids, new Set(range(0, 49)), new Set(), MAX_LIVE_POSTERS, MAX_POSTERS).has(ids[48] ?? "")).toBe(false);
+  });
+
+  test("the ceiling bounds the margins too: they never fill past it, whatever the fill cap", () => {
+    expect(livePosters(ids, new Set(), new Set(ids), 24, 10).size).toBe(10);
+    expect(livePosters(ids, new Set(range(0, 5)), new Set(ids), 24, 10).size).toBe(10);
   });
 
   test("nothing visible yet (the observer has not reported): the near tiles, nearest first in the list's order, up to the cap", () => {
-    expect([...livePosters(ids, new Set(), new Set(range(5, 12)), MAX_LIVE_POSTERS)]).toEqual(range(5, 12));
-    expect(livePosters(ids, new Set(), new Set(ids), MAX_LIVE_POSTERS).size).toBe(MAX_LIVE_POSTERS);
+    expect([...livePosters(ids, new Set(), new Set(range(5, 12)), MAX_LIVE_POSTERS, MAX_POSTERS)]).toEqual(range(5, 12));
+    expect(livePosters(ids, new Set(), new Set(ids), MAX_LIVE_POSTERS, MAX_POSTERS).size).toBe(MAX_LIVE_POSTERS);
   });
 
   test("the observers' reports are coalesced (round 2): one tick's reports land together at once, and a fast scroll's flood lands once at the end of each 150 ms", async () => {
@@ -357,8 +374,8 @@ describe("video posters (rounds 1 and 2, M1): every VISIBLE tile is live; the ti
   });
 
   test("a tile that left the zone lets go of its poster; an id the list does not hold is never live", () => {
-    expect(livePosters(ids, new Set(), new Set(), MAX_LIVE_POSTERS).size).toBe(0);
-    expect([...livePosters(range(0, 2), new Set(["media-gone-0001"]), new Set(["media-gone-0002", ids[1] ?? ""]), MAX_LIVE_POSTERS)]).toEqual([ids[1]]);
+    expect(livePosters(ids, new Set(), new Set(), MAX_LIVE_POSTERS, MAX_POSTERS).size).toBe(0);
+    expect([...livePosters(range(0, 2), new Set(["media-gone-0001"]), new Set(["media-gone-0002", ids[1] ?? ""]), MAX_LIVE_POSTERS, MAX_POSTERS)]).toEqual([ids[1]]);
   });
 });
 

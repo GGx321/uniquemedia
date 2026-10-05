@@ -331,6 +331,18 @@ describe("video posters (rounds 1 and 2, M1)", () => {
     expect(tiles().filter(isLive)).toHaveLength(30);
   });
 
+  test("a tall window (1180×2160: 73 tiles in view): only the first 48 hold a player; the other 25 draw the film placeholder", async () => {
+    scrolled(within(0, 73), () => true);
+    const { engine, client } = await mineStudio(asWindow);
+    seedVideos(engine, 80);
+    await openMine(engine, client);
+    await flush();
+    const all = tiles();
+    expect(all.filter(isLive)).toHaveLength(48);
+    expect(all.slice(0, 48).every(isLive)).toBe(true);
+    expect(all.slice(48).every((tile) => tile.querySelector(".mine-pic-video") !== null)).toBe(true);
+  });
+
   test("a poster that failed is tried again when its tile comes back into view (a new source)", async () => {
     const view = scrolled(() => true, () => true);
     const { engine, client } = await mineStudio(asWindow);

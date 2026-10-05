@@ -23,6 +23,7 @@ import {
   lengthClock,
   livePosters,
   MAX_LIVE_POSTERS,
+  MAX_POSTERS,
   type MineLibrary,
   mineHint,
   mineSections,
@@ -345,7 +346,8 @@ function StickerTileView({ tile, blocked, why, onPick, onDelete, onCancel }: { t
 /**
  * Where the video tiles are (rounds 1 and 2, M1): two IntersectionObservers on the tab's own scroll area, one for what is seen (no margin) and one
  * for a screen of margin around it, their reports coalesced (`PosterZones`: at most one update per 150 ms while scrolling). `livePosters` then
- * gives every visible tile a poster and the nearest margin tiles the rest. Where nothing reports (no observer), every tile counts as visible.
+ * gives the visible tiles a poster (up to its ceiling) and the nearest margin tiles the rest. Where nothing reports (no observer), every tile counts
+ * as visible.
  */
 function usePosterZones(root: { readonly current: HTMLElement | null }, ids: readonly string[]): { visible: ReadonlySet<string>; near: ReadonlySet<string> } {
   const [zones, setZones] = useState<{ visible: ReadonlySet<string>; near: ReadonlySet<string> }>(() => ({ visible: new Set(), near: new Set() }));
@@ -526,10 +528,10 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
   const empty = list.state === "ready" && library.media.length === 0 && !imports.some(isActiveImport);
   const montageMs = totalMs(spec);
   const confirmText = confirm === null ? null : deleteConfirmText(confirm.media, spec);
-  // M1: the video tiles near the view hold a live poster, at most MAX_LIVE_POSTERS of them.
+  // M1: the video tiles in view hold a live poster (at most MAX_POSTERS), and those near it fill up to MAX_LIVE_POSTERS.
   const videoIds = sections.visual.flatMap((t) => (t.kind === "record" && t.media.kind === "video" ? [t.media.mediaId] : []));
   const zones = usePosterZones(scroller, videoIds);
-  const live = livePosters(videoIds, zones.visible, zones.near, MAX_LIVE_POSTERS);
+  const live = livePosters(videoIds, zones.visible, zones.near, MAX_LIVE_POSTERS, MAX_POSTERS);
 
   return (
     <div ref={scroller} className="mine">

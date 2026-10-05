@@ -323,20 +323,25 @@ export function nextListening(current: string | null, mediaId: string): string |
  */
 export const MAX_LIVE_POSTERS = 24;
 
+/** The hard ceiling (round 3): never more live players than this, visible or not (a 1180×2160 window shows 73 tiles: 459 MB of players). */
+export const MAX_POSTERS = 48;
+
 /**
- * The video tiles that hold a live poster (round 2): EVERY visible tile (`visible`), even past the cap, since a blank tile in view is a bug; then
+ * The video tiles that hold a live poster (round 2): the visible tiles (`visible`), even past `cap`, since a blank tile in view is a bug; then
  * the tiles in the margins (`near`), nearest to the visible ones first (by their places in the list; the list's order breaks a tie), until `cap`.
- * With nothing visible yet, the margins alone, from the top of the list.
+ * With nothing visible yet, the margins alone, from the top of the list. Round 3: never more than `ceiling` in all: past it, the visible tiles
+ * are taken in the list's order and the rest draw the placeholder.
  */
-export function livePosters(order: readonly string[], visible: ReadonlySet<string>, near: ReadonlySet<string>, cap: number): ReadonlySet<string> {
-  const live = new Set(order.filter((id) => visible.has(id)));
+export function livePosters(order: readonly string[], visible: ReadonlySet<string>, near: ReadonlySet<string>, cap: number, ceiling: number): ReadonlySet<string> {
+  const live = new Set(order.filter((id) => visible.has(id)).slice(0, ceiling));
+  const fill = Math.min(cap, ceiling);
   const seen = order.flatMap((id, i) => (visible.has(id) ? [i] : []));
   const first = seen[0] ?? 0;
   const last = seen.at(-1) ?? 0;
   const distance = (i: number): number => (seen.length === 0 ? i : i < first ? first - i : i > last ? i - last : 0);
   const margin = order.flatMap((id, i) => (near.has(id) && !visible.has(id) ? [{ id, i }] : [])).sort((a, b) => distance(a.i) - distance(b.i) || a.i - b.i);
   for (const { id } of margin) {
-    if (live.size >= cap) break;
+    if (live.size >= fill) break;
     live.add(id);
   }
   return live;
