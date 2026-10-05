@@ -536,6 +536,7 @@ export class VideoService {
         return own === undefined ? undefined : { path: join(renderTmpDir, jobId, ownPhotoCopyName(own.mediaId)), width: own.width, height: own.height };
       },
       ownPhotos: [...ownPhotos.values()],
+      scenePhotoBytes: scenePhotoIds(filled.clips).reduce((sum, id) => sum + (library.getPhoto(id)?.bytes ?? 0), 0),
       // An own video clip: the mezzanine as the admission found it; the job streams a verified copy into its own folder, the library file is never an ffmpeg input.
       ownVideos: [...ownVideos.values()],
       ownStickers: [...ownStickers.values()],

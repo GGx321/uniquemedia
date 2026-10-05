@@ -176,6 +176,20 @@ describe("collectForbiddenStrings", () => {
     expect(strings).toEqual(["Jane Q. Photographer", "(c) 2026 Example Studio"]);
   });
 
+  test("checks the signal between photos: once it has fired no further photo is read (review round 1, L8)", async () => {
+    const stop = new AbortController();
+    const read: string[] = [];
+    const reading = (id: string): Promise<Uint8Array> => {
+      read.push(id);
+      stop.abort(new Error("stopped"));
+      return Promise.resolve(new Uint8Array(0));
+    };
+
+    await expect(collectForbiddenStrings(reading, ["photo-a", "photo-b", "photo-c"], stop.signal)).rejects.toThrow("stopped");
+
+    expect(read).toEqual(["photo-a"]);
+  });
+
   test("a photo that cannot be read is an error, not silently skipped: its text would go unchecked", async () => {
     await expect(collectForbiddenStrings(() => Promise.reject(new Error("gone")), ["photo-a"])).rejects.toThrow("gone");
   });

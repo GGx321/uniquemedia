@@ -88,6 +88,8 @@ export interface RenderPlan {
    * into its own folder; `resolvePhoto` points at the copy (`ownPhotoCopyName`), never at the library file. Absent: none.
    */
   readonly ownPhotos?: readonly OwnPhotoSource[];
+  /** The stored sizes of the scene photos the spec names, summed: their read (the forbidden strings) spends the same staging budget as the copies. Absent: 0. */
+  readonly scenePhotoBytes?: number;
   /**
    * The own stickers the spec names (3f.5), each as the admission found it: the library file, its canvas, loop and sha256. The job verifies
    * each when it resolves the layers and writes the verified bytes into its own folder (`layers.ts`); ffmpeg never reads the library file. Absent: none.
@@ -397,7 +399,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       try {
         // The library may sit on a drive that has gone quiet: the read runs under the staging bound (time and cancel), so a silent disk ends the job
         // TIMEOUT or cancelled instead of holding the slot, the holds and the reservations for ever.
-        const photoStrings = await staging.run(() => collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips)));
+        const photoStrings = await staging.run((signal) => collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips), signal));
         // The track's own text joins the photos' (invariant 14), each under its own quota: neither may be found in the finished video.
         forbiddenStrings = track === null ? photoStrings : combineForbiddenStrings(photoStrings, track.forbidden);
       } catch (error) {
@@ -577,6 +579,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     // ONE time bound for all the job's staging, from the SUM of the bytes it will read: the own photos', videos' and stickers' copies and a track's bytes. Each read runs raced
     // against it (here, and in the runner for the copies into the job folder), so a read that never returns ends the job TIMEOUT instead of holding the render slot for ever.
     const stagedBytes =
+      (plan.scenePhotoBytes ?? 0) +
       (plan.ownPhotos ?? []).reduce((sum, own) => sum + own.bytes, 0) +
       (plan.ownVideos ?? []).reduce((sum, own) => sum + own.bytes, 0) +
       (plan.ownStickers ?? []).reduce((sum, own) => sum + own.bytes, 0) +

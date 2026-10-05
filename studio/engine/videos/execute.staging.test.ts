@@ -280,6 +280,12 @@ describe("the bound is sized from the SUM of every staged byte (B8)", () => {
     expect(asked).toEqual([PHOTO.length + MEZZANINE.length]);
   });
 
+  test("the scene photos' stored sizes are in the sum too: their read spends the same budget (review round 1, L8)", async () => {
+    const { asked } = await run({ spec: base, plan: { scenePhotoBytes: 7_000_000 } });
+
+    expect(asked).toEqual([7_000_000]);
+  });
+
   test("an own track's bytes are in the sum too", async () => {
     const { asked } = await run({
       spec: (w) => ({ ...base(w), clips: [ownPhotoClip(1, 4_000)], music: { source: "own", mediaId: "media-0000009", startMs: 0 } }),
