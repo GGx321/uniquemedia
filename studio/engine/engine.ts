@@ -128,6 +128,8 @@ const NO_STICKERS: StickerAssets = {
 
 /** `detail` travels as T0 `SafeText`, which allows at most 500 chars. */
 const MAX_DETAIL = 500;
+/** How often a failure to post one type of event is logged (`#emit`). */
+const POST_WARN_INTERVAL_MS = 60_000;
 
 export interface EngineDeps {
   /** A fresh random id per engine start; events and snapshots carry it. */
@@ -3312,8 +3314,18 @@ export class Engine {
     if (stamped.gap) return;
     try {
       for (const e of stamped.events) this.#deps.post(e);
-    } catch {
-      console.warn("studio engine: an event could not be posted to main; it is in the log");
+    } catch (error) {
+      // The type and the kind of the error, never its text (a path may be in it); once a minute per type, so a stream of progress events cannot flood the log.
+      const now = this.#deps.monotonic();
+      const last = this.#postWarnedAt.get(event.type);
+      if (last === undefined || now - last >= POST_WARN_INTERVAL_MS || now < last) {
+        this.#postWarnedAt.set(event.type, now);
+        const kind = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error";
+        console.warn(`studio engine: an event could not be posted to main (${event.type}, ${kind}); it is in the log`);
+      }
     }
   }
+
+  /** When each event type's failure to post was last logged: see `#emit`. */
+  readonly #postWarnedAt = new Map<string, number>();
 }

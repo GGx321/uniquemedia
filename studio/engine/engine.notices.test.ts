@@ -132,6 +132,38 @@ describe("noteUnhandledRejection", () => {
     expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { notices: [{ code: "engine-internal-error", count: 1 }] } });
   });
 
+  test("a port that keeps refusing is told once per event type a minute, with the type and the kind of the error and no text", async () => {
+    let mono = 0;
+    const { engine } = await startEngine(dir(), {
+      deps: {
+        monotonic: () => mono,
+        post: () => {
+          throw Object.assign(new Error("the port is closed at /Users/secret"), { code: "EPIPE" });
+        },
+      },
+    });
+    const realWarn = console.warn;
+    const warned: string[] = [];
+    console.warn = (...args: unknown[]) => void warned.push(args.join(" "));
+    try {
+      engine.noteUnhandledRejection(); // engine.notice at 0
+      mono = 5_000;
+      engine.noteUnhandledRejection(); // engine.notice again, 5 s on: the same type, inside the minute
+      mono = 10_000;
+      engine.noteUnhandledRejection();
+      expect(warned.filter((line) => line.includes("could not be posted"))).toHaveLength(1);
+      mono = 61_000;
+      engine.noteUnhandledRejection();
+    } finally {
+      console.warn = realWarn;
+    }
+    const posted = warned.filter((line) => line.includes("could not be posted"));
+    expect(posted).toHaveLength(2);
+    expect(posted[0]).toContain("engine.notice");
+    expect(posted[0]).toContain("EPIPE");
+    expect(posted.join("\n")).not.toContain("secret");
+  });
+
   test("a shutdown drops the trailing announcement: nothing is posted after the engine said it is stopping", async () => {
     const { engine, events } = await startEngine(dir(), { deps: { monotonic: () => performance.now(), internalNoticeWindowMs: 60 } });
     for (let n = 0; n < 3; n++) engine.noteUnhandledRejection();
