@@ -41,6 +41,11 @@ export function filesText(preview: AvatarDeletePreview): string | null {
   if (preview.videos === 0) return null;
   const { videos, videoFilesFound: found, videoFilesUnchecked: unchecked } = preview;
   const absent = Math.max(0, videos - found - unchecked);
+  if (found === 0) {
+    // Nothing goes: it is not said that anything does.
+    const why = [absent > 0 ? `${absent} нет в «Готовые видео»` : null, unchecked > 0 ? `${unchecked} не успели проверить` : null].filter((part): part is string => part !== null);
+    return `Видео: ${videos}. Их файлы в Корзину не уйдут: ${why.join(", ")} — они останутся как есть.`;
+  }
   const parts = [`Видео: ${videos}. Файлов в «Готовые видео» найдено ${found} из ${videos} — они уйдут в Корзину.`];
   if (absent > 0) parts.push(`${absent} там нет — они останутся как есть.`);
   if (unchecked > 0) parts.push(`${unchecked} не успели проверить — они тоже останутся на месте.`);
@@ -63,8 +68,19 @@ type Phase =
   /** The preview was refused or could not be made: nothing to confirm. */
   | { readonly kind: "refused"; readonly error: EngineError };
 
-/** The refusal of a preview or a delete, in words: a busy avatar says what to wait for; every other code has its fixed Russian text. */
+/**
+ * What to do when the Trash refuses, on this system (`platform` is the window's `navigator.platform`): Windows keeps a Recycle Bin per volume, and a volume that has
+ * never recycled anything, or a network drive, has none; macOS has none on some external and network volumes; elsewhere the advice names neither.
+ */
+export function trashHint(platform: string): string {
+  if (/^win/i.test(platform)) return "Если на диске нет Корзины, удалите любой файл с него в Корзину один раз или перенесите библиотеку на другой диск.";
+  if (/^mac/i.test(platform)) return "Корзина есть не на каждом внешнем или сетевом томе: перенесите библиотеку на внутренний диск или удалите папку аватара вручную в Finder.";
+  return "Корзина есть не на каждом внешнем или сетевом томе: перенесите библиотеку на внутренний диск.";
+}
+
+/** The refusal of a preview or a delete, in words: a busy avatar says what to wait for; a Trash that refused says what to do here; every other code has its fixed Russian text. */
 function failureText(error: EngineError): string {
+  if (error.code === "TRASH_UNAVAILABLE") return `${errorText(error)} ${trashHint(typeof navigator === "undefined" ? "" : navigator.platform)}`;
   return error.code === "IN_FLIGHT"
     ? "Аватар сейчас занят: идёт генерация, рендер или сохранение, удаляется другой аватар или меняется папка библиотеки. Дождитесь окончания и повторите."
     : errorText(error);

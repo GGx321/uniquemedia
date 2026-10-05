@@ -92,7 +92,9 @@ describe("the confirmation", () => {
 
     await ask();
 
-    expect(panelText()).toContain("0 из 1");
+    expect(panelText()).toContain("не уйдут");
+    expect(panelText()).not.toContain("0 из 1");
+    expect(panelText()).not.toContain("они уйдут в Корзину");
     expect(panelText()).toContain("останутся как есть");
   });
 
@@ -333,6 +335,50 @@ describe("what goes wrong", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Понятно" }));
     expect(screen.queryByText(/не удалось переместить в Корзину/) === null).toBe(true);
+  });
+
+  test("a second delete does not wipe out the unread warning about the first one's files", async () => {
+    const { engine } = await withMia();
+    engine.keepVideoFilesOnDelete(2);
+    await ask();
+    fireEvent.click(within(panel()).getByRole("button", { name: "Удалить" }));
+    await screen.findByText(/2 видео не удалось переместить в Корзину/);
+
+    await ask("Sofia");
+    // the first warning is itself an alert: the question is found by its own class
+    const question = document.querySelector<HTMLElement>(".avatar-confirm") ?? document.body;
+    fireEvent.click(within(question).getByRole("button", { name: "Удалить" }));
+    await screen.findByText(/Аватар «Sofia» в Корзине/);
+
+    expect(screen.getByText(/Аватар «Mia» в Корзине/)).toBeDefined();
+    expect(screen.getByText(/2 видео не удалось переместить в Корзину/)).toBeDefined();
+    fireEvent.click(screen.getAllByRole("button", { name: "Понятно" })[0] ?? document.body);
+    expect(screen.queryByText(/Аватар «Mia» в Корзине/) === null).toBe(true);
+    expect(screen.getByText(/Аватар «Sofia» в Корзине/)).toBeDefined();
+  });
+
+  test("a Trash that refuses says what to do on THIS system: Windows gets the Recycle Bin advice, macOS its own sentence", async () => {
+    const original = Object.getOwnPropertyDescriptor(Navigator.prototype, "platform");
+    try {
+      for (const [platform, expected, absent] of [
+        ["Win32", "удалите любой файл с него в Корзину один раз", "Finder"],
+        ["MacIntel", "удалите папку аватара вручную в Finder", "в Корзину один раз"],
+      ] as const) {
+        Object.defineProperty(navigator, "platform", { value: platform, configurable: true });
+        const { engine, unmount } = await withMia();
+        engine.failNext("avatars.delete", { code: "TRASH_UNAVAILABLE" });
+        await ask();
+        fireEvent.click(within(panel()).getByRole("button", { name: "Удалить" }));
+        await flush();
+
+        expect(panelText()).toContain(expected);
+        expect(panelText()).not.toContain(absent);
+        unmount();
+      }
+    } finally {
+      Reflect.deleteProperty(navigator, "platform");
+      if (original !== undefined) Object.defineProperty(Navigator.prototype, "platform", original);
+    }
   });
 
   test("a draft is spoken of as a draft, whatever the avatar is called", async () => {

@@ -745,17 +745,39 @@ test("avatar.removed tells the draft and video listeners to read again: the avat
   h.stop();
 });
 
-test("what is said after an avatar delete is kept in the view until it is dismissed, and replaced by a newer one", async () => {
+test("what is said after an avatar delete is kept in the view until it is dismissed: a newer notice never replaces an unread one about files left behind", async () => {
   const h = await host();
-  expect(h.store.getView().avatarDeleteNotice).toBeNull();
+  expect(h.store.getView().avatarDeleteNotices).toEqual([]);
 
   h.store.noteAvatarDeleted({ draft: false, name: "Mia", kept: 2, unchecked: 0, folder: "Mia" });
-  expect(h.store.getView().avatarDeleteNotice).toMatchObject({ name: "Mia", kept: 2 });
   h.store.noteAvatarDeleted({ draft: true, name: "Черновик", kept: 0, unchecked: 0, folder: null });
-  expect(h.store.getView().avatarDeleteNotice).toMatchObject({ draft: true });
 
-  h.store.dismissAvatarDeleted();
-  expect(h.store.getView().avatarDeleteNotice).toBeNull();
+  const notices = h.store.getView().avatarDeleteNotices;
+  expect(notices.map((n) => n.name)).toEqual(["Mia", "Черновик"]);
+  const [warn] = notices;
+  if (warn === undefined) throw new Error("expected a notice");
+  h.store.dismissAvatarDeleted(warn.id);
+  expect(h.store.getView().avatarDeleteNotices.map((n) => n.name)).toEqual(["Черновик"]);
+  h.stop();
+});
+
+test("plain notices are trimmed to the newest three, but a warning about files left behind is never dropped to make room", async () => {
+  const h = await host();
+  h.store.noteAvatarDeleted({ draft: false, name: "Warned", kept: 1, unchecked: 0, folder: "Warned" });
+  for (const name of ["A", "B", "C", "D", "E"]) h.store.noteAvatarDeleted({ draft: false, name, kept: 0, unchecked: 0, folder: null });
+
+  expect(h.store.getView().avatarDeleteNotices.map((n) => n.name)).toEqual(["Warned", "C", "D", "E"]);
+  h.stop();
+});
+
+test("dismissing a notice that is not there changes nothing", async () => {
+  const h = await host();
+  h.store.noteAvatarDeleted({ draft: false, name: "Mia", kept: 0, unchecked: 0, folder: null });
+  const before = h.store.getView().avatarDeleteNotices;
+
+  h.store.dismissAvatarDeleted(9999);
+
+  expect(h.store.getView().avatarDeleteNotices).toBe(before);
   h.stop();
 });
 

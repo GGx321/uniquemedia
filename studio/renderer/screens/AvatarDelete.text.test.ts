@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarDeletePreview } from "../../shared/engine";
-import { filesText, goesText, keptText } from "./AvatarDelete";
+import { filesText, goesText, keptText, trashHint } from "./AvatarDelete";
 
 // The words of the «Удалить аватар» confirmation and of what is said after it. A no-break space is read as a space.
 const plain = (text: string | null): string => (text ?? "").replace(/ /g, " ");
@@ -35,6 +35,48 @@ describe("filesText", () => {
     expect(text).toContain("найдено 1 из 4");
     expect(text).toContain("2 не успели проверить — они тоже останутся");
     expect(text).toContain("1 там нет — они останутся как есть.");
+  });
+});
+
+describe("filesText when no file was found", () => {
+  test("never promises a move to the Trash it will not make", () => {
+    const text = plain(filesText(preview({ videos: 3, videoFilesFound: 0 })));
+
+    expect(text).toBe("Видео: 3. Их файлы в Корзину не уйдут: 3 нет в «Готовые видео» — они останутся как есть.");
+    expect(text).not.toContain("найдено 0");
+    expect(text).not.toContain("они уйдут в Корзину");
+  });
+
+  test("names the ones that could not be checked apart from the ones that are not there", () => {
+    const text = plain(filesText(preview({ videos: 3, videoFilesFound: 0, videoFilesUnchecked: 2 })));
+
+    expect(text).toBe("Видео: 3. Их файлы в Корзину не уйдут: 1 нет в «Готовые видео», 2 не успели проверить — они останутся как есть.");
+  });
+
+  test("all of them unchecked says only that", () => {
+    expect(plain(filesText(preview({ videos: 2, videoFilesFound: 0, videoFilesUnchecked: 2 })))).toBe("Видео: 2. Их файлы в Корзину не уйдут: 2 не успели проверить — они останутся как есть.");
+  });
+});
+
+describe("trashHint: what to do when the Trash refuses, on this system", () => {
+  test("Windows: the Recycle Bin advice", () => {
+    expect(trashHint("Win32")).toContain("удалите любой файл с него в Корзину один раз");
+    expect(trashHint("Win32")).toContain("перенесите библиотеку");
+  });
+
+  test("macOS: its own sentence, no Recycle Bin advice", () => {
+    const hint = trashHint("MacIntel");
+
+    expect(hint).toContain("вручную в Finder");
+    expect(hint).not.toContain("один раз");
+  });
+
+  test("any other system: a sentence that names neither", () => {
+    const hint = trashHint("Linux x86_64");
+
+    expect(hint).not.toContain("Finder");
+    expect(hint).not.toContain("один раз");
+    expect(hint).toContain("внутренний диск");
   });
 });
 

@@ -130,14 +130,16 @@ export interface EngineView {
    */
   readonly paidInFlightAvatars: ReadonlySet<string>;
   /**
-   * What the owner is told after an avatar was deleted («Удалить аватар»): window-wide, so a notice about video files that stayed behind is still there
-   * when the Avatars screen is left and opened again, until the owner dismisses it. Null when there is nothing to say.
+   * What the owner is told after an avatar was deleted («Удалить аватар»), oldest first: window-wide, so a notice about video files that stayed behind is still
+   * there when the Avatars screen is left and opened again, until the owner dismisses it. A newer notice never replaces an unread warning.
    */
-  readonly avatarDeleteNotice: AvatarDeleteNotice | null;
+  readonly avatarDeleteNotices: readonly AvatarDeleteNotice[];
 }
 
 /** What is said once an avatar is gone: its name (a draft has none), how many video files stayed behind or were not checked, and the export subfolder they are in. */
 export interface AvatarDeleteNotice {
+  /** Told apart for dismissing: assigned by the store. */
+  readonly id: number;
   readonly draft: boolean;
   readonly name: string;
   readonly kept: number;
@@ -165,7 +167,7 @@ const INITIAL: EngineView = {
   notices: [],
   cancellingJobs: new Set(),
   paidInFlightAvatars: new Set(),
-  avatarDeleteNotice: null,
+  avatarDeleteNotices: [],
 };
 
 export function isActiveJob(job: JobView): boolean {
@@ -583,14 +585,24 @@ export class EngineStore {
     this.update({ paidInFlightAvatars });
   }
 
-  /** An avatar was deleted: what is said about it, window-wide (see `EngineView.avatarDeleteNotice`). Replaces the one before. */
-  noteAvatarDeleted(notice: AvatarDeleteNotice): void {
-    this.update({ avatarDeleteNotice: notice });
+  /** How many plain notices (nothing left behind) are kept; the warnings are never counted or dropped. */
+  private static readonly PLAIN_AVATAR_NOTICES = 3;
+  private avatarNoticeSeq = 0;
+
+  /**
+   * An avatar was deleted: what is said about it, window-wide (see `EngineView.avatarDeleteNotices`). It is added to the ones still unread; only the OLDEST PLAIN
+   * ones are dropped past a few, so a warning about files left behind is never lost to a newer notice.
+   */
+  noteAvatarDeleted(notice: Omit<AvatarDeleteNotice, "id">): void {
+    const all = [...this.view.avatarDeleteNotices, { ...notice, id: ++this.avatarNoticeSeq }];
+    const plain = all.filter((n) => n.kept + n.unchecked === 0);
+    const drop = new Set(plain.slice(0, Math.max(0, plain.length - EngineStore.PLAIN_AVATAR_NOTICES)).map((n) => n.id));
+    this.update({ avatarDeleteNotices: all.filter((n) => !drop.has(n.id)) });
   }
 
-  /** The owner has read it. */
-  dismissAvatarDeleted(): void {
-    if (this.view.avatarDeleteNotice !== null) this.update({ avatarDeleteNotice: null });
+  /** The owner has read one of them. */
+  dismissAvatarDeleted(id: number): void {
+    if (this.view.avatarDeleteNotices.some((n) => n.id === id)) this.update({ avatarDeleteNotices: this.view.avatarDeleteNotices.filter((n) => n.id !== id) });
   }
 
   async refreshAvatars(): Promise<void> {

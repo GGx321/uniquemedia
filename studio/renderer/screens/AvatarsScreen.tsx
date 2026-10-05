@@ -459,7 +459,7 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
   const [search, setSearch] = useState("");
   // An avatar was just deleted («Удалить аватар»): said once it is gone, with the video files that stayed behind, if any. The notice lives in the window's
   // store, so one about files left behind is still there when this screen is left and opened again, until it is dismissed.
-  const removed = view.avatarDeleteNotice;
+  const removedNotices = view.avatarDeleteNotices;
   // Its card goes with the engine's `avatar.removed`: the focus moves off it to the screen's title, never to the body.
   const onDeleted = (who: DeletedAvatar, result: AvatarDeleteResult): void => {
     document.querySelector<HTMLElement>(".content .screen-title")?.focus({ preventScroll: true });
@@ -558,11 +558,12 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
       </header>
 
       {saved && <Notice tone="ok">Аватар «{saved}» сохранён. Мастер-портрет готов для фото.</Notice>}
-      {removed !== null && (
+      {removedNotices.map((removed) => (
         <Notice
+          key={removed.id}
           tone={removed.kept + removed.unchecked > 0 ? "warn" : "ok"}
           actions={
-            <button type="button" className="btn btn-s" onClick={() => store.dismissAvatarDeleted()}>
+            <button type="button" className="btn btn-s" onClick={() => store.dismissAvatarDeleted(removed.id)}>
               Понятно
             </button>
           }
@@ -570,7 +571,7 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
           {removed.draft ? "Черновик аватара" : `Аватар «${removed.name}»`} в Корзине — оттуда его можно вернуть.
           {removed.kept + removed.unchecked > 0 && <> {keptText(removed)}</>}
         </Notice>
-      )}
+      ))}
       {ready && <AccountBanner view={view} />}
 
       {view.phase === "connecting" && <SkeletonGrid />}
