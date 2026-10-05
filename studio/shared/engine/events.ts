@@ -30,6 +30,8 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `job.cancelled`: the job stopped on a user's cancel; attempts it aborted count at their worst case until reconciled.
  * - `settings.changed`: the whole settings, key status included (`rejected` after a 401), whenever any of them changed.
  * - `avatar.changed`: a saved avatar was created (a draft was picked) or changed; a draft with its id is gone.
+ * - `avatar.removed`: an avatar (a draft, an active or an archived one) was deleted: it and everything of it (photos, drafts, videos, their records)
+ *   leave every list. Its folder is in the system Trash by then.
  * - `draft.changed`: a draft was created or changed (e.g. a batch of candidates landed).
  * - `engine.error`: a failure that belongs to no command.
  * - `engine.notice`: something the windows must be told that is not an error; also pending in the snapshot.
@@ -49,6 +51,7 @@ const EVENT_SPECS = [
   /** `librarySwitchGeneration` is `Snapshot`'s own counter: it says whether this settings.changed is a genuine library switch. */
   defineEvent("settings.changed", z.strictObject({ settings: Settings, librarySwitchGeneration: Count })),
   defineEvent("avatar.changed", z.strictObject({ avatar: AvatarSummary })),
+  defineEvent("avatar.removed", z.strictObject({ avatarId: Id })),
   defineEvent("draft.changed", z.strictObject({ draft: Draft })),
   defineEvent("engine.error", z.strictObject({ error: EngineError })),
   defineEvent("engine.notice", z.strictObject({ notice: EngineNotice })),

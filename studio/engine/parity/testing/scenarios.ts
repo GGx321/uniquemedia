@@ -1716,7 +1716,28 @@ const MIN_CLIP_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS];
+// «Удалить аватар» (2026-10-05). The delete itself is main's (the system Trash), so only what the ENGINE answers is played here: the preview's counts and its
+// refusals. The move, the engine's prepare and finish, and the mock's `avatars.delete` have their own tests.
+const AVATAR_DELETE_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "delete an avatar: the preview counts what would go, and is refused while the avatar has a render",
+    async run(t, w) {
+      await t.call("avatars.deletePreview", { avatarId: w.otherAvatarId });
+      await t.call("avatars.deletePreview", { avatarId: w.archivedAvatarId });
+      await t.call("avatars.deletePreview", { avatarId: "avatar-nobody-1" });
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      await t.call("avatars.deletePreview", { avatarId: w.avatarId });
+      await t.call("videos.render", { montageId });
+      t.note("a render of the avatar is queued: the preview is refused, and another avatar's is not");
+      await t.call("avatars.deletePreview", { avatarId: w.avatarId });
+      await t.call("avatars.deletePreview", { avatarId: w.otherAvatarId });
+      await t.settle();
+      await t.call("avatars.deletePreview", { avatarId: w.avatarId });
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

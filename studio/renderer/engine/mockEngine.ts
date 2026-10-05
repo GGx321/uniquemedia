@@ -661,6 +661,8 @@ export class MockEngine implements EngineBridge {
   private focusAvailable = true;
   private skippedDrafts = 0;
   private notListedDrafts = 0;
+  /** `keepVideoFilesOnDelete`: how many files the next `avatars.delete` says stayed behind. */
+  private videoFilesKeptNext = 0;
   /** The photos an unfinished video's pending intent holds (`holdPendingVideoPhotos`). */
   private readonly pendingVideoPhotos = new Set<string>();
   /** The montage drafts, in the order they were made; they outlive a restart, as the real engine's files do. */
@@ -1618,6 +1620,10 @@ export class MockEngine implements EngineBridge {
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: archived } });
         return this.ok(c, { avatar: archived });
       }
+      case "avatars.deletePreview":
+        return this.deletePreview(c, c.payload.avatarId);
+      case "avatars.delete":
+        return this.deleteAvatar(c, c.payload.avatarId);
       case "avatars.rewriteDescriptor": {
         const { avatarId } = c.payload;
         // The engine's order: the key and the ledger before it even looks up
@@ -1918,6 +1924,71 @@ export class MockEngine implements EngineBridge {
   private jobRunningFor(avatarId: string): boolean {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
     return this.jobs.some(active) || this.runJobs.some(active);
+  }
+
+  // ---------- «Удалить аватар» ----------
+  //
+  // The engine's `#deletePreview` and `#deletePrepare`/`#deleteFinish` with main's move to the system Trash behind them: the Trash is the command's own
+  // answer here (a test that wants it to refuse forces TRASH_UNAVAILABLE with `failNext`). The avatar and everything of it leave the mock together.
+
+  /** A test control: the NEXT `avatars.delete` reports `count` more video files that main found and could not move to the Trash (they stay as plain files). Used once. */
+  keepVideoFilesOnDelete(count: number): void {
+    this.videoFilesKeptNext = count;
+  }
+
+  /** Whether anything of the avatar runs or is reserved: a candidates job, a photo run, a render (queued or running), a video intent a crash left pending. */
+  private deleteBusy(avatarId: string): boolean {
+    const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
+    return this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || heldByIntent;
+  }
+
+  /** What would go with the avatar, counted as the engine counts it (`avatarDeleteCounts`). */
+  private deleteCounts(avatarId: string): { photos: number; candidates: number; drafts: number; videos: number } {
+    const draft = this.drafts.find((d) => d.avatarId === avatarId);
+    return {
+      photos: this.photos.filter((p) => p.avatarId === avatarId).length,
+      candidates: draft === undefined ? 0 : draft.candidates.length + draft.hiddenBelowThreshold,
+      drafts: [...this.montages.values()].filter((m) => m.spec.avatarId === avatarId).length,
+      videos: this.videos.filter((v) => v.summary.avatarId === avatarId).length,
+    };
+  }
+
+  private deletePreview(c: CommandMessage, avatarId: string): ResponseMessage {
+    // The engine reads `library` unchecked (a read), then looks the avatar up, then asks what runs.
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    if (!this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    if (this.deleteBusy(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run, a candidate job or a video render of this avatar is running; delete the avatar when it ends" });
+    this.checkExport();
+    const found = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present").length;
+    const counts = this.deleteCounts(avatarId);
+    return this.ok(c, { avatarId, ...counts, videoFilesFound: found, videoFilesUnchecked: 0 });
+  }
+
+  private deleteAvatar(c: CommandMessage, avatarId: string): ResponseMessage {
+    // `#liveLibrary()`: a switch under way first, then no library, then the avatar, then what runs.
+    const gone = this.mediaLibraryGate();
+    if (gone) return this.fail(c, gone);
+    if (!this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    if (this.deleteBusy(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run, a candidate job or a video render of this avatar is running; delete the avatar when it ends" });
+    this.checkExport();
+    const present = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
+    for (const video of present) this.exportFiles.delete(video.summary.relPath);
+    const mine = new Set(this.photos.filter((p) => p.avatarId === avatarId).map((p) => p.photoId));
+    this.avatars = this.avatars.filter((a) => a.avatarId !== avatarId);
+    this.drafts = this.drafts.filter((d) => d.avatarId !== avatarId);
+    this.photos = this.photos.filter((p) => p.avatarId !== avatarId);
+    this.videos = this.videos.filter((v) => v.summary.avatarId !== avatarId);
+    this.montages = new Map([...this.montages].filter(([, m]) => m.spec.avatarId !== avatarId));
+    this.renderJobs = this.renderJobs.filter((j) => j.avatarId !== avatarId);
+    this.jobs = this.jobs.filter((j) => j.avatarId !== avatarId);
+    this.runJobs = this.runJobs.filter((j) => j.avatarId !== avatarId);
+    for (const photoId of mine) this.pendingVideoPhotos.delete(photoId);
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.removed", payload: { avatarId } });
+    const kept = this.videoFilesKeptNext;
+    this.videoFilesKeptNext = 0;
+    const folder = present[0]?.summary.relPath.split("/")[0] ?? null;
+    return this.ok(c, { avatarId, videoFilesTrashed: present.length, videoFilesKept: kept, videoFilesUnchecked: 0, videoFolder: folder });
   }
 
   // ---------- montage drafts (3d.1b) ----------

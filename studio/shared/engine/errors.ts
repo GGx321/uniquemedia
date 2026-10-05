@@ -83,6 +83,12 @@ import { Count, SafeText } from "./primitives";
  *   Russian text (`MEDIA_REASONS_RU`): `heic` is «сохраните как JPEG», `too-large` and `no-space` say what to change, `changed` that
  *   the file may be picked again. A reason never carries a path.
  *
+ * «Удалить аватар» (2026-10-05):
+ * - TRASH_UNAVAILABLE: the system Trash cannot take the avatar's folder (a network drive or a volume with no Trash, or the move failed), so
+ *   NOTHING was deleted and the avatar stays as it was. Never a permanent delete in its place.
+ *   `avatars.delete` also answers IN_FLIGHT while anything of the avatar runs or is reserved (a photo run, a candidate job, a render, a pending
+ *   video, a draft being saved) or a library switch is under way, and NOT_FOUND for an avatar the library does not have.
+ *
  * Stage 3 music (the flashapi list; a request costs one of 30 per 31 days):
  * - MUSIC_KEY_MISSING: no RapidAPI key is stored, so nothing is sent and no quota is spent.
  * - MUSIC_KEY_REJECTED: flashapi answered 401 to this key (now or on an earlier refresh, remembered across restarts), or
@@ -135,6 +141,7 @@ export const ERROR_CODES = [
   "MUSIC_QUOTA_EXHAUSTED",
   "MUSIC_UNAVAILABLE",
   "MEDIA_UNSUPPORTED",
+  "TRASH_UNAVAILABLE",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);

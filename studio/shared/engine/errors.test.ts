@@ -46,6 +46,7 @@ const EXPECTED_CODES = [
   "MUSIC_QUOTA_EXHAUSTED",
   "MUSIC_UNAVAILABLE",
   "MEDIA_UNSUPPORTED",
+  "TRASH_UNAVAILABLE",
 ];
 
 /** The codes that must say more than their code: what is wrong with the montage, which cells, why the folder is unusable, which caption rule broke, why music could not be fetched. */

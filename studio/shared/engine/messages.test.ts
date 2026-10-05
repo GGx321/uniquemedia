@@ -294,6 +294,8 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: { avatar: { ...avatar, avatarId: DRAFT_ID, masterPhotoId: "photo-0101" } },
   },
   "avatars.archive": { payload: { avatarId: "avatar-0001" }, result: { avatar: { ...avatar, status: "archived" } } },
+  "avatars.deletePreview": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", photos: 12, candidates: 0, drafts: 2, videos: 3, videoFilesFound: 2, videoFilesUnchecked: 0 } },
+  "avatars.delete": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", videoFilesTrashed: 2, videoFilesKept: 1, videoFilesUnchecked: 0, videoFolder: "Mia" } },
   "avatars.rewriteDescriptor": { payload: { avatarId: "avatar-0009", acceptedWorstMicros: 27_500 }, result: { avatarId: "avatar-0009" } },
   "avatars.pickImportPhoto": { payload: {}, result: { picked: true, stagingId: "staging-0001", width: 1024, height: 1365 } },
   "media.pickImport": { payload: { kind: "photo" }, result: { picked: true, jobIds: ["job-00000001"], refused: [{ name: "notes.txt", reason: "format" }], skipped: 0 } },
@@ -410,6 +412,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "money.reconcileNeeded": { reasons: ["open-reserves"], unsettledMicros: 55_000 },
   "settings.changed": { settings: { ...settings, apiKey: { ...keyStatus, rejected: true } }, librarySwitchGeneration: 2 },
   "avatar.changed": { avatar },
+  "avatar.removed": { avatarId: "avatar-0001" },
   "draft.changed": { draft },
   "engine.error": { error: { code: "INTERNAL" } },
   "engine.notice": { notice },
@@ -484,6 +487,8 @@ describe("contract surface", () => {
         "avatars.cancel",
         "avatars.pick",
         "avatars.archive",
+        "avatars.deletePreview",
+        "avatars.delete",
         "avatars.rewriteDescriptor",
         "avatars.pickImportPhoto",
         "media.pickImport",
@@ -542,6 +547,7 @@ describe("contract surface", () => {
         "money.reconcileNeeded",
         "settings.changed",
         "avatar.changed",
+        "avatar.removed",
         "draft.changed",
         "engine.error",
         "engine.notice",
@@ -569,6 +575,7 @@ describe("contract surface", () => {
   test("only the key commands, the dialogs («import photo», «export folder»), «show in folder» (a video's file, an avatar's folder) and the built-in and own stickers' bytes (3d.4, 3f.5) are handled by main alone", () => {
     const actual: string[] = [...MAIN_ONLY_COMMANDS].sort();
     expect(actual).toEqual([
+      "avatars.delete",
       "avatars.pickImportPhoto",
       "media.pickImport",
       "media.stickerBytes",

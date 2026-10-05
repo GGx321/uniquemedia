@@ -1567,6 +1567,25 @@ describe("a genuine settings.update switch blocks new paid work, pick and archiv
     const retried = ok(await engine.handle(command("avatars.pick", { avatarId: saved.draftId, photoId: pickable.id, name: "Zoe" })));
     expect(retried).toMatchObject({ result: { avatar: { name: "Zoe" } } });
   });
+
+  test("avatar.deletePrepare is refused with IN_FLIGHT while the survey runs, and nothing is taken out of the library or left claimed", async () => {
+    const saved = await seedLibrary(join(dir, "library"), "saved");
+    const g = remountGate(join(dir, "library"));
+    const { engine, posted } = await startEngine({}, { folderFs: g.folderFs });
+
+    g.arm();
+    const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
+    await g.atGate;
+
+    await engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-0000d001", avatarId: saved.avatarId, token: "token-00000001" });
+    expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-0000d001", error: { code: "IN_FLIGHT" } });
+
+    g.release();
+    await updating;
+    // The refusal left no claim behind: the same avatar is deleted once the switch is over.
+    await engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-0000d002", avatarId: saved.avatarId, token: "token-00000002" });
+    expect(posted.at(-1)).toMatchObject({ callId: "call-0000d002", deletePlan: { avatarId: saved.avatarId } });
+  });
 });
 
 describe("the live folder's identity is re-verified before any paid command, pick or archive (keepLive)", () => {

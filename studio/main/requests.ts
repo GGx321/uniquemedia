@@ -7,6 +7,7 @@ import {
   type ResponseMessage,
 } from "../shared/engine";
 import { isAppPage } from "./appProtocol";
+import { isAvatarDeleteCommand, type AvatarDeleteCommand } from "./avatarDeleteFlow";
 import { isExportFolderCommand, type ExportFolderCommand } from "./exportFolderFlow";
 import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
@@ -80,6 +81,11 @@ export interface RequestRoutes {
   /** 3e.2 (K17): «Папка «Готовые видео»». Main finds the avatar's folder in the export folder itself and opens it. */
   revealFolder(command: RevealFolderCommand): Promise<ResponseMessage>;
   /**
+   * «Удалить аватар»: `avatars.delete {avatarId}`. Main asks the engine what goes, checks every path against its own roots, moves the avatar's folder to the
+   * system Trash first and its video files after, and tells the engine how it ended. The window names an avatar and is never told a path.
+   */
+  avatarDelete(command: AvatarDeleteCommand): Promise<ResponseMessage>;
+  /**
    * 3f.1 (invariant 34, K29): `media.pickImport {kind}`. Main opens its own dialog, looks at each picked file and hands the engine the path
    * over the control channel; the window sends a kind and is never told a path.
    */
@@ -113,6 +119,7 @@ async function route(raw: unknown, routes: RequestRoutes): Promise<ResponseMessa
     if (isExportFolderCommand(message)) return routes.exportFolder(message);
     if (isRevealCommand(message)) return routes.reveal(message);
     if (isRevealFolderCommand(message)) return routes.revealFolder(message);
+    if (isAvatarDeleteCommand(message)) return routes.avatarDelete(message);
     if (isStickerBytesCommand(message)) return routes.stickerBytes(message);
     if (isOwnStickerBytesCommand(message)) return routes.ownStickerBytes(message);
     return errorResponseFor(message, { code: "INTERNAL", detail: `${message.type} has no handler in main` });
