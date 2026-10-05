@@ -875,9 +875,11 @@ input[type="range"]::-webkit-slider-thumb {
 
 /* ── Avatars (Main.dc.html) ── */
 
+/* A collection: a wider window gets more cards, never bigger ones. 200px is the floor of the mockup's 212px card: 4 columns
+   at the window's 1200px minimum, the mockup's 5 at 1440, 7 at 1920, 10 at 2560, each card 200-254px wide. */
 .avatar-grid {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 16px;
 }
 
@@ -887,10 +889,16 @@ input[type="range"]::-webkit-slider-thumb {
   overflow: hidden;
 }
 
+/* The mockup's 212 x 224 photo as a shape, not a height: the crop is the same share of the portrait at any card width. */
 .avatar-card > .ph {
-  height: 224px;
+  aspect-ratio: 212 / 224;
   flex-shrink: 0;
   background: #1b1b23;
+}
+
+/* A 3:4 portrait in that shape loses a fifth of its height: take it mostly from below, so the hair and the chin stay. */
+.avatar-card .portrait-img {
+  object-position: 50% 22%;
 }
 
 .avatar-card-draft {
@@ -968,10 +976,10 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 10px 12px;
 }
 
-/* Unreadable: no fixed photo height, the dark surface takes what is left. */
+/* Unreadable: no fixed photo shape, the dark surface takes what is left. */
 .avatar-card > .unreadable-ph {
   flex-grow: 1;
-  height: auto;
+  aspect-ratio: auto;
   min-height: 150px;
   background: var(--photo-dim);
 }
@@ -2178,10 +2186,6 @@ input[type="range"]::-webkit-slider-thumb {
   .row {
     row-gap: 8px;
     padding: 6px 0;
-  }
-
-  .avatar-grid {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .wizard {
