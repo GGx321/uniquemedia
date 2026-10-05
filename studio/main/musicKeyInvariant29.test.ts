@@ -13,6 +13,7 @@ import { captureConsole, expectNoKeyFragment, fragmentForms } from "../testing/k
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { engineEnv } from "./engineEnv";
 import { handleMusicKeyCommand, MUSIC_SECRETS_FILE, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
+import { APP_PAGE_URL } from "./appProtocol";
 import { handleRendererRequest, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 useNativeGlobals();
 
@@ -67,9 +68,8 @@ describe("the scan itself", () => {
 
 // ---------- the renderer's whole path, over a real engine ----------
 
-const FILE_URL = "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html";
-const TRUSTED: TrustedRenderer = { fileUrl: FILE_URL };
-const APP_FRAME: SenderFrame = { url: FILE_URL, isTopFrame: true, isAppWindow: true };
+const TRUSTED: TrustedRenderer = {};
+const APP_FRAME: SenderFrame = { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: true };
 
 let seq = 0;
 function rendererCommand(type: string, payload: unknown = {}): unknown {

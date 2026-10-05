@@ -8,6 +8,7 @@ import { Engine } from "../engine/engine";
 import { createEngineClient, type EngineBridge } from "../renderer/engine/client";
 import { EngineStore } from "../renderer/engine/store";
 import { HostNotices } from "./notices";
+import { APP_PAGE_URL } from "./appProtocol";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -19,11 +20,9 @@ useNativeGlobals();
 // must show up in the store without ever making it resync in a loop, and it
 // must never look like an engine error.
 
-// With a drive letter, an absolute path on every platform: on Windows a file
-// URL without one is refused by main's sender check.
-const FILE_URL = "file:///C:/Studio/resources/app.asar/out-studio/renderer/index.html";
-const TRUSTED: TrustedRenderer = { fileUrl: FILE_URL };
-const FRAME: SenderFrame = { url: FILE_URL, isTopFrame: true, isAppWindow: true };
+// The page main.ts loads in every build without a dev server (appProtocol.ts).
+const TRUSTED: TrustedRenderer = {};
+const FRAME: SenderFrame = { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: true };
 const CORRUPT = "settings.json is not valid JSON; it was moved to settings.json.corrupt-20260924T100000Z and the defaults are in use";
 const CRASH = "the engine exited unexpectedly (code 9); restarting it";
 
@@ -181,10 +180,8 @@ describe("HostNotices", () => {
 });
 
 describe("main's notices reach the renderer store through the engine's snapshot and stream", () => {
-  test("the harness's renderer URL is main's renderer on every platform, so these tests hold on the Windows runner too", () => {
-    for (const platform of ["darwin", "linux", "win32"] satisfies NodeJS.Platform[]) {
-      expect(isTrustedSender(FRAME, TRUSTED, platform)).toBe(true);
-    }
+  test("the harness's renderer URL is main's renderer", () => {
+    expect(isTrustedSender(FRAME, TRUSTED)).toBe(true);
   });
 
   test("a notice from startup (corrupt settings.json) is in the first snapshot, with one snapshot and no engine error", async () => {

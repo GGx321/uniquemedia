@@ -9,21 +9,18 @@ import type { RevealCommand, RevealFolderCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import type { OwnStickerBytesCommand } from "./ownStickerBytesFlow";
 import type { StickerBytesCommand } from "./stickerBytesFlow";
+import { APP_PAGE_URL } from "./appProtocol";
 import { handleRendererRequest, isTrustedSender, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { captureConsole, expectNoKeyFragment } from "../testing/keyLeaks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import { PROTOCOL_VERSION } from "../shared/engine";
 useNativeGlobals();
 
-// A renderer URL with a drive letter is an absolute path on every platform
-// ("/C:/…" off Windows, "C:\…" on it), so the request path's tests hold on the
-// Windows runner as on macOS. A URL without one is no path at all on Windows.
-const FILE_URL = "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html";
-const MAC_FILE_URL = "file:///Applications/Studio.app/Contents/Resources/app.asar/out-studio/renderer/index.html";
-const PLATFORMS: NodeJS.Platform[] = ["darwin", "linux", "win32"];
-const PACKAGED: TrustedRenderer = { fileUrl: FILE_URL };
-const DEV: TrustedRenderer = { devServerUrl: "http://localhost:5173/", fileUrl: FILE_URL };
-const APP_FRAME: SenderFrame = { url: FILE_URL, isTopFrame: true, isAppWindow: true };
+// The window's page is `studio-app://renderer/index.html` in every build without a dev server (appProtocol.ts): the same URL
+// on every platform, with no drive letter, letter case or path separator to read it by.
+const PACKAGED: TrustedRenderer = {};
+const DEV: TrustedRenderer = { devServerUrl: "http://localhost:5173/" };
+const APP_FRAME: SenderFrame = { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: true };
 const KEY = "sk-or-v1-0123456789abcdef-wxyz";
 const MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
 
@@ -93,91 +90,43 @@ function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unkn
 }
 
 describe("isTrustedSender", () => {
-  test("the renderer URL these tests use is the renderer on every platform, so they hold on the Windows runner too", () => {
-    for (const platform of PLATFORMS) expect(isTrustedSender(APP_FRAME, PACKAGED, platform)).toBe(true);
+  test("accepts the app's own page, with or without a fragment", () => {
+    expect(isTrustedSender(APP_FRAME, PACKAGED)).toBe(true);
+    expect(isTrustedSender({ ...APP_FRAME, url: `${APP_PAGE_URL}#/avatars` }, PACKAGED)).toBe(true);
   });
-
-  for (const platform of PLATFORMS) {
-    test(`accepts the packaged renderer file, with or without a fragment or query (${platform})`, () => {
-      expect(isTrustedSender(APP_FRAME, PACKAGED, platform)).toBe(true);
-      expect(isTrustedSender({ ...APP_FRAME, url: `${FILE_URL}#/avatars` }, PACKAGED, platform)).toBe(true);
-      expect(isTrustedSender({ ...APP_FRAME, url: `${FILE_URL}?x=1` }, PACKAGED, platform)).toBe(true);
-    });
-  }
 
   const rejected: [string, SenderFrame, TrustedRenderer][] = [
     ["an iframe", { ...APP_FRAME, isTopFrame: false }, PACKAGED],
     ["a frame that is not an app window's main frame", { ...APP_FRAME, isAppWindow: false }, PACKAGED],
     ["a frame that is gone", { ...APP_FRAME, url: null }, PACKAGED],
+    // The page used to be this file. No `file:` page is the app's own any more, whichever file it is.
+    ["the renderer file the page used to be (Windows)", { ...APP_FRAME, url: "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html" }, PACKAGED],
+    ["the renderer file the page used to be (macOS)", { ...APP_FRAME, url: "file:///Applications/Studio.app/Contents/Resources/app.asar/out-studio/renderer/index.html" }, PACKAGED],
     ["another file", { ...APP_FRAME, url: "file:///C:/Users/Public/evil/index.html" }, PACKAGED],
-    ["a sibling of the renderer", { ...APP_FRAME, url: FILE_URL.replace("index.html", "other.html") }, PACKAGED],
-    ["the renderer's path on another host (a Windows share)", { ...APP_FRAME, url: FILE_URL.replace("file:///", "file://evil/") }, PACKAGED],
-    ["the renderer's path under another scheme, with no host either", { ...APP_FRAME, url: FILE_URL.replace("file:", "studio-media:") }, PACKAGED],
+    ["another file of the bundle", { ...APP_FRAME, url: "studio-app://renderer/assets/index.js" }, PACKAGED],
+    ["the page with a query", { ...APP_FRAME, url: `${APP_PAGE_URL}?x=1` }, PACKAGED],
+    ["the page reached through a dot segment", { ...APP_FRAME, url: "studio-app://renderer/assets/../index.html" }, PACKAGED],
+    ["the page with an encoded name", { ...APP_FRAME, url: "studio-app://renderer/index%2Ehtml" }, PACKAGED],
+    ["the page on another host of the scheme", { ...APP_FRAME, url: "studio-app://evil/index.html" }, PACKAGED],
+    ["the page under the media scheme", { ...APP_FRAME, url: "studio-media://renderer/index.html" }, PACKAGED],
     ["a web page", { ...APP_FRAME, url: "https://example.com/" }, PACKAGED],
     ["the dev server in a packaged run", { ...APP_FRAME, url: "http://localhost:5173/" }, PACKAGED],
     ["another origin in dev", { ...APP_FRAME, url: "http://localhost:5174/" }, DEV],
-    ["the file URL in dev, when the dev server is the renderer", APP_FRAME, DEV],
+    ["the app's page in dev, when the dev server is the renderer", APP_FRAME, DEV],
     ["garbage", { ...APP_FRAME, url: "::::" }, PACKAGED],
   ];
-  for (const platform of PLATFORMS) {
-    for (const [name, frame, trusted] of rejected) {
-      test(`rejects ${name} (${platform})`, () => {
-        expect(isTrustedSender(frame, trusted, platform)).toBe(false);
-      });
-    }
-  }
-
-  for (const platform of PLATFORMS) {
-    test(`compares file URLs as paths: percent-encoding and dot segments do not matter (${platform})`, () => {
-      expect(isTrustedSender({ ...APP_FRAME, url: FILE_URL.replace("index.html", "index%2Ehtml") }, PACKAGED, platform)).toBe(true);
-      expect(isTrustedSender({ ...APP_FRAME, url: FILE_URL.replace("renderer/", "main/../renderer/") }, PACKAGED, platform)).toBe(true);
-      expect(isTrustedSender({ ...APP_FRAME, url: FILE_URL.replace("index.html", "index.html%2F..%2Fx") }, PACKAGED, platform)).toBe(false);
-    });
-
-    test(`an encoded backslash never leads to the renderer: a separator Windows refuses, a plain character elsewhere (${platform})`, () => {
-      expect(isTrustedSender({ ...APP_FRAME, url: FILE_URL.replace("index.html", "x%5C..%5Cindex.html") }, PACKAGED, platform)).toBe(false);
-      expect(isTrustedSender({ ...APP_FRAME, url: FILE_URL.replace("index.html", "x%5c..%5cindex.html") }, PACKAGED, platform)).toBe(false);
+  for (const [name, frame, trusted] of rejected) {
+    test(`rejects ${name}`, () => {
+      expect(isTrustedSender(frame, trusted)).toBe(false);
     });
   }
-
-  test("the macOS app's renderer URL, which has no drive letter, is its renderer off Windows", () => {
-    const trusted: TrustedRenderer = { fileUrl: MAC_FILE_URL };
-    expect(isTrustedSender({ ...APP_FRAME, url: MAC_FILE_URL }, trusted, "darwin")).toBe(true);
-    expect(isTrustedSender({ ...APP_FRAME, url: MAC_FILE_URL }, trusted, "linux")).toBe(true);
-  });
-
-  test("on Windows a file URL without a drive letter is not an absolute path, so it is never the renderer", () => {
-    expect(isTrustedSender({ ...APP_FRAME, url: MAC_FILE_URL }, { fileUrl: MAC_FILE_URL }, "win32")).toBe(false);
-  });
-
-  test("on Windows the comparison ignores letter case; elsewhere it does not", () => {
-    const trusted: TrustedRenderer = { fileUrl: "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html" };
-    const frame: SenderFrame = { ...APP_FRAME, url: "file:///c:/program%20files/studio/Resources/app.asar/out-studio/renderer/index.html" };
-    expect(isTrustedSender(frame, trusted, "win32")).toBe(true);
-    expect(isTrustedSender(frame, trusted, "darwin")).toBe(false);
-  });
-
-  describe("on Windows only ASCII letters fold: a sign JavaScript lowercases to a letter is another name to NTFS", () => {
-    const rendererIn = (user: string) => `file:///C:/Users/${user}/AppData/Local/Programs/Studio/resources/app.asar/out-studio/renderer/index.html`;
-    const signs: [string, string, string][] = [
-      ["KELVIN SIGN (U+212A) is not k", "Nikita", "Ni%E2%84%AAita"],
-      ["ANGSTROM SIGN (U+212B) is not å", "H%C3%A5kon", "H%E2%84%ABkon"],
-      ["OHM SIGN (U+2126) is not ω", "%CF%89", "%E2%84%A6"],
-    ];
-    for (const [name, trusted, window] of signs) {
-      test(name, () => {
-        expect(isTrustedSender({ ...APP_FRAME, url: rendererIn(window) }, { fileUrl: rendererIn(trusted) }, "win32")).toBe(false);
-      });
-    }
-
-    test("an ASCII difference of case, in the drive letter or a folder, still matches", () => {
-      const window = rendererIn("NIKITA").replace("file:///C:/", "file:///c:/");
-      expect(isTrustedSender({ ...APP_FRAME, url: window }, { fileUrl: rendererIn("Nikita") }, "win32")).toBe(true);
-    });
-  });
 
   test("accepts any path on the dev server's origin in dev", () => {
     expect(isTrustedSender({ ...APP_FRAME, url: "http://localhost:5173/index.html#x" }, DEV)).toBe(true);
+  });
+
+  test('a URL with an opaque origin is never the dev server\'s, though a parser reads both origins as "null"', () => {
+    expect(isTrustedSender({ ...APP_FRAME, url: "evil://x/index.html" }, { devServerUrl: "studio-app://renderer/" })).toBe(false);
   });
 });
 
@@ -490,8 +439,8 @@ describe("media.pickImport routing", () => {
     const { routes, mediaImport, engine } = routesSpy();
     const frames: SenderFrame[] = [
       { url: "https://example.com/", isTopFrame: true, isAppWindow: true },
-      { url: FILE_URL, isTopFrame: false, isAppWindow: true },
-      { url: FILE_URL, isTopFrame: true, isAppWindow: false },
+      { url: APP_PAGE_URL, isTopFrame: false, isAppWindow: true },
+      { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: false },
       { url: null, isTopFrame: true, isAppWindow: true },
     ];
     for (const frame of frames) {
@@ -547,8 +496,8 @@ describe("stickers.bytes routing", () => {
     const frames: SenderFrame[] = [
       { url: "data:text/html,<p>x</p>", isTopFrame: true, isAppWindow: true },
       { url: "https://example.com/", isTopFrame: true, isAppWindow: true },
-      { url: FILE_URL, isTopFrame: false, isAppWindow: true },
-      { url: FILE_URL, isTopFrame: true, isAppWindow: false },
+      { url: APP_PAGE_URL, isTopFrame: false, isAppWindow: true },
+      { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: false },
       { url: null, isTopFrame: true, isAppWindow: true },
     ];
     for (const frame of frames) {
@@ -592,8 +541,8 @@ describe("media.stickerBytes routing", () => {
     const frames: SenderFrame[] = [
       { url: "data:text/html,<p>x</p>", isTopFrame: true, isAppWindow: true },
       { url: "https://example.com/", isTopFrame: true, isAppWindow: true },
-      { url: FILE_URL, isTopFrame: false, isAppWindow: true },
-      { url: FILE_URL, isTopFrame: true, isAppWindow: false },
+      { url: APP_PAGE_URL, isTopFrame: false, isAppWindow: true },
+      { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: false },
       { url: null, isTopFrame: true, isAppWindow: true },
     ];
     for (const frame of frames) {

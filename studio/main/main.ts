@@ -17,7 +17,6 @@ import {
 import { randomUUID } from "node:crypto";
 import { lstat, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import type { EventMessage, MediaPickKind } from "../shared/engine";
 import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
@@ -38,6 +37,7 @@ import { handleOwnStickerBytesCommand } from "./ownStickerBytesFlow";
 import { handleStickerBytesCommand } from "./stickerBytesFlow";
 import { createStickerAssets } from "../engine/videos/stickerAssets";
 import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES } from "./mediaProtocol";
+import { APP_PAGE_URL, APP_SCHEME, APP_SCHEME_PRIVILEGES, handleAppRequest } from "./appProtocol";
 import { HostNotices } from "./notices";
 import { appMenuTemplate } from "./appMenu";
 import { createQuitFlow, WINDOW_FLUSH_WAIT_MS } from "./quitFlow";
@@ -87,10 +87,15 @@ if (STUDIO_E2E) {
   }
 }
 
-// Must run before `ready`. The CSP is never bypassed: the renderer CSP allows the scheme in img-src and media-src.
-protocol.registerSchemesAsPrivileged([{ scheme: MEDIA_SCHEME, privileges: MEDIA_SCHEME_PRIVILEGES }]);
+// Must run before `ready`, once for every scheme. The CSP is never bypassed: the renderer CSP allows the media scheme in
+// img-src and media-src, and the app's own scheme is the page's origin, so 'self' (appProtocol.ts).
+protocol.registerSchemesAsPrivileged([
+  { scheme: MEDIA_SCHEME, privileges: MEDIA_SCHEME_PRIVILEGES },
+  { scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES },
+]);
 
-const RENDERER_FILE = join(import.meta.dirname, "../renderer/index.html");
+/** The renderer's build, inside app.asar when packaged: everything `studio-app://renderer/` serves, and nothing else. */
+const RENDERER_DIR = join(import.meta.dirname, "../renderer");
 // Inside app.asar when packaged; utilityProcess loads it from there.
 const ENGINE_ENTRY = join(import.meta.dirname, "../engine/main.js");
 /** In userData, next to the ledger: bodies of paid answers that could not be used, kept (redacted) as evidence. */
@@ -102,7 +107,7 @@ const MUSIC_DIR = "music";
 const TEXT_PREVIEW_DIR = "text";
 /** The built-in stickers: inside app.asar when packaged, next to `out-studio/` in the repo. */
 const STICKER_DIR = join(import.meta.dirname, "../../studio/assets/stickers");
-const TRUSTED: TrustedRenderer = { devServerUrl, fileUrl: pathToFileURL(RENDERER_FILE).href };
+const TRUSTED: TrustedRenderer = { devServerUrl };
 
 function isDevServer(url: string): boolean {
   return devServerUrl !== undefined && new URL(url).origin === new URL(devServerUrl).origin;
@@ -136,8 +141,9 @@ function createWindow(): void {
   win.webContents.on("will-navigate", (event) => {
     if (!isDevServer(event.url)) event.preventDefault();
   });
+  // Never a `file:` URL: on one the CSP's 'self' is every file on the disk, and the page could read any of them.
   if (devServerUrl) win.loadURL(devServerUrl);
-  else win.loadFile(RENDERER_FILE);
+  else win.loadURL(APP_PAGE_URL);
 }
 
 function senderFrameOf(event: IpcMainInvokeEvent | IpcMainEvent): SenderFrame {
@@ -247,6 +253,8 @@ async function pickMediaFiles(owner: BrowserWindow | null, kind: MediaPickKind):
 }
 
 async function startStudio(): Promise<void> {
+  // First, before anything awaits: no window may load the page before its scheme answers.
+  protocol.handle(APP_SCHEME, (request) => handleAppRequest(request, RENDERER_DIR));
   const userData = app.getPath("userData");
   const { store: settings, notice } = await SettingsStore.open(userData);
   if (notice !== null) console.warn(`studio: ${notice}`);
