@@ -501,6 +501,11 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     await openDraft(engine, client, { music: { source: "trending", trackId: "track-gone-000001", startMs: 0 } });
     selectBlock(/^Музыка:/);
     await within(props()).findByText("Трек из прежнего списка");
+    // The engine finds no such track: the reason, and ONE line saying where to pick another (review round 1: the old «выберите его снова во
+    // вкладке «Музыка»» hint is not said a second time under it).
+    await within(props()).findByText("Трека больше нет в Studio: видео с ним не соберётся. Замените трек.");
+    const lines = [...props().querySelectorAll(".ed-music-swap, .ed-props-note")].map((p) => plain(p.textContent));
+    expect(lines).toEqual(["Другой трек — во вкладке «Музыка» или «Мои»."]);
     fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Музыка»" }));
     expect(tab("Музыка").getAttribute("aria-selected")).toBe("true");
   });
