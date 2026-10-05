@@ -246,6 +246,28 @@ describe("the photos of a pending intent are held until recovery resolves it (st
     expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
   });
 
+  test("the folder hold is released only after the intents it guards hold their own photos: a render admitted while one is read finds them taken (round 3, M-1)", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    await recoverVideos({ library, exportRoot: null }, { libraryFs: unlistable });
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+
+    // The folder lists again; while the intent is being read, nothing it may name is free.
+    const seen: { during: number | null } = { during: null };
+    const watched = {
+      readdir: NODE_LIBRARY_READ_FS.readdir,
+      readFile: (...args: Parameters<typeof NODE_LIBRARY_READ_FS.readFile>) => {
+        if (args[0].includes(".pending")) seen.during = library.eligibleUnusedPhotos(w.avatar.id).length;
+        return NODE_LIBRARY_READ_FS.readFile(...args);
+      },
+    };
+    await recoverVideos({ library, exportRoot: null }, { libraryFs: watched });
+
+    expect(seen.during).toBe(0);
+    expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).not.toContain(w.photos[0]?.id);
+  });
+
   test("a disk call that TIMES OUT in the listing holds the avatar's photos before the run ends, so the avatars after it are not the only ones guarded (round 2, L4)", async () => {
     const w = world();
     await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));

@@ -347,9 +347,6 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
       };
       try {
         names = await lib.readdir(paths.pendingDir);
-        // The folder lists: whatever hold a failed listing made is over (the intents it holds are held one by one below). Only a FULL run knows the folder's whole
-        // content: a targeted settle skips the intents that are not its own, so it must not release a hold that guards them.
-        if (only === null) input.library.releasePendingPhotos(dirHold);
       } catch (error) {
         // A call that TIMED OUT ends the run (and the avatars after this one with it): the hold is made before it does.
         if (hasErrorCode(error, "ETIMEDOUT")) {
@@ -453,6 +450,11 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           await unreadable("unreadable", true);
         }
       }
+      // The folder listed and every intent in it now holds its own photos: whatever hold a failed listing made is over. Released only
+      // AFTER the intents above are held, never before: a render admitted between the two would find the photos free. Only a FULL run
+      // knows the folder's whole content: a targeted settle skips the intents that are not its own, so it must not release a hold that
+      // guards them. A run that throws above (a timeout) never gets here: the hold stays.
+      if (only === null) input.library.releasePendingPhotos(dirHold);
     }
     return loaded;
   }
