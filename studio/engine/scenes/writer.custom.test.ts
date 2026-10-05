@@ -112,7 +112,15 @@ describe("a refusal's feedback is bounded: the words are the model's own text, s
 
   test("at most REFUSAL_WORDS_MAX words are told, in the order they came", () => {
     const words = Array.from({ length: 30 }, (_, i) => `word${String.fromCharCode(97 + i)}`);
-    for (const told of quotedPerReason(writerRefusalText(refusal(words)))) expect(told).toEqual(words.slice(0, REFUSAL_WORDS_MAX));
+    for (const told of quotedPerReason(writerRefusalText(refusal(words)))) expect(told).toEqual(words.slice(0, 6));
+  });
+
+  test("a message built for 50 distinct offending words carries exactly 6 of them, whatever REFUSAL_WORDS_MAX is called", () => {
+    const words = Array.from({ length: 50 }, (_, i) => `offence${String(i).padStart(2, "0")}`);
+    const content = writerMessages([slot({ category: "home" })], refusal(words))[1]?.content ?? "";
+    const told = words.filter((word) => content.includes(`"${word}"`));
+    expect(told).toEqual(words.slice(0, 6));
+    expect(REFUSAL_WORDS_MAX).toBe(6);
   });
 
   test("a word is clipped to REFUSAL_WORD_BYTES_MAX UTF-8 bytes", () => {
@@ -148,12 +156,14 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   const label = "L".repeat(CATEGORY_LABEL_MAX);
   const snapshot: CategorySnapshot = { ref: CUSTOM, name: "я".repeat(40), label, style: "editorial" };
   /** What the reserve keeps clear of the ceiling: room for a field a later change adds to a slot or to a refusal. */
-  const MARGIN = 300;
-  const MARGIN_PRINTED = 368;
+  const MARGIN = 200;
+  const MARGIN_PRINTED = 241;
+  /** A 100-photo run's last chunk is slots 76..100: the widest indices a chunk can carry. */
+  const FIRST_INDEX = 100 - WRITER_CALL.slotsPerCall + 1;
 
   function worstSlots(textLength: number, text = "x"): PlanSlot[] {
     return Array.from({ length: WRITER_CALL.slotsPerCall }, (_, i) => ({
-      slotIndex: i + 1,
+      slotIndex: FIRST_INDEX + i,
       category: CUSTOM,
       location: text.repeat(textLength),
       timeOfDay: text.repeat(TIME_OF_DAY_MAX),
@@ -166,8 +176,14 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
     }));
   }
 
-  /** 40 distinct words in four spellings each, of the widest kinds: far more than the feedback tells. */
-  const hostileWords = Array.from({ length: 40 }, (_, i) => ["Я", "😀", "W", "é"].map((c) => `${c.repeat(30)}${i}`)).flat();
+  /**
+   * 160 distinct words, each exactly REFUSAL_WORD_BYTES_MAX bytes and distinct within them (the feedback clips a word before it
+   * tells it apart), of the four widest kinds: far more than the feedback tells, and the kinds interleaved.
+   */
+  const hostileWords = Array.from({ length: 40 }, (_, i) => {
+    const n = String(i).padStart(4, "0");
+    return [`${"W".repeat(12)}${n}`, `${"Я".repeat(6)}${n}`, `${"😀".repeat(3)}${n}`, `${"é".repeat(6)}${n}`];
+  }).flat();
 
   function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
     const indices = slots.map((s) => s.slotIndex);
@@ -185,6 +201,20 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   const floorOf = (slots: readonly PlanSlot[]): number =>
     promptTokenFloor({ messages: writerMessages(slots, worstRefusal(slots), categoryLabelOf([snapshot])), jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
   const CEILING = WRITER_CALL.inputTokens;
+
+  test("the worst refusal really carries the most the feedback can: exactly REFUSAL_WORDS_MAX distinct words of exactly REFUSAL_WORD_BYTES_MAX bytes, per reason", () => {
+    expect(new Set(hostileWords).size).toBe(hostileWords.length);
+    expect(hostileWords.every((w) => Buffer.byteLength(w, "utf8") === REFUSAL_WORD_BYTES_MAX)).toBe(true);
+    const text = writerRefusalText(worstRefusal(worstSlots(POOL_TEXT_MAX)));
+    const reasons = text.split("; ").filter((reason) => reason.includes("we do not allow"));
+    expect(reasons).toHaveLength(2);
+    for (const reason of reasons) {
+      const told = [...reason.matchAll(/"([^"]*)"/g)].map((m) => m[1] ?? "");
+      expect(told).toHaveLength(REFUSAL_WORDS_MAX);
+      expect(new Set(told).size).toBe(REFUSAL_WORDS_MAX);
+      for (const word of told) expect(Buffer.byteLength(word, "utf8")).toBe(REFUSAL_WORD_BYTES_MAX);
+    }
+  });
 
   test(`every text at POOL_TEXT_MAX, label at 24 chars, the worst refusal: the prompt floor stays at least ${MARGIN} tokens under the 14K ceiling (margin ${MARGIN_PRINTED})`, () => {
     expect(floorOf(worstSlots(POOL_TEXT_MAX))).toBeLessThanOrEqual(CEILING - MARGIN);
