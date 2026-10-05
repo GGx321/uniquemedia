@@ -61,11 +61,29 @@ describe("coversFrame", () => {
     expect(coversFrame(frame, { width: 200, height: 300 })).toBe(false);
   });
 
-  test("half a CSS pixel short is still covered (a band that thin is never seen); just past that is not", () => {
-    expect(coversFrame(frame, { width: 211.5, height: 224 })).toBe(true);
-    expect(coversFrame(frame, { width: 212, height: 223.5 })).toBe(true);
-    expect(coversFrame(frame, { width: 211.4, height: 224 })).toBe(false);
-    expect(coversFrame(frame, { width: 212, height: 223.4 })).toBe(false);
+  // A band of a few pixels round a print reads as a sizing bug, not a print: up to 5 % of a side (at least 8 px) short, the
+  // picture still fills the frame, stretched at most ~1.3× (the audit's threshold for artefacts) instead of 1.25×.
+  test("up to 5 % of a side short still counts as covered; just past it does not", () => {
+    const large = { width: 400, height: 400 };
+    expect(coversFrame(large, { width: 380, height: 400 })).toBe(true);
+    expect(coversFrame(large, { width: 400, height: 380 })).toBe(true);
+    expect(coversFrame(large, { width: 379.9, height: 400 })).toBe(false);
+    expect(coversFrame(large, { width: 400, height: 379.9 })).toBe(false);
+  });
+
+  test("on a small frame the slack is 8 px rather than 5 %", () => {
+    const small = { width: 100, height: 100 };
+    expect(coversFrame(small, { width: 92, height: 100 })).toBe(true);
+    expect(coversFrame(small, { width: 100, height: 92 })).toBe(true);
+    expect(coversFrame(small, { width: 91.9, height: 100 })).toBe(false);
+    expect(coversFrame(small, { width: 100, height: 91.9 })).toBe(false);
+  });
+
+  test("the cases the review measured: a master at 150 % fills its card; the same master at 200 % does not", () => {
+    // 246 × 281 at dpr 1.5 → 205 × 234.2 in a 212.4 × 224.4 card: 7.4 px short (3.5 %).
+    expect(coversFrame({ width: 212.4, height: 224.4 }, { width: 205, height: 234.17 })).toBe(true);
+    // At dpr 2 → 153.75 × 175.6: 58 px short.
+    expect(coversFrame({ width: 212.4, height: 224.4 }, { width: 153.75, height: 175.625 })).toBe(false);
   });
 
   test("no cap, or a frame not laid out yet, counts as covered", () => {
