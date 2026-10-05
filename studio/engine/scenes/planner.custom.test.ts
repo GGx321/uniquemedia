@@ -160,6 +160,26 @@ describe("custom categories draw on streams of their own (subSeed by ref)", () =
     }
   });
 
+  const asRow = (s: PlanSlot) => [s.location, s.timeOfDay, s.activity, s.outfit, s.shot, s.pose];
+
+  test("pins the draws of a custom category on its own streams: the first five slots for one seed are fixed", () => {
+    const p = planWithPools({ seed: 20261005, count: 5, categories: [CUSTOM_A], poses: { profile: true, back: true } }, POOLS_WITH_CUSTOM);
+    expect(p.slots.map(asRow)).toEqual([
+      ["a Paris bakery counter", "morning", "choosing a croissant", "a striped knit top and a midi skirt", "mirror", "front"],
+      ["a bridge over the Seine", "golden hour", "leaning on the railing", "a beige trench coat and jeans", "friend", "three-quarter"],
+      ["a tiny bookshop", "evening", "browsing a shelf", "a long cardigan and straight trousers", "friend", "front"],
+      ["a flower stall", "midday", "smelling a bouquet", "a long cardigan and straight trousers", "candid", "three-quarter"],
+      ["a corner cafe in Paris", "midday", "reading a menu", "a beige trench coat and jeans", "selfie", "three-quarter"],
+    ]);
+  });
+
+  test("a custom category does not draw from a built-in's stream: the same pool under home's name draws other slots", () => {
+    const input = { seed: 20261005, count: 5, poses: { profile: true, back: true } };
+    const custom = planWithPools({ ...input, categories: [CUSTOM_A] }, POOLS_WITH_CUSTOM).slots.map(asRow);
+    const underHome = planWithPools({ ...input, categories: ["home"] }, { ...POOLS, home: CUSTOM_POOL }).slots.map(asRow);
+    expect(custom).not.toEqual(underHome);
+  });
+
   test("a built-in category given the same slots draws the same ones whether or not custom categories are in the request", () => {
     const without = planWithPools({ seed: 77, count: 6, categories: ["home", "travel"] }, POOLS_WITH_CUSTOM);
     const withCustom = planWithPools({ seed: 77, count: 9, categories: ["home", "travel", CUSTOM_A] }, POOLS_WITH_CUSTOM);
@@ -180,8 +200,9 @@ describe("custom categories draw on streams of their own (subSeed by ref)", () =
   });
 
   test("a custom category is planned after the built-ins, in the order the request lists the custom ones", () => {
-    const p = planWithPools({ seed: 3, count: 8, categories: [CUSTOM_B, "fitness", CUSTOM_A, "home"] }, POOLS_WITH_CUSTOM);
-    expect(p.slots.map((s) => s.category)).toEqual(["home", "home", "fitness", "fitness", CUSTOM_B, CUSTOM_B, CUSTOM_A, CUSTOM_A]);
+    // CUSTOM_A sorts after CUSTOM_B alphabetically, so only the order given can put it first.
+    const p = planWithPools({ seed: 3, count: 8, categories: [CUSTOM_A, "fitness", CUSTOM_B, "home"] }, POOLS_WITH_CUSTOM);
+    expect(p.slots.map((s) => s.category)).toEqual(["home", "home", "fitness", "fitness", CUSTOM_A, CUSTOM_A, CUSTOM_B, CUSTOM_B]);
     expect(p.slots.map((s) => s.slotIndex)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
   });
 });
@@ -202,7 +223,7 @@ describe("the planner's split is the shared splitCount", () => {
   });
 
   test("the plan's category blocks follow orderCategories", () => {
-    const list: CategoryRef[] = ["fit", CUSTOM_B, "home", CUSTOM_A];
+    const list: CategoryRef[] = ["fit", CUSTOM_A, "home", CUSTOM_B];
     const blocks = [...new Set(planWithPools({ seed: 1, count: 8, categories: list.map(asPlanner) }, POOLS_WITH_CUSTOM).slots.map((s) => s.category))];
     expect(blocks).toEqual(orderCategories(list).map(asPlanner));
   });
