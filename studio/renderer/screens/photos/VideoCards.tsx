@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
 import type { ExportStatus, Montage, TrackSummary, VideoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { percentOf, renderPhase, rendersAhead } from "../../engine/renderJobs";
@@ -7,6 +7,7 @@ import { errorText } from "../../lib/errors";
 import { countOf, NBSP } from "../../lib/format";
 import { coverUrl, placeholderGradient, posterUrl } from "../../lib/media";
 import { Icon, PlayIcon, Spin } from "../../ui/Icon";
+import { cancelOnEscape, useConfirmFocus } from "../../ui/useConfirmFocus";
 import { useMediaRetry } from "../../ui/useMediaRetry";
 import { ClipPoster } from "../montage/ClipPoster";
 import { draftMeta, draftName, whenLabel } from "../montage/labels";
@@ -92,9 +93,23 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
         Изменить
       </button>
     );
+  // Slice review 5-M4: the confirmation keeps the keyboard's place (Settings' pattern): asked, the focus is on «Отмена»; cancelled, it goes back
+  // to the button that asked (the trash, or «Удалить запись», which is mounted again).
+  const focus = useConfirmFocus();
+  const trashRef = useRef<HTMLButtonElement>(null);
+  const recordRef = useRef<HTMLButtonElement>(null);
   const ask = (mode: "video" | "record"): void => {
+    if (asking !== null || busy) return;
     if (mode === "record" && view.recordDelete?.confirm === null) onDelete(video, "record");
-    else setAsking(mode);
+    else {
+      setAsking(mode);
+      focus.opened();
+    }
+  };
+  const cancel = (): void => {
+    const from = asking;
+    setAsking(null);
+    focus.moveTo(() => (from === "video" ? trashRef.current : recordRef.current));
   };
   const confirmText = asking === "video" ? deleteConfirmText(video.photoCount) : asking === "record" ? (view.recordDelete?.confirm ?? null) : null;
   return (
@@ -120,7 +135,7 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
             <span className="mono faint video-when">{whenLabel(video.createdAt, now)}</span>
           </div>
           {view.trash && (
-            <button type="button" className="ibtn video-trash" aria-label={`Удалить видео ${number}`} disabled={busy || asking !== null} onClick={() => ask("video")}>
+            <button ref={trashRef} type="button" className="ibtn video-trash" aria-label={`Удалить видео ${number}`} aria-disabled={busy || asking !== null} onClick={() => ask("video")}>
               <Icon name="trash" size={13} />
             </button>
           )}
@@ -132,12 +147,12 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
             <span role="alert" className="video-status video-confirm-text">
               {confirmText}
             </span>
-            <div className="video-actions">
+            <div className="video-actions" onKeyDown={(e) => cancelOnEscape(e, cancel, busy)}>
               <button type="button" className="btn btn-s btn-d" disabled={busy} onClick={() => onDelete(video, asking ?? "record")}>
                 {busy && <Spin />}
                 {asking === "video" ? "Удалить" : "Удалить запись"}
               </button>
-              <button type="button" className="btn btn-s" disabled={busy} onClick={() => setAsking(null)}>
+              <button ref={focus.cancelRef} type="button" className="btn btn-s" disabled={busy} onClick={cancel}>
                 Отмена
               </button>
             </div>
@@ -157,7 +172,7 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
                 </button>
               )}
               {view.recordDelete !== null && (
-                <button type="button" className="btn btn-s" disabled={busy} onClick={() => ask("record")}>
+                <button ref={recordRef} type="button" className="btn btn-s" disabled={busy} onClick={() => ask("record")}>
                   {busy && <Spin />}
                   Удалить запись
                 </button>

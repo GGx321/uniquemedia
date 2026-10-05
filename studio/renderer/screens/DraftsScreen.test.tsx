@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU } from "../../shared/engine";
 import { freePhotos, PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll, tick } from "../testing";
+import { callsOf, describeElement, flush, focusedLabel, runAll, tick } from "../testing";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, SOFIA, studio } from "./montage/screenKit";
 
 // 3d.2: the drafts screen (EditorEmpty.dc.html), where the sidebar's «Монтаж» leads.
@@ -158,6 +158,40 @@ describe("delete", () => {
     fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Удалить" }));
     await waitFor(() => expect(cards()).toHaveLength(0));
     expect(callsOf(engine, "montages.delete")).toHaveLength(1);
+  });
+
+  test("the keyboard (slice review 5-M4): asked, the focus is on «Отмена»; Escape and «Отмена» give it back to the trash; deleted, it lands on the list's heading", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, []);
+    await openDrafts();
+    const trash = (): HTMLElement => screen.getByRole("button", { name: "Удалить черновик Mia · без названия" });
+    const cancel = (): HTMLElement => within(screen.getByRole("alert")).getByRole("button", { name: "Отмена" });
+    // A key on the focused trash (the test DOM moves no focus on a click).
+    const ask = async (): Promise<void> => {
+      trash().focus();
+      fireEvent.click(trash());
+      await flush();
+    };
+
+    await ask();
+    expect(focusedLabel()).toBe(describeElement(cancel()));
+    // The trash stays in the tab order while the question is open; pressing it again asks nothing more.
+    expect(trash().hasAttribute("disabled")).toBe(false);
+    expect(trash().getAttribute("aria-disabled")).toBe("true");
+    fireEvent.keyDown(cancel(), { key: "Escape" });
+    await flush();
+    expect(screen.queryByRole("alert") === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    await ask();
+    fireEvent.click(cancel());
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    await ask();
+    fireEvent.click(within(screen.getByRole("alert")).getByRole("button", { name: "Удалить" }));
+    await waitFor(() => expect(cards()).toHaveLength(0));
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Черновики" })));
   });
 });
 

@@ -10,6 +10,7 @@ import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { cancelOnEscape, useConfirmFocus } from "../ui/useConfirmFocus";
 import { ClipPoster } from "./montage/ClipPoster";
 import { draftMeta, draftTitle, whenLabel } from "./montage/labels";
 import { photoProblems } from "./montage/renderBlock";
@@ -68,7 +69,22 @@ function cardNote(item: MontageListItem, photos: ReadonlyMap<string, PhotoSummar
   return null;
 }
 
-function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; avatar: AvatarSummary | null; photos: ReadonlyMap<string, PhotoSummary>; job: JobView | null; now: Date }) {
+function DraftCard({
+  item,
+  avatar,
+  photos,
+  job,
+  now,
+  onDeleted,
+}: {
+  item: MontageListItem;
+  avatar: AvatarSummary | null;
+  photos: ReadonlyMap<string, PhotoSummary>;
+  job: JobView | null;
+  now: Date;
+  /** The draft is deleted: its card goes with the next list, so the focus moves off it. */
+  onDeleted: () => void;
+}) {
   const { client } = useEngine();
   const navigate = useNavigate();
   const mounted = useMounted();
@@ -76,6 +92,20 @@ function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; 
   const [confirming, setConfirming] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<EngineError | null>(null);
+  // Slice review 5-M4: the confirmation keeps the keyboard's place (Settings' pattern).
+  const focus = useConfirmFocus();
+  const trashRef = useRef<HTMLButtonElement>(null);
+
+  function ask(): void {
+    if (confirming || deleting) return;
+    setConfirming(true);
+    focus.opened();
+  }
+
+  function cancel(): void {
+    setConfirming(false);
+    focus.moveTo(() => trashRef.current);
+  }
   const { montage } = item;
   const title = draftTitle(avatar?.name ?? null, montage.name);
   const note = cardNote(item, photos);
@@ -91,7 +121,10 @@ function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; 
     setDeleting(false);
     // Deleted: the list drops the card on its own (montage.changed removed refetches it).
     if (!reply.ok) setError(reply.error);
-    else setConfirming(false);
+    else {
+      setConfirming(false);
+      onDeleted();
+    }
   }
 
   return (
@@ -108,7 +141,8 @@ function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; 
             </h3>
             <span className="mono faint draft-when">{whenLabel(montage.updatedAt, now)}</span>
           </div>
-          <button type="button" className="ibtn draft-delete" aria-label={`Удалить черновик ${title}`} disabled={confirming || deleting} onClick={() => setConfirming(true)}>
+          {/* Asked already, it stays in the tab order (the focus comes back to it) and answers nothing more. */}
+          <button ref={trashRef} type="button" className="ibtn draft-delete" aria-label={`Удалить черновик ${title}`} aria-disabled={confirming || deleting} onClick={ask}>
             <Icon name="trash" size={13} />
           </button>
         </div>
@@ -136,7 +170,7 @@ function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; 
         {note !== null && <span className={note.warn ? "draft-note warn-text" : "draft-note draft-note-ok"}>{note.text}</span>}
         {error !== null && <ErrorNotice error={error} />}
         {confirming ? (
-          <div className="draft-confirm" role="alert">
+          <div className="draft-confirm" role="alert" onKeyDown={(e) => cancelOnEscape(e, cancel, deleting)}>
             <span>
               Удалить черновик?{" "}
               {job !== null ? "Рендер из него продолжится, видео сохранится." : "Видео из него останутся в «Готовых видео»."}
@@ -146,7 +180,7 @@ function DraftCard({ item, avatar, photos, job, now }: { item: MontageListItem; 
                 {deleting && <Spin />}
                 Удалить
               </button>
-              <button type="button" className="btn btn-s" disabled={deleting} onClick={() => setConfirming(false)}>
+              <button ref={focus.cancelRef} type="button" className="btn btn-s" disabled={deleting} onClick={cancel}>
                 Отмена
               </button>
             </div>
@@ -257,6 +291,7 @@ export function DraftsScreen({ lastAvatarId }: { lastAvatarId: string | null }) 
   const mounted = useMounted();
   const hintId = useId();
   const listId = useId();
+  const listHeading = useRef<HTMLHeadingElement>(null);
   const ready = view.phase === "ready";
   const [list, setList] = useState<DraftList | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
@@ -374,7 +409,8 @@ export function DraftsScreen({ lastAvatarId }: { lastAvatarId: string | null }) 
 
       <section className="drafts-list" aria-labelledby={listId} aria-busy={list === null && error === null}>
         <div className="drafts-list-head">
-          <h2 id={listId} className="card-title">
+          {/* A deleted draft's card takes the focus with it: the list's heading gets it (slice review 5-M4). */}
+          <h2 ref={listHeading} id={listId} className="card-title" tabIndex={-1}>
             Черновики
           </h2>
           <span className="mono muted">{list === null ? "…" : `${items.length} · сохраняются сами`}</span>
@@ -411,6 +447,7 @@ export function DraftsScreen({ lastAvatarId }: { lastAvatarId: string | null }) 
                   photos={list?.photos.get(item.montage.spec.avatarId) ?? new Map()}
                   job={activeRenderOf(view.jobs, item.montage.montageId)}
                   now={now}
+                  onDeleted={() => listHeading.current?.focus()}
                 />
               ))}
           <button type="button" className="drafts-new-tile" onClick={() => navigate({ name: "photos", avatarId: photosAvatar?.avatarId ?? null })}>

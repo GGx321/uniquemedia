@@ -219,6 +219,62 @@ describe("the «Видео» tab", () => {
     await waitFor(() => expect(screen.queryByRole("article", { name: "утро дома" }) === null).toBe(true));
   });
 
+  test("the keyboard (slice review 5-M4): asked, the focus is on «Отмена»; Escape and «Отмена» give it back to the trash; deleted, it lands on «Видео»", async () => {
+    const h = await openMia({ tab: "videos" });
+    await act(async () => {
+      await rendered(h, [scenePhoto(1).photoId, scenePhoto(2).photoId], "утро дома");
+    });
+    await screen.findByRole("article", { name: "утро дома" });
+    const trash = (): HTMLElement => within(card("утро дома")).getByRole("button", { name: /^Удалить видео / });
+    const cancel = (): HTMLElement => within(card("утро дома")).getByRole("button", { name: "Отмена" });
+    const ask = async (): Promise<void> => {
+      trash().focus();
+      fireEvent.click(trash());
+      await flush();
+    };
+
+    await ask();
+    expect(focusedLabel()).toBe(describeElement(cancel()));
+    expect(trash().hasAttribute("disabled")).toBe(false);
+    fireEvent.keyDown(cancel(), { key: "Escape" });
+    await flush();
+    expect(within(card("утро дома")).queryByRole("alert") === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    await ask();
+    fireEvent.click(cancel());
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    await ask();
+    fireEvent.click(within(card("утро дома")).getByRole("button", { name: "Удалить" }));
+    await waitFor(() => expect(screen.queryByRole("article", { name: "утро дома" }) === null).toBe(true));
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Видео" })));
+  });
+
+  test("the keyboard (slice review 5-M4): «Удалить запись» behind its confirmation gives the focus back to itself on Escape", async () => {
+    const h = await openMia({ tab: "videos" });
+    await act(async () => {
+      await rendered(h, [scenePhoto(1).photoId], "пляж");
+    });
+    h.engine.moveExportFolder();
+    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Видео" }));
+    await flush();
+    await screen.findByRole("article", { name: "пляж" });
+    const record = (): HTMLElement => within(card("пляж")).getByRole("button", { name: "Удалить запись" });
+    record().focus();
+    fireEvent.click(record());
+    await flush();
+    const cancel = within(card("пляж")).getByRole("button", { name: "Отмена" });
+    expect(focusedLabel()).toBe(describeElement(cancel));
+    fireEvent.keyDown(cancel, { key: "Escape" });
+    await flush();
+    expect(within(card("пляж")).queryByRole("alert") === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(record()));
+    expect(callsOf(h.engine, "videos.delete")).toHaveLength(0);
+  });
+
   test("a file deleted outside Studio: «Файл удалён», and «Удалить запись» at once frees the photos", async () => {
     const h = await openMia({ tab: "videos" });
     let videoId = "";

@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { ERROR_MESSAGES_RU, type MontageDraft, mediaReasonRu } from "../../shared/engine";
 import type { MockEngine, MockMediaPick } from "../engine/mockEngine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, flush } from "../testing";
+import { callsOf, describeElement, flush, focusedLabel } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, paidMusicCalls, studio as openStudio } from "./montage/screenKit";
 import { collageClip, photoClip } from "./montage/testkit";
@@ -324,6 +324,46 @@ describe("deleting a file", () => {
     fireEvent.click(within(within(media()).getByRole("alert")).getByRole("button", { name: "Отмена" }));
     expect(callsOf(engine, "media.delete")).toHaveLength(0);
     expect(within(section("Фото и видео")).getByRole("button", { name: /^Фото croissant/ })).toBeDefined();
+  });
+
+  test("the keyboard (slice review 5-M4): asked, the focus is on «Отмена»; Escape, «Отмена» and a refusal's «Понятно» give it back to the tile's trash; deleted, it lands on «Добавить файлы»", async () => {
+    const { client, engine } = await studio();
+    seed(engine);
+    await openMine(engine, client);
+    const trash = (): HTMLElement => within(section("Фото и видео")).getByRole("button", { name: "Удалить croissant.jpg" });
+    const confirm = (): HTMLElement => within(media()).getByRole("alert");
+    const ask = async (): Promise<void> => {
+      trash().focus();
+      fireEvent.click(trash());
+      await flush();
+    };
+
+    await ask();
+    expect(focusedLabel()).toBe(describeElement(within(confirm()).getByRole("button", { name: "Отмена" })));
+    fireEvent.keyDown(within(confirm()).getByRole("button", { name: "Отмена" }), { key: "Escape" });
+    await flush();
+    expect(within(media()).queryByRole("alert") === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    await ask();
+    fireEvent.click(within(confirm()).getByRole("button", { name: "Отмена" }));
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    engine.failNext("media.delete", { code: "IN_FLIGHT", detail: "a queued or running render uses this media" });
+    await ask();
+    fireEvent.click(within(confirm()).getByRole("button", { name: "Удалить" }));
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(within(confirm()).getByRole("button", { name: "Понятно" })));
+    fireEvent.click(within(confirm()).getByRole("button", { name: "Понятно" }));
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    await ask();
+    fireEvent.click(within(confirm()).getByRole("button", { name: "Удалить" }));
+    await flush();
+    expect(within(section("Фото и видео")).queryByRole("button", { name: "Удалить croissant.jpg" }) === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(within(media()).getByRole("button", { name: /^Добавить файлы/ })));
   });
 
   test("a file a render uses is refused honestly (IN_FLIGHT): nothing is deleted, and the tile stays", async () => {
