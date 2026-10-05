@@ -716,6 +716,42 @@ describe("a share that stops answering", () => {
     expect(outcome).toBe("errored");
   });
 
+  // Round 2, L-2: one gate for every route let a dead EXPORT share (videos) hold the slots the healthy local library (photos, posters) needs. Each root has its own.
+  describe("a dead export share does not starve the library", () => {
+    const gates = (): NonNullable<MediaDeps["gates"]> => ({
+      library: createDiskGate({ maxConcurrent: 2, deadlineMs: 60, maxQueued: 16 }),
+      export: createDiskGate({ maxConcurrent: 1, deadlineMs: 60, maxQueued: 16 }),
+      local: createDiskGate({ maxConcurrent: 1, deadlineMs: 60, maxQueued: 16 }),
+    });
+
+    test("videos that never answer fill the export gate (503 and 504), and photos from the library are served at once", async () => {
+      await commitVideo();
+      const stall = stalled();
+      const exportDead = countingFs({ beforeRealpath: (path) => (path.startsWith(w.exportRoot) ? stall.promise : Promise.resolve()) });
+      const shared = gates();
+      const videos = await Promise.all(Array.from({ length: 4 }, () => get(videoUrl(), {}, { gates: shared, fs: exportDead })));
+      expect(videos.map((r) => r.status).sort()).toEqual([503, 503, 503, 504]);
+      const started = Date.now();
+      const photos = await Promise.all(Array.from({ length: 6 }, () => get(photoUrl, {}, { gates: shared, fs: exportDead })));
+      expect(photos.map((r) => r.status)).toEqual([200, 200, 200, 200, 200, 200]);
+      expect(Date.now() - started).toBeLessThan(1000);
+      stall.release();
+    });
+
+    test("each route is on the gate of the root it reads: photo, poster and media on the library, video on the export folder, the rest on userData", async () => {
+      const used: string[] = [];
+      const tracking = (name: string): ReturnType<typeof createDiskGate> => {
+        const inner = createDiskGate({ maxConcurrent: 2, deadlineMs: 500, maxQueued: 16 });
+        return { get inFlight() { return inner.inFlight; }, get queued() { return inner.queued; }, run: (operation, signal) => { used.push(name); return inner.run(operation, signal); } };
+      };
+      const own = { library: tracking("library"), export: tracking("export"), local: tracking("local") };
+      for (const url of [photoUrl, `studio-media://poster/${AVATAR}/${VIDEO}`, "studio-media://media/media-0000001", videoUrl(), "studio-media://track/track-000001", "studio-media://cover/track-000001", "studio-media://text/preview-0001", "studio-media://sticker/none-such"]) {
+        await get(url, {}, { gates: own });
+      }
+      expect(used).toEqual(["library", "library", "library", "export", "local", "local", "local", "local"]);
+    });
+  });
+
   test("an aborted request that is still waiting for a slot never touches the disk", async () => {
     const stall = stalled();
     const gate = gateOf(1, 5000);

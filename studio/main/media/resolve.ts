@@ -36,6 +36,32 @@ export interface MediaDeps {
   fs?: MediaFsOps;
   /** Bounds the file work of a request: how many run at once, and for how long (diskGate.ts). The shared gate of the protocol by default. */
   gate?: DiskGate;
+  /** One gate per root (library, export folder, userData), so a dead share starves only its own routes; the protocol's shared ones by default. `gate` wins over it. */
+  gates?: MediaGates;
+}
+
+/** The roots a route reads, each with its own disk gate: a dead export share (videos) must not hold the slots the library (photos, posters) needs. */
+export interface MediaGates {
+  readonly library: DiskGate;
+  readonly export: DiskGate;
+  readonly local: DiskGate;
+}
+
+/** Which root's gate a route works under: the library for photos, posters and own media; the export folder for videos; userData for the rest. */
+export function gateKeyOf(route: MediaRoute): keyof MediaGates {
+  switch (route.route) {
+    case "photo":
+    case "poster":
+    case "media":
+      return "library";
+    case "video":
+      return "export";
+    case "track":
+    case "cover":
+    case "sticker":
+    case "text":
+      return "local";
+  }
 }
 
 export interface Served {
