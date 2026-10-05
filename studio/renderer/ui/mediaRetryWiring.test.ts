@@ -5,7 +5,15 @@ import { readFileSync } from "node:fs";
 // and covers are lazy, so a long list does not queue every poster ahead of other pictures (the library has two disk slots, mediaProtocol.ts).
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), "utf8");
-const COMPONENTS = ["./Portrait.tsx", "../screens/photos/PhotoViewer.tsx", "../screens/photos/VideoPlayer.tsx", "../screens/photos/VideoCards.tsx"] as const;
+// Portrait.tsx wires it once, in the PortraitPicture that both a library photo and an own photo from «Мои» draw through. The preview's own photo
+// (a cell's `<img>`, Preview.tsx) is wired as well.
+const COMPONENTS = [
+  "./Portrait.tsx",
+  "../screens/photos/PhotoViewer.tsx",
+  "../screens/photos/VideoPlayer.tsx",
+  "../screens/photos/VideoCards.tsx",
+  "../screens/montage/Preview.tsx",
+] as const;
 
 test.each(COMPONENTS.map((path) => [path] as const))("%s uses useMediaRetry, puts its key and onError on the element, and keeps no one-strike onError", (path) => {
   const source = read(path);

@@ -9,6 +9,7 @@ import { ownPhotoUrl, ownStickerUrl, photoUrl, placeholderGradient, stickerUrl }
 import { Icon, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
 import { useDevicePixelRatio } from "../../ui/useDevicePixelRatio";
+import { useMediaRetry } from "../../ui/useMediaRetry";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { captionLine, layerName, stickerName } from "./labels";
 import { type CellView, clipViewAt, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
@@ -752,10 +753,33 @@ function cellLabel(clipNumber: number, cellCount: number, cell: CellView): strin
 /** Whether a crop can move at all: the window is smaller than the picture on some axis (an own video already 9:16 fills the frame whole). */
 const cropMoves = (window: Rect, source: Size): boolean => window.w < source.w || window.h < source.h;
 
+/**
+ * A cell's own photo (3-H1) at its window. With no window (its record not read yet, or no longer in the library) or a picture that would not
+ * load, a stand-in (review r1 LOW-5). A failed load is asked for once more after a pause, as every `studio-media://` picture is (a busy or
+ * slow disk answers 503/504, useMediaRetry.ts); the stand-in covers the pause, so the errored picture is never drawn. The dev mock stores no
+ * picture: a placeholder at the window.
+ */
+function OwnPhotoPicture({ url, mediaId, window, source }: { url: string | null; mediaId: string; window: Rect | null; source: Size | null }) {
+  const retry = useMediaRetry(url);
+  if (window === null || source === null || retry.failed || retry.waiting) {
+    return (
+      <span className="pv-photo-standin" aria-hidden="true">
+        <Silhouette />
+      </span>
+    );
+  }
+  if (url === null) {
+    return (
+      <span className="pv-photo pv-photo-mock" style={{ ...pictureStyle(window, source), background: placeholderGradient(mediaId) }}>
+        <Silhouette />
+      </span>
+    );
+  }
+  return <img key={retry.key} className="pv-photo" src={url} alt="" draggable={false} style={pictureStyle(window, source)} onError={retry.onError} />;
+}
+
 function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
   const { content, window, source } = cell;
-  /** The picture that would not load: a stand-in shows instead (until another picture is asked for). */
-  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const classes = ["pv-cell", content.kind === "video" ? "pv-cell-video" : "", selected ? "pv-cell-on" : "", dropping ? "pv-cell-drop" : ""].filter(Boolean).join(" ");
   const style: CSSProperties = { ...boxStyle(cell.rect), opacity: cell.alphaPermille / 1000 };
   return (
@@ -796,20 +820,8 @@ function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, d
             </span>
           )
         ))}
-      {/* 3-H1: an own photo's window comes from its RECORD's size (the render's), so it is placed before its picture arrives. With no record
-          (not read yet, or no longer in the library) or a picture that would not load, the cell shows a stand-in (review r1 LOW-5). */}
-      {content.kind === "ownPhoto" &&
-        (window === null || source === null || (url !== null && failedUrl === url) ? (
-          <span className="pv-photo-standin" aria-hidden="true">
-            <Silhouette />
-          </span>
-        ) : url !== null ? (
-          <img className="pv-photo" src={url} alt="" draggable={false} style={pictureStyle(window, source)} onError={() => setFailedUrl(url)} />
-        ) : (
-          <span className="pv-photo pv-photo-mock" style={{ ...pictureStyle(window, source), background: placeholderGradient(content.mediaId) }}>
-            <Silhouette />
-          </span>
-        ))}
+      {/* 3-H1: an own photo's window comes from its RECORD's size (the render's), so it is placed before its picture arrives. */}
+      {content.kind === "ownPhoto" && <OwnPhotoPicture url={url} mediaId={content.mediaId} window={window} source={source} />}
       {content.kind === "empty" && (
         <span className="pv-empty">
           <Icon name="plus" size={16} />
