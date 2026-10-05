@@ -538,21 +538,30 @@ export class MediaService {
 
   #finish(jobId: string, mediaKind: MediaKind, name: string, end: End): void {
     const ref = { kind: "import" as const, jobId, mediaKind, name, mediaId: null };
+    let told: boolean;
     switch (end.status) {
       case "done": {
         const state = this.#deps.jobs.finishImport(jobId, { status: "done", result: { kind: "import", mediaId: end.media.mediaId, media: end.media } });
         if (state === null || state.kind !== "import" || state.result === undefined) return;
-        this.#event("job.done", { jobId, result: state.result });
-        return;
+        told = this.#event("job.done", { jobId, result: state.result });
+        break;
       }
       case "failed": {
         const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: end.reason, detail: end.detail };
-        if (this.#deps.jobs.finishImport(jobId, { status: "failed", error }) !== null) this.#event("job.failed", { ...ref, error });
-        return;
+        if (this.#deps.jobs.finishImport(jobId, { status: "failed", error }) === null) return;
+        told = this.#event("job.failed", { ...ref, error });
+        break;
       }
       case "cancelled":
-        if (this.#deps.jobs.finishImport(jobId, { status: "cancelled" }) !== null) this.#event("job.cancelled", ref);
-        return;
+        if (this.#deps.jobs.finishImport(jobId, { status: "cancelled" }) === null) return;
+        told = this.#event("job.cancelled", ref);
+        break;
+    }
+    // A terminal event that the log refused leaves no gap in the sequence (a refused event uses no seq), so a window would stay on «running» for ever. The fallback is the
+    // smallest event the contract is sure to take; the window then shows the job as ended, and its next snapshot says how.
+    if (!told) {
+      const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: "failed", detail: "the import ended but its result could not be reported" };
+      this.#event("job.failed", { ...ref, error });
     }
   }
 
@@ -600,11 +609,13 @@ export class MediaService {
    * Sends an event. A watcher is an observer: an event that cannot be sent (the log refused it, the schema did) is logged and never thrown, so that it cannot stop the
    * import that told it (L1 of the Stage 3 review: a throw between «took the turn» and the cleanup kept the turn for ever and blocked every later import and a library switch).
    */
-  #event<T extends UnsequencedEvent["type"]>(type: T, payload: Extract<UnsequencedEvent, { type: T }>["payload"]): void {
+  #event<T extends UnsequencedEvent["type"]>(type: T, payload: Extract<UnsequencedEvent, { type: T }>["payload"]): boolean {
     try {
       this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type, payload } as UnsequencedEvent);
+      return true;
     } catch (error) {
       this.#deps.log(`an event could not be sent (${type}, ${errorCodeOf(error)})`);
+      return false;
     }
   }
 }

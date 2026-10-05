@@ -1271,34 +1271,44 @@ describe("an event that cannot be sent never jams the queue (L1 of the Stage 3 r
     expect(r.jobs.activeImports()).toBe(0);
   });
 
-  test("the event that ends a job fails: the job is over all the same, the next one runs, and nothing is left unhandled", async () => {
-    const unhandled: unknown[] = [];
-    const listener = (reason: unknown): void => void unhandled.push(reason);
-    process.on("unhandledRejection", listener);
-    try {
-      await endsWithABrokenEvent(unhandled);
-    } finally {
-      process.off("unhandledRejection", listener);
+  /** Polls until `done` holds, so that a promise nobody awaits (a job's own run) is judged by what it did, not by what `settled` swallowed. */
+  async function until(done: () => boolean, ms = 2000): Promise<boolean> {
+    for (const start = Date.now(); Date.now() - start < ms; ) {
+      if (done()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 5));
     }
-  });
+    return done();
+  }
 
-  async function endsWithABrokenEvent(unhandled: unknown[]): Promise<void> {
+  test("the event that ends a job fails: it is logged, the job is over all the same, and the next one runs", async () => {
+    const lines: string[] = [];
     const r = rig({
+      log: (line) => lines.push(line),
       emit: (event) => {
         if (event.type === "job.done") throw broken();
       },
     });
     const a = await started(r, await callFor("a.jpg", jpeg(300)));
-    expect(await within(r.service.settled())).not.toBe("timed out");
+    expect(await until(() => r.jobs.stateOf(a)?.status === "done" && r.jobs.activeImports() === 0)).toBe(true);
+    // The throw was caught where it was thrown: it is in the log, and it did not end the job's own run in a rejection.
+    expect(lines.some((line) => line.includes("an event could not be sent (job.done"))).toBe(true);
     const b = await started(r, await callFor("b.jpg", jpeg(310)));
-    expect(await within(r.service.settled())).not.toBe("timed out");
-    expect(r.jobs.stateOf(a)).toMatchObject({ status: "done" });
-    expect(r.jobs.stateOf(b)).toMatchObject({ status: "done" });
-    expect(r.jobs.activeImports()).toBe(0);
-    // Let a rejection that nobody handles surface.
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    expect(unhandled).toEqual([]);
-  }
+    expect(await until(() => r.jobs.stateOf(b)?.status === "done" && r.jobs.activeImports() === 0)).toBe(true);
+  });
+
+  test("a terminal event that cannot be sent is replaced by a minimal job.failed, so the window does not stay on «running»", async () => {
+    const r = rig({
+      emit: (event) => {
+        if (event.type === "job.done" && event.payload.jobId !== undefined) throw broken();
+        r.events.push(event);
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    expect(await until(() => r.jobs.stateOf(a)?.status === "done")).toBe(true);
+    const told = r.events.filter((event) => event.type === "job.failed" && event.payload.jobId === a);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ payload: { error: { code: "MEDIA_UNSUPPORTED", mediaReason: "failed" } } });
+  });
 });
 
 describe("a full queue (the review's queue items)", () => {
