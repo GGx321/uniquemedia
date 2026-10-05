@@ -356,44 +356,61 @@ describe("deleting a file", () => {
     expect(within(section("Фото и видео")).getByRole("button", { name: /^Фото croissant/ })).toBeDefined();
   });
 
-  test("the keyboard (slice review 5-M4): asked, the focus is on «Отмена»; Escape, «Отмена» and a refusal's «Понятно» give it back to the tile's trash; deleted, it lands on «Добавить файлы»", async () => {
-    const { client, engine } = await studio();
-    seed(engine);
-    await openMine(engine, client);
+  // Slice review 5-M4. Review r1 LOW-9: these once ran as one test of four rounds, each asking the whole editor for roles by name, and it ran past
+  // Bun's 5 s under load; each round is its own test now, and the confirmation and its buttons are found inside the confirmation only.
+  describe("the keyboard (slice review 5-M4)", () => {
+    async function openTab(): Promise<MockEngine> {
+      const { client, engine } = await studio();
+      seed(engine);
+      await openMine(engine, client);
+      return engine;
+    }
     const trash = (): HTMLElement => within(section("Фото и видео")).getByRole("button", { name: "Удалить croissant.jpg" });
-    const confirm = (): HTMLElement => within(media()).getByRole("alert");
+    const confirm = (): HTMLElement => document.querySelector<HTMLElement>(".mine-confirm") ?? document.body;
+    const inConfirm = (name: string): HTMLElement => within(confirm()).getByRole("button", { name });
+    const dropZone = (): HTMLElement => document.querySelector<HTMLElement>(".mine > button.drop") ?? document.body;
     const ask = async (): Promise<void> => {
-      trash().focus();
-      fireEvent.click(trash());
+      const button = trash();
+      button.focus();
+      fireEvent.click(button);
       await flush();
     };
 
-    await ask();
-    expect(focusedLabel()).toBe(describeElement(within(confirm()).getByRole("button", { name: "Отмена" })));
-    fireEvent.keyDown(within(confirm()).getByRole("button", { name: "Отмена" }), { key: "Escape" });
-    await flush();
-    expect(within(media()).queryByRole("alert") === null).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(trash()));
+    test("asked, the focus is on «Отмена»; Escape and «Отмена» give it back to the tile's trash", async () => {
+      await openTab();
+      await ask();
+      expect(focusedLabel()).toBe(describeElement(inConfirm("Отмена")));
+      fireEvent.keyDown(inConfirm("Отмена"), { key: "Escape" });
+      await flush();
+      expect(document.querySelector(".mine-confirm") === null).toBe(true);
+      expect(focusedLabel()).toBe(describeElement(trash()));
 
-    await ask();
-    fireEvent.click(within(confirm()).getByRole("button", { name: "Отмена" }));
-    await flush();
-    expect(focusedLabel()).toBe(describeElement(trash()));
+      await ask();
+      fireEvent.click(inConfirm("Отмена"));
+      await flush();
+      expect(focusedLabel()).toBe(describeElement(trash()));
+    });
 
-    engine.failNext("media.delete", { code: "IN_FLIGHT", detail: "a queued or running render uses this media" });
-    await ask();
-    fireEvent.click(within(confirm()).getByRole("button", { name: "Удалить" }));
-    await flush();
-    expect(focusedLabel()).toBe(describeElement(within(confirm()).getByRole("button", { name: "Понятно" })));
-    fireEvent.click(within(confirm()).getByRole("button", { name: "Понятно" }));
-    await flush();
-    expect(focusedLabel()).toBe(describeElement(trash()));
+    test("a refusal's «Понятно» takes the focus, and gives it back to the trash", async () => {
+      const engine = await openTab();
+      engine.failNext("media.delete", { code: "IN_FLIGHT", detail: "a queued or running render uses this media" });
+      await ask();
+      fireEvent.click(inConfirm("Удалить"));
+      await flush();
+      expect(focusedLabel()).toBe(describeElement(inConfirm("Понятно")));
+      fireEvent.click(inConfirm("Понятно"));
+      await flush();
+      expect(focusedLabel()).toBe(describeElement(trash()));
+    });
 
-    await ask();
-    fireEvent.click(within(confirm()).getByRole("button", { name: "Удалить" }));
-    await flush();
-    expect(within(section("Фото и видео")).queryByRole("button", { name: "Удалить croissant.jpg" }) === null).toBe(true);
-    expect(focusedLabel()).toBe(describeElement(within(media()).getByRole("button", { name: /^Добавить файлы/ })));
+    test("deleted, the focus lands on «Добавить файлы»", async () => {
+      await openTab();
+      await ask();
+      fireEvent.click(inConfirm("Удалить"));
+      await flush();
+      expect(within(section("Фото и видео")).queryByRole("button", { name: "Удалить croissant.jpg" }) === null).toBe(true);
+      expect(focusedLabel()).toBe(describeElement(dropZone()));
+    });
   });
 
   test("a file a render uses is refused honestly (IN_FLIGHT): nothing is deleted, and the tile stays", async () => {
