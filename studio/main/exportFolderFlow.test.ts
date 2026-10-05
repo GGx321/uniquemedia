@@ -168,6 +168,56 @@ describe("settings.setExportPath: a pick the engine accepts", () => {
   });
 });
 
+// Stage 3 whole-slice review I1 (invariant 34, K29): an error's `detail` goes to the window, and it never names a path. A failed write of settings.json carries the
+// file's absolute path (with the user's name in it) in its own message; the answer says what failed and the error's code, and nothing else of it.
+describe("settings.setExportPath: the settings cannot be saved", () => {
+  const failing = (message: string, code?: string): Error => Object.assign(new Error(message), code === undefined ? {} : { code });
+
+  async function saveFailure(error: unknown): Promise<ResponseMessage> {
+    const h = await harness({ pick: join(userData, "Reels") });
+    h.store.save = async () => {
+      throw error;
+    };
+    return handleExportFolderCommand(command("settings.setExportPath"), h.deps);
+  }
+
+  test("the detail names no path: not the settings file's, and not the user's folder", async () => {
+    const response = await saveFailure(failing("EACCES: permission denied, open '/Users/alex/Library/Application Support/Studio/settings.json.tmp'", "EACCES"));
+    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    const detail = response.ok ? "" : response.error.detail;
+    expect(detail).not.toContain("/Users/alex");
+    expect(detail).not.toContain("settings.json");
+    expect(detail).not.toContain("alex");
+    expect(detail).not.toMatch(/[\\/]/);
+  });
+
+  test("it says what failed and the error's own code, so a person can search for it", async () => {
+    const response = await saveFailure(failing("ENOSPC: no space left on device, write 'C:\\Users\\alex\\AppData\\settings.json'", "ENOSPC"));
+    expect(response.ok ? "" : response.error.detail).toBe("the settings could not be saved (ENOSPC)");
+  });
+
+  test.each([
+    ["an error with no code", failing("boom at /home/alex/x")],
+    ["a code that is not a plain code (it could carry anything)", failing("x", "open '/home/alex/x'")],
+    ["a thrown string", "/home/alex/x failed"],
+    ["a thrown object", { message: "/home/alex/x" }],
+  ])("%s gives a neutral detail with no text of the error", async (_label, error) => {
+    const response = await saveFailure(error);
+    expect(response.ok ? "" : response.error.detail).toBe("the settings could not be saved");
+  });
+
+  test("a failed save changes nothing: the path stays the old one and the engine is not told", async () => {
+    const h = await harness({ pick: join(userData, "Reels") });
+    const before = h.store.current.exportPath;
+    h.store.save = async () => {
+      throw failing("EIO", "EIO");
+    };
+    await handleExportFolderCommand(command("settings.setExportPath"), h.deps);
+    expect(h.store.current.exportPath).toBe(before);
+    expect(h.sent).toEqual([]);
+  });
+});
+
 describe("settings.setExportPath: a pick the engine refuses", () => {
   test.each(["missing", "not-a-directory", "not-writable", "overlaps-library", "invalid-marker", "invalid-marker-with-records", "newer-marker"] as const)(
     "%s is answered with EXPORT_UNAVAILABLE and its reason, and nothing is saved or sent",

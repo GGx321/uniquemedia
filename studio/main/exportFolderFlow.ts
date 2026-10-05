@@ -45,11 +45,11 @@ export interface ExportFolderFlowDeps extends ReportedSettingsDeps {
   platform: NodeJS.Platform;
 }
 
-const MAX_DETAIL = 500;
-
-function describe(error: unknown): string {
-  const text = error instanceof Error ? error.message : String(error);
-  return text.length <= MAX_DETAIL ? text : `${text.slice(0, MAX_DETAIL - 1)}…`;
+/** A system error's code (`EACCES`, `ENOSPC`) when it is a plain one, else null. The code, never the error's message: that carries the file's absolute path (invariant 34, K29). */
+function errorCodeOf(error: unknown): string | null {
+  if (typeof error !== "object" || error === null || !("code" in error)) return null;
+  const code: unknown = error.code;
+  return typeof code === "string" && /^[A-Z][A-Z0-9_]{1,31}$/.test(code) ? code : null;
 }
 
 /**
@@ -81,7 +81,9 @@ async function setExportPath(command: Extract<ExportFolderCommand, { type: "sett
   try {
     await deps.settings.save({ ...deps.settings.current, exportPath: path.data });
   } catch (error) {
-    return errorResponseFor(command, { code: "INTERNAL", detail: `the settings could not be saved: ${describe(error)}` });
+    // Fixed words and the error's code: a write error's own text names the settings file, so it never reaches the window.
+    const code = errorCodeOf(error);
+    return errorResponseFor(command, { code: "INTERNAL", detail: code === null ? "the settings could not be saved" : `the settings could not be saved (${code})` });
   }
   deps.engine.send({ kind: "control", type: "settings.update", settings: deps.settings.current });
   const settings = await reportedSettings(deps);
