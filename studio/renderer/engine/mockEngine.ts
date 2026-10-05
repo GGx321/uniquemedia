@@ -141,7 +141,7 @@ type RunCategory = RunRequest["categories"][number];
  * 1K); a slot's worst case is every one of its paid attempts
  * (the real engine's RUN_ATTEMPTS_PER_SLOT); the scene writer's expected
  * share per photo and its worst case per chunk of photos it writes at once.
- * With the Photos mockup's own numbers: 20 photos are ≈ $1.01, до $3.07.
+ * With the Photos mockup's own numbers: 20 photos are ≈ $1.01, up to $3.07.
  */
 export const MOCK_RUN_IMAGE = 50_000;
 export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
