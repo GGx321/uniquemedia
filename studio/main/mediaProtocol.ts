@@ -41,9 +41,9 @@ function unavailable(status: 503 | 504, extra: Record<string, string>): Response
 
 /**
  * One gate per root, so a dead share starves only its own routes: a video on a dead export share holds the export gate and nothing else, and the photos of
- * the healthy library keep being served. The slots add up to libuv's four threads in the worst case, but not in a realistic one: the library takes two, the
- * export folder one (a video is read one chunk at a time), userData one, and userData is the app's own local folder, which does not stall. A dead library
- * and a dead export share together hold three, and main's own file work (settings, keys, the app's assets) still has one. A request has ten seconds from its
+ * the healthy library keep being served. The library takes two slots, the export
+ * folder one (a video is read one chunk at a time), userData one, and userData is the app's own local folder, which does not stall. All of them held at once
+ * are four threads of the eight libuv has here (threadPool.ts), so main's own work (settings, keys, DNS, crypto, the app's assets) keeps at least four. A request has ten seconds from its
  * ask, waiting included: a sleeping disk or a NAS waking up answers well inside that, a dead share does not. 64 may wait per gate; a longer queue means the
  * page asked for far more than it can show, and the rest are told to come back (the renderer asks once more, ui/useMediaRetry.ts).
  */
@@ -51,7 +51,13 @@ export const MEDIA_DISK_SLOTS = { library: 2, export: 1, local: 1 } as const;
 export const MEDIA_DISK_DEADLINE_MS = 10_000;
 const MEDIA_DISK_MAX_QUEUED = 64;
 const gateOf = (maxConcurrent: number): DiskGate => createDiskGate({ maxConcurrent, deadlineMs: MEDIA_DISK_DEADLINE_MS, maxQueued: MEDIA_DISK_MAX_QUEUED });
-const SHARED_GATES: MediaGates = { library: gateOf(MEDIA_DISK_SLOTS.library), export: gateOf(MEDIA_DISK_SLOTS.export), local: gateOf(MEDIA_DISK_SLOTS.local) };
+/** Three gates, one per root, sized by `MEDIA_DISK_SLOTS`. */
+export function createMediaGates(): MediaGates {
+  return { library: gateOf(MEDIA_DISK_SLOTS.library), export: gateOf(MEDIA_DISK_SLOTS.export), local: gateOf(MEDIA_DISK_SLOTS.local) };
+}
+
+/** The gates the protocol really runs on (a test that injects its own `gates` does not see them): three objects, one per root. */
+export const SHARED_MEDIA_GATES: MediaGates = createMediaGates();
 
 /**
  * The `protocol.handle` handler for `studio-media://` (invariant 28). The URL is parsed to a route and its ids
@@ -64,7 +70,7 @@ export async function handleMediaRequest(request: MediaRequest, deps: MediaDeps)
   if (request.method !== "GET") return notFound();
   const route = parseMediaRoute(request.url);
   if (route === null) return notFound();
-  const gate = deps.gate ?? (deps.gates ?? SHARED_GATES)[gateKeyOf(route)];
+  const gate = deps.gate ?? (deps.gates ?? SHARED_MEDIA_GATES)[gateKeyOf(route)];
   const signal = request.signal;
   try {
     // The route's disk work (the record, the root marker, every step of the path) is ONE gated operation, and so is every chunk read below: a share that

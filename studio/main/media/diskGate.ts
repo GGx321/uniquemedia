@@ -1,9 +1,9 @@
 // A bound on the file work `studio-media://` does in main (Stage 3 whole-slice review L5).
 //
-// Every `lstat`, `realpath`, `open` and `read` of a served file runs on one of libuv's four worker threads, shared with ALL the file work main does: settings.json,
-// the key stores, the app's own assets over `studio-app://`. A library or export folder on a share that stops answering (a NAS, a sleeping disk: the plan allows
-// both, `D:\Reels` and `/Volumes/...`) ties a thread up per request until the share gives up, and a grid of photos asks for many at once. With four threads held,
-// main's own file work waits behind them and the window freezes.
+// Every `lstat`, `realpath`, `open` and `read` of a served file runs on one of libuv's worker threads (eight here, threadPool.ts; four by default), shared with ALL
+// the file, DNS and crypto work main does: settings.json, the key stores, the app's own assets over `studio-app://`. A library or export folder on a share that
+// stops answering (a NAS, a sleeping disk: the plan allows both, `D:\Reels` and `/Volumes/...`) ties a thread up per request until the share gives up, and a grid
+// of photos asks for many at once. With every thread held, main's own work waits behind them and the window freezes.
 //
 // So the media protocol's file work goes through this gate:
 //   - at most `maxConcurrent` operations are in flight, the rest wait (at most `maxQueued` of them: a longer queue is answered `busy` at once);
@@ -26,7 +26,7 @@ export class DiskGateError extends Error {
 }
 
 export interface DiskGateOptions {
-  /** Operations in flight at once. libuv has four threads and main needs some of them: 2 leaves the rest. */
+  /** Operations in flight at once on this gate. The gates of all the roots together must leave main its reserve of the pool (mediaProtocol.ts, threadPool.ts). */
   readonly maxConcurrent: number;
   /** From the request's ask to its answer, queue wait included. */
   readonly deadlineMs: number;
