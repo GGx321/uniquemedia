@@ -1,6 +1,7 @@
 import type { MediaSummary, MontageDraft } from "../../../shared/engine";
 import { ownVideoIssues } from "../../../shared/montage";
 import type { EngineClient } from "../../engine/client";
+import type { EngineStore } from "../../engine/store";
 import { sameJson } from "./json";
 import { type MediaRecords, useMediaRecords } from "./ownMedia";
 import type { EngineVerdict } from "./renderBlock";
@@ -50,8 +51,8 @@ export function videoLookup(videos: OwnVideos, mediaId: string): VideoLookup {
 }
 
 /** The own videos the draft's clips play, by media id: asked by id, followed by `media.changed`. */
-export function useOwnVideos(client: Pick<EngineClient, "request" | "subscribe">, mediaIds: readonly string[]): OwnVideos {
-  return useMediaRecords(client, "video", mediaIds, ownVideoOf);
+export function useOwnVideos(client: Pick<EngineClient, "request">, mediaIds: readonly string[], store: Pick<EngineStore, "subscribeMedia">): OwnVideos {
+  return useMediaRecords(client, "video", mediaIds, ownVideoOf, store);
 }
 
 const VIDEO_PROBLEMS: ReadonlySet<string> = new Set<VideoProblem>(["media-unavailable", "video-too-short"]);

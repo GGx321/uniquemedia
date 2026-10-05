@@ -4,6 +4,7 @@ import type { CommandPayload, CommandType, MediaSummary, MontageDraft, MontageIs
 import type { EngineClient, EngineReply } from "../../engine/client";
 import { MockEngine, mockEngineClient } from "../../engine/mockEngine";
 import { ManualScheduler } from "../../engine/scheduler";
+import type { EngineStore } from "../../engine/store";
 import { NO_RECORDS, applyRecordsChange } from "./ownMedia";
 import { ownVideoOf, type OwnVideos, useOwnVideos, videoLookup, videoProblems } from "./ownVideos";
 import { draftSpec, photoClip, videoClip } from "./testkit";
@@ -132,15 +133,17 @@ describe("useOwnVideos", () => {
       },
       subscribe: (listener) => real.subscribe(listener),
     };
-    return { client, asked, failures };
+    // The store's media signals, as the mock's `media.changed` events make them (this test has no gaps to resync from).
+    const store: Pick<EngineStore, "subscribeMedia"> = { subscribeMedia: (listener) => real.subscribe((event) => (event.type === "media.changed" ? listener(event.payload) : undefined)) };
+    return { client, store, asked, failures };
   }
 
   const DEMO = "media-demo-0002";
   const lists = (asked: readonly Asked[]): unknown[] => asked.filter((a) => a.type === "media.list").map((a) => a.payload);
 
   test("asks for the videos the clips play by id, once each, of the video kind; one the library lacks is gone", async () => {
-    const { client, asked } = watched();
-    const { result } = renderHook(() => useOwnVideos(client, [DEMO, "media-00000404", DEMO]));
+    const { client, store, asked } = watched();
+    const { result } = renderHook(() => useOwnVideos(client, [DEMO, "media-00000404", DEMO], store));
     await waitFor(() => expect(videoLookup(result.current, DEMO).state).toBe("known"));
     expect(lists(asked)).toEqual([{ kind: "video", mediaIds: ["media-00000404", DEMO] }]);
     expect(videoLookup(result.current, DEMO)).toEqual({ state: "known", video: { mediaId: DEMO, name: "demo-clip.mov", width: 1_080, height: 608, durationMs: 14_000, sourceFps: 29.97, hdrToSdr: false } });
@@ -148,19 +151,19 @@ describe("useOwnVideos", () => {
   });
 
   test("asks nothing while the draft plays no own video", async () => {
-    const { client, asked } = watched();
-    renderHook(() => useOwnVideos(client, []));
+    const { client, store, asked } = watched();
+    renderHook(() => useOwnVideos(client, [], store));
     await act(async () => undefined);
     expect(lists(asked)).toEqual([]);
   });
 
   test("a list that cannot be read leaves every video unknown, never gone, and raises nothing", async () => {
-    const { client, asked, failures } = watched({ fail: true });
+    const { client, store, asked, failures } = watched({ fail: true });
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
     try {
-      const { result } = renderHook(() => useOwnVideos(client, [DEMO]));
+      const { result } = renderHook(() => useOwnVideos(client, [DEMO], store));
       await waitFor(() => expect(lists(asked)).toHaveLength(1));
       // The list fails now; awaiting our handler's result lets the hook's, queued with it, run first.
       await act(async () => {
@@ -175,8 +178,8 @@ describe("useOwnVideos", () => {
   });
 
   test("a video deleted afterwards is gone (media.changed), with no second list", async () => {
-    const { client, asked } = watched();
-    const { result } = renderHook(() => useOwnVideos(client, [DEMO]));
+    const { client, store, asked } = watched();
+    const { result } = renderHook(() => useOwnVideos(client, [DEMO], store));
     await waitFor(() => expect(videoLookup(result.current, DEMO).state).toBe("known"));
     await act(async () => {
       await client.request("media.delete", { mediaId: DEMO });

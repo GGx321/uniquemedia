@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import type { MediaKind, MediaSummary, MontageDraft } from "../../../shared/engine";
 import { ownPhotoCells, ownStickerCells, ownVideoClips } from "../../../shared/montage";
 import type { EngineClient } from "../../engine/client";
+import type { EngineStore } from "../../engine/store";
 
 // The editor's picture of the owner's own files its draft names (3f.5 for stickers, 3f.3b for videos): the records it needs, asked for BY ID
 // (`media.list {kind, mediaIds}`, so a file older than the 500 newest the plain listing holds is still found) and kept current by `media.changed`.
@@ -56,17 +57,20 @@ export function applyRecordsChange<T extends { readonly mediaId: string }>(recor
 }
 
 /**
- * The records of kind `kind` the draft names (`mediaIds`), asked by id and followed by `media.changed`. Nothing is held or answered until the answer
- * arrives, nor when it cannot be had (a refused or failed list): every id is then unknown. Nothing is asked while the draft names none; the ids are asked
- * in sorted order, each once, so the same set in another order is not another question. `viewOf` must be a stable function (a module's own).
+ * The records of kind `kind` the draft names (`mediaIds`), asked by id and followed by the store's `media.changed`, asked for again on its `resynced`. Nothing is
+ * held or answered until the answer arrives, nor when it cannot be had (a refused or failed list): every id is then unknown. Nothing is asked while the draft names
+ * none; the ids are asked in sorted order, each once, so the same set in another order is not another question. `viewOf` must be a stable function (a module's own).
  */
 export function useMediaRecords<T extends { readonly mediaId: string }>(
-  client: Pick<EngineClient, "request" | "subscribe">,
+  client: Pick<EngineClient, "request">,
   kind: MediaKind,
   mediaIds: readonly string[],
   viewOf: (summary: MediaSummary) => T | null,
+  store: Pick<EngineStore, "subscribeMedia">,
 ): MediaRecords<T> {
   const [records, setRecords] = useState<MediaRecords<T>>(NO_RECORDS);
+  // Bumped when the store resyncs: the effect then lists the records again.
+  const [attempt, setAttempt] = useState(0);
   const key = [...new Set(mediaIds)].sort().join("\n");
   useEffect(() => {
     let alive = true;
@@ -81,10 +85,14 @@ export function useMediaRecords<T extends { readonly mediaId: string }>(
       for (const change of early.splice(0)) next = applyRecordsChange(next, change, viewOf);
       setRecords(next);
     };
-    const unsubscribe = client.subscribe((event) => {
-      if (event.type !== "media.changed") return;
-      if (!listed) early.push(event.payload);
-      else if (alive) setRecords((current) => applyRecordsChange(current, event.payload, viewOf));
+    const unsubscribe = store.subscribeMedia((signal) => {
+      if (!alive) return;
+      if (signal.change === "resynced") {
+        setAttempt((n) => n + 1);
+        return;
+      }
+      if (!listed) early.push(signal);
+      else setRecords((current) => applyRecordsChange(current, signal, viewOf));
     });
     if (ids.length > 0) {
       void client.request("media.list", { kind, mediaIds: ids }).then(
@@ -108,6 +116,6 @@ export function useMediaRecords<T extends { readonly mediaId: string }>(
       alive = false;
       unsubscribe();
     };
-  }, [client, key, kind, viewOf]);
+  }, [client, store, key, kind, viewOf, attempt]);
   return records;
 }

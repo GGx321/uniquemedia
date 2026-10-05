@@ -1,5 +1,6 @@
 import type { MediaSummary } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
+import type { EngineStore } from "../../engine/store";
 import { useMediaRecords } from "./ownMedia";
 
 // The editor's picture of the owner's own stickers (Stage 3, 3f.5): what the preview needs of each to draw it: its canvas (the box is sized from it),
@@ -30,6 +31,6 @@ export function ownStickerOf(summary: MediaSummary): OwnSticker | null {
  * own sticker the layer names then has no record to draw from, and its place is shown with nothing in it (as a sticker gone from the set is). Nothing
  * is asked while the draft names none; the ids are asked in sorted order, each once, so the same set in another order is not another question.
  */
-export function useOwnStickers(client: Pick<EngineClient, "request" | "subscribe">, mediaIds: readonly string[]): ReadonlyMap<string, OwnSticker> {
-  return useMediaRecords(client, "sticker", mediaIds, ownStickerOf).held;
+export function useOwnStickers(client: Pick<EngineClient, "request">, mediaIds: readonly string[], store: Pick<EngineStore, "subscribeMedia">): ReadonlyMap<string, OwnSticker> {
+  return useMediaRecords(client, "sticker", mediaIds, ownStickerOf, store).held;
 }
