@@ -378,7 +378,7 @@ function unavailable(model: string): MoneyError {
   return new MoneyError("PRICE_UNAVAILABLE", `no price loaded for ${model}`);
 }
 
-async function getJson(fetch: FetchLike, url: string, timeoutMs: number): Promise<unknown> {
+export async function getJson(fetch: FetchLike, url: string, timeoutMs: number): Promise<unknown> {
   // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
   // unref'd, which hung the Windows CI runs once M6 moved these tests onto
   // Bun's native AbortController/AbortSignal (timeoutSignal.ts's own doc
