@@ -88,9 +88,10 @@ function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HT
     observer.observe(node);
     if (withHints && hints.current !== null) observer.observe(hints.current);
     if (dock !== null) observer.observe(dock);
-    // A card that comes, goes, folds or unfolds changes the dock's height without its box changing (it may be held to the room).
+    // A card that comes, goes, folds or unfolds changes the dock's height without its box changing (it may be held to the room), and so does
+    // a line that changes in place (a notice's text, «Ещё N»'s count: React sets the text node's data, review r3 LOW-2).
     const cards = dock === null || typeof MutationObserver === "undefined" ? null : new MutationObserver(place);
-    if (dock !== null) cards?.observe(dock, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    if (dock !== null) cards?.observe(dock, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["hidden"] });
     return () => {
       observer.disconnect();
       cards?.disconnect();
