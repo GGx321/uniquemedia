@@ -408,8 +408,10 @@ test("a picture that will not load falls back to the placeholder, with no backdr
 
   // One failure is a second try after a pause (a busy or slow disk answers 503/504); only the second is the placeholder (useMediaRetry.ts).
   fireEvent.error(img);
-  expect(picture().tagName).toBe("IMG");
+  // During the pause the errored picture is not drawn (no broken-image icon with its alt text): the placeholder stands in.
+  expect(screen.getByRole("img", { name: LABEL }).tagName).toBe("SPAN");
   await retryPause();
+  expect(picture().tagName).toBe("IMG");
   fireEvent.error(picture());
 
   const stand = screen.getByRole("img", { name: LABEL });

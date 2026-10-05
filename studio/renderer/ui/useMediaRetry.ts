@@ -15,6 +15,11 @@ export interface MediaRetry {
   readonly key: number;
   /** Both tries failed: draw the placeholder. */
   readonly failed: boolean;
+  /**
+   * The first try failed and the pause before the second runs. The errored element must not be drawn meanwhile: Chromium paints a broken-image icon and the
+   * alt text for it, which for a second would look like a glitch where a real 404 used to show the placeholder at once. Draw the placeholder, or nothing.
+   */
+  readonly waiting: boolean;
   /** The element's `onError`. */
   onError(): void;
 }
@@ -36,6 +41,7 @@ export function useMediaRetry(src: string | null, delayMs: number = MEDIA_RETRY_
   return {
     key: phase === "retrying" || phase === "failed" ? 1 : 0,
     failed: phase === "failed",
+    waiting: phase === "waiting",
     onError: () => {
       setState((current) => {
         const now: Phase = current.src === src ? current.phase : "first";

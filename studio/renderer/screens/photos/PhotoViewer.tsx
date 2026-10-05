@@ -244,7 +244,7 @@ function ViewerPhoto({ photo, label }: { photo: PhotoSummary; label: string }) {
   const src = photoUrl(photo.avatarId, photo.photoId);
   const retry = useMediaRetry(src);
   const broken = retry.failed || src === null;
-  if (client.kind === "mock" || broken) {
+  if (client.kind === "mock" || broken || retry.waiting) {
     return (
       <div className="viewer-ph">
         <PortraitPlaceholder seed={photo.photoId} label={label} />

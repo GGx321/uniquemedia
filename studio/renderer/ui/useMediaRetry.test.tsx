@@ -17,6 +17,8 @@ function Probe({ src, loads }: { src: string | null; loads: string[] }) {
   // One entry per element that appears: each new element is a new load of the same address, which is how the browser asks again.
   const noted = useCallback((node: HTMLImageElement | null) => { if (node !== null) loads.push(`${media.key}:${src}`); }, [loads, media.key, src]);
   if (src === null || media.failed) return <p>placeholder</p>;
+  // While the retry waits, the errored element is not drawn at all: a broken-image icon with its alt text must not show for a second.
+  if (media.waiting) return <p>waiting</p>;
   return <img key={media.key} alt="shot" src={src} ref={noted} onError={media.onError} />;
 }
 
@@ -62,6 +64,27 @@ test("the first failure alone does not show the placeholder", () => {
   render(<Probe src="studio-media://photo/a/b" loads={[]} />);
   fireEvent.error(shot());
   expect(screen.queryByText("placeholder") === null).toBe(true);
+});
+
+test("during the pause the errored element is gone from the DOM (no broken-image icon, no alt text), and the retry brings a new one", async () => {
+  render(<Probe src="studio-media://photo/a/b" loads={[]} />);
+  fireEvent.error(shot());
+  expect(screen.queryByRole("img", { name: "shot" }) === null).toBe(true);
+  expect(screen.getByText("waiting")).toBeDefined();
+  await act(() => pause(DELAY * 3));
+  expect(screen.queryByText("waiting") === null).toBe(true);
+  expect(shot()).toBeDefined();
+});
+
+test("waiting is only the pause: not before the first failure, and not once the verdict is in", async () => {
+  const { rerender } = render(<Probe src="studio-media://photo/a/b" loads={[]} />);
+  expect(screen.queryByText("waiting") === null).toBe(true);
+  fireEvent.error(shot());
+  await act(() => pause(DELAY * 3));
+  fireEvent.error(shot());
+  expect(screen.queryByText("waiting") === null).toBe(true);
+  rerender(<Probe src="studio-media://photo/a/other" loads={[]} />);
+  expect(screen.queryByText("waiting") === null).toBe(true);
 });
 
 test("another address gets its own two chances: a failure of the old one is not carried over", async () => {

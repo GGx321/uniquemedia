@@ -555,7 +555,9 @@ describe("a photo that will not load", () => {
     expect(img.getAttribute("src")).toBe(`studio-media://photo/${MIA.avatarId}/${scenePhoto(2).photoId}`);
     // A failed load is tried once more after a pause (503/504 from a busy disk); the second failure is the placeholder (ui/useMediaRetry.ts).
     fireEvent.error(img);
-    expect(within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" }).tagName).toBe("IMG");
+    // During the pause the errored picture is not drawn (no broken-image icon with its alt text): the placeholder stands in, without the failure pill.
+    expect(within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" }).classList.contains("portrait-placeholder")).toBe(true);
+    expect(within(viewer()).queryByText("Фото не открылось") === null).toBe(true);
     await act(() => new Promise<void>((resolve) => setTimeout(resolve, MEDIA_RETRY_DELAY_MS + 60)));
     fireEvent.error(within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" }));
     expect(within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" }).classList.contains("portrait-placeholder")).toBe(true);

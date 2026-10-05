@@ -91,7 +91,7 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
   const dpr = useDevicePixelRatio(natural !== null);
   const cap = natural === null ? null : drawCap(natural, dpr);
   const { banded, backdrop } = useFrameFit(frame, src, cap);
-  if (client.kind === "mock" || failed || src === null) return <PortraitPlaceholder seed={photoId} label={label} />;
+  if (client.kind === "mock" || failed || retry.waiting || src === null) return <PortraitPlaceholder seed={photoId} label={label} />;
   // Held only when banded. Each side is held on its own: a frame wider than the cap but not taller (or the other way) gets a box of
   // the frame's height and the cap's width, and `cover` crops inside it; either way no side is stretched past the cap.
   const capStyle: CSSProperties | undefined = banded && cap !== null ? { maxWidth: `${cap.width}px`, maxHeight: `${cap.height}px` } : undefined;
