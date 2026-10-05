@@ -9,7 +9,7 @@ import { stickerUses } from "./stickerOps";
 // 3d.5: the «GIF» tab (EditorGif.dc.html; G1–G10). The built-in set from the shared manifest (CF11: its 10 stickers, its Russian
 // names and its 7 categories, not the artboard's 20), each tile with how often the montage uses it (G4) and a ring on the selected
 // layer's sticker (G5). A click puts the sticker at the playhead (G6), or, after «Заменить стикер», swaps the selected layer's
-// sticker in place (R41). At 10 stickers the tiles are off and the line says why (G10). «Мои» are 3f's.
+// sticker in place (R41). At 10 stickers the tiles are off and the line says why (G10). The owner's own stickers are in the «Мои» tab (3f.6): the block here points there.
 
 export interface StickerTabProps {
   readonly spec: MontageDraft;
@@ -21,9 +21,11 @@ export interface StickerTabProps {
   /** Why a sticker cannot be added at the playhead now (the cap, no room, no clips); null when it can. */
   readonly addWhy: string | null;
   readonly onPick: (stickerId: string) => void;
+  /** Switches the media panel to the «Мои» tab, where the owner's own GIF and APNG live (3f.6). */
+  readonly onOpenMine: () => void;
 }
 
-export function StickerTab({ spec, current, replacing, onCancelReplace, addWhy, onPick }: StickerTabProps) {
+export function StickerTab({ spec, current, replacing, onCancelReplace, addWhy, onPick, onOpenMine }: StickerTabProps) {
   const { client } = useEngine();
   const [category, setCategory] = useState<StickerCategoryId | null>(null);
   const uses = stickerUses(spec);
@@ -94,13 +96,11 @@ export function StickerTab({ spec, current, replacing, onCancelReplace, addWhy, 
       </div>
 
       <div className="ed-gif-section ed-gif-mine">
-        <div className="ed-prow">
-          <span className="lbl">Мои</span>
-          <button type="button" className="tadd" aria-label="Добавить свой стикер" disabled title="Свои стикеры — скоро">
-            <Icon name="plus" size={11} strokeWidth={2.6} />
-          </button>
-        </div>
-        <span className="faint ed-gif-hint">Свои GIF и APNG — скоро.</span>
+        <span className="lbl">Мои</span>
+        <span className="faint ed-gif-hint">Свои GIF и APNG — во вкладке «Мои».</span>
+        <button type="button" className="btn btn-s" onClick={onOpenMine}>
+          Открыть «Мои»
+        </button>
       </div>
     </>
   );

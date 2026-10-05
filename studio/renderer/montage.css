@@ -3047,8 +3047,8 @@
   margin-top: auto;
 }
 
-.ed-gif-mine .tadd {
-  margin-left: 0;
+.ed-gif-mine .btn {
+  align-self: flex-start;
 }
 
 /* the «Музыка» tab (U1–U18): rows in the sheet's .trow, the quota at the foot */

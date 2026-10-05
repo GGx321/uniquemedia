@@ -825,6 +825,28 @@ describe("a sticker's properties: size, time, the Reels zones, «Заменит�
     expect(within(media()).queryByText(/^Замена:/) === null).toBe(true);
   });
 
+  test("the «Мои» block points to the «Мои» tab instead of saying «скоро»", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.click(tab("GIF"));
+    expect(within(media()).getByText("Свои GIF и APNG — во вкладке «Мои».")).toBeDefined();
+    expect(within(media()).queryAllByText(/скоро/i)).toHaveLength(0);
+    expect(within(media()).queryAllByTitle(/скоро/i)).toHaveLength(0);
+    expect(within(media()).queryAllByRole("button", { name: "Добавить свой стикер" })).toHaveLength(0);
+  });
+
+  test("«Открыть «Мои»» switches the media panel to the «Мои» tab and leaves the keyboard focus on it", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.click(tab("GIF"));
+    expect(tab("GIF").getAttribute("aria-selected")).toBe("true");
+    fireEvent.click(within(media()).getByRole("button", { name: "Открыть «Мои»" }));
+    expect(tab("Мои").getAttribute("aria-selected")).toBe("true");
+    expect(tab("GIF").getAttribute("aria-selected")).toBe("false");
+    expect(document.activeElement === tab("Мои")).toBe(true);
+    expect(within(media()).queryAllByRole("button", { name: "Открыть «Мои»" })).toHaveLength(0);
+  });
+
   test("ten stickers: the tiles are off and the line says what to do", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: Array.from({ length: 10 }, (_, i) => ({ ...stickerLayer(i, 0, 1_000), sticker: { source: "builtin" as const, stickerId: "heart-pulse" } })) });

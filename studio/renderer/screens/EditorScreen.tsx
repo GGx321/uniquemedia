@@ -1021,6 +1021,7 @@ function DraftEditor({
                 replacing={replaceLive ? layerName(state.spec, replacingIndex) : null}
                 onCancelReplace={() => setReplacing(null)}
                 onPick={pickSticker}
+                onOpenMine={() => openTab("mine")}
               />
             ) : (
               <TextTabAtPlayhead
