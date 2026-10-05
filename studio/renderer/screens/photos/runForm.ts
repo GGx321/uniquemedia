@@ -48,10 +48,10 @@ const OWN_SCENE_LABEL = "Своя сцена";
  * name its photo kept (a snapshot, so a rename or a delete later changes nothing),
  * or a fixed fallback when the sidecar kept none.
  */
-export function photoCategoryLabel(photo: Pick<PhotoSummary, "category" | "categoryLabel">): string {
-  const { category, categoryLabel } = photo;
-  if (category === "own") return categoryLabel ?? OWN_SCENE_LABEL;
-  if (isCustomCategory(category)) return categoryLabel ?? CUSTOM_CATEGORY_FALLBACK;
+export function photoCategoryLabel(photo: Pick<PhotoSummary, "category" | "categoryName">): string {
+  const { category, categoryName } = photo;
+  if (category === "own") return categoryName ?? OWN_SCENE_LABEL;
+  if (isCustomCategory(category)) return categoryName ?? CUSTOM_CATEGORY_FALLBACK;
   return CATEGORY_LABEL[category];
 }
 

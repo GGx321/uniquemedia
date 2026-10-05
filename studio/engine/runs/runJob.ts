@@ -629,7 +629,7 @@ async function runGates(ctx: Context, slot: SlotState, attemptId: string, image:
 
 function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: string, prompt: string, image: ImageOk, size: { width: number; height: number }, qa: PhotoQa): NewPhotoMeta {
   // A custom category's photo keeps the owner's name for it, as the plan's snapshot had it, so renaming or deleting the category later never changes it.
-  const categoryLabel = ctx.plan.categories?.find((c) => c.ref === slot.slot.category)?.name;
+  const categoryName = ctx.plan.categories?.find((c) => c.ref === slot.slot.category)?.name;
   return {
     mediaType: image.mediaType,
     width: size.width,
@@ -644,7 +644,7 @@ function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: stri
       prompt,
       slot: slot.slot.attemptIdBase,
       category: contractCategory(slot.slot.category),
-      ...(categoryLabel === undefined ? {} : { categoryLabel }),
+      ...(categoryName === undefined ? {} : { categoryName }),
       costMicros: image.costMicros,
     },
     qa,

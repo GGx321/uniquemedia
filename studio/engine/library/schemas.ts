@@ -74,7 +74,7 @@ const GeneratedSourceSchema = z.object({
    * not change it. Absent for the five built-ins and for every sidecar written before custom categories. This object is not strict, so an
    * older build strips it on read.
    */
-  categoryLabel: NonEmpty.optional(),
+  categoryName: NonEmpty.optional(),
   /** Integer micro-dollars. */
   costMicros: z.int().nonnegative(),
 });

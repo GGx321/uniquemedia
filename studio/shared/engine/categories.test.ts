@@ -183,17 +183,17 @@ describe("PhotoSummary.category (widened)", () => {
   });
 
   test("lists a custom-category photo with the label its sidecar carries", () => {
-    const parsed = PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryLabel: "Кофейни Парижа" });
+    const parsed = PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryName: "Кофейни Парижа" });
     expect(parsed.success).toBe(true);
-    expect(parsed.success && parsed.data.categoryLabel).toBe("Кофейни Парижа");
+    expect(parsed.success && parsed.data.categoryName).toBe("Кофейни Парижа");
   });
 
   test("lists an own-scene photo", () => {
-    expect(PhotoSummary.safeParse({ ...photo, category: "own", categoryLabel: "Своя сцена" }).success).toBe(true);
+    expect(PhotoSummary.safeParse({ ...photo, category: "own", categoryName: "Своя сцена" }).success).toBe(true);
   });
 
   test("refuses a label on a built-in category: the renderer owns those names", () => {
-    expect(PhotoSummary.safeParse({ ...photo, categoryLabel: "Дом" }).success).toBe(false);
+    expect(PhotoSummary.safeParse({ ...photo, categoryName: "Дом" }).success).toBe(false);
   });
 
   test("refuses an unknown category string", () => {
@@ -201,7 +201,7 @@ describe("PhotoSummary.category (widened)", () => {
   });
 
   test("refuses an empty or over-long label", () => {
-    expect(PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryLabel: "" }).success).toBe(false);
-    expect(PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryLabel: "я".repeat(41) }).success).toBe(false);
+    expect(PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryName: "" }).success).toBe(false);
+    expect(PhotoSummary.safeParse({ ...photo, category: CUSTOM_A, categoryName: "я".repeat(41) }).success).toBe(false);
   });
 });

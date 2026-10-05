@@ -91,10 +91,10 @@ describe("the chips' counts for custom and own categories", () => {
   const CUSTOM_B = "cat-night-market";
   const mixed: PhotoSummary[] = [
     scenePhoto(1),
-    scenePhoto(2, { category: CUSTOM_A, categoryLabel: "Кофейни Парижа" }),
-    scenePhoto(3, { category: CUSTOM_B, categoryLabel: "Ночной рынок" }),
-    scenePhoto(4, { category: "own", categoryLabel: "Своя сцена" }),
-    scenePhoto(5, { category: CUSTOM_A, categoryLabel: "Кофейни Парижа" }),
+    scenePhoto(2, { category: CUSTOM_A, categoryName: "Кофейни Парижа" }),
+    scenePhoto(3, { category: CUSTOM_B, categoryName: "Ночной рынок" }),
+    scenePhoto(4, { category: "own", categoryName: "Своя сцена" }),
+    scenePhoto(5, { category: CUSTOM_A, categoryName: "Кофейни Парижа" }),
     scenePhoto(6, { category: "fit" }),
   ];
 
@@ -116,12 +116,12 @@ describe("the chips' counts for custom and own categories", () => {
   });
 
   test("a renamed category shows the label of its newest photo, the list being newest first", () => {
-    const renamed = [scenePhoto(1, { category: CUSTOM_A, categoryLabel: "Новое имя" }), scenePhoto(2, { category: CUSTOM_A, categoryLabel: "Старое имя" })];
+    const renamed = [scenePhoto(1, { category: CUSTOM_A, categoryName: "Новое имя" }), scenePhoto(2, { category: CUSTOM_A, categoryName: "Старое имя" })];
     expect(binFacets(renamed, ALL).categories).toEqual([{ category: CUSTOM_A, label: "Новое имя", count: 2 }]);
   });
 
   test("a chosen custom category the other chip empties is still offered, with 0", () => {
-    const used = [scenePhoto(1, { category: CUSTOM_A, categoryLabel: "Кофейни Парижа", used: true, usedIn: ["video-0000001"] })];
+    const used = [scenePhoto(1, { category: CUSTOM_A, categoryName: "Кофейни Парижа", used: true, usedIn: ["video-0000001"] })];
     expect(binFacets(used, { unusedOnly: true, category: CUSTOM_A }).categories).toEqual([{ category: CUSTOM_A, label: "Кофейни Парижа", count: 0 }]);
   });
 

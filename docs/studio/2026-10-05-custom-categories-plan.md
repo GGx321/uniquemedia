@@ -298,10 +298,10 @@ label reaches `slotForWriter` (`writer.ts:131-134`). Pinned: every request body 
 byte-identical to today's. Phase 2 reuses the same function for scene sets (compose, rewrite, idea).
 
 **Photos.** `PhotoSummary.category` widens to `PhotoCategory = SceneCategory | CustomCategoryId |
-"own"` plus `categoryLabel?: string` (present for custom and own). The sidecar gains an optional
-`categoryLabel` written at commit from the plan's snapshot (the sidecar schema is a non-strict
+"own"` plus `categoryName?: string` (present for custom and own). The sidecar gains an optional
+`categoryName` written at commit from the plan's snapshot (the sidecar schema is a non-strict
 `z.object`, so older builds strip it; `SIDECAR_SCHEMA_VERSION` stays 1). Gallery and viewer show
-`categoryLabel ?? CATEGORY_LABEL[category]`. The montage photo bin builds its facets from the
+`categoryName ?? CATEGORY_LABEL[category]`. The montage photo bin builds its facets from the
 categories its photos actually carry (built-ins first, then custom and own by label) instead of
 `SceneCategory.options` (`montage/bin.ts:65-69`, `PhotoBin.tsx:110`); its local `PhotoCategory`
 type (`bin.ts:5`) is renamed so it no longer shadows the new contract type.
@@ -454,9 +454,9 @@ CustomCategoryId`; `PhotoCategory = CategoryRef | "own"`; `CategorySummary {cate
 description, label, style, pool {locations, outfits, shotDeck}, model, createdAt, updatedAt}`;
 `SceneSetView {sceneSetId, avatarId, createdAt, revision, status, runId|null (named once used), poses, spentMicros,
 scenes ≤ 200}`; `SceneView {sceneId, origin: planned|own, category: PhotoCategory,
-categoryLabel|null, shot, pose, place {location, timeOfDay, activity, outfit}|null, idea|null,
+categoryName|null, shot, pose, place {location, timeOfDay, activity, outfit}|null, idea|null,
 text|null, edited, removed, unwritten: pending|gave-up|null}`. `RunRequest.categories` widens to
-`CategoryRef[]` (1..20, unique). `PhotoSummary.category` → `PhotoCategory` + `categoryLabel?`.
+`CategoryRef[]` (1..20, unique). `PhotoSummary.category` → `PhotoCategory` + `categoryName?`.
 
 **Commands.**
 
@@ -509,7 +509,7 @@ answer as soon as the job is launched (`runs.start`'s formula).
 | `runs/<id>/plan.json` | phase 1, additive: slot category widened to custom refs, top-level `categories?` snapshot. Phase 2, additive: slot `sentence?`, an own-slot variant, top-level `sceneSetId?`, `request` optional when `sceneSetId` is set; invariant `sceneSetId` ⇔ every slot has a sentence ⇔ `writerChunks: []` | today's files parse unchanged — pinned by a fixture written by `main` 3a9cd498 that must parse, fold and price a resume |
 | `journal.jsonl` | none | — |
 | `ledger.jsonl` | none (scope `{avatarJobId}` reused) | — |
-| photo sidecar | optional `categoryLabel` | non-strict object: older builds strip it; an older build skips a custom-category photo from its gallery (counted, not lost) |
+| photo sidecar | optional `categoryName` | non-strict object: older builds strip it; an older build skips a custom-category photo from its gallery (counted, not lost) |
 | renderer local storage | the switch position | try/catch; default ON when unreadable |
 
 ## 7. Money constants (provisional — each measured and pinned in its task)
@@ -578,14 +578,14 @@ owner reviews at the end of each phase (Stage 3 rule: build against local artboa
 
 Scope (phase 1 only — nothing for scene sets yet):
 - contract: `CustomCategoryId`, `CategoryRef` in `RunRequest.categories`, `PhotoCategory`
-  (custom + `"own"`, so the renderer changes once) and `categoryLabel?` on `PhotoSummary`;
+  (custom + `"own"`, so the renderer changes once) and `categoryName?` on `PhotoSummary`;
 - the shared `orderCategories`/`splitCount`, used by the planner and by `runForm.ts`;
 - `planWithPools` by ref, a custom category on `subSeed(seed, ref)`;
 - `runWriterPhase` parametrised (call shape, messages builder) with a run passing today's values;
   the label resolver from the plan's snapshot;
 - assembler style from the snapshot; `sentenceProblems` exported (the assembler keeps calling it);
 - `RunPlanSchema`: category refs + the top-level `categories` snapshot only;
-- `runJob` writes `categoryLabel` into the sidecar; `photoSummaryFrom` lists custom photos;
+- `runJob` writes `categoryName` into the sidecar; `photoSummaryFrom` lists custom photos;
 - every renderer consumer of a category: `runForm.ts`, `GenerateCard.tsx` (chips stay built-in until
   CS.3), `Gallery.tsx:45`, `PhotoViewer.tsx:91`, `montage/bin.ts:5,65-69`, `PhotoBin.tsx:110`, the
   mock engine.
@@ -603,7 +603,7 @@ Tests first:
 - schema: `main`'s `plan.json` fixture parses, folds and prices a resume unchanged; a plan naming a
   custom ref without a snapshot entry is refused;
 - assembler: built-in prompts byte-identical (existing pins); custom style used;
-- `photos.list` lists a custom photo with `categoryLabel`; an unknown string is still skipped and
+- `photos.list` lists a custom photo with `categoryName`; an unknown string is still skipped and
   counted; the montage bin shows a custom facet with its label.
 Review notes (opus): determinism of built-in seeds; the money diff limited to `writerPhase.ts`
 (parametrised, same values), `plan.ts` (refs, snapshot) and `runJob.ts` (label) — `estimate.ts` and
@@ -621,7 +621,7 @@ golden is untouched (CS.1 adds no command).
   `CATEGORY_LABEL_MAX` (24), `CATEGORY_NAME_MAX` (40), `POOL_TEXT_MAX`. `CustomCategoryId` is typed as the template
   `` `cat-${string}` `` (checked against `^cat-[a-z0-9-]{8,59}$`), not `string`: a plain `string` would have collapsed
   `CategoryRef` to `string` and every `Record<CategoryRef, …>` lookup with it. `RunRequest.categories` is
-  `CategoryRef[]` (1..20, unique); `PhotoSummary.category` is `PhotoCategory`, plus `categoryLabel?` (refused on a built-in
+  `CategoryRef[]` (1..20, unique); `PhotoSummary.category` is `PhotoCategory`, plus `categoryName?` (refused on a built-in
   category: the renderer owns those names).
 - **Shared split**: `orderCategories` (built-ins canonical, then custom in the order given, each once) and `splitCount`
   (even split, the remainder one each to the earliest) are the one rule the planner and the renderer both call.
@@ -642,9 +642,9 @@ golden is untouched (CS.1 adds no command).
   or a slot names must have an entry. `buildRunPlan` writes the key only when there are entries, so a built-in run's
   `plan.json` is the document main wrote. `sceneCategory`/`contractCategory` stay in `plan.ts` and delegate to
   `scenes/categories.ts`.
-- **Sidecar and listing**: `GeneratedSourceSchema` gains optional `categoryLabel` (non-strict object: older builds strip it;
+- **Sidecar and listing**: `GeneratedSourceSchema` gains optional `categoryName` (non-strict object: older builds strip it;
   `SIDECAR_SCHEMA_VERSION` stays 1). `runJob` writes the snapshot's **name** (the owner's own wording) there for a custom
-  slot and nothing for a built-in one. `photoSummaryFrom` passes `categoryLabel` through only for a custom or own category,
+  slot and nothing for a built-in one. `photoSummaryFrom` passes `categoryName` through only for a custom or own category,
   so a stray label on a built-in photo never makes it vanish; an unknown string is still skipped and counted.
 - **Engine commands**: the contract now accepts custom refs, but there is no category library until CS.2, so
   `runs.estimate` and `runs.start` answer `NOT_FOUND` (free, naming the ref) for any custom ref, right after the avatar

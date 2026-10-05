@@ -455,8 +455,8 @@ describe("a run with a custom category", () => {
     const byCategory = (category: string) => sources.filter((s) => s?.kind === "generated" && s.category === category);
     expect(byCategory(CUSTOM_REF)).toHaveLength(2);
     expect(byCategory("home")).toHaveLength(2);
-    for (const s of byCategory(CUSTOM_REF)) expect(s).toMatchObject({ categoryLabel: "Кофейни Парижа" });
-    for (const s of byCategory("home")) expect(s !== undefined && "categoryLabel" in s).toBe(false);
+    for (const s of byCategory(CUSTOM_REF)) expect(s).toMatchObject({ categoryName: "Кофейни Парижа" });
+    for (const s of byCategory("home")) expect(s !== undefined && "categoryName" in s).toBe(false);
   });
 
   test("the writer is told the snapshot's English label, never the id or the owner's name", async () => {

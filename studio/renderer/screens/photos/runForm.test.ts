@@ -107,7 +107,7 @@ test("a built-in category is named by the renderer's own Russian label, whatever
 });
 
 test("a custom category is named by the label its photo kept", () => {
-  expect(photoCategoryLabel({ category: CUSTOM_A, categoryLabel: "Кофейни Парижа" })).toBe("Кофейни Парижа");
+  expect(photoCategoryLabel({ category: CUSTOM_A, categoryName: "Кофейни Парижа" })).toBe("Кофейни Парижа");
 });
 
 test("a custom category whose photo kept no label still has a name", () => {
@@ -116,5 +116,5 @@ test("a custom category whose photo kept no label still has a name", () => {
 
 test("an own scene is «Своя сцена» unless its photo kept another label", () => {
   expect(photoCategoryLabel({ category: "own" })).toBe("Своя сцена");
-  expect(photoCategoryLabel({ category: "own", categoryLabel: "Идея" })).toBe("Идея");
+  expect(photoCategoryLabel({ category: "own", categoryName: "Идея" })).toBe("Идея");
 });

@@ -52,14 +52,14 @@ export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState): Phot
   // is rejected there, the same as any other malformed runId.
   const runId = sidecar.source.attemptId.split(":")[0];
   // Only a custom or own category carries the name its sidecar kept; the five built-ins are named by the renderer, so a stray label on one is dropped, not a reason to lose the photo.
-  const { category, categoryLabel } = sidecar.source;
-  const labelled = categoryLabel !== undefined && category !== undefined && !SceneCategory.safeParse(category).success;
+  const { category, categoryName } = sidecar.source;
+  const labelled = categoryName !== undefined && category !== undefined && !SceneCategory.safeParse(category).success;
   const parsed = PhotoSummary.safeParse({
     photoId: sidecar.id,
     avatarId: sidecar.avatarId,
     runId,
     category,
-    ...(labelled ? { categoryLabel } : {}),
+    ...(labelled ? { categoryName } : {}),
     createdAt: sidecar.createdAt,
     qa: qaSummaryOf(sidecar.qa),
     used: state.usedIn.length > 0,
