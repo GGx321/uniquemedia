@@ -1577,13 +1577,13 @@ describe("a genuine settings.update switch blocks new paid work, pick and archiv
     const updating = engine.receive({ kind: "control", type: "settings.update", settings: { ...init().settings, monthlyBudgetMicros: 20_000_000 } });
     await g.atGate;
 
-    await engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-0000d001", avatarId: saved.avatarId });
+    await engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-0000d001", avatarId: saved.avatarId, token: "token-00000001" });
     expect(posted.at(-1)).toMatchObject({ kind: "control", type: "reply", callId: "call-0000d001", error: { code: "IN_FLIGHT" } });
 
     g.release();
     await updating;
     // The refusal left no claim behind: the same avatar is deleted once the switch is over.
-    await engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-0000d002", avatarId: saved.avatarId });
+    await engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-0000d002", avatarId: saved.avatarId, token: "token-00000002" });
     expect(posted.at(-1)).toMatchObject({ callId: "call-0000d002", deletePlan: { avatarId: saved.avatarId } });
   });
 });
