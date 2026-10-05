@@ -1,5 +1,5 @@
 import { constants } from "node:fs";
-import { copyFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdir, rmdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 import { fsyncDir, fsyncFile, hasErrorCode } from "./durableFs";
 import { QUARANTINE_DIR } from "./layout";
@@ -32,6 +32,17 @@ export interface QuarantineDurability {
   fsyncDir(dir: string): Promise<void>;
 }
 
+/**
+ * The file WAS moved into the quarantine, and the flush of a folder that followed failed: the move happened (its entry is kept), only its durability is in doubt. A caller
+ * that counts what was set aside counts it; a caller that only needs «did it fail» treats it as the error it is.
+ */
+export class QuarantineNotFlushed extends Error {
+  constructor(options?: { cause: unknown }) {
+    super("the file was set aside but a folder flush failed", options);
+    this.name = "QuarantineNotFlushed";
+  }
+}
+
 /** Moves things a crash or a hand edit left behind into
  *  `quarantine/<timestamp>/<same relative path>`. Nothing is ever deleted, and what is set aside is durable: every folder it
  *  makes is flushed in its parent, and a move is flushed in the folder it left and the folder it entered (3e.2 review). */
@@ -52,11 +63,33 @@ export class Quarantine {
     const dir = await this.#ensureDir();
     const from = relative(this.#root, path);
     const target = join(dir, from);
-    await this.#makeFolders(dirname(target));
-    await renameWithRetry(path, target);
-    await this.#durable.fsyncDir(dirname(target));
-    await this.#durable.fsyncDir(dirname(path));
+    try {
+      await this.#makeFolders(dirname(target));
+      await renameWithRetry(path, target);
+    } catch (error) {
+      await this.#dropIfEmpty(dirname(target));
+      throw error;
+    }
+    // From here the file is in the quarantine: the entry is kept whatever the flushes do.
     this.entries.push({ from, to: relative(this.#root, target), reason, ...(detail === undefined ? {} : { detail }) });
+    try {
+      await this.#durable.fsyncDir(dirname(target));
+      await this.#durable.fsyncDir(dirname(path));
+    } catch (error) {
+      throw new QuarantineNotFlushed({ cause: error });
+    }
+  }
+
+  /** A move that failed before it moved anything leaves no empty stamp folder behind (quiet: an empty folder is harmless, only untidy). */
+  async #dropIfEmpty(targetDir: string): Promise<void> {
+    if (this.entries.length > 0 || this.#dir === null) return;
+    const stamp = this.#dir;
+    // From the folder the file would have gone into, up to the stamp: each `rmdir` only removes an empty one.
+    for (let dir = targetDir; dir.startsWith(stamp); dir = dirname(dir)) {
+      await rmdir(dir).catch(() => undefined);
+      if (dir === stamp) break;
+    }
+    this.#dir = null;
   }
 
   /**

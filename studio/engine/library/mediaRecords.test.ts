@@ -373,6 +373,22 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     expect(lines[0]).not.toContain(root());
   });
 
+  test("a file that was moved but whose folder flush then failed is counted as set aside, not as one that stays where it is", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    const lines: string[] = [];
+    const report = await records({
+      warn: (text) => lines.push(text),
+      quarantineDurability: {
+        fsyncDir: async (dir) => {
+          if (dir === mediaDir()) throw Object.assign(new Error("flush failed"), { code: "EIO" });
+        },
+      },
+    }).recover();
+    expect(report.quarantinedOrphans).toBe(1);
+    expect(lines.join("\n")).not.toContain("stay where they are");
+    expect(await quarantinedMedia()).toEqual(["holiday-photo.jpg"]);
+  });
+
   test("several files that cannot be set aside are told in one log line, not one each", async () => {
     await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
     await writeFile(join(mediaDir(), "holiday-two.jpg"), "the owner's other photo");

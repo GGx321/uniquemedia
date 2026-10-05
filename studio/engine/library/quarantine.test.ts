@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { readdirSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { Quarantine } from "./quarantine";
+import { Quarantine, QuarantineNotFlushed } from "./quarantine";
 import { useTempDir } from "./testing/helpers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -78,5 +79,34 @@ describe("Quarantine: what it sets aside is durable", () => {
     expect(await readFile(path, "utf8")).toBe("not json\n");
     for (const dir of [root(), join(root(), "quarantine"), stampDir, join(stampDir, "avatars")]) expect(dirs()).toContain(dir);
     expect(synced.find((s) => s.dir === targetDir)?.held).toEqual([basename(path)]);
+  });
+});
+
+describe("Quarantine: a move that happened is told as one", () => {
+  test("a rename that succeeded and a flush that then failed is a QuarantineNotFlushed: the file is in the quarantine and the entry is kept", async () => {
+    const path = await recordFile();
+    const quarantine = new Quarantine(root(), NOW, {
+      fsyncDir: async (dir) => {
+        if (dir === dirname(path)) throw Object.assign(new Error("flush failed"), { code: "EIO" });
+      },
+    });
+    await expect(quarantine.move(path, "invalid-video-record")).rejects.toBeInstanceOf(QuarantineNotFlushed);
+    expect(existsSync(path)).toBe(false);
+    expect(quarantine.entries).toHaveLength(1);
+    expect(existsSync(join(root(), "quarantine", STAMP, "avatars", "avatar-0001", "videos", "video-00000002.json"))).toBe(true);
+  });
+
+  test("a move whose rename failed is the original error, not a QuarantineNotFlushed, and leaves no entry", async () => {
+    const quarantine = new Quarantine(root(), NOW, { fsyncDir: async () => undefined });
+    const error = await quarantine.move(join(root(), "avatars", "gone.json"), "invalid-sidecar").catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(QuarantineNotFlushed);
+    expect(quarantine.entries).toHaveLength(0);
+  });
+
+  test("when every move failed no empty stamp folder is left in the quarantine", async () => {
+    const quarantine = new Quarantine(root(), NOW, { fsyncDir: async () => undefined });
+    await quarantine.move(join(root(), "avatars", "gone.json"), "invalid-sidecar").catch(() => undefined);
+    expect(existsSync(join(root(), "quarantine", STAMP))).toBe(false);
   });
 });

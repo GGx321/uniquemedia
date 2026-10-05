@@ -10,7 +10,7 @@ import { isNoSpaceError } from "../freeBytes";
 import { fsyncDir, fsyncFile, hasErrorCode, isTempName, writeJsonAtomic } from "./durableFs";
 import { isFromNewerVersion, MEDIA_DIR, MEDIA_RECORD_SCHEMA_VERSION, MEDIA_STAGING_DIR, QUARANTINE_DIR } from "./layout";
 import { openRegularNoFollow, type OpenRegularOps } from "./openRegular";
-import { Quarantine } from "./quarantine";
+import { Quarantine, QuarantineNotFlushed, type QuarantineDurability } from "./quarantine";
 import { renameWithRetry } from "./renameRetry";
 import { unlinkWithRetry } from "./unlinkRetry";
 
@@ -192,6 +192,8 @@ export interface MediaRecordsOptions {
   readonly root: string;
   readonly newId: () => string;
   readonly now: () => Date;
+  /** How the quarantine flushes a folder; its own by default. A test plays a flush that fails. */
+  readonly quarantineDurability?: QuarantineDurability;
   /** Where a failure that stops nothing is told (never with a path). */
   readonly warn?: (text: string) => void;
   /** The disk calls a record is opened with when its waveform is read (`openRegularNoFollow`); the real ones by default. A test plays a swap or a handle that lies. */
@@ -291,6 +293,8 @@ export class MediaRecords {
       await quarantine.move(path, "orphan-media");
       return "moved";
     } catch (error) {
+      // The file is in the quarantine and only a flush of a folder failed: it was set aside.
+      if (error instanceof QuarantineNotFlushed) return "moved";
       return hasErrorCode(error, "ENOENT") ? "gone" : "failed";
     }
   }
@@ -419,7 +423,7 @@ export class MediaRecords {
     let quarantinedOrphans = 0;
     let notSetAside = 0;
     let restored = 0;
-    const quarantine = new Quarantine(this.#options.root, this.#options.now);
+    const quarantine = new Quarantine(this.#options.root, this.#options.now, this.#options.quarantineDurability);
     let held: Map<string, string> | undefined;
     const inQuarantine = async (name: string): Promise<string | undefined> => (held ??= await this.#quarantinedMedia()).get(name);
     // Brings a piece back from the quarantine, then judges the record again (a record only: a file has none to judge) and lists it when it is sound.
