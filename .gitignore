@@ -12,3 +12,10 @@ release-studio/
 # T7b, the face gate: fetched model binaries (38.7 MB + 233 KB), never committed —
 # studio/scripts/faceModelCache.ts fetches and sha256-verifies them here.
 /.cache/
+
+# Private working folders and agent instruction files: untracked on purpose, and the repository is PUBLIC.
+/.omc/
+/.playwright-mcp/
+/.claude/
+/AGENTS.md
+/CLAUDE.md
