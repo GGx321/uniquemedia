@@ -754,7 +754,11 @@ export const PhotoSummary = z
     usedIn: z.array(Id).max(MAX_PHOTO_USED_IN).refine(unique, "a video must not be listed twice"),
     /** The owner's own «do not use» mark (rejected.jsonl); a mark is not a verdict of any gate. */
     rejected: z.boolean(),
-    /** A queued or running render holds this photo, so no second render takes it (S16). */
+    /**
+     * A queued or running render holds this photo, so no second render takes it (S16). Also true while a commit intent a crash or a failed
+     * commit left is not settled yet (its file may still be adopted, and one photo goes into one video): then no job exists for it, and
+     * the hold ends when the intent is adopted (the photo is then `used`) or dropped.
+     */
     reserved: z.boolean(),
     /**
      * The verdict of the one eligibility rule: a generated scene photo that

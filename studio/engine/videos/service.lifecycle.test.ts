@@ -429,6 +429,32 @@ describe("an intent recovery deferred (stage 3 review 3-M3: one photo, one video
   });
 });
 
+describe("holds that a recovery made are announced (review round 1, L3)", () => {
+  test("a deferred intent holds its avatar's photos: the avatar is announced so its eligibleUnusedCount refreshes", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const library = await w.reopen();
+    const r = serviceRig(w, { library });
+    const before = library.eligibleUnusedCount(w.avatar.id);
+
+    r.service.startup(library, { ok: false, reason: "missing" });
+    await r.service.settled();
+
+    expect(library.eligibleUnusedCount(w.avatar.id)).toBe(before - 1);
+    expect(r.announced).toContain(w.avatar.id);
+  });
+
+  test("a clean start announces nothing", async () => {
+    const w = world();
+    const r = serviceRig(w, { library: await w.reopen() });
+
+    r.service.startup(w.library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    await r.service.settled();
+
+    expect(r.announced).toEqual([]);
+  });
+});
+
 describe("startup", () => {
   test("sweeps render-tmp beside the recovery, leaving the folder of a job that is running", async () => {
     const w = world();

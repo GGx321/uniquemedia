@@ -955,6 +955,8 @@ export class VideoService {
     const exportRoot = await this.#freshRoot(options.exportCheck);
     if (signal.aborted) return;
     const run = deps.recover?.run ?? recoverVideos;
+    // What each avatar's count of free photos was: recovery holds (and releases) the photos of pending intents, which moves it.
+    const freeBefore = new Map(library.listAvatars().map((manifest) => [manifest.id, library.eligibleUnusedCount(manifest.id)]));
     const report = await run({ library, exportRoot, live: deps.tracker, signal, ...(options.only === undefined ? {} : { only: options.only }) }, { log: deps.log, ...deps.recover?.deps });
     // Counts only, and only when there was something to settle: a clean open is silent.
     if (report.adopted.length + report.dropped.length + report.deferred.length + report.left.length + report.skipped.length > 0) {
@@ -967,7 +969,8 @@ export class VideoService {
         const avatarId = await this.#announceAdopted(library, videoId);
         if (avatarId !== null) avatars.add(avatarId);
       }
-      // Their photos are used now: the avatars' counts moved.
+      // Their photos are used now: the avatars' counts moved. So did the count of an avatar whose photos recovery held or freed.
+      for (const manifest of library.listAvatars()) if (library.eligibleUnusedCount(manifest.id) !== freeBefore.get(manifest.id)) avatars.add(manifest.id);
       for (const avatarId of avatars) this.#announce(library, avatarId);
     }
     if (options.only === undefined) for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);

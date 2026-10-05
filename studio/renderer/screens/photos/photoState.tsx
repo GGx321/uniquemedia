@@ -11,7 +11,7 @@ import { FACE_GATE_THRESHOLD } from "./shared";
 export function montagePickRefusal(photo: PhotoSummary): string | null {
   if (photo.rejected) return "Фото отклонено — в монтаж не попадает";
   if (photo.used || photo.usedIn.length > 0) return "Фото уже в видео: одно фото — одно видео";
-  if (photo.reserved) return "Фото сейчас в рендере";
+  if (photo.reserved) return "Фото занято: в рендере или ждёт незавершённое видео";
   if (!photo.eligible) return "Это фото не подходит для видео";
   return null;
 }

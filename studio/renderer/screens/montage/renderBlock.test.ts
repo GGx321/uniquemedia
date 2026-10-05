@@ -91,7 +91,7 @@ describe("the reasons, each on its own", () => {
 
   test("a rejected photo, a photo a queued render holds, and one the engine will not take for another reason", () => {
     expect(renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(1) }, photos: photosOf(photo(2, { rejected: true, eligible: false })) }))).toEqual({ text: "Кадр 2: фото отклонено — замените его", settings: false, clips: [1] });
-    expect(renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(2) }, photos: photosOf(photo(3, { reserved: true })) }))?.text).toBe("Кадр 3: фото уже в очереди на рендер");
+    expect(renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(2) }, photos: photosOf(photo(3, { reserved: true })) }))?.text).toBe("Кадр 3: фото занято: в рендере или ждёт незавершённое видео");
     expect(renderBlock(input({ verdict: { spec: READY, issues: unavailableAt(3) }, photos: photosOf() }))?.text).toBe("Кадр 4: фото недоступно — замените его");
   });
 

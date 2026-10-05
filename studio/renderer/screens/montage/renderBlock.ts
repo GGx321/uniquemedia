@@ -162,7 +162,7 @@ function photoText(first: FlaggedCell, usedVideo: UsedVideo | null): string {
     case "rejected":
       return `${clipName(first.clip)}: фото отклонено — замените его`;
     case "reserved":
-      return `${clipName(first.clip)}: фото уже в очереди на рендер`;
+      return `${clipName(first.clip)}: фото занято: в рендере или ждёт незавершённое видео`;
     case "unavailable":
       return `${clipName(first.clip)}: фото недоступно — замените его`;
   }
