@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { ENGINE_GONE_DETAIL, type AvatarTraits, type EngineCommandMessage, type EngineError, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
 import { COMMAND_DEADLINE_MS, MEDIA_IMPORT_DEADLINE_MS, type EngineInit } from "../engine/control";
+import { EXPORT_CHECK_TIMEOUT_MS } from "../engine/engine";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
+import { DELETE_TIMEOUT_MS } from "../engine/videos/service";
 import { REFERENCE_TIMEOUT_MS } from "../engine/runs/timeouts";
 import { MAX_ATTEMPT_MS } from "../engine/openrouter/transport";
 import { EngineHost, REQUEST_TIMEOUT_MS, type EngineChild, type HostPort } from "./engineHost";
@@ -491,6 +493,12 @@ describe("request deadline", () => {
     // One attempt: three HTTP tries to their 180 s timeout and two retry waits at the 60 s Retry-After cap plus 1 s jitter.
     expect(MAX_ATTEMPT_MS).toBe(3 * 180_000 + 2 * 61_000);
     expect(COMMAND_DEADLINE_MS["avatars.createDraft"]).toBe(PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
+  });
+
+  test("videos.delete: main waits at least as long as the engine's own worst case, so the engine's timeout text reaches the window (stage 3 review 4-M1)", () => {
+    const deadline = COMMAND_DEADLINE_MS["videos.delete"] ?? REQUEST_TIMEOUT_MS;
+    // The export check, then the bounded delete: the engine answers its own EXPORT_UNAVAILABLE only after both.
+    expect(deadline).toBeGreaterThanOrEqual(EXPORT_CHECK_TIMEOUT_MS + DELETE_TIMEOUT_MS);
   });
 
   test("the estimates wait for a price load that times out, so the fallback estimate is not lost to main's deadline", () => {

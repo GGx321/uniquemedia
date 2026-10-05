@@ -38,6 +38,7 @@ import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./lis
 import type { CommitTracker, LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
+import { DELETE_TIMEOUT_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
 
 // The command layer of the video pipeline (Stage 3 plan, 3a.8b.2): `videos.render`, `videos.cancel`, `videos.list` and
 // `videos.delete`, the render queue's events as the contract's `job.*` and `video.changed`, and what happens around a
@@ -137,10 +138,7 @@ export const DEFAULT_STALE_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000, 
 export const RENDER_COMMAND_DEADLINE_MS = 25_000;
 /** Kept back for eligibility, the sources and `submit` once the focus is done. */
 export const RENDER_COMMAND_MARGIN_MS = 2_000;
-/** One record's file check in a listing or a `videos.get`; a disk that does not answer reads `unchecked` (K15). */
-export const RECORD_CHECK_TIMEOUT_MS = 5_000;
-/** A delete's disk work (a full hash of a file up to 64 MiB, two unlinks, flushes). */
-export const DELETE_TIMEOUT_MS = 60_000;
+export { DELETE_TIMEOUT_MS, RECORD_CHECK_TIMEOUT_MS };
 /** How long after the focus budget the abort net waits. */
 const FOCUS_NET_SLACK_MS = 25;
 /** Reading the used index again on demand before a render or a list. */
