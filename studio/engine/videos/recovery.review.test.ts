@@ -259,6 +259,24 @@ describe("adoption", () => {
     expect(library.photoStates(w.avatar.id).get(w.photos[1]?.id ?? "")?.usedIn).toEqual([crashed.id]);
   });
 
+  test.each([true, false])("a record that names the same file in another letter case claims it on a case-insensitive root, not on a case-sensitive one (caseInsensitive: %p)", async (caseInsensitive) => {
+    const bytes = fakeVideoBytes(2048);
+    {
+      const w = world();
+      const lower = sampleRecord(w, { bytes, videoId: "video-0000000a", jobId: "job-0000000a", relPath: "mia/2026-09-29_photo_001.mp4" });
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, lower);
+      await commitIntent(NODE_COMMIT_FS, w.libraryRoot, w.avatar.id, lower.id);
+      const pending = sampleRecord(w, { bytes, videoId: "video-0000000b", jobId: "job-0000000b", photoIds: [w.photos[1]?.id ?? ""] });
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, pending);
+      mkdirSync(join(w.exportRoot, "Mia"), { recursive: true });
+      writeFileSync(join(w.exportRoot, FINAL), bytes);
+
+      const report = await recoverVideos({ library: await w.reopen(), exportRoot: { ...rootRef(w), caseInsensitive } });
+
+      expect(report.dropped.map((d) => d.reason)).toEqual(caseInsensitive ? ["file-claimed"] : []);
+    }
+  });
+
   test("an intent whose stored mtime is not the file's is still adopted when it is the only one naming the file (the bytes are verified)", async () => {
     const w = world();
     const bytes = fakeVideoBytes(2048);

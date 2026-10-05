@@ -190,7 +190,7 @@ async function hasPublishSibling(fs: CommitFs, root: string): Promise<boolean> {
  * the file that stands there (its own file was deleted, and a later one took the name): it must not make this one's verified file
  * look claimed, or the video would lose its record while its file lives on.
  */
-async function otherNamesFile(lib: LibraryReadFs, libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, sha256: string, exceptVideoId: string, includeIntents: boolean): Promise<boolean> {
+async function otherNamesFile(lib: LibraryReadFs, libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, sha256: string, caseInsensitive: boolean, exceptVideoId: string, includeIntents: boolean): Promise<boolean> {
   for (const avatarId of avatarIds) {
     const paths = videoPaths(libraryRoot, avatarId);
     for (const dir of includeIntents ? [paths.videosDir, paths.pendingDir] : [paths.videosDir]) {
@@ -205,7 +205,7 @@ async function otherNamesFile(lib: LibraryReadFs, libraryRoot: string, avatarIds
         if (name === `${exceptVideoId}.json`) continue;
         try {
           const parsed = VideoRecordSchema.safeParse(JSON.parse(await lib.readFile(join(dir, name))));
-          if (parsed.success && parsed.data.file.rootId === rootId && parsed.data.file.relPath === relPath && parsed.data.file.sha256 === sha256) return true;
+          if (parsed.success && parsed.data.file.rootId === rootId && (caseInsensitive ? parsed.data.file.relPath.toLowerCase() === relPath.toLowerCase() : parsed.data.file.relPath === relPath) && parsed.data.file.sha256 === sha256) return true;
         } catch (error) {
           if (!(error instanceof SyntaxError) && !hasErrorCode(error, "ENOENT")) throw error;
         }
@@ -441,9 +441,9 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     // never name one file. Its stored mtime (which survives a rename) settles a tie between intents, and nothing more.
     const isVerifiedFile = facts.size === record.file.bytes && (await io(() => hashFile(file))) === record.file.sha256;
     if (!isVerifiedFile) return drop("mismatch");
-    if (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, record.file.sha256, videoId, false)) return drop("file-claimed");
+    if (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, record.file.sha256, root.ref.caseInsensitive, videoId, false)) return drop("file-claimed");
     // Right bytes, other mtime (DST on FAT32, a copy round trip): still ours, unless another intent names the same file and this one cannot show it is the one.
-    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== facts.mtimeMs && (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, record.file.sha256, videoId, true))) {
+    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== facts.mtimeMs && (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, record.file.sha256, root.ref.caseInsensitive, videoId, true))) {
       // Two intents, one file, and neither can show it is the one: both wait (whichever is looked at first), nothing is dropped or adopted.
       return void report.deferred.push({ videoId, reason: "file-shared" });
     }
