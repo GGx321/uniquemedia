@@ -632,6 +632,9 @@ describe("imports run one after another", () => {
     });
     await started(r, await callFor("one.jpg", jpeg(200)));
     await started(r, await callFor("two.jpg", jpeg(210)));
+    // The first importer is reached only after its file is staged (real disk work, as slow as the machine is busy): wait for that, not a guessed 50 ms.
+    await waitFor(() => order.length > 0);
+    // What is left is a negative, which only time can show: the second job had its chance, and a wrong start would have come before this.
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(order).toEqual(["start one.jpg"]);
     release();
@@ -1210,8 +1213,8 @@ describe("the owner's file is let go after the copy (L2 of the Stage 3 review)",
     });
     await started(r, await callFor("a.jpg", jpeg(300)));
     await started(r, await callFor("b.jpg", jpeg(310)));
-    // A has copied and is inside its importer; B waits for the turn with its file open.
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // A has copied and is inside its importer; B waits for the turn with its file open. Waited for as a state (the copy is real disk work), not as 50 ms.
+    await waitFor(() => calls === 1 && counting.open() === 1);
     expect(counting.open()).toBe(1);
     gate.resolve();
     await r.service.settled();
