@@ -186,3 +186,47 @@ test("PRICE_CHANGED re-asks: the fresh estimate is shown and must be confirmed a
   expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(1);
   expect(importButton().textContent).toContain("Подтвердить новую цену");
 });
+
+// The large-screen audit (H2): the import takes a photo of any size; a small one makes a soft master portrait and a weak reference
+// for every photo run. The screen says so next to the picked size — advice only: the import still goes ahead (no new gate).
+const SMALL_ADVICE = "Маленькое фото (246×281 px) — портрет и сгенерированные фото будут нечёткими. Лучше от 1024 px по короткой стороне.";
+const adviceText = (): string | null => screen.queryByText(/Маленькое фото/)?.textContent?.replace(/ /g, " ") ?? null;
+
+test("H2: a photo under 768 px on its short side is advised against, with its size — and the import still goes ahead", async () => {
+  const { engine } = setup();
+  engine.queueImportPick({ picked: true, stagingId: "staging-small-0001", width: 246, height: 281 });
+  await openImport();
+  await pickPhoto();
+
+  expect(adviceText()).toBe(SMALL_ADVICE);
+  fireEvent.change(nameInput(), { target: { value: "Zoe" } });
+  expect(importButton().hasAttribute("disabled")).toBe(false);
+  fireEvent.click(importButton());
+  await screen.findByRole("heading", { level: 1, name: "Аватары" });
+
+  const [imported] = callsOf(engine, "avatars.importAvatar");
+  expect(imported?.payload.stagingId).toBe("staging-small-0001");
+});
+
+test("H2: a short side of 768 px or more gets no advice", async () => {
+  const { engine } = setup();
+  engine.queueImportPick({ picked: true, stagingId: "staging-edge-0001", width: 1024, height: 768 });
+  await openImport();
+  await pickPhoto();
+
+  expect(screen.getByText(/1024×768/)).toBeTruthy();
+  expect(adviceText()).toBeNull();
+});
+
+test("H2: picking a larger photo after a small one drops the advice", async () => {
+  const { engine } = setup();
+  engine.queueImportPick({ picked: true, stagingId: "staging-small-0001", width: 246, height: 281 });
+  await openImport();
+  await pickPhoto();
+  expect(adviceText()).toBe(SMALL_ADVICE);
+
+  // The mock's own pick: 1024 × 1365.
+  fireEvent.click(pickButton());
+  await waitFor(() => expect(screen.getByText(/1024×1365/)).toBeTruthy());
+  expect(adviceText()).toBeNull();
+});

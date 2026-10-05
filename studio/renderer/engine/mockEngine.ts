@@ -1046,7 +1046,10 @@ export class MockEngine implements EngineBridge {
     this.reconcileQueue.push(result);
   }
 
-  /** The next avatars.pickImportPhoto answers with `result` (e.g. `{ picked: false }`, a cancel) instead of a fresh staged photo. */
+  /**
+   * The next avatars.pickImportPhoto answers with `result` instead of a fresh staged photo: `{ picked: false }` (a cancel), or a
+   * photo of the size a test needs, staged under its own `stagingId` as a fresh pick would be.
+   */
   queueImportPick(result: ImportPhotoPicked): void {
     this.nextImportPick = result;
   }
@@ -1595,6 +1598,8 @@ export class MockEngine implements EngineBridge {
         if (this.nextImportPick !== null) {
           const queued = this.nextImportPick;
           this.nextImportPick = null;
+          // A queued photo is staged like any other (a photo of the size a test needs); a cancel stages nothing.
+          if (queued.picked) this.stagedImportId = queued.stagingId;
           return this.ok(c, queued);
         }
         const stagingId = this.nextId("staging");

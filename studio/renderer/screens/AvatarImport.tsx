@@ -2,12 +2,14 @@ import { useEffect, useId, useRef, useState } from "react";
 import { AvatarName, type EngineError, type Estimate } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { NBSP } from "../lib/format";
+import { IMPORT_GOOD_SHORT_SIDE, isSmallImportPhoto } from "../lib/importPhoto";
 import { formatUsd } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { useNavigate } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
+import { Notice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { EstimateCard } from "./wizard/EstimateCard";
 
@@ -184,6 +186,14 @@ export function AvatarImport() {
             {MAX_IMPORT_PHOTO_SIDE}
             {NBSP}px; анимированные файлы не подходят.
           </p>
+          {/* The large-screen audit (H2): advice next to the picked size, never a refusal — the import goes ahead either way. */}
+          {preview && isSmallImportPhoto(preview) && (
+            <Notice tone="warn">
+              Маленькое фото ({preview.width}×{preview.height}
+              {NBSP}px) — портрет и сгенерированные фото будут нечёткими. Лучше от {IMPORT_GOOD_SHORT_SIDE}
+              {NBSP}px по короткой стороне.
+            </Notice>
+          )}
           <div className="wizard-form-footer">
             <button
               type="button"
