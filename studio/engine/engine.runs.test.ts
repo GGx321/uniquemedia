@@ -16,13 +16,13 @@ import { ffmpegPath } from "../node/ffmpegBinary";
 import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { RunPlanSchema, type RunPlan } from "./runs/plan";
-import { plan as planScenes } from "./scenes";
+import { CAMERA_REALISM_CLAUSE, plan as planScenes } from "./scenes";
 import { faceModelPaths } from "../scripts/faceModelCache";
 import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
 import type { QaGate, QaInput } from "./runs/qa";
-import type { Estimate, ImageAgeCheck, ResponseMessage } from "../shared/engine";
+import type { Estimate, ImageAgeCheck, ImageQuality, ResponseMessage } from "../shared/engine";
 import type { Engine, EngineDeps } from "./engine";
 import { command, engineSettings, failed, GOOD, jobEnd, MODERATION, NOW, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -233,11 +233,15 @@ function engineOver(
     network?: number;
     monthlyBudgetMicros?: number;
     imageModel?: string;
+    imageQuality?: ImageQuality | null;
+    cameraRealism?: boolean;
     faceGateLoadError?: string;
   } = {},
 ) {
   const settings = engineSettings(dir(), {
     imageAgeCheck: opts.imageAgeCheck ?? "off",
+    ...(opts.imageQuality === undefined ? {} : { imageQuality: opts.imageQuality }),
+    ...(opts.cameraRealism === undefined ? {} : { cameraRealism: opts.cameraRealism }),
     ...(opts.imageModel === undefined ? {} : { imageModel: opts.imageModel }),
     ...(opts.network === undefined ? {} : { concurrency: { network: opts.network } }),
     ...(opts.monthlyBudgetMicros === undefined ? {} : { monthlyBudgetMicros: opts.monthlyBudgetMicros }),
@@ -278,6 +282,18 @@ describe("runs.estimate", () => {
     expect(ok(await engine.handle(estimate(avatarId, 20)))).toMatchObject({ result: { estimate: { worstMicros: 3_075_000 } } });
   });
 
+  test("prices the chosen quality: medium is $0.06 + $0.01 reference an attempt, so 20 photos cap at $4.275", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(runNetwork(), { imageQuality: "medium" });
+    expect(ok(await engine.handle(estimate(avatarId, 20)))).toMatchObject({ result: { estimate: { worstMicros: 4_275_000 } } });
+  });
+
+  test("a model with no quality knob (null) is priced at its plain 1K price: grok-imagine-image-quality is $0.05 + $0.01", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(runNetwork(), { imageModel: "x-ai/grok-imagine-image-quality", imageQuality: null });
+    expect(ok(await engine.handle(estimate(avatarId, 20)))).toMatchObject({ result: { estimate: { worstMicros: 20 * 3 * 60_000 + 75_000 } } });
+  });
+
   test("is NOT_FOUND for an unknown avatar and for a draft: only a saved avatar with a master gets photos", async () => {
     const draft = await seedAvatar({ status: "draft" });
     const { engine } = await engineOver(runNetwork());
@@ -309,6 +325,42 @@ describe("runs.start", () => {
 
     expect(planOf(runId).capMicros).toBe(FOUR_WORST);
     expect(planOf(runId).plannedWorstMicros).toBe(FOUR_WORST);
+  });
+
+  test("the chosen quality and camera realism reach plan.json and the first image request: medium, and the realism clause last", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const { engine, events } = await engineOver(net, { imageQuality: "medium", cameraRealism: true });
+    const worst = 4 * 3 * 70_000 + 2 * 37_500;
+
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId, worst)));
+    await until(() => net.imageCalls().length > 0, "the first image request");
+    const stored = planOf(runId);
+    const body = net.imageCalls()[0]?.json() ?? {};
+
+    expect(stored.models.imageQuality).toBe("medium");
+    expect(stored.cameraRealism).toBe(true);
+    expect(body.quality).toBe("medium");
+    expect(String(body.prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
+  test("the settings' camera realism is captured when the run starts: switching it off afterwards does not change that run", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const { engine, events } = await engineOver(net, { cameraRealism: true });
+
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST)));
+    await engine.applyControl({ kind: "control", type: "settings.update", settings: engineSettings(dir(), { imageAgeCheck: "off", cameraRealism: false }) });
+    await until(() => net.imageCalls().length > 0, "the first image request");
+
+    expect(planOf(runId).cameraRealism).toBe(true);
+    expect(String(net.imageCalls()[0]?.json().prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
   });
 
   test("the run's poses reach the planner: plan.json holds exactly the plan its seed and those poses draw", async () => {
