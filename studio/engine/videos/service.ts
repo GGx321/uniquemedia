@@ -661,9 +661,12 @@ export class VideoService {
     // One fresh look at the export root, one hash budget for the whole listing.
     // The look at the export root is inside the listing's budget too: a root that does not answer is "cannot judge" (null), and every record reads `unchecked`.
     let root: ExportRootRef | null = null;
+    // A root that could not be judged in time says nothing about any file (K15): every record reads `unchecked`, never «elsewhere» (which is what a refused root says).
+    let rootJudged = true;
     try {
       root = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#freshRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
     } catch (error) {
+      rootJudged = false;
       this.#deps.log(`videos.list: the export folder could not be looked at in time (${kindOf(error)}); the files are left unchecked`);
     }
     const budget = newHashBudget();
@@ -671,11 +674,13 @@ export class VideoService {
     const summaries: VideoSummary[] = [];
     const drafts = new Map<string, boolean>();
     let spentLogged = false;
+    /** A look that was cut at what the budget had left: the budget is spent, whatever the clock says to the millisecond. */
+    let cutByBudget = false;
     for (const record of read.records.slice(0, MAX_LISTED_VIDEOS)) {
       let state: FileState;
       // The listing's own budget, from its entry: a record looked at after it is spent is `unchecked` without a call to the disk, and one in flight is cut at what is left.
       const remainingMs = listBudgetMs - (performance.now() - enteredAt);
-      if (remainingMs <= 0) {
+      if (!rootJudged || remainingMs <= 0) {
         if (!spentLogged) this.#deps.log(`videos.list: the listing's budget of ${listBudgetMs} ms is spent; the remaining files of avatar ${avatarId} are left unchecked`);
         spentLogged = true;
         state = "unchecked";
@@ -685,11 +690,12 @@ export class VideoService {
         } catch (error) {
           // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
           this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
+          if (remainingMs <= checkMs) cutByBudget = true;
           state = "unchecked";
         }
       }
       // The draft lookups are disk calls too: once the budget is spent the record keeps the draft id as written (the same answer as a lookup that failed).
-      const spent = performance.now() - enteredAt >= listBudgetMs;
+      const spent = cutByBudget || performance.now() - enteredAt >= listBudgetMs;
       summaries.push(videoSummaryOf(spent ? record : await this.#withLiveDraft(library, record, drafts), state));
     }
     return summaries;
