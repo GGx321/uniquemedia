@@ -4,6 +4,7 @@ export { LIBRARY_FILE } from "./layout";
 export {
   openLibrary,
   type AvatarPatch,
+  type DetachedAvatar,
   type JournalRead,
   type Library,
   type LibraryDeps,

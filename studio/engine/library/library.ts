@@ -123,6 +123,22 @@ export type NewImportedAvatar = NewAvatar & {
   photoMeta: NewPhotoMeta;
 };
 
+/**
+ * An avatar taken out of the library's in-memory indexes (`Library#detachAvatar`) with everything those indexes held about it, so
+ * `Library#reattachAvatar` can put it back exactly as it was when the system Trash did not take its folder. Opaque to callers.
+ */
+export interface DetachedAvatar {
+  readonly avatarId: string;
+  readonly manifest: AvatarManifest;
+  readonly photos: readonly PhotoSidecar[];
+  readonly rejectedPhotoIds: readonly string[];
+  readonly brokenRejectLog: string | undefined;
+  readonly videos: readonly VideoRecordUse[] | undefined;
+  readonly videoProblems: readonly VideoRecordProblem[] | undefined;
+  readonly videoIndexStale: ReadonlySet<string> | undefined;
+  readonly pendingHolds: ReadonlyArray<readonly [string, { readonly avatarId: string; readonly photoIds: readonly string[] }]>;
+}
+
 export interface JournalRead<T> {
   events: T[];
   /** Text after the last newline: an append a crash cut short. Not an event. */
@@ -383,6 +399,82 @@ export class Library {
     return { avatar: manifest, photo: sidecar };
   }
 
+
+  /** The avatar's folder (`avatars/<avatarId>`), by the library's own naming; the id becomes a path segment, so it is validated. */
+  avatarDirPath(avatarId: string): string {
+    if (!isLibraryId(avatarId)) throw new LibraryError("invalid-id", `avatar id ${JSON.stringify(avatarId)} breaks the id pattern`);
+    return this.#avatarDir(avatarId);
+  }
+
+  /** How many montage draft files the avatar's folder holds (`<montageId>.json`; temp files, folders and other names do not count). */
+  async montageCount(avatarId: string): Promise<number> {
+    let entries;
+    try {
+      entries = await readdir(this.montagesDir(avatarId), { withFileTypes: true });
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return 0;
+      throw error;
+    }
+    return entries.filter((entry) => entry.isFile() && !entry.name.startsWith(".") && entry.name.endsWith(".json")).length;
+  }
+
+  /**
+   * Takes the avatar out of every in-memory index (the avatar, its photos, its reject marks, its video records, its pending intent
+   * holds) and answers what was taken, for `reattachAvatar`. SYNCHRONOUS and memory only: the disk is not touched, so a caller can
+   * decide the avatar's folder may go (the system Trash) with the indexes already saying so, and undo it if the folder stays.
+   * Whatever the caller does next must not await between its own checks and this call.
+   */
+  detachAvatar(avatarId: string): DetachedAvatar {
+    const manifest = this.#avatars.get(avatarId);
+    if (manifest === undefined) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+    const photos = this.photosByAvatar(avatarId);
+    const pendingHolds = [...this.#pendingHolds].filter(([, hold]) => hold.avatarId === avatarId);
+    const detached: DetachedAvatar = {
+      avatarId,
+      manifest,
+      photos,
+      rejectedPhotoIds: photos.filter((photo) => this.#rejected.has(photo.id)).map((photo) => photo.id),
+      brokenRejectLog: this.#brokenRejectLogs.get(avatarId),
+      videos: this.#videosByAvatar.get(avatarId),
+      videoProblems: this.#videoProblems.get(avatarId),
+      videoIndexStale: this.#videoIndexStale.get(avatarId),
+      pendingHolds,
+    };
+    for (const photo of photos) {
+      this.#photos.delete(photo.id);
+      this.#rejected.delete(photo.id);
+    }
+    this.#avatars.delete(avatarId);
+    this.#brokenRejectLogs.delete(avatarId);
+    this.#videosByAvatar.delete(avatarId);
+    this.#videoProblems.delete(avatarId);
+    this.#videoIndexStale.delete(avatarId);
+    // A reload of the used index that was reading while this ran must not bring the records back.
+    this.#videoGeneration.set(avatarId, (this.#videoGeneration.get(avatarId) ?? 0) + 1);
+    for (const [videoId] of pendingHolds) this.#pendingHolds.delete(videoId);
+    return detached;
+  }
+
+  /** Puts back what `detachAvatar` took. Refuses (`invalid-record`) when the library already has an avatar with that id: nothing is overwritten. */
+  reattachAvatar(detached: DetachedAvatar): void {
+    if (this.#avatars.has(detached.avatarId)) throw new LibraryError("invalid-record", `avatar ${detached.avatarId} is already in the library`);
+    this.#avatars.set(detached.avatarId, detached.manifest);
+    for (const photo of detached.photos) this.#photos.set(photo.id, photo);
+    for (const photoId of detached.rejectedPhotoIds) this.#rejected.add(photoId);
+    if (detached.brokenRejectLog !== undefined) this.#brokenRejectLogs.set(detached.avatarId, detached.brokenRejectLog);
+    if (detached.videos !== undefined) this.#videosByAvatar.set(detached.avatarId, [...detached.videos]);
+    if (detached.videoProblems !== undefined) this.#videoProblems.set(detached.avatarId, [...detached.videoProblems]);
+    if (detached.videoIndexStale !== undefined) this.#videoIndexStale.set(detached.avatarId, new Set(detached.videoIndexStale));
+    this.#videoGeneration.set(detached.avatarId, (this.#videoGeneration.get(detached.avatarId) ?? 0) + 1);
+    for (const [videoId, hold] of detached.pendingHolds) this.#pendingHolds.set(videoId, hold);
+  }
+
+  /** How many commit intents of the avatar are pending (written, no record yet): its photos are held for them. */
+  pendingVideoCount(avatarId: string): number {
+    let count = 0;
+    for (const hold of this.#pendingHolds.values()) if (hold.avatarId === avatarId) count++;
+    return count;
+  }
 
   getAvatar(avatarId: string): AvatarManifest | undefined {
     return this.#avatars.get(avatarId);
