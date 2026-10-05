@@ -1,3 +1,4 @@
+export { CategoryError, CategoryStore, snapshotOf, summaryOf, type CategoryErrorCode, type PendingCall, type StoredCategory } from "./categories";
 export { LibraryError, type LibraryErrorCode } from "./errors";
 export { LIBRARY_ID_PATTERN, isLibraryId } from "./ids";
 export { LIBRARY_FILE } from "./layout";
