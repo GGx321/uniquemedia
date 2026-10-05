@@ -691,7 +691,10 @@ export class Engine {
       checker: new FileStateChecker(),
       withLibrary: (work) => this.#withLiveLibrary(work),
       openLibrary: () => this.library,
-      noteUnreadablePending: (count) => this.#noteCounted("pending-video-unreadable", count),
+      noteUnreadablePending: (blocked) => {
+        if (blocked.held > 0) this.#noteCounted("pending-video-unreadable", blocked.held);
+        if (blocked.damaged > 0) this.#noteCounted("pending-video-set-aside", blocked.damaged);
+      },
       checkExport: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
       exportSwitch: { pending: () => this.#exportSwitchPending(), currentPath: () => this.#settings.exportPath },
       caseProbe: this.#caseProbe,

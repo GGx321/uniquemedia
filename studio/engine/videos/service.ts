@@ -134,8 +134,11 @@ export interface VideoServiceDeps {
   readonly listBudgetMs?: number;
   /** How long the probe of the export volume's case rule may take in `#freshRoot`; `CASE_PROBE_TIMEOUT_MS` when absent. */
   readonly caseProbeTimeoutMs?: number;
-  /** Told with the count of the intents a start's recovery left unreadable (the engine raises a notice for them); absent: nobody is told. */
-  readonly noteUnreadablePending?: (count: number) => void;
+  /**
+   * Told what a start's recovery found standing between the owner and his photos (`RecoveryReport.blocked`: `held` unreadable intents or `.pending/` folders, `damaged`
+   * intents set aside); the engine raises a notice for each. Only for the library that is live, and only when something was found; absent: nobody is told.
+   */
+  readonly noteUnreadablePending?: (blocked: { held: number; damaged: number }) => void;
   /** How the commit intent's file is looked at before a settle; `lstat` when absent (a test plays a disk that fails or does not answer). */
   readonly intentLstat?: (path: string) => Promise<unknown>;
   /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
@@ -667,13 +670,14 @@ export class VideoService {
     let rootJudged = true;
     try {
       const look = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#lookRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
-      if (look.kind === "unanswered") rootJudged = false;
-      else root = look.kind === "root" ? look.ref : null;
+      if (look.kind === "unanswered") {
+        rootJudged = false;
+        this.#deps.log(`videos.list: the export folder did not answer; the files of avatar ${avatarId} are left unchecked`);
+      } else root = look.kind === "root" ? look.ref : null;
     } catch (error) {
       rootJudged = false;
-      this.#deps.log(`videos.list: the export folder could not be looked at (${kindOf(error)}); the files are left unchecked`);
+      this.#deps.log(`videos.list: the export folder could not be looked at (${kindOf(error)}); the files of avatar ${avatarId} are left unchecked`);
     }
-    if (!rootJudged) this.#deps.log(`videos.list: the export folder did not answer; the files of avatar ${avatarId} are left unchecked`);
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
@@ -999,34 +1003,32 @@ export class VideoService {
     for (const { code } of swept.skipped) this.#deps.log(`a leftover in render-tmp could not be removed (${code}); the next start tries again`);
   }
 
-  async #recover(library: Library, signal: AbortSignal, options: { exportCheck?: ExportRootCheck; only?: { videoIds: readonly string[] } }): Promise<void> {
+  async #recover(library: Library, signal: AbortSignal, options: { exportCheck?: ExportRootCheck }): Promise<void> {
     const deps = this.#deps;
     // What each avatar's photos looked like (which are held, how many are free) before recovery held or freed any: what is announced is what moved.
     const before = this.#heldKeys(library);
     // The library's pending intents are read and their photos held FIRST, before the export root is asked anything: a slow or hung root must not leave the
     // photos free at the start. A step of its own, so a test's stand-in for the whole recovery is not called twice.
-    if (options.only === undefined) {
-      try {
-        await recoverVideos({ library, exportRoot: null, live: deps.tracker, signal, holdOnly: true }, { log: deps.log, ...deps.recover?.deps });
-      } catch (error) {
-        deps.log(`recovery: the pending intents' photos could not be held first (${kindOf(error)})`);
+    try {
+      const held = await recoverVideos({ library, exportRoot: null, live: deps.tracker, signal, holdOnly: true }, { log: deps.log, ...deps.recover?.deps });
+      // What stands between the owner and his photos he is told, by count and never by path, for the library he is looking at (a switch or a stop ends the story).
+      if (!signal.aborted && deps.openLibrary() === library && (held.blocked.held > 0 || held.blocked.damaged > 0)) {
+        try {
+          deps.noteUnreadablePending?.(held.blocked);
+        } catch (error) {
+          deps.log(`recovery: the notice of what blocks the photos could not be raised (${kindOf(error)})`);
+        }
       }
-      if (signal.aborted) return;
-      this.#announceHeldChanges(library, before);
+    } catch (error) {
+      deps.log(`recovery: the pending intents' photos could not be held first (${kindOf(error)})`);
     }
+    if (signal.aborted) return;
+    this.#announceHeldChanges(library, before);
     // A FRESH look at the root, and the SAME tracker the renders register in: a live commit is never taken for a crash's leftover.
     const exportRoot = await this.#freshRoot(options.exportCheck);
     if (signal.aborted) return;
     const run = deps.recover?.run ?? recoverVideos;
-    const report = await run({ library, exportRoot, live: deps.tracker, signal, ...(options.only === undefined ? {} : { only: options.only }) }, { log: deps.log, ...deps.recover?.deps });
-    // An intent that could not be read leaves photos held that the owner cannot free by himself: he is told (a notice), by count, never by path.
-    if (options.only === undefined && report.left.length > 0) {
-      try {
-        deps.noteUnreadablePending?.(report.left.length);
-      } catch (error) {
-        deps.log(`recovery: the notice of unreadable intents could not be raised (${kindOf(error)})`);
-      }
-    }
+    const report = await run({ library, exportRoot, live: deps.tracker, signal }, { log: deps.log, ...deps.recover?.deps });
     // Counts only, and only when there was something to settle: a clean open is silent.
     if (report.adopted.length + report.dropped.length + report.deferred.length + report.left.length + report.skipped.length > 0) {
       deps.log(`recovery: ${report.adopted.length} adopted, ${report.dropped.length} dropped, ${report.deferred.length} deferred, ${report.left.length} left, ${report.skipped.length} skipped`);
@@ -1042,7 +1044,7 @@ export class VideoService {
       for (const avatarId of avatars) this.#announce(library, avatarId);
       this.#announceHeldChanges(library, before, avatars);
     }
-    if (options.only === undefined) for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);
+    for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);
   }
 
   /** Per avatar, the photos that are held (reserved) and how many are free: a change in either is something the windows have not been told. */

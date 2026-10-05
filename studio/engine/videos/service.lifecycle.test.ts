@@ -6,7 +6,7 @@ import { EngineFailure } from "../engineFailure";
 import type { MontageDraft } from "../../shared/engine/montage";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
-import { recoverVideos, type RecoveryReport } from "./recovery";
+import { NODE_LIBRARY_READ_FS, recoverVideos, type LibraryReadFs, type RecoveryReport } from "./recovery";
 import { videoPaths, type VideoRecord } from "./record";
 import { errnoError, faultyFs, FINAL, sampleRecord, specOf, useWorld, type World } from "./testing/kit";
 import { DEFAULT_STALE_RETRY_DELAYS_MS } from "./service";
@@ -520,28 +520,79 @@ describe("the hold of a pending intent does not wait on a disk that fails or han
   });
 });
 
-describe("an intent that could not be read is told to the owner (review round 1 of the follow-ups, M2)", () => {
-  test("recovery at the start that leaves an intent unreadable raises the notice once, with the count of such intents", async () => {
+describe("what blocks the owner's photos is told to him (review round 1 of the follow-ups, M2; round 2, M2-M3)", () => {
+  type Blocked = { held: number; damaged: number };
+  const unlistable = { readFile: NODE_LIBRARY_READ_FS.readFile, readdir: (path: string) => (path.endsWith(".pending") ? Promise.reject(errnoError("EACCES")) : NODE_LIBRARY_READ_FS.readdir(path)) };
+  const busy = { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => Promise.reject(errnoError("EBUSY")) };
+
+  async function start(w: World, setup: () => Promise<void> | void, libraryFs?: LibraryReadFs) {
+    await setup();
+    const library = await w.reopen();
+    const told: Blocked[] = [];
+    const r = serviceRig(w, { library, deps: { noteUnreadablePending: (blocked) => void told.push(blocked), ...(libraryFs === undefined ? {} : { recover: { deps: { libraryFs } } }) } });
+    r.service.startup(library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    await r.service.settled();
+    return { told, r, library };
+  }
+
+  test("a damaged intent is set aside and told ONCE as damaged: the next start has nothing to tell", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    const first = await start(w, async () => {
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+      writeFileSync(videoPaths(w.libraryRoot, w.avatar.id).intent(record.id), "{ not json");
+    });
+    expect(first.told).toEqual([{ held: 0, damaged: 1 }]);
+
+    const library = await w.reopen();
+    const second = serviceRig(w, { library, deps: { noteUnreadablePending: (blocked) => void first.told.push(blocked) } });
+    second.service.startup(library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    await second.service.settled();
+
+    expect(first.told).toEqual([{ held: 0, damaged: 1 }]);
+  });
+
+  test("an intent that could not be read (a read error) is told as held", async () => {
+    const w = world();
+    const { told } = await start(w, () => writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {})), busy);
+
+    expect(told).toEqual([{ held: 1, damaged: 0 }]);
+  });
+
+  test("a .pending folder that cannot be listed is told as held: the strongest block must not be the silent one", async () => {
+    const w = world();
+    const { told } = await start(w, () => writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {})), unlistable);
+
+    expect(told).toEqual([{ held: 1, damaged: 0 }]);
+  });
+
+  test("a valid intent beside the files the OS leaves (.DS_Store, Thumbs.db, desktop.ini) tells nothing", async () => {
+    const w = world();
+    const { told } = await start(w, async () => {
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+      for (const name of [".DS_Store", "Thumbs.db", "desktop.ini"]) writeFileSync(join(videoPaths(w.libraryRoot, w.avatar.id).pendingDir, name), "x");
+    });
+
+    expect(told).toEqual([]);
+  });
+
+  test("a clean start tells nothing", async () => {
+    const w = world();
+    const { told } = await start(w, () => undefined);
+
+    expect(told).toEqual([]);
+  });
+
+  test("a library that is no longer the live one is not told about: the notice belongs to the window that shows it", async () => {
     const w = world();
     const record = sampleRecord(w, {});
     await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
     writeFileSync(videoPaths(w.libraryRoot, w.avatar.id).intent(record.id), "{ not json");
-    const library = await w.reopen();
-    const told: number[] = [];
-    const r = serviceRig(w, { library, deps: { noteUnreadablePending: (count) => void told.push(count) } });
+    const told: Blocked[] = [];
+    // The engine's live library is another one (here: none) by the time recovery has run.
+    const r = serviceRig(w, { library: w.library, deps: { noteUnreadablePending: (blocked) => void told.push(blocked), openLibrary: () => null } });
 
-    r.service.startup(library, { ok: true, root: w.exportRoot, rootId: w.rootId });
-    await r.service.settled();
-
-    expect(told).toEqual([1]);
-  });
-
-  test("a clean start, and a targeted settle, tell nothing", async () => {
-    const w = world();
-    const told: number[] = [];
-    const r = serviceRig(w, { deps: { noteUnreadablePending: (count) => void told.push(count) } });
-
-    r.service.startup(w.library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    r.service.startup(await w.reopen(), { ok: true, root: w.exportRoot, rootId: w.rootId });
     await r.service.settled();
 
     expect(told).toEqual([]);
