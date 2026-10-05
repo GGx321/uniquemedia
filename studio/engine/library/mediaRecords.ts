@@ -9,6 +9,7 @@ import { MAX_ENVELOPE_STEPS } from "../music/trackRecord";
 import { fsyncDir, fsyncFile, hasErrorCode, isTempName, writeJsonAtomic } from "./durableFs";
 import { isFromNewerVersion, MEDIA_DIR, MEDIA_RECORD_SCHEMA_VERSION, MEDIA_STAGING_DIR } from "./layout";
 import { openRegularNoFollow, type OpenRegularOps } from "./openRegular";
+import { Quarantine } from "./quarantine";
 import { renameWithRetry } from "./renameRetry";
 import { unlinkWithRetry } from "./unlinkRetry";
 
@@ -18,15 +19,19 @@ import { unlinkWithRetry } from "./unlinkRetry";
 // restart sees the whole record or none. The stored file is made durable and renamed into its name BEFORE the record is written, so
 // a record never names a file that is not on disk; the crash windows are:
 //   - before the file is stored: the staged copy is left to the staging cleanup;
-//   - the file is stored, the record is not (an ORPHAN file): `recover` removes it at the next open;
+//   - the file is stored, the record is not (an ORPHAN file): `recover` sets it aside in the library's quarantine at the next open;
 //   - the record's temp file is left: `recover` sweeps it;
-//   - the record is written: complete. A record whose file is gone (DANGLING) names nothing and is removed at the next open.
+//   - the record is written: complete. A record whose file is gone (DANGLING) names nothing and is set aside at the next open.
+// NOTHING IS DELETED BY AN OPEN. An orphan file may be the owner's own, or half of a pair a sync has not finished bringing; a dangling
+// record may be waiting for its file. Both go to `<library>/quarantine/<stamp>/media/` (a rename on the same volume), with one log line,
+// so a library opened half-copied loses nothing over any number of opens. Only a record's own temp file is swept.
+//
 // An import interrupted by a crash is therefore CLEANED UP, never resumed: the source path is not kept anywhere (invariant 34), so
 // there is nothing to resume from, and the owner picks the file again.
 //
 // NOTHING OUTSIDE `<library>/media/` IS EVER TOUCHED. The folder must be a real folder (an `lstat` refuses a link or a junction) that
 // resolves inside the library root. A record's `file` must be exactly `<its id>.<the extension of its format>`: a record can never
-// point a removal at another name. Only files of that shape, with no record at all, are removed as orphans; a record that cannot be
+// point a removal at another name. Only files of that shape, with no record at all, are set aside as orphans; a record that cannot be
 // read, or that a newer Studio wrote, keeps its file and is never removed.
 
 /** The extension of the stored file, by container. Closed: an unknown format is not stored. */
@@ -213,10 +218,10 @@ export type MediaProblemReason = "unreadable" | "too-new" | "damaged";
 export interface MediaRecoveryReport {
   /** Records read and listed. */
   readonly listed: number;
-  /** Stored files with no record at all, removed. */
-  readonly removedOrphans: number;
-  /** Records whose file is gone, removed. */
-  readonly removedDangling: number;
+  /** Stored files with no record at all, moved to the library's quarantine. */
+  readonly quarantinedOrphans: number;
+  /** Records whose file is gone, moved to the library's quarantine. */
+  readonly quarantinedDangling: number;
   /** Records that were not listed and not touched, by file name (never a path). */
   readonly problems: readonly { file: string; reason: MediaProblemReason }[];
   /** The media folder is not a plain folder of the library's: nothing was read or removed. */
@@ -277,6 +282,17 @@ export class MediaRecords {
     }
   }
 
+  /** Moves a file to the library's quarantine; false (and a log line, never a path) when it could not, and then it stays where it is. */
+  async #setAside(quarantine: Quarantine, path: string, reason: "orphan-media" | "dangling-media-record"): Promise<boolean> {
+    try {
+      await quarantine.move(path, reason);
+      return true;
+    } catch (error) {
+      if (!hasErrorCode(error, "ENOENT")) this.#warn("a stored media file could not be set aside; it stays where it is");
+      return false;
+    }
+  }
+
   /** Whether `<root>/media` is a real folder inside the library root: a link or a junction is not one. */
   async #dirState(): Promise<DirState> {
     let info;
@@ -332,12 +348,12 @@ export class MediaRecords {
   }
 
   /**
-   * Reads the folder at an open: removes what a crash left (a record's temp file, a stored file with no record, a record whose file is
-   * gone) and lists the sound records. Additive: records already committed by this instance stay. A record that cannot be read, was
+   * Reads the folder at an open: removes a record's temp file a crash left and sets aside (never deletes) a stored file with no record and
+   * a record whose file is gone and lists the sound records. Additive: records already committed by this instance stay. A record that cannot be read, was
    * written by a newer Studio, or whose file is not the size it names is neither listed nor removed. Never throws for a file.
    */
   async recover(): Promise<MediaRecoveryReport> {
-    const empty: MediaRecoveryReport = { listed: 0, removedOrphans: 0, removedDangling: 0, problems: [], unusable: false };
+    const empty: MediaRecoveryReport = { listed: 0, quarantinedOrphans: 0, quarantinedDangling: 0, problems: [], unusable: false };
     const state = await this.#dirState();
     if (state === "absent") return empty;
     if (state === "unsafe") {
@@ -358,8 +374,9 @@ export class MediaRecords {
     }
 
     const problems: { file: string; reason: MediaProblemReason }[] = [];
-    let removedDangling = 0;
-    let removedOrphans = 0;
+    let quarantinedDangling = 0;
+    let quarantinedOrphans = 0;
+    const quarantine = new Quarantine(this.#options.root, this.#options.now);
     for (const entry of entries) {
       if (entry.isFile() && (isTempName(entry.name) && RECORD_TEMP_NAME.test(entry.name))) await this.#removeQuietly(join(this.#dir, entry.name));
     }
@@ -370,7 +387,7 @@ export class MediaRecords {
       const judged = await this.#judge(entry.name);
       if (judged.kind === "problem") problems.push({ file: entry.name, reason: judged.reason });
       else if (judged.kind === "dangling") {
-        if (await this.#removeQuietly(join(this.#dir, entry.name))) removedDangling++;
+        if (await this.#setAside(quarantine, join(this.#dir, entry.name), "dangling-media-record")) quarantinedDangling++;
       } else if (!this.#inFlight.has(judged.record.id)) this.#enter(judged.record);
     }
     for (const entry of entries) {
@@ -378,9 +395,12 @@ export class MediaRecords {
       const id = entry.name.slice(0, entry.name.lastIndexOf("."));
       // Judged AFTER the listing: a commit that ended since has its record in the index now, and its file is no orphan.
       if (recordIds.has(id) || this.#inFlight.has(id) || this.#index.has(id) || this.#deleting.has(id)) continue;
-      if (await this.#removeQuietly(join(this.#dir, entry.name))) removedOrphans++;
+      if (await this.#setAside(quarantine, join(this.#dir, entry.name), "orphan-media")) quarantinedOrphans++;
     }
-    return { listed: this.#index.size, removedOrphans, removedDangling, problems, unusable: false };
+    if (quarantinedOrphans + quarantinedDangling > 0) {
+      this.#warn(`${quarantinedOrphans} stored file(s) without a record and ${quarantinedDangling} record(s) without a file were set aside in the library's quarantine folder`);
+    }
+    return { listed: this.#index.size, quarantinedOrphans, quarantinedDangling, problems, unusable: false };
   }
 
   async #judge(name: string): Promise<{ kind: "record"; record: RecordShape } | { kind: "dangling" } | { kind: "problem"; reason: MediaProblemReason }> {

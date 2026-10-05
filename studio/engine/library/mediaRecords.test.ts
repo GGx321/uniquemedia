@@ -49,6 +49,15 @@ async function photoInput(extra: Partial<MediaCommitInput> = {}): Promise<MediaC
 
 const names = async (dir: string): Promise<string[]> => (await readdir(dir).catch(() => [])).filter((n) => n !== ".staging").sort();
 
+/** Every file the library's quarantine holds from `media/`, by name: set aside, never deleted. */
+async function quarantinedMedia(): Promise<string[]> {
+  const out: string[] = [];
+  for (const stamp of await readdir(join(root(), "quarantine")).catch(() => [])) {
+    out.push(...(await readdir(join(root(), "quarantine", stamp, "media")).catch(() => [])));
+  }
+  return out.sort();
+}
+
 describe("a stored file gets its record", () => {
   test("the staged copy moves into media/ under the id and the record is written beside it", async () => {
     const store = records();
@@ -202,7 +211,7 @@ describe("what is refused before anything is moved", () => {
 });
 
 describe("a crash at each point of a commit leaves a library that opens cleanly", () => {
-  test("a crash after the file is stored and before the record: the next open removes the file, nothing is listed", async () => {
+  test("a crash after the file is stored and before the record: the next open sets the file aside, nothing is listed", async () => {
     const crashing = records({
       hooks: {
         treatAsCrash: treatSimulatedCrash,
@@ -221,7 +230,8 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     const report = await reopened.recover();
     expect(await names(mediaDir())).toEqual([]);
     expect(reopened.list()).toEqual({ media: [], total: 0 });
-    expect(report.removedOrphans).toBeGreaterThanOrEqual(1);
+    expect(report.quarantinedOrphans).toBeGreaterThanOrEqual(1);
+    expect((await quarantinedMedia()).some((n) => n.endsWith(".jpg"))).toBe(true);
   });
 
   test("a failed commit cleans up after itself when it can: nothing is left behind", async () => {
@@ -250,10 +260,10 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     const reopened = records();
     const report = await reopened.recover();
     expect(reopened.list().media).toEqual([summary]);
-    expect(report).toMatchObject({ removedOrphans: 0, removedDangling: 0, problems: [] });
+    expect(report).toMatchObject({ quarantinedOrphans: 0, quarantinedDangling: 0, problems: [] });
   });
 
-  test("a record whose file is gone is removed at the next open: it names nothing", async () => {
+  test("a record whose file is gone is not listed and is set aside at the next open, not deleted", async () => {
     const first = records();
     const summary = await first.commit(await photoInput());
     await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "taken-away.jpg"));
@@ -261,7 +271,58 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     const report = await reopened.recover();
     expect(reopened.list().total).toBe(0);
     expect(await names(mediaDir())).toEqual([]);
-    expect(report.removedDangling).toBe(1);
+    expect(report.quarantinedDangling).toBe(1);
+    expect(await quarantinedMedia()).toEqual([`${summary.mediaId}.json`]);
+  });
+
+  test("a library opened while half of it is missing loses nothing: no piece is deleted over two opens", async () => {
+    // The reviewer's two-opens experiment: a record without its file, and a file without its record, then each other half arrives.
+    const first = records();
+    const kept = await first.commit(await photoInput());
+    const other = await first.commit(await photoInput({ name: "other.jpg" }));
+    const keptRecord = await readFile(join(mediaDir(), `${kept.mediaId}.json`));
+    const otherFile = await readFile(join(mediaDir(), `${other.mediaId}.jpg`));
+    // Open 1: the sync has brought kept's record and other's file, but not their partners.
+    await rename(join(mediaDir(), `${kept.mediaId}.jpg`), join(tmp(), "kept.jpg"));
+    await rename(join(mediaDir(), `${other.mediaId}.json`), join(tmp(), "other.json"));
+    const firstOpen = await records().recover();
+    expect(firstOpen).toMatchObject({ quarantinedOrphans: 1, quarantinedDangling: 1 });
+    // The partners arrive; open 2 must not lose any of the four pieces.
+    await rename(join(tmp(), "kept.jpg"), join(mediaDir(), `${kept.mediaId}.jpg`));
+    await rename(join(tmp(), "other.json"), join(mediaDir(), `${other.mediaId}.json`));
+    await records().recover();
+    const all = [...(await names(mediaDir())), ...(await quarantinedMedia())].sort();
+    expect(all.filter((n) => n.startsWith(kept.mediaId))).toHaveLength(2);
+    expect(all.filter((n) => n.startsWith(other.mediaId))).toHaveLength(2);
+    // And the set-aside copies are the bytes that were there.
+    const stamp = (await readdir(join(root(), "quarantine")))[0] ?? "";
+    expect(await readFile(join(root(), "quarantine", stamp, "media", `${kept.mediaId}.json`))).toEqual(keptRecord);
+    expect(await readFile(join(root(), "quarantine", stamp, "media", `${other.mediaId}.jpg`))).toEqual(otherFile);
+  });
+
+  test("a file the owner dropped into media/ with a name of our shape is set aside, not deleted", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    const report = await records().recover();
+    expect(report.quarantinedOrphans).toBe(1);
+    expect(await names(mediaDir())).toEqual([]);
+    expect(await quarantinedMedia()).toEqual(["holiday-photo.jpg"]);
+  });
+
+  test("setting aside is told in the log, with counts and no path", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    const lines: string[] = [];
+    await records({ warn: (text) => lines.push(text) }).recover();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/1 .*set aside/);
+    expect(lines[0]).not.toContain(root());
+  });
+
+  test("a file that cannot be set aside stays where it is, and the open still finishes", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    await writeFile(join(root(), "quarantine"), "a file where the quarantine folder should be");
+    const report = await records().recover();
+    expect(report.quarantinedOrphans).toBe(0);
+    expect(await names(mediaDir())).toEqual(["holiday-photo.jpg"]);
   });
 
   // L-3 (review M10): only a file that is NOT THERE makes a record dangling; any other disk error says nothing about the file.
@@ -278,7 +339,7 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
       },
     });
     const report = await reopened.recover();
-    expect(report.removedDangling).toBe(0);
+    expect(report.quarantinedDangling).toBe(0);
     expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
     expect(report.problems).toHaveLength(1);
   });
@@ -445,7 +506,7 @@ describe("what open will not judge for itself", () => {
     expect(store.list().total).toBe(0);
   });
 
-  test("only files of the shape of ours are ever removed as orphans, and folders are left", async () => {
+  test("only files of the shape of ours are ever set aside as orphans, and folders are left", async () => {
     await planted("media-00000060.jpg", "an orphan of ours");
     await planted("notes.txt", "the owner's");
     await planted("MEDIA-00000061.jpg", "capitals are not ours");
@@ -453,6 +514,7 @@ describe("what open will not judge for itself", () => {
     await mkdir(join(mediaDir(), "media-00000063.jpg"));
     await records().recover();
     expect(await names(mediaDir())).toEqual(["MEDIA-00000061.jpg", "media-00000062.exe", "media-00000063.jpg", "notes.txt"]);
+    expect(await quarantinedMedia()).toEqual(["media-00000060.jpg"]);
   });
 
   // L-4 (review M14): a temp file that is not a record's own is the owner's or another program's.
@@ -488,7 +550,7 @@ describe("what open will not judge for itself", () => {
     const store = records();
     const report = await store.recover();
     expect(store.list().total).toBe(0);
-    expect(report).toMatchObject({ removedOrphans: 0, removedDangling: 0, problems: [] });
+    expect(report).toMatchObject({ quarantinedOrphans: 0, quarantinedDangling: 0, problems: [] });
     expect(await readdir(root())).toEqual([]);
   });
 });
