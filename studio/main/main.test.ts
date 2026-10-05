@@ -313,6 +313,57 @@ describe("duplicateRemoveSwitchProblems: no second, literal removeSwitch call fo
   });
 });
 
+// Stage 3 whole-slice review L4: the session's permission handlers. Electron grants every permission a page asks for until the session has handlers, so they must
+// be installed before any window exists: the FIRST statement of `startStudio`, which runs before anything awaits and before `createWindow`.
+const PERMISSIONS_CLEAN = `
+async function startStudio(): Promise<void> {
+  installSessionPermissions(session.defaultSession, TRUSTED);
+  protocol.handle(APP_SCHEME, (request) => handleAppRequest(request, RENDERER_DIR));
+  await engine.start();
+  createWindow();
+}
+`;
+
+/** Why `startStudio` of `source` does not install the session's permission handlers first: the one allowed shape is `installSessionPermissions(session.defaultSession, TRUSTED)` as its first statement. */
+function permissionProblems(source: string): string[] {
+  const file = parse(source);
+  const start = file.statements.find((s): s is ts.FunctionDeclaration => ts.isFunctionDeclaration(s) && s.name?.text === "startStudio");
+  if (start?.body === undefined) return ["no `startStudio` function was found"];
+  const first = start.body.statements[0];
+  if (first === undefined || !ts.isExpressionStatement(first) || !ts.isCallExpression(first.expression)) return ["the first statement of startStudio is not a call"];
+  const call = first.expression;
+  if (!ts.isIdentifier(call.expression) || call.expression.text !== "installSessionPermissions") return ["the first statement of startStudio is not installSessionPermissions(...)"];
+  const [target, trusted, ...rest] = call.arguments;
+  const isDefaultSession = target !== undefined && ts.isPropertyAccessExpression(target) && target.name.text === "defaultSession" && ts.isIdentifier(target.expression) && target.expression.text === "session";
+  if (!isDefaultSession) return ["installSessionPermissions is not given session.defaultSession"];
+  if (trusted === undefined || !ts.isIdentifier(trusted) || trusted.text !== "TRUSTED" || rest.length > 0) return ["installSessionPermissions is not given exactly (session.defaultSession, TRUSTED)"];
+  return [];
+}
+
+describe("permissionProblems: the permission handlers are installed first in startStudio", () => {
+  test("passes the clean shape", () => {
+    expect(permissionProblems(PERMISSIONS_CLEAN)).toEqual([]);
+  });
+
+  test("fails when startStudio does not exist", () => {
+    expect(permissionProblems("const x = 1;")).toEqual(["no `startStudio` function was found"]);
+  });
+
+  test("fails when a window is created, or anything awaited, before the install", () => {
+    const late = PERMISSIONS_CLEAN.replace("  installSessionPermissions(session.defaultSession, TRUSTED);\n", "").replace("  createWindow();", "  createWindow();\n  installSessionPermissions(session.defaultSession, TRUSTED);");
+    expect(permissionProblems(late)).toEqual(["the first statement of startStudio is not installSessionPermissions(...)"]);
+    const afterAwait = PERMISSIONS_CLEAN.replace("  installSessionPermissions(session.defaultSession, TRUSTED);\n", "  await engine.start();\n  installSessionPermissions(session.defaultSession, TRUSTED);\n");
+    expect(permissionProblems(afterAwait)).toEqual(["the first statement of startStudio is not a call"]);
+  });
+
+  test("fails when it is conditional or given another session", () => {
+    expect(permissionProblems(PERMISSIONS_CLEAN.replace("installSessionPermissions(session.defaultSession, TRUSTED);", "if (x) installSessionPermissions(session.defaultSession, TRUSTED);"))).toEqual([
+      "the first statement of startStudio is not a call",
+    ]);
+    expect(permissionProblems(PERMISSIONS_CLEAN.replace("session.defaultSession", "session.fromPartition('x')"))).toEqual(["installSessionPermissions is not given session.defaultSession"]);
+  });
+});
+
 // Applies every rule above, each a pure function over source text as tested
 // above, to the real file and, for the file-wide rules, to every other file
 // under studio/main.
@@ -333,6 +384,10 @@ describe("the real studio/main/main.ts", () => {
 
   test("main.ts uses no labeled statement", () => {
     expect(labeledStatementProblems(mainSource, "main.ts")).toEqual([]);
+  });
+
+  test("startStudio installs the session's permission handlers as its first statement, before any window", () => {
+    expect(permissionProblems(mainSource)).toEqual([]);
   });
 
   test("every file under studio/main accesses commandLine only as an immediate call, never appends a switch, and never duplicates the refusal's removeSwitch call", () => {

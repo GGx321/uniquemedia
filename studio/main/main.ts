@@ -7,6 +7,7 @@ import {
   MessageChannelMain,
   protocol,
   safeStorage,
+  session,
   shell,
   utilityProcess,
   type IpcMainEvent,
@@ -43,6 +44,7 @@ import { appMenuTemplate } from "./appMenu";
 import { createQuitFlow, WINDOW_FLUSH_WAIT_MS } from "./quitFlow";
 import { createWindowFlush } from "./windowFlush";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
+import { installSessionPermissions } from "./sessionPermissions";
 import { handleSettingsCommand, reconcileLibraryPath } from "./settingsFlow";
 import { defaultLibraryPath, defaultSettings, SettingsStore } from "./settingsStore";
 
@@ -253,7 +255,9 @@ async function pickMediaFiles(owner: BrowserWindow | null, kind: MediaPickKind):
 }
 
 async function startStudio(): Promise<void> {
-  // First, before anything awaits: no window may load the page before its scheme answers.
+  // Before anything, and before any window: Electron grants every permission to a session with no handlers (sessionPermissions.ts).
+  installSessionPermissions(session.defaultSession, TRUSTED);
+  // Then, before anything awaits: no window may load the page before its scheme answers.
   protocol.handle(APP_SCHEME, (request) => handleAppRequest(request, RENDERER_DIR));
   const userData = app.getPath("userData");
   const { store: settings, notice } = await SettingsStore.open(userData);
