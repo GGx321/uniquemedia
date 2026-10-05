@@ -468,11 +468,13 @@
   white-space: nowrap;
 }
 
+/* As tall as the window allows: the window less the card's own head and padding (~72px) and 32px of scrim above and below,
+   up to 960px, which is the 1080 x 1920 video at one screen pixel per video pixel on a 2x screen. */
 .player-frame {
   display: flex;
   align-items: center;
   justify-content: center;
-  height: min(80vh, 760px);
+  height: min(100vh - 136px, 960px);
   aspect-ratio: 9 / 16;
   overflow: hidden;
   border-radius: 10px;
