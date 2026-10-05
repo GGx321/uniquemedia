@@ -1,5 +1,4 @@
 import {
-  AGE_CHECK_ALREADY_REFUSED_DETAIL,
   DRAFT_CHANGING_DETAIL,
   DRAFT_TOO_NEW_DETAIL,
   ERROR_MESSAGES_RU,
@@ -16,16 +15,6 @@ import {
 } from "../../shared/engine";
 import type { SettingsFocus } from "../navigation";
 import { countOf, waitLabel } from "./format";
-
-/**
- * T6c (H2, M2): re-picking a photo already refused by the mandatory
- * one-time age check is refused again for free — unlike the ordinary
- * AGE_CHECK_FAILED (ERROR_MESSAGES_RU's own text), nothing was charged this
- * time, so it needs its own wording rather than claiming the age check was
- * paid for again.
- */
-const AGE_CHECK_ALREADY_REFUSED_RU =
-  "Это фото уже не подтвердило возраст при прошлой попытке. Импорт отменён, ничего не сохранено и не потрачено — выберите другое фото.";
 
 /**
  * 3d.2 (the 3d.1a review): two INTERNAL answers of `montages.get` the owner can act on, told apart by their shared
@@ -54,7 +43,6 @@ function baseText(error: EngineError): string {
     const limit = renderQueueLimitOf(error.detail);
     if (limit !== null) return `В очереди уже ${countOf(limit, RENDER_FORMS)}: это предел. Дождитесь, пока часть из них соберётся, или отмените лишние, и повторите. Ничего не потрачено и не сохранено.`;
   }
-  if (error.code === "AGE_CHECK_FAILED" && error.detail === AGE_CHECK_ALREADY_REFUSED_DETAIL) return AGE_CHECK_ALREADY_REFUSED_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
+import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -169,5 +171,13 @@ describe("HostCall media.import and its reply", () => {
     expect(EngineReply.safeParse({ ...reply, error: { code: "VALIDATION", detail: "not a photo" }, mediaReason: "format" }).success).toBe(true);
     expect(EngineReply.safeParse({ ...reply, mediaReason: "heic?" }).success).toBe(false);
     expect(EngineReply.safeParse({ ...reply, mediaJobId: "no" }).success).toBe(false);
+  });
+});
+
+// An import's only paid call is the describe job (at most IMPORT_DESCRIBE_MAX_ATTEMPTS attempts): since the 2026-10-05 removal of its age
+// check the deadline holds no room for a third attempt, so main does not wait on a call the engine can no longer be making.
+describe("COMMAND_DEADLINE_MS['avatars.importAvatar'] covers the describe attempts and no age check", () => {
+  test("a price load, then exactly the describe attempts at their slowest, plus the fixed slack", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
   });
 });

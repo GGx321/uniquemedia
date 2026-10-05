@@ -95,12 +95,9 @@ export function descriptorJobCap(priced: PricedBook, models: AvatarModels): numb
 // one from a prompt. A one-off vision call reads the staged photo and writes
 // both her typed traits and her descriptor in one strict JSON answer
 // (importDescribe.ts), gated by the same AvatarDescriptor/AvatarTraits rules
-// as a generated avatar's. Two mandatory safeguards precede it: the owner's
-// confirmation that the photo is an AI persona (a contract-level requirement,
-// commands.ts's `confirmedAiPersona: z.literal(true)`) and, whatever the
-// `imageAgeCheck` toggle says, the one-time image age check (ageCheck.ts) on
-// the imported photo itself — an imported image bypasses the prompt's own
-// 21+ anchoring, so this check is never optional here.
+// as a generated avatar's. Owner decision 2026-10-05 (personal-use app): an
+// import makes no age check and asks for no AI-persona confirmation; the
+// describe call is the only paid call.
 
 /** At most 2 describe attempts, mirroring the descriptor job's own retry limit (descriptor.ts's DESCRIPTOR_MAX_ATTEMPTS). */
 export const IMPORT_DESCRIBE_MAX_ATTEMPTS = 2;
@@ -108,9 +105,8 @@ export const IMPORT_DESCRIBE_MAX_ATTEMPTS = 2;
 /**
  * The describe call's limits: longer than the plain descriptor call's (every
  * trait field, not just one string) and carries one attached image (the
- * staged photo, downscaled to its own — larger — side than the age check's
- * own image: importStaging.ts's IMPORT_DESCRIBE_MAX_SIDE, 1024, not
- * ageCheck.ts's AGE_CHECK_MAX_SIDE, 768). Typical counts are an estimate,
+ * staged photo, downscaled to importStaging.ts's IMPORT_DESCRIBE_MAX_SIDE,
+ * 1024). Typical counts are an estimate,
  * like the descriptor call's own.
  */
 const IMPORT_DESCRIBE_LIMITS = { maxTokens: 3_000, inputTokens: 7_000, images: 1, typical: { inputTokens: 1_800, outputTokens: 650 } } as const;
@@ -120,34 +116,25 @@ export function importDescribeCall(textModel: string): ChatCall {
   return { model: textModel, ...IMPORT_DESCRIBE_LIMITS, typical: { ...IMPORT_DESCRIBE_LIMITS.typical } };
 }
 
-/**
- * The models an import job prices: the settings' text model (the vision
- * describe call) and the age check's own fixed model (AGE_CHECK_CALL) —
- * always both, whatever `imageAgeCheck` says: the import's own one-time age
- * check is mandatory regardless of that toggle (unlike a candidate batch's
- * optional one), so it is always priced.
- */
+/** The models an import job prices: the settings' text model alone (the vision describe call). */
 export function importPriceModels(models: AvatarModels): PriceModels {
-  return { imageModels: [], chatModels: [...new Set([models.textModel, AGE_CHECK_CALL.model])] };
+  return { imageModels: [], chatModels: [models.textModel] };
 }
 
 /**
- * The import job's expected and worst cost: one mandatory age check plus up
- * to IMPORT_DESCRIBE_MAX_ATTEMPTS describe attempts. Unlike createDraft or
- * generateCandidates, there is no separate batch scope: the whole command
- * runs in one scope, so this estimate's own `worstMicros` is exactly that
- * scope's cap.
+ * The import job's expected and worst cost: up to IMPORT_DESCRIBE_MAX_ATTEMPTS
+ * describe attempts, nothing else. Unlike createDraft or generateCandidates,
+ * there is no separate batch scope: the whole command runs in one scope, so
+ * this estimate's own `worstMicros` is exactly that scope's cap.
  */
 export function importJobEstimate(priced: PricedBook, models: AvatarModels): Estimate {
   const { book } = priced;
   const describe = importDescribeCall(models.textModel);
-  const ageWorst = book.chatWorstCase({ model: AGE_CHECK_CALL.model, maxTokens: AGE_CHECK_CALL.maxTokens, inputTokens: AGE_CHECK_CALL.inputTokens, images: AGE_CHECK_CALL.images });
-  const ageExpected = book.chatCost({ model: AGE_CHECK_CALL.model, images: AGE_CHECK_CALL.images, ...AGE_CHECK_CALL.typical });
   const describeWorst = book.chatWorstCase({ model: describe.model, maxTokens: describe.maxTokens, inputTokens: describe.inputTokens, images: describe.images });
   const describeExpected = book.chatCost({ model: describe.model, images: describe.images, ...describe.typical });
   return {
-    expectedMicros: ageExpected + describeExpected,
-    worstMicros: ageWorst + IMPORT_DESCRIBE_MAX_ATTEMPTS * describeWorst,
+    expectedMicros: describeExpected,
+    worstMicros: IMPORT_DESCRIBE_MAX_ATTEMPTS * describeWorst,
     prices: book.source,
     pricesAsOf: priced.asOf,
   };

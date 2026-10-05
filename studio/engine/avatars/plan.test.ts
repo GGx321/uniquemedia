@@ -165,24 +165,24 @@ describe("import an existing avatar (T6c)", () => {
     });
   });
 
-  test("prices the settings' text model and the age check's own fixed model, whatever imageAgeCheck says — the import's own age check is mandatory", () => {
+  test("prices only the settings' text model: an import makes no age check, so the age check's model is never priced", () => {
     expect(importPriceModels(DEFAULTS)).toEqual({ imageModels: [], chatModels: ["x-ai/grok-4.3"] });
     expect(importPriceModels({ ...DEFAULTS, textModel: "acme/vision" })).toEqual({
       imageModels: [],
-      chatModels: ["acme/vision", "x-ai/grok-4.3"],
+      chatModels: ["acme/vision"],
     });
   });
 
-  test("worst case: one mandatory age check + up to 2 describe attempts — $0.037750 worst, $0.005535 expected", () => {
+  test("worst case: up to 2 describe attempts and nothing else — $0.032500 worst, $0.003875 expected", () => {
     const estimate = importJobEstimate(FALLBACK, DEFAULTS);
 
     expect(estimate).toEqual({
-      expectedMicros: AGE_CHECK.expected + IMPORT_DESCRIBE.expected,
-      worstMicros: AGE_CHECK.worst + IMPORT_DESCRIBE_MAX_ATTEMPTS * IMPORT_DESCRIBE.worst,
+      expectedMicros: IMPORT_DESCRIBE.expected,
+      worstMicros: IMPORT_DESCRIBE_MAX_ATTEMPTS * IMPORT_DESCRIBE.worst,
       prices: "fallback",
       pricesAsOf: "2026-09-24",
     });
-    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([5_535, 37_750]);
+    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([3_875, 32_500]);
     expect(Estimate.safeParse(estimate).success).toBe(true);
   });
 
@@ -193,21 +193,22 @@ describe("import an existing avatar (T6c)", () => {
   // fallback prices, so none of the three can drift from each other unnoticed.
   test("L8: IMPORT_FALLBACK_PRICE (shared with the renderer's mock and its UI text) matches the real computation exactly", () => {
     const estimate = importJobEstimate(FALLBACK, DEFAULTS);
+    // The age check alone is still priced for the photo runs' own toggle (Settings text); it is no part of the import's whole.
     expect({ expectedMicros: AGE_CHECK.expected, worstMicros: AGE_CHECK.worst }).toEqual(IMPORT_FALLBACK_PRICE.ageCheck);
     expect({ expectedMicros: IMPORT_DESCRIBE.expected, worstMicros: IMPORT_DESCRIBE.worst }).toEqual(IMPORT_FALLBACK_PRICE.describe);
     expect({ expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros }).toEqual(IMPORT_FALLBACK_PRICE.whole);
     expect(estimate.pricesAsOf).toBe(IMPORT_FALLBACK_PRICE.asOf);
   });
 
-  test("no image model is ever priced: the import never generates an image, only reads the staged one", () => {
+  test("no image model and no age-check model is ever priced: an import needs only its text model's price", () => {
     const book = new PriceBook(
       new Map(), // no image price loaded at all
-      new Map([["x-ai/grok-4.3", { price: { promptPico: 1_250_000, completionPico: 2_500_000, imagePico: 0, requestPico: 0, overrides: [] }, source: "live" }]]),
+      new Map([["acme/vision", { price: { promptPico: 1_250_000, completionPico: 2_500_000, imagePico: 0, requestPico: 0, overrides: [] }, source: "live" }]]),
     );
-    expect(() => importJobEstimate({ book, asOf: "2026-10-01" }, DEFAULTS)).not.toThrow();
+    expect(() => importJobEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/vision" })).not.toThrow();
   });
 
-  test("the text model from the settings prices the describe call; the age check stays on grok-4.3", () => {
+  test("the text model from the settings prices the describe call, and nothing else is added", () => {
     const rates = (promptPico: number, completionPico: number): PriceEntry<ChatPrice> => ({
       price: { promptPico, completionPico, imagePico: 0, requestPico: 0, overrides: [] },
       source: "live",
@@ -215,7 +216,6 @@ describe("import an existing avatar (T6c)", () => {
     const book = new PriceBook(
       new Map(),
       new Map([
-        ["x-ai/grok-4.3", rates(1_250_000, 2_500_000)],
         ["acme/vision", rates(1_000_000, 1_000_000)],
       ]),
     );
@@ -223,8 +223,8 @@ describe("import an existing avatar (T6c)", () => {
     const estimate = importJobEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/vision" });
 
     expect(estimate).toEqual({
-      expectedMicros: AGE_CHECK.expected + (1_800 + 650),
-      worstMicros: AGE_CHECK.worst + 2 * (7_000 + 3_000),
+      expectedMicros: 1_800 + 650,
+      worstMicros: 2 * (7_000 + 3_000),
       prices: "live",
       pricesAsOf: "2026-10-01",
     });

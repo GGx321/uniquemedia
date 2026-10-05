@@ -27,7 +27,6 @@ const EXPECTED_CODES = [
   "IN_FLIGHT",
   "LIBRARY_UNAVAILABLE",
   "DESCRIPTOR_INVALID",
-  "AGE_CHECK_FAILED",
   "IMPORT_SUBJECT_INVALID",
   "QA_REJECTED",
   "AGE_GATE_UNAVAILABLE",
@@ -53,13 +52,21 @@ const EXPECTED_CODES = [
 const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE", "TEXT_INVALID", "MUSIC_UNAVAILABLE", "MEDIA_UNSUPPORTED"];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of forty-two codes", () => {
+  test("is exactly the closed set of forty-one codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });
 
   test("rejects a code outside the set", () => {
     expect(ErrorCode.safeParse("PAYMENT_REQUIRED").success).toBe(false);
+  });
+
+  // Owner decision 2026-10-05: an import makes no age check, so the code that only it could answer with is gone (photo runs keep
+  // QA_REJECTED and AGE_GATE_UNAVAILABLE for their own gate).
+  test("no longer has AGE_CHECK_FAILED, and still has the photo runs' own age-gate codes", () => {
+    expect(ErrorCode.safeParse("AGE_CHECK_FAILED").success).toBe(false);
+    expect(ErrorCode.safeParse("QA_REJECTED").success).toBe(true);
+    expect(ErrorCode.safeParse("AGE_GATE_UNAVAILABLE").success).toBe(true);
   });
 });
 

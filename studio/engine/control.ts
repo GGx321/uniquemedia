@@ -261,8 +261,8 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "avatars.estimateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.estimateRewriteDescriptor": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.estimateImport": PRICE_FETCH_TIMEOUT_MS + 15_000,
-  // T6c: one mandatory age-check attempt, then up to IMPORT_DESCRIBE_MAX_ATTEMPTS describe attempts, each at its slowest.
-  "avatars.importAvatar": PRICE_FETCH_TIMEOUT_MS + (1 + IMPORT_DESCRIBE_MAX_ATTEMPTS) * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  // T6c: up to IMPORT_DESCRIBE_MAX_ATTEMPTS describe attempts, each at its slowest (no age check since 2026-10-05).
+  "avatars.importAvatar": PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

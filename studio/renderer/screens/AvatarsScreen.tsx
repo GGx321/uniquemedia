@@ -372,7 +372,7 @@ function NewAvatarTile({ estimate }: { estimate: Estimate | null }) {
 // case, not the worst case alone prefixed with «≈» (which overstated the
 // approximate cost about sevenfold here) — formatted the same way every other
 // price in the app is (lib/money.ts).
-const IMPORT_TILE_PRICE = `≈ ${formatUsdRange(IMPORT_FALLBACK_PRICE.whole.expectedMicros, IMPORT_FALLBACK_PRICE.whole.worstMicros, 2)}`;
+const IMPORT_TILE_PRICE = `≈ ${formatUsdRange(IMPORT_FALLBACK_PRICE.whole.expectedMicros, IMPORT_FALLBACK_PRICE.whole.worstMicros, 3)}`;
 
 /** T6c: one photo the owner already has, instead of generating one from a prompt. */
 function ImportAvatarTile() {

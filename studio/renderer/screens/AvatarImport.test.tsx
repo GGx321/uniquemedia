@@ -20,10 +20,6 @@ async function pickPhoto(): Promise<void> {
   await waitFor(() => expect(estimateText()).not.toBeNull());
 }
 
-function confirmCheckbox(): HTMLElement {
-  return screen.getByRole("checkbox", { name: "это ИИ-персона, а не фото реального человека" });
-}
-
 function nameInput(): HTMLElement {
   return screen.getByPlaceholderText("Mia");
 }
@@ -65,15 +61,15 @@ test("M1: the empty estimate state never mentions the wizard's own (nonexistent,
   expect(screen.queryByText(/Оценить стоимость/) === null).toBe(true);
 });
 
-// M1: the import's age check is mandatory whatever settings.imageAgeCheck
-// says — the caption must say so plainly, not the avatar-creation wording
-// ("Дескриптор и 4 портрета…") which does not describe this flow at all.
-test("M1: the estimate's caption is the import's own — the mandatory age check and describe attempts, not avatar-creation wording", async () => {
+// Owner decision 2026-10-05 (personal-use app): an import makes no age check and asks for no AI-persona confirmation, so its estimate
+// caption names only the describe attempts.
+test("M1: the estimate's caption is the import's own — the describe attempts only, no age check, not avatar-creation wording", async () => {
   setup();
   await openImport();
   await pickPhoto();
 
-  expect(await screen.findByText(/Обязательная проверка возраста и описание по фото \(до 2 попыток\)/)).toBeTruthy();
+  expect(await screen.findByText(/Описание по фото \(до 2 попыток\)/)).toBeTruthy();
+  expect(screen.queryByText(/проверка возраста/i) === null).toBe(true);
   expect(screen.queryByText(/Дескриптор и 4 портрета/) === null).toBe(true);
 });
 
@@ -100,24 +96,19 @@ test("a cancelled dialog changes nothing: no estimate, the button offers to pick
   expect(pickButton().textContent).toBe("Выбрать фото");
 });
 
-test("the confirmation checkbox is required: the engine refuses without it, so the UI never sends acceptedWorstMicros with it unchecked", async () => {
-  const { engine } = setup();
+test("there is no AI-persona checkbox and no checkbox of any kind: only the name stands between the estimate and the import", async () => {
+  setup();
   await openImport();
   await pickPhoto();
-  fireEvent.change(nameInput(), { target: { value: "Zoe" } });
 
-  fireEvent.click(importButton());
-  await flush();
-
-  expect(await screen.findByText(/Подтвердите, что это ИИ-персона/)).toBeTruthy();
-  expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(0);
+  expect(screen.queryByRole("checkbox") === null).toBe(true);
+  expect(screen.queryByText(/ИИ-персон/) === null).toBe(true);
 });
 
 test("a name is required before the import is sent", async () => {
   const { engine } = setup();
   await openImport();
   await pickPhoto();
-  fireEvent.click(confirmCheckbox());
 
   fireEvent.click(importButton());
   await flush();
@@ -126,35 +117,20 @@ test("a name is required before the import is sent", async () => {
   expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(0);
 });
 
-test("happy path: pick, tick the confirmation, name it, import — lands back on Avatars with the new avatar saved", async () => {
+test("happy path: pick, name it, import — lands back on Avatars with the new avatar saved", async () => {
   const { engine } = setup();
   await openImport();
   await pickPhoto();
-  fireEvent.click(confirmCheckbox());
   fireEvent.change(nameInput(), { target: { value: "Zoe" } });
 
   fireEvent.click(importButton());
   await screen.findByRole("heading", { level: 1, name: "Аватары" });
 
   const [imported] = callsOf(engine, "avatars.importAvatar");
-  expect(imported?.payload).toMatchObject({ name: "Zoe", confirmedAiPersona: true });
+  expect(imported?.payload).toMatchObject({ name: "Zoe" });
+  expect(imported?.payload).not.toHaveProperty("confirmedAiPersona");
   await screen.findByText(/Аватар «Zoe» сохранён/);
   await screen.findByRole("heading", { level: 2, name: "Zoe" });
-});
-
-test("AGE_CHECK_FAILED: nothing to retry with, back to step 1 with a clear message", async () => {
-  const { engine } = setup();
-  engine.failNextImportAgeCheck();
-  await openImport();
-  await pickPhoto();
-  fireEvent.click(confirmCheckbox());
-  fireEvent.change(nameInput(), { target: { value: "Zoe" } });
-
-  fireEvent.click(importButton());
-  await screen.findByText(/не подтвердила уверенно/);
-
-  expect(estimateText()).toBeNull();
-  expect(pickButton().textContent).toBe("Выбрать фото");
 });
 
 // T6c review round 3, L4: the old code guessed "consumed or not" from the
@@ -171,8 +147,7 @@ test.each(["NETWORK", "INTERNAL", "IMPORT_SUBJECT_INVALID"] satisfies ErrorCode[
     const { engine } = setup();
     await openImport();
     await pickPhoto();
-    fireEvent.click(confirmCheckbox());
-    fireEvent.change(nameInput(), { target: { value: "Zoe" } });
+      fireEvent.change(nameInput(), { target: { value: "Zoe" } });
     engine.failNextImportAfterConsuming({ code });
 
     fireEvent.click(importButton());
@@ -186,7 +161,6 @@ test("BUDGET_EXCEEDED raised by the free pre-check never touches the stage: the 
   const { engine } = setup();
   await openImport();
   await pickPhoto();
-  fireEvent.click(confirmCheckbox());
   fireEvent.change(nameInput(), { target: { value: "Zoe" } });
   engine.failNext("avatars.importAvatar", { code: "BUDGET_EXCEEDED" });
 
@@ -203,7 +177,6 @@ test("PRICE_CHANGED re-asks: the fresh estimate is shown and must be confirmed a
   const { engine } = setup();
   await openImport();
   await pickPhoto();
-  fireEvent.click(confirmCheckbox());
   fireEvent.change(nameInput(), { target: { value: "Zoe" } });
   engine.setImportPrice({ expectedMicros: 6_000, worstMicros: 45_000 });
 

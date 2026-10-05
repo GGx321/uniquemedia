@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test";
 import {
-  AGE_CHECK_ALREADY_REFUSED_DETAIL,
   DRAFT_CHANGING_DETAIL,
   DRAFT_TOO_NEW_DETAIL,
   ERROR_MESSAGES_RU,
@@ -14,18 +13,6 @@ import {
 } from "../../shared/engine";
 import { errorSettingsFocus, errorText, settingsLinkLabel } from "./errors";
 import { NBSP } from "./format";
-
-// T6c review round 3, L8: the free re-pick's own wording (errors.ts:17)
-// override was never directly tested — only reachable through the whole
-// AvatarImport screen. A regression here (e.g. matching on the wrong detail,
-// or on any AGE_CHECK_FAILED regardless of detail) would still let every
-// screen-level test pass, since none of them assert this exact string.
-
-test("AGE_CHECK_FAILED with the free re-pick's own detail gets its own Russian text, not the ordinary paid-refusal one", () => {
-  const text = errorText({ code: "AGE_CHECK_FAILED", detail: AGE_CHECK_ALREADY_REFUSED_DETAIL });
-  expect(text).toContain("уже не подтвердило возраст");
-  expect(text).not.toContain("оплачена только проверка возраста");
-});
 
 // 3f.3b round 3: a render that ran past its time limit (a dead library disk, a stuck ffmpeg) is free and local; the general TIMEOUT text is about a paid OpenRouter request.
 
@@ -50,23 +37,6 @@ test("a paid request's TIMEOUT keeps the OpenRouter text, with no detail and wit
 
 test("only a TIMEOUT with the render's detail gets the render's text: another code with it keeps its own", () => {
   expect(errorText({ code: "NETWORK", detail: `${RENDER_TIMEOUT_DETAIL_PREFIX} of 60 s` })).toBe(ERROR_MESSAGES_RU.NETWORK);
-});
-
-test("AGE_CHECK_FAILED with any other detail (the ordinary, paid refusal) keeps the ordinary text", () => {
-  const text = errorText({ code: "AGE_CHECK_FAILED", detail: "the one-time image age check did not confirm an adult (not-adult)" });
-  expect(text).toContain("оплачена только проверка возраста");
-  expect(text).not.toContain("уже не подтвердило возраст");
-});
-
-test("AGE_CHECK_FAILED with no detail at all keeps the ordinary text too", () => {
-  const text = errorText({ code: "AGE_CHECK_FAILED" });
-  expect(text).toContain("оплачена только проверка возраста");
-});
-
-test("the override still appends a retry wait when the engine gave one", () => {
-  const text = errorText({ code: "AGE_CHECK_FAILED", detail: AGE_CHECK_ALREADY_REFUSED_DETAIL, retryAfterMs: 5_000 });
-  expect(text).toContain("уже не подтвердило возраст");
-  expect(text).toContain("Повторите через");
 });
 
 // 3d.2 (the 3d.1a review): a draft from a newer Studio answers INTERNAL, and «Внутренняя ошибка движка» would

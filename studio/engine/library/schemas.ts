@@ -52,7 +52,7 @@ export type AvatarStatus = AvatarManifest["status"];
 /**
  * Where a photo came from: a generated frame, or (T6c, invariant 9 widened:
  * "generated, or the owner's import") a photo the owner already had and
- * imported through the one-time image age check and vision descriptor job.
+ * imported through the vision descriptor job.
  * Still no kind for an arbitrary file: an imported photo only ever exists
  * because `avatars.importAvatar` stored it through the library, exactly like
  * a generated one — no other code path can add a `PhotoSource`. A union, not
@@ -75,15 +75,17 @@ const GeneratedSourceSchema = z.object({
 
 /**
  * No model, provider, job, prompt or cost: none of that applies to a photo
- * the owner already had. `confirmedAiPersona` records the owner's own
- * confirmation (the payload's `confirmedAiPersona: z.literal(true)`) — the
- * engine refuses the import without it, so this field is never anything but
- * `true` once it exists (L11: recorded, not only checked and discarded).
+ * the owner already had. `confirmedAiPersona` is READ-ONLY legacy: sidecars
+ * an older build wrote carry the owner's AI-persona confirmation (only ever
+ * `true`). Owner decision 2026-10-05 dropped the confirmation, so a new import
+ * writes neither it nor the one-time age verdict (`qa.age`, which the photo
+ * QA schema below still reads). Optional so those old sidecars parse exactly
+ * as they did.
  */
 const ImportedSourceSchema = z.strictObject({
   kind: z.literal("imported"),
   importedAt: IsoTimestamp,
-  confirmedAiPersona: z.literal(true),
+  confirmedAiPersona: z.literal(true).optional(),
 });
 
 export const PhotoSourceSchema = z.discriminatedUnion("kind", [GeneratedSourceSchema, ImportedSourceSchema]);
@@ -116,19 +118,6 @@ export const RejectedEntrySchema = z.object({
   at: IsoTimestamp,
 });
 export type RejectedEntry = z.infer<typeof RejectedEntrySchema>;
-
-/**
- * `<root>/refused-imports.json` (T6c, H2): the sha256 of every imported
- * photo's raw bytes the mandatory one-time image age check has already
- * refused. Read at library open, written atomically (temp + fsync +
- * rename), so `import.stagePhoto` can refuse a known-refused photo for free
- * on a re-pick, before anything is downscaled or paid for.
- */
-export const RefusedImportsFileSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  sha256: z.array(Sha256Hex),
-});
-export type RefusedImportsFile = z.infer<typeof RefusedImportsFileSchema>;
 
 /** `avatars/<avatarId>/photos/<id>.json` — the commit record of one photo. */
 export const PhotoSidecarSchema = z

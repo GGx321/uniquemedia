@@ -9,7 +9,7 @@ import { imageSize, isAnimatedImage, sniffImageMediaType, type ImageMediaType } 
 // own declared size, so an oversized image is refused for free instead of
 // only once ffmpeg's own -max_pixels (downscale.ts) refuses to decode it.
 
-/** The describe call's own (larger) downscale side, distinct from the age check's own smaller one (ageCheck.ts's AGE_CHECK_MAX_SIDE, 768): the describe call needs more detail than a plain adult/not-adult judgement does. */
+/** The describe call's own downscale side: enough detail for the vision call to read every trait of her. */
 export const IMPORT_DESCRIBE_MAX_SIDE = 1024;
 
 export type ImportPhotoRejection = "not-an-image" | "animated" | "unreadable-size" | "too-many-pixels";

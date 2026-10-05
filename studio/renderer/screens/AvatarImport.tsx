@@ -8,7 +8,6 @@ import { useNavigate } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
-import { ErrorNotice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { EstimateCard } from "./wizard/EstimateCard";
 
@@ -37,10 +36,10 @@ function nameIssue(name: string): string | null {
  * "Импортировать аватара" (T6c): the owner uploads one master photo he
  * already has, instead of generating one from a prompt. Flow: pick a photo
  * (main's own dialog — the renderer never sends a path or raw bytes, design
- * constraint 1) → see the estimate for that exact photo → tick the AI-persona
- * confirmation → enter a name → confirm. Nothing is spent before the last
- * click: the one-time image age check and the vision description both run
- * inside `avatars.importAvatar` itself.
+ * constraint 1) → see the estimate for that exact photo → enter a name →
+ * confirm. Nothing is spent before the last click: the vision description
+ * runs inside `avatars.importAvatar` itself. Owner decision 2026-10-05
+ * (personal-use app): no age check and no AI-persona confirmation.
  */
 export function AvatarImport() {
   const { client, store } = useEngine();
@@ -48,14 +47,11 @@ export function AvatarImport() {
   const navigate = useNavigate();
   const nameId = useId();
   const nameErrorId = useId();
-  const confirmId = useId();
 
   const [stagingId, setStagingId] = useState<string | null>(null);
   const [preview, setPreview] = useState<{ width: number; height: number } | null>(null);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [previousWorst, setPreviousWorst] = useState<number | null>(null);
-  const [confirmedAiPersona, setConfirmedAiPersona] = useState(false);
-  const [showConfirmIssue, setShowConfirmIssue] = useState(false);
   const [name, setName] = useState("");
   const [showNameIssue, setShowNameIssue] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
@@ -102,15 +98,13 @@ export function AvatarImport() {
   }
 
   async function confirmImport(): Promise<void> {
-    setShowConfirmIssue(true);
     setShowNameIssue(true);
-    if (stagingId === null || estimate === null || !confirmedAiPersona || nameIssue(name) !== null) return;
+    if (stagingId === null || estimate === null || nameIssue(name) !== null) return;
     setBusy("import");
     setError(null);
     const reply = await client.request("avatars.importAvatar", {
       stagingId,
       name: name.trim(),
-      confirmedAiPersona: true,
       acceptedWorstMicros: estimate.worstMicros,
     });
     if (!mounted.current) return;
@@ -158,8 +152,6 @@ export function AvatarImport() {
   else if (stop?.kind === "restart") blockedReason = restartStopText(stop.code);
 
   const nameProblem = nameIssue(name);
-  const showAgeError = error?.code === "AGE_CHECK_FAILED";
-  const estimateError = error && !showAgeError ? error : null;
 
   return (
     <div className="page page-import">
@@ -222,33 +214,16 @@ export function AvatarImport() {
             estimating={busy === "pick"}
             action={null}
             blockedReason={null}
-            error={estimateError}
+            error={error}
             repeat={false}
             variant="import"
           />
-          {showAgeError && error && <ErrorNotice error={error} />}
 
           {stagingId && estimate && (
             <section className="import-confirm" aria-labelledby="import-confirm-title">
               <h2 id="import-confirm-title" className="sr-only">
                 Подтверждение
               </h2>
-              <div className="field">
-                <label className="confirm-check" htmlFor={confirmId}>
-                  <input
-                    id={confirmId}
-                    type="checkbox"
-                    checked={confirmedAiPersona}
-                    onChange={(e) => setConfirmedAiPersona(e.currentTarget.checked)}
-                  />
-                  это ИИ-персона, а не фото реального человека
-                </label>
-                {showConfirmIssue && !confirmedAiPersona && (
-                  <p className="field-error" role="alert">
-                    Подтвердите, что это ИИ-персона — без этого движок откажет.
-                  </p>
-                )}
-              </div>
               <div className="save-bar">
                 <div className="field">
                   <label className="fl" htmlFor={nameId}>

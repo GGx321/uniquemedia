@@ -1410,9 +1410,6 @@ function renderImportPhoto(): Uint8Array {
 async function runImportScenario(target: Target): Promise<void> {
   const mock = await startMockOpenRouter({
     descriptorText: AVATAR_DESCRIPTOR,
-    // The one-time image age check is mandatory for an import, whatever
-    // settings.imageAgeCheck says; nothing here should reject it.
-    rejectAgeCheckNumber: 0,
   });
   const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-import-"));
   const userData = join(tmp, "userData");
@@ -1461,16 +1458,15 @@ async function runImportScenario(target: Target): Promise<void> {
 
     const estimate = await req(cdp, "avatars.estimateImport", { stagingId });
     check(
-      "import scenario: avatars.estimateImport prices the mandatory age check plus up to two describe attempts",
+      "import scenario: avatars.estimateImport prices up to two describe attempts and no age check",
       field(estimate, "ok") === true && typeof field(estimate, "result", "worstMicros") === "number",
       estimate,
     );
 
-    // 2. Confirm the import: the one-time age check, then the vision describe call.
+    // 2. Confirm the import: the vision describe call (no age check, no AI-persona confirmation).
     const imported = await req(cdp, "avatars.importAvatar", {
       stagingId,
       name: IMPORT_MARKER_NAME,
-      confirmedAiPersona: true,
       acceptedWorstMicros: field(estimate, "result", "worstMicros"),
     });
     check("import scenario: avatars.importAvatar writes a new active avatar", field(imported, "ok") === true, imported);
@@ -1484,14 +1480,14 @@ async function runImportScenario(target: Target): Promise<void> {
     );
 
     // 3. The library: the master photo's sidecar marks it imported (invariant
-    // 9 widened: "generated, or the owner's import"), with the one-time
-    // age verdict recorded in qa.age.
+    // 9 widened: "generated, or the owner's import"), with no age verdict
+    // and no AI-persona confirmation written (owner decision 2026-10-05).
     const { library } = await openLibrary(libraryRoot);
     const manifest = library.getAvatar(String(avatarId));
     const photo = manifest?.masterPhotoId ? library.getPhoto(manifest.masterPhotoId) : undefined;
     check(
-      "import scenario: the master photo's sidecar records the import, not a generated frame, with a passing one-time age verdict",
-      photo?.source.kind === "imported" && photo.qa.age?.adult === true,
+      "import scenario: the master photo's sidecar records the import, not a generated frame, with no age verdict and no confirmation",
+      photo?.source.kind === "imported" && photo.qa.age === undefined && !("confirmedAiPersona" in photo.source),
       photo,
     );
 
@@ -1501,10 +1497,10 @@ async function runImportScenario(target: Target): Promise<void> {
     );
     check("import scenario: studio-media:// serves the imported master photo (invariant 9 widened)", loaded === true);
 
-    // 5. Exactly one mandatory age check and one describe attempt reached the mock; the import never generates an image.
+    // 5. Exactly one describe attempt reached the mock, no age check; the import never generates an image.
     check(
-      "import scenario: the mock saw exactly one age check and one describe attempt, no image generation",
-      mock.ageCheckRequests().length === 1 && mock.importDescribeRequests().length === 1 && mock.imageRequests().length === 0,
+      "import scenario: the mock saw exactly one describe attempt, no age check, no image generation",
+      mock.ageCheckRequests().length === 0 && mock.importDescribeRequests().length === 1 && mock.imageRequests().length === 0,
       mock.requests,
     );
     check("import scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
@@ -1515,7 +1511,7 @@ async function runImportScenario(target: Target): Promise<void> {
     const nameLeaks = mock.requests.filter((r) => JSON.stringify(r.body).toLowerCase().includes(IMPORT_MARKER_NAME.toLowerCase()));
     check("import scenario: the owner's entered name never reaches the mock", nameLeaks.length === 0, nameLeaks);
 
-    // 7. Money: one age check + one describe attempt, exactly the mock's charged costs, nothing left open.
+    // 7. Money: one describe attempt, exactly the mock's charged costs, nothing left open.
     const expectedMicros = Math.round(mock.totalUsageUsd() * 1_000_000);
     const money = await req(cdp, "money.status");
     check(

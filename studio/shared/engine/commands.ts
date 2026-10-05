@@ -292,18 +292,13 @@ const ENGINE_SPECS = [
   // instead of generating one. `stagingId` names a photo staged by main's
   // dialog (avatars.pickImportPhoto, above) and validated/downscaled by the
   // engine; the estimate must be for that exact staged image (design
-  // constraint 1: pick, then estimate, then accept). Worst case: one
-  // one-time image age check + up to two vision-description attempts.
+  // constraint 1: pick, then estimate, then accept). Worst case: up to two
+  // vision-description attempts — an import makes no age check and asks for no
+  // AI-persona confirmation (owner decision 2026-10-05, personal-use app).
   defineCommand("avatars.estimateImport", z.strictObject({ stagingId: Id }), Estimate),
-  // Refused with AGE_CHECK_FAILED when the one-time age check on the staged
-  // photo does not clearly confirm an adult (nothing is stored, reserves are
-  // settled); `confirmedAiPersona` must be exactly `true` — the engine refuses
-  // without the owner's confirmation that the photo is an AI persona, not a
-  // real person (a schema-level requirement, not a business check, so a
-  // missing or false confirmation never even reaches the engine's logic).
   defineCommand(
     "avatars.importAvatar",
-    z.strictObject({ stagingId: Id, name: AvatarName, confirmedAiPersona: z.literal(true), ...AcceptedWorst }),
+    z.strictObject({ stagingId: Id, name: AvatarName, ...AcceptedWorst }),
     z.strictObject({ avatar: AvatarSummary }),
   ),
   // photo runs (T6). A run is persisted in the library (its plan and journal),

@@ -760,7 +760,7 @@ test("avatars.pickImportPhoto: a fresh stage replaces an earlier one; only the n
 
   const worst = (await unwrap(client.request("avatars.estimateImport", { stagingId: second.stagingId }))).worstMicros;
   expect(
-    await client.request("avatars.importAvatar", { stagingId: first.stagingId, name: "Zoe", confirmedAiPersona: true, acceptedWorstMicros: worst }),
+    await client.request("avatars.importAvatar", { stagingId: first.stagingId, name: "Zoe", acceptedWorstMicros: worst }),
   ).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
 });
 
@@ -769,7 +769,7 @@ test("avatars.importAvatar: the imported master is not a gallery photo, so the n
   const staged = await unwrap(client.request("avatars.pickImportPhoto", {}));
   if (!staged.picked) throw new Error("expected a picked photo");
   const worst = (await unwrap(client.request("avatars.estimateImport", { stagingId: staged.stagingId }))).worstMicros;
-  const { avatar } = await unwrap(client.request("avatars.importAvatar", { stagingId: staged.stagingId, name: "Zoe", confirmedAiPersona: true, acceptedWorstMicros: worst }));
+  const { avatar } = await unwrap(client.request("avatars.importAvatar", { stagingId: staged.stagingId, name: "Zoe", acceptedWorstMicros: worst }));
   expect(avatar.photoCount).toBe(0);
 });
 

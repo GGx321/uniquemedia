@@ -1,19 +1,18 @@
 import { describe, expect, test } from "bun:test";
-import { chmod, mkdir, readdir, readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { ErrorCode, Estimate, ResponseMessage } from "../shared/engine";
+import type { Estimate, ResponseMessage } from "../shared/engine";
 import { openLibrary } from "./library";
 import { PNG_1X1 } from "./library/testing/helpers";
 import { chatBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import {
-  ageReply,
   command,
   engineSettings,
   failed,
   filesUnder,
   GOOD,
   ledgerLines,
-  MODERATION,
   network,
   ok,
   OFFLINE,
@@ -27,15 +26,14 @@ import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
 // T6c: importing an existing avatar from one photo the owner already has.
-// The one-time image age check (mandatory, whatever settings.imageAgeCheck
-// says) runs first; only a clear pass reaches the vision describe job, which
-// writes both typed traits and the descriptor in one strict JSON answer.
+// The vision describe job writes both typed traits and the descriptor in one
+// strict JSON answer. Owner decision 2026-10-05 (personal-use app): an import
+// makes no age check and asks for no AI-persona confirmation.
 
 const dir = useEngineDir("studio-engine-import-");
 
 /** The import job's price at the dated fallback table (plan.test.ts pins the same numbers). */
-const IMPORT_ESTIMATE: Estimate = { expectedMicros: 5_535, worstMicros: 37_750, prices: "fallback", pricesAsOf: "2026-09-24" };
-const AGE_WORST = 5_250;
+const IMPORT_ESTIMATE: Estimate = { expectedMicros: 3_875, worstMicros: 32_500, prices: "fallback", pricesAsOf: "2026-09-24" };
 const DESCRIBE_WORST = 16_250;
 
 function describeReply(overrides: Record<string, unknown> = {}, cost = 0.0021): Reply {
@@ -107,7 +105,7 @@ async function estimateWorst(engine: Awaited<ReturnType<typeof startEngine>>["en
 }
 
 function importCommand(stagingId: string, name: string, acceptedWorstMicros: number, extra: Record<string, unknown> = {}): unknown {
-  return command("avatars.importAvatar", { stagingId, name, confirmedAiPersona: true, acceptedWorstMicros, ...extra });
+  return command("avatars.importAvatar", { stagingId, name, acceptedWorstMicros, ...extra });
 }
 
 /** The vision describe calls, distinct from a plain new-avatar descriptor call: its own JSON schema name. */
@@ -227,86 +225,24 @@ describe("import.stagePhoto (main → engine control channel)", () => {
   });
 });
 
-// T6c review round 2, H2: the mandatory one-time image age check must not be
-// re-rollable by simply re-picking the exact same file — a fresh pick gets a
-// fresh stagingId, but the underlying bytes (and so the sha256 the library
-// keys refusals by) are the same. Staging refuses a known-refused photo for
-// free, before anything is downscaled or paid for.
-describe("import.stagePhoto (H2): a photo already refused by the age check cannot be re-rolled by re-picking it", () => {
-  test("re-picking the exact same refused photo is refused for free, with no new request and nothing downscaled again", async () => {
+// Owner decision 2026-10-05: the refused-imports list is gone. A library an
+// older build wrote may still hold its `refused-imports.json`; it is neither
+// read nor rewritten, and a photo it names stages and imports like any other.
+describe("import.stagePhoto: a legacy refused-imports.json no longer refuses anything", () => {
+  test("a photo whose sha256 an old refused-imports.json lists stages and imports, and the file is left as it was", async () => {
     const bytes = portraitPng(3);
-    const net = network({ age: () => ageReply(false, 0.95) });
-    const started = await startWithStagedPhoto(net, bytes);
-    const worst = await estimateWorst(started.engine, started.stagingId);
-    expect(failed(await started.engine.handle(importCommand(started.stagingId, "Zoe", worst))).error.code).toBe("AGE_CHECK_FAILED");
-    const callsBefore = net.calls.length;
+    const net = network({ descriptors: [describeReply()] });
+    const started = await startEngine(dir(), { net });
+    const legacyPath = join(dir(), "library", "refused-imports.json");
+    const legacy = JSON.stringify({ schemaVersion: 1, sha256: [createHash("sha256").update(bytes).digest("hex")] });
+    await writeFile(legacyPath, legacy);
 
-    await started.engine.receive({ kind: "control", type: "import.stagePhoto", callId: "call-refused-0001", bytes });
+    const stagingId = await stageOn(started, bytes);
+    const worst = await estimateWorst(started.engine, stagingId);
+    const response = await started.engine.handle(importCommand(stagingId, "Zoe", worst));
 
-    const reply = replyFor(started.posted, "call-refused-0001");
-    expect(reply?.error).toMatchObject({ code: "AGE_CHECK_FAILED" });
-    expect(reply?.error?.detail).toContain("already refused");
-    expect(reply?.stage).toBeUndefined();
-    expect(net.calls).toHaveLength(callsBefore);
-  });
-
-  test("a different photo (different bytes) is unaffected by another photo's refusal", async () => {
-    const net = network({ age: () => ageReply(false, 0.95) });
-    const started = await startWithStagedPhoto(net, portraitPng(3));
-    const worst = await estimateWorst(started.engine, started.stagingId);
-    expect(failed(await started.engine.handle(importCommand(started.stagingId, "Zoe", worst))).error.code).toBe("AGE_CHECK_FAILED");
-
-    await started.engine.receive({ kind: "control", type: "import.stagePhoto", callId: "call-other-0001", bytes: portraitPng(4) });
-
-    const reply = replyFor(started.posted, "call-other-0001");
-    expect(reply?.stage).toBeDefined();
-  });
-
-  test("a refusal for another reason (not the age check itself, e.g. a network error) is never recorded: the same photo can be re-picked", async () => {
-    const bytes = portraitPng(3);
-    const net = network({ age: () => OFFLINE });
-    const started = await startWithStagedPhoto(net, bytes);
-    const worst = await estimateWorst(started.engine, started.stagingId);
-    expect(failed(await started.engine.handle(importCommand(started.stagingId, "Zoe", worst))).error.code).toBe("NETWORK");
-
-    await started.engine.receive({ kind: "control", type: "import.stagePhoto", callId: "call-retry-0001", bytes });
-
-    const reply = replyFor(started.posted, "call-retry-0001");
-    expect(reply?.stage).toBeDefined();
-  });
-
-  // Round 3, L2: the free staging-time check alone is not enough — B is
-  // staged from the exact same bytes as X *before* X's own age check has
-  // resolved (so B's own stage-time check still sees "not refused yet").
-  // Once X resolves and records the refusal, B's own import must not pay
-  // for another age check on the very same bytes: the refused list is
-  // re-checked for free right before B would otherwise spend anything.
-  test("a race: B (staged from the same bytes while X's age check is still pending) never pays once X's refusal lands", async () => {
-    let release: () => void = () => {};
-    const held = new Promise<void>((resolve) => (release = resolve));
-    const bytes = portraitPng(5);
-    const net = network({ age: async () => (await held, ageReply(false, 0.95)) });
-    const started = await startWithStagedPhoto(net, bytes);
-    const worstA = await estimateWorst(started.engine, started.stagingId);
-
-    // X's own import: reaches its (gated) age-check request, then suspends.
-    const importingX = started.engine.handle(importCommand(started.stagingId, "Zoe", worstA));
-
-    // B: the exact same bytes, re-picked while X is still in flight — its
-    // own stage-time check passes, since X has not refused yet.
-    const stagingB = await stageOn(started, bytes);
-
-    release();
-    expect(failed(await importingX).error.code).toBe("AGE_CHECK_FAILED");
-    const callsBeforeB = net.calls.length;
-
-    const worstB = await estimateWorst(started.engine, stagingB);
-    const responseB = await started.engine.handle(importCommand(stagingB, "Zoe", worstB));
-
-    const failure = failed(responseB);
-    expect(failure.error.code).toBe("AGE_CHECK_FAILED");
-    expect(failure.error.detail).toContain("already refused");
-    expect(net.calls).toHaveLength(callsBeforeB); // B never sent its own age-check request
+    expect(ok(response).ok).toBe(true);
+    expect(await readFile(legacyPath, "utf8")).toBe(legacy);
   });
 });
 
@@ -317,7 +253,7 @@ describe("avatars.estimateImport", () => {
     expect(failed(response).error.code).toBe("NOT_FOUND");
   });
 
-  test("prices one mandatory age check plus up to two describe attempts", async () => {
+  test("prices up to two describe attempts and nothing else", async () => {
     const { engine, stagingId } = await startWithStagedPhoto(network());
     const response = await engine.handle(command("avatars.estimateImport", { stagingId }));
     expect(ok(response).result).toEqual(IMPORT_ESTIMATE);
@@ -325,8 +261,8 @@ describe("avatars.estimateImport", () => {
 });
 
 describe("avatars.importAvatar: happy path", () => {
-  test("the age check passes, the describe call succeeds: a new active avatar with the imported photo as its master", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply()] });
+  test("the describe call succeeds: a new active avatar with the imported photo as its master", async () => {
+    const net = network({ descriptors: [describeReply()] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
 
@@ -341,23 +277,38 @@ describe("avatars.importAvatar: happy path", () => {
     expect(manifest?.status).toBe("active");
     const photo = manifest?.masterPhotoId ? library.getPhoto(manifest.masterPhotoId) : undefined;
     expect(photo?.source.kind).toBe("imported");
-    expect(photo?.qa.age).toEqual({ adult: true, confidence: 0.93 });
-    // L11: the owner's AI-persona confirmation is recorded in the sidecar, not just checked at the contract boundary.
-    expect(photo?.source).toMatchObject({ confirmedAiPersona: true });
   });
 
-  test("the one-time age check runs even with settings.imageAgeCheck off: it is mandatory for import regardless", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply()] });
-    const { engine, stagingId } = await startWithStagedPhoto(net, undefined, { init: { settings: engineSettings(dir(), { imageAgeCheck: "off" }) } });
+  test("the sidecar of an imported photo records neither an age verdict nor an AI-persona confirmation", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
 
-    await engine.handle(importCommand(stagingId, "Nia", worst));
+    const answer = ok(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+    if (answer.type !== "avatars.importAvatar") throw new Error("wrong type");
 
-    expect(net.ageCalls()).toHaveLength(1);
+    const { library } = await openLibrary(join(dir(), "library"));
+    const masterId = library.getAvatar(answer.result.avatar.avatarId)?.masterPhotoId;
+    const photo = masterId ? library.getPhoto(masterId) : undefined;
+    expect(photo?.qa.age).toBeUndefined();
+    expect(photo?.source).toEqual({ kind: "imported", importedAt: expect.any(String) as unknown as string });
   });
 
-  test("attempt ids: <importId>:age and <importId>:describe#N", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply({ ethnicity: "martian" }), describeReply()] });
+  test.each([["on" as const], ["off" as const]])("an import sends no age check and reserves no age money, with settings.imageAgeCheck %s", async (imageAgeCheck) => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net, undefined, { init: { settings: engineSettings(dir(), { imageAgeCheck }) } });
+    const worst = await estimateWorst(engine, stagingId);
+
+    expect(ok(await engine.handle(importCommand(stagingId, "Nia", worst))).ok).toBe(true);
+
+    expect(net.ageCalls()).toHaveLength(0);
+    const reserves = ledgerLines(dir()).filter((l) => l.type === "reserve");
+    expect(reserves).toHaveLength(1);
+    expect(reserves[0]).toMatchObject({ worstMicros: DESCRIBE_WORST });
+  });
+
+  test("attempt ids: <importId>:describe#N, never an :age one", async () => {
+    const net = network({ descriptors: [describeReply({ ethnicity: "martian" }), describeReply()] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
 
@@ -366,7 +317,7 @@ describe("avatars.importAvatar: happy path", () => {
     const ids = ledgerLines(dir())
       .filter((l) => l.type === "reserve")
       .map((l) => String(l.attemptId));
-    expect(ids.some((id) => /:age$/.test(id))).toBe(true);
+    expect(ids.some((id) => /:age$/.test(id))).toBe(false);
     expect(ids.some((id) => id.endsWith(":describe#1"))).toBe(true);
     expect(ids.some((id) => id.endsWith(":describe#2"))).toBe(true);
   });
@@ -425,17 +376,27 @@ describe("avatars.importAvatar: money gates before any spend", () => {
     expect(ok(retry).ok).toBe(true);
   });
 
-  test("confirmedAiPersona missing or false never reaches the engine's logic: VALIDATION at the contract level", async () => {
+  // Strict on purpose: the renderer ships inside the same app bundle as the engine, so no older renderer can be talking to this engine,
+  // and a strict object keeps an unknown key a loud VALIDATION like every other command's payload.
+  test("a payload still carrying the removed confirmedAiPersona is VALIDATION at the contract level, and nothing is sent", async () => {
     const net = network();
     const { engine, stagingId } = await startWithStagedPhoto(net);
 
-    const withFalse = await engine.handle(command("avatars.importAvatar", { stagingId, name: "Zoe", confirmedAiPersona: false, acceptedWorstMicros: IMPORT_ESTIMATE.worstMicros }));
-    expect(failed(withFalse).error.code).toBe("VALIDATION");
+    const response = await engine.handle(
+      command("avatars.importAvatar", { stagingId, name: "Zoe", confirmedAiPersona: true, acceptedWorstMicros: IMPORT_ESTIMATE.worstMicros }),
+    );
 
-    const withoutIt = await engine.handle(command("avatars.importAvatar", { stagingId, name: "Zoe", acceptedWorstMicros: IMPORT_ESTIMATE.worstMicros }));
-    expect(failed(withoutIt).error.code).toBe("VALIDATION");
-
+    expect(failed(response).error.code).toBe("VALIDATION");
     expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  test("a payload without any confirmation is accepted: stagingId, name and the accepted worst case are enough", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+
+    const response = await engine.handle(command("avatars.importAvatar", { stagingId, name: "Zoe", acceptedWorstMicros: IMPORT_ESTIMATE.worstMicros }));
+
+    expect(ok(response).ok).toBe(true);
   });
 });
 
@@ -489,7 +450,7 @@ describe("avatars.importAvatar: a library switch clears the staged photo (L5)", 
 // that a regression could quietly delete without any test noticing.
 describe("avatars.importAvatar: the staged photo is single-use and never stale (H1 guards 1 and 3)", () => {
   test("importing the same stagingId again after success is NOT_FOUND, with no new request", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply()] });
+    const net = network({ descriptors: [describeReply()] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
     expect(ok(await engine.handle(importCommand(stagingId, "Zoe", worst))).ok).toBe(true);
@@ -501,11 +462,11 @@ describe("avatars.importAvatar: the staged photo is single-use and never stale (
     expect(net.calls).toHaveLength(callsBefore);
   });
 
-  test("importing the same stagingId again after AGE_CHECK_FAILED is NOT_FOUND, with no new request", async () => {
-    const net = network({ age: () => ageReply(false, 0.95) });
+  test("importing the same stagingId again after a failed import is NOT_FOUND, with no new request", async () => {
+    const net = network({ descriptors: [describeReply({ people: 2 })] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
-    expect(failed(await engine.handle(importCommand(stagingId, "Zoe", worst))).error.code).toBe("AGE_CHECK_FAILED");
+    expect(failed(await engine.handle(importCommand(stagingId, "Zoe", worst))).error.code).toBe("IMPORT_SUBJECT_INVALID");
     const callsBefore = net.calls.length;
 
     const second = await engine.handle(importCommand(stagingId, "Zoe", worst));
@@ -530,7 +491,7 @@ describe("avatars.importAvatar: the staged photo is single-use and never stale (
   test("L1: a later stage that lands while an earlier import is finishing survives its single-use clear", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
-    const net = network({ prices: async () => (await held, OFFLINE), age: () => ageReply(true, 0.93), descriptors: [describeReply()] });
+    const net = network({ prices: async () => (await held, OFFLINE), descriptors: [describeReply()] });
     const started = await startWithStagedPhoto(net, portraitPng(1));
 
     // No sleep needed: #importAvatar reads #importStaging and passes its
@@ -549,7 +510,7 @@ describe("avatars.importAvatar: a second import while one is being written is re
   test("a concurrent import is refused with IN_FLIGHT; the first still finishes normally", async () => {
     let release: () => void = () => {};
     const held = new Promise<void>((resolve) => (release = resolve));
-    const net = network({ prices: async () => (await held, OFFLINE), age: () => ageReply(true, 0.93), descriptors: [describeReply()] });
+    const net = network({ prices: async () => (await held, OFFLINE), descriptors: [describeReply()] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
 
     // No sleep needed (same pattern as createDraft/rewriteDescriptor's own
@@ -564,55 +525,9 @@ describe("avatars.importAvatar: a second import while one is being written is re
   });
 });
 
-describe("avatars.importAvatar: the age check's own non-ok paths never reach the describe call (H1 guard 4)", () => {
-  interface Case {
-    name: string;
-    age: () => Reply;
-    code: ErrorCode;
-  }
-
-  const cases: Case[] = [
-    { name: "a confidence below the age check's own threshold", age: () => ageReply(true, 0.5), code: "AGE_CHECK_FAILED" },
-    { name: "an answer that is not the JSON asked for (unreadable)", age: () => ({ status: 200, body: chatBody("The person is an adult.", { cost: 0.0014 }) }), code: "AGE_CHECK_FAILED" },
-    { name: "an empty answer (EMPTY_CONTENT)", age: () => ({ status: 200, body: chatBody(null, { cost: 0.0014 }) }), code: "AGE_CHECK_FAILED" },
-    { name: "a moderation refusal", age: () => MODERATION, code: "AGE_CHECK_FAILED" },
-    { name: "a network error before any response", age: () => OFFLINE, code: "NETWORK" },
-    {
-      name: "a charge above the worst case",
-      age: () => ({ status: 200, body: chatBody(JSON.stringify({ adult: true, confidence: 0.95, reason: "An adult." }), { cost: 6 }) }),
-      code: "SETTLE_ABOVE_WORST",
-    },
-  ];
-
-  test.each(cases.map((c): [string, Case] => [c.name, c]))("%s", async (_label, c) => {
-    const net = network({ age: c.age });
-    const { engine, stagingId } = await startWithStagedPhoto(net);
-    const worst = await estimateWorst(engine, stagingId);
-
-    const response = await engine.handle(importCommand(stagingId, "Zoe", worst));
-
-    expect(failed(response).error.code).toBe(c.code);
-    expect(describeCalls(net)).toHaveLength(0);
-    const listing = ok(await engine.handle(command("avatars.list")));
-    if (listing.type !== "avatars.list") throw new Error("wrong type");
-    expect(listing.result.avatars).toHaveLength(0);
-  });
-});
-
 describe("avatars.importAvatar: a 401 marks the key rejected (H1 guard 5)", () => {
-  test("a 401 from the age check answers AUTH_INVALID and marks the key rejected", async () => {
-    const net = network({ age: () => ({ status: 401, body: { error: { message: "No auth credentials found" } } }) });
-    const { engine, stagingId, events } = await startWithStagedPhoto(net);
-    const worst = await estimateWorst(engine, stagingId);
-
-    const response = await engine.handle(importCommand(stagingId, "Zoe", worst));
-
-    expect(failed(response).error.code).toBe("AUTH_INVALID");
-    expect(events().at(-1)).toMatchObject({ type: "settings.changed", payload: { settings: { apiKey: { rejected: true } } } });
-  });
-
-  test("a 401 from the describe call (after the age check settled) also marks the key rejected", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [{ status: 401, body: { error: { message: "No auth credentials found" } } }] });
+  test("a 401 from the describe call answers AUTH_INVALID and marks the key rejected", async () => {
+    const net = network({ descriptors: [{ status: 401, body: { error: { message: "No auth credentials found" } } }] });
     const { engine, stagingId, events } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
 
@@ -632,7 +547,7 @@ describe("avatars.importAvatar: a failing library write answers INTERNAL and kee
   test.skipIf(process.platform === "win32")(
     "the avatars folder cannot be written: INTERNAL, no avatar listed, the paid description is kept in raw/",
     async () => {
-      const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply()] });
+      const net = network({ descriptors: [describeReply()] });
       const { engine, stagingId } = await startWithStagedPhoto(net);
       const worst = await estimateWorst(engine, stagingId);
       const avatarsDir = join(dir(), "library", "avatars");
@@ -662,57 +577,9 @@ describe("avatars.importAvatar: a failing library write answers INTERNAL and kee
   );
 });
 
-// Round 3, L3: recordRefusedImport itself can fail (disk full, a read-only
-// library folder) — that must never turn a genuine AGE_CHECK_FAILED verdict
-// into an unrelated INTERNAL, and it must never be swallowed silently either.
-describe("avatars.importAvatar: recording the refusal can itself fail, without losing the refusal (L3)", () => {
-  test.skipIf(process.platform === "win32")(
-    "a read-only library folder: still AGE_CHECK_FAILED, with a note that the refusal could not be remembered",
-    async () => {
-      const net = network({ age: () => ageReply(false, 0.95) });
-      const { engine, stagingId } = await startWithStagedPhoto(net);
-      const worst = await estimateWorst(engine, stagingId);
-      const libraryRoot = join(dir(), "library");
-
-      await chmod(libraryRoot, 0o555);
-      let response: ResponseMessage;
-      try {
-        response = await engine.handle(importCommand(stagingId, "Zoe", worst));
-      } finally {
-        await chmod(libraryRoot, 0o755);
-      }
-
-      const failure = failed(response);
-      expect(failure.error.code).toBe("AGE_CHECK_FAILED");
-      expect(failure.error.detail).toContain("could not be remembered");
-    },
-  );
-});
-
-describe("avatars.importAvatar: the one-time age check", () => {
-  test("a refusal stores nothing and settles: no avatar, the age attempt is reserved and settled", async () => {
-    const net = network({ age: () => ageReply(false, 0.95) });
-    const { engine, stagingId } = await startWithStagedPhoto(net);
-    const worst = await estimateWorst(engine, stagingId);
-
-    const response = await engine.handle(importCommand(stagingId, "Zoe", worst));
-
-    expect(failed(response).error.code).toBe("AGE_CHECK_FAILED");
-    expect(describeCalls(net)).toHaveLength(0);
-    const listing = ok(await engine.handle(command("avatars.list")));
-    if (listing.type !== "avatars.list") throw new Error("wrong type");
-    expect(listing.result.avatars).toHaveLength(0);
-
-    const lines = ledgerLines(dir());
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toMatchObject({ type: "reserve", worstMicros: AGE_WORST });
-    expect(lines[1]).toMatchObject({ type: "settle" });
-  });
-});
-
 describe("avatars.importAvatar: the description gate", () => {
   test("a rejected first answer is asked once more; a good second answer succeeds", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply({ ethnicity: "martian" }), describeReply()] });
+    const net = network({ descriptors: [describeReply({ ethnicity: "martian" }), describeReply()] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
 
@@ -722,9 +589,8 @@ describe("avatars.importAvatar: the description gate", () => {
     expect(describeCalls(net)).toHaveLength(2);
   });
 
-  test("rejected twice fails the import; nothing is stored, every attempt (age + 2 describe) is settled", async () => {
+  test("rejected twice fails the import; nothing is stored, both describe attempts are settled", async () => {
     const net = network({
-      age: () => ageReply(true, 0.93),
       descriptors: [describeReply({ ethnicity: "martian" }), describeReply({ descriptor: "not anchored at all" })],
     });
     const { engine, stagingId } = await startWithStagedPhoto(net);
@@ -738,8 +604,8 @@ describe("avatars.importAvatar: the description gate", () => {
     expect(listing.result.avatars).toHaveLength(0);
 
     const lines = ledgerLines(dir());
-    expect(lines.filter((l) => l.type === "reserve")).toHaveLength(3);
-    expect(lines.filter((l) => l.type === "settle")).toHaveLength(3);
+    expect(lines.filter((l) => l.type === "reserve")).toHaveLength(2);
+    expect(lines.filter((l) => l.type === "settle")).toHaveLength(2);
     const firstDescribeReserve = lines.find((l) => l.type === "reserve" && String(l.attemptId).endsWith(":describe#1"));
     expect(firstDescribeReserve).toMatchObject({ worstMicros: DESCRIBE_WORST });
   });
@@ -750,7 +616,7 @@ describe("avatars.importAvatar: the description gate", () => {
 // or the wrong gender fails at once, with no second describe attempt.
 describe("avatars.importAvatar: the subject check (M5, exactly one woman)", () => {
   test("a group photo (people: 2) fails at once with IMPORT_SUBJECT_INVALID; nothing stored, one settled describe attempt", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply({ people: 2 })] });
+    const net = network({ descriptors: [describeReply({ people: 2 })] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
 
@@ -763,12 +629,12 @@ describe("avatars.importAvatar: the subject check (M5, exactly one woman)", () =
     expect(listing.result.avatars).toHaveLength(0);
 
     const lines = ledgerLines(dir());
-    expect(lines.filter((l) => l.type === "reserve")).toHaveLength(2); // age + one describe, never a second
-    expect(lines.filter((l) => l.type === "settle")).toHaveLength(2);
+    expect(lines.filter((l) => l.type === "reserve")).toHaveLength(1); // one describe, never a second
+    expect(lines.filter((l) => l.type === "settle")).toHaveLength(1);
   });
 
   test("exactly one person who is not a woman fails at once with IMPORT_SUBJECT_INVALID", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply({ woman: false })] });
+    const net = network({ descriptors: [describeReply({ woman: false })] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
 
@@ -781,7 +647,7 @@ describe("avatars.importAvatar: the subject check (M5, exactly one woman)", () =
 
 describe("avatars.importAvatar: the cap is cleared afterward", () => {
   test("two imports in a row, in the same engine, both succeed: no leftover cap from the first blocks the second", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply(), describeReply({ ethnicity: "latina" })] });
+    const net = network({ descriptors: [describeReply(), describeReply({ ethnicity: "latina" })] });
     const started = await startEngine(dir(), { net });
 
     for (const name of ["Zoe", "Mia"]) {
@@ -804,7 +670,7 @@ describe("avatars.importAvatar: the cap is cleared afterward", () => {
   // authorize spending nothing should be authorizing there any more; deleted,
   // capOf() falls back to a 0 cap and refuses it.
   test("after an import ends, its own scope is capped at 0: a stray reserve in it is refused, not allowed by a leftover cap", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [describeReply()] });
+    const net = network({ descriptors: [describeReply()] });
     const { engine, stagingId } = await startWithStagedPhoto(net);
     const worst = await estimateWorst(engine, stagingId);
     expect(ok(await engine.handle(importCommand(stagingId, "Zoe", worst))).ok).toBe(true);

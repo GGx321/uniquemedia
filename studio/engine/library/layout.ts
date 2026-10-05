@@ -29,8 +29,11 @@ export const FOCUS_FILE = "focus.json";
 export const HISTORY_FILE = "history.jsonl";
 export const PLAN_FILE = "plan.json";
 export const JOURNAL_FILE = "journal.jsonl";
-/** T6c (H2): a library-root file listing the sha256 of every imported photo the mandatory one-time age check has already refused, so re-picking the exact same bytes cannot re-roll it for free. */
-export const REFUSED_IMPORTS_FILE = "refused-imports.json";
+/**
+ * Legacy (T6c, H2; removed 2026-10-05): older builds kept a library-root list of refused imports here. Nothing reads or writes it any more;
+ * the name survives only so a crash leftover of its write still counts as a library temp file. The file itself is left alone.
+ */
+const LEGACY_REFUSED_IMPORTS_FILE = "refused-imports.json";
 
 /**
  * The schema version this build writes and the newest it reads, per record
@@ -42,7 +45,6 @@ export const REFUSED_IMPORTS_FILE = "refused-imports.json";
 export const LIBRARY_FILE_SCHEMA_VERSION = 1;
 export const MANIFEST_SCHEMA_VERSION = 2;
 export const SIDECAR_SCHEMA_VERSION = 1;
-export const REFUSED_IMPORTS_SCHEMA_VERSION = 1;
 /** A draft file's `schemaVersion`: the montage service stamps it, and refuses to read a newer one (it would drop what it does not know on the next save). */
 export const MONTAGE_FILE_SCHEMA_VERSION = 1;
 /** A video record's `schemaVersion`: the writer (task 3a.8b) stamps it, the reader (videoRecords.ts) refuses a newer one with its own reason. */
@@ -50,11 +52,11 @@ export const VIDEO_RECORD_SCHEMA_VERSION = 1;
 
 /**
  * A temp file left by a crash while one of the library root's own JSON
- * files — library.json or refused-imports.json (T6c review round 3, L8) —
- * was being written (durableFs.ts's own `.<name>.<hex>.tmp` shape).
+ * files — library.json, or the removed refused-imports.json (T6c review
+ * round 3, L8) — was being written (durableFs.ts's own `.<name>.<hex>.tmp` shape).
  */
 export function isLibraryFileTemp(name: string): boolean {
-  return [LIBRARY_FILE, REFUSED_IMPORTS_FILE].some((file) => name.startsWith(`.${file}.`) && name.endsWith(".tmp"));
+  return [LIBRARY_FILE, LEGACY_REFUSED_IMPORTS_FILE].some((file) => name.startsWith(`.${file}.`) && name.endsWith(".tmp"));
 }
 
 /** True when a parsed record declares a schema version newer than `newestReadable`, the newest this build knows for its kind. */

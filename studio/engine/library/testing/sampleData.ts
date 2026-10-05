@@ -58,7 +58,6 @@ export function samplePhotoMeta(extra: Partial<NewPhotoMeta> = {}): NewPhotoMeta
 export const SAMPLE_IMPORTED_SOURCE: ImportedPhotoSource = {
   kind: "imported",
   importedAt: "2026-09-27T10:00:00.000Z",
-  confirmedAiPersona: true,
 };
 
 /** RIFF/WEBP container header — enough to sniff as WebP. */

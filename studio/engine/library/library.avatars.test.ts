@@ -180,44 +180,34 @@ describe("createImportedAvatar (T6c, M3: atomic — manifest, photo and sidecar 
   });
 });
 
-describe("isRefusedImport / recordRefusedImport (T6c, H2)", () => {
-  test("a hash is not refused until recorded", async () => {
+// Owner decision 2026-10-05: the refused-imports list (T6c, H2) is gone — only
+// the removed import age check ever fed it. A library an older build wrote may
+// still hold its `refused-imports.json`: it must open, and it is left alone.
+describe("a legacy refused-imports.json (removed 2026-10-05)", () => {
+  const LEGACY_FILE = "refused-imports.json";
+  const legacyBodies: Array<[string, string]> = [
+    ["a valid list", JSON.stringify({ schemaVersion: 1, sha256: ["b".repeat(64)] })],
+    ["a corrupt file", "not json"],
+    ["a list from a newer version", JSON.stringify({ schemaVersion: 2, sha256: [] })],
+  ];
+
+  test("the library no longer offers a refused-imports lookup or record", async () => {
     const { library } = await openLibrary(root(), deps());
-    expect(library.isRefusedImport("a".repeat(64))).toBe(false);
+    expect("isRefusedImport" in library).toBe(false);
+    expect("recordRefusedImport" in library).toBe(false);
   });
 
-  test("recordRefusedImport makes isRefusedImport true, in this instance and after a reopen", async () => {
-    const { library } = await openLibrary(root(), deps());
-    const sha256 = "b".repeat(64);
-    await library.recordRefusedImport(sha256);
-
-    expect(library.isRefusedImport(sha256)).toBe(true);
-    expect(await readJson(join(root(), "refused-imports.json"))).toEqual({ schemaVersion: 1, sha256: [sha256] });
-
-    const reopened = await openLibrary(root(), deps());
-    expect(reopened.library.isRefusedImport(sha256)).toBe(true);
-  });
-
-  test("recording the same hash twice is a no-op, not a second write", async () => {
-    const { library } = await openLibrary(root(), deps());
-    const sha256 = "c".repeat(64);
-    await library.recordRefusedImport(sha256);
-    const before = await readFile(join(root(), "refused-imports.json"), "utf8");
-    await library.recordRefusedImport(sha256);
-    const after = await readFile(join(root(), "refused-imports.json"), "utf8");
-    expect(after).toBe(before);
-  });
-
-  test("a missing refused-imports.json is read as empty, never blocking open", async () => {
-    const { library } = await openLibrary(root(), deps());
-    expect(library.isRefusedImport("d".repeat(64))).toBe(false);
-  });
-
-  test("a corrupt refused-imports.json is read as empty, never blocking open", async () => {
+  test.each(legacyBodies)("%s next to library.json: the library still opens, nothing is quarantined, the file is left as it was", async (_label, body) => {
     await openLibrary(root(), deps());
-    await writeFile(join(root(), "refused-imports.json"), "not json");
-    const { library } = await openLibrary(root(), deps());
-    expect(library.isRefusedImport("e".repeat(64))).toBe(false);
+    await writeFile(join(root(), LEGACY_FILE), body);
+
+    const { library, report } = await openLibrary(root(), deps());
+
+    expect(report.quarantined).toEqual([]);
+    expect(await readFile(join(root(), LEGACY_FILE), "utf8")).toBe(body);
+    // And it is a working library: an avatar still saves and reads back.
+    const saved = await library.createAvatar(MIA);
+    expect(library.getAvatar(saved.id)?.name).toBe("Mia");
   });
 });
 

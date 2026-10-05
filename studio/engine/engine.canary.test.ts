@@ -145,8 +145,8 @@ describe("avatars.importAvatar: the owner's name never leaves the engine", () =>
     return { status: 200, body: chatBody(JSON.stringify(answer), { cost }) };
   }
 
-  test("the age check and the describe call never carry the owner-entered name, marker-named import included", async () => {
-    const net = network({ age: () => ageReply(true, 0.93), descriptors: [importDescribeReply()] });
+  test("the describe call never carries the owner-entered name, marker-named import included, and no age check is sent", async () => {
+    const net = network({ descriptors: [importDescribeReply()] });
     const { engine, posted } = await startEngine(dir2(), { net });
     const callId = "call-canary-0001";
     // H3: a realistic-sized fixture, not a degenerate 1×1 PNG — ffmpeg's real
@@ -160,12 +160,13 @@ describe("avatars.importAvatar: the owner's name never leaves the engine", () =>
 
     const estimate = ok(await engine.handle(command("avatars.estimateImport", { stagingId })));
     if (estimate.type !== "avatars.estimateImport") throw new Error("wrong type");
-    const response = await engine.handle(command("avatars.importAvatar", { stagingId, name: MARKER_NAME, confirmedAiPersona: true, acceptedWorstMicros: estimate.result.worstMicros }));
+    const response = await engine.handle(command("avatars.importAvatar", { stagingId, name: MARKER_NAME, acceptedWorstMicros: estimate.result.worstMicros }));
 
     // L2: the canary proves nothing if the import itself silently failed —
     // it must actually reach the describe call for the "never carries it" check below to mean anything.
     expect(ok(response).ok).toBe(true);
     expect(net.calls.filter((c) => c.url.endsWith("/chat/completions") && schemaName(c) === "import_describe")).toHaveLength(1);
+    expect(net.ageCalls()).toHaveLength(0);
 
     const marker = MARKER_NAME.toLowerCase();
     const carrying = net.calls.filter((call) => `${call.url}\n${JSON.stringify(call.headers)}\n${call.body ?? ""}`.toLowerCase().includes(marker));

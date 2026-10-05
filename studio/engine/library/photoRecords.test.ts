@@ -66,7 +66,7 @@ describe("looksLikeRunPhoto", () => {
   });
 
   test("is false for an imported photo", () => {
-    const imported = runPhotoSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z", confirmedAiPersona: true } });
+    const imported = runPhotoSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z" } });
     expect(looksLikeRunPhoto(imported)).toBe(false);
   });
 });
@@ -139,7 +139,7 @@ describe("photoSummaryFrom", () => {
   });
 
   test("is null for an imported photo", () => {
-    const imported = runPhotoSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z", confirmedAiPersona: true } });
+    const imported = runPhotoSidecar({ source: { kind: "imported", importedAt: "2026-09-27T10:00:00.000Z" } });
     expect(photoSummaryFrom(imported, FRESH)).toBeNull();
   });
 

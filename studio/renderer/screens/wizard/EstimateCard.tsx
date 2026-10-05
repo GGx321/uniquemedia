@@ -27,13 +27,12 @@ interface EstimateCardProps {
   errorActions?: ReactNode;
   /** Another batch for an existing draft: its descriptor is not written again. */
   repeat: boolean;
-  /** Whether the image age check is on, so the caption mentions it only when it actually runs (owner's decision, 2026-09-27: off by default). Irrelevant, and so optional, for `variant: "import"` — its own age check is always mandatory, never toggle-dependent. */
+  /** Whether the image age check is on, so the caption mentions it only when it actually runs (owner's decision, 2026-09-27: off by default). Irrelevant, and so optional, for `variant: "import"` — an import makes no age check at all. */
   imageAgeCheck?: ImageAgeCheck;
   /**
    * T6c (review round 2, M1): the import screen's own caption and empty
-   * state — its mandatory one-time age check runs whatever `imageAgeCheck`
-   * says (never optional, unlike a generated avatar's own toggle-able one),
-   * and there is no separate "Оценить стоимость" button to point to: the
+   * state — it makes no age check whatever `imageAgeCheck` says (owner
+   * decision 2026-10-05), and there is no separate "Оценить стоимость" button to point to: the
    * estimate appears on its own, right after a photo is picked. Defaults to
    * the avatar-creation/next-batch wording every other screen already used.
    */
@@ -41,7 +40,7 @@ interface EstimateCardProps {
 }
 
 function caption(variant: "avatar" | "import", repeat: boolean, imageAgeCheck: ImageAgeCheck | undefined): string {
-  if (variant === "import") return "Обязательная проверка возраста и описание по фото (до 2 попыток). Худшая цена — это предел: дороже этот шаг не выйдет.";
+  if (variant === "import") return "Описание по фото (до 2 попыток). Худшая цена — это предел: дороже этот шаг не выйдет.";
   // Another batch: the descriptor is already paid for and this price is the
   // batch alone (avatars.estimateCandidates / the draft's own estimate) — not
   // the whole avatar's price used as a loose upper bound, so the caption must

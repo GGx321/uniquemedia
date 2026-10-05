@@ -304,7 +304,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "media.cancelImport": { payload: { jobId: "job-00000001" }, result: { jobId: "job-00000001" } },
   "avatars.estimateImport": { payload: { stagingId: "staging-0001" }, result: { ...estimate, expectedMicros: 6_500, worstMicros: 42_000 } },
   "avatars.importAvatar": {
-    payload: { stagingId: "staging-0001", name: "Лиза", confirmedAiPersona: true, acceptedWorstMicros: 42_000 },
+    payload: { stagingId: "staging-0001", name: "Лиза", acceptedWorstMicros: 42_000 },
     result: { avatar },
   },
   "runs.estimate": { payload: runRequest, result: { estimate } },
@@ -1706,5 +1706,20 @@ describe("Stage 3 results and events", () => {
     expect(parseMessage(okResponse("engine.snapshot", snapshot)).ok).toBe(true);
     const { exportStatus: _e, ...without } = snapshot;
     expect(parseMessage(okResponse("engine.snapshot", without)).ok).toBe(false);
+  });
+});
+
+// Owner decision 2026-10-05 (personal-use app): the import's AI-persona confirmation is gone from the wire. The payload object is strict, as
+// every command's is: the renderer ships in the same bundle as the engine, so no older renderer can send the removed field, and a stray
+// one stays a loud refusal instead of being dropped silently.
+describe("avatars.importAvatar payload after the confirmation's removal", () => {
+  const base = { stagingId: "staging-0001", name: "Лиза", acceptedWorstMicros: 32_500 };
+
+  test("accepts stagingId, name and the accepted worst case, with no confirmation", () => {
+    expect(parseMessage(command("avatars.importAvatar", base)).ok).toBe(true);
+  });
+
+  test("refuses a payload that still carries confirmedAiPersona", () => {
+    expect(parseMessage(command("avatars.importAvatar", { ...base, confirmedAiPersona: true })).ok).toBe(false);
   });
 });

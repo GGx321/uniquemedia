@@ -31,14 +31,12 @@ import {
   MONTAGES_DIR,
   PHOTOS_DIR,
   PLAN_FILE,
-  REFUSED_IMPORTS_FILE,
   RUNS_DIR,
   THUMBS_DIR,
   REJECTED_FILE,
   VIDEOS_DIR,
   isFromNewerVersion,
   LIBRARY_FILE_SCHEMA_VERSION,
-  REFUSED_IMPORTS_SCHEMA_VERSION,
   SIDECAR_SCHEMA_VERSION,
   isLibraryFileTemp,
 } from "./layout";
@@ -51,7 +49,6 @@ import {
   HistoryEntrySchema,
   LibraryFileSchema,
   PhotoSidecarSchema,
-  RefusedImportsFileSchema,
   RejectedEntrySchema,
   type AvatarManifest,
   type AvatarStatus,
@@ -236,8 +233,6 @@ export class Library {
   /** Bumped by every incremental index change, so a reload that read the folder before it knows to read again. */
   readonly #videoGeneration = new Map<string, number>();
   readonly #beforeReadVideoRecord: ((path: string) => void | Promise<void>) | undefined;
-  /** T6c (H2): sha256 of every imported photo's raw bytes the mandatory one-time age check has already refused. */
-  #refusedImportHashes = new Set<string>();
 
   private constructor(root: string, deps: LibraryDeps, createdAt: string) {
     this.root = root;
@@ -280,7 +275,6 @@ export class Library {
         library.#videoProblems.set(avatarId, [...(library.#videoProblems.get(avatarId) ?? []), problem]);
       }
     }
-    library.#refusedImportHashes = await loadRefusedImports(root);
 
     // Reported, never "fixed" by rewriting the manifest: restoring the photo
     // from quarantine heals the avatar. Until then referencePhoto() is null.
@@ -396,20 +390,6 @@ export class Library {
     return { avatar: manifest, photo: sidecar };
   }
 
-  /** T6c (H2): whether `sha256` (an imported photo's raw bytes) was already refused by the mandatory one-time age check — checked for free, before anything is downscaled or paid for, so re-picking the exact same bytes cannot re-roll it. */
-  isRefusedImport(sha256: string): boolean {
-    return this.#refusedImportHashes.has(sha256);
-  }
-
-  /** Records that the mandatory one-time age check refused this photo's exact raw bytes; written atomically (temp + fsync + rename), like every other library JSON file. A no-op if already recorded. */
-  async recordRefusedImport(sha256: string): Promise<void> {
-    if (this.#refusedImportHashes.has(sha256)) return;
-    const next = new Set(this.#refusedImportHashes);
-    next.add(sha256);
-    const file = RefusedImportsFileSchema.parse({ schemaVersion: REFUSED_IMPORTS_SCHEMA_VERSION, sha256: [...next].sort() });
-    await writeJsonAtomic(join(this.root, REFUSED_IMPORTS_FILE), file, { beforeRename: this.#beforeRename });
-    this.#refusedImportHashes = next;
-  }
 
   getAvatar(avatarId: string): AvatarManifest | undefined {
     return this.#avatars.get(avatarId);
@@ -1252,21 +1232,6 @@ async function ensureLibraryFile(root: string, now: () => Date): Promise<string>
     throw new LibraryError("invalid-library-file", `${path} is not a supported library file: ${result.error.message}`);
   }
   return result.data.createdAt;
-}
-
-/**
- * T6c (H2): the sha256 of every imported photo the mandatory one-time image
- * age check has already refused, from `<root>/refused-imports.json`. Never
- * blocks or quarantines the library over it: it is a courtesy cache, not the
- * safety boundary itself (the mandatory age check always still runs on
- * import) — a missing or unreadable file is simply read as empty.
- */
-async function loadRefusedImports(root: string): Promise<Set<string>> {
-  const raw = await readJsonFile(join(root, REFUSED_IMPORTS_FILE));
-  if (!raw.ok) return new Set();
-  if (isFromNewerVersion(raw.value, REFUSED_IMPORTS_SCHEMA_VERSION)) return new Set();
-  const parsed = RefusedImportsFileSchema.safeParse(raw.value);
-  return parsed.success ? new Set(parsed.data.sha256) : new Set();
 }
 
 export function openLibrary(root: string, deps: LibraryDeps = {}): Promise<{ library: Library; report: OpenReport }> {

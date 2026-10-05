@@ -104,9 +104,9 @@ export const MOCK_ESTIMATE: Readonly<Estimate> = {
   pricesAsOf: "2026-09-24",
 };
 /**
- * T6c (import an existing avatar), L8: one mandatory one-time age check plus
- * up to two vision describe attempts — the shared IMPORT_FALLBACK_PRICE's own
- * whole-job number (plan.ts's importJobEstimate at the fallback prices),
+ * T6c (import an existing avatar), L8: up to two vision describe attempts and
+ * no age check (owner decision 2026-10-05) — the shared IMPORT_FALLBACK_PRICE's
+ * own whole-job number (plan.ts's importJobEstimate at the fallback prices),
  * never a separate copy of it, so the mock cannot drift from the real
  * engine's own computation. Unaffected by settings.imageAgeCheck, unlike the
  * candidate batches' own toggle-able check.
@@ -631,8 +631,6 @@ export class MockEngine implements EngineBridge {
   private stagedImportId: string | null = null;
   /** The next avatars.pickImportPhoto answers with this instead of a fresh staged photo. */
   private nextImportPick: ImportPhotoPicked | null = null;
-  /** The next avatars.importAvatar's one-time age check fails: nothing is stored, AGE_CHECK_FAILED. */
-  private nextImportAgeCheckFails = false;
   /** T6c review round 3, L4: see failNextImportAfterConsuming's own doc comment. */
   private nextImportFailure: EngineError | null = null;
   /** T8b: photo runs, oldest first (runs.list answers newest first), and their jobs. */
@@ -1051,15 +1049,10 @@ export class MockEngine implements EngineBridge {
     this.nextImportPick = result;
   }
 
-  /** The next avatars.importAvatar's one-time image age check fails: nothing is stored, the reserve is settled, AGE_CHECK_FAILED. */
-  failNextImportAgeCheck(): void {
-    this.nextImportAgeCheckFails = true;
-  }
-
   /**
    * T6c review round 3, L4: the next avatars.importAvatar fails with `error`
-   * only after its stage is already consumed (money already spent for the
-   * age check) — unlike `failNext`, which answers before the gates even run
+   * only after its stage is already consumed (money already spent for one
+   * describe attempt) — unlike `failNext`, which answers before the gates even run
    * and so never touches the stage at all. Stands in for anything the real
    * engine's own paid job can fail with once the stage is gone (NETWORK,
    * INTERNAL, IMPORT_SUBJECT_INVALID, …), so a renderer test can tell that
@@ -1612,17 +1605,10 @@ export class MockEngine implements EngineBridge {
         if (this.nextImportFailure) {
           const error = this.nextImportFailure;
           this.nextImportFailure = null;
-          this.spend(IMPORT_FALLBACK_PRICE.ageCheck.expectedMicros);
-          return this.fail(c, error);
-        }
-        if (this.nextImportAgeCheckFails) {
-          this.nextImportAgeCheckFails = false;
-          // The one-time age check ran (and is billed) before the describe
-          // call would have; nothing else is spent, nothing is stored. L8:
-          // the age check's own expected micros, shared with plan.test.ts
+          // One describe attempt ran (and is billed); nothing is stored. L8: its own expected micros, shared with plan.test.ts
           // and the import tile's own text — never a separate number.
-          this.spend(IMPORT_FALLBACK_PRICE.ageCheck.expectedMicros);
-          return this.fail(c, { code: "AGE_CHECK_FAILED" });
+          this.spend(IMPORT_FALLBACK_PRICE.describe.expectedMicros);
+          return this.fail(c, error);
         }
         const avatar: AvatarSummary = {
           avatarId: this.nextId("avatar"),
@@ -2990,7 +2976,7 @@ export class MockEngine implements EngineBridge {
     return { ...this.price, expectedMicros: DESCRIPTOR.expected, worstMicros: DESCRIPTOR.worst, ...this.rewritePriceOverride };
   }
 
-  /** T6c's import job price: fixed, unaffected by settings.imageAgeCheck (its own one-time age check is mandatory either way). */
+  /** T6c's import job price: fixed, unaffected by settings.imageAgeCheck (an import makes no age check either way). */
   private importPrice(): Estimate {
     return { ...this.importPriceValue };
   }

@@ -100,10 +100,11 @@ describe("openLibrary", () => {
     expect(report.quarantined.map((q) => [q.from, q.reason])).toEqual([[".library.json.0a1b2c3d4e5f.tmp", "temp-file"]]);
   });
 
-  // T6c review round 3, L8: a crash during recordRefusedImport's own write
-  // (H2) leaves the exact same shape of leftover as library.json's own —
-  // isLibraryFileTemp must recognise it too, or it sits at the root forever
-  // instead of being quarantined like every other crash leftover.
+  // T6c review round 3, L8: a crash during the (since removed, 2026-10-05)
+  // refused-imports write left the exact same shape of leftover as
+  // library.json's own — isLibraryFileTemp still recognises it, or an old
+  // library's leftover sits at the root forever instead of being quarantined
+  // like every other crash leftover.
   test("a leftover temp of a crashed refused-imports.json write does not make the folder non-empty either", async () => {
     await writeFile(join(root(), ".refused-imports.json.0a1b2c3d4e5f.tmp"), '{"schemaVersion":1,');
 

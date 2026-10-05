@@ -636,8 +636,8 @@ function ConcurrencyRow({ settings }: { settings: Settings }) {
   );
 }
 
-// One image age check at the dated fallback table (IMPORT_FALLBACK_PRICE: the
-// same AGE_CHECK_CALL prices a candidate's check and an import's). «до» means
+// One image age check at the dated fallback table (IMPORT_FALLBACK_PRICE.ageCheck:
+// the AGE_CHECK_CALL price a candidate's or a run photo's check pays). «до» means
 // a hard cap everywhere else in the app, but the fallback table is only used
 // when OpenRouter did not answer — the live price can be higher — so this is
 // «≈» (nearest, not rounded up): a range from the expected price to the worst

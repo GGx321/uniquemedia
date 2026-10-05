@@ -3,7 +3,6 @@ import { mkdir, readFile } from "node:fs/promises";
 import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import {
-  AGE_CHECK_ALREADY_REFUSED_DETAIL,
   AvatarDescriptor,
   Id,
   AvatarTraits,
@@ -217,7 +216,7 @@ export interface EngineDeps {
    * `signal` entirely to exercise the M4 timeout below on its own.
    */
   downscaleImportPhoto?: (bytes: Uint8Array, maxSide: number, signal: AbortSignal) => Promise<Uint8Array>;
-  /** M4: bounds each of the two import downscales (age check size, then describe size); IMPORT_DOWNSCALE_TIMEOUT_MS unless a test says otherwise. */
+  /** M4: bounds the import's downscale to the describe call's size; IMPORT_DOWNSCALE_TIMEOUT_MS unless a test says otherwise. */
   importDownscaleTimeoutMs?: number;
   /**
    * T6: the QA gates every photo run's paid images pass through, in order
@@ -610,11 +609,7 @@ export class Engine {
     width: number;
     height: number;
     rawBytes: Uint8Array;
-    /** sha256 of `rawBytes`, hex: the library's own key for H2's refused-imports list. */
-    sha256: string;
-    /** Downscaled once at stage time, to the age check's own size (ageCheck.ts's AGE_CHECK_MAX_SIDE). */
-    ageJpeg: Uint8Array;
-    /** Downscaled once at stage time, larger than the age check's own JPEG: more detail for the vision describe call. */
+    /** Downscaled once at stage time, to the describe call's own size (importStaging.ts's IMPORT_DESCRIBE_MAX_SIDE). */
     describeJpeg: Uint8Array;
   } | null = null;
   /** One avatars.importAvatar at a time, like #creatingDraft. */
@@ -1067,19 +1062,8 @@ export class Engine {
                   : "the image's size could not be read";
           return { kind: "control", type: "reply", callId: call.callId, error: { code: "VALIDATION", detail } };
         }
-        // T6c review H2: the mandatory age check must not be re-rollable by
-        // simply re-picking the same file — a fresh pick gets a fresh
-        // stagingId, but the sha256 of its exact bytes is the same one the
-        // library keyed the earlier refusal by. Checked for free, before
-        // anything below is downscaled or paid for.
-        const sha256 = createHash("sha256").update(call.bytes).digest("hex");
-        if (this.library?.isRefusedImport(sha256) === true) {
-          return { kind: "control", type: "reply", callId: call.callId, error: { code: "AGE_CHECK_FAILED", detail: AGE_CHECK_ALREADY_REFUSED_DETAIL } };
-        }
-        let ageJpeg: Uint8Array;
         let describeJpeg: Uint8Array;
         try {
-          ageJpeg = await this.#boundedImportDownscale(call.bytes, AGE_CHECK_MAX_SIDE);
           describeJpeg = await this.#boundedImportDownscale(call.bytes, IMPORT_DESCRIBE_MAX_SIDE);
         } catch (error) {
           // L4: messageOf() already truncates the error's own message, but
@@ -1090,7 +1074,7 @@ export class Engine {
           return { kind: "control", type: "reply", callId: call.callId, error: { code: "VALIDATION", detail } };
         }
         const stagingId = this.#deps.newId();
-        this.#importStaging = { stagingId, mediaType: checked.info.mediaType, width: checked.info.width, height: checked.info.height, rawBytes: call.bytes, sha256, ageJpeg, describeJpeg };
+        this.#importStaging = { stagingId, mediaType: checked.info.mediaType, width: checked.info.width, height: checked.info.height, rawBytes: call.bytes, describeJpeg };
         return { kind: "control", type: "reply", callId: call.callId, stage: { stagingId, width: checked.info.width, height: checked.info.height } };
       }
     }
@@ -2441,15 +2425,11 @@ export class Engine {
    * whole import job. The staged photo is single-use: consumed the moment
    * those checks pass, so a second click can never reuse it.
    *
-   * Then, in one scope: the mandatory one-time image age check (whatever
-   * `imageAgeCheck` says — an imported image bypasses the prompt's own 21+
-   * anchoring, invariant 8's own text-level safeguards notwithstanding), and
-   * only on a clear pass, the vision describe job for her typed traits and
-   * descriptor. Either step's refusal stores nothing; every attempt made so
-   * far is still settled by the client's own settle rule. Confirmation that
-   * the photo is an AI persona is a contract-level requirement (`z.literal(true)`
-   * on `confirmedAiPersona`), not a check made here: a payload without it
-   * never reaches this method at all.
+   * Then, in one scope, the vision describe job for her typed traits and
+   * descriptor — the only paid call. A failure stores nothing; every attempt
+   * made is still settled by the client's own settle rule. Owner decision
+   * 2026-10-05 (personal-use app): an import makes no age check and asks for
+   * no AI-persona confirmation.
    */
   async #importAvatar(payload: CommandPayload<"avatars.importAvatar">): Promise<{ avatar: AvatarSummary }> {
     const key = this.#usableKey("import an avatar");
@@ -2464,16 +2444,6 @@ export class Engine {
     const job = importJobEstimate(priced, models);
     Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, job.worstMicros);
-    // Round 3, L2: re-checked for free, right before anything is spent — not
-    // only at stage time. The race this closes: X's own age check is still
-    // pending when the very same bytes are re-picked as stage B; X resolves
-    // and records the refusal first, and B must not still pay for its own
-    // age check on bytes already known to fail it.
-    if (library.isRefusedImport(staged.sha256)) {
-      // Single-use even on this free refusal: the same L1 guard as below, so a stage that raced ahead of us survives.
-      if (this.#importStaging?.stagingId === staged.stagingId) this.#importStaging = null;
-      throw new EngineFailure({ code: "AGE_CHECK_FAILED", detail: AGE_CHECK_ALREADY_REFUSED_DETAIL });
-    }
 
     // Single-use, consumed now: a failed import below needs a fresh pick, never a silent retry of the same bytes.
     // L1: only clear the slot if it still holds this same staged photo — a
@@ -2482,7 +2452,7 @@ export class Engine {
 
     const importId = this.#deps.newId();
     const scope: Scope = { avatarJobId: importId };
-    // The scope only ever sends one age check and up to two describe attempts — exactly this job's own worst case.
+    // The scope only ever sends up to two describe attempts — exactly this job's own worst case.
     this.#caps.set(scopeKey(scope), job.worstMicros);
     const client = this.#openRouter(key);
     const linesBefore = budget.ledger.lines.length;
@@ -2490,7 +2460,7 @@ export class Engine {
     try {
       outcome = await runImportJob(
         { chat: (params) => client.chat(params), budget, priceBook: priced.book },
-        { jobId: importId, scope, textModel: models.textModel, ageJpeg: staged.ageJpeg, describeJpeg: staged.describeJpeg },
+        { jobId: importId, scope, textModel: models.textModel, describeJpeg: staged.describeJpeg },
       );
     } finally {
       this.#caps.delete(scopeKey(scope));
@@ -2498,26 +2468,9 @@ export class Engine {
     }
     if (!outcome.ok) {
       if (outcome.authInvalid) this.markKeyRejected(key);
-      // H2: only the age check itself refusing this exact photo says
-      // anything about what the photo shows — a transient failure (NETWORK,
-      // AUTH_INVALID, SETTLE_ABOVE_WORST) never blocks a later re-pick.
-      if (outcome.error.code === "AGE_CHECK_FAILED") {
-        // L3: recording the refusal can itself fail (disk full, a read-only
-        // library folder) — that must never turn a genuine AGE_CHECK_FAILED
-        // verdict into an unrelated INTERNAL, and it must never be silently
-        // swallowed either: the detail says the refusal could not be kept.
-        try {
-          await library.recordRefusedImport(staged.sha256);
-        } catch (error) {
-          throw new EngineFailure({
-            code: "AGE_CHECK_FAILED",
-            detail: detailOf(`${outcome.error.detail ?? outcome.error.code}; the refusal could not be remembered for a later re-pick: ${messageOf(error, "unknown error")}`),
-          });
-        }
-      }
       throw new EngineFailure(outcome.error);
     }
-    const { traits, descriptor, ageConfidence } = outcome;
+    const { traits, descriptor } = outcome;
 
     // M3: the manifest (status "active", her master already set), the photo
     // file and its sidecar all publish in ONE rename — no dangling avatar,
@@ -2534,8 +2487,8 @@ export class Engine {
           mediaType: staged.mediaType,
           width: staged.width,
           height: staged.height,
-          source: { kind: "imported", importedAt: new Date(this.#deps.clock()).toISOString(), confirmedAiPersona: payload.confirmedAiPersona },
-          qa: { age: { adult: true, confidence: ageConfidence } },
+          source: { kind: "imported", importedAt: new Date(this.#deps.clock()).toISOString() },
+          qa: {},
         },
       })
       .catch(async (error: unknown) => {
