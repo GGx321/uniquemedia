@@ -15,7 +15,7 @@ import { stagingBound, type StagingBound } from "../renderQueue/stagingBound";
 import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/runner";
 import type { VerifiedFile, VerifyExpected } from "../verify";
 import type { NumberFs } from "./exportNumbers";
-import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
+import { assertFolderContained, commitVideo, mayHaveLeftIntent, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import type { OpenRegularOps } from "../library/openRegular";
 import { collectForbiddenStrings, combineForbiddenStrings } from "./forbiddenStrings";
@@ -557,7 +557,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         // Settled later, the photos would be free for a moment while a video exists, and a second render would take them.
         // A deadline before the claim and a cancel leave nothing to settle.
         const cancelled = context.signal.aborted && error === context.signal.reason;
-        if (deadlineFired || cancelled || deps.settleLeftover === undefined) throw error;
+        // A failure before the intent's write began left no intent: nothing to settle, and no photo to hold for one.
+        if (deadlineFired || cancelled || deps.settleLeftover === undefined || !mayHaveLeftIntent(error)) throw error;
         const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive }, photoIds: scenePhotoIds(plan.spec.clips) }, stepMs, log);
         if (adopted === null) throw error;
         // The video exists: the job is done, not failed.

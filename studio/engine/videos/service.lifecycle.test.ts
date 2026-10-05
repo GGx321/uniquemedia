@@ -489,6 +489,24 @@ describe("the hold of a pending intent does not wait on a disk that fails or han
     expect(await refused(r, w)).toBe("PHOTO_UNAVAILABLE");
   });
 
+  test("a commit that failed BEFORE any intent was written settles nothing and holds nothing: no disk call is made for an intent that never existed (follow-up L2)", async () => {
+    const w = world();
+    let looked = 0;
+    const r = serviceRig(w, {
+      deps: {
+        intentLstat: () => (looked++, new Promise<never>(() => undefined)),
+        renderOverrides: { stepDeadlineMs: 50, verify: async () => ({ result: { ok: false, reasons: [{ code: "UUID_BOX", message: "m" }] }, sha256: null, bytes: 1 }) },
+      },
+    });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+    expect(looked).toBe(0);
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.reserved).toBe(false);
+  });
+
   test("recovery that hangs on the export root at the start still holds the photos: the library is read before the root is asked (the start-up window)", async () => {
     const w = world();
     await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
