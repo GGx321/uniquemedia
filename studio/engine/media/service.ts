@@ -628,6 +628,6 @@ function endOfCommitFailure(error: unknown): End {
     if (error.code === "disk") return { status: "failed", reason: "unreadable", detail: error.message };
     return { status: "failed", reason: "failed", detail: error.message };
   }
-  if (error instanceof MediaDiskError) return { status: "failed", reason: error.code === "ENOSPC" || error.code === "EDQUOT" ? "no-space" : "unreadable", detail: error.message };
+  if (error instanceof MediaDiskError) return { status: "failed", reason: "unreadable", detail: error.message };
   return { status: "failed", reason: "failed", detail: "the media could not be stored" };
 }

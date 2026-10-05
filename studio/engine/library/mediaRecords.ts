@@ -699,7 +699,7 @@ export class MediaRecords {
 
   /**
    * Removes the record, then its file. The record goes FIRST: from that moment the media is gone for every reader, and a file that then
-   * cannot be removed is an orphan the next open removes. False for an id the library does not hold. A record that cannot be removed
+   * cannot be removed is an orphan the next open sets aside in the quarantine. False for an id the library does not hold. A record that cannot be removed
    * leaves everything as it was and throws. The file removed is the one the record's id and format name, inside the media folder, by
    * its name: `unlink` never follows a link.
    */

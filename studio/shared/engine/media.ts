@@ -50,7 +50,7 @@ export const MAX_PICKED_FILES = 20;
  * - `heic`: the bytes are a HEIC or HEIF picture, which Studio does not read; the window says «сохраните как JPEG» (V3);
  * - `changed`: the file was replaced or was still changing between the dialog and the copy;
  * - `unreadable`: the disk refused to read it, or to take the copy;
- * - `no-space`: the library's disk has too little free room for the copy (the file and a margin);
+ * - `no-space`: the library's disk has too little free room, or filled up, for the copy or for what an importer writes (a mezzanine, a work file);
  * - `too-many`: more than `MAX_PICKED_FILES` in one pick, or the engine already holds as many waiting imports as it takes (a larger number; the text does not state it);
  * - `failed`: the kind's importer failed, or the engine could not go on with this file (the rest of a pick that stopped there is `failed` too);
  * - `cancelled`: the import was stopped (the window closed, the engine's own time ran out, the app quit);

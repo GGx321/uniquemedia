@@ -3,7 +3,7 @@ import { lstat, mkdir, open, readdir, realpath, type FileHandle } from "node:fs/
 import { isAbsolute, join, relative } from "node:path";
 import { Id, isUnsafePickedPath, MEDIA_BYTE_CAPS, type MediaKind, type MediaPickKind, type MediaUnsupportedReason, type PickedFileIdentity } from "../../shared/engine";
 import { FREE_MARGIN_BYTES, freeBytesOf, isNoSpaceError, isShortOfRoom } from "../freeBytes";
-import { openRegularNoFollow,UnsafeOpenError, type OpenRegularOps } from "../library/openRegular";
+import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOps } from "../library/openRegular";
 import { renameWithRetry } from "../library/renameRetry";
 import { unlinkWithRetry } from "../library/unlinkRetry";
 import { pickedIdentityOf, sameIdentity } from "./identity";
