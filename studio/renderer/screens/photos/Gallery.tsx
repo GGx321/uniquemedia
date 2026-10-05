@@ -169,7 +169,13 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
   const nothing = emptyText(filter, usage);
   // A photo's number is its place in the whole gallery, whatever the filter shows.
   const positions = new Map((gallery?.photos ?? []).map((p, i) => [p.photoId, i + 1]));
-  const place = viewing === null ? null : viewerPlace(viewerPhotos(gallery?.photos ?? [], photos, viewing), viewing);
+  const viewerList = viewing === null ? [] : viewerPhotos(gallery?.photos ?? [], photos, viewing);
+  const place = viewing === null ? null : viewerPlace(viewerList, viewing);
+  /** A photo's number in the viewer's own count, for a refusal said on another photo. */
+  const viewerPosition = (photoId: string): number | null => {
+    const index = viewerList.findIndex((p) => p.photoId === photoId);
+    return index < 0 ? null : index + 1;
+  };
   // The photo on screen left the gallery (its sidecar unreadable now, say): the viewer closes, and stays closed if it returns.
   const gone = viewing !== null && place === null;
   useEffect(() => {
@@ -269,6 +275,7 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
           onShow={setViewing}
           onClose={() => setViewing(null)}
           returnFocus={tileFor}
+          positionOf={viewerPosition}
         />
       )}
     </section>

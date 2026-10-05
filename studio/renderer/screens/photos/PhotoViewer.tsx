@@ -4,9 +4,10 @@ import type { PhotoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { errorText } from "../../lib/errors";
 import { photoUrl } from "../../lib/media";
+import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { PortraitPlaceholder } from "../../ui/Portrait";
-import { FocusEdge } from "../../ui/FocusEdge";
+import { useAnnouncer } from "../../ui/useAnnouncer";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
 import { CATEGORY_LABEL } from "./runForm";
@@ -33,9 +34,16 @@ interface PhotoViewerProps {
   readonly onClose: () => void;
   /** The element to hand the focus to when the viewer closes on this photo, at this place. */
   readonly returnFocus: (photoId: string, index: number) => HTMLElement | null;
+  /** A photo's number in the viewer's list (as «Фото N из M» counts), or null when the list does not hold it. */
+  readonly positionOf: (photoId: string) => number | null;
 }
 
-export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, onClose, returnFocus }: PhotoViewerProps) {
+/** A refused mark said on another photo than its own: which one, by the viewer's own count. */
+function refusedElsewhere(position: number | null): string {
+  return position === null ? "Отметка другого фото не сохранена" : `Отметка фото ${position} не сохранена`;
+}
+
+export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, onClose, returnFocus, positionOf }: PhotoViewerProps) {
   const { photo, index, total, prevId, nextId } = place;
   const titleId = useId();
   const pickWhyId = useId();
@@ -49,7 +57,10 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   const lastFocused = useRef<EventTarget | null>(null);
   /** The photo on screen came from the owner's own step (not from a list that changed under it): say which it is. */
   const stepped = useRef(false);
-  const [announcement, setAnnouncement] = useState("");
+  const [stepNews, sayStep] = useAnnouncer();
+  /** A refused mark is said once, when it comes: a refusal the viewer opened with is old news. */
+  const [refusalNews, sayRefusal] = useAnnouncer();
+  const seenFailure = useRef(mark.failure);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus: () => returnFocus(photo.photoId, index) });
   // The dialog's empty band round the arrows looks like the dark around it, and closes like it.
   const backdrop = useBackdropClose(onClose, [scrimRef, dialogRef]);
@@ -84,8 +95,19 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   useEffect(() => {
     if (!stepped.current) return;
     stepped.current = false;
-    setAnnouncement(`${title}: ${category}`);
+    sayStep(`${title}: ${category}`);
   }, [photo.photoId]);
+
+  // A refused mark, when it comes: on the photo on screen its own words; on another (the owner stepped on while the engine
+  // answered) which photo it was for too. Shown afterwards without being said again.
+  useEffect(() => {
+    const failure = mark.failure;
+    if (failure === seenFailure.current) return;
+    seenFailure.current = failure;
+    if (failure === null) return;
+    const text = errorText(failure.error);
+    sayRefusal(failure.photoId === photo.photoId ? text : `${refusedElsewhere(positionOf(failure.photoId))}: ${text}`);
+  }, [mark.failure]);
 
   // A control that turns off under the focus drops it to the page in Chromium. An arrow at its end hands it to the other
   // arrow (stepping on is what the owner was doing); any other control (a pick a render now holds, say) to «Закрыть», so the
@@ -104,7 +126,9 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   // A photo picked before it became unusable can still be unpicked, as on its tile.
   const why = montagePickRefusal(photo);
   const marking = mark.marking.has(photo.photoId);
-  const failure = mark.failure !== null && mark.failure.photoId === photo.photoId ? mark.failure.error : null;
+  const failure = mark.failure;
+  const failedHere = failure !== null && failure.photoId === photo.photoId ? errorText(failure.error) : null;
+  const failedElsewhere = failure !== null && failure.photoId !== photo.photoId ? refusedElsewhere(positionOf(failure.photoId)) : null;
   const frame = ["viewer-frame", picked ? "viewer-frame-on" : "", refused ? "viewer-frame-refused" : ""].filter(Boolean).join(" ");
 
   return createPortal(
@@ -146,7 +170,10 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
                 {refused && <span className="pill photo-badge viewer-refused">недоступно</span>}
               </div>
               <p className="sr-only" aria-live="polite">
-                {announcement}
+                {stepNews}
+              </p>
+              <p className="sr-only" aria-live="assertive">
+                {refusalNews}
               </p>
             </header>
 
@@ -188,12 +215,9 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
                   {mark.blocked}
                 </p>
               )}
-              {/* The gallery column says it too, but under the scrim and out of reach: here it is where the owner is. */}
-              {failure !== null && (
-                <p className="viewer-error" role="alert">
-                  {errorText(failure)}
-                </p>
-              )}
+              {/* The gallery column says it too, but under the scrim and out of reach: here it is where the owner is. No alert
+                  role: the assertive region above said it once, and a return to this photo must not say it again. */}
+              {(failedHere ?? failedElsewhere) !== null && <p className="viewer-error">{failedHere ?? failedElsewhere}</p>}
             </div>
 
             <p className="viewer-keys" aria-hidden="true">

@@ -6,6 +6,7 @@ import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
 import { ManualScheduler } from "../engine/scheduler";
 import { callsOf, describeElement, flush, focusedLabel, setup, tick } from "../testing";
+import { ANNOUNCE_MS } from "../ui/useAnnouncer";
 
 // The photo viewer on the Photos screen's «Фото» tab: a click on a tile's photo opens it full size over the screen, with
 // «Фото N из M», its category and the tile's badges; ← and → step through the gallery as its filter shows it (no wrap);
@@ -61,7 +62,17 @@ function focusEdge(edge: "start" | "end"): void {
   found.focus();
 }
 /** The live region that announces the owner's steps. */
-const announced = (): string => viewer().querySelector("[aria-live]")?.textContent ?? "";
+const announced = (): string => viewer().querySelector('[aria-live="polite"]')?.textContent ?? "";
+/** The live region that says a refused mark, once. */
+const refusalNews = (): string => viewer().querySelector('[aria-live="assertive"]')?.textContent ?? "";
+/** The refusal as the viewer shows it, on its photo or naming it. */
+const refusalShown = (): string => viewer().querySelector(".viewer-error")?.textContent ?? "";
+/** Long enough for a live region to have been cleared after it spoke. */
+async function waitPastAnnouncement(): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, ANNOUNCE_MS + 50));
+  });
+}
 
 describe("opening a photo", () => {
   test("a click on a tile's photo opens it in a modal viewer: «Фото N из M», its category and the tile's badges, the photo large", async () => {
@@ -329,6 +340,9 @@ describe("stepping through the gallery", () => {
     expect(announced()).toBe("Фото 2 из 3: Путешествия");
     fireEvent.click(prev());
     expect(announced()).toBe("Фото 1 из 3: Фитнес");
+    // Said, then cleared: the same words after another step are announced again.
+    await waitPastAnnouncement();
+    expect(announced()).toBe("");
   });
 
   test("the arrows follow the gallery's filter: under «Отклонённые» only the rejected photos, numbered among themselves", async () => {
@@ -400,25 +414,48 @@ describe("the tile's actions, in the viewer", () => {
     expect(screen.getByRole("button", { name: "Фото 2: отклонить — в видео не брать" })).toBeDefined();
   });
 
-  test("a mark the engine refuses is said inside the viewer, on the photo it was for, until a mark goes through", async () => {
+  test("a mark the engine refuses is said inside the viewer, announced once, and shown on its photo until a mark goes through", async () => {
     const h = await openMia();
     fireEvent.click(openButton(2));
     h.engine.failNext("photos.setRejected", { code: "INTERNAL" });
     fireEvent.click(inViewer("Отклонить"));
     await flush();
 
-    expect(within(viewer()).getByRole("alert").textContent).toBe(ERROR_MESSAGES_RU.INTERNAL);
+    expect(refusalShown()).toBe(ERROR_MESSAGES_RU.INTERNAL);
+    expect(refusalNews()).toBe(ERROR_MESSAGES_RU.INTERNAL);
     expect(inViewer("Отклонить")).toBeDefined();
-    // Another photo is not the one refused.
-    press("ArrowRight");
+    // Said once: the live region is cleared after it, and nothing in the viewer is an alert that a return would say again.
+    await waitPastAnnouncement();
+    expect(refusalNews()).toBe("");
     expect(within(viewer()).queryByRole("alert") === null).toBe(true);
+    press("ArrowRight");
     press("ArrowLeft");
-    expect(within(viewer()).getByRole("alert")).toBeDefined();
+    expect(refusalShown()).toBe(ERROR_MESSAGES_RU.INTERNAL);
+    expect(refusalNews()).toBe("");
+    expect(within(viewer()).queryByRole("alert") === null).toBe(true);
     // Tried again and set: the refusal goes.
     fireEvent.click(inViewer("Отклонить"));
     await flush();
-    expect(within(viewer()).queryByRole("alert") === null).toBe(true);
+    expect(refusalShown()).toBe("");
     expect(within(viewer()).getByText("отклонено")).toBeDefined();
+  });
+
+  test("a refusal that comes after the owner moved on is said on the photo on screen, naming the photo it was for", async () => {
+    const h = await openMia();
+    fireEvent.click(openButton(2));
+    h.engine.delayNext("photos.setRejected", 50);
+    h.engine.failNext("photos.setRejected", { code: "INTERNAL" });
+    fireEvent.click(inViewer("Отклонить"));
+    press("ArrowRight");
+    tick(h.scheduler, 1); // the engine answers now, on another photo
+    await flush();
+
+    expect(viewerTitle()).toBe("Фото 3 из 6");
+    expect(refusalShown()).toBe("Отметка фото 2 не сохранена");
+    expect(refusalNews()).toBe(`Отметка фото 2 не сохранена: ${ERROR_MESSAGES_RU.INTERNAL}`);
+    // Back on the photo it was for: the refusal itself, not announced again.
+    press("ArrowLeft");
+    expect(refusalShown()).toBe(ERROR_MESSAGES_RU.INTERNAL);
   });
 
   test("while the marks cannot be read, the viewer's «Отклонить» is off with the tile's reason on screen", async () => {
