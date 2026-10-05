@@ -37,5 +37,5 @@ export async function isShortOfRoom(freeBytes: FreeBytes, dir: string, neededByt
 export function isNoSpaceError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if ("code" in error && (error.code === "ENOSPC" || error.code === "EDQUOT")) return true;
-  return "stderrTail" in error && typeof error.stderrTail === "string" && /No space left on device/i.test(error.stderrTail);
+  return "stderrTail" in error && typeof error.stderrTail === "string" && /No space left on device|Dis[ck] quota exceeded/i.test(error.stderrTail);
 }

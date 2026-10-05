@@ -126,7 +126,7 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
       await runFfmpegArgv({ argv: [...argv, output], output, signal, timeoutMs, ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }) });
     } catch (error) {
       // Every write was checked for room first, so a disk left under the margin is one that filled meanwhile: a full disk, not a wrong picture.
-      if (!signal.aborted && (isNoSpaceError(error) || (await isShortOfRoom(freeBytes, dirname(request.staged.path), margin)))) throw new Refused("no-space");
+      if (!signal.aborted && (await isShortOfRoom(freeBytes, dirname(request.staged.path), margin))) throw new Refused("no-space");
       throw error;
     }
   }
