@@ -353,6 +353,28 @@ describe("the «Видео» tab", () => {
     expect(screen.queryByRole("dialog") === null).toBe(true);
   });
 
+  test("the player holds the focus like the photo viewer: Tab stays inside it, and closing gives the focus back to «Смотреть»", async () => {
+    const h = await openMia({ tab: "videos" });
+    await act(async () => {
+      await rendered(h, [scenePhoto(1).photoId], "пляж");
+    });
+    const watch = within(await screen.findByRole("article", { name: "пляж" })).getByRole("button", { name: "Смотреть видео «пляж»" });
+    watch.focus();
+    fireEvent.click(watch);
+    const close = within(screen.getByRole("dialog", { name: "пляж" })).getByRole("button", { name: "Закрыть" });
+    expect(document.activeElement).toBe(close);
+    // «Закрыть» is the only control (the dev mock plays no video): Tab either way keeps the focus on it.
+    expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(false);
+    expect(fireEvent.keyDown(close, { key: "Tab", shiftKey: true })).toBe(false);
+    expect(document.activeElement).toBe(close);
+    // A focus that strayed behind the dialog is brought back by the next Tab.
+    watch.focus();
+    expect(fireEvent.keyDown(watch, { key: "Tab" })).toBe(false);
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(document.activeElement).toBe(watch);
+  });
+
   test("renders on their way are cards: running with its frames and «Отменить», queued «после 1 рендера» with «Убрать из очереди»", async () => {
     const h = await openMia({ tab: "videos" });
     const make = async (photoIds: string[], name: string): Promise<void> => {
