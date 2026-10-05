@@ -812,8 +812,8 @@ function DraftEditor({
   }, [client, avatarId, usedVideoId, avatar]);
 
   const holder = usedVideoId === null ? undefined : videos?.find((v) => v.videoId === usedVideoId);
-  // K12 (the video's own title) comes with 3e.2: until then a video made from this draft is «из этого черновика»
-  // (the draft's name may have changed since), any other is called by its file name in «Готовые видео».
+  // A video made from this draft is «из этого черновика» (the draft's name may have changed since); any other is called by its file name in
+  // «Готовые видео». The «Видео» tab's cards call it by its title (`VideoSummary.title`, K12, 3e.2) instead: the slice review's 5-L4, left open.
   const usedVideo: UsedVideo | null = holder === undefined ? null : holder.montageId === montageId ? "this-draft" : { file: fileLabel(holder) };
 
   const block = renderBlock({
