@@ -2130,7 +2130,8 @@ export class MockEngine implements EngineBridge {
       return this.ok(c, { focus: this.ownMedia.hasFace(photo.mediaId) ? { ...MOCK_FOCUS } : null });
     }
     const known = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photo.photoId);
-    if (known === undefined || !known.eligible) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
+    // Eligibility as the windows see it (`photoView`): none is eligible while the reject marks cannot be read, as the library's `isEligible` has it.
+    if (known === undefined || !this.photoView(known).eligible) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
     return this.ok(c, { focus: this.focusOf(avatarId, photo.photoId) });
   }
 

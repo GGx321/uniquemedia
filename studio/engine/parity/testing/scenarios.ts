@@ -1647,6 +1647,8 @@ function usageUnknownScenario(name: string, usage: NonNullable<RigOptions["usage
       await t.call("montages.get", { montageId });
       await t.call("videos.render", { montageId });
       await t.call("engine.snapshot", {});
+      t.note("a focus asks for the photo, not its usage: refused only where no photo is eligible (unreadable marks)");
+      await t.call("montages.focus", { avatarId: w.avatarId, photo: { source: "scene", photoId: photo(w, 1) } });
     },
   };
 }

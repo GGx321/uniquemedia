@@ -2708,6 +2708,9 @@ export const GOLDEN: Record<string, string[]> = {
     "< error PHOTO_UNAVAILABLE {\"detail\":\"the usage of this avatar's photos cannot be trusted right now (log-needs-repair)\",\"issues\":[{\"code\":\"photo-unavailable\",\"path\":[\"clips\",0,\"cells\",0]},{\"code\":\"photo-unavailable\",\"path\":[\"clips\",0,\"cells\",1]}],\"photoReason\":\"log-needs-repair\"}",
     "> engine.snapshot {}",
     "< ok snapshot {\"jobs\":[],\"exportStatus\":{\"status\":\"ok\"},\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":0,\"usage\":{\"state\":\"unknown\",\"reasons\":[\"record-unreadable\"]}},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}]}",
+    "# a focus asks for the photo, not its usage: refused only where no photo is eligible (unreadable marks)",
+    "> montages.focus {\"avatarId\":\"avatar#1\",\"photo\":{\"source\":\"scene\",\"photoId\":\"photo#1\"}}",
+    "< ok {\"focus\":{\"x\":0.5,\"y\":0.35}}",
   ],
   "an avatar with a record from a newer Studio: a pick and a render are LIBRARY_TOO_NEW, and a draft's photos are unavailable": [
     "> avatars.list {}",
@@ -2730,6 +2733,9 @@ export const GOLDEN: Record<string, string[]> = {
     "< error LIBRARY_TOO_NEW {\"detail\":\"a video record of this avatar was written by a newer version of Studio\"}",
     "> engine.snapshot {}",
     "< ok snapshot {\"jobs\":[],\"exportStatus\":{\"status\":\"ok\"},\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":0,\"usage\":{\"state\":\"unknown\",\"reasons\":[\"library-too-new\"]}},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}]}",
+    "# a focus asks for the photo, not its usage: refused only where no photo is eligible (unreadable marks)",
+    "> montages.focus {\"avatarId\":\"avatar#1\",\"photo\":{\"source\":\"scene\",\"photoId\":\"photo#1\"}}",
+    "< ok {\"focus\":{\"x\":0.5,\"y\":0.35}}",
   ],
   "an avatar whose reject marks cannot be read: no photo is eligible, and a pick, a draft and a render refuse them": [
     "> avatars.list {}",
@@ -2774,5 +2780,8 @@ export const GOLDEN: Record<string, string[]> = {
     "< error PHOTO_UNAVAILABLE {\"detail\":\"the usage of this avatar's photos cannot be trusted right now (log-needs-repair)\",\"issues\":[{\"code\":\"photo-unavailable\",\"path\":[\"clips\",0,\"cells\",0]},{\"code\":\"photo-unavailable\",\"path\":[\"clips\",0,\"cells\",1]}],\"photoReason\":\"log-needs-repair\"}",
     "> engine.snapshot {}",
     "< ok snapshot {\"jobs\":[],\"exportStatus\":{\"status\":\"ok\"},\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":0,\"usage\":{\"state\":\"unknown\",\"reasons\":[\"rejects-unreadable\"]}},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}]}",
+    "# a focus asks for the photo, not its usage: refused only where no photo is eligible (unreadable marks)",
+    "> montages.focus {\"avatarId\":\"avatar#1\",\"photo\":{\"source\":\"scene\",\"photoId\":\"photo#1\"}}",
+    "< error PHOTO_UNAVAILABLE {\"issues\":[{\"code\":\"photo-unavailable\",\"path\":[\"photo\"]}]}",
   ],
 };

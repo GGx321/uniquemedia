@@ -149,6 +149,22 @@ describe("an avatar whose usage is unknown", () => {
     expect(photos.every((p) => !p.rejected)).toBe(true);
   });
 
+  test("montages.focus refuses a scene photo while the reject marks cannot be read: none of the avatar's photos is eligible", async () => {
+    const mock = unknownMock(["rejects-unreadable"]);
+
+    const reply = await mock.client.request("montages.focus", { avatarId: MIA.avatarId, photo: { source: "scene", photoId: PHOTO_IDS[0] ?? "" } });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] } });
+  });
+
+  test("montages.focus still answers while only a record cannot be read: a focus needs the photo, not its usage", async () => {
+    const mock = unknownMock(["record-unreadable"]);
+
+    const reply = await mock.client.request("montages.focus", { avatarId: MIA.avatarId, photo: { source: "scene", photoId: PHOTO_IDS[0] ?? "" } });
+
+    expect(reply.ok).toBe(true);
+  });
+
   test("a mark made while usage is unknown does not move the avatar's unused count: it stays 0", async () => {
     const mock = unknownMock(["record-unreadable"]);
 
