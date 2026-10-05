@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AvatarName, AvatarTraits } from "./avatar";
+import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -235,6 +236,16 @@ const MAIN_ONLY_SPECS = [
   // through its record (the kind must be sticker, the sha256 is checked on the exact bytes, the size is capped before it reads), answers the file and
   // never a path. NOT_FOUND for an id that is not an own sticker; INTERNAL, with fixed text, for one that fails its check.
   defineCommand("media.stickerBytes", OwnStickerBytesPayload, OwnStickerBytes),
+  // «Удалить аватар» (2026-10-05): the avatar, its photos, candidates, master, drafts and finished videos (the files in «Готовые видео» and their
+  // records) go to the system Trash (macOS Trash, Windows Recycle Bin), where the owner can restore them. Only main has `shell.trashItem`, so
+  // this is main's: the window names an avatar and never a path. Main asks the engine what goes (the engine resolves every path itself, inside the
+  // library and the export folder), moves the avatar's folder first, and tells the engine whether it went. Answers
+  //   IN_FLIGHT         anything of the avatar runs or is reserved (a photo run, a candidate job, a render, a pending video, a draft being saved), or a
+  //                     library switch is under way: nothing is touched;
+  //   TRASH_UNAVAILABLE the Trash cannot take the avatar's folder (a network drive, a volume with no Trash): nothing is deleted, never a permanent delete;
+  //   NOT_FOUND         an avatar the library does not have; LIBRARY_UNAVAILABLE no library is open.
+  // On success `videoFilesKept` counts the files that were found and could not be moved: they stay as plain files in «Готовые видео».
+  defineCommand("avatars.delete", z.strictObject({ avatarId: Id }), AvatarDeleteResult),
 ] as const;
 
 /** Commands main forwards to the engine. */
@@ -278,6 +289,10 @@ const ENGINE_SPECS = [
     z.strictObject({ avatar: AvatarSummary }),
   ),
   defineCommand("avatars.archive", z.strictObject({ avatarId: Id }), z.strictObject({ avatar: AvatarSummary })),
+  // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
+  // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
+  // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.
+  defineCommand("avatars.deletePreview", z.strictObject({ avatarId: Id }), AvatarDeletePreview),
   // The paid recovery for an avatar whose stored descriptor fails today's
   // rules: rewrites it from the avatar's stored typed traits alone (the same
   // descriptor job as createDraft), keeping its master photo, candidates and

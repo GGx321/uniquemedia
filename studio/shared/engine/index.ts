@@ -1,6 +1,7 @@
 // Typed contract between Studio's renderer, main process and engine utilityProcess.
 export * from "./ageText";
 export * from "./avatar";
+export * from "./avatarDelete";
 export * from "./commands";
 export * from "./envelope";
 export * from "./errorMessagesRu";

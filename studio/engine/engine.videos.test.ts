@@ -138,7 +138,7 @@ describe("a real render through videos.render", () => {
       expect(existsSync(file)).toBe(false);
       expect(await listVideos(engine, avatarId)).toEqual([]);
       expect((await listPhotos(engine, avatarId)).filter((p) => p.used)).toEqual([]);
-      expect(events().slice(before).map((e) => [e.type, e.payload])).toContainEqual(["video.changed", { change: "removed", videoId, avatarId }]);
+      expect(events().slice(before).map((e): [string, unknown] => [e.type, e.payload])).toContainEqual(["video.changed", { change: "removed", videoId, avatarId }]);
     },
     REAL_RENDER_TIMEOUT_MS,
   );
