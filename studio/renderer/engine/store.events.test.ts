@@ -745,6 +745,20 @@ test("avatar.removed tells the draft and video listeners to read again: the avat
   h.stop();
 });
 
+test("what is said after an avatar delete is kept in the view until it is dismissed, and replaced by a newer one", async () => {
+  const h = await host();
+  expect(h.store.getView().avatarDeleteNotice).toBeNull();
+
+  h.store.noteAvatarDeleted({ draft: false, name: "Mia", kept: 2, unchecked: 0, folder: "Mia" });
+  expect(h.store.getView().avatarDeleteNotice).toMatchObject({ name: "Mia", kept: 2 });
+  h.store.noteAvatarDeleted({ draft: true, name: "Черновик", kept: 0, unchecked: 0, folder: null });
+  expect(h.store.getView().avatarDeleteNotice).toMatchObject({ draft: true });
+
+  h.store.dismissAvatarDeleted();
+  expect(h.store.getView().avatarDeleteNotice).toBeNull();
+  h.stop();
+});
+
 test("the avatar listeners hear the removal AFTER the view dropped the avatar", async () => {
   const h = await host({ avatars: [SAVED] });
   const listed: boolean[] = [];

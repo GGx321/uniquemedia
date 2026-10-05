@@ -98,4 +98,9 @@ describe("TRASH_UNAVAILABLE", () => {
     expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).toContain("Корзин");
     expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).toContain("не удалён");
   });
+
+  test("says what to do about a volume with no Recycle Bin", () => {
+    expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).toContain("в Корзину один раз");
+    expect(ERROR_MESSAGES_RU.TRASH_UNAVAILABLE).toContain("перенесите библиотеку");
+  });
 });

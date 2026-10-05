@@ -1,7 +1,7 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 import type { AvatarDeletePreview, AvatarDeleteResult, EngineError } from "../../shared/engine";
 import { useEngine } from "../engine/react";
-import { countOf, NBSP } from "../lib/format";
+import { countOf } from "../lib/format";
 import { errorText } from "../lib/errors";
 import { useMounted } from "./photos/shared";
 import { Icon, Spin } from "../ui/Icon";
@@ -15,32 +15,44 @@ import { cancelOnEscape, useConfirmFocus } from "../ui/useConfirmFocus";
 /** The one sentence the owner reads before deleting. */
 export const TRASH_SENTENCE = "Аватар, его фото, черновики и готовые видео уйдут в Корзину — оттуда их можно вернуть.";
 
+/** How to get it back, in one line: the Trash holds the avatar's folder and each video file as separate things, and Studio shows the avatar again after a restart. */
+export const RESTORE_LINE = "Вернуть можно из Корзины: аватар и каждый видеофайл лежат там отдельными объектами, а чтобы аватар снова появился в Studio, после возврата перезапустите Studio.";
+
 const PHOTOS = ["фото", "фото", "фото"] as const;
 const CANDIDATES = ["вариант портрета", "варианта портрета", "вариантов портрета"] as const;
 const DRAFTS = ["черновик монтажа", "черновика монтажа", "черновиков монтажа"] as const;
 const VIDEOS = ["видео", "видео", "видео"] as const;
 
-/** «Уйдут в Корзину: 22 фото, 2 черновика монтажа, 3 видео.» — only what there is to go. */
+/** «Уйдут в Корзину: 22 фото, 2 черновика монтажа.» — only what there is to go, the videos apart (`filesText`). */
 export function goesText(preview: AvatarDeletePreview): string {
   const parts = [
     preview.photos > 0 ? countOf(preview.photos, PHOTOS) : null,
     preview.candidates > 0 ? countOf(preview.candidates, CANDIDATES) : null,
     preview.drafts > 0 ? countOf(preview.drafts, DRAFTS) : null,
-    preview.videos > 0 ? countOf(preview.videos, VIDEOS) : null,
   ].filter((part): part is string => part !== null);
   return parts.length === 0 ? "Кроме самого аватара, у него пока ничего нет." : `Уйдут в Корзину: ${parts.join(", ")}.`;
 }
 
-/** The video files: how many of the records' files are in «Готовые видео» now and go with the avatar; the rest stay where they are. */
+/**
+ * The videos in one line: how many there are, how many of their files are in «Готовые видео» now and go with the avatar, and what stays where it is: the files
+ * that are not in the folder, and the ones that could not be checked in time.
+ */
 export function filesText(preview: AvatarDeletePreview): string | null {
   if (preview.videos === 0) return null;
-  const stay = preview.videoFilesFound < preview.videos ? " Остальных там нет — они останутся как есть." : "";
-  return `Файлов видео в папке «Готовые видео»: ${preview.videoFilesFound}${NBSP}из${NBSP}${preview.videos}.${stay}`;
+  const { videos, videoFilesFound: found, videoFilesUnchecked: unchecked } = preview;
+  const absent = Math.max(0, videos - found - unchecked);
+  const parts = [`Видео: ${videos}. Файлов в «Готовые видео» найдено ${found} из ${videos} — они уйдут в Корзину.`];
+  if (absent > 0) parts.push(`${absent} там нет — они останутся как есть.`);
+  if (unchecked > 0) parts.push(`${unchecked} не успели проверить — они тоже останутся на месте.`);
+  return parts.join(" ");
 }
 
-/** What the owner is told when a video file stayed behind after the avatar went. */
-export function keptText(kept: number): string {
-  return `${countOf(kept, VIDEOS)} не удалось переместить в Корзину — они остались в папке «Готовые видео».`;
+/** What the owner is told when video files stayed behind after the avatar went: the ones the Trash refused, and the ones that could not be checked. */
+export function keptText({ kept, unchecked, folder }: { kept: number; unchecked: number; folder: string | null }): string {
+  const parts = [kept > 0 ? `${countOf(kept, VIDEOS)} не удалось переместить в Корзину` : null, unchecked > 0 ? `${countOf(unchecked, VIDEOS)} не успели проверить` : null].filter(
+    (part): part is string => part !== null,
+  );
+  return `${parts.join(", ")} — они остались в папке «Готовые видео${folder === null ? "" : `/${folder}`}».`;
 }
 
 type Phase =
@@ -53,7 +65,15 @@ type Phase =
 
 /** The refusal of a preview or a delete, in words: a busy avatar says what to wait for; every other code has its fixed Russian text. */
 function failureText(error: EngineError): string {
-  return error.code === "IN_FLIGHT" ? "Аватар сейчас занят: идёт генерация, рендер или сохранение. Дождитесь, когда это закончится, и повторите." : errorText(error);
+  return error.code === "IN_FLIGHT"
+    ? "Аватар сейчас занят: идёт генерация, рендер или сохранение, удаляется другой аватар или меняется папка библиотеки. Дождитесь окончания и повторите."
+    : errorText(error);
+}
+
+/** Who was deleted, for what is said afterwards: a draft has no name of its own. */
+export interface DeletedAvatar {
+  readonly name: string;
+  readonly draft: boolean;
 }
 
 export interface AvatarDelete {
@@ -67,14 +87,16 @@ export interface AvatarDelete {
  * `label` names the avatar in the button's name («Удалить аватар Mia»); `draft` words it for a draft. `onDeleted` is told once `avatars.delete` answered ok
  * (the card goes with `avatar.removed`): the screen moves the focus off the card and says what stayed behind.
  */
-export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarId: string; label: string; draft: boolean; onDeleted: (result: AvatarDeleteResult) => void }): AvatarDelete {
+export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarId: string; label: string; draft: boolean; onDeleted: (who: DeletedAvatar, result: AvatarDeleteResult) => void }): AvatarDelete {
   const { client } = useEngine();
   const mounted = useMounted();
   const [phase, setPhase] = useState<Phase>({ kind: "closed" });
   const focus = useConfirmFocus();
   const trashRef = useRef<HTMLButtonElement>(null);
+  const confirmRef = useRef<HTMLDivElement>(null);
   /** Which question is current: an answer to an older one (the owner cancelled and asked again) is dropped. */
   const asked = useRef(0);
+  const who: DeletedAvatar = { name: label, draft };
 
   const ask = useCallback((): void => {
     if (phase.kind !== "closed") return;
@@ -103,15 +125,17 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
 
   async function remove(preview: AvatarDeletePreview): Promise<void> {
     setPhase({ kind: "deleting", preview });
+    // The buttons are off while it runs and would drop the focus to the body: the question itself holds it.
+    focus.moveTo(() => confirmRef.current);
     const reply = await client.request("avatars.delete", { avatarId });
     if (!mounted.current) {
       // The card is already gone (the event came first): the screen still hears the answer.
-      if (reply.ok) onDeleted(reply.result);
+      if (reply.ok) onDeleted(who, reply.result);
       return;
     }
     if (reply.ok) {
       setPhase({ kind: "closed" });
-      onDeleted(reply.result);
+      onDeleted(who, reply.result);
       return;
     }
     // Refused: the question stays open with what went wrong, and its buttons, off while it was asked, take the focus back.
@@ -139,7 +163,7 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
   const failure = phase.kind === "ready" ? phase.failure : phase.kind === "refused" ? phase.error : null;
   const files = preview === null ? null : filesText(preview);
   const confirmation = !open ? null : (
-    <div className="avatar-confirm" role="alert" onKeyDown={(e) => cancelOnEscape(e, cancel, deleting)}>
+    <div ref={confirmRef} tabIndex={-1} className="avatar-confirm" role="alert" onKeyDown={(e) => cancelOnEscape(e, cancel, deleting)}>
       {phase.kind === "loading" && (
         <span className="avatar-confirm-wait">
           <Spin /> Смотрим, что уйдёт…
@@ -150,6 +174,7 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
           <span>{goesText(preview)}</span>
           {files !== null && <span>{files}</span>}
           <span>{TRASH_SENTENCE}</span>
+          <span className="faint">{RESTORE_LINE}</span>
           <span className="faint">Файлы из «Мои» (свои фото, видео, музыка и стикеры) останутся на месте.</span>
         </>
       )}

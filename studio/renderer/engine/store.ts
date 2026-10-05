@@ -129,6 +129,20 @@ export interface EngineView {
    * single flag) since a paid command is always scoped to one avatar.
    */
   readonly paidInFlightAvatars: ReadonlySet<string>;
+  /**
+   * What the owner is told after an avatar was deleted («Удалить аватар»): window-wide, so a notice about video files that stayed behind is still there
+   * when the Avatars screen is left and opened again, until the owner dismisses it. Null when there is nothing to say.
+   */
+  readonly avatarDeleteNotice: AvatarDeleteNotice | null;
+}
+
+/** What is said once an avatar is gone: its name (a draft has none), how many video files stayed behind or were not checked, and the export subfolder they are in. */
+export interface AvatarDeleteNotice {
+  readonly draft: boolean;
+  readonly name: string;
+  readonly kept: number;
+  readonly unchecked: number;
+  readonly folder: string | null;
 }
 
 const INITIAL: EngineView = {
@@ -151,6 +165,7 @@ const INITIAL: EngineView = {
   notices: [],
   cancellingJobs: new Set(),
   paidInFlightAvatars: new Set(),
+  avatarDeleteNotice: null,
 };
 
 export function isActiveJob(job: JobView): boolean {
@@ -566,6 +581,16 @@ export class EngineStore {
     if (inFlight) paidInFlightAvatars.add(avatarId);
     else paidInFlightAvatars.delete(avatarId);
     this.update({ paidInFlightAvatars });
+  }
+
+  /** An avatar was deleted: what is said about it, window-wide (see `EngineView.avatarDeleteNotice`). Replaces the one before. */
+  noteAvatarDeleted(notice: AvatarDeleteNotice): void {
+    this.update({ avatarDeleteNotice: notice });
+  }
+
+  /** The owner has read it. */
+  dismissAvatarDeleted(): void {
+    if (this.view.avatarDeleteNotice !== null) this.update({ avatarDeleteNotice: null });
   }
 
   async refreshAvatars(): Promise<void> {
