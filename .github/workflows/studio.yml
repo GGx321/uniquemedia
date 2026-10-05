@@ -50,6 +50,7 @@ on:
       - "package.json"
       - "bun.lock"
       - ".github/workflows/studio.yml"
+      - ".github/actions/studio-install/**"
   # Weekly, so a `latest`-Bun regression (like the one the canary job guards
   # against) is caught even on a week with no studio push, and the heavy tier
   # (see the tiers above) runs on a timer instead of on every push.

@@ -696,6 +696,20 @@ describe("the Electron-Node steps' bounds", () => {
     }
   });
 
+  // A push that touches only the local action changes how every job installs, so it must run this workflow (and its pins).
+  test("every local action the workflow uses is in on.push.paths", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    const parsed: unknown = Bun.YAML.parse(workflow);
+    if (typeof parsed !== "object" || parsed === null || !("on" in parsed) || typeof parsed.on !== "object" || parsed.on === null || !("push" in parsed.on) || typeof parsed.on.push !== "object" || parsed.on.push === null || !("paths" in parsed.on.push) || !Array.isArray(parsed.on.push.paths)) throw new Error("no on.push.paths in the workflow");
+    const paths: unknown[] = parsed.on.push.paths;
+    const used = new Set<string>();
+    for (const job of Object.values(await workflowJobs())) {
+      for (const step of (job.steps ?? []) as { uses?: string }[]) if (step.uses?.startsWith("./")) used.add(step.uses.replace(/^\.\//, ""));
+    }
+    expect(used.size).toBeGreaterThan(0);
+    for (const dir of used) expect([dir, paths.includes(`${dir}/**`)]).toEqual([dir, true]);
+  });
+
   test("the studio-install action: frozen install, a retry that clears ffmpeg-static, a binary that must run, no cache, no secrets, bash on every step", async () => {
     const text = await readFile(join(ROOT, ".github", "actions", "studio-install", "action.yml"), "utf8");
     const parsed: unknown = Bun.YAML.parse(text);
