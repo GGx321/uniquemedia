@@ -53,7 +53,12 @@ export interface VideoImporterOptions {
   readonly freeBytes?: FreeBytes;
   /** What is kept free beyond that worst output; `FREE_MARGIN_BYTES` (64 MiB) by default. */
   readonly freeMarginBytes?: number;
+  /** The smallest encode worth starting, in bytes of room beyond the margin; 8 MiB by default (a test lowers it). */
+  readonly minEncodeBytes?: number;
 }
+
+/** A few seconds of a clip at CRF 16 is a few MiB: with less room than this beyond the margin no encode is started. */
+const MIN_ENCODE_BYTES = 8 * 1024 * 1024;
 
 /** Whether what ffmpeg wrote is what the plan asked for; the walker's reading of it, never ffmpeg's. */
 function isPlannedOutput(info: VideoInfo, plan: VideoPlan): boolean {
@@ -125,12 +130,19 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     }
     if (signal.aborted) return { ok: false, reason: "cancelled" };
 
-    // Room for the worst mezzanine the encode's own `-fs` lets through (the cap plus the muxer's slack) and a margin, asked BEFORE a work file is made: the copy's room
-    // check covered only the copy, and an encode that fills the disk starves every other writer of the volume (the ledger, the render's copies) until it fails.
+    // The encode is BOUNDED by the disk, not refused for the worst case of a 2 GiB clip: `-fs` is the cap plus the muxer's slack, or what is free beyond the margin when that is
+    // less, so a small clip imports on a small disk and an encode that fills the disk is stopped with the margin still free (it would starve every other writer of the volume:
+    // the ledger, the render's copies). Only a disk too small for any encode is refused up front. A disk that cannot say keeps the full limit.
     const freeBytes = options.freeBytes ?? freeBytesOf;
     const margin = options.freeMarginBytes ?? FREE_MARGIN_BYTES;
     const folder = dirname(staged.path);
-    if (await isShortOfRoom(freeBytes, folder, maxStoredBytes + (options.stopSlackBytes ?? STORED_STOP_SLACK_BYTES) + margin)) return { ok: false, reason: "no-space" };
+    const fullLimit = maxStoredBytes + (options.stopSlackBytes ?? STORED_STOP_SLACK_BYTES);
+    const free = await freeBytes(folder).catch(() => null);
+    const roomed = free === null ? Infinity : free - margin;
+    const limit = Math.min(fullLimit, roomed);
+    if (roomed < (options.minEncodeBytes ?? MIN_ENCODE_BYTES)) return { ok: false, reason: "no-space" };
+    // Stopped by the room, not by the cap: only a limit below the cap can be the disk's.
+    const bySpace = limit < maxStoredBytes;
     if (signal.aborted) return { ok: false, reason: "cancelled" };
 
     const work = await workFile();
@@ -145,7 +157,7 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     try {
       await run({
         onFrames: (frames) => progress.report(frames),
-        argv: videoArgs(staged.path, plan, work.path, maxStoredBytes, options.stopSlackBytes),
+        argv: videoArgs(staged.path, plan, work.path, maxStoredBytes, options.stopSlackBytes, limit),
         output: work.path,
         signal,
         timeoutMs: options.timeoutMs ?? plan.timeoutMs,
@@ -158,6 +170,8 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       // told as that; the limit stops the file AT its headroom above the cap, so a stopped file is never under it, and any other failure leaves a smaller one.
       const stopped = await stat(work.path).then((info) => info.size, () => 0);
       if (stopped >= maxStoredBytes) return fail("too-large");
+      // `-fs` stops the file AT its limit: a file at a limit below the cap is the room's doing.
+      if (bySpace && stopped >= limit) return fail("no-space");
       // The room asked for above covered the whole output, so a disk left under the margin is one the encode filled (or another writer did): a full disk, not a wrong file.
       return fail((await isShortOfRoom(freeBytes, folder, margin)) ? "no-space" : "failed");
     }
@@ -167,6 +181,7 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
     // encode's own `-fs` limit cut short is told as what it is, not as a broken one.
     const writtenBytes = await stat(work.path).then((info) => info.size, () => 0);
     if (writtenBytes > maxStoredBytes) return fail("too-large");
+    if (bySpace && writtenBytes >= limit) return fail("no-space");
 
     // What ffmpeg wrote is judged by the same walker that judged what it read.
     let made: VideoInfo | undefined;
