@@ -156,6 +156,51 @@ describe("photoSummaryFrom", () => {
   });
 });
 
+// CS.1: a photo of a custom category lists with the name its sidecar kept, and
+// a photo written before custom categories (the five built-in values) lists
+// exactly as it always did.
+describe("photoSummaryFrom: custom and own categories", () => {
+  const CUSTOM = "cat-paris-cafes";
+
+  test("lists a custom-category photo with the owner's name its sidecar kept", () => {
+    const sidecar = runPhotoSidecar({ source: generatedSource({ category: CUSTOM, categoryLabel: "Кофейни Парижа" }) });
+    expect(photoSummaryFrom(sidecar, FRESH)).toMatchObject({ photoId: "photo-0002", category: CUSTOM, categoryLabel: "Кофейни Парижа" });
+  });
+
+  test("lists a custom-category photo even when its sidecar kept no name: the renderer then has the id alone", () => {
+    const summary = photoSummaryFrom(runPhotoSidecar({ source: generatedSource({ category: CUSTOM }) }), FRESH);
+    expect(summary?.category).toBe(CUSTOM);
+    expect(summary !== null && "categoryLabel" in summary).toBe(false);
+  });
+
+  test("lists an own-scene photo with its label", () => {
+    const summary = photoSummaryFrom(runPhotoSidecar({ source: generatedSource({ category: "own", categoryLabel: "Своя сцена" }) }), FRESH);
+    expect(summary).toMatchObject({ category: "own", categoryLabel: "Своя сцена" });
+  });
+
+  test("every one of the five built-in values still lists as before, with no label key", () => {
+    for (const category of ["home", "travel", "shoot", "glam", "fit"] as const) {
+      const summary = photoSummaryFrom(runPhotoSidecar({ source: generatedSource({ category }) }), FRESH);
+      expect(summary?.category).toBe(category);
+      expect(summary !== null && "categoryLabel" in summary).toBe(false);
+    }
+  });
+
+  test("a built-in photo never carries a label even if its sidecar did: the photo is listed, not dropped", () => {
+    const summary = photoSummaryFrom(runPhotoSidecar({ source: generatedSource({ category: "home", categoryLabel: "stray" }) }), FRESH);
+    expect(summary?.category).toBe("home");
+    expect(summary !== null && "categoryLabel" in summary).toBe(false);
+  });
+
+  test("is still null, and still worth logging, for a category string that is not a ref: a malformed custom id", () => {
+    for (const category of ["cat-x", "cat-UPPERCASE1", "Home", "photoshoot"]) {
+      const corrupt = runPhotoSidecar({ source: generatedSource({ category, categoryLabel: "x" }) });
+      expect(photoSummaryFrom(corrupt, FRESH)).toBeNull();
+      expect(looksLikeRunPhoto(corrupt)).toBe(true);
+    }
+  });
+});
+
 describe("finalizePhotoList", () => {
   function summaryAt(minute: number): PhotoSummary {
     return {

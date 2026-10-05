@@ -155,6 +155,16 @@ describe("PhotoSidecarSchema", () => {
     expect<unknown>(PhotoSidecarSchema.parse(sidecar)).toEqual(sidecar);
   });
 
+  test("keeps a custom category's categoryLabel, and a sidecar without one parses unchanged", () => {
+    const labelled = validSidecar({ source: sourceWith({ category: "cat-paris-cafes", categoryLabel: "Кофейни Парижа" }) });
+    expect<unknown>(PhotoSidecarSchema.parse(labelled)).toEqual(labelled);
+    expect(PhotoSidecarSchema.safeParse(validSidecar({ source: sourceWith({ category: "home" }) })).success).toBe(true);
+  });
+
+  test("rejects an empty categoryLabel", () => {
+    expect(PhotoSidecarSchema.safeParse(validSidecar({ source: sourceWith({ category: "cat-paris-cafes", categoryLabel: "" }) })).success).toBe(false);
+  });
+
   // Owner decision 2026-09-29: 2K removed. A sidecar written while runs still
   // chose a resolution carries a `resolution` field; it must keep loading.
   describe("legacy resolution (2K removed)", () => {
