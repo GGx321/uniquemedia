@@ -338,16 +338,17 @@ describe("the splitter between the media panel and the stage", () => {
   });
 
   test("with a storage whose reads and writes throw, the same", async () => {
-    const reads = spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+    // The window gets a storage of its own that throws, and its real one is put back after. Not a spy on `Storage.prototype`: happy-dom binds
+    // each method of a storage instance on its FIRST use and keeps it, so a first use under the spy kept the throwing stand-in on the shared
+    // `localStorage` for every later test in the process (the canary's random order hit it: 420 was stored and 280 read).
+    const real = Object.getOwnPropertyDescriptor(window, "localStorage");
+    const blocked = (): never => {
       throw new DOMException("quota", "QuotaExceededError");
+    };
+    Object.defineProperty(window, "localStorage", { configurable: true, value: { getItem: blocked, setItem: blocked, removeItem: blocked } });
+    restores.push(() => {
+      if (real !== undefined) Object.defineProperty(window, "localStorage", real);
     });
-    const writes = spyOn(Storage.prototype, "setItem").mockImplementation(() => {
-      throw new DOMException("quota", "QuotaExceededError");
-    });
-    restores.push(
-      () => reads.mockRestore(),
-      () => writes.mockRestore(),
-    );
     await editor();
     expect(now()).toBe(MEDIA_WIDTH.default);
     fireEvent.keyDown(splitter(), { key: "ArrowRight" });
