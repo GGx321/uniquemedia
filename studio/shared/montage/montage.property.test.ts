@@ -231,9 +231,49 @@ describe("boundaries", () => {
     }
   });
 
+  test("a 100 ms 4-cell staggered collage, the shortest clip: 3 frames, every cell visible from frame 0, windows valid on all 3 frames for every seed", () => {
+    const clip = collage4(100);
+    for (let seed = 0; seed < 64; seed++) {
+      const { plan, frames, cells } = clipPipeline(seed, clip);
+      expect(frames).toBe(3);
+      expect(cells.map((c) => c.reveal)).toEqual(Array.from({ length: 4 }, () => ({ startFrame: 0, frames: 0 })));
+      for (const { geometry } of cells) {
+        for (let f = 0; f < frames; f++) {
+          const w = motionWindow(plan, geometry.canvas, geometry.anchor, f, frames);
+          expect(w.x).toBeGreaterThanOrEqual(0);
+          expect(w.y).toBeGreaterThanOrEqual(0);
+          expect(w.w).toBeGreaterThanOrEqual(1);
+          expect(w.h).toBeGreaterThanOrEqual(1);
+          expect(w.x + w.w).toBeLessThanOrEqual(geometry.canvas.w);
+          expect(w.y + w.h).toBeLessThanOrEqual(geometry.canvas.h);
+        }
+      }
+    }
+  });
+
+  test("a 3-frame motion still runs from its first zoom to its last: frame 0 at the start, frame 2 at the end, one frame between", () => {
+    for (let seed = 0; seed < 64; seed++) {
+      const { plan, cells } = clipPipeline(seed, collage4(100));
+      const geometry = cells[0]?.geometry;
+      if (geometry === undefined || plan.kind !== "kenburns") continue;
+      const [first, middle, last] = [0, 1, 2].map((f) => motionWindow(plan, geometry.canvas, geometry.anchor, f, 3).w);
+      // In: the window shrinks; out: it grows; the middle frame is between the two ends.
+      const [lo, hi] = plan.direction === "in" ? [last ?? 0, first ?? 0] : [first ?? 0, last ?? 0];
+      expect(lo).toBeLessThan(hi);
+      expect(middle).toBeGreaterThanOrEqual(lo);
+      expect(middle).toBeLessThanOrEqual(hi);
+    }
+  });
+
   test("twenty 500 ms clips would be 10 s = 300 frames, every clip 15 frames", () => {
     const clips = Array.from({ length: 20 }, (_, i) => ({ clipId: `clip-twenty-${i}`, durationMs: 500 }));
     expect(clipRanges(clips).every((r) => r.frames === 15)).toBe(true);
     expect(totalFrames(clips)).toBe(300);
+  });
+
+  test("twenty 100 ms clips are 2 s = 60 frames, every clip 3 frames", () => {
+    const clips = Array.from({ length: 20 }, (_, i) => ({ clipId: `clip-twenty-${i}`, durationMs: 100 }));
+    expect(clipRanges(clips).every((r) => r.frames === 3)).toBe(true);
+    expect(totalFrames(clips)).toBe(60);
   });
 });

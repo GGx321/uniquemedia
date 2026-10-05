@@ -93,6 +93,7 @@ describe("buildPass1: an own video clip", () => {
   });
 
   test.each([
+    [100, 3],
     [500, 15],
     [15_000, 450],
   ])("a clip of %d ms, the montage's own limit, holds %d frames and the graph stops at the same number", (ms, frames) => {
@@ -101,8 +102,9 @@ describe("buildPass1: an own video clip", () => {
     expect(graphOf(job.argv)).toContain(`trim=end_frame=${frames}`);
   });
 
-  test("refuses a clip below the 500 ms minimum or off the 100 ms grid as BAD_DURATION", () => {
-    expect(() => build([video(400)])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
+  test("refuses a clip below the 100 ms minimum or off the 100 ms grid as BAD_DURATION", () => {
+    expect(() => build([video(90)])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
+    expect(() => build([video(0)])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
     expect(() => build([video(2_050)])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
   });
 
@@ -120,7 +122,8 @@ describe("buildPass1: an own video clip", () => {
 
   test("the seek is half a frame before the first frame whatever the trim is", () => {
     for (const trimMs of [100, 300, 1_000, 5_700, 179_500]) {
-      const { argv } = only(build([video(500, trimMs)]));
+      // A 100 ms clip (3 frames) seeks the same way: the clip's own length does not move the seek.
+      const { argv } = only(build([video(100, trimMs)]));
       const startFrame = (trimMs * 3) / 100;
       const given = Number(argv[argv.indexOf("-ss") + 1]?.replace("us", ""));
       // Strictly between frame (startFrame - 1) and frame startFrame, in microseconds.

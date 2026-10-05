@@ -40,7 +40,8 @@ const ANCHORS: readonly Anchor[] = [
   { uPermille: 1000, vPermille: 1000 },
   { uPermille: 137, vPermille: 863 },
 ];
-const FRAME_COUNTS = [1, 2, 15, 30, 91, 120, 450];
+// 3 frames is the shortest clip (100 ms), 15 the 500 ms clip that used to be the shortest.
+const FRAME_COUNTS = [1, 2, 3, 15, 30, 91, 120, 450];
 
 const CLIP_ID = "clip-under-test";
 const PLANS = MOVING_CASES.map((c) => ({ name: c.name, plan: planWhere(CLIP_ID, c.motion, c.pick).plan }));

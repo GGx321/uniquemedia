@@ -5,7 +5,7 @@ import { Icon } from "../../ui/Icon";
 import { OwnPortrait, Portrait } from "../../ui/Portrait";
 import { type ClipLayout, cellsOf, type Edit, clipStartMs, layoutOf, maxDurationMs, roomMs, setDuration, setLayout, setMotion, setStagger, totalMs } from "./clipOps";
 import { ownsKeys } from "./keys";
-import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerStepLabel } from "./labels";
+import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerRowLabel } from "./labels";
 import { type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
@@ -231,7 +231,7 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
               ))}
             </div>
             <div className={clip.kind === "collage" ? "ed-prow ed-stagger" : "ed-prow ed-stagger ed-stagger-off"}>
-              <span>{clip.kind === "collage" ? `Ячейки по очереди, шаг ${staggerStepLabel(clip.durationMs, clip.cells.length)}` : "Ячейки по очереди"}</span>
+              <span>{clip.kind === "collage" ? staggerRowLabel(clip.durationMs, clip.cells.length) : "Ячейки по очереди"}</span>
               <button
                 type="button"
                 role="switch"

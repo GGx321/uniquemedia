@@ -106,10 +106,11 @@ describe("the importer asks ffmpeg before it encodes", () => {
     expect(asked).toBe(0);
   });
 
-  test("a clip too short for any montage is refused before the check, as before", async () => {
+  test("a clip too short for any montage is refused before the check, as before (at a 0.5 s bound: at the contract's 0.1 s a 5-frame clip is a clip)", async () => {
     let asked = 0;
     const rig = requestFor(tmp(), await stage(tmp(), source(5)));
     const outcome = await createVideoImporter({
+      minDurationMs: 500,
       run: async () => undefined,
       streamCheck: async () => {
         asked++;

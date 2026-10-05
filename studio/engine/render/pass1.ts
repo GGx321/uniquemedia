@@ -164,8 +164,10 @@ function buildClipGraph(clip: Clip & { kind: "photo" | "collage" }, seed: number
     const source = sources[k];
     const rect = rects[k];
     if (source === undefined || rect === undefined) throw new RenderGraphError("CELL_EMPTY", `collage cell ${k} has no photo`);
-    if (clip.stagger) {
-      const reveal = cellReveal(k, cells.length, clip.durationMs, true);
+    // A clip too short for a whole-frame step (100 ms with 3 or 4 cells) has a reveal of 0 frames: every cell is on screen from
+    // the first frame, and `fade` takes n of at least 1, so there is no fade to write.
+    const reveal = clip.stagger ? cellReveal(k, cells.length, clip.durationMs, true) : null;
+    if (reveal !== null && reveal.frames > 0) {
       filters.push(cellChain(k, `raw${k}`, source, cell, rect, plan, frames));
       filters.push(`[raw${k}]format=yuva420p,fade=t=in:s=${reveal.startFrame}:n=${reveal.frames}:alpha=1[c${k}]`);
     } else {

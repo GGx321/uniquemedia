@@ -259,8 +259,6 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const anglesHint = `${ids}-angles-hint`;
   const countLabel = `${ids}-count`;
   const catsLabel = `${ids}-cats`;
-  const reviewLabel = `${ids}-review`;
-  const reviewSoon = `${ids}-review-soon`;
   const imageModel = view.settings ? modelName(view.settings.imageModel) : null;
   // The engine's own route (runs/plan.ts's runRoute) sends quality "low" for
   // the settings' own image model, but quality null once that model already
@@ -398,17 +396,6 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
           <div className="mono photos-cost-row photos-cost-total">
             <span>Ожидаемая</span>
             <span aria-live="polite">{current ? `≈ ${formatUsd(current.estimate.expectedMicros)}` : "—"}</span>
-          </div>
-          <div className="photos-review">
-            {/* Owner decision: full opacity, not the usual 45%-dimmed disabled
-                track (near-invisible, "has no colour") — aria-disabled, not
-                the native attribute, so it stays non-interactive without the
-                dimming; the "скоро" tag alone says it is not available yet. */}
-            <button type="button" className="sw" role="switch" aria-checked="false" aria-disabled="true" aria-labelledby={reviewLabel} aria-describedby={reviewSoon} />
-            <span id={reviewLabel}>Сцены на проверку</span>
-            <span id={reviewSoon} className="tag">
-              скоро
-            </span>
           </div>
           <button
             type="button"

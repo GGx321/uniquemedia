@@ -21,11 +21,21 @@ describe("splitEvenly: 100 ms units, the remainder to the first clips", () => {
     expect(splitEvenly(4000, 1)).toEqual([4000]);
   });
 
-  test("the smallest split the contract allows: 20 clips of exactly 500 ms make 10.0 s", () => {
+  test("20 clips of exactly 500 ms make 10.0 s", () => {
     expect(splitEvenly(10_000, 20)).toEqual(Array.from({ length: 20 }, () => 500));
   });
 
-  test("for every count 1..20 and every valid total the parts sum to the total, are multiples of 100 ms, at least 500 ms, and differ by at most 100 ms", () => {
+  test("the smallest split the contract allows: 20 clips of exactly 100 ms make 2.0 s, and one more step goes to the first clip", () => {
+    expect(splitEvenly(2_000, 20)).toEqual(Array.from({ length: 20 }, () => 100));
+    expect(splitEvenly(2_100, 20)).toEqual([200, ...Array.from({ length: 19 }, () => 100)]);
+  });
+
+  test("a 4.0 s montage in 20 clips is 200 ms each, and in 2 clips of a 100 ms floor 100 ms is never needed", () => {
+    expect(splitEvenly(4_000, 20)).toEqual(Array.from({ length: 20 }, () => 200));
+    expect(splitEvenly(100, 1)).toEqual([100]);
+  });
+
+  test("for every count 1..20 and every valid total the parts sum to the total, are multiples of 100 ms, at least 100 ms, and differ by at most 100 ms", () => {
     let cases = 0;
     for (let count = 1; count <= MAX_CLIPS; count++) {
       for (let total = Math.max(MIN_TOTAL_MS, count * MIN_CLIP_MS); total <= MAX_TOTAL_MS; total += TIME_STEP_MS) {
@@ -42,13 +52,14 @@ describe("splitEvenly: 100 ms units, the remainder to the first clips", () => {
         cases++;
       }
     }
-    // 8 counts x 111 totals, then 12 counts from 106 down to 51: 1830 combinations.
-    expect(cases).toBe(1830);
+    // Every count has room from 4.0 s (a clip needs only 100 ms): 20 counts x 111 totals.
+    expect(cases).toBe(2220);
   });
 
-  test("refuses a total too short for the count (each clip needs 500 ms)", () => {
-    expect(() => splitEvenly(4000, 9)).toThrow(RangeError);
-    expect(() => splitEvenly(9900, 20)).toThrow(RangeError);
+  test("refuses a total too short for the count (each clip needs 100 ms)", () => {
+    expect(() => splitEvenly(1_900, 20)).toThrow(RangeError);
+    expect(() => splitEvenly(100, 2)).toThrow(RangeError);
+    expect(() => splitEvenly(0, 1)).toThrow(RangeError);
   });
 
   test.each([[1050, 2], [4000, 0], [4000, 1.5], [-100, 1], [Number.NaN, 1]])("refuses total %p ms in %p parts", (total, count) => {

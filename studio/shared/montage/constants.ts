@@ -44,5 +44,5 @@ export const STAGGER_MAX_STEP_MS = 300;
 // each equals the contract's.
 export const MIN_TOTAL_MS = 4_000;
 export const MAX_TOTAL_MS = 15_000;
-export const MIN_CLIP_MS = 500;
+export const MIN_CLIP_MS = 100;
 export const MAX_CLIPS = 20;

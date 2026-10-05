@@ -8,7 +8,7 @@ import { createVideoImporter } from "./videoImporter";
 useNativeGlobals();
 setDefaultTimeout(60_000);
 
-// 3f.6 on REAL ffmpeg: the shortest clip (15 frames, 0.5 s) at the real boundary, from clips ffmpeg made, and the real `-progress` frames the importer passes on. A fake
+// 3f.6 on REAL ffmpeg: the shortest clip (3 frames, 0.1 s) at the real boundary, from clips ffmpeg made, and the real `-progress` frames the importer passes on. A fake
 // ffmpeg (videoImporter.short.test.ts, videoImporter.progress.test.ts) proves the decisions; only the real one proves that the frame count the encode makes is the one
 // the bound is judged on, and that `-progress` reports reach the job.
 
@@ -21,21 +21,25 @@ async function importFrames(frames: number, prepare?: MediaImportRequest["prepar
 }
 
 describe("the shortest clip, on real ffmpeg", () => {
-  test("a clip of 14 frames (0.467 s) is refused too-short", async () => {
-    expect(await importFrames(14)).toEqual({ ok: false, reason: "too-short" });
+  test("a clip of 2 frames (0.067 s) is refused too-short", async () => {
+    expect(await importFrames(2)).toEqual({ ok: false, reason: "too-short" });
   });
 
-  test("a clip of 15 frames (exactly 0.5 s) is imported, and its record says 500 ms", async () => {
-    const outcome = await importFrames(15);
-    expect(outcome).toMatchObject({ ok: true, facts: { durationMs: 500 } });
+  test("a clip of 3 frames (exactly 0.1 s) is imported, and its record says 100 ms", async () => {
+    const outcome = await importFrames(3);
+    expect(outcome).toMatchObject({ ok: true, facts: { durationMs: 100 } });
   });
 
   test("a clip of one frame is refused too-short", async () => {
     expect(await importFrames(1)).toEqual({ ok: false, reason: "too-short" });
   });
 
-  test("a clip of 16 frames is imported", async () => {
-    expect((await importFrames(16)).ok).toBe(true);
+  test("a clip of 4 frames is imported", async () => {
+    expect((await importFrames(4)).ok).toBe(true);
+  });
+
+  test("a clip of 15 frames (0.5 s, the old shortest) is imported, and its record says 500 ms", async () => {
+    expect(await importFrames(15)).toMatchObject({ ok: true, facts: { durationMs: 500 } });
   });
 });
 

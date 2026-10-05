@@ -6,7 +6,7 @@ import { roomMs } from "./clipOps";
 // The editor sends each result through `DraftSession.edit` (a drag or a held key is one undo step). What every result keeps:
 // - the contract's grid: `trimStartMs` and the clip's length are whole 100 ms steps (`multipleOf(TIME_STEP_MS)`: the engine refuses anything else),
 //   so a wanted time is snapped to the nearest step first;
-// - the clip at least 0.5 s, the montage at most 15 s (the clip grows only by the room), a start no further than `MAX_SOURCE_OFFSET_MS`;
+// - the clip at least 0.1 s (`MIN_CLIP_MS`), the montage at most 15 s (the clip grows only by the room), a start no further than `MAX_SOURCE_OFFSET_MS`;
 // - the clip inside the stored video: it ends by `sourceEndMs`, the video's length down to the grid (`video-too-short` otherwise). An edit never makes a
 //   clip that already runs past the end (a draft from elsewhere) worse; sliding it brings its start back to the video's start.
 // The window SLIDES (the length kept); its LEFT edge moves the start with the end kept (as pulling a film's head does: earlier makes it longer), its RIGHT
@@ -102,7 +102,7 @@ export function trimEndTo(spec: MontageDraft, index: number, wantedMs: number, s
   return withClip(spec, index, clip, clip.trimStartMs, end - clip.trimStartMs);
 }
 
-/** The longest `clip` may last from its trim: up to the video's end on the grid, never under 0.5 s (what the timeline's handles are held to). */
+/** The longest `clip` may last from its trim: up to the video's end on the grid, never under `MIN_CLIP_MS` (what the timeline's handles are held to). */
 export function durationLimitMs(clip: VideoClip, sourceMs: number): number {
   return Math.max(MIN_CLIP_MS, sourceEndMs(sourceMs) - clip.trimStartMs);
 }

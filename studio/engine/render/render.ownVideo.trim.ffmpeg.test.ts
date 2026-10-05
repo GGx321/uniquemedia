@@ -48,4 +48,26 @@ describe("an own video clip on real ffmpeg: every trim position", () => {
     expect(runs).toBe((FRAMES - CLIP_FRAMES) / 3 + 1);
     expect(wrong).toEqual([]);
   });
+
+  test("the shortest clip, 100 ms (3 frames: `trim=end_frame=3` after a half-frame `-ss`), plays exactly the frames asked for from every third start and from the last one", async () => {
+    const m = mezzanine as Mezzanine;
+    const shortest = 3;
+    const starts = [...Array.from({ length: Math.floor((FRAMES - shortest) / 9) + 1 }, (_, i) => i * 9), FRAMES - shortest];
+    const wrong: string[] = [];
+    let runs = 0;
+    for (const start of starts) {
+      const clipDir = join(dir, `short-${++runs}`);
+      mkdirSync(clipDir, { recursive: true });
+      const copy = join(clipDir, "own.mp4");
+      copyFileSync(m.path, copy);
+      const clip: Clip = { clipId: "v", durationMs: (shortest * 100) / 3, transitionIn: "cut", kind: "video", mediaId: m.mediaId, trimStartMs: (start * 100) / 3, focus: null };
+      const jobs = buildPass1({ seed: 1, clips: [clip], resolvePhoto: () => undefined, resolveVideo: () => ({ path: copy, width: m.width, height: m.height }), clipDir });
+      await runPass1(jobs);
+      const got = frameNumbersOf(jobs[0]?.output ?? "", true);
+      const want = Array.from({ length: shortest }, (_, i) => start + i);
+      if (JSON.stringify(got) !== JSON.stringify(want)) wrong.push(`${start}: ${JSON.stringify(got)}`);
+    }
+    expect(runs).toBe(starts.length);
+    expect(wrong).toEqual([]);
+  });
 });

@@ -72,7 +72,7 @@ export function binFacets(photos: readonly PhotoSummary[], filter: BinFilter): {
 
 /**
  * What a click on a tile does: `select` the clip a placed photo is in; nothing for a `taken` one (in a video or a render); a free
- * one `fill`s the empty cell waiting for it, or is `append`ed as a new clip, unless the draft is `full` (20 clips, or no 0.5 s
+ * one `fill`s the empty cell waiting for it, or is `append`ed as a new clip, unless the draft is `full` (20 clips, or nothing
  * left of the 15 s).
  */
 export type TileAction = "select" | "fill" | "append" | "taken" | "full";

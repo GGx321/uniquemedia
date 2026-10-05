@@ -70,18 +70,23 @@ describe("what the toolbar can do with the selection", () => {
     }
   });
 
-  test("a video clip splits with the playhead inside it and 0.5 s on both sides", () => {
+  test("a video clip splits with the playhead inside it and a step (0.1 s) on both sides", () => {
     expect(selectionActions(spec, clip("clip-002"), 2_000).split).toEqual({ enabled: true });
     expect(selectionActions(spec, clip("clip-002"), 1_500).split).toEqual({ enabled: true });
-    expect(selectionActions(spec, clip("clip-002"), 1_400).split).toEqual({ enabled: false, why: "too-short" });
+    expect(selectionActions(spec, clip("clip-002"), 1_100).split).toEqual({ enabled: true });
+    expect(selectionActions(spec, clip("clip-002"), 2_900).split).toEqual({ enabled: true });
+    // Less than a step from an edge snaps onto the edge: that is outside the clip, not too short.
+    expect(selectionActions(spec, clip("clip-002"), 1_040).split).toEqual({ enabled: false, why: "playhead-outside" });
     expect(selectionActions(spec, clip("clip-002"), 1_000).split).toEqual({ enabled: false, why: "playhead-outside" });
     expect(selectionActions(spec, clip("clip-002"), 3_000).split).toEqual({ enabled: false, why: "playhead-outside" });
   });
 
-  test("a copy needs a free clip and 0.5 s of room", () => {
+  test("a copy needs a free clip and room: a 100 ms step is enough, none at 15 s", () => {
     const full = draftSpec(photoClips(20, 500));
     expect(selectionActions(full, clip("clip-001"), 0).duplicate).toEqual({ enabled: false, why: "clip-cap" });
-    const long = draftSpec([photoClip(0, "photo-mia-0001", 14_600)]);
+    const last = draftSpec([photoClip(0, "photo-mia-0001", 14_900)]);
+    expect(selectionActions(last, clip("clip-001"), 0).duplicate).toEqual({ enabled: true });
+    const long = draftSpec([photoClip(0, "photo-mia-0001", 15_000)]);
     expect(selectionActions(long, clip("clip-001"), 0).duplicate).toEqual({ enabled: false, why: "no-room" });
   });
 

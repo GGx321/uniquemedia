@@ -72,7 +72,7 @@ export const MAX_PICKED_FILES = 20;
  *   (A sticker's side over 720 px is `dimensions`, under 2 px `too-small`, a file over 5 MB or an animation that re-encodes past 5 MB `too-large`,
  *   and a file that is not a GIF or an APNG the decoder reads the way the validator did is `format`.)
  * - `too-short` (3f.6): a clip or a track that no montage can use, judged from what the importer made and not from a header: a video under
- *   `MIN_CLIP_MS` (0.5 s, the shortest clip), a track under `MIN_TOTAL_MS` (4 s, the shortest montage, which a track must cover from its start).
+ *   `MIN_CLIP_MS` (0.1 s, the shortest clip), a track under `MIN_TOTAL_MS` (4 s, the shortest montage, which a track must cover from its start).
  */
 export const MediaUnsupportedReason = z.enum([
   "not-a-file",

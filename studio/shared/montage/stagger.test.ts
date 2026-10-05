@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { MIN_CLIP_MS } from "./constants";
 import { cellAlphaPermille, cellReveal, staggerStepFrames } from "./stagger";
 import { msToFrames } from "./timeline";
 
 const CELL_COUNTS = [2, 3, 4];
-/** Every valid duration: 500 ms to 15.0 s in 100 ms steps. */
+/** Every valid duration: the shortest clip (100 ms) to 15.0 s in 100 ms steps. */
 const DURATIONS: number[] = [];
-for (let ms = 500; ms <= 15_000; ms += 100) DURATIONS.push(ms);
+for (let ms = MIN_CLIP_MS; ms <= 15_000; ms += 100) DURATIONS.push(ms);
 
 describe("staggerStepFrames: min(300 ms, durationMs / (n + 1)) rounded down to a frame", () => {
   test("a 500 ms collage of 4 gets a 100 ms (3 frame) step", () => {
@@ -26,11 +27,18 @@ describe("staggerStepFrames: min(300 ms, durationMs / (n + 1)) rounded down to a
     expect(staggerStepFrames(500, 3)).toBe(3);
   });
 
-  test("the step is at least 1 frame, at most 9, and never longer than durationMs / (n + 1), for every valid duration and collage size", () => {
+  test("the shortest clip (100 ms = 3 frames) is too short to stagger 3 or 4 cells: the step rounds down to 0 frames, and 2 cells get 1 frame", () => {
+    expect(staggerStepFrames(100, 4)).toBe(0);
+    expect(staggerStepFrames(100, 3)).toBe(0);
+    expect(staggerStepFrames(100, 2)).toBe(1);
+  });
+
+  test("the step is a whole 0 to 9 frames and never longer than durationMs / (n + 1), for every valid duration and collage size", () => {
     for (const ms of DURATIONS) {
       for (const n of CELL_COUNTS) {
         const step = staggerStepFrames(ms, n);
-        expect(step).toBeGreaterThanOrEqual(1);
+        expect(Number.isInteger(step)).toBe(true);
+        expect(step).toBeGreaterThanOrEqual(0);
         expect(step).toBeLessThanOrEqual(9);
         // In milliseconds: step * 100 / 3 <= min(300, ms / (n + 1)).
         expect(step * 100).toBeLessThanOrEqual(Math.min(900, (ms * 3) / (n + 1)) + 1e-9);
@@ -80,16 +88,32 @@ describe("cellReveal", () => {
     for (const ms of DURATIONS) {
       const total = msToFrames(ms);
       for (const n of CELL_COUNTS) {
+        const stepped = staggerStepFrames(ms, n) > 0;
         let previousStart = -1;
         for (let k = 0; k < n; k++) {
           const r = cellReveal(k, n, ms, true);
-          expect(r.startFrame).toBeGreaterThan(previousStart);
+          // A clip too short for a whole-frame step shows every cell at once, so the starts then tie at 0.
+          if (stepped) expect(r.startFrame).toBeGreaterThan(previousStart);
+          else expect(r.startFrame).toBeGreaterThanOrEqual(previousStart);
           expect(r.startFrame).toBeGreaterThanOrEqual(0);
           expect(r.startFrame + r.frames).toBeLessThan(total);
           previousStart = r.startFrame;
         }
       }
     }
+  });
+
+  test("a 100 ms collage of 4 shows every cell at once: a reveal of 0 frames from frame 0, fully opaque on all 3 frames", () => {
+    for (let k = 0; k < 4; k++) {
+      const r = cellReveal(k, 4, 100, true);
+      expect(r).toEqual({ startFrame: 0, frames: 0 });
+      for (let f = 0; f < 3; f++) expect(cellAlphaPermille(r, f)).toBe(1000);
+    }
+  });
+
+  test("a 100 ms collage of 2 staggers by one frame: cell 1 starts on frame 1 and is in on frame 2 of 3", () => {
+    expect(cellReveal(0, 2, 100, true)).toEqual({ startFrame: 0, frames: 1 });
+    expect(cellReveal(1, 2, 100, true)).toEqual({ startFrame: 1, frames: 1 });
   });
 
   test("refuses a cell index outside 0..n-1", () => {

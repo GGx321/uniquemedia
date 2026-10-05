@@ -35,7 +35,7 @@ export interface VideoImporterOptions {
   /** Overrides the plan's wall-clock limit (a test). */
   readonly timeoutMs?: number;
   /**
-   * The shortest clip taken, in ms; `MIN_CLIP_MS` (0.5 s) by default. A clip shorter than this can never be put in a montage, so it is refused `too-short`: before the
+   * The shortest clip taken, in ms; `MIN_CLIP_MS` (0.1 s, 3 frames) by default. A clip shorter than this can never be put in a montage, so it is refused `too-short`: before the
    * encode when the walker's own count of the samples (and the edit) says it cannot reach it, and after it from the frames the encode MADE. A test knob: most committed
    * fixtures are a few frames, and 0 takes any length.
    */

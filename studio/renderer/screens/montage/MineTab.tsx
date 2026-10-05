@@ -111,7 +111,7 @@ export interface MineTabProps {
   readonly playhead: PlayheadStore;
   /** The selected clip's empty cell a photo click fills; null when none waits. */
   readonly fillTarget: FillTarget;
-  /** Why no clip can be added (20 clips, no 0.5 s of room). */
+  /** Why no clip can be added (20 clips, no room left of the 15 s). */
   readonly addBlock: AddRefusal | null;
   /** Why no sticker can be added at the playhead now (the cap, no room); null when it can. */
   readonly stickerWhy: string | null;

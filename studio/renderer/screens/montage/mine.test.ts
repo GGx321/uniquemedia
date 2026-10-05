@@ -57,7 +57,7 @@ function importing(patch: Partial<ImportView> & Pick<ImportView, "jobId" | "name
 
 const PHOTO = media("photo", "croissant.jpg");
 const VIDEO = media("video", "latte-pour.mov");
-const BLINK = media("video", "blink.mov", { durationMs: 499 });
+const BLINK = media("video", "blink.mov", { durationMs: 99 });
 const SONG = media("audio", "summer-edit.mp3");
 const NOTE = media("audio", "voice-note.m4a", { durationMs: 5_000 });
 const STICKER = media("sticker", "underline.gif");
@@ -118,7 +118,7 @@ describe("the sections (M2, M8, M12): newest first, the imports on their way at 
     const byName = new Map(visual.flatMap((t) => (t.kind === "record" ? [[t.media.name, t] as const] : [])));
     expect(byName.get("latte-pour.mov")).toMatchObject({ slot: 3, action: "select" });
     expect(byName.get("croissant.jpg")).toMatchObject({ slot: null, action: "append" });
-    // A video under 0.5 s on the grid is never placed (M7: the engine refuses it at import; this holds anyway).
+    // A video under 0.1 s on the grid is never placed (M7: the engine refuses it at import; this holds anyway).
     expect(byName.get("blink.mov")).toMatchObject({ slot: null, action: "too-short" });
   });
 
@@ -155,7 +155,7 @@ describe("the words on the tiles and rows", () => {
   test("a photo or video tile's name says what it is, how long a video runs, where it stands and what a click does", () => {
     const { visual } = mineSections(LIBRARY, [], SPEC, NO_TARGET);
     const labels = visual.flatMap((t) => (t.kind === "record" ? [visualAria(t, null)] : []));
-    expect(labels).toEqual([s("Видео blink.mov, 0:00: короче 0.5 с, в ролик не поставить"), "Видео latte-pour.mov, 0:06 · в кадре 3: выбрать кадр 3", "Фото croissant.jpg: добавить кадр в конец ролика"]);
+    expect(labels).toEqual([s("Видео blink.mov, 0:00: короче 0.1 с, в ролик не поставить"), "Видео latte-pour.mov, 0:06 · в кадре 3: выбрать кадр 3", "Фото croissant.jpg: добавить кадр в конец ролика"]);
     const fill = mineSections(LIBRARY, [], draftSpec([collageClip(0, ["photo-mia-0001", null])]), { fillTarget: { clip: 0, cell: 1 }, addBlock: null, selectedSticker: null }).visual;
     const [photo] = fill.flatMap((t) => (t.kind === "record" && t.media.kind === "photo" ? [t] : []));
     expect(photo === undefined ? "" : visualAria(photo, { clip: 0, cell: 1 })).toBe("Фото croissant.jpg: в ячейку 2 кадра 1");
@@ -208,7 +208,7 @@ describe("the words on the tiles and rows", () => {
   test("a tile's tooltip says how much of a video a click puts in", () => {
     const { visual } = mineSections(LIBRARY, [], SPEC, NO_TARGET);
     const titles = visual.flatMap((t) => (t.kind === "record" ? [visualTitle(t)] : []));
-    expect(titles).toEqual([s("Видео короче 0.5 с — в ролик не поставить"), "Уже в кадре 3 — клик выберет его", "Клик — кадр в конец ролика"]);
+    expect(titles).toEqual([s("Видео короче 0.1 с — в ролик не поставить"), "Уже в кадре 3 — клик выберет его", "Клик — кадр в конец ролика"]);
     const fresh = mineSections({ media: [media("video", "fresh.mov")], total: 1 }, [], SPEC, NO_TARGET).visual[0];
     expect(fresh?.kind === "record" ? visualTitle(fresh) : "").toBe(s("Клик — видео с начала, до 2 с, в конец ролика"));
   });

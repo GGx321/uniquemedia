@@ -15,7 +15,7 @@ import { FIXTURES, type VideoFixtureName } from "./fixtures/index";
 
 /**
  * The real video importer with the shortest-clip bound off (`minDurationMs: 0`), for a test whose clip is a few frames long (the committed fixtures are 3 to 14 frames, under the
- * 0.5 s a clip must have, 3f.6): such a test is about something else, and an option the caller gives still wins. The bound itself is tested with the real default
+ * shortest clip, `MIN_CLIP_MS`, 3f.6): such a test is about something else, and an option the caller gives still wins. The bound itself is tested with the real default
  * (`videoImporter.short.test.ts`).
  */
 export const createVideoImporterForShortClips = (options: Parameters<typeof createVideoImporter>[0] = {}): ReturnType<typeof createVideoImporter> => createVideoImporter({ minDurationMs: 0, ...options });
