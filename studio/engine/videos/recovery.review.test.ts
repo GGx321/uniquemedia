@@ -162,6 +162,36 @@ describe("the photos of a pending intent are held until recovery resolves it (st
     expect(photo(w, library)?.reserved).toBe(true);
   });
 
+  test.each([
+    ["a read error (EBUSY)", { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => Promise.reject(errnoError("EBUSY")) }, false],
+    ["an intent from a newer Studio", undefined, true],
+  ] as const)("an intent that cannot be read at open (%s) fails closed: ALL the avatar's photos are held, as nothing is known of which it names (follow-up L1)", async (_name, libraryFs, tooNew) => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    if (tooNew) writeFileSync(videoPaths(w.libraryRoot, w.avatar.id).intent(record.id), JSON.stringify({ ...record, schemaVersion: 99 }));
+    const library = await w.reopen();
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) }, libraryFs === undefined ? {} : { libraryFs });
+
+    expect(report.left).toHaveLength(1);
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+    expect(photo(w, library)?.reserved).toBe(true);
+  });
+
+  test("once the intent reads again, the hold narrows to the photos it names", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const library = await w.reopen();
+    await recoverVideos({ library, exportRoot: null }, { libraryFs: { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => Promise.reject(errnoError("EBUSY")) } });
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+
+    await recoverVideos({ library, exportRoot: null });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).toEqual(w.photos.slice(1).map((p) => p.id));
+  });
+
   test("an intent a live job owns keeps the hold that was made for it: recovery neither makes nor drops it", async () => {
     const w = world();
     const record = sampleRecord(w, {});

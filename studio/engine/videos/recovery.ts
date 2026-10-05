@@ -57,7 +57,7 @@ export interface ExportRootRef {
 }
 
 export interface RecoverInput {
-  readonly library: Pick<Library, "root" | "listAvatars" | "holdPendingPhotos" | "releasePendingPhotos"> & IndexPort;
+  readonly library: Pick<Library, "root" | "listAvatars" | "photosByAvatar" | "holdPendingPhotos" | "releasePendingPhotos"> & IndexPort;
   /** The current export root, or null when the last check refused it (its intents are then kept). */
   readonly exportRoot: ExportRootRef | null;
   /** The renders running now (`CommitTracker`). */
@@ -356,10 +356,16 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         const videoId = match[1];
         if (only !== null && !only.has(videoId)) continue;
         const base = { avatarId: avatar.id, name, relative, kind: "intent" as const, videoId };
+        // An intent that cannot be read (a transient error, a file too big, one from a newer Studio) may name any photo of the avatar: fail closed, hold them ALL until
+        // a later read of it says which (the hold of the same video id is then replaced by the exact one) or it is gone.
+        const unreadable = (left: "unreadable" | "too-new"): void => {
+          loaded.push({ ...base, left });
+          input.library.holdPendingPhotos(avatar.id, videoId, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
+        };
         try {
           const info = await fs.lstat(paths.intent(videoId));
           if (info.size > MAX_INTENT_BYTES || !info.isFile) {
-            loaded.push({ ...base, left: "unreadable" });
+            unreadable("unreadable");
             continue;
           }
           let value: unknown;
@@ -367,15 +373,15 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
             value = JSON.parse(await lib.readFile(paths.intent(videoId)));
           } catch (error) {
             if (hasErrorCode(error, "ETIMEDOUT") || signal.aborted) throw error;
-            loaded.push({ ...base, left: "unreadable" });
+            unreadable("unreadable");
             continue;
           }
           if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) {
-            loaded.push({ ...base, left: "too-new" });
+            unreadable("too-new");
             continue;
           }
           const parsed = VideoRecordSchema.safeParse(value);
-          if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) loaded.push({ ...base, left: "unreadable" });
+          if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) unreadable("unreadable");
           else {
             loaded.push({ ...base, record: parsed.data });
             // Until this intent is adopted or dropped, its photos are held: its file may be adopted at any time, and a run that defers it
