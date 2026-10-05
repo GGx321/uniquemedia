@@ -127,6 +127,8 @@ const frame = (img: HTMLImageElement): Element => {
   return span;
 };
 const backdrop = (img: HTMLImageElement): Element | null => frame(img).querySelector(".portrait-backdrop");
+// A boolean, never the node: a failing matcher on a DOM node prints its whole graph and hangs the shard (testing/domMatchers.ts).
+const hasBackdrop = (img: HTMLImageElement): boolean => backdrop(img) !== null;
 
 test("nothing is capped before the picture has loaded", () => {
   pixelRatio(2);
@@ -136,7 +138,7 @@ test("nothing is capped before the picture has loaded", () => {
   expect(img.style.maxWidth).toBe("");
   expect(img.style.maxHeight).toBe("");
   expect(frame(img).getAttribute("data-fit")).toBeNull();
-  expect(backdrop(img)).toBeNull();
+  expect(hasBackdrop(img)).toBe(false);
 });
 
 test("a small picture on a 2× screen is held to its cap, centred over a blurred copy of itself", () => {
@@ -168,7 +170,7 @@ test("a picture large enough for its frame fills it as before: capped far past t
   expect(img.style.maxWidth).toBe("540px");
   expect(img.style.maxHeight).toBe("720px");
   expect(frame(img).getAttribute("data-fit")).toBeNull();
-  expect(backdrop(img)).toBeNull();
+  expect(hasBackdrop(img)).toBe(false);
 });
 
 test("the same small picture on a 1× screen still fills the same frame", () => {
@@ -180,7 +182,7 @@ test("the same small picture on a 1× screen still fills the same frame", () => 
 
   expect(img.style.maxWidth).toBe("307.5px");
   expect(frame(img).getAttribute("data-fit")).toBeNull();
-  expect(backdrop(img)).toBeNull();
+  expect(hasBackdrop(img)).toBe(false);
 });
 
 test("a window moved to a screen of another pixel ratio re-caps the picture", () => {
@@ -219,14 +221,18 @@ test("a picture short on one side only is held on that side and still gets the b
   expect(img.style.maxWidth).toBe("250px");
   expect(img.style.maxHeight).toBe("93.75px");
   expect(frame(img).getAttribute("data-fit")).toBe("capped");
-  expect(backdrop(img)).not.toBeNull();
+  expect(hasBackdrop(img)).toBe(true);
 });
 
-test("the pixel-ratio query is dropped once no portrait is left on screen", () => {
+test("the pixel ratio is followed only while a loaded picture depends on it: not before, and not after the last portrait goes", () => {
   pixelRatio(2);
   const media = mediaQueries();
   frameOf({ width: 212, height: 224 });
   const view = renderPortrait();
+  // Nothing drawn yet (or a placeholder, or a picture that never loads): no query of its own, beside the editor preview's.
+  expect(media.listening()).toEqual([]);
+
+  load(picture(), 246, 281);
   expect(media.listening()).toEqual(["(resolution: 2dppx)"]);
 
   view.unmount();
@@ -244,11 +250,11 @@ test("another photo in the same place is a new picture: it waits for its own siz
   view.show("photo-mia-second");
   const second = picture();
   // A fresh element: the old picture is never left on screen, uncapped, while the new one loads.
-  expect(second).not.toBe(first);
+  expect(second === first).toBe(false);
   expect(second.getAttribute("src")).toContain("photo-mia-second");
   expect(second.style.maxWidth).toBe("");
   expect(frame(second).getAttribute("data-fit")).toBeNull();
-  expect(backdrop(second)).toBeNull();
+  expect(hasBackdrop(second)).toBe(false);
 
   load(second, 864, 1152);
   expect(second.style.maxWidth).toBe("540px");
@@ -261,15 +267,15 @@ test("a picture that will not load falls back to the placeholder, with no backdr
   renderPortrait();
   const img = picture();
   load(img, 246, 281);
-  expect(backdrop(img)).not.toBeNull();
+  expect(hasBackdrop(img)).toBe(true);
 
   fireEvent.error(img);
 
   const stand = screen.getByRole("img", { name: "Мастер-портрет: Mia" });
   expect(stand.tagName).toBe("SPAN");
   expect(stand.classList.contains("portrait-placeholder")).toBe(true);
-  expect(document.querySelector(".portrait-backdrop")).toBeNull();
-  expect(document.querySelector("img")).toBeNull();
+  expect(document.querySelector(".portrait-backdrop") === null).toBe(true);
+  expect(document.querySelector("img") === null).toBe(true);
 });
 
 test("the band follows the frame: a frame that grows past the cap gets it, one that shrinks back loses it", () => {
@@ -282,9 +288,9 @@ test("the band follows the frame: a frame that grows past the cap gets it, one t
 
   layout.resize({ width: 212, height: 224 });
   expect(frame(img).getAttribute("data-fit")).toBe("capped");
-  expect(backdrop(img)).not.toBeNull();
+  expect(hasBackdrop(img)).toBe(true);
 
   layout.resize({ width: 150, height: 170 });
   expect(frame(img).getAttribute("data-fit")).toBeNull();
-  expect(backdrop(img)).toBeNull();
+  expect(hasBackdrop(img)).toBe(false);
 });

@@ -67,10 +67,11 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
   const [failed, setFailed] = useState(false);
   const [loaded, setLoaded] = useState<{ src: string; natural: PixelSize } | null>(null);
   const frame = useRef<HTMLSpanElement>(null);
-  const dpr = useDevicePixelRatio();
   const src = photoUrl(avatarId, photoId);
   // A natural size belongs to the picture it was read from: a new photo id waits for its own load.
-  const natural = loaded !== null && loaded.src === src ? loaded.natural : null;
+  const natural = loaded !== null && loaded.src === src && !failed ? loaded.natural : null;
+  // The ratio is followed only once there is a picture whose cap depends on it.
+  const dpr = useDevicePixelRatio(natural !== null);
   const cap = natural === null ? null : drawCap(natural, dpr);
   const banded = useBanded(frame, cap);
   if (client.kind === "mock" || failed || src === null) return <PortraitPlaceholder seed={photoId} label={label} />;

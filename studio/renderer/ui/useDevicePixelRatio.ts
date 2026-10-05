@@ -33,7 +33,15 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-/** The screen's pixel ratio: how many screen pixels one CSS pixel takes (2 on a Retina screen). */
-export function useDevicePixelRatio(): number {
-  return useSyncExternalStore(subscribe, current);
+/** Listens to nothing: a component that does not depend on the ratio yet reads it on its own renders only. */
+function ignore(): () => void {
+  return () => {};
+}
+
+/**
+ * The screen's pixel ratio: how many screen pixels one CSS pixel takes (2 on a Retina screen). Followed only while `watching`
+ * (a portrait whose picture has loaded): a placeholder, or a picture still on its way, keeps no query open.
+ */
+export function useDevicePixelRatio(watching = true): number {
+  return useSyncExternalStore(watching ? subscribe : ignore, current);
 }
