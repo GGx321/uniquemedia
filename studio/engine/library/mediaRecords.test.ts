@@ -49,6 +49,15 @@ async function photoInput(extra: Partial<MediaCommitInput> = {}): Promise<MediaC
 
 const names = async (dir: string): Promise<string[]> => (await readdir(dir).catch(() => [])).filter((n) => n !== ".staging").sort();
 
+/** The bytes of a file the quarantine holds from `media/`, from whichever open's folder it is in. */
+async function quarantinedBytes(name: string): Promise<Buffer | null> {
+  for (const stamp of await readdir(join(root(), "quarantine")).catch(() => [])) {
+    const bytes = await readFile(join(root(), "quarantine", stamp, "media", name)).catch(() => null);
+    if (bytes !== null) return bytes;
+  }
+  return null;
+}
+
 /** Every file the library's quarantine holds from `media/`, by name: set aside, never deleted. */
 async function quarantinedMedia(): Promise<string[]> {
   const out: string[] = [];
@@ -287,17 +296,16 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     await rename(join(mediaDir(), `${other.mediaId}.json`), join(tmp(), "other.json"));
     const firstOpen = await records().recover();
     expect(firstOpen).toMatchObject({ quarantinedOrphans: 1, quarantinedDangling: 1 });
-    // The partners arrive; open 2 must not lose any of the four pieces.
+    // The partners arrive (each beside a piece that was set aside); open 2 must not lose any of the four pieces.
     await rename(join(tmp(), "kept.jpg"), join(mediaDir(), `${kept.mediaId}.jpg`));
     await rename(join(tmp(), "other.json"), join(mediaDir(), `${other.mediaId}.json`));
     await records().recover();
     const all = [...(await names(mediaDir())), ...(await quarantinedMedia())].sort();
     expect(all.filter((n) => n.startsWith(kept.mediaId))).toHaveLength(2);
     expect(all.filter((n) => n.startsWith(other.mediaId))).toHaveLength(2);
-    // And the set-aside copies are the bytes that were there.
-    const stamp = (await readdir(join(root(), "quarantine")))[0] ?? "";
-    expect(await readFile(join(root(), "quarantine", stamp, "media", `${kept.mediaId}.json`))).toEqual(keptRecord);
-    expect(await readFile(join(root(), "quarantine", stamp, "media", `${other.mediaId}.jpg`))).toEqual(otherFile);
+    // And what was set aside is the bytes that were there, whichever open set it aside.
+    expect(await quarantinedBytes(`${kept.mediaId}.json`)).toEqual(keptRecord);
+    expect(await quarantinedBytes(`${other.mediaId}.jpg`)).toEqual(otherFile);
   });
 
   test("a file the owner dropped into media/ with a name of our shape is set aside, not deleted", async () => {
