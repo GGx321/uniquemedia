@@ -506,6 +506,8 @@ interface OpenedLibrary {
  */
 export class Engine {
   readonly #deps: EngineDeps;
+  /** When each event type's failure of each kind to post was last logged (`${type}:${kind}`): see `#emit`. */
+  readonly #postWarnedAt = new Map<string, number>();
   /** Free writes into the live library that are running (a reject mark): a library switch waits for them like for a paid write, but they do not block an avatar's job. */
   #librarySmallWrites = 0;
   readonly #folderFs: FolderFs;
@@ -3322,16 +3324,21 @@ export class Engine {
       for (const e of stamped.events) this.#deps.post(e);
     } catch (error) {
       // The type and the kind of the error, never its text (a path may be in it); once a minute per type, so a stream of progress events cannot flood the log.
-      const now = this.#deps.monotonic();
-      const last = this.#postWarnedAt.get(event.type);
+      const kind = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error";
+      let now = 0;
+      try {
+        now = this.#deps.monotonic();
+      } catch {
+        // A clock that throws is no reason to lose the line: it is told, as if the minute had passed.
+        now = Number.POSITIVE_INFINITY;
+      }
+      const key = `${event.type}:${kind}`;
+      const last = this.#postWarnedAt.get(key);
       if (last === undefined || now - last >= POST_WARN_INTERVAL_MS || now < last) {
-        this.#postWarnedAt.set(event.type, now);
-        const kind = error instanceof Error && "code" in error && typeof error.code === "string" ? error.code : "error";
+        this.#postWarnedAt.set(key, now);
         console.warn(`studio engine: an event could not be posted to main (${event.type}, ${kind}); it is in the log`);
       }
     }
   }
 
-  /** When each event type's failure to post was last logged: see `#emit`. */
-  readonly #postWarnedAt = new Map<string, number>();
 }

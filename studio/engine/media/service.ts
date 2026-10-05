@@ -79,6 +79,8 @@ interface Area {
   readonly records: MediaRecords;
   /** The library's crash windows are settled: nothing reads or writes the media folder before this. */
   readonly ready: Promise<void>;
+  /** Fires when this area is replaced (the library opened again) or the engine stops: the recovery's hashing of quarantined copies stops with it. */
+  readonly closing: AbortController;
 }
 
 type End =
@@ -154,7 +156,7 @@ export class MediaService {
 
   // ---------- the library's areas ----------
 
-  #newArea(root: string): Area {
+  #newArea(root: string, replaced?: Area): Area {
     const importers = this.#deps.importers ?? {};
     const staging = new MediaStaging({
       ...this.#deps.staging,
@@ -170,11 +172,17 @@ export class MediaService {
       warn: this.#deps.records?.warn ?? ((text) => this.#deps.log(text)),
     });
     // Settled in the background; a copy or a listing waits for it. Neither part throws for a file.
+    const closing = new AbortController();
+    // An area made after the service stopped is born stopped: nothing is hashed for it.
+    if (this.#stopping) closing.abort();
     const ready = (async () => {
-      await records.recover();
+      // The recovery of the area this one replaces was stopped (it is let go of in `libraryOpened`) and ends quickly: this one starts after it, so that two never read the
+      // quarantine, or rename a copy in it, at once.
+      await replaced?.ready.catch(() => undefined);
+      await records.recover({ signal: closing.signal });
       await staging.sweep();
     })().catch(() => this.#deps.log("a library's own media could not be read at its opening"));
-    return { active: 0, staging, records, ready };
+    return { active: 0, staging, records, ready, closing };
   }
 
   #areaOf(root: string): Area {
@@ -199,7 +207,9 @@ export class MediaService {
       void known.staging.sweep();
       return;
     }
-    this.#areas.set(library.root, this.#newArea(library.root));
+    // The area that is replaced is let go: a recovery still hashing for it must not hold the disk for a library that is read afresh.
+    known?.closing.abort();
+    this.#areas.set(library.root, this.#newArea(library.root, known));
   }
 
   // ---------- media.import ----------
@@ -265,6 +275,7 @@ export class MediaService {
    */
   async stop(): Promise<void> {
     this.#stopping = true;
+    for (const area of this.#areas.values()) area.closing.abort();
     for (const state of this.#deps.jobs.states()) if (state.kind === "import" && (state.status === "running" || state.status === "queued")) this.#deps.jobs.cancel(state.jobId);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<void>((resolve) => {
