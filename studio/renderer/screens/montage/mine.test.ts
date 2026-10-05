@@ -373,6 +373,53 @@ describe("video posters (rounds 1–3, M1): the VISIBLE tiles are live up to MAX
     expect(applied).toHaveLength(3);
   });
 
+  describe("dispose (V10): a tab that goes leaves no poster update and no timer behind", () => {
+    function rig() {
+      const scheduler = new ManualScheduler();
+      const applied: string[][] = [];
+      const zones = new PosterZones(scheduler, (visible) => applied.push([...visible].sort()));
+      return { scheduler, applied, zones };
+    }
+
+    test("a report still waiting for its tick never lands, and nothing is scheduled", async () => {
+      const { scheduler, applied, zones } = rig();
+      zones.report("visible", [{ id: "a", isIntersecting: true }]);
+      zones.dispose();
+      await Promise.resolve();
+      expect(applied).toHaveLength(0);
+      expect(scheduler.pending).toBe(0);
+    });
+
+    test("during the cool-down: its timer is cancelled, and the reports waiting on it never land", async () => {
+      const { scheduler, applied, zones } = rig();
+      zones.report("visible", [{ id: "a", isIntersecting: true }]);
+      await Promise.resolve();
+      expect(applied).toEqual([["a"]]);
+      expect(scheduler.pending).toBe(1);
+      zones.report("visible", [{ id: "b", isIntersecting: true }]);
+      zones.dispose();
+      expect(scheduler.pending).toBe(0);
+      scheduler.runAll();
+      await Promise.resolve();
+      expect(applied).toEqual([["a"]]);
+    });
+
+    test("once quiet: later reports never land and schedule nothing; a second dispose is harmless", async () => {
+      const { scheduler, applied, zones } = rig();
+      zones.report("near", [{ id: "a", isIntersecting: true }]);
+      await Promise.resolve();
+      scheduler.runAll();
+      expect(applied).toHaveLength(1);
+      zones.dispose();
+      zones.dispose();
+      zones.report("visible", [{ id: "c", isIntersecting: true }]);
+      await Promise.resolve();
+      expect(scheduler.pending).toBe(0);
+      scheduler.runAll();
+      expect(applied).toHaveLength(1);
+    });
+  });
+
   test("a tile that left the zone lets go of its poster; an id the list does not hold is never live", () => {
     expect(livePosters(ids, new Set(), new Set(), MAX_LIVE_POSTERS, MAX_POSTERS).size).toBe(0);
     expect([...livePosters(range(0, 2), new Set(["media-gone-0001"]), new Set(["media-gone-0002", ids[1] ?? ""]), MAX_LIVE_POSTERS, MAX_POSTERS)]).toEqual([ids[1]]);
