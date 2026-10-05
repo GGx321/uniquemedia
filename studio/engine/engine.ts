@@ -691,6 +691,7 @@ export class Engine {
       checker: new FileStateChecker(),
       withLibrary: (work) => this.#withLiveLibrary(work),
       openLibrary: () => this.library,
+      noteUnreadablePending: (count) => this.#noteCounted("pending-video-unreadable", count),
       checkExport: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
       exportSwitch: { pending: () => this.#exportSwitchPending(), currentPath: () => this.#settings.exportPath },
       caseProbe: this.#caseProbe,
@@ -3265,6 +3266,15 @@ export class Engine {
     }
     this.#internalNoticeEmittedAt = now;
     this.#internalNoticeEmittedId = notice.noticeId;
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice } });
+  }
+
+  /** A notice of `code` with `count` (what the engine found, not how often it happened), replacing an earlier one of its code, and announced at once. */
+  #noteCounted(code: EngineNotice["code"], count: number): void {
+    const notice: EngineNotice = { noticeId: this.#deps.newId(), code, at: new Date(this.#deps.clock()).toISOString(), count: Math.max(1, count) };
+    const earlier = this.#notices.findIndex((n) => n.code === code);
+    if (earlier === -1) this.#notices.push(notice);
+    else this.#notices[earlier] = notice;
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice } });
   }
 

@@ -7,7 +7,7 @@ import type { MontageDraft } from "../../shared/engine/montage";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
 import { recoverVideos, type RecoveryReport } from "./recovery";
-import type { VideoRecord } from "./record";
+import { videoPaths, type VideoRecord } from "./record";
 import { errnoError, faultyFs, FINAL, sampleRecord, specOf, useWorld, type World } from "./testing/kit";
 import { DEFAULT_STALE_RETRY_DELAYS_MS } from "./service";
 import { FakeTimers, serviceRig, until, withOverrides } from "./testing/serviceKit";
@@ -517,6 +517,34 @@ describe("the hold of a pending intent does not wait on a disk that fails or han
     await until(() => library.photoStates(w.avatar.id).get(photoId(w, 0))?.reserved === true, "the photos to be held");
 
     expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).not.toContain(photoId(w, 0));
+  });
+});
+
+describe("an intent that could not be read is told to the owner (review round 1 of the follow-ups, M2)", () => {
+  test("recovery at the start that leaves an intent unreadable raises the notice once, with the count of such intents", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    writeFileSync(videoPaths(w.libraryRoot, w.avatar.id).intent(record.id), "{ not json");
+    const library = await w.reopen();
+    const told: number[] = [];
+    const r = serviceRig(w, { library, deps: { noteUnreadablePending: (count) => void told.push(count) } });
+
+    r.service.startup(library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    await r.service.settled();
+
+    expect(told).toEqual([1]);
+  });
+
+  test("a clean start, and a targeted settle, tell nothing", async () => {
+    const w = world();
+    const told: number[] = [];
+    const r = serviceRig(w, { deps: { noteUnreadablePending: (count) => void told.push(count) } });
+
+    r.service.startup(w.library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    await r.service.settled();
+
+    expect(told).toEqual([]);
   });
 });
 

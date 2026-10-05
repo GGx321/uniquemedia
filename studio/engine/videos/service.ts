@@ -134,6 +134,8 @@ export interface VideoServiceDeps {
   readonly listBudgetMs?: number;
   /** How long the probe of the export volume's case rule may take in `#freshRoot`; `CASE_PROBE_TIMEOUT_MS` when absent. */
   readonly caseProbeTimeoutMs?: number;
+  /** Told with the count of the intents a start's recovery left unreadable (the engine raises a notice for them); absent: nobody is told. */
+  readonly noteUnreadablePending?: (count: number) => void;
   /** How the commit intent's file is looked at before a settle; `lstat` when absent (a test plays a disk that fails or does not answer). */
   readonly intentLstat?: (path: string) => Promise<unknown>;
   /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
@@ -1011,6 +1013,14 @@ export class VideoService {
     if (signal.aborted) return;
     const run = deps.recover?.run ?? recoverVideos;
     const report = await run({ library, exportRoot, live: deps.tracker, signal, ...(options.only === undefined ? {} : { only: options.only }) }, { log: deps.log, ...deps.recover?.deps });
+    // An intent that could not be read leaves photos held that the owner cannot free by himself: he is told (a notice), by count, never by path.
+    if (options.only === undefined && report.left.length > 0) {
+      try {
+        deps.noteUnreadablePending?.(report.left.length);
+      } catch (error) {
+        deps.log(`recovery: the notice of unreadable intents could not be raised (${kindOf(error)})`);
+      }
+    }
     // Counts only, and only when there was something to settle: a clean open is silent.
     if (report.adopted.length + report.dropped.length + report.deferred.length + report.left.length + report.skipped.length > 0) {
       deps.log(`recovery: ${report.adopted.length} adopted, ${report.dropped.length} dropped, ${report.deferred.length} deferred, ${report.left.length} left, ${report.skipped.length} skipped`);

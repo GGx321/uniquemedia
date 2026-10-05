@@ -6,6 +6,7 @@ const NOTICE_TITLE: Record<NoticeCode, string> = {
   "engine-restarted": "Движок перезапускался",
   "settings-reset": "Настройки сброшены",
   "engine-internal-error": "Внутренняя ошибка движка",
+  "pending-video-unreadable": "Незавершённое видео не прочитано",
 };
 
 // engine-restarted says only what happened: whether open reserves need a
@@ -17,6 +18,8 @@ const NOTICE_TEXT: Record<NoticeCode, string> = {
   "engine-restarted": "Движок перезапускался: работа, которая шла в момент сбоя, могла быть потеряна.",
   "settings-reset": "Файл настроек не удалось прочитать, поэтому используются значения по умолчанию. Проверьте ключ и папку библиотеки в Настройках.",
   "engine-internal-error": "Движок перехватил непредвиденную ошибку и продолжил работу. Если что-то работает не так, перезапустите Studio.",
+  "pending-video-unreadable":
+    "При запуске не удалось прочитать запись о недоделанном видео, поэтому некоторые фото могут быть «заняты». Если запись от более новой версии, обновите Studio. Если файл повреждён, удалите его из папки «videos/.pending» внутри папки библиотеки и перезапустите Studio.",
 };
 
 /**
