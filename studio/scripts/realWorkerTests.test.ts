@@ -636,39 +636,80 @@ describe("the Electron-Node steps' bounds", () => {
   // or a write permission comes back.
   const PUBLISHERS = /actions\/upload-artifact|actions\/download-artifact|softprops\/action-gh-release/;
 
+  // Every key and every string value of a parsed YAML document: what the runner would read, comments excluded.
+  function yamlStrings(node: unknown, out: string[] = []): string[] {
+    if (typeof node === "string") out.push(node);
+    else if (Array.isArray(node)) for (const item of node) yamlStrings(item, out);
+    else if (typeof node === "object" && node !== null) {
+      for (const [key, value] of Object.entries(node)) {
+        out.push(key);
+        yamlStrings(value, out);
+      }
+    }
+    return out;
+  }
+
+  // The files of every local action. A missing .github/actions is fine; any other scan error is not.
+  async function localActionFiles(): Promise<{ file: string; text: string }[]> {
+    const actionsDir = join(ROOT, ".github", "actions");
+    let files: string[] = [];
+    try {
+      files = await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: actionsDir, onlyFiles: true }));
+    } catch (error) {
+      if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+    }
+    return Promise.all(files.map(async (file) => ({ file, text: await readFile(join(actionsDir, file), "utf8") })));
+  }
+
   test("nothing publishes: no release job, no artifact or release action in the workflow or in any local action", async () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     const jobs = await workflowJobs();
     expect(jobs.release).toBeUndefined();
     expect(workflow).not.toMatch(PUBLISHERS);
     expect(workflow).not.toMatch(/\bgh\s+release\b/);
-    // A local composite action is a way around the workflow text: scan every file under .github/actions too.
-    const actionsDir = join(ROOT, ".github", "actions");
-    const localFiles = await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: actionsDir, onlyFiles: true })).catch(() => []);
-    for (const file of localFiles) {
-      const text = await readFile(join(actionsDir, file), "utf8");
+    // A local composite action is a way around the workflow text: scan every file under .github/actions too, for the same actions,
+    // for `gh release`, and for anything artifact-shaped (upload-pages-artifact and the like).
+    for (const { file, text } of await localActionFiles()) {
       expect([file, PUBLISHERS.test(text)]).toEqual([file, false]);
       expect([file, /\bgh\s+release\b/.test(text)]).toEqual([file, false]);
+      expect([file, /artifact/i.test(text)]).toEqual([file, false]);
     }
     // No job needs an artifact another job would have to hand over.
     expect(Object.values(jobs).filter((job) => JSON.stringify(job.steps ?? []).includes("artifact"))).toEqual([]);
+    // A job that `uses:` a reusable workflow is a way around the steps checked above: this workflow has none.
+    expect(Object.entries(jobs).filter(([, job]) => job.uses !== undefined).map(([name]) => name)).toEqual([]);
   });
 
   test("no secret reaches the workflow, and the token is read-only everywhere", async () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     const jobs = await workflowJobs();
-    // No `secrets.X` expression at all: the workflow uses none today, so any new one is a decision to review, not a drive-by.
-    expect(workflow).not.toMatch(/\bsecrets\./);
+    // No reference to the secrets context at all (`secrets.X`, `secrets['X']`, `toJSON(secrets)`, `secrets: inherit`): the workflow and its
+    // local actions use none today, so any new one is a decision to review, not a drive-by. Parsed values and keys, so a comment may say it.
     const parsed: unknown = Bun.YAML.parse(workflow);
+    expect(yamlStrings(parsed).filter((text) => /\bsecrets\b/.test(text))).toEqual([]);
+    for (const { file, text } of await localActionFiles()) {
+      expect([file, yamlStrings(Bun.YAML.parse(text)).filter((value) => /\bsecrets\b/.test(value))]).toEqual([file, []]);
+    }
     if (typeof parsed !== "object" || parsed === null || !("permissions" in parsed)) throw new Error("no top-level permissions in the workflow");
     expect(parsed.permissions).toEqual({ contents: "read" });
     expect(Object.entries(jobs).filter(([, job]) => JSON.stringify(job.permissions ?? {}).includes("write")).map(([name]) => name)).toEqual([]);
   });
 
+  // Nothing restored from a cache is executed: the one cache the workflow has holds the face models (hash-checked on every run), and a cache of
+  // node_modules or of the ffmpeg binary is how an unchecked binary would come back.
+  test("no cache step holds node_modules or ffmpeg", async () => {
+    for (const [name, job] of Object.entries(await workflowJobs())) {
+      for (const step of (job.steps ?? []) as { uses?: string; with?: { path?: unknown } }[]) {
+        if (step.uses?.startsWith("actions/cache")) expect([name, String(step.with?.path)]).toEqual([name, expect.not.stringMatching(/node_modules|ffmpeg/i)]);
+      }
+    }
+  });
+
   test("the packaging never publishes: electron-builder runs with --publish never, no other --publish value exists, and the config has publish: null", async () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     expect(workflow).toMatch(/bunx electron-builder --config electron-builder\.studio\.yml --publish never\r?$/m);
-    const values = [...workflow.matchAll(/--publish[ =](\S+)/g)].map((m) => m[1]);
+    // `-p` is electron-builder's short form of --publish: look at both, on the lines that run electron-builder.
+    const values = workflow.split(/\r?\n/).filter((line) => line.includes("electron-builder")).flatMap((line) => [...line.matchAll(/(?<![\w-])(?:--publish|-p)[ =](\S+)/g)].map((m) => m[1]));
     expect(values.length).toBeGreaterThan(0);
     for (const value of values) expect(value).toBe("never");
     const config = await readFile(join(ROOT, "electron-builder.studio.yml"), "utf8");
@@ -689,8 +730,9 @@ describe("the Electron-Node steps' bounds", () => {
     const jobs = await workflowJobs();
     for (const [name, job] of Object.entries(jobs)) {
       const steps = (job.steps ?? []) as { run?: string; uses?: string }[];
+      // Anywhere in a run script, not only at its start: `set -e` then `bun install` is still a bare install.
+      expect([name, steps.some((step) => /(^|[\s;&|{(])bun (install|i)\b/m.test(step.run ?? ""))]).toEqual([name, false]);
       if (steps.some((step) => step.run?.startsWith("bun "))) {
-        expect([name, steps.some((step) => /^bun (install|i)\b/.test(step.run ?? ""))]).toEqual([name, false]);
         expect([name, steps.some((step) => step.uses === "./.github/actions/studio-install")]).toEqual([name, true]);
       }
     }
@@ -733,8 +775,9 @@ describe("the Electron-Node steps' bounds", () => {
     // The binary is executed, and a failure is an error annotation plus a non-zero exit, after the retry.
     expect(script).toContain('"$bin" -version');
     expect(script).toMatch(/if ! ffmpeg_works; then\r?\n\s+echo "::error::[^\n]*"\r?\n\s+exit 1\r?\n\s*fi/);
-    // The retry does not hide a failure: its install is not followed by `|| true`.
-    expect(script).not.toMatch(/\|\|\s*true/);
+    // The retry does not hide a failure: nothing in the script swallows an exit code (`|| true`, `|| :`, `set +e`).
+    expect(script).not.toMatch(/\|\|\s*(?:true\b|false\b|:)/);
+    expect(script).not.toMatch(/set\s+\+(?:e\b|o\s+errexit)/);
   });
 
   test("the perf job never gates a run: continue-on-error is true on every trigger, tags included; the heavy job blocks on tags and the schedule", async () => {
