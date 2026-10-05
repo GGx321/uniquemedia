@@ -652,6 +652,7 @@ export class MockEngine implements EngineBridge {
   private seedCounter = 0;
   /** Test controls for the refusals a run start or resume can meet before it spends anything: see `setLibraryAvailable`, `setFaceGateAvailable`, `setAgeGateAvailable`, `removeMaster`. */
   private libraryOpen = true;
+  private librarySwitching = false;
   private faceGate: { available: boolean; loadError?: string } = { available: true };
   private ageGateAvailable = true;
   private readonly mastersMissing = new Set<string>();
@@ -1108,6 +1109,11 @@ export class MockEngine implements EngineBridge {
     this.libraryOpen = available;
   }
 
+  /** A library switch is being surveyed (the engine's `#switching`): the own-media commands wait with IN_FLIGHT until it ends. */
+  setLibrarySwitching(switching: boolean): void {
+    this.librarySwitching = switching;
+  }
+
   /**
    * No face gate wired into photo runs (the models or onnxruntime-web failed
    * to load at engine start): runs.start and runs.resume answer
@@ -1460,10 +1466,15 @@ export class MockEngine implements EngineBridge {
         for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
         return this.ok(c, { mediaId: c.payload.mediaId, apngBase64: btoa(binary) });
       }
-      case "media.list":
+      case "media.list": {
+        const refusal = this.mediaLibraryGate();
+        if (refusal) return this.fail(c, refusal);
         return this.ok(c, this.ownMedia.list(c.payload.kind, c.payload.mediaIds));
+      }
       case "media.delete": {
         const { mediaId } = c.payload;
+        const refusal = this.mediaLibraryGate();
+        if (refusal) return this.fail(c, refusal);
         if (!this.ownMedia.has(mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
         // The engine asks the render queue's reserved set after it knows the media is there: a queued or running render that names it refuses.
         if (this.renderJobs.some((job) => isActive(job) && job.mediaIds.includes(mediaId))) return this.fail(c, { code: "IN_FLIGHT", detail: "a queued or running render uses this media; delete it when the render ends" });
@@ -2561,6 +2572,15 @@ export class MockEngine implements EngineBridge {
   // ---------- photo runs (T8b) ----------
 
   /** The engine's `#liveLibrary()`: no library open refuses a paid run command before it looks at what the command names. */
+  /**
+   * The engine's `withLibrary` for the own-media commands (the library's records, read or written): while a library switch is being surveyed
+   * they wait with IN_FLIGHT, and with no library open they are LIBRARY_UNAVAILABLE, the switch checked first.
+   */
+  private mediaLibraryGate(): EngineError | null {
+    if (this.librarySwitching) return { code: "IN_FLIGHT", detail: "a library switch is being surveyed; write commands wait for it to finish" };
+    return this.libraryGate();
+  }
+
   private libraryGate(): EngineError | null {
     return this.libraryOpen ? null : { code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" };
   }
