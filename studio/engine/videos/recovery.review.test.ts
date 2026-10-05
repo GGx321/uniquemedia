@@ -6,7 +6,7 @@ import { sweepPartFiles } from "../renderQueue/sweep";
 import { commitVideo, type CommitInput } from "./commit";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { CommitTracker } from "./execute";
-import { writeIntent } from "./intents";
+import { commitIntent, writeIntent } from "./intents";
 import { partNameOf, videoPaths } from "./record";
 import { recoverVideos, type ExportRootRef } from "./recovery";
 import {
@@ -132,6 +132,29 @@ describe("adoption", () => {
     const report = await recoverVideos({ library: await w.reopen(), exportRoot: rootRef(w) });
     expect(report.adopted).toEqual([]);
     expect(await libraryVideoFiles(w)).toEqual(["video-00000002.json"]);
+  });
+
+  test("a record that names the same path but another file's bytes does not own the file: an intent whose verified file stands there is adopted, not dropped as file-claimed (stage 3 review 3-M2)", async () => {
+    const w = world();
+    // Video A's record names Mia/..._001.mp4 with ITS bytes; the owner deleted that file and a later render's file took the name.
+    const old = sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a", bytes: fakeVideoBytes(2048, 1) });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, old);
+    await commitIntent(NODE_COMMIT_FS, w.libraryRoot, w.avatar.id, old.id);
+    // The new video's commit crashed between the rename and the link: its verified bytes sit under the name, its intent is pending.
+    const bytes = fakeVideoBytes(3000, 7);
+    const crashed = sampleRecord(w, { bytes, videoId: "video-0000000b", jobId: "job-0000000b", photoIds: [w.photos[1]?.id ?? ""] });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, crashed);
+    mkdirSync(join(w.exportRoot, "Mia"), { recursive: true });
+    writeFileSync(join(w.exportRoot, FINAL), bytes);
+
+    const library = await w.reopen();
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) });
+
+    expect(report.dropped).toEqual([]);
+    expect(report.adopted).toEqual([crashed.id]);
+    expect(await libraryVideoFiles(w)).toEqual([`${old.id}.json`, `${crashed.id}.json`]);
+    // The video keeps its record, so its photo stays used.
+    expect(library.photoStates(w.avatar.id).get(w.photos[1]?.id ?? "")?.usedIn).toEqual([crashed.id]);
   });
 
   test("an intent whose stored mtime is not the file's is still adopted when it is the only one naming the file (the bytes are verified)", async () => {
