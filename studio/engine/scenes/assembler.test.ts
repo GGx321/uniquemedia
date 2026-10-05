@@ -7,7 +7,7 @@ import { plan } from "./planner";
 import { PlanSlotSchema, PoseSchema, type PlanSlot } from "./schema";
 import { SHOTS } from "./types";
 import { revealingWordsIn } from "./words";
-import { AssemblerRefusalError, assembleRun, assembleSlot, BINDING_ANCHOR, CAMERA_REALISM_CLAUSE, POSE_PHRASE, SHOT_PHRASE } from "./assembler";
+import { AssemblerRefusalError, assembleRun, assembleSlot, BINDING_ANCHOR, CAMERA_REALISM_CLAUSE, CAMERA_REALISM_CLAUSE_EDITORIAL, POSE_PHRASE, SHOT_PHRASE } from "./assembler";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -279,12 +279,38 @@ describe("camera realism", () => {
     expect(prompts.every((p) => p.endsWith(CAMERA_REALISM_CLAUSE))).toBe(true);
   });
 
-  test("the clause is a short English sentence about the camera, with no youth word and no revealing word", () => {
-    expect(CAMERA_REALISM_CLAUSE.length).toBeLessThanOrEqual(220);
-    expect(youthWords(CAMERA_REALISM_CLAUSE, "descriptor")).toEqual([]);
-    expect(revealingWordsIn(CAMERA_REALISM_CLAUSE)).toEqual([]);
-    expect(CAMERA_REALISM_CLAUSE).toMatch(/skin texture/i);
-    expect(CAMERA_REALISM_CLAUSE).toMatch(/no airbrushing/i);
+  test.each([
+    ["the smartphone clause", CAMERA_REALISM_CLAUSE],
+    ["the editorial clause", CAMERA_REALISM_CLAUSE_EDITORIAL],
+  ])("%s is a short English sentence about the camera, with no youth word, no revealing word and no stop-word", (_name, clause) => {
+    expect(clause.length).toBeLessThanOrEqual(220);
+    expect(youthWords(clause, "descriptor")).toEqual([]);
+    expect(revealingWordsIn(clause)).toEqual([]);
+    expect(clause).toMatch(/skin texture/i);
+    expect(clause).toMatch(/no airbrushing/i);
+    expect(clause).not.toMatch(/\b(?:8k|masterpiece|professional photo|perfect skin|stunning|flawless|beautiful)\b/i);
+  });
+
+  // Review round 1, M4: «Editorial photo» + «Candid smartphone photo» in one prompt contradicts itself.
+  test("a photoshoot slot gets the editorial clause, which never says smartphone, and never the phone one", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot", shot: "photographer" }), SENTENCE, MASTER, { cameraRealism: true });
+
+    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
+    expect(prompt).not.toContain(CAMERA_REALISM_CLAUSE);
+    expect(CAMERA_REALISM_CLAUSE_EDITORIAL).not.toMatch(/smartphone|phone/i);
+  });
+
+  test("a photoshoot prompt with the clause says smartphone nowhere", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot", shot: "photographer" }), SENTENCE, MASTER, { cameraRealism: true });
+
+    expect(prompt).toContain("Editorial photo");
+    expect(prompt.toLowerCase()).not.toContain("smartphone");
+  });
+
+  test("every other category keeps the smartphone clause", () => {
+    for (const category of ["home", "travel", "glamour", "fitness"] as const) {
+      expect(assembleSlot(DESCRIPTOR, slot({ category }), SENTENCE, MASTER, { cameraRealism: true }).prompt.endsWith(CAMERA_REALISM_CLAUSE)).toBe(true);
+    }
   });
 
   test("the stop-word filter leaves the clause whole (it contains none of them)", () => {
@@ -292,13 +318,20 @@ describe("camera realism", () => {
     expect(prompt.endsWith(CAMERA_REALISM_CLAUSE)).toBe(true);
   });
 
+  test("the editorial clause survives the stop-word filter whole too", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot", shot: "photographer" }), SENTENCE, MASTER, { cameraRealism: true });
+    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
+  });
+
   test("every valid shot and pose with the clause stays well under 2000 characters", () => {
     for (const shot of SHOTS) {
       for (const pose of PoseSchema.options) {
-        const candidate = { ...slot(), shot, pose };
-        if (!PlanSlotSchema.safeParse(candidate).success) continue;
-        const { prompt } = assembleSlot(DESCRIPTOR, candidate, SENTENCE, MASTER, { cameraRealism: true });
-        expect(prompt.length).toBeLessThan(2000);
+        for (const category of ["home", "photoshoot"] as const) {
+          const candidate = { ...slot(), category, shot, pose };
+          if (!PlanSlotSchema.safeParse(candidate).success) continue;
+          const { prompt } = assembleSlot(DESCRIPTOR, candidate, SENTENCE, MASTER, { cameraRealism: true });
+          expect(prompt.length).toBeLessThan(2000);
+        }
       }
     }
   });

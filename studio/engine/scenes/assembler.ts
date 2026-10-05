@@ -73,6 +73,13 @@ const REALISM_PHONE = "Smartphone photo, natural skin texture, slight noise, no 
 export const CAMERA_REALISM_CLAUSE =
   "Candid smartphone photo, natural skin texture with pores, slight sensor noise, imperfect natural light, no retouching, no airbrushing.";
 
+/**
+ * The same clause for a `photoshoot` slot, whose prompt already says «Editorial photo» (REALISM_EDITORIAL): a camera, not a phone, so
+ * the two sentences do not contradict each other (review round 1, M4). Every other category takes CAMERA_REALISM_CLAUSE.
+ */
+export const CAMERA_REALISM_CLAUSE_EDITORIAL =
+  "Shot on a camera, natural skin texture with pores, subtle grain, imperfect natural light, no retouching, no airbrushing.";
+
 const BASE_CONSTRAINTS = "She is an adult woman. Only she is in focus; no text, logos, brand names or watermark.";
 const PHONE_HAND_CONSTRAINT = " One hand holds the phone; only her other hand acts.";
 
@@ -130,7 +137,7 @@ function constraintsFor(slot: PlanSlot): string {
 }
 
 export interface AssembleOptions {
-  /** «Реализм камеры»: append CAMERA_REALISM_CLAUSE. Off when absent. */
+  /** «Реализм камеры»: append CAMERA_REALISM_CLAUSE (CAMERA_REALISM_CLAUSE_EDITORIAL for a photoshoot slot). Off when absent. */
   cameraRealism?: boolean;
 }
 
@@ -170,7 +177,7 @@ export function assembleSlot(
     `${SHOT_PHRASE[slot.shot]}. ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
     `${realism} ${constraintsFor(slot)}`;
   const prompt = normalize(raw);
-  return { slotIndex: slot.slotIndex, prompt: options.cameraRealism === true ? `${prompt} ${CAMERA_REALISM_CLAUSE}` : prompt, references: [master] };
+  return { slotIndex: slot.slotIndex, prompt: options.cameraRealism === true ? `${prompt} ${slot.category === "photoshoot" ? CAMERA_REALISM_CLAUSE_EDITORIAL : CAMERA_REALISM_CLAUSE}` : prompt, references: [master] };
 }
 
 /** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. */
