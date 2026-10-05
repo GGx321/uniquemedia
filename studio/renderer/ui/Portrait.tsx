@@ -2,6 +2,7 @@ import { type CSSProperties, type RefObject, useLayoutEffect, useRef, useState }
 import { useEngine } from "../engine/react";
 import { coversFrame, drawCap, type PixelSize } from "../lib/imageFit";
 import { photoUrl, placeholderGradient } from "../lib/media";
+import { type ContentSize, observeSize } from "./observeSize";
 import { useDevicePixelRatio } from "./useDevicePixelRatio";
 
 /** The neutral figure over a placeholder; screens tint it with CSS (unreadable tiles, drawing slots). */
@@ -29,59 +30,73 @@ export function PortraitPlaceholder({ seed, label }: { seed: string; label: stri
   );
 }
 
+
+/** How a frame holds one picture: whether the picture's cap leaves a band now, and whether it ever has for this picture. */
+interface FrameFit {
+  readonly src: string;
+  readonly banded: boolean;
+  /** Its backdrop is kept from the first band on, hidden while the frame is filled, so a resize back and forth never remakes it. */
+  readonly kept: boolean;
+}
+
 /**
- * Whether a picture held to `cap` leaves a band in its frame, followed as the frame resizes (a window resize grows the avatar
- * cards). Nothing is observed until there is a cap, that is until the picture has loaded.
+ * Whether a picture held to `cap` leaves a band in its frame (`coversFrame`), and whether its backdrop is kept. Measured on the spot
+ * when there is a cap (the picture has loaded), before the browser paints, then followed by the one shared observer as the frame
+ * resizes (a window resize grows the avatar cards). A fit belongs to its picture: another photo starts with none.
  */
-function useBanded(frame: RefObject<HTMLElement | null>, cap: PixelSize | null): boolean {
-  const [banded, setBanded] = useState(false);
+function useFrameFit(frame: RefObject<HTMLElement | null>, src: string | null, cap: PixelSize | null): { banded: boolean; backdrop: boolean } {
+  const [fit, setFit] = useState<FrameFit | null>(null);
   const capWidth = cap?.width ?? null;
   const capHeight = cap?.height ?? null;
   useLayoutEffect(() => {
     const node = frame.current;
-    if (capWidth === null || capHeight === null || node === null || typeof ResizeObserver === "undefined") {
-      setBanded(false);
-      return;
-    }
-    const observer = new ResizeObserver((entries) => {
-      const own = entries.find((entry) => entry.target === node);
-      if (own === undefined) return;
-      setBanded(!coversFrame({ width: own.contentRect.width, height: own.contentRect.height }, { width: capWidth, height: capHeight }));
-    });
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [frame, capWidth, capHeight]);
-  return banded;
+    if (src === null || capWidth === null || capHeight === null || node === null) return;
+    const judge = (size: ContentSize): void => {
+      const banded = !coversFrame(size, { width: capWidth, height: capHeight });
+      setFit((now) => {
+        const mine = now !== null && now.src === src;
+        const kept = banded || (mine && now.kept);
+        return mine && now.banded === banded && now.kept === kept ? now : { src, banded, kept };
+      });
+    };
+    // The content box, as the observer reports it (a hover's scale is not a resize).
+    judge({ width: node.clientWidth, height: node.clientHeight });
+    return observeSize(node, judge);
+  }, [frame, src, capWidth, capHeight]);
+  const own = fit !== null && fit.src === src && cap !== null;
+  return { banded: own && fit.banded, backdrop: own && fit.kept };
 }
 
 /**
  * A library photo through `studio-media://`, or a placeholder in mock mode or when it cannot load.
  *
- * The large-screen audit (H2): once loaded, the picture is never drawn past `drawCap` for the screen's pixel ratio. One that can fill
- * its frame within that is drawn as ever (cover, filling the frame). One that cannot (an imported master of a few hundred pixels in
- * a wide card on a 2× screen) is drawn at its cap, centred like a print, and the band around it is the same picture blurred and
- * dimmed: the frame keeps its size and colour, the grid its rhythm, and nothing on screen is softer than the file itself.
+ * The large-screen audit (H2): once loaded, the picture is never drawn noticeably past `drawCap` for the screen's pixel ratio. One
+ * that can fill its frame within that (or within a few pixels of it, see `coversFrame`) is drawn as ever, covering the frame. One
+ * that cannot (an imported master of a few hundred pixels in an avatar card on a 2× screen) is drawn at its cap, centred like a
+ * print, and the band around it is the same picture blurred and dimmed: the frame keeps its size and colour, the grid its rhythm,
+ * and nothing on screen is softer than the file itself.
  */
 export function Portrait({ avatarId, photoId, label }: { avatarId: string; photoId: string; label: string }) {
   const { client } = useEngine();
-  const [failed, setFailed] = useState(false);
+  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<{ src: string; natural: PixelSize } | null>(null);
   const frame = useRef<HTMLSpanElement>(null);
   const src = photoUrl(avatarId, photoId);
-  // A natural size belongs to the picture it was read from: a new photo id waits for its own load.
+  // A failure and a natural size belong to the picture they came from: another photo id gets its own chance and its own load.
+  const failed = src !== null && failedSrc === src;
   const natural = loaded !== null && loaded.src === src && !failed ? loaded.natural : null;
   // The ratio is followed only once there is a picture whose cap depends on it.
   const dpr = useDevicePixelRatio(natural !== null);
   const cap = natural === null ? null : drawCap(natural, dpr);
-  const banded = useBanded(frame, cap);
+  const { banded, backdrop } = useFrameFit(frame, src, cap);
   if (client.kind === "mock" || failed || src === null) return <PortraitPlaceholder seed={photoId} label={label} />;
-  // Each side is held on its own: a frame wider than the cap but not taller (or the other way) gets a box of the frame's height and
-  // the cap's width, and `cover` crops inside it; either way no side is stretched past the cap, and `useBanded` sees the band.
-  const capStyle: CSSProperties | undefined = cap === null ? undefined : { maxWidth: `${cap.width}px`, maxHeight: `${cap.height}px` };
+  // Held only when banded. Each side is held on its own: a frame wider than the cap but not taller (or the other way) gets a box of
+  // the frame's height and the cap's width, and `cover` crops inside it; either way no side is stretched past the cap.
+  const capStyle: CSSProperties | undefined = banded && cap !== null ? { maxWidth: `${cap.width}px`, maxHeight: `${cap.height}px` } : undefined;
   // Keyed by its address: another photo is a new element, so the last picture is never left on screen, uncapped, while it loads.
   return (
     <span ref={frame} className="portrait" data-fit={banded ? "capped" : undefined}>
-      {banded && <img key={`backdrop-${src}`} className="portrait-backdrop" src={src} alt="" aria-hidden="true" decoding="async" draggable={false} />}
+      {backdrop && <img key={`backdrop-${src}`} className="portrait-backdrop" src={src} alt="" aria-hidden="true" decoding="async" draggable={false} />}
       <img
         key={src}
         className="portrait-img"
@@ -91,7 +106,7 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
         decoding="async"
         style={capStyle}
         onLoad={(e) => setLoaded({ src, natural: { width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight } })}
-        onError={() => setFailed(true)}
+        onError={() => setFailedSrc(src)}
       />
     </span>
   );

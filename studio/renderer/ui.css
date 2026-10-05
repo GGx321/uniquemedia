@@ -1098,6 +1098,11 @@ input[type="range"]::-webkit-slider-thumb {
   pointer-events: none;
 }
 
+/* Kept once made, so a resize across the threshold never decodes it again; drawn only while the picture is held to its cap. */
+.portrait:not([data-fit="capped"]) > .portrait-backdrop {
+  display: none;
+}
+
 .portrait[data-fit="capped"] > .portrait-img {
   border-radius: 6px;
   box-shadow: var(--shadow-lift);
