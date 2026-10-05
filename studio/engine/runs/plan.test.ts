@@ -173,10 +173,34 @@ describe("buildRunPlan: the image choice", () => {
     expect(run.cameraRealism).toBe(true);
   });
 
-  test("persists null for a model with no quality knob, and camera realism off by default", () => {
+  test("persists null for a model with no quality knob", () => {
     const run = buildRunPlan({ ...newRun(2), models: { ...MODELS, imageQuality: null } });
     expect(run.models.imageQuality).toBeNull();
-    expect(run.cameraRealism).toBe(false);
+  });
+
+  // Merge compatibility (review round 1): a default run's plan.json is byte-for-byte what it was before the choice existed, so a
+  // plan built today and one built before are the same file, and an exact-keys test of the plan (or a later slice's) does not move.
+  test("a default run writes neither cameraRealism nor imageQuality: its plan.json carries exactly the keys it always had", () => {
+    const run = buildRunPlan(newRun(2));
+    expect("cameraRealism" in run).toBe(false);
+    expect(Object.keys(run.models).sort()).toEqual(["fallback", "image", "text"]);
+    expect(Object.keys(run).sort()).toEqual(
+      ["avatarId", "capMicros", "createdAt", "imageAgeCheck", "models", "plannedWorstMicros", "request", "runId", "scenes", "schemaVersion", "slotAttempts", "writerChunks"].sort(),
+    );
+  });
+
+  test("camera realism off, said explicitly, is written no more than the default is", () => {
+    expect("cameraRealism" in buildRunPlan({ ...newRun(2), cameraRealism: false })).toBe(false);
+  });
+
+  test("imageQuality low on the default model is the default and is not written; a run on Seedream (no knob) writes none either", () => {
+    expect("imageQuality" in buildRunPlan({ ...newRun(2), models: { ...MODELS, imageQuality: "low" } }).models).toBe(false);
+    expect("imageQuality" in buildRunPlan({ ...newRun(2), models: { imageModel: FALLBACK_IMAGE_MODEL, textModel: MODELS.textModel, imageQuality: null } }).models).toBe(false);
+  });
+
+  test("a plan without imageQuality resumes as the same low route a plan with it written would", () => {
+    const written = buildRunPlan({ ...newRun(2), models: { ...MODELS, imageQuality: "low" } });
+    expect(planRoute(written)).toEqual(runRoute(MODELS.imageModel, "low"));
   });
 
   test("a plan.json written before the choice (neither field) still parses", () => {

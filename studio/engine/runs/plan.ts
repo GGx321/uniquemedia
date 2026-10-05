@@ -240,8 +240,10 @@ export function buildRunPlan(input: NewRunPlan): RunPlan {
     createdAt: input.createdAt,
     request: input.request,
     imageAgeCheck: input.imageAgeCheck,
-    cameraRealism: input.cameraRealism ?? false,
-    models: { image: route[0].model, imageQuality: route[0].quality, fallback: route[1]?.model ?? null, text: input.models.textModel },
+    // Written only when it differs from what a plan without the key means (no clause; `low`, or none for Seedream), so a default run's
+    // plan.json is byte-for-byte the one written before the image-model choice existed.
+    ...(input.cameraRealism === true ? { cameraRealism: true } : {}),
+    models: { image: route[0].model, ...(route[0].quality === "low" || route[0].model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: route[0].quality }), fallback: route[1]?.model ?? null, text: input.models.textModel },
     capMicros: input.capMicros,
     plannedWorstMicros: input.plannedWorstMicros,
     scenes: input.scenes,
