@@ -417,7 +417,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   }
 
   return (
-    <div className="page">
+    <div className="page page-bounded">
       <header className="page-head">
         <div>
           <button type="button" className="back-link" onClick={() => navigate({ name: "avatars" })}>

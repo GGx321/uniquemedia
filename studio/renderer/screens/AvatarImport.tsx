@@ -156,7 +156,7 @@ export function AvatarImport() {
   const nameProblem = nameIssue(name);
 
   return (
-    <div className="page page-import">
+    <div className="page page-bounded page-import">
       <header className="page-head">
         <div>
           <button type="button" className="back-link" onClick={() => navigate({ name: "avatars" })}>

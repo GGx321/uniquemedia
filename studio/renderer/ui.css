@@ -2198,7 +2198,20 @@ input[type="range"]::-webkit-slider-thumb {
     grid-template-columns: 420px minmax(0, 1fr);
   }
 
+  /* Four candidates across the narrower side column would be 95 x 126, too small to choose a face from: two by two instead. */
+  .cand-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .photos-scenes {
     width: 400px;
+  }
+}
+
+/* The mockup's wizard fills a 900px window, its save bar at the foot of the form. In a taller window it keeps its own height
+   instead: the form card no longer stretches half empty and the save bar stays right under the candidates. */
+@media (min-height: 1000px) {
+  .wizard {
+    flex-grow: 0;
   }
 }
