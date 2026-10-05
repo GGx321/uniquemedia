@@ -67,20 +67,73 @@ describe("the chips' counts", () => {
     expect(binFacets(PHOTOS, ALL)).toEqual({
       unused: 3,
       categories: [
-        { category: "home", count: 2 },
-        { category: "travel", count: 2 },
-        { category: "glam", count: 1 },
+        { category: "home", label: "Дом", count: 2 },
+        { category: "travel", label: "Путешествия", count: 2 },
+        { category: "glam", label: "Гламур 18+", count: 1 },
       ],
     });
     expect(binFacets(PHOTOS, { unusedOnly: true, category: null }).categories).toEqual([
-      { category: "home", count: 1 },
-      { category: "travel", count: 1 },
-      { category: "glam", count: 1 },
+      { category: "home", label: "Дом", count: 1 },
+      { category: "travel", label: "Путешествия", count: 1 },
+      { category: "glam", label: "Гламур 18+", count: 1 },
     ]);
   });
 
   test("a chosen category the other chip empties is still offered (with 0), so the choice never vanishes from under the owner", () => {
-    expect(binFacets(PHOTOS, { unusedOnly: true, category: "fit" }).categories.at(-1)).toEqual({ category: "fit", count: 0 });
+    expect(binFacets(PHOTOS, { unusedOnly: true, category: "fit" }).categories.at(-1)).toEqual({ category: "fit", label: "Фитнес", count: 0 });
+  });
+});
+
+// CS.1: the facets come from the categories the photos actually carry, so a photo of a custom category (or an own scene)
+// is never hidden from the bin's category filter.
+describe("the chips' counts for custom and own categories", () => {
+  const CUSTOM_A = "cat-paris-cafes";
+  const CUSTOM_B = "cat-night-market";
+  const mixed: PhotoSummary[] = [
+    scenePhoto(1),
+    scenePhoto(2, { category: CUSTOM_A, categoryLabel: "Кофейни Парижа" }),
+    scenePhoto(3, { category: CUSTOM_B, categoryLabel: "Ночной рынок" }),
+    scenePhoto(4, { category: "own", categoryLabel: "Своя сцена" }),
+    scenePhoto(5, { category: CUSTOM_A, categoryLabel: "Кофейни Парижа" }),
+    scenePhoto(6, { category: "fit" }),
+  ];
+
+  test("a custom category is offered with its own label and its count", () => {
+    const facets = binFacets(mixed, ALL).categories;
+    expect(facets.find((c) => c.category === CUSTOM_A)).toEqual({ category: CUSTOM_A, label: "Кофейни Парижа", count: 2 });
+  });
+
+  test("the built-ins come first in the contract's order, then the custom ones and the own scenes by label", () => {
+    expect(binFacets(mixed, ALL).categories.map((c) => c.label)).toEqual(["Дом", "Фитнес", "Кофейни Парижа", "Ночной рынок", "Своя сцена"]);
+  });
+
+  test("a category with no photo is not offered", () => {
+    expect(binFacets(PHOTOS, ALL).categories.map((c) => c.category)).toEqual(["home", "travel", "glam"]);
+  });
+
+  test("choosing a custom category keeps only its photos; the numbers stay those of the whole bin", () => {
+    expect(binTiles(mixed, draftSpec([]), { unusedOnly: false, category: CUSTOM_A }).map((t) => t.n)).toEqual([2, 5]);
+  });
+
+  test("a renamed category shows the label of its newest photo, the list being newest first", () => {
+    const renamed = [scenePhoto(1, { category: CUSTOM_A, categoryLabel: "Новое имя" }), scenePhoto(2, { category: CUSTOM_A, categoryLabel: "Старое имя" })];
+    expect(binFacets(renamed, ALL).categories).toEqual([{ category: CUSTOM_A, label: "Новое имя", count: 2 }]);
+  });
+
+  test("a chosen custom category the other chip empties is still offered, with 0", () => {
+    const used = [scenePhoto(1, { category: CUSTOM_A, categoryLabel: "Кофейни Парижа", used: true, usedIn: ["video-0000001"] })];
+    expect(binFacets(used, { unusedOnly: true, category: CUSTOM_A }).categories).toEqual([{ category: CUSTOM_A, label: "Кофейни Парижа", count: 0 }]);
+  });
+
+  test("a custom category's own photos are counted per category, never merged with another's", () => {
+    const counts = binFacets(mixed, ALL).categories.map((c) => [c.category, c.count]);
+    expect(counts).toEqual([
+      ["home", 1],
+      ["fit", 1],
+      [CUSTOM_A, 2],
+      [CUSTOM_B, 1],
+      ["own", 1],
+    ]);
   });
 });
 

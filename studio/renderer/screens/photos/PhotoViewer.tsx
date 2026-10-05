@@ -11,7 +11,7 @@ import { useAnnouncer } from "../../ui/useAnnouncer";
 import { useMediaRetry } from "../../ui/useMediaRetry";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
-import { CATEGORY_LABEL } from "./runForm";
+import { photoCategoryLabel } from "./runForm";
 import { viewerStep, type ViewerPlace } from "./viewerModel";
 
 // The «Фото» tab's photo viewer (no artboard draws one; built in the language of the video player, AvatarVideos.dc.html's
@@ -88,7 +88,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
     return () => window.removeEventListener("keydown", onKey);
   }, [prevId, nextId, onShow]);
 
-  const category = CATEGORY_LABEL[photo.category];
+  const category = photoCategoryLabel(photo);
   const title = `Фото ${index + 1} из ${total}`;
 
   // Only the owner's own step is announced, once its photo is on screen: a running job's new photo moves the number too, and

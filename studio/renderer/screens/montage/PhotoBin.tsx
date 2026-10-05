@@ -2,7 +2,6 @@ import { useId } from "react";
 import type { MontageDraft, PhotoSummary } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
-import { CATEGORY_LABEL } from "../photos/runForm";
 import { binFacets, type BinFilter, binTiles, type BinTile, tileAction } from "./bin";
 import type { AddRefusal } from "./clipOps";
 import { addBlockedLabel } from "./labels";
@@ -105,9 +104,9 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter,
             }}
           >
             <option value="">Все категории</option>
-            {facets.categories.map(({ category, count }) => (
+            {facets.categories.map(({ category, label, count }) => (
               <option key={category} value={category}>
-                {`${CATEGORY_LABEL[category]} · ${count}`}
+                {`${label} · ${count}`}
               </option>
             ))}
           </select>

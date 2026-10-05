@@ -1,4 +1,4 @@
-import { SceneCategory, type RunRequest } from "../../../shared/engine";
+import { isCustomCategory, orderCategories, SceneCategory, splitCount, type PhotoSummary, type RunRequest } from "../../../shared/engine";
 import type { EngineView } from "../../engine/store";
 import { paidStop, restartStopText } from "../../lib/paidStop";
 
@@ -29,8 +29,8 @@ export const DEFAULT_RUN_FORM: RunForm = {
   poses: { profile: false, back: false },
 };
 
-/** The mockup's own labels; the scene tags and the gallery use them too. */
-export const CATEGORY_LABEL: Record<RunCategory, string> = {
+/** The mockup's own labels for the five built-ins; the scene tags and the gallery use them too. */
+export const CATEGORY_LABEL: Record<SceneCategory, string> = {
   home: "Дом",
   travel: "Путешествия",
   shoot: "Фотосессия",
@@ -38,27 +38,38 @@ export const CATEGORY_LABEL: Record<RunCategory, string> = {
   fit: "Фитнес",
 };
 
+/** What a custom category's photo is called when its sidecar kept no name, and an own scene's default name. */
+const CUSTOM_CATEGORY_FALLBACK = "Своя категория";
+const OWN_SCENE_LABEL = "Своя сцена";
+
 /**
- * How many photos each chosen category gets: the engine planner's own split
- * (scenes/planner.ts's `distribute`) — as even as possible, the remainder to
- * the categories earliest in the contract's canonical order.
+ * A photo's category as the gallery, the viewer and the montage bin show it: a
+ * built-in by the renderer's own label; a custom category or an own scene by the
+ * name its photo kept (a snapshot, so a rename or a delete later changes nothing),
+ * or a fixed fallback when the sidecar kept none.
  */
-export function photosPerCategory(count: number, categories: readonly RunCategory[]): Map<RunCategory, number> {
-  const ordered = SceneCategory.options.filter((c) => categories.includes(c));
-  const split = new Map<RunCategory, number>();
-  if (ordered.length === 0) return split;
-  const base = Math.floor(count / ordered.length);
-  const remainder = count % ordered.length;
-  ordered.forEach((category, i) => split.set(category, base + (i < remainder ? 1 : 0)));
-  return split;
+export function photoCategoryLabel(photo: Pick<PhotoSummary, "category" | "categoryLabel">): string {
+  const { category, categoryLabel } = photo;
+  if (category === "own") return categoryLabel ?? OWN_SCENE_LABEL;
+  if (isCustomCategory(category)) return categoryLabel ?? CUSTOM_CATEGORY_FALLBACK;
+  return CATEGORY_LABEL[category];
 }
 
-/** The exact request a price is asked for and a run is started with; categories in canonical order, so equal forms give equal requests. */
+/**
+ * How many photos each chosen category gets: the engine planner's own split,
+ * the contract's shared `splitCount` (the planner calls the very same function),
+ * so a chip's count can never drift from what the engine draws.
+ */
+export function photosPerCategory(count: number, categories: readonly RunCategory[]): Map<RunCategory, number> {
+  return new Map(splitCount(count, categories).map(({ ref, count: n }) => [ref, n]));
+}
+
+/** The exact request a price is asked for and a run is started with; categories in the contract's order, so equal forms give equal requests. */
 export function runRequest(avatarId: string, form: RunForm): RunRequest {
   return {
     avatarId,
     count: form.count,
-    categories: SceneCategory.options.filter((c) => form.categories.includes(c)),
+    categories: orderCategories(form.categories),
     poses: { profile: form.poses.profile, back: form.poses.back },
   };
 }
