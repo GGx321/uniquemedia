@@ -125,7 +125,7 @@ export interface RenderPlan {
 }
 
 export interface VideoRenderDeps {
-  readonly library: Pick<Library, "root" | "readPhotoVerified" | "listAvatars" | "namedVideoFiles" | "usageReasons"> & IndexPort;
+  readonly library: Pick<Library, "root" | "readPhotoVerified" | "listAvatars" | "namedVideoFiles" | "usageReasons" | "releasePendingPhotos"> & IndexPort;
   readonly tracker: CommitTracker;
   /** `userData/render-tmp`. Required: there is no `os.tmpdir` fallback. */
   readonly renderTmpDir: string;
@@ -535,6 +535,9 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         .then(async (committed) => {
           // The record is on disk; the used index follows it before the job ends and the reservation is released.
           await indexCommittedRecord(deps.library, committed.record, log);
+          // The record now marks the photos used. A hold made for this video's intent while the job was live (recovery could not read the intent and held all the
+          // avatar's photos) has nothing left to guard, and nobody else would release it.
+          deps.library.releasePendingPhotos(committed.record.id);
           try {
             deps.onCommitted?.(committed.record);
           } catch (error) {
