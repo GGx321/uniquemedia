@@ -814,6 +814,7 @@ function DraftEditor({
     spec: state.spec,
     exportStatus: view.exportStatus,
     avatarActive: avatar?.status !== "archived",
+    ...(avatar == null ? {} : { avatarUsage: avatar.usage }),
     verdict,
     photos: photoIndex,
     usedVideo,
