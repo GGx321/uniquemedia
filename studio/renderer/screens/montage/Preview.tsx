@@ -6,7 +6,7 @@ import { stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
 import { previewLook, refusedNow } from "../../engine/textPreviewQueue";
 import { ownStickerUrl, photoUrl, placeholderGradient, stickerUrl } from "../../lib/media";
-import { Icon } from "../../ui/Icon";
+import { Icon, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { captionLine, layerName, stickerName } from "./labels";
@@ -21,12 +21,13 @@ import type { TrimPeekStore } from "./trimPeek";
 import { resolveSelection } from "./selection";
 import type { DraftSession } from "./session";
 import { StickerCanvas } from "./StickerCanvas";
+import { clockMs } from "./timelineScale";
 import { type OwnSticker, useOwnStickers } from "./ownStickers";
 import { ownStickerKey, StickerFrameCache, stickerFramesFrom } from "./stickerFrames";
 import { setStickerSize } from "./stickerOps";
 import { setTextScale } from "./textOps";
 import { useLayerPreview, usePrefetchTextPreviews, useTextPreviews } from "./textPreviews";
-import { usePlayheadFrame } from "./usePlayhead";
+import { usePlayheadFrame, usePlayheadRest, usePlayheadStep, usePlaying } from "./usePlayhead";
 import { type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // 3d.4: the editor's live preview (Editor.dc.html's centre: the 9:16 frame at 306 × 544), drawn at the playhead's frame from the
@@ -545,6 +546,8 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           onDrop={(e) => dropOn(e, cell)}
         />
       ))}
+      {/* After the cells and before the layers: drawn above the picture, under every caption and sticker (they keep their presses). */}
+      <PreviewPlay timeline={timeline} gesture={drag !== null} />
       {layers.map(({ index, layer }) => {
         const handlers = {
           label: layerLabel(live, index),
@@ -576,6 +579,60 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
       {bars && <SlideBars spec={live} frame={frame} />}
       {hinted !== undefined && <CellHint cell={hinted} pending={hinted.content.kind === "scene" && focusPending.has(hinted.content.photoId)} />}
     </div>
+  );
+}
+
+/** How long the ❚❚ stays after a playback starts, and after the pointer last moved over the frame (playhead time, so it follows the clock). */
+const PLAY_PEEK_MS = 1_000;
+const PLAY_IDLE_MS = 1_600;
+
+/**
+ * The preview's own play control (the owner's feedback, 2026-10-05): ▶ in the middle of the frame while paused; while playing, ❚❚ for a moment
+ * after the start, while the pointer moves over the frame (and a little after), while it is hovered or keyboard-focused (the stylesheet), and
+ * otherwise gone, taking no click. It is `timeline.togglePlay`, the one playback the timeline's button drives. A gesture on the frame (a layer
+ * or a crop being dragged) hides it.
+ */
+function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: boolean }) {
+  const playing = usePlaying(timeline.playhead);
+  const step = usePlayheadStep(timeline.playhead);
+  const rest = usePlayheadRest(timeline.playhead);
+  const wrap = useRef<HTMLSpanElement>(null);
+  const [hovered, setHovered] = useState(false);
+  /** The playhead's step when the pointer last moved over the frame, in the playback that started at `run`. */
+  const [moved, setMoved] = useState<{ at: number; run: number } | null>(null);
+
+  // A pointer moving over the frame (and not dragging there) brings the ❚❚ up; listened to on the stage, so only this control re-renders.
+  useEffect(() => {
+    const stage = wrap.current?.parentElement;
+    if (stage === null || stage === undefined) return;
+    const onMove = (event: PointerEvent): void => {
+      if (event.buttons !== 0) return;
+      const now = timeline.playhead.get();
+      if (!now.playing) return;
+      const at = clockMs(now.ms);
+      setMoved((last) => (last !== null && last.at === at && last.run === now.restMs ? last : { at, run: now.restMs }));
+    };
+    stage.addEventListener("pointermove", onMove);
+    return () => stage.removeEventListener("pointermove", onMove);
+  }, [timeline.playhead]);
+
+  const sinceMove = moved !== null && moved.run === rest && step >= moved.at ? step - moved.at : Number.POSITIVE_INFINITY;
+  const shown = !gesture && (!playing || hovered || step - rest < PLAY_PEEK_MS || sinceMove < PLAY_IDLE_MS);
+  return (
+    <span ref={wrap} className="pv-play-wrap">
+      <button
+        type="button"
+        className={playing ? "pv-play pv-play-on" : "pv-play"}
+        data-shown={shown}
+        aria-label={playing ? "Пауза" : "Воспроизвести"}
+        tabIndex={gesture ? -1 : undefined}
+        onClick={timeline.togglePlay}
+        onPointerEnter={() => setHovered(true)}
+        onPointerLeave={() => setHovered(false)}
+      >
+        {playing ? <PauseIcon size={24} /> : <PlayIcon size={26} />}
+      </button>
+    </span>
   );
 }
 

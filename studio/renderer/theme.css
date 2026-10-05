@@ -130,6 +130,11 @@
   --pv-zone-fill: rgba(9, 9, 12, 0.3);
   --pv-zone-edge: rgba(255, 255, 255, 0.45);
   --pv-ring-inner: rgba(255, 255, 255, 0.6);
+  /* the preview's play control (2026-10-05): dark glass over any picture, a light rim, and its glow once it turns the accent */
+  --pv-play-glass: rgba(9, 9, 12, 0.46);
+  --pv-play-rim: rgba(255, 255, 255, 0.24);
+  --pv-play-glow: rgba(255, 122, 89, 0.4);
+  --pv-play-drop: rgba(0, 0, 0, 0.35);
   /* an own video in the preview and the trim strip (3f.3b) where there is no picture (the dev mock, a file still loading): a deep film ground, a frame
      grid so the crop is seen to move, a warm light at the video's middle, the stand-in card's glass edge, and the strip's sprocket holes */
   --pv-video-ground: linear-gradient(165deg, #322b3d 0%, #1b1823 52%, #0f0f14 100%);

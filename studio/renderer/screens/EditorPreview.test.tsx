@@ -44,6 +44,8 @@ const preview = (): HTMLElement => screen.getByRole("region", { name: "Прев�
 const props = (): HTMLElement => screen.getByRole("complementary", { name: "Свойства" });
 const clockText = (): string => (timeline().querySelector(".ed-tl-clock")?.textContent ?? "").replace(/\s+/g, " ");
 const inPreview = (name: string | RegExp): HTMLElement => within(preview()).getByRole("button", { name });
+/** The frame's cells (the preview's other buttons are its layers and its play control). */
+const cellButtons = (): HTMLElement[] => within(preview()).getAllByRole("button", { name: /^Кадр / });
 const undo = (): void => {
   fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
 };
@@ -112,9 +114,9 @@ describe("the frame at the playhead", () => {
   test("the clip under the playhead, its cells where the render puts them; the end shows the last frame", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { clips: [photoClip(0, P1, 2_000), collageClip(1, [P2, null, P3], 3_000, false)] });
-    expect(within(preview()).getAllByRole("button").map((b) => b.getAttribute("aria-label"))).toEqual(["Кадр 1"]);
+    expect(cellButtons().map((b) => b.getAttribute("aria-label"))).toEqual(["Кадр 1"]);
     fireEvent.keyDown(within(timeline()).getByRole("slider", { name: "Плейхед" }), { key: "End" });
-    const cells = within(preview()).getAllByRole("button");
+    const cells = cellButtons();
     expect(cells.map((b) => b.getAttribute("aria-label"))).toEqual(["Кадр 2, ячейка 1", "Кадр 2, ячейка 2: пустая", "Кадр 2, ячейка 3"]);
     expect(cells.map(drawnBox)).toEqual(clipCellRects({ kind: "collage", layout: "collage3" }).map(exact));
   });
@@ -644,6 +646,110 @@ describe("playback", () => {
     expect(clockText()).toBe("00:08.0 / 00:08.0");
     expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
     expect(frames.pending()).toBe(0);
+  });
+});
+
+// The owner's feedback (2026-10-05): the preview had no play control of its own. A ▶ sits in the middle of the frame while the montage is
+// paused; while it plays, a ❚❚ shows for a moment after the start and whenever the pointer moves over the frame, and is gone (taking no click)
+// otherwise. It drives the one playback the timeline's button drives, and it lies UNDER the layers: a caption or a sticker over the middle of
+// the frame keeps its press.
+describe("the play control on the preview", () => {
+  const control = (): HTMLElement => {
+    const node = preview().querySelector(".pv-play");
+    if (!(node instanceof HTMLElement)) throw new Error("no play control on the preview");
+    return node;
+  };
+  const shown = (): string | null => control().getAttribute("data-shown");
+  const stage = (): HTMLElement => {
+    const node = preview().querySelector(".pv-stage");
+    if (!(node instanceof HTMLElement)) throw new Error("no stage");
+    return node;
+  };
+
+  test("paused, a ▶ in the frame plays the montage the timeline plays; then it is ❚❚, and stops it", async () => {
+    frames = manualFrames();
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    expect([control().getAttribute("aria-label"), shown()]).toEqual(["Воспроизвести", "true"]);
+    fireEvent.click(control());
+    expect(within(timeline()).getByRole("button", { name: "Пауза" })).toBeDefined();
+    frames.advance(1_000);
+    expect(clockText()).toBe("00:01.0 / 00:08.0");
+    expect(control().getAttribute("aria-label")).toBe("Пауза");
+    fireEvent.click(control());
+    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
+    expect([control().getAttribute("aria-label"), shown()]).toEqual(["Воспроизвести", "true"]);
+    frames.advance(1_000);
+    expect(clockText()).toBe("00:01.0 / 00:08.0");
+  });
+
+  test("one playback: started by the timeline's button, it is stopped by the preview's, and the other way round", async () => {
+    frames = manualFrames();
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
+    expect(control().getAttribute("aria-label")).toBe("Пауза");
+    frames.advance(500);
+    fireEvent.click(control());
+    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
+    expect(clockText()).toBe("00:00.5 / 00:08.0");
+    fireEvent.click(control());
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Пауза" }));
+    expect(control().getAttribute("aria-label")).toBe("Воспроизвести");
+  });
+
+  test("playing: shown for a moment after the start, then hidden until the pointer moves over the frame, and again after a still moment", async () => {
+    frames = manualFrames();
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
+    expect(shown()).toBe("true");
+    for (let i = 0; i < 40; i++) frames.advance(34);
+    expect(shown()).toBe("false");
+    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 40, clientY: 40 });
+    frames.advance(34);
+    expect(shown()).toBe("true");
+    for (let i = 0; i < 60; i++) frames.advance(34);
+    expect(shown()).toBe("false");
+    // Hovered, it stays while the pointer rests on it.
+    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 41, clientY: 40 });
+    fireEvent.pointerEnter(control());
+    for (let i = 0; i < 60; i++) frames.advance(34);
+    expect(shown()).toBe("true");
+    fireEvent.pointerLeave(control());
+    frames.advance(34);
+    expect(shown()).toBe("false");
+  });
+
+  test("a pointer moving with a button held (a drag on the frame) does not bring it up", async () => {
+    frames = manualFrames();
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
+    for (let i = 0; i < 40; i++) frames.advance(34);
+    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 1, clientX: 40, clientY: 40 });
+    frames.advance(34);
+    expect(shown()).toBe("false");
+  });
+
+  test("it lies under the layers: a sticker over the middle of the frame is drawn above it and keeps its press", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [heart(0, 0, 4_000, { x: 0.5, y: 0.5, size: 0.4 })] });
+    const sticker = inPreview("Стикер 1: Сердце");
+    // Later in the frame's order is drawn above: the layer comes after the control.
+    expect(control().compareDocumentPosition(sticker) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.pointerDown(sticker, { pointerId: 2, button: 0, clientX: 0, clientY: 0 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 2 }));
+    });
+    expect(sticker.getAttribute("aria-pressed")).toBe("true");
+    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
+  });
+
+  test("an empty montage has nothing to play: no control on the frame", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { clips: [] });
+    expect(preview().querySelector(".pv-play") === null).toBe(true);
   });
 });
 

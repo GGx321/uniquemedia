@@ -235,14 +235,16 @@ describe("one sound at a time across the editor (round 1, L5)", () => {
     seedMine(engine);
     await openMine(engine, client);
     const listen = () => within(section("Музыка")).getByRole("button", { name: /^(Послушать|Остановить) summer-edit\.mp3$/ });
-    fireEvent.click(screen.getByRole("button", { name: "Воспроизвести" }));
+    // The timeline's own control (the preview has one more, driving the same playback).
+    const timeline = (): HTMLElement => screen.getByRole("region", { name: "Таймлайн" });
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
     await flush();
-    expect(screen.getByRole("button", { name: "Пауза" })).toBeDefined();
+    expect(within(timeline()).getByRole("button", { name: "Пауза" })).toBeDefined();
     fireEvent.click(listen());
     await flush();
     expect(listen().getAttribute("aria-pressed")).toBe("true");
-    expect(screen.getByRole("button", { name: "Воспроизвести" })).toBeDefined();
-    fireEvent.click(screen.getByRole("button", { name: "Воспроизвести" }));
+    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
     await flush();
     expect(listen().getAttribute("aria-pressed")).toBe("false");
   });
