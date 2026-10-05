@@ -25,6 +25,12 @@ test("a photo held by an unfinished video says so and does not advise cancelling
   const text = errorText({ code: "PHOTO_UNAVAILABLE", issues: PHOTO_ISSUES, photoReason: "pending-video" });
   expect(text).toContain("не успело сохраниться");
   expect(text).not.toContain("Отмените");
+  // No promise that waiting helps: an unfinished video is settled at start-up (or a library switch) only, and an unreadable one holds every photo.
+  expect(text).not.toContain("Подождите");
+  expect(text).not.toContain("подождите");
+  expect(text).toContain("при запуске Studio");
+  // The notice the engine raises for an unreadable intent is named, as the owner reads it.
+  expect(text).toContain("Незавершённое видео не прочитано");
   expect(text).toContain("выберите другое фото");
 });
 

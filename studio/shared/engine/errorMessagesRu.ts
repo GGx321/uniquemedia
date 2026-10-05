@@ -158,12 +158,14 @@ export const CAPTION_ISSUES_RU = {
 
 /**
  * Why a photo was refused, for PHOTO_UNAVAILABLE's `photoReason`: each text names the cause and the way out. The last two refuse EVERY photo of the
- * avatar, so replacing one photo cannot help and the text says so.
+ * avatar, so replacing one photo cannot help and the text says so; `pending-video` may refuse every photo too (an unreadable intent holds them all),
+ * so its text does not promise that another photo is free.
  */
 export const PHOTO_UNAVAILABLE_REASONS_RU = {
   "in-video": "Это фото уже в другом видео: одно фото идёт только в одно видео. Выберите другое фото или удалите то видео — тогда фото освободится.",
   "held-by-render": "Это фото сейчас занято рендером: он стоит в очереди или идёт. Отмените тот рендер — тогда фото освободится; если он соберётся, фото останется в том видео. Выберите другое фото.",
-  "pending-video": "Это фото занято видео, которое не успело сохраниться до конца: Studio сейчас разбирается с ним. Подождите немного (о результате скажет уведомление) или выберите другое фото.",
+  "pending-video":
+    "Это фото держит видео, которое не успело сохраниться до конца. Оно освободится, когда Studio доделает или отменит это видео — это происходит при запуске Studio. Если пришло уведомление «Незавершённое видео не прочитано», следуйте ему. Пока выберите другое фото, если оно свободно.",
   "index-stale": "Studio сейчас не может проверить, какие фото этого аватара уже в видео: она ещё перечитывает записи. Пока так, не подходят все фото этого аватара, а не одно. Подождите немного и повторите.",
   "log-needs-repair":
     "Записи об этом аватаре повреждены или недоступны, и Studio не знает, какие его фото уже в видео, поэтому не подходят все фото этого аватара, а не одно. Откройте «Фото» этого аватара: там написано, что случилось и что можно сделать.",
