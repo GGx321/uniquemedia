@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { EventMessage, ResponseMessage, type AvatarTraits, type Estimate } from "../shared/engine";
@@ -676,20 +676,24 @@ describe("avatars.rewriteDescriptor", () => {
     ok(await rewriting);
   });
 
-  test("a library write that fails after the paid call fails the command; the money stays settled and the paid descriptor is kept", async () => {
+  // The avatar's folder must still be on the disk when the paid call starts (an avatar whose folder went to the Trash is refused NOT_FOUND before any money: see
+  // engine.avatarDelete.test.ts), so this failure is made AFTER that look: the folder is there and cannot be written to.
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a library write that fails after the paid call fails the command; the money stays settled and the paid descriptor is kept", async () => {
     const { avatarId } = await seedUnreadable("draft");
     const { engine } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
-    // The avatars folder becomes a file: the rewrite cannot be written.
-    await rm(join(dir, "library", "avatars"), { recursive: true });
-    await writeFile(join(dir, "library", "avatars"), "not a folder");
-
-    const refused = failed(await engine.handle(rewriteDescriptor(avatarId)));
-    expect(refused.error.code).toBe("INTERNAL");
-    expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: 2_100 });
-    const jobId = String(ledgerLines()[0]?.jobId);
-    expect(refused.error.detail).toContain(`raw/${rawFileName(`${jobId}:rewrite`)}`);
-    const kept = JSON.parse(await readFile(join(dir, "userData", "raw", rawFileName(`${jobId}:rewrite`)), "utf8"));
-    expect(kept).toEqual({ avatarId, descriptor: { age: 25, text: GOOD } });
+    const folder = join(dir, "library", "avatars", avatarId);
+    await chmod(folder, 0o555);
+    try {
+      const refused = failed(await engine.handle(rewriteDescriptor(avatarId)));
+      expect(refused.error.code).toBe("INTERNAL");
+      expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: 2_100 });
+      const jobId = String(ledgerLines()[0]?.jobId);
+      expect(refused.error.detail).toContain(`raw/${rawFileName(`${jobId}:rewrite`)}`);
+      const kept = JSON.parse(await readFile(join(dir, "userData", "raw", rawFileName(`${jobId}:rewrite`)), "utf8"));
+      expect(kept).toEqual({ avatarId, descriptor: { age: 25, text: GOOD } });
+    } finally {
+      await chmod(folder, 0o755);
+    }
   });
 });
 
