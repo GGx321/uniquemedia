@@ -1325,6 +1325,22 @@
   transform: translateX(-50%);
 }
 
+/* An own photo with no picture to draw (no record yet, gone, or a picture that would not load; review r1 LOW-5): the cell's ground, hatched,
+   with the figure, so it never reads as an empty cell. */
+.pv-photo-standin {
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(135deg, var(--hatch-dark) 0 6px, var(--hatch-light) 6px 12px), var(--photo-dim);
+}
+
+.pv-photo-standin .portrait-silhouette {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  height: 62%;
+  transform: translateX(-50%);
+}
+
 /* an own video clip (3f.3b, V4): the `<video>` of its mezzanine, the whole video placed so the frame shows the render's crop; under it, the ground
    that stands in until its first frame (and wherever there is no picture), cut from the same place; the cell's button lies over both */
 .pv-cell-video {

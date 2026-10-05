@@ -742,6 +742,8 @@ const cropMoves = (window: Rect, source: Size): boolean => window.w < source.w |
 
 function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
   const { content, window, source } = cell;
+  /** The picture that would not load: a stand-in shows instead (until another picture is asked for). */
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
   const classes = ["pv-cell", content.kind === "video" ? "pv-cell-video" : "", selected ? "pv-cell-on" : "", dropping ? "pv-cell-drop" : ""].filter(Boolean).join(" ");
   const style: CSSProperties = { ...boxStyle(cell.rect), opacity: cell.alphaPermille / 1000 };
   return (
@@ -782,12 +784,15 @@ function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, d
             </span>
           )
         ))}
-      {/* 3-H1: an own photo's window comes from its RECORD's size (the render's), so it is placed before its picture arrives. */}
+      {/* 3-H1: an own photo's window comes from its RECORD's size (the render's), so it is placed before its picture arrives. With no record
+          (not read yet, or no longer in the library) or a picture that would not load, the cell shows a stand-in (review r1 LOW-5). */}
       {content.kind === "ownPhoto" &&
-        window !== null &&
-        source !== null &&
-        (url !== null ? (
-          <img className="pv-photo" src={url} alt="" draggable={false} style={pictureStyle(window, source)} />
+        (window === null || source === null || (url !== null && failedUrl === url) ? (
+          <span className="pv-photo-standin" aria-hidden="true">
+            <Silhouette />
+          </span>
+        ) : url !== null ? (
+          <img className="pv-photo" src={url} alt="" draggable={false} style={pictureStyle(window, source)} onError={() => setFailedUrl(url)} />
         ) : (
           <span className="pv-photo pv-photo-mock" style={{ ...pictureStyle(window, source), background: placeholderGradient(content.mediaId) }}>
             <Silhouette />
