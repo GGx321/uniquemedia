@@ -1035,6 +1035,85 @@ describe("bringing a piece back from the quarantine is judged, confined and neve
     expect(await readdir(folder)).toEqual([]);
   });
 
+  test("two copies of the right size, the newest one with the wrong content (a zero-filled or rotted copy): the older, whose hash is the record's, is brought back", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    await stamp("2026-10-04T11-00-00-000Z", { [piece.file]: "\0\0\0\0\0\0\0\0\0\0\0" });
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("photo bytes");
+    expect(reopened.list().total).toBe(1);
+  });
+
+  test("a partial copy in the NEWER stamp and the full one in the older: every copy is looked at, and the full one is brought back", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    await stamp("2026-10-04T11-00-00-000Z", { [piece.file]: "part" });
+    const report = await records().recover();
+    expect(report.restored).toBe(1);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("photo bytes");
+  });
+
+  test("no copy has the record's hash: nothing is brought back, and the record stays a missing-file problem", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "PHOTO BYTES" });
+    const report = await records().recover();
+    expect(report.restored).toBe(0);
+    expect(report.problems).toEqual([{ file: `${piece.id}.json`, reason: "missing-file" }]);
+  });
+
+  /** An orphan file in media/ whose record is only in the quarantine, in the copies a test gives. */
+  async function orphanWithRecordCopies(copies: Record<string, (good: string) => string>): Promise<{ id: string; good: string }> {
+    const summary = await records().commit(await photoInput());
+    const good = await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8");
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "gone.json"));
+    for (const [name, make] of Object.entries(copies)) await stamp(name, { [`${summary.mediaId}.json`]: make(good) });
+    return { id: summary.mediaId, good };
+  }
+
+  test("a truncated record copy in the newest stamp is skipped, and the good older copy is brought back and listed", async () => {
+    const { id } = await orphanWithRecordCopies({
+      "2026-10-04T10-00-00-000Z": (good) => good,
+      "2026-10-04T11-00-00-000Z": (good) => good.slice(0, 40),
+    });
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(reopened.list().media.map((m) => m.mediaId)).toEqual([id]);
+  });
+
+  test("a record copy whose bytes are not the size of the file in media/ is skipped", async () => {
+    const { id } = await orphanWithRecordCopies({
+      "2026-10-04T10-00-00-000Z": (good) => good,
+      "2026-10-04T11-00-00-000Z": (good) => good.replace(/"bytes": ?\d+/, '"bytes": 9999'),
+    });
+    const reopened = records();
+    await reopened.recover();
+    expect(reopened.list().media.map((m) => m.mediaId)).toEqual([id]);
+    expect(reopened.get(id)?.bytes).toBe("photo bytes".length);
+  });
+
+  test("a record copy that is not a trusted record of its own name is skipped", async () => {
+    const { id } = await orphanWithRecordCopies({
+      "2026-10-04T10-00-00-000Z": (good) => good,
+      "2026-10-04T11-00-00-000Z": (good) => good.replace(/"id": ?"[^"]+"/, '"id": "media-99999999"'),
+    });
+    const reopened = records();
+    await reopened.recover();
+    expect(reopened.list().media.map((m) => m.mediaId)).toEqual([id]);
+  });
+
+  test("stamps are ordered by their time, not as text: the folder made later in the same millisecond (…Z-10) is newer than …Z-2", async () => {
+    const { id } = await orphanWithRecordCopies({
+      "2026-10-04T10-00-00-000Z-2": (good) => good.replace(/"name": ?"[^"]+"/, '"name": "older.jpg"'),
+      "2026-10-04T10-00-00-000Z-10": (good) => good.replace(/"name": ?"[^"]+"/, '"name": "newer.jpg"'),
+    });
+    const reopened = records();
+    await reopened.recover();
+    expect(reopened.get(id)?.name).toBe("newer.jpg");
+  });
+
   test("records that cannot be listed are told in one log line with counts per reason and no path", async () => {
     await recordWithoutFile();
     await writeFile(join(mediaDir(), "media-00000070.json"), "{ not json");

@@ -324,7 +324,7 @@ export class MediaRecords {
     if (!(await this.#plainFolderInRoot(parent))) return found;
     let stamps;
     try {
-      stamps = (await readdir(parent, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().reverse();
+      stamps = (await readdir(parent, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(compareStamps).reverse();
     } catch {
       return found;
     }
@@ -340,6 +340,27 @@ export class MediaRecords {
       for (const file of files) if (file.isFile()) found.set(file.name, [...(found.get(file.name) ?? []), join(folder, file.name)]);
     }
     return found;
+  }
+
+  /** Whether a quarantined copy of a record's FILE is that file: the size the record names, and the hash it names (a same-size copy a sync zero-filled is not it). */
+  async #fitsFile(from: string, bytes: number, sha256: string): Promise<boolean> {
+    if ((await lstat(from).then((info) => info.size, () => -1)) !== bytes) return false;
+    return (await hashFile(from).catch(() => null)) === sha256;
+  }
+
+  /**
+   * Whether a quarantined copy of a RECORD can be brought back to `recordName`: it reads as a record of this version, is trusted under that name, and the file in `media/` that
+   * it names is the size it says (a truncated or altered copy is not the record of the file that is there).
+   */
+  async #fitsRecord(from: string, recordName: string): Promise<boolean> {
+    try {
+      const parsed = RecordShape.safeParse(JSON.parse(await readFile(from, "utf8")));
+      if (!parsed.success || !this.#trusted(parsed.data, recordName)) return false;
+      const size = await lstat(join(this.#dir, parsed.data.file)).then((info) => (info.isFile() ? info.size : -1), () => -1);
+      return size === parsed.data.bytes;
+    } catch {
+      return false;
+    }
   }
 
   /**
@@ -456,11 +477,11 @@ export class MediaRecords {
     let restored = 0;
     const quarantine = new Quarantine(this.#options.root, this.#options.now, this.#options.quarantineDurability);
     let held: Map<string, string[]> | undefined;
-    // Brings a piece back from the quarantine: the newest copy that is the size asked for (a file is the size its record names; a record has no size to match). A partial
-    // copy a sync left in an older stamp is never the one that comes back.
-    const bringBack = async (name: string, bytes?: number): Promise<boolean> => {
+    // Brings a piece back from the quarantine: the newest copy that `fits` (see `#fitsRecord` and `#fitsFile`). A partial copy a sync left in a newer or older stamp, a copy of the
+    // right size with the wrong content, and a record that cannot be trusted are each skipped, and the next copy is tried.
+    const bringBack = async (name: string, fits: (from: string) => Promise<boolean>): Promise<boolean> => {
       for (const from of (held ??= await this.#quarantinedMedia()).get(name) ?? []) {
-        if (bytes !== undefined && (await lstat(from).then((info) => info.size, () => -1)) !== bytes) continue;
+        if (!(await fits(from))) continue;
         if (!(await this.#restore(from, name))) return false;
         held.set(name, (held.get(name) ?? []).filter((path) => path !== from));
         restored++;
@@ -485,7 +506,7 @@ export class MediaRecords {
       if (judged.kind === "problem") problems.push({ file: entry.name, reason: judged.reason });
       else if (judged.kind === "dangling") {
         // Told, not moved: its file may be on its way. A file the quarantine holds under its name (an older open set it aside) is brought back to it.
-        if (await bringBack(judged.file, judged.bytes)) await enterJudged(entry.name);
+        if (await bringBack(judged.file, (from) => this.#fitsFile(from, judged.bytes, judged.sha256))) await enterJudged(entry.name);
         else problems.push({ file: entry.name, reason: "missing-file" });
       } else if (!this.#inFlight.has(judged.record.id)) this.#enter(judged.record);
     }
@@ -495,7 +516,7 @@ export class MediaRecords {
       // Judged AFTER the listing: a commit that ended since has its record in the index now, and its file is no orphan.
       if (recordIds.has(id) || this.#inFlight.has(id) || this.#index.has(id) || this.#deleting.has(id)) continue;
       // Its record may be in the quarantine (an older open set it aside): the pair is brought back together, and the file stays.
-      if (await bringBack(`${id}.json`)) {
+      if (await bringBack(`${id}.json`, (from) => this.#fitsRecord(from, `${id}.json`))) {
         await enterJudged(`${id}.json`);
         continue;
       }
@@ -515,7 +536,7 @@ export class MediaRecords {
     return { listed: this.#index.size, quarantinedOrphans, restored, problems, unusable: false };
   }
 
-  async #judge(name: string): Promise<{ kind: "record"; record: RecordShape } | { kind: "dangling"; file: string; bytes: number } | { kind: "problem"; reason: MediaProblemReason }> {
+  async #judge(name: string): Promise<{ kind: "record"; record: RecordShape } | { kind: "dangling"; file: string; bytes: number; sha256: string } | { kind: "problem"; reason: MediaProblemReason }> {
     let text: string;
     try {
       text = await readFile(join(this.#dir, name), "utf8");
@@ -537,7 +558,7 @@ export class MediaRecords {
       info = await (this.#options.fs?.lstat ?? lstat)(join(this.#dir, record.file));
     } catch (error) {
       // Only a file that is NOT THERE makes a record dangling; any other error says nothing about the file (a cloud placeholder, a drive).
-      if (hasErrorCode(error, "ENOENT")) return { kind: "dangling", file: record.file, bytes: record.bytes };
+      if (hasErrorCode(error, "ENOENT")) return { kind: "dangling", file: record.file, bytes: record.bytes, sha256: record.sha256 };
       return { kind: "problem", reason: "damaged" };
     }
     if (!info.isFile() || info.size !== record.bytes) return { kind: "problem", reason: "damaged" };
@@ -784,6 +805,19 @@ async function exists(path: string): Promise<boolean> {
     if (hasErrorCode(error, "ENOENT")) return false;
     throw error;
   }
+}
+
+/** Quarantine stamps by their time: `<iso>Z`, then `<iso>Z-<n>` for a folder made in the same millisecond, ordered by `n` as a number (`-10` is after `-2`). */
+function compareStamps(a: string, b: string): number {
+  const split = (stamp: string): { base: string; n: number } | null => {
+    const match = /^(.*Z)(?:-(\d+))?$/.exec(stamp);
+    return match?.[1] === undefined ? null : { base: match[1], n: match[2] === undefined ? 0 : Number(match[2]) };
+  };
+  const left = split(a);
+  const right = split(b);
+  if (left === null || right === null) return a < b ? -1 : a > b ? 1 : 0;
+  if (left.base !== right.base) return left.base < right.base ? -1 : 1;
+  return left.n - right.n;
 }
 
 async function hashFile(path: string): Promise<string> {
