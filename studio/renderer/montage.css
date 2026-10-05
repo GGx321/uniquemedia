@@ -3047,13 +3047,16 @@
 }
 
 /* A low window (the large-screen audit's M6a, 1200 × 760): the sections keep their own height and the tab scrolls as a whole, so the
-   presets are never drawn over «Слои» and the list does not scroll inside a scroll. */
-.ed-media-text {
+   presets are never drawn over «Слои» and the list does not scroll inside a scroll. The «GIF» tab the same (review round 1: its own-sticker
+   section was cut off 92 px down, out of reach); «Фото», «Мои» and «Музыка» scroll their own lists. */
+.ed-media-text,
+.ed-media-gif {
   overflow-x: hidden;
   overflow-y: auto;
 }
 
-.ed-media-text > * {
+.ed-media-text > *,
+.ed-media-gif > * {
   flex-shrink: 0;
 }
 
