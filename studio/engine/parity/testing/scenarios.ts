@@ -1737,7 +1737,49 @@ const AVATAR_DELETE_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS];
+// CS.2: the owner's own scene categories. Only the free commands are played here (the parity rig scripts no chat, so a create and a regenerate have their own
+// engine and mock tests): what the library lists, a rename and a removal with every refusal, a delete, the forgetting of an interrupted call, and a run that
+// names a category the library does not hold. The price (`categories.estimate`) differs by design: the mock's prices are «live», the engine's offline ones the table.
+const CATEGORY_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "custom categories: the library lists its category, the unreadable file and the interrupted create; a rename, a removal and a delete, with their refusals",
+    rig: { categories: true },
+    async run(t) {
+      t.note("the list: one category, one file nobody can read, one create a closed Studio left, nothing in flight");
+      await t.call("categories.list", {});
+      t.note("a rename is free and announced; a name another category holds and a blank one are refused");
+      await t.call("categories.update", { categoryId: "cat-parity-0001", name: "  Кофейни у Сены " });
+      await t.call("categories.update", { categoryId: "cat-parity-0001", name: " " });
+      await t.call("categories.update", { categoryId: "cat-nobody-here", name: "Другое имя" });
+      t.note("an outfit goes by its text; one that is not there, and a place when the pool is at its minimum, are refused");
+      await t.call("categories.update", { categoryId: "cat-parity-0001", removeOutfits: ["a red scarf and a coat"] });
+      await t.call("categories.update", { categoryId: "cat-parity-0001", removeOutfits: ["a hat nobody has"] });
+      await t.call("categories.update", { categoryId: "cat-parity-0001", removeOutfits: ["a black midi dress"] });
+      await t.call("categories.update", { categoryId: "cat-parity-0001", removeLocations: ["a flower stall"] });
+      await t.call("categories.update", { categoryId: "cat-parity-0001" });
+      await t.call("categories.list", {});
+      t.note("the interrupted create is forgotten once; the second time there is nothing to forget");
+      await t.call("categories.dismissInterrupted", { jobId: "job-parity-0001" });
+      await t.call("categories.dismissInterrupted", { jobId: "job-parity-0001" });
+      t.note("a delete announces the removal; a second delete finds nothing");
+      await t.call("categories.delete", { categoryId: "cat-parity-0001" });
+      await t.call("categories.delete", { categoryId: "cat-parity-0001" });
+      await t.call("categories.list", {});
+    },
+  },
+  {
+    name: "custom categories: a run names a category the library does not hold, and is refused before any price",
+    rig: { categories: true },
+    async run(t, w) {
+      const poses = { profile: false, back: false };
+      t.note("an estimate and a start name a category nobody made (one the library holds is not played: its price is worded differently by design)");
+      await t.call("runs.estimate", { avatarId: w.avatarId, count: 4, categories: ["home", "cat-nobody-here"], poses });
+      await t.call("runs.start", { avatarId: w.avatarId, count: 4, categories: ["cat-nobody-here"], poses, acceptedWorstMicros: 10_000_000 });
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...CATEGORY_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

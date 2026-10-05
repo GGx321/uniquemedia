@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { authorizationLabel, markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
 import { failureDetail } from "./failureDetail";
+import { readPoolAnswer } from "../engine/scenes/poolGen";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -89,6 +90,46 @@ describe("requestCarries lowercases the marker words too", () => {
     await send(m, "/credits?note=zebra");
     expect(m.requests.map((r) => requestCarries(r, ["ZEBRA"]))).toEqual([true]);
     expect(m.requests.map((r) => requestCarries(r, ["Lantern", "Zebra"]))).toEqual([true]);
+  });
+});
+
+// CS.2: the pool call of a custom category ("scene_pool"). The smoke creates a category against this mock, so what the mock answers must be a pool the
+// engine's own reader accepts whole, at a cost /credits adds up, and its requests are listed apart from every other chat call.
+describe("the pool call", () => {
+  const body = (user: string) =>
+    JSON.stringify({
+      model: "x-ai/grok-4.3",
+      messages: [
+        { role: "system", content: "rules" },
+        { role: "user", content: user },
+      ],
+      response_format: { type: "json_schema", json_schema: { name: "scene_pool", strict: true, schema: {} } },
+    });
+  const post = (m: MockOpenRouter, user = "Description of the theme") => nativeFetch(`${m.url}/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: body(user) });
+
+  test("answers a pool the engine's reader accepts whole, with nothing dropped", async () => {
+    const m = await started();
+    const reply = (await (await post(m)).json()) as { choices: { message: { content: string } }[] };
+    const read = readPoolAnswer(reply.choices[0]?.message.content ?? "");
+    expect(read.ok && read.dropped).toBe(0);
+    expect(read.ok && read.label).toBe("Mock theme");
+  });
+
+  test("lists the request apart from the other chat calls, and books its cost against /credits", async () => {
+    const m = await started();
+    await post(m);
+    expect(m.poolRequests()).toHaveLength(1);
+    expect(m.sceneWriterRequests()).toHaveLength(0);
+    expect(m.unexpected).toEqual([]);
+    expect(m.totalUsageUsd()).toBeCloseTo(0.0051, 6);
+  });
+
+  test("answers what the scenario told it to, and a cost of its own", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "A 25-year-old woman.", poolAnswer: { label: "Seine bakeries" }, costsUsd: { pool: 0.006 } });
+    const reply = (await (await post(mock)).json()) as { choices: { message: { content: string } }[] };
+    const read = readPoolAnswer(reply.choices[0]?.message.content ?? "");
+    expect(read.ok && read.label).toBe("Seine bakeries");
+    expect(mock.totalUsageUsd()).toBeCloseTo(0.006, 6);
   });
 });
 

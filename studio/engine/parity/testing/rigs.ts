@@ -1,6 +1,6 @@
 import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
+import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type CategoryInterrupted, type CategorySummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
 import { handleMediaPickCommand, isMediaPickCommand, type MediaImportFlowDeps } from "../../../main/mediaImportFlow";
 import { SettingsStore } from "../../../main/settingsStore";
@@ -278,7 +278,47 @@ export interface RigOptions {
    * (`index-stale` is memory only, never a file: the unit tests of both engines hold it.)
    */
   readonly usage?: "record-unreadable" | "library-too-new" | "rejects-unreadable";
+  /**
+   * CS.2: the library holds one custom category (`PARITY_CATEGORY`), one category file nothing can read, and the record of one create a closed Studio left
+   * (`PARITY_INTERRUPTED`). The real rig writes them through the library's own store before the engine opens it; the mock is seeded with the same.
+   */
+  readonly categories?: boolean;
 }
+
+/** The custom category of a rig with `categories`: what the real store holds and the mock lists. */
+export const PARITY_CATEGORY: Omit<CategorySummary, "createdAt" | "updatedAt"> = {
+  categoryId: "cat-parity-0001",
+  name: "Кофейни Парижа",
+  description: "кофейни и булочные Парижа",
+  label: "Paris cafes",
+  style: "phone",
+  pool: {
+    locations: ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"].map((name, i) => ({
+      name,
+      times: ["morning", "midday"],
+      activities: [
+        { text: "reading a menu", twoHanded: false },
+        { text: "stirring a cappuccino", twoHanded: true },
+      ],
+      mirror: i === 2,
+    })),
+    outfits: ["a beige trench coat and jeans", "a striped tee and a beret", "a black midi dress", "a red scarf and a coat"],
+    shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+  },
+  model: "x-ai/grok-4.3",
+  spentMicros: 5_000,
+};
+
+/** The create a closed Studio left in a rig with `categories`: nothing of it is in the rig's ledger, so it is counted at nothing. */
+export const PARITY_INTERRUPTED = {
+  jobId: "job-parity-0001",
+  kind: "create",
+  name: "Горы зимой",
+  description: "горы зимой",
+  categoryId: null,
+  startedAt: "2026-10-05T12:00:00.000Z",
+  spentMicros: 0,
+} as const satisfies CategoryInterrupted;
 
 export interface ParityRig extends Recorded {
   readonly name: "mock" | "real";
@@ -349,7 +389,15 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     { ...SOFIA, photoCount: OTHER_PHOTOS, eligibleUnusedCount: OTHER_PHOTOS },
     { ...NORA, photoCount: 0, eligibleUnusedCount: 0 },
   ];
-  const engine = new MockEngine({ scheduler, avatars, photos, renderConcurrency: options.renderConcurrency ?? 1 });
+  const engine = new MockEngine({
+    scheduler,
+    avatars,
+    photos,
+    renderConcurrency: options.renderConcurrency ?? 1,
+    ...(options.categories === true
+      ? { categories: [{ ...PARITY_CATEGORY, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" }], unreadableCategories: 1, interruptedCategories: [{ ...PARITY_INTERRUPTED }] }
+      : {}),
+  });
   const events: EventMessage[] = [];
   engine.subscribe((raw) => events.push(EventMessage.parse(raw)));
   let messages = 0;
@@ -590,6 +638,12 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const otherPhotoIds = await seedPhotos(library, otherAvatarId, OTHER_PHOTOS, 2);
   const archivedAvatarId = await seedAvatar(library, "Nora");
   if (options.usage !== undefined) await breakUsage(join(dir, "library", "avatars", avatarId), avatarId, options.usage);
+  if (options.categories === true) {
+    await library.categories.create(PARITY_CATEGORY);
+    const { spentMicros: _counted, ...record } = PARITY_INTERRUPTED;
+    await library.categories.writePending(record);
+    await writeFile(join(dir, "library", "categories", "cat-parity-broken.json"), "{not json");
+  }
 
   const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds) };
   const gate = new Gate();

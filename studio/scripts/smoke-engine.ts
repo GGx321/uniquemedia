@@ -57,6 +57,9 @@
  *   record (canvas, a 9 frame loop, 3 slots a frame); `media.stickerBytes` answers the stored file itself through the real main, refuses a
  *   file changed since the import, and the built-in `stickers.bytes` never serves it; a one-frame GIF fails `not-animated`, a truncated
  *   one `format`; deleting the media ends the door. `--only sticker` runs it alone.
+ * - the custom-category scenario (CS.2, `runCategoryScenario`): `categories.create` makes the owner's own category with one paid pool call against the
+ *   mock, a run of 5 photos names it (every photo carries the category and the owner's name, the writer is told the English label, the plan keeps a
+ *   snapshot), and neither the avatar's marker vibe nor the category's name reaches the pool call. `--only category` runs it alone.
  *
  * Every debug door (remote debugging, DevTools, the test switches) is a
  * build-time constant: a `build:studio` output has none, however it is
@@ -2500,6 +2503,101 @@ async function runPhotoRunKillResumeScenario(target: Target): Promise<void> {
   }
 }
 
+// ---------- custom category end-to-end scenario (CS.2) ----------
+
+const CATEGORY_NAME = "Кофейни Парижа";
+const CATEGORY_DESCRIPTION = "кофейни и булочные Парижа, утро и вечер";
+const CATEGORY_LABEL = "Paris cafes";
+const CATEGORY_PHOTOS = 5;
+
+/**
+ * CS.2: the owner's own category, made and drawn in the packaged app against the mock. `categories.create` is one paid pool call (the mock answers
+ * the "scene_pool" schema), the category is listed, and a run of 5 photos names it: every photo is the category's, carries the owner's name, and the
+ * writer was told only the English label. The avatar's marker vibe must reach no request of the category call; the pool call was reserved once and
+ * settled, and the run's plan keeps a snapshot of the category.
+ */
+async function runCategoryScenario(target: Target): Promise<void> {
+  const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true, poolAnswer: { label: CATEGORY_LABEL } });
+  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-category-"));
+  const userData = join(tmp, "userData");
+  const libraryRoot = join(tmp, "category-library");
+  await mkdir(userData, { recursive: true });
+  await mkdir(libraryRoot, { recursive: true });
+
+  const running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`]);
+  try {
+    const { cdp } = running;
+    const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
+    check("category scenario: settings.setApiKey stores the fake key", field(keySet, "ok") === true, keySet);
+    const libSet = await req(cdp, "settings.setLibraryPath", { path: libraryRoot });
+    check("category scenario: settings.setLibraryPath adopts the temp library (via --studio-pick-folder)", field(libSet, "ok") === true && field(libSet, "result", "libraryPath") === libraryRoot, libSet);
+    const avatarId = await createActiveAvatarForRun(cdp, "Cleo");
+
+    // 1. The library starts with no category; the pool call is priced before it is accepted.
+    const empty = await req(cdp, "categories.list");
+    check("category scenario: categories.list of a new library is empty, with nothing unreadable, interrupted or busy", JSON.stringify(field(empty, "result")) === JSON.stringify({ categories: [], unreadable: 0, interrupted: [], busy: null }), empty);
+    const estimate = await req(cdp, "categories.estimate");
+    const worstMicros = Number(field(estimate, "result", "worstMicros"));
+    check("category scenario: categories.estimate prices the pool call (a worst case above the expected one)", field(estimate, "ok") === true && worstMicros > Number(field(estimate, "result", "expectedMicros")) && worstMicros > 0, estimate);
+
+    // 2. One paid call makes the category.
+    const poolsBefore = mock.poolRequests().length;
+    const created = await req(cdp, "categories.create", { name: CATEGORY_NAME, description: CATEGORY_DESCRIPTION, acceptedWorstMicros: worstMicros });
+    check("category scenario: categories.create makes a category", field(created, "ok") === true, created);
+    const categoryId = String(field(created, "result", "category", "categoryId"));
+    check("category scenario: the category is the owner's name, the mock's label and a pool of five places", field(created, "result", "category", "name") === CATEGORY_NAME && field(created, "result", "category", "label") === CATEGORY_LABEL && Array.isArray(field(created, "result", "category", "pool", "locations")) && (field(created, "result", "category", "pool", "locations") as unknown[]).length === 5, created);
+    check("category scenario: the call cost what the mock billed for it (settled at usage.cost), and the category's own total says so", field(created, "result", "spentMicros") === 5_100 && field(created, "result", "category", "spentMicros") === 5_100, created);
+    check("category scenario: exactly one pool request reached the mock", mock.poolRequests().length === poolsBefore + 1, mock.poolRequests().length - poolsBefore);
+    const listed = await req(cdp, "categories.list");
+    const listedIds = field(listed, "result", "categories");
+    check("category scenario: categories.list holds the category, and the record is on disk in the library", Array.isArray(listedIds) && listedIds.length === 1 && field(listedIds[0], "categoryId") === categoryId && (await filesUnder(join(libraryRoot, "categories"))).some((f) => f.endsWith(`${categoryId}.json`)), listed);
+    const noPending = (await filesUnder(join(libraryRoot, "categories"))).filter((f) => f.includes("pending-"));
+    check("category scenario: the record of the call is gone once it ended", noPending.length === 0, noPending);
+
+    // 3. A run names it.
+    const request = { avatarId, count: CATEGORY_PHOTOS, categories: [categoryId], poses: RUN_POSES };
+    const runEstimate = await req(cdp, "runs.estimate", request);
+    check("category scenario: runs.estimate accepts the custom category", field(runEstimate, "ok") === true, runEstimate);
+    const started = await req(cdp, "runs.start", { ...request, acceptedWorstMicros: field(runEstimate, "result", "estimate", "worstMicros") });
+    check("category scenario: runs.start plans and launches the run", field(started, "ok") === true, started);
+    const runId = String(field(started, "result", "runId"));
+    const end = await waitFor("the category run's job to end", () => endEventOf(cdp, field(started, "result", "jobId")), 90_000);
+    check("category scenario: the run finished as job.done", field(end, "type") === "job.done", end);
+    const photoIds = field(end, "payload", "result", "photoIds");
+    check("category scenario: all 5 photos were drawn", Array.isArray(photoIds) && photoIds.length === CATEGORY_PHOTOS && Number(field(end, "payload", "result", "failedSlots")) === 0, end);
+
+    // 4. What the owner sees, and what the engine kept.
+    const photos = await req(cdp, "photos.list", { avatarId });
+    const generated = (field(photos, "result", "photos") as unknown[]).filter((p) => field(p, "category") === categoryId);
+    check("category scenario: photos.list lists the 5 photos under the category, each with the owner's name", generated.length === CATEGORY_PHOTOS && generated.every((p) => field(p, "categoryName") === CATEGORY_NAME), photos);
+    const plan: unknown = JSON.parse(await readFile(join(libraryRoot, "runs", runId, "plan.json"), "utf8"));
+    check(
+      "category scenario: the run's plan keeps a snapshot of the category (id, the owner's name, the English label, the style)",
+      JSON.stringify(field(plan, "categories")) === JSON.stringify([{ ref: categoryId, name: CATEGORY_NAME, label: CATEGORY_LABEL, style: "phone" }]),
+      field(plan, "categories"),
+    );
+    const writerBodies = mock.sceneWriterRequests().map((r) => r.bodyText);
+    check("category scenario: the writer was told the English label, never the category's id or the owner's name", writerBodies.length >= 1 && writerBodies.every((b) => b.includes(CATEGORY_LABEL) && !b.includes(categoryId) && !b.includes(CATEGORY_NAME)), writerBodies.length);
+
+    // 5. What did not leave: the avatar's marker vibe, and the category's name, in any request of the pool call.
+    const poolRequests = mock.poolRequests();
+    check("category scenario: the pool call carried the owner's description and neither the category's name nor the avatar's marker vibe", poolRequests.length === 1 && poolRequests.every((r) => r.bodyText.includes("кофейни и булочные Парижа") && !r.bodyText.includes(CATEGORY_NAME) && !carriesMarker(r)), poolRequests.map((r) => markerMatch(r, AVATAR_MARKER_WORDS)));
+    const carrying = mock.requests.filter(carriesMarker);
+    check("category scenario: every request that carries the avatar's marker vibe is an avatar_descriptor request", carrying.length > 0 && carrying.every((r) => r.schemaName === "avatar_descriptor"), carrying.map((r) => ({ path: r.path, schemaName: r.schemaName })));
+
+    // 6. The money: one reserve for the pool call, settled; nothing open; the mock's total is the ledger's.
+    const poolReserves = (await reservedAttemptIds(userData, "")).filter((id) => /:pool#\d+$/.test(id));
+    check("category scenario: the pool call was reserved exactly once, under its own attempt id", poolReserves.length === 1, poolReserves);
+    const money = await req(cdp, "money.status");
+    check("category scenario: money.status has no open reserve, and the ledger's total is what the mock billed", field(money, "result", "unsettledMicros") === 0 && Math.abs(Number(field(money, "result", "spentMicros")) - Math.round(mock.totalUsageUsd() * 1_000_000)) <= 1, money);
+    check("category scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
+  } finally {
+    await quit(running);
+    await mock.stop();
+    await removeTemp(tmp);
+  }
+}
+
 // ---------- main ----------
 
 // ---------- packaged render end-to-end scenario (plan 3a.9: headless E2E; 3e.1: playback) ----------
@@ -2949,6 +3047,13 @@ async function main(): Promise<void> {
     return;
   }
 
+  // `--only category` runs the custom-category scenario alone (CS.2), for working on it.
+  if (argValue("--only") === "category") {
+    await runCategoryScenario(target);
+    finish();
+    return;
+  }
+
   // `--only music` runs the track store's scenario alone, for working on it; the full run is the one that counts.
   if (argValue("--only") === "music") {
     await runMusicScenario(target);
@@ -3375,6 +3480,7 @@ async function main(): Promise<void> {
   await runPackagedStickerScenario(target);
   await runMusicScenario(target);
   await runPhotoRunKillResumeScenario(target);
+  await runCategoryScenario(target);
   await runPackagedRenderScenario(target);
   finish();
 }

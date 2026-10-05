@@ -16,7 +16,7 @@
  * - POST /chat/completions                       (the descriptor, schema
  *   "avatar_descriptor"; the age check, schema "age_check"; T6c's vision
  *   describe call, schema "import_describe"; the scene writer, schema
- *   "scene_sentences")
+ *   "scene_sentences"; a custom category's pool, schema "scene_pool")
  * - POST /images                                 (candidate and scene
  *   portraits — a real, valid, non-animated PNG rendered once by the bundled
  *   ffmpeg, never a committed binary blob)
@@ -45,6 +45,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
+import { POOL_JSON_SCHEMA } from "../engine/scenes/poolGen";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { servedPoolImagePng } from "./distinctPattern";
@@ -175,6 +176,25 @@ function writerSentenceFor(slot: z.infer<typeof WriterRequestSlot>): string {
   return `She spends a quiet moment at ${slot.location} in the ${slot.timeOfDay}, wearing ${slot.outfit}, calm and unhurried.`;
 }
 
+/**
+ * A category's pool as the mock answers the "scene_pool" call (CS.2): five places, three outfits and a deck, in the shape the engine's own reader
+ * accepts whole (poolGen.ts's `readPoolAnswer`; the mock's own test pins it). Every text is plain, short and free of the words the pool rules refuse.
+ */
+const DEFAULT_POOL_ANSWER = {
+  label: "Mock theme",
+  locations: ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"].map((name, i) => ({
+    name,
+    times: ["morning", "midday"],
+    activities: [
+      { text: "reading a menu", twoHanded: false },
+      { text: "stirring a cappuccino", twoHanded: true },
+    ],
+    mirror: i === 2,
+  })),
+  outfits: ["a beige trench coat and jeans", "a striped tee and a beret", "a black midi dress"],
+  shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+};
+
 /** The JSON schema a chat completion asked for ("avatar_descriptor", "age_check"), or null — studio/engine/testing/engineHarness.ts's `schemaName`, read from the parsed body instead of a captured fetch call. */
 function schemaNameOf(body: unknown): string | null {
   if (typeof body !== "object" || body === null || !("response_format" in body)) return null;
@@ -277,7 +297,9 @@ export interface MockOpenRouterOptions {
   /** Which age-check call, counted across the whole run (1-based), answers "not an adult"; 0 rejects none. */
   rejectAgeCheckNumber?: number;
   /** USD per call; /credits' total_usage is the running sum of exactly these. */
-  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; writer?: number };
+  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; writer?: number; pool?: number };
+  /** CS.2: fields that replace those of the default pool the mock answers for the "scene_pool" schema (a category's pool call), e.g. `{ label: "Seine bakeries" }`. */
+  poolAnswer?: Record<string, unknown>;
   /**
    * T6's kill-and-resume scenario: held after the request is recorded (so a
    * caller can see it arrive) and before the response is built, so a run
@@ -339,6 +361,8 @@ export interface MockOpenRouter {
   importDescribeRequests(): MockRequest[];
   /** T6: the scene writer's own requests ("scene_sentences" schema). */
   sceneWriterRequests(): MockRequest[];
+  /** CS.2: a custom category's pool calls ("scene_pool" schema). */
+  poolRequests(): MockRequest[];
   priceRequests(): MockRequest[];
   creditsRequests(): MockRequest[];
   /** The running total this mock has billed, in USD — what /credits reports. */
@@ -356,7 +380,7 @@ const NO_BODY: SentBody = { json: null, text: "" };
 
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
-  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, writer: 0.011, ...opts.costsUsd };
+  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, writer: 0.011, pool: 0.0051, ...opts.costsUsd };
   const rejectAt = opts.rejectAgeCheckNumber ?? 1;
   const imageDelayMs = opts.imageDelayMs ?? 0;
   const writerDelayMs = opts.writerDelayMs ?? 0;
@@ -475,6 +499,9 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
           const answer = { scenes: slots.map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
           return json(chatCompletion(JSON.stringify(answer), costs.writer));
         }
+        if (entry.schemaName === POOL_JSON_SCHEMA.name) {
+          return json(chatCompletion(JSON.stringify({ ...DEFAULT_POOL_ANSWER, ...opts.poolAnswer }), costs.pool));
+        }
         return loudly404(entry);
       }
       if (method === "POST" && path === "/api/v1/images") {
@@ -502,6 +529,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     descriptorRequests: () => requests.filter((r) => r.schemaName === "avatar_descriptor"),
     importDescribeRequests: () => requests.filter((r) => r.schemaName === "import_describe"),
     sceneWriterRequests: () => requests.filter((r) => r.schemaName === WRITER_JSON_SCHEMA.name),
+    poolRequests: () => requests.filter((r) => r.schemaName === POOL_JSON_SCHEMA.name),
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),
     creditsRequests: () => requests.filter((r) => r.path === "/api/v1/credits"),
     totalUsageUsd: () => totalUsageUsd,
