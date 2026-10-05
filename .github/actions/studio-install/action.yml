@@ -7,6 +7,9 @@ description: >-
   node_modules/ffmpeg-static, which makes bun reinstall the package and run its postinstall again. Whatever the attempt,
   the install only counts as done when the binary actually runs (`-version`), so a missing or truncated file fails the
   step instead of passing it. No cache: nothing restored from a cache is ever executed here.
+  The install is frozen on purpose: the weekly canary runs it on `bun latest`, and a lockfile-format change in a newer Bun turning
+  that job red is the early signal it exists to give, not a flake to retry away. The binary check has no timeout of its own:
+  `timeout` is not on macOS runners by default (and Git Bash on Windows has a different one), so it is not portable here.
 runs:
   using: composite
   steps:

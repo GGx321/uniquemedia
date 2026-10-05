@@ -720,6 +720,8 @@ describe("the Electron-Node steps' bounds", () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     expect(workflow).toMatch(/- "studio-v\*"/);
     expect(workflow).toContain("Studio releases are disabled while the repo is public; see owner decision 2026-10-05");
+    // Tags older than the commit that removed the upload and release steps would still publish.
+    expect(workflow).toContain("must point at a commit at or after c82a9aa5");
   });
 
   // ffmpeg-static's postinstall downloads its binary from GitHub on every install; one such download failed on main. Every job installs

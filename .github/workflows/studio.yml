@@ -34,6 +34,7 @@ on:
     # build and the heavy tier as verification, but there is no `release` job and the installers are not uploaded anywhere
     # (a public repo's artifacts are downloadable by any logged-in GitHub user, and the macOS ffmpeg-static build is GPL+nonfree).
     # Re-enable only together with a private distribution channel.
+    # A `studio-v*` tag must point at a commit at or after c82a9aa5: older commits still carry the upload and release steps.
     tags:
       - "studio-v*"
     # Studio builds on src/core and src/node, so a uniquifier-side change that
