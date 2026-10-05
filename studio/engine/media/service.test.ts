@@ -859,6 +859,30 @@ describe("a delete between the commit and the job's end (L-1, probe P2)", () => 
   });
 });
 
+describe("delete asks the reserved provider and takes the media out of the index in one synchronous step (L9 of the Stage 3 review)", () => {
+  test("a lookup that is already in flight when the provider is asked does not find the media afterwards: no await sits between the check and the removal", async () => {
+    let admitted = false;
+    let pending: Promise<unknown> = Promise.resolve();
+    const r: Rig = rig({
+      reservedMedia: (id) => {
+        // A render's lookup begins at this very moment, and its admission (`onFound`) runs the first time it can: a step after the provider answers.
+        pending = r.service.lookup(id, undefined, () => {
+          admitted = true;
+        });
+        return false;
+      },
+    });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const result = r.jobs.stateOf(jobId)?.result;
+    const mediaId = result?.kind === "import" ? result.mediaId : undefined;
+    if (mediaId === undefined || mediaId === null) throw new Error("the import did not store a media");
+    expect(await r.service.delete(mediaId)).toBe("deleted");
+    await pending;
+    expect(admitted).toBe(false);
+  });
+});
+
 describe("a media that a queued or running render uses (M-3)", () => {
   test("is not deleted while the provider says it is reserved: the answer is in-use, nothing is removed or told", async () => {
     const reserved = new Set<string>();

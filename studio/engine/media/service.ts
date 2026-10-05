@@ -289,9 +289,9 @@ export class MediaService {
    * a stored file, which checks it again before it reads.
    *
    * `onFound` is the render's ADMISSION (3f.2, fix round 3 M1): it runs SYNCHRONOUSLY, in the same step that reads the record and before
-   * the answer travels back, so a render reserves the media with no await between the lookup and the reservation. `media.delete` takes a
-   * media out of the index in its first tick and only then asks the reserved provider, so a media is either found here and then refused
-   * to the delete (`in-use`), or already gone from this lookup. It is not called for a media that is not found; a throw from it is the
+   * the answer travels back, so a render reserves the media with no await between the lookup and the reservation. `media.delete` asks the
+   * reserved provider and takes the media out of the index in ONE synchronous step (no await between the check and the removal; a test pins it), so a media is
+   * either found here and then refused to the delete (`in-use`), or already gone from this lookup. It is not called for a media that is not found; a throw from it is the
    * lookup's own.
    */
   async lookup(
@@ -345,6 +345,8 @@ export class MediaService {
       const area = this.#areaOf(library.root);
       await area.ready;
       if (!area.records.has(mediaId)) return "not-found";
+      // NO AWAIT from the provider's answer to the removal: `remove` takes the record out of the index in its synchronous prefix, so no lookup's admission
+      // (`onFound`) can run between «not reserved» and «gone». An await here would let a render reserve a media whose delete has already decided.
       if (this.#deps.reservedMedia?.(mediaId) === true) return "in-use";
       const removed = await area.records.remove(mediaId);
       if (!removed) return "not-found";
