@@ -1,5 +1,5 @@
 import { CAPTION_ISSUES_RU, type CaptionIssue, type EngineError, type MontageDraft } from "../../../shared/engine";
-import { type LayerPreview, previewLook } from "../../engine/textPreviewQueue";
+import { type LayerPreview, lookValue } from "../../engine/textPreviewQueue";
 import { errorText } from "../../lib/errors";
 import type { CaptionRefusal } from "./textOps";
 
@@ -63,17 +63,18 @@ export function captionNotice(local: CaptionRefusal | null, check: CaptionCheck)
 }
 
 /**
- * The text layers whose caption the engine's preview refused as a caption rule (TEXT_INVALID), judged for the layer's look NOW: an answer
- * for an older value is stale and counts for nothing, and a drawing that failed or a transport failure is not the caption's fault. This is
- * what the committed check cannot know (`emoji-missing` needs the real font): the render is refused for it later, in the job, so «Рендер»
- * waits for the same verdict the panel already shows.
+ * The text layers whose caption the engine's preview refused as a caption rule (TEXT_INVALID) for the text they hold NOW: an answer for an
+ * older text is stale and counts for nothing, and a drawing that failed or a transport failure is not the caption's fault. This is what the
+ * local rules cannot know (`emoji-missing` needs the real font): the render would be refused for it later, in the job, so «Рендер» is blocked
+ * by the same verdict the panel already shows. With no verdict yet (never asked, or still out) a layer is not listed.
  */
 export function refusedCaptionLayers(layers: readonly MontageDraft["layers"][number][], previewOf: (layerId: string) => LayerPreview): ReadonlySet<string> {
   const refused = new Set<string>();
   for (const layer of layers) {
     if (layer.kind !== "text") continue;
     const { shown } = previewOf(layer.layerId);
-    if (shown !== null && shown.look === previewLook(layer) && shown.answer.kind === "invalid") refused.add(layer.layerId);
+    // A caption rule depends on the text alone (and the shared emoji font), so a refusal holds while the colour, size, style or font change.
+    if (shown !== null && shown.answer.kind === "invalid" && lookValue(shown.look) === layer.value) refused.add(layer.layerId);
   }
   return refused;
 }

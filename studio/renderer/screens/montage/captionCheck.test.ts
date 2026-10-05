@@ -92,6 +92,17 @@ describe("the layers whose caption the engine's preview refused, as it stands no
     expect(refusedCaptionLayers([edited], (id) => states.get(id) ?? NO_PREVIEW).size).toBe(0);
   });
 
+  test.each([
+    ["colour", { color: "#000000" }],
+    ["size", { scale: 2 }],
+    ["style", { style: "outline" as const }],
+    ["font", { font: "oswald" as const }],
+  ])("a refusal stays when only the %s changes: the rule judges the value alone", (_what, patch) => {
+    const refused = layer(0, "tofu");
+    const states = new Map([[refused.layerId, answeredFor(previewLook(refused), invalid("emoji-missing"))]]);
+    expect([...refusedCaptionLayers([{ ...refused, ...patch }], (id) => states.get(id) ?? NO_PREVIEW)]).toEqual([refused.layerId]);
+  });
+
   test("a picture, a failed drawing, a layer never asked and a sticker are not listed", () => {
     const drawn = layer(0, "a");
     const broken = layer(1, "b");

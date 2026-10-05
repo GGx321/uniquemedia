@@ -58,6 +58,17 @@ export function previewLook(layer: TextLayer): string {
   return JSON.stringify([layer.value, layer.font, layer.style, layer.color, layer.scale]);
 }
 
+/** The caption text a look (`previewLook`) was made for, or null for a string that is not a look. */
+export function lookValue(look: string): string | null {
+  try {
+    const parsed: unknown = JSON.parse(look);
+    const value = Array.isArray(parsed) ? parsed[0] : undefined;
+    return typeof value === "string" ? value : null;
+  } catch {
+    return null;
+  }
+}
+
 interface Ask {
   readonly ask: number;
   readonly look: string;
