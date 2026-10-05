@@ -805,6 +805,21 @@ describe("notices in the editor float over the preview (slice review 5-L1)", () 
     expect(shownCards()).toHaveLength(1);
   });
 
+  test("review r2 LOW-4: a focused card folded behind a newer one hands the focus to that newer card", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    const refused = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice") as HTMLElement;
+    within(refused).getByRole("button", { name: "Закрыть" }).focus();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    await flush();
+    expect(refused.hidden).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Понятно" })));
+  });
+
   test("review r1 LOW-3: closing a card hands the focus to the next card, then to the screen's title", async () => {
     const { client, engine } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);

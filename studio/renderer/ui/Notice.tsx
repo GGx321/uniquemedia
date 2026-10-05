@@ -3,7 +3,7 @@ import type { EngineError } from "../../shared/engine";
 import { errorSettingsFocus, errorText, settingsLinkLabel } from "../lib/errors";
 import { useNavigate } from "../navigation";
 import { Icon } from "./Icon";
-import { handOffFocusAfterRemoval } from "./focusHandoff";
+import { handOffFocusAfterRemoval, handOffFocusFromHidden } from "./focusHandoff";
 import { useDockCard, useNoticeRole } from "./NoticeDock";
 
 export type NoticeTone = "info" | "ok" | "warn" | "danger";
@@ -50,6 +50,12 @@ export function Notice({
     },
     [],
   );
+  // Folded behind a newer card with the focus inside (review r2 LOW-4): hidden, it would drop the focus to the body; it hands it on instead.
+  const hidden = card?.state === "hidden";
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (hidden && node !== null && node.contains(document.activeElement)) handOffFocusFromHidden(node);
+  }, [hidden]);
   useEffect(() => {
     if (moved === null) return;
     (moved === "chip" ? chip.current : ref.current?.querySelector<HTMLElement>("button"))?.focus();
@@ -75,7 +81,7 @@ export function Notice({
     );
   }
   return (
-    <div ref={ref} className={card === null ? `notice notice-${tone}` : `notice notice-${tone} notice-card`} role={role} hidden={card?.state === "hidden"}>
+    <div ref={ref} className={card === null ? `notice notice-${tone}` : `notice notice-${tone} notice-card`} role={role} hidden={hidden}>
       <span className="notice-icon">
         <Icon name={ICON[tone]} size={16} />
       </span>
