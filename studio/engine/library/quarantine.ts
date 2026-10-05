@@ -14,8 +14,6 @@ export type QuarantineReason =
   | "temp-file"
   /** A file in `media/` with the name of a stored one and no record: the owner's own, or half of a pair a sync has not finished. */
   | "orphan-media"
-  /** A media record whose file is not in `media/`: it may be waiting for its file. */
-  | "dangling-media-record"
   /** 3e.2: a file among an avatar's video records that cannot be read as one, moved aside by «Убрать повреждённую запись». */
   | "invalid-video-record"
   /** 3e.2: a reject log with a line that cannot be read, COPIED aside by «Восстановить отметки» before it is rebuilt. */
