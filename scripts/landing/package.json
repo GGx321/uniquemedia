@@ -1,0 +1,9 @@
+{
+  "name": "uniquemedia-landing-uploader",
+  "private": true,
+  "type": "module",
+  "description": "The dependency tree of upload.ts, the one script that holds the Vercel Blob token. Locked on its own and installed frozen by .github/workflows/landing-downloads.yml.",
+  "dependencies": {
+    "@vercel/blob": "2.8.0"
+  }
+}

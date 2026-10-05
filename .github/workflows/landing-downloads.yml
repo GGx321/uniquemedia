@@ -36,9 +36,9 @@ jobs:
     env:
       TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       # Pinned via .bun-version, like studio.yml.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
           bun-version-file: .bun-version
       - name: Download installers from the release
@@ -48,16 +48,14 @@ jobs:
           mkdir -p installers
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir installers --pattern '*.dmg' --pattern '*.exe'
           ls -l installers
-      # No repo-wide `bun install`: only the one dependency the script needs,
-      # in a temp dir, with install scripts disabled. No secrets in this step.
-      - name: Install @vercel/blob only
-        run: |
-          VERSION="$(bun -e "console.log(require('./package.json').devDependencies['@vercel/blob'])")"
-          mkdir -p "$RUNNER_TEMP/uploader"
-          cp scripts/landing/downloads.ts scripts/landing/upload.ts "$RUNNER_TEMP/uploader/"
-          cd "$RUNNER_TEMP/uploader"
-          echo '{"private":true}' > package.json
-          bun add "@vercel/blob@$VERSION" --ignore-scripts
+      # No repo-wide `bun install`: only the uploader's own dependency tree, from the
+      # lockfile committed beside it (scripts/landing/bun.lock, @vercel/blob pinned
+      # exactly), frozen, with install scripts disabled. Nothing is resolved afresh,
+      # so a new release of a transitive package cannot reach the Blob token below.
+      # No secrets in this step.
+      - name: Install the uploader's locked dependencies
+        working-directory: scripts/landing
+        run: bun install --frozen-lockfile --ignore-scripts
       # The only step that sees the Blob token.
       - name: Upload to Vercel Blob
         env:
@@ -68,4 +66,4 @@ jobs:
             echo "::error::Secret BLOB_READ_WRITE_TOKEN is not set for this repository."
             exit 1
           fi
-          bun "$RUNNER_TEMP/uploader/upload.ts" "$TAG" "$GITHUB_WORKSPACE/installers"
+          bun scripts/landing/upload.ts "$TAG" "$GITHUB_WORKSPACE/installers"
