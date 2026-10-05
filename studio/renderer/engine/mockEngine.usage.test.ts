@@ -139,6 +139,25 @@ describe("an avatar whose usage is unknown", () => {
     expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "log-needs-repair" } });
   });
 
+  test("photos.setRejected is refused as INTERNAL, naming the reject log, while the marks cannot be read, and marks nothing", async () => {
+    const mock = unknownMock(["rejects-unreadable"]);
+
+    const reply = await mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: PHOTO_IDS[0] ?? "", rejected: true });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "INTERNAL", detail: expect.stringContaining("rejected.jsonl") } });
+    const { photos } = await unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }));
+    expect(photos.every((p) => !p.rejected)).toBe(true);
+  });
+
+  test("a mark made while usage is unknown does not move the avatar's unused count: it stays 0", async () => {
+    const mock = unknownMock(["record-unreadable"]);
+
+    await unwrap(mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: PHOTO_IDS[0] ?? "", rejected: true }));
+
+    const { avatars } = await unwrap(mock.client.request("avatars.list", {}));
+    expect(avatars[0]?.eligibleUnusedCount).toBe(0);
+  });
+
   test("a recovery that clears the last reason makes the photos usable again", async () => {
     const mock = unknownMock(["record-unreadable"]);
     await unwrap(mock.client.request("videos.quarantineRecords", { avatarId: MIA.avatarId }));

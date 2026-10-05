@@ -1816,6 +1816,8 @@ export class MockEngine implements EngineBridge {
         const { avatarId, photoId, rejected } = c.payload;
         const photo = this.libraryOpen ? this.photos.find((p) => p.photoId === photoId && p.avatarId === avatarId) : undefined;
         if (photo === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
+        // The library refuses a mark while the reject log cannot be read (a mark may hide in the unreadable part): nothing is written.
+        if (this.usageReasonsOf(avatarId).includes("rejects-unreadable")) return this.fail(c, { code: "INTERNAL", detail: `rejected.jsonl of avatar ${avatarId} needs repair` });
         let current = photo;
         if (photo.rejected !== rejected) {
           current = { ...photo, rejected, eligible: !rejected };
@@ -2698,7 +2700,8 @@ export class MockEngine implements EngineBridge {
   private shiftEligibleUnused(avatarId: string, delta: number): void {
     const avatar = this.avatars.find((a) => a.avatarId === avatarId);
     if (avatar === undefined) return;
-    const updated = { ...avatar, eligibleUnusedCount: Math.max(0, avatar.eligibleUnusedCount + delta) };
+    // While the avatar's usage cannot be trusted its count is 0 whatever is marked (the library's `eligibleUnusedCount`).
+    const updated = avatar.usage.state === "unknown" ? avatar : { ...avatar, eligibleUnusedCount: Math.max(0, avatar.eligibleUnusedCount + delta) };
     this.avatars = this.avatars.map((a) => (a === avatar ? updated : a));
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: updated } });
   }
