@@ -233,19 +233,25 @@ describe("what main does with the dropped paths: a pick's own checks", () => {
   test("one at a time (review LOW-3): a drop while another drop runs, and main's dialog while a drop runs, are refused IN_FLIGHT", async () => {
     const path = await put("beach.jpg");
     let release: () => void = () => undefined;
+    // The drop reaches the engine only after main's real file checks (open, stat), whose time depends on the machine's load; wait for
+    // the engine to be called instead of guessing a delay, else `release` is still a no-op and the held call never settles.
+    let reachedEngine: () => void = () => undefined;
+    const engineCalled = new Promise<void>((resolve) => {
+      reachedEngine = resolve;
+    });
     const slow = harness();
     const held: DropDeps = {
       ...slow.deps,
       engine: {
-        importMedia: (call) =>
+        importMedia: () =>
           new Promise<MediaImportReply>((resolve) => {
             release = () => resolve({ error: null, mediaJobId: "job-00000001" });
-            void call;
+            reachedEngine();
           }),
       },
     };
     const first = drop({ paths: [path], more: 0 }, held);
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await engineCalled;
     const second = await drop({ paths: [path], more: 0 }, harness().deps);
     expect(second.ok ? "ok" : second.error.code).toBe("IN_FLIGHT");
     const command = CommandMessage.parse({ v: PROTOCOL_VERSION, id: "msg-000002", kind: "command", type: "media.pickImport", payload: { kind: "any" } });
