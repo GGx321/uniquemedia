@@ -3,29 +3,12 @@ import type { EngineError } from "../../shared/engine";
 import { errorSettingsFocus, errorText, settingsLinkLabel } from "../lib/errors";
 import { useNavigate } from "../navigation";
 import { Icon } from "./Icon";
+import { handOffFocusAfterRemoval } from "./focusHandoff";
 import { useDockCard, useNoticeRole } from "./NoticeDock";
 
 export type NoticeTone = "info" | "ok" | "warn" | "danger";
 
 const ICON = { info: "info", ok: "check", warn: "alert", danger: "alert" } as const;
-
-/**
- * Where the focus goes when a notice that held it goes (its «Понятно» or «Закрыть» was pressed, review r1 LOW-3): the first button of the next
- * notice beside it (or the one before), else the screen's title. Only when the focus really fell to the body: something that took it meanwhile
- * (a new screen's title) keeps it.
- */
-function focusAfter(node: HTMLElement): void {
-  const area = node.closest(".ed-dock, .content");
-  const notices = area === null ? [] : [...area.querySelectorAll<HTMLElement>(".notice")];
-  const at = notices.indexOf(node);
-  const next = at < 0 ? [] : [...notices.slice(at + 1), ...notices.slice(0, at).reverse()];
-  // After the commit that removed it (and drew the next card of a dock's stack in its place).
-  queueMicrotask(() => {
-    if (document.activeElement !== null && document.activeElement !== document.body) return;
-    const button = next.filter((n) => n.isConnected && !n.hidden).map((n) => n.querySelector<HTMLElement>("button:not([disabled])")).find((b) => b !== null);
-    (button ?? document.querySelector<HTMLElement>(".content .screen-title"))?.focus();
-  });
-}
 
 /**
  * An inline message. `danger` and `warn` are announced as alerts; `role="status"` says a warning politely instead, for advice
@@ -63,7 +46,7 @@ export function Notice({
     () => () => {
       // Read when it goes: its element is still in the page while its effects are cleaned up.
       const node = ref.current;
-      if (node !== null && node.contains(document.activeElement)) focusAfter(node);
+      if (node !== null && node.contains(document.activeElement)) handOffFocusAfterRemoval(node);
     },
     [],
   );

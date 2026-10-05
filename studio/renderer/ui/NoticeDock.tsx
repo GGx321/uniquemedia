@@ -1,6 +1,7 @@
-import { createContext, type ReactNode, useCallback, useContext, useId, useLayoutEffect, useMemo, useState } from "react";
+import { createContext, type ReactNode, useCallback, useContext, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { plural } from "../lib/format";
+import { handOffFocusAfterRemoval } from "./focusHandoff";
 import { Icon } from "./Icon";
 
 // Where the window's own notices (the engine's, a render that ended elsewhere) are drawn (slice review 5, L1). On most screens they stand on top of
@@ -66,6 +67,11 @@ export function NoticeDockProvider({ children }: { children: ReactNode }) {
       return next;
     });
   }, []);
+  // With fewer than two cards shown the stack has nothing to unfold: it is folded again, so the next pair opens folded (review r2 LOW-2).
+  const shown = order.filter((k) => !minimized.has(k)).length;
+  useLayoutEffect(() => {
+    if (expanded && shown < 2) setExpanded(false);
+  }, [expanded, shown]);
   const value = useMemo(() => ({ node, offer, seen, cards: { order, minimized, expanded, register, minimize, restore, setExpanded } }), [node, seen, order, minimized, expanded, register, minimize, restore]);
   return <DockContext.Provider value={value}>{children}</DockContext.Provider>;
 }
@@ -151,9 +157,22 @@ export function DockMore() {
   if (cards === null) return null;
   const shown = cards.order.filter((k) => !cards.minimized.has(k)).length;
   if (shown < 2) return null;
+  return <MoreButton expanded={cards.expanded} folded={shown - 1} onToggle={() => cards.setExpanded(!cards.expanded)} />;
+}
+
+/** The toggle itself: going (one card left) with the focus on it, it hands the focus to the card that is left (review r2 LOW-2). */
+function MoreButton({ expanded, folded, onToggle }: { expanded: boolean; folded: number; onToggle: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(
+    () => () => {
+      const node = ref.current;
+      if (node !== null && node === document.activeElement) handOffFocusAfterRemoval(node);
+    },
+    [],
+  );
   return (
-    <button type="button" className="ed-dock-more" aria-expanded={cards.expanded} onClick={() => cards.setExpanded(!cards.expanded)}>
-      {cards.expanded ? "Свернуть список уведомлений" : `Ещё ${shown - 1} ${plural(shown - 1, NOTICE_FORMS)}`}
+    <button ref={ref} type="button" className="ed-dock-more" aria-expanded={expanded} onClick={onToggle}>
+      {expanded ? "Свернуть список уведомлений" : `Ещё ${folded} ${plural(folded, NOTICE_FORMS)}`}
       <Icon name="chevronDown" size={12} strokeWidth={2.4} />
     </button>
   );

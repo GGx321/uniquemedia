@@ -784,6 +784,27 @@ describe("notices in the editor float over the preview (slice review 5-L1)", () 
     expect([dockCards().length, chips().length]).toEqual([1, 0]);
   });
 
+  test("review r2 LOW-2: with one card left, «Свернуть список» goes with the focus handed to that card, and the next pair opens folded", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "вечер");
+    fireEvent.click(screen.getByRole("button", { name: "Ещё 1 уведомление" }));
+    await flush();
+    const fold = screen.getByRole("button", { name: "Свернуть список уведомлений" });
+    fold.focus();
+    // The save goes through (the test DOM leaves the focus on the toggle): one card is left.
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await waitFor(() => expect(dockCards()).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: /Свернуть список|^Ещё / }) === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Понятно" })));
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "ночь");
+    expect(screen.getByRole("button", { name: "Ещё 1 уведомление" }).getAttribute("aria-expanded")).toBe("false");
+    expect(shownCards()).toHaveLength(1);
+  });
+
   test("review r1 LOW-3: closing a card hands the focus to the next card, then to the screen's title", async () => {
     const { client, engine } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);
