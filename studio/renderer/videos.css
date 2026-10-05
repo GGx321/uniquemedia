@@ -566,16 +566,17 @@
   box-shadow: var(--shadow-frame);
 }
 
-/* As tall as the window allows (the scrim's 24 px and the card's 14 px off each side), or as wide as the arrows (2 × 56),
-   the card's padding and gap (44) and the facts column (272) leave room for; never past 1600 px. The photo inside is
-   contained and never enlarged past its own pixels. Picked: the accent ring of the tile; refused: the warning ring. */
+/* As tall as the window allows (the scrim's 24 px, the card's 14 px padding and its 1 px border, on both sides: 78), or as
+   wide as the scrim (48), the arrows with their gaps (2 × 56), the card's padding, gap and border (46) and the facts column
+   (272) leave room for (478 in all); never past 1600 px. The photo inside is contained and never enlarged past its own
+   pixels. Picked: the accent ring of the tile; refused: the warning ring. */
 .viewer-frame {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  height: min(calc(100vh - 76px), calc((100vw - 478px) * 16 / 9), 1600px);
+  height: min(calc(100vh - 78px), calc((100vw - 478px) * 16 / 9), 1600px);
   aspect-ratio: 9 / 16;
   overflow: hidden;
   border: 2px solid transparent;
