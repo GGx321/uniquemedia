@@ -191,6 +191,19 @@ describe("placing own files (M7, M11, M12): each is one undo step", () => {
     expect(clipLabels()).toHaveLength(4);
   });
 
+  test("3-H1: an own photo's clip shows the photo in the timeline's film strip, never the empty cell's hatching", async () => {
+    const { client, engine } = await studio();
+    seed(engine);
+    await openMine(engine, client);
+    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: добавить кадр в конец ролика" }));
+    await flush();
+    const clip = within(timeline()).getByRole("button", { name: /^Кадр 5: / });
+    const frames = [...clip.querySelectorAll(".ed-strip-frame")];
+    expect(frames.length).toBeGreaterThan(0);
+    expect(frames.every((f) => !f.classList.contains("ed-strip-frame-empty"))).toBe(true);
+    expect((frames[0] as HTMLElement).style.background).toContain("linear-gradient");
+  });
+
   test("dragged onto «Кадры», a video becomes a clip at the boundary under the pointer", async () => {
     const { client, engine } = await studio();
     seed(engine);
