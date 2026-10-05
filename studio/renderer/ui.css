@@ -828,6 +828,12 @@ input[type="range"]::-webkit-slider-thumb {
   flex: 1 0 auto;
 }
 
+/* A form-like page: as wide as the window up to --page-max, then held there, left under its title (Настройки, the avatar
+   wizard, the import). Collections (Аватары, Фото, Видео, Черновики) take the full width and gain columns instead. */
+.page-bounded {
+  max-width: var(--page-max);
+}
+
 .page-head {
   display: flex;
   align-items: flex-end;

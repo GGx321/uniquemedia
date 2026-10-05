@@ -149,6 +149,10 @@
   /* other */
   --uniq: #7c6cff;
 
+  /* Layout: the widest a form-like page (settings, the avatar wizard, the import) or a notice grows. The mockup's content is
+     1136px at 1440, so nothing changes up to there; past it, labels stay next to their controls instead of drifting apart. */
+  --page-max: 1280px;
+
   /* The sheet's own stacks; fonts.css declares the three faces as Google serves them. */
   --font-display: "Geologica", "Onest", sans-serif;
   --font-body: "Onest", system-ui, sans-serif;

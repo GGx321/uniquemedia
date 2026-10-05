@@ -1430,7 +1430,7 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
   const ageCheckOn = settings?.imageAgeCheck === "on";
 
   return (
-    <div className="page">
+    <div className="page page-bounded">
       <header className="page-head">
         <ScreenTitle>Настройки</ScreenTitle>
       </header>
