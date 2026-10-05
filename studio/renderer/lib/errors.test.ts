@@ -10,9 +10,22 @@ import {
   RENDER_NOT_QUEUED_DETAIL,
   RENDER_TIMEOUT_DETAIL_PREFIX,
   renderQueueFullDetail,
+  UNKNOWN_IMAGE_MODEL_RU,
+  UNSUPPORTED_IMAGE_QUALITY_RU,
 } from "../../shared/engine";
 import { errorSettingsFocus, errorText, settingsLinkLabel } from "./errors";
 import { NBSP } from "./format";
+
+// The image-model choice: main refuses an unknown model or an unsupported quality with VALIDATION and a Russian detail, which is the text shown.
+
+test("a refused image model or quality is shown with its own Russian text, not the general VALIDATION one", () => {
+  expect(errorText({ code: "VALIDATION", detail: UNKNOWN_IMAGE_MODEL_RU })).toBe(UNKNOWN_IMAGE_MODEL_RU);
+  expect(errorText({ code: "VALIDATION", detail: UNSUPPORTED_IMAGE_QUALITY_RU })).toBe(UNSUPPORTED_IMAGE_QUALITY_RU);
+});
+
+test("any other VALIDATION keeps the general text, whatever its detail says", () => {
+  expect(errorText({ code: "VALIDATION", detail: "the payload is wrong" })).toBe(ERROR_MESSAGES_RU.VALIDATION);
+});
 
 // 3f.3b round 3: a render that ran past its time limit (a dead library disk, a stuck ffmpeg) is free and local; the general TIMEOUT text is about a paid OpenRouter request.
 

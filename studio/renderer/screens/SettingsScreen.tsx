@@ -7,6 +7,9 @@ import {
   NetworkConcurrency,
   type ApiKeyStatus,
   type EngineError,
+  type ImageModelCatalogue,
+  type ImageModelEntry,
+  type ImageQuality,
   type MoneyStatus,
   type MusicKeyStatus,
   type MusicStatus,
@@ -20,6 +23,7 @@ import { isActiveJob, type SyncPhase } from "../engine/store";
 import { errorText } from "../lib/errors";
 import { EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText, type PickedNotice } from "../lib/exportFolder";
 import { countOf, monthName, NBSP, waitLabel } from "../lib/format";
+import { modelOptionLabel, photoPriceMicros, qualityOptionLabel } from "../lib/imageModels";
 import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type DollarsParse } from "../lib/money";
 import { listLine, musicFailureText, quotaView, recoveryText, refreshGate, refreshLabel, refusalText } from "../lib/music";
 import { paidStop, restartStopText } from "../lib/paidStop";
@@ -688,6 +692,148 @@ function ImageAgeCheckRow({ settings }: { settings: Settings }) {
           onClick={() => void change(!on)}
         />
       </Row>
+      {error && <ErrorNotice error={error} />}
+    </>
+  );
+}
+
+/**
+ * The camera-realism switch: when on, every NEW run's image prompts end with one fixed English clause about the camera (skin pores,
+ * sensor noise, imperfect light, no retouching: studio/engine/scenes/assembler.ts). Off by default.
+ */
+function CameraRealismRow({ settings }: { settings: Settings }) {
+  const { client, store } = useEngine();
+  const labelId = useId();
+  const hintId = useId();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<EngineError | null>(null);
+  const on = settings.cameraRealism;
+
+  async function change(next: boolean): Promise<void> {
+    setBusy(true);
+    setError(null);
+    const reply = await client.request("settings.setCameraRealism", { cameraRealism: next });
+    setBusy(false);
+    if (reply.ok) store.setSettings(reply.result);
+    else setError(reply.error);
+  }
+
+  return (
+    <>
+      <Row
+        label="Реализм камеры"
+        labelId={labelId}
+        hintId={hintId}
+        hint="в промпт добавляется фраза про снимок на смартфон: поры кожи, шум матрицы, неидеальный свет, без ретуши · применяется к новым запускам"
+      >
+        <button
+          type="button"
+          role="switch"
+          className={on ? "sw sw-on" : "sw"}
+          aria-checked={on}
+          aria-labelledby={labelId}
+          aria-describedby={hintId}
+          aria-busy={busy}
+          disabled={busy}
+          onClick={() => void change(!on)}
+        />
+      </Row>
+      {error && <ErrorNotice error={error} />}
+    </>
+  );
+}
+
+type CatalogueState = { status: "loading" } | { status: "failed" } | { status: "ready"; catalogue: ImageModelCatalogue };
+
+/**
+ * «Фото»: the image model (a select over the engine's catalogue: name, price of one photo, «не проверена» for a model outside the
+ * spike) and, for a model with two qualities, the quality. They apply to NEW runs and new portraits; a run that has started keeps
+ * what it was planned and priced with. The catalogue is read once when the card opens; until it arrives, or when it cannot be
+ * read, the model is shown as plain text, as before the choice existed.
+ */
+function ImageModelRows({ settings }: { settings: Settings }) {
+  const { client, store } = useEngine();
+  const modelId = useId();
+  const qualityId = useId();
+  const hintId = useId();
+  const [state, setState] = useState<CatalogueState>({ status: "loading" });
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<EngineError | null>(null);
+
+  useEffect(() => {
+    let current = true;
+    void client.request("settings.imageModels", {}).then((reply) => {
+      if (current) setState(reply.ok ? { status: "ready", catalogue: reply.result } : { status: "failed" });
+    });
+    return () => {
+      current = false;
+    };
+  }, [client]);
+
+  async function save(imageModel: string, imageQuality?: ImageQuality): Promise<void> {
+    setBusy(true);
+    setError(null);
+    const reply = await client.request("settings.setModels", { imageModel, ...(imageQuality === undefined ? {} : { imageQuality }), textModel: settings.textModel });
+    setBusy(false);
+    if (reply.ok) store.setSettings(reply.result);
+    else setError(reply.error);
+  }
+
+  const explanation = "портреты аватара и фото-раны";
+  if (state.status !== "ready") {
+    return (
+      <>
+        <Row label="Фото" hint={state.status === "failed" ? `${explanation} · список моделей не загрузился, выбор недоступен` : explanation}>
+          <span className="mono row-value">{settings.imageModel}</span>
+        </Row>
+      </>
+    );
+  }
+
+  const { catalogue } = state;
+  const entry: ImageModelEntry | undefined = catalogue.models.find((m) => m.id === settings.imageModel);
+  const price = entry === undefined ? null : formatUsd(photoPriceMicros(entry, settings.imageQuality), 3);
+  const hint = [
+    explanation,
+    price === null ? null : `≈ ${price} за фото (с референсом)`,
+    "применяется к новым запускам",
+    catalogue.source === "fallback" ? "встроенный список: OpenRouter не ответил" : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join(" · ");
+
+  return (
+    <>
+      <Row label="Фото" labelFor={modelId} hint={hint} hintId={hintId}>
+        <select id={modelId} className="row-select mono" value={settings.imageModel} disabled={busy} aria-describedby={hintId} onChange={(e) => void save(e.target.value)}>
+          {entry === undefined && <option value={settings.imageModel}>{`${settings.imageModel} · нет в списке`}</option>}
+          {catalogue.models.map((m) => (
+            <option key={m.id} value={m.id}>
+              {modelOptionLabel(m)}
+            </option>
+          ))}
+        </select>
+      </Row>
+      {entry !== undefined && entry.qualities.length > 1 && (
+        <Row label="Качество фото" labelFor={qualityId} hint="выше качество — дороже каждый кадр, цена в списке">
+          <select
+            id={qualityId}
+            className="row-select mono"
+            value={settings.imageQuality ?? ""}
+            disabled={busy}
+            onChange={(e) => {
+              const next = entry.qualities.find((q) => q === e.target.value);
+              if (next !== undefined) void save(settings.imageModel, next);
+            }}
+          >
+            {entry.qualities.map((q) => (
+              <option key={q} value={q}>
+                {qualityOptionLabel(entry, q)}
+              </option>
+            ))}
+          </select>
+        </Row>
+      )}
       {error && <ErrorNotice error={error} />}
     </>
   );
@@ -1477,10 +1623,9 @@ export function SettingsScreen({ focus, back }: { focus?: SettingsFocus; back?: 
               >
                 <span className="mono row-value">{settings.textModel}</span>
               </Row>
-              <Row label="Фото" hint="портреты аватара и фото-раны">
-                <span className="mono row-value">{settings.imageModel}</span>
-              </Row>
+              <ImageModelRows settings={settings} />
               <ImageAgeCheckRow settings={settings} />
+              <CameraRealismRow settings={settings} />
               {/*
                * The engine's face gate (studio/engine/face/config.ts) is a
                * hybrid, not a strict identity filter — wired into photo runs
