@@ -1400,10 +1400,24 @@ input[type="range"]::-webkit-slider-thumb {
   border: 0;
 }
 
+/* The candidates card decides its grid by its own width, not the window's (the form column beside it changes at 1280). */
+.candidates-card {
+  container: candidates / inline-size;
+}
+
 .cand-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
+}
+
+/* Four across while a candidate gets at least 140px (the mockup's is 145 at 1440, a wide window's 181); in a narrower card
+   (a window under ~1420) two by two instead, never larger than on a wide window, so the card stays about as tall as the form
+   and a face is never 95 x 126 to choose from. */
+@container candidates (width < 596px) {
+  .cand-grid {
+    grid-template-columns: repeat(2, minmax(0, 181px));
+  }
 }
 
 .cand,
@@ -2211,13 +2225,16 @@ input[type="range"]::-webkit-slider-thumb {
     grid-template-columns: 420px minmax(0, 1fr);
   }
 
-  /* Four candidates across the narrower side column would be 95 x 126, too small to choose a face from: two by two instead. */
-  .cand-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
   .photos-scenes {
     width: 400px;
+  }
+}
+
+/* Where the candidates go two by two (a window under ~1420, see .cand-grid) the side column is the taller one: the form card
+   keeps its own height instead of stretching to it half empty. From 1440 both columns reach the save bar's foot, as drawn. */
+@media (max-width: 1421px) {
+  .wizard-form {
+    align-self: start;
   }
 }
 
