@@ -133,6 +133,8 @@ export interface VideoServiceDeps {
   readonly recordCheckTimeoutMs?: number;
   /** The one budget of a whole `videos.list`, from its entry; `LIST_BUDGET_MS` when absent. */
   readonly listBudgetMs?: number;
+  /** The bytes one listing (and one avatar delete's look at the files) may hash; the checker's default (32 MiB) when absent. */
+  readonly hashBudgetBytes?: number;
   /** How long the probe of the export volume's case rule may take in `#freshRoot`; `CASE_PROBE_TIMEOUT_MS` when absent. */
   readonly caseProbeTimeoutMs?: number;
   /**
@@ -831,8 +833,8 @@ export class VideoService {
    * «Удалить аватар»: the avatar's video files that are in the CURRENT export folder, as absolute paths, resolved here from the avatar's records and never
    * from anything a caller names. A file is listed only when the cheap check reads it `present` (the root's marker matches, no link on the way, the size and
    * the stored mtime or hash agree): a file that is gone, changed, in another export folder, or not looked at in time is left where it is. The whole look is under
-   * `LIST_BUDGET_MS`. Read only: nothing is written or moved. `unlisted` counts the records whose file was not listed because more than `max` were present or
-   * the budget ran out. An export folder that is unusable or does not answer lists nothing (`exportRoot: null`): nothing is guessed.
+   * `LIST_BUDGET_MS`. Read only: nothing is written or moved. A file the hash budget (32 MiB) was spent before is NOT listed on a size match alone (a listing reads that
+   * `present`; a delete must not). `unlisted` counts the records whose file was not listed because more than `max` were present, the hash budget ran out or the time did. An export folder that is unusable or does not answer lists nothing (`exportRoot: null`): nothing is guessed.
    */
   async avatarFiles(libraryRoot: string, avatarId: string, options: { max?: number } = {}): Promise<{ files: string[]; exportRoot: string | null; unlisted: number }> {
     const enteredAt = performance.now();
@@ -853,7 +855,7 @@ export class VideoService {
       this.#deps.log(`the records of avatar ${avatarId} could not be read for an avatar delete (${kindOf(error)}); its video files are left where they are`);
       return { files: [], exportRoot: root.root, unlisted: 0 };
     }
-    const budget = newHashBudget();
+    const budget = newHashBudget(this.#deps.hashBudgetBytes);
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const files: string[] = [];
     let unlisted = 0;
@@ -865,17 +867,27 @@ export class VideoService {
       }
       let state: FileState;
       try {
-        state = await within(Math.min(checkMs, remainingMs), () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
+        state = await within(Math.min(checkMs, remainingMs), () => this.#deps.checker.check(record, root, { verify: "cheap", budget, whenSpent: "unchecked" }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
       } catch (error) {
         this.#deps.log(`the file of ${record.id} could not be checked for an avatar delete (${kindOf(error)}); it is left where it is`);
         unlisted++;
         continue;
       }
+      // `unchecked`: the hash budget was spent before this file could be proved ours. Never listed on a size match alone.
+      if (state === "unchecked") unlisted++;
       if (state !== "present") continue;
       if (files.length >= max) unlisted++;
       else files.push(recordFilePath(record, root).file);
     }
     return { files, exportRoot: root.root, unlisted };
+  }
+
+  /**
+   * An avatar a delete took out of the indexes and then kept (the Trash refused) is back: a used index that was stale when it was taken out is read again on
+   * its own, as it would have been had the avatar stayed.
+   */
+  avatarRestored(library: Library, avatarId: string): void {
+    this.#scheduleStaleRetry(library, avatarId);
   }
 
   #deleteFailure(videoId: string, error: unknown): EngineFailure {

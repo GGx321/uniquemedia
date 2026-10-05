@@ -247,6 +247,12 @@ export const HostCall = z.discriminatedUnion("type", [
    * has no matching `deletePrepare` for (it restarted meanwhile) is answered NOT_FOUND and changes nothing.
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("avatar.deleteFinish"), callId: Id, avatarId: Id, outcome: z.enum(["trashed", "kept"]) }),
+  /**
+   * Main finished moving an avatar's folder to the Trash but the engine did not know the delete any more (it restarted between prepare and finish, so it
+   * lists an avatar whose folder is gone): the engine looks at the disk, forgets every avatar whose own manifest file is no longer there (announcing each with
+   * `avatar.removed`) and leaves the rest, and any avatar a delete or a job is under way for. Free, no reply but ok.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("avatars.pruneMissing"), callId: Id }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;
 

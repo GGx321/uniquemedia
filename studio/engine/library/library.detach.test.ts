@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openLibrary, type LibraryDeps } from "./library";
+import { sceneSpec, writeVideoRecord } from "./testing/videoRecords";
 import { expectLibraryError, PNG_1X1, SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "./testing/helpers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -181,5 +182,45 @@ describe("montageCount", () => {
     const { library, avatar } = await twoAvatars();
 
     expect(await library.montageCount(avatar.id)).toBe(0);
+  });
+});
+
+describe("manifestOnDisk", () => {
+  test("is true while the avatar's manifest file is there and false once it is gone, whatever the indexes say", async () => {
+    const { library, avatar } = await twoAvatars();
+    expect(await library.manifestOnDisk(avatar.id)).toBe(true);
+
+    await rm(join(root(), "avatars", avatar.id), { recursive: true });
+
+    expect(await library.manifestOnDisk(avatar.id)).toBe(false);
+    expect(library.getAvatar(avatar.id)).toBeDefined();
+  });
+
+  test("is false for a manifest that is a link: it is not the avatar's own file", async () => {
+    const { library, avatar } = await twoAvatars();
+    const manifest = join(root(), "avatars", avatar.id, "avatar.json");
+    await rm(manifest);
+    await symlink(join(root(), "avatars", "elsewhere.json"), manifest);
+
+    expect(await library.manifestOnDisk(avatar.id)).toBe(false);
+  });
+});
+
+describe("reloadVideoRecords of an avatar detached while it reads", () => {
+  test("does not bring the records of a detached avatar back into the index", async () => {
+    const holder: { detach?: (() => void) | undefined } = {};
+    const { library } = await openLibrary(root(), deps({ testHooks: { beforeReadVideoRecord: () => holder.detach?.() } }));
+    const avatar = await library.createAvatar(SAMPLE_AVATAR);
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, scene());
+    await writeVideoRecord(root(), "video-0000000a", sceneSpec(avatar.id, [photo.id]));
+    holder.detach = () => {
+      holder.detach = undefined;
+      library.detachAvatar(avatar.id);
+    };
+
+    await library.reloadVideoRecords(avatar.id);
+
+    expect(library.videoCount(avatar.id)).toBe(0);
+    expect(library.namedVideoFiles()).toEqual([]);
   });
 });

@@ -14,7 +14,7 @@ import { NODE_COMMIT_FS } from "./videos/commitFs";
 import { commitIntent, writeIntent } from "./videos/intents";
 import { parseRecordSpec, type VideoRecord } from "./videos/record";
 import { fakeVideoBytes, sha256Of, specOf } from "./videos/testing/kit";
-import { command, engineSettings, failed, GOOD, NOW, ok, startEngine, TRAITS, useEngineDir } from "./testing/engineHarness";
+import { command, engineSettings, failed, GOOD, NOW, ok, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -275,6 +275,155 @@ describe("avatar.deletePrepare", () => {
     const reply = await ask(started, { kind: "control", type: "library.open", callId: "call-0000a001", path: join(dir(), "other-library") });
 
     expect(reply.error?.code).toBe("IN_FLIGHT");
+  });
+});
+
+describe("two prepares at once", () => {
+  test("exactly one gets the plan, the other is IN_FLIGHT, and the loser's avatar is untouched", async () => {
+    const seeded = await seed();
+    const started = await start();
+    const a = prepareCall(seeded.avatarId);
+    const b = prepareCall(seeded.draftId);
+
+    await Promise.all([started.engine.receive(a), started.engine.receive(b)]);
+
+    const replies = [a, b].map((call) => EngineReply.parse(started.posted.find((m) => typeof m === "object" && m !== null && "callId" in m && m.callId === call.callId)));
+    expect(replies.filter((r) => r.error?.code === "IN_FLIGHT")).toHaveLength(1);
+    expect(replies.filter((r) => r.deletePlan !== undefined)).toHaveLength(1);
+    const winner = replies.find((r) => r.deletePlan !== undefined)?.deletePlan?.avatarId ?? "";
+    const loser = winner === seeded.avatarId ? seeded.draftId : seeded.avatarId;
+    // the winner finishes as kept and BOTH are listed as they were; a new delete of either goes through
+    expect((await ask(started, finishCall(winner, "kept"))).error).toBeUndefined();
+    const listed = await avatarsOf(started);
+    expect([...listed.avatars.map((x) => x.avatarId), ...listed.draftIds].sort()).toEqual([seeded.avatarId, seeded.draftId].sort());
+    expect((await ask(started, prepareCall(loser))).deletePlan?.avatarId).toBe(loser);
+  });
+
+  test("the same avatar twice at once: one plan, one IN_FLIGHT", async () => {
+    const seeded = await seed();
+    const started = await start();
+    const a = prepareCall(seeded.avatarId);
+    const b = prepareCall(seeded.avatarId);
+
+    await Promise.all([started.engine.receive(a), started.engine.receive(b)]);
+
+    const replies = [a, b].map((call) => EngineReply.parse(started.posted.find((m) => typeof m === "object" && m !== null && "callId" in m && m.callId === call.callId)));
+    expect(replies.filter((r) => r.error?.code === "IN_FLIGHT")).toHaveLength(1);
+    expect(replies.filter((r) => r.deletePlan !== undefined)).toHaveLength(1);
+  });
+});
+
+describe("a delete that ends as kept shows the avatar to the windows again", () => {
+  test("an avatar is announced again with avatar.changed", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await ask(started, prepareCall(seeded.avatarId));
+    const mark = started.posted.length;
+
+    await ask(started, finishCall(seeded.avatarId, "kept"));
+
+    const events = started.posted.slice(mark).flatMap((m) => {
+      const e = EventMessage.safeParse(m);
+      return e.success ? [e.data] : [];
+    });
+    expect(events.map((e) => e.type)).toContain("avatar.changed");
+  });
+
+  test("a draft is announced again with draft.changed", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await ask(started, prepareCall(seeded.draftId));
+    const mark = started.posted.length;
+
+    await ask(started, finishCall(seeded.draftId, "kept"));
+
+    const types = started.posted.slice(mark).flatMap((m) => {
+      const e = EventMessage.safeParse(m);
+      return e.success ? [e.data.type] : [];
+    });
+    expect(types).toContain("draft.changed");
+  });
+
+  test("a used index that was stale is read again on its own", async () => {
+    const seeded = await seed();
+    const started = await start({ deps: { videos: { staleRetryDelaysMs: [1] } } });
+    started.engine.library?.flagVideoIndexStale(seeded.avatarId, "video-0000000f");
+    await ask(started, prepareCall(seeded.avatarId));
+    await ask(started, finishCall(seeded.avatarId, "kept"));
+
+    await until(() => started.engine.library?.videoIndexStale(seeded.avatarId).length === 0, "the stale index to be read again");
+  });
+});
+
+describe("a paid command for an avatar whose folder is no longer on the disk", () => {
+  test("avatars.generateCandidates refuses NOT_FOUND before it reserves anything", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await rm(join(libraryDir(), "avatars", seeded.draftId), { recursive: true });
+
+    const refused = failed(await started.engine.handle(command("avatars.generateCandidates", { avatarId: seeded.draftId, acceptedWorstMicros: 10_000_000 })));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(started.net.paidCalls()).toEqual([]);
+  });
+
+  test("runs.start refuses NOT_FOUND", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
+
+    const refused = failed(await started.engine.handle(command("runs.start", { avatarId: seeded.avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 10_000_000 })));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(started.net.paidCalls()).toEqual([]);
+  });
+
+  test("avatars.rewriteDescriptor refuses NOT_FOUND", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
+
+    const refused = failed(await started.engine.handle(command("avatars.rewriteDescriptor", { avatarId: seeded.avatarId, acceptedWorstMicros: 10_000_000 })));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(started.net.paidCalls()).toEqual([]);
+  });
+});
+
+describe("avatars.pruneMissing", () => {
+  test("drops the avatars whose folder is gone from the disk, announces each, and keeps the rest", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
+
+    const reply = await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b001" });
+
+    expect(reply.error).toBeUndefined();
+    expect(removedEvents(started)).toEqual([seeded.avatarId]);
+    const listed = await avatarsOf(started);
+    expect(listed.avatars).toEqual([]);
+    expect(listed.draftIds).toEqual([seeded.draftId]);
+  });
+
+  test("changes nothing when every avatar is still on the disk", async () => {
+    await seed();
+    const started = await start();
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b002" });
+
+    expect(removedEvents(started)).toEqual([]);
+    expect((await avatarsOf(started)).avatars).toHaveLength(1);
+  });
+
+  test("leaves an avatar a delete is under way for alone", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await ask(started, prepareCall(seeded.avatarId));
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b003" });
+
+    expect(removedEvents(started)).toEqual([]);
+    expect((await ask(started, finishCall(seeded.avatarId, "kept"))).error).toBeUndefined();
   });
 });
 

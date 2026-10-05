@@ -26,6 +26,8 @@ import { RootMarkerCheck } from "./rootMarker";
 //      a match is remembered against the file's (size, mtime, inode, device), so the next listing is step 2 again;
 //   4. hashing is capped per listing by a shared `HashBudget` (32 MiB by default: a few files). Once it is spent a size
 //      match reads as `present` without a hash, which is what the contract's `present` means, and is not remembered.
+// A caller that must NOT act on a guess (the avatar delete, which moves files to the Trash) passes `whenSpent: "unchecked"`: a size match that the spent
+// budget could not hash is then `unchecked`, never `present`.
 // `verify: "full"` skips 2-4 and always hashes: it is what a destructive action (delete) asks for, so no cheap answer
 // ever decides to remove a file.
 //
@@ -96,7 +98,7 @@ export class FileStateChecker {
     return this.#verified.get(videoId);
   }
 
-  async check(record: VideoRecord, root: ExportRootRef | null, options: { verify: Verification; budget?: HashBudget }): Promise<FileState> {
+  async check(record: VideoRecord, root: ExportRootRef | null, options: { verify: Verification; budget?: HashBudget; whenSpent?: "present" | "unchecked" }): Promise<FileState> {
     if (root === null || record.file.rootId !== root.rootId) return "elsewhere";
     // The id alone proves nothing: the marker at this path must hold it (an empty folder there is another root).
     if (!(await this.#markers.matches(root.root, root.rootId))) return "elsewhere";
@@ -121,7 +123,8 @@ export class FileStateChecker {
       if (known !== undefined && sameStamp(known, stamp)) return "present";
       const budget = options.budget;
       if (budget !== undefined) {
-        if (budget.remaining < facts.size) return "present";
+        // Spent: a size match alone reads `present` (what the contract means by it for a listing), unless the caller must not guess (a delete): then it is `unchecked`.
+        if (budget.remaining < facts.size) return options.whenSpent ?? "present";
         budget.remaining -= facts.size;
       }
     }

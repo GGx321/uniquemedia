@@ -406,6 +406,19 @@ export class Library {
     return this.#avatarDir(avatarId);
   }
 
+  /**
+   * Whether the avatar's own manifest file (`avatars/<id>/avatar.json`, a regular file, not a link) is on the disk NOW, whatever the indexes say. A paid
+   * command asks it first: an avatar whose folder was moved to the Trash (its delete finished while the engine was restarted) must never be paid for.
+   */
+  async manifestOnDisk(avatarId: string): Promise<boolean> {
+    try {
+      return (await lstat(join(this.avatarDirPath(avatarId), MANIFEST_FILE))).isFile();
+    } catch (error) {
+      if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return false;
+      throw error;
+    }
+  }
+
   /** How many montage draft files the avatar's folder holds (`<montageId>.json`; temp files, folders and other names do not count). */
   async montageCount(avatarId: string): Promise<number> {
     let entries;
@@ -915,6 +928,8 @@ export class Library {
       for (;;) {
         const generation = this.#videoGeneration.get(avatarId) ?? 0;
         const read = await readVideoRecords(this.#avatarDir(avatarId), avatarId, { beforeRead: this.#beforeReadVideoRecord });
+        // Detached (an avatar delete) while it read: its records must not come back into the index of an avatar the library no longer has.
+        if (!this.#avatars.has(avatarId)) return;
         if ((this.#videoGeneration.get(avatarId) ?? 0) !== generation) continue;
         this.#videosByAvatar.set(avatarId, read.records);
         this.#videoIndexStale.delete(avatarId); // the disk has just been read: the index is in step again

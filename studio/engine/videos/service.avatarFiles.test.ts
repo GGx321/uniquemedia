@@ -127,6 +127,17 @@ describe("avatarFiles", () => {
     expect(found.unlisted).toBe(1);
   });
 
+  test("a file the hash budget was spent before is NOT listed (a size match alone never sends a file to the Trash) and is counted as unlisted", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { hashBudgetBytes: 100 } });
+    await committed(w);
+
+    const found = await r.service.avatarFiles(w.libraryRoot, w.avatar.id);
+
+    expect(found.files).toEqual([]);
+    expect(found.unlisted).toBe(1);
+  });
+
   test("an avatar with no videos lists nothing", async () => {
     const w = world();
     const r = serviceRig(w);

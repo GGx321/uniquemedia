@@ -498,6 +498,13 @@ interface OpenedLibrary {
   unreadable: UnreadableAvatar[];
 }
 
+/** The one avatar delete between prepare and finish: `library` and `detached` are set once the avatar is out of the indexes (until then it is only preparing). */
+interface PendingDelete {
+  readonly avatarId: string;
+  library: Library | null;
+  detached: DetachedAvatar | null;
+}
+
 /**
  * The engine's state and command dispatcher. Every message from main is
  * parsed here: control messages (the API key, settings) against
@@ -607,7 +614,7 @@ export class Engine {
    * library switch and no other command changes it) and already out of the library's indexes (memory only), with what the indexes held kept in
    * `detached` to put back if its folder stays. Null when no delete is under way; one at a time.
    */
-  #pendingDelete: { readonly avatarId: string; readonly library: Library; readonly detached: DetachedAvatar } | null = null;
+  #pendingDelete: PendingDelete | null = null;
   /** `montages.focus` requests running now, by avatar: an avatar with one is not deleted (it reads the avatar's photos). */
   readonly #focusRequests = new Map<string, number>();
   /**
@@ -1067,6 +1074,13 @@ export class Engine {
       case "avatar.deletePrepare":
         try {
           return { kind: "control", type: "reply", callId: call.callId, deletePlan: await this.#deletePrepare(call.avatarId) };
+        } catch (error) {
+          return { kind: "control", type: "reply", callId: call.callId, error: engineErrorFrom(error) };
+        }
+      case "avatars.pruneMissing":
+        try {
+          await this.#pruneMissing();
+          return { kind: "control", type: "reply", callId: call.callId };
         } catch (error) {
           return { kind: "control", type: "reply", callId: call.callId, error: engineErrorFrom(error) };
         }
@@ -1874,6 +1888,7 @@ export class Engine {
     const library = await this.#liveLibrary();
     const { avatarId, count, categories, poses } = payload;
     const manifest = this.#runnableAvatar(library, avatarId);
+    await this.#assertAvatarOnDisk(library, avatarId);
     if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
     // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
     const imageAgeCheck = this.#settings.imageAgeCheck;
@@ -1948,6 +1963,7 @@ export class Engine {
     let launched = false;
     try {
       const manifest = this.#runnableAvatar(library, plan.avatarId);
+      await this.#assertAvatarOnDisk(library, plan.avatarId);
       this.#assertAgeGate(plan.imageAgeCheck);
       this.#assertFaceGate();
       const { state, estimate, priced, budget } = await this.#remaining(library, plan);
@@ -2343,6 +2359,7 @@ export class Engine {
     const library = await this.#liveLibrary();
     const { avatarId } = payload;
     const manifest = this.#manifestOrNotFound(library, avatarId);
+    await this.#assertAvatarOnDisk(library, avatarId);
     this.#assertRewritable(avatarId, manifest);
     // isRewritable (inside #assertRewritable) already proved this parses; re-parsed here only to get its typed data.
     const traits = AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age });
@@ -2565,6 +2582,7 @@ export class Engine {
     const { avatarId } = payload;
     const manifest = library.getAvatar(avatarId);
     if (manifest === undefined || manifest.status !== "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
+    await this.#assertAvatarOnDisk(library, avatarId);
     this.#assertDescriptorReadable(manifest);
     const descriptor: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
     if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
@@ -2800,38 +2818,57 @@ export class Engine {
   /** `avatar.deletePrepare`: see the section's comment. Throws what the reply's `error` carries; on success the avatar stays claimed until `#deleteFinish`. */
   async #deletePrepare(avatarId: string): Promise<AvatarDeletePlan> {
     if (this.#pendingDelete !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: "an avatar is already being deleted; wait for it to finish" });
-    // Claimed before the first await: nothing else (a library switch included) may change the avatar from here to the finish.
-    this.#claimAvatar(avatarId, "a job or command is changing this avatar; delete it when that ends");
-    let pending: { readonly avatarId: string; readonly library: Library; readonly detached: DetachedAvatar } | null = null;
+    // The single slot is taken HERE, before the first await: a second prepare that arrives while this one awaits the library finds it taken.
+    const slot: PendingDelete = { avatarId, library: null, detached: null };
+    this.#pendingDelete = slot;
+    try {
+      // Claimed before the first await too: nothing else (a library switch included) may change the avatar from here to the finish.
+      this.#claimAvatar(avatarId, "a job or command is changing this avatar; delete it when that ends");
+    } catch (error) {
+      this.#pendingDelete = null;
+      throw error;
+    }
     try {
       const library = await this.#liveLibrary();
       if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
       const busy = this.#deleteBusy(library, avatarId);
       if (busy !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
       // No await between the last look and this: nothing can start for the avatar in between. From here a render or a pick finds no avatar.
-      pending = { avatarId, library, detached: library.detachAvatar(avatarId) };
-      this.#pendingDelete = pending;
+      slot.library = library;
+      slot.detached = library.detachAvatar(avatarId);
       const found = await this.#videos.avatarFiles(library.root, avatarId);
       return { avatarId, libraryRoot: library.root, folder: library.avatarDirPath(avatarId), exportRoot: found.exportRoot, files: found.files, unlisted: found.unlisted };
     } catch (error) {
-      // Nothing was moved: put the avatar back and let go.
-      if (pending !== null) {
-        this.#pendingDelete = null;
-        pending.library.reattachAvatar(pending.detached);
-      }
+      // Nothing was moved: put the avatar back and let go of the slot and the claim.
+      if (slot.library !== null && slot.detached !== null) slot.library.reattachAvatar(slot.detached);
+      this.#pendingDelete = null;
       this.#busyAvatars.delete(avatarId);
       throw error;
     }
   }
 
-  /** `avatar.deleteFinish`: `trashed` forgets the avatar and announces it, `kept` puts it back. NOT_FOUND when no such delete is pending (the engine restarted, or a repeat). */
+  /**
+   * `avatar.deleteFinish`: `trashed` forgets the avatar and announces it, `kept` puts it back and announces it again (a window reloaded between prepare and
+   * finish never saw it come back otherwise). NOT_FOUND when no such delete is pending (the engine restarted, or a repeat), or still preparing.
+   */
   #deleteFinish(avatarId: string, outcome: "trashed" | "kept"): void {
     const pending = this.#pendingDelete;
-    if (pending === null || pending.avatarId !== avatarId) throw new EngineFailure({ code: "NOT_FOUND", detail: `no delete of avatar ${avatarId} is pending` });
+    if (pending === null || pending.avatarId !== avatarId || pending.library === null || pending.detached === null) {
+      throw new EngineFailure({ code: "NOT_FOUND", detail: `no delete of avatar ${avatarId} is pending` });
+    }
     this.#pendingDelete = null;
     try {
       if (outcome === "kept") {
-        pending.library.reattachAvatar(pending.detached);
+        const { library } = pending;
+        library.reattachAvatar(pending.detached);
+        if (library.getAvatar(avatarId)?.status === "draft") {
+          const draft = this.#draft(avatarId);
+          if (draft !== null) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
+        } else {
+          this.#announceAvatarOrLog(library, avatarId);
+        }
+        // A used index that was stale when it was taken out is read again, as it would have been had the avatar stayed.
+        this.#videos.avatarRestored(library, avatarId);
         return;
       }
       this.#jobs.forgetFinishedFor(avatarId);
@@ -2839,6 +2876,30 @@ export class Engine {
     } finally {
       this.#busyAvatars.delete(avatarId);
     }
+  }
+
+  /**
+   * `avatars.pruneMissing` (main, after a folder went to the Trash that this engine no longer knew a delete for): forgets every avatar whose own manifest file
+   * is gone from the disk, announcing each with `avatar.removed`. An avatar a delete, a job or a command is under way for is left alone.
+   */
+  async #pruneMissing(): Promise<void> {
+    const library = this.library;
+    if (library === null) return;
+    for (const manifest of library.listAvatars()) {
+      const { id } = manifest;
+      if (this.#busyAvatars.has(id) || this.#jobs.hasLiveJobFor(id)) continue;
+      if (await library.manifestOnDisk(id)) continue;
+      // The look took a moment: the avatar may have become busy, or be gone, meanwhile.
+      if (this.#busyAvatars.has(id) || library.getAvatar(id) === undefined) continue;
+      library.detachAvatar(id);
+      this.#jobs.forgetFinishedFor(id);
+      this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId: id } });
+    }
+  }
+
+  /** A paid command for an avatar whose manifest is no longer on the disk (its folder went to the Trash, the delete's finish was lost) is refused before it reserves anything. */
+  async #assertAvatarOnDisk(library: Library, avatarId: string): Promise<void> {
+    if (!(await library.manifestOnDisk(avatarId))) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} is no longer on the disk` });
   }
 
   /** The saved avatar as the grid lists it, announced with avatar.changed. */
