@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { trashableOn } from "./trashSupport";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // Windows: `shell.trashItem` runs SHFileOperation-style with no prompt, and on a place that has no Recycle Bin (a network share or a mapped
 // network drive) such a call may delete for good. «Удалить аватар» promises the Trash, so a place that cannot be shown to have one is refused up front.

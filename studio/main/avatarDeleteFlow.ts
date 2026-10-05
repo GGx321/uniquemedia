@@ -126,6 +126,11 @@ export async function handleAvatarDeleteCommand(command: AvatarDeleteCommand, de
         kept++;
         continue;
       }
+      // Its own volume may have no Trash (the export folder on a network share): moved there it could be deleted for good, so it stays.
+      if (!(await deps.trashable(file).catch(() => false))) {
+        kept++;
+        continue;
+      }
       try {
         await deps.trash(file);
         trashed++;

@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { PROTOCOL_VERSION, ResponseMessage, type CommandMessage, type EngineError } from "../shared/engine";
 import type { AvatarDeletePlan } from "../engine/control";
 import { handleAvatarDeleteCommand, isAvatarDeleteCommand, type AvatarDeleteFlowDeps, type EntryKind } from "./avatarDeleteFlow";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+useNativeGlobals();
 
 // «Удалить аватар», main's side: the window names an avatar; the ENGINE resolves what goes; main checks every path against its own roots, moves the
 // avatar's folder to the system Trash FIRST, tells the engine whether it went, and only then moves the video files. Nothing outside the library root
@@ -175,6 +177,17 @@ describe("the Trash refuses the avatar's folder", () => {
     expect(r.log).toEqual(["prepare", "finish:kept"]);
     expect(response).toMatchObject({ ok: false, error: { code: "TRASH_UNAVAILABLE" } });
     expect(r.disk.has(FOLDER)).toBe(true);
+  });
+});
+
+describe("a video file on a volume with no Trash", () => {
+  test("is left where it is and counted as kept, never moved (it could be deleted for good); the avatar still goes", async () => {
+    const r = rig({ trashable: (path) => !path.startsWith(EXPORT) });
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", `trash:${FOLDER}`, "finish:trashed"]);
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
   });
 });
 
