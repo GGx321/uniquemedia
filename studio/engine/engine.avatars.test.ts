@@ -68,6 +68,8 @@ function init(overrides: Partial<EngineInit> = {}): EngineInit {
       // figures, before the age check became optional); the dedicated
       // engine.imageAgeCheck.test.ts covers OFF.
       imageAgeCheck: "on",
+      imageQuality: "low",
+      cameraRealism: false,
       exportPath: join(dir, "export"),
       renderConcurrency: "auto",
     },

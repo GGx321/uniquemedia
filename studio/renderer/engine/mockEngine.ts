@@ -1,5 +1,6 @@
 import {
   AvatarDescriptor,
+  checkImageChoice,
   type ApiKeyStatus,
   type MusicKeyStatus,
   type AvatarStatus,
@@ -68,6 +69,7 @@ import { windowPeaks } from "../../shared/music/trackShape";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
 import { mockOwnStickerBytes, mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
+import { MOCK_IMAGE_CATALOGUE } from "./mockImageModels";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
@@ -711,7 +713,9 @@ export class MockEngine implements EngineBridge {
       monthlyBudgetMicros: options.money?.monthlyBudgetMicros ?? 10_000_000,
       libraryPath: "/Users/studio/Studio/library",
       imageModel: "x-ai/grok-imagine-image-2.0",
+      imageQuality: "low",
       textModel: "x-ai/grok-4.3",
+      cameraRealism: false,
       concurrency: { network: options.concurrency ?? 6 },
       imageAgeCheck: options.imageAgeCheck ?? "off",
       exportPath: "/Users/studio/Studio/export",
@@ -1503,8 +1507,20 @@ export class MockEngine implements EngineBridge {
         this.checkExport();
         return this.ok(c, { exportStatus: this.exportReported });
       }
-      case "settings.setModels":
-        this.settings = { ...this.settings, imageModel: c.payload.imageModel, textModel: c.payload.textModel };
+      case "settings.imageModels":
+        return this.ok(c, MOCK_IMAGE_CATALOGUE);
+      case "settings.setModels": {
+        // As main does it: the model already set needs no catalogue; anything else must come from it.
+        const { imageModel, imageQuality, textModel } = c.payload;
+        const unchanged = imageModel === this.settings.imageModel && (imageQuality === undefined || imageQuality === this.settings.imageQuality);
+        const choice = checkImageChoice(unchanged ? { models: [] } : MOCK_IMAGE_CATALOGUE, this.settings, { imageModel, imageQuality });
+        if (!choice.ok) return this.fail(c, { code: "VALIDATION", detail: choice.detail });
+        this.settings = { ...this.settings, imageModel, imageQuality: choice.imageQuality, textModel };
+        this.emitSettingsChanged();
+        return this.ok(c, this.settings);
+      }
+      case "settings.setCameraRealism":
+        this.settings = { ...this.settings, cameraRealism: c.payload.cameraRealism };
         this.emitSettingsChanged();
         return this.ok(c, this.settings);
       case "settings.setConcurrency":

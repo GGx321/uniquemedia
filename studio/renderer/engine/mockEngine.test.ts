@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { AvatarDescriptor, type EventMessage } from "../../shared/engine";
+import { AvatarDescriptor, ImageModelCatalogue, UNKNOWN_IMAGE_MODEL_RU, UNSUPPORTED_IMAGE_QUALITY_RU, type EventMessage } from "../../shared/engine";
 import { DEFAULT_TRAITS, randomTraits } from "../lib/traits";
 import { MOCK_AGE_CHECK_PER_SLOT, MOCK_ESTIMATE, MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -236,7 +236,7 @@ test("settings.setApiKey, clearApiKey, setModels and setConcurrency each emit se
 
   await unwrap(client.request("settings.setApiKey", { key: "sk-or-v1-abcdefgh-0000" }));
   await unwrap(client.request("settings.clearApiKey", {}));
-  await unwrap(client.request("settings.setModels", { imageModel: "bytedance/seedream-5-pro", textModel: "x-ai/grok-5" }));
+  await unwrap(client.request("settings.setModels", { imageModel: "bytedance-seed/seedream-5-0-pro", textModel: "x-ai/grok-5" }));
   await unwrap(client.request("settings.setConcurrency", { network: 3 }));
 
   expect(events.filter((e) => e.type === "settings.changed")).toHaveLength(4);
@@ -859,4 +859,50 @@ test("photos.setRejected is NOT_FOUND for an unknown avatar and for a photo the 
   const { mia, photo } = await demoMia(client);
   expect(await client.request("photos.setRejected", { avatarId: "avatar-00000404", photoId: photo.photoId, rejected: true })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
   expect(await client.request("photos.setRejected", { avatarId: mia.avatarId, photoId: "photo-00000404", rejected: true })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+});
+
+// ---------- the image model choice ----------
+
+const GROK = "x-ai/grok-imagine-image-2.0";
+const SEEDREAM = "bytedance-seed/seedream-5-0-pro";
+
+test("settings.imageModels serves a fixed catalogue that passes the contract, with the default model and its two qualities", async () => {
+  const { client } = makeMock();
+  const catalogue = ImageModelCatalogue.parse(await unwrap(client.request("settings.imageModels", {})));
+
+  expect(catalogue.models.find((m) => m.id === GROK)).toMatchObject({ qualities: ["low", "medium"], tested: true });
+  expect(catalogue.models.find((m) => m.id === SEEDREAM)).toMatchObject({ qualities: [] });
+});
+
+test("the mock starts on the engine's defaults: the default model at quality low, camera realism off", async () => {
+  const { client } = makeMock();
+
+  expect(await unwrap(client.request("settings.get", {}))).toMatchObject({ imageModel: GROK, imageQuality: "low", cameraRealism: false });
+});
+
+test("settings.setModels saves a quality the model lists and a null for a model with none, and reports both with settings.get", async () => {
+  const { client } = makeMock();
+
+  expect(await unwrap(client.request("settings.setModels", { imageModel: GROK, imageQuality: "medium", textModel: "x-ai/grok-4.3" }))).toMatchObject({ imageQuality: "medium" });
+  expect(await unwrap(client.request("settings.setModels", { imageModel: SEEDREAM, textModel: "x-ai/grok-4.3" }))).toMatchObject({ imageModel: SEEDREAM, imageQuality: null });
+  expect(await unwrap(client.request("settings.get", {}))).toMatchObject({ imageModel: SEEDREAM, imageQuality: null });
+});
+
+test("settings.setModels refuses an unknown model and an unsupported quality with VALIDATION and a Russian detail, and changes nothing", async () => {
+  const { client, events } = makeMock();
+
+  const unknown = await client.request("settings.setModels", { imageModel: "acme/not-listed", textModel: "x-ai/grok-4.3" });
+  expect(unknown).toMatchObject({ ok: false, error: { code: "VALIDATION", detail: UNKNOWN_IMAGE_MODEL_RU } });
+  const quality = await client.request("settings.setModels", { imageModel: SEEDREAM, imageQuality: "medium", textModel: "x-ai/grok-4.3" });
+  expect(quality).toMatchObject({ ok: false, error: { code: "VALIDATION", detail: UNSUPPORTED_IMAGE_QUALITY_RU } });
+
+  expect(await unwrap(client.request("settings.get", {}))).toMatchObject({ imageModel: GROK, imageQuality: "low" });
+  expect(events.filter((e) => e.type === "settings.changed")).toHaveLength(0);
+});
+
+test("settings.setCameraRealism changes the setting and emits settings.changed", async () => {
+  const { client, events } = makeMock();
+
+  expect(await unwrap(client.request("settings.setCameraRealism", { cameraRealism: true }))).toMatchObject({ cameraRealism: true });
+  expect(events.filter((e) => e.type === "settings.changed")).toHaveLength(1);
 });

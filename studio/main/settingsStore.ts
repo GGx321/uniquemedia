@@ -14,6 +14,13 @@ export const DEFAULT_MONTHLY_BUDGET_MICROS = 10_000_000;
 /** Plan, fixed decisions: default image model and scene text model. */
 export const DEFAULT_IMAGE_MODEL = "x-ai/grok-imagine-image-2.0";
 export const DEFAULT_TEXT_MODEL = "x-ai/grok-4.3";
+/**
+ * The default image model's own quality, as every run sent it before the choice existed. A file written before
+ * `imageQuality` existed is backfilled with this; a model with no quality knob stores `null` instead (settings.setModels).
+ */
+export const DEFAULT_IMAGE_QUALITY = "low";
+/** «Реализм камеры» is off until the owner turns it on; an older file is backfilled with this. */
+export const DEFAULT_CAMERA_REALISM = false;
 export const DEFAULT_NETWORK_CONCURRENCY = 6;
 /**
  * Owner's decision (2026-09-27): the paid image age check is off by default.
@@ -48,7 +55,9 @@ export function defaultSettings(userData: string, home: string = homedir(), api:
     monthlyBudgetMicros: DEFAULT_MONTHLY_BUDGET_MICROS,
     libraryPath: defaultLibraryPath(userData, api),
     imageModel: DEFAULT_IMAGE_MODEL,
+    imageQuality: DEFAULT_IMAGE_QUALITY,
     textModel: DEFAULT_TEXT_MODEL,
+    cameraRealism: DEFAULT_CAMERA_REALISM,
     concurrency: { network: DEFAULT_NETWORK_CONCURRENCY },
     imageAgeCheck: DEFAULT_IMAGE_AGE_CHECK,
     // An empty HOME, a relative one, or (on Windows) a rooted path with no drive would break the contract's
@@ -71,7 +80,7 @@ function isMissing(error: unknown): boolean {
 }
 
 /** Settings added after the first release: an older file lacks them, and `loadSettings` fills in the default. */
-const BACKFILLED_KEYS = ["imageAgeCheck", "exportPath", "renderConcurrency"] as const;
+const BACKFILLED_KEYS = ["imageAgeCheck", "exportPath", "renderConcurrency", "imageQuality", "cameraRealism"] as const;
 
 function withMissingKeysBackfilled(raw: unknown, defaults: EngineSettings): unknown {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
