@@ -68,13 +68,44 @@ function asWindow(client: EngineClient): EngineClient {
   return { ...client, kind: "window" };
 }
 
-function renderPortrait(): void {
+function renderPortrait(photoId: string = PHOTO): { show: (next: string) => void; unmount: () => void } {
   const engine = new MockEngine({ scheduler: new ManualScheduler(), latencyMs: 0 });
-  render(
-    <EngineProvider client={asWindow(mockEngineClient(engine))}>
-      <Portrait avatarId={AVATAR} photoId={PHOTO} label="Мастер-портрет: Mia" />
-    </EngineProvider>,
+  const client = asWindow(mockEngineClient(engine));
+  const tree = (id: string) => (
+    <EngineProvider client={client}>
+      <Portrait avatarId={AVATAR} photoId={id} label="Мастер-портрет: Mia" />
+    </EngineProvider>
   );
+  const { rerender, unmount } = render(tree(photoId));
+  return { show: (next) => rerender(tree(next)), unmount };
+}
+
+/** A stand-in `matchMedia` whose queries are told when their ratio stops matching; `listening` lists the queries still heard. */
+function mediaQueries(): { listening: () => string[]; fire: () => void } {
+  const realMatch = window.matchMedia;
+  const queries: { media: string; change: (() => void) | null }[] = [];
+  window.matchMedia = ((media: string) => {
+    const query = { media, change: null as (() => void) | null };
+    queries.push(query);
+    return {
+      media,
+      matches: true,
+      addEventListener: (_: string, listener: () => void) => {
+        query.change = listener;
+      },
+      removeEventListener: () => {
+        query.change = null;
+      },
+    } as unknown as MediaQueryList;
+  }) as typeof window.matchMedia;
+  restores.push(() => {
+    window.matchMedia = realMatch;
+  });
+  const heard = () => queries.filter((q) => q.change !== null);
+  return {
+    listening: () => heard().map((q) => q.media),
+    fire: () => act(() => heard()[0]?.change?.()),
+  };
 }
 
 function picture(): HTMLImageElement {
@@ -156,28 +187,11 @@ test("a window moved to a screen of another pixel ratio re-caps the picture", ()
   let ratio = 1;
   const own = Object.getOwnPropertyDescriptor(window, "devicePixelRatio");
   Object.defineProperty(window, "devicePixelRatio", { configurable: true, get: () => ratio });
-  const realMatch = window.matchMedia;
-  // A query for the ratio as it is now: it is told when that ratio stops matching.
-  const queries: { media: string; change: (() => void) | null }[] = [];
-  window.matchMedia = ((media: string) => {
-    const query = { media, change: null as (() => void) | null };
-    queries.push(query);
-    return {
-      media,
-      matches: true,
-      addEventListener: (_: string, listener: () => void) => {
-        query.change = listener;
-      },
-      removeEventListener: () => {
-        query.change = null;
-      },
-    } as unknown as MediaQueryList;
-  }) as typeof window.matchMedia;
   restores.push(() => {
-    window.matchMedia = realMatch;
     if (own !== undefined) Object.defineProperty(window, "devicePixelRatio", own);
     else Reflect.deleteProperty(window, "devicePixelRatio");
   });
+  const media = mediaQueries();
   frameOf({ width: 212, height: 224 });
   renderPortrait();
   const img = picture();
@@ -186,13 +200,76 @@ test("a window moved to a screen of another pixel ratio re-caps the picture", ()
   expect(frame(img).getAttribute("data-fit")).toBeNull();
 
   ratio = 2;
-  const watching = queries.filter((q) => q.change !== null);
-  expect(watching.map((q) => q.media)).toEqual(["(resolution: 1dppx)"]);
-  act(() => watching[0]?.change?.());
+  expect(media.listening()).toEqual(["(resolution: 1dppx)"]);
+  media.fire();
 
   expect(img.style.maxWidth).toBe("153.75px");
   expect(frame(img).getAttribute("data-fit")).toBe("capped");
-  expect(queries.filter((q) => q.change !== null).map((q) => q.media)).toEqual(["(resolution: 2dppx)"]);
+  expect(media.listening()).toEqual(["(resolution: 2dppx)"]);
+});
+
+test("a picture short on one side only is held on that side and still gets the band", () => {
+  pixelRatio(2);
+  frameOf({ width: 212, height: 224 });
+  renderPortrait();
+  const img = picture();
+  // A wide, low picture: its cap (250 × 93.75) is wider than the frame but far from its height.
+  load(img, 400, 150);
+
+  expect(img.style.maxWidth).toBe("250px");
+  expect(img.style.maxHeight).toBe("93.75px");
+  expect(frame(img).getAttribute("data-fit")).toBe("capped");
+  expect(backdrop(img)).not.toBeNull();
+});
+
+test("the pixel-ratio query is dropped once no portrait is left on screen", () => {
+  pixelRatio(2);
+  const media = mediaQueries();
+  frameOf({ width: 212, height: 224 });
+  const view = renderPortrait();
+  expect(media.listening()).toEqual(["(resolution: 2dppx)"]);
+
+  view.unmount();
+  expect(media.listening()).toEqual([]);
+});
+
+test("another photo in the same place is a new picture: it waits for its own size, never borrows the last one's cap", () => {
+  pixelRatio(2);
+  frameOf({ width: 212, height: 224 });
+  const view = renderPortrait();
+  const first = picture();
+  load(first, 246, 281);
+  expect(frame(first).getAttribute("data-fit")).toBe("capped");
+
+  view.show("photo-mia-second");
+  const second = picture();
+  // A fresh element: the old picture is never left on screen, uncapped, while the new one loads.
+  expect(second).not.toBe(first);
+  expect(second.getAttribute("src")).toContain("photo-mia-second");
+  expect(second.style.maxWidth).toBe("");
+  expect(frame(second).getAttribute("data-fit")).toBeNull();
+  expect(backdrop(second)).toBeNull();
+
+  load(second, 864, 1152);
+  expect(second.style.maxWidth).toBe("540px");
+  expect(frame(second).getAttribute("data-fit")).toBeNull();
+});
+
+test("a picture that will not load falls back to the placeholder, with no backdrop left behind", () => {
+  pixelRatio(2);
+  frameOf({ width: 212, height: 224 });
+  renderPortrait();
+  const img = picture();
+  load(img, 246, 281);
+  expect(backdrop(img)).not.toBeNull();
+
+  fireEvent.error(img);
+
+  const stand = screen.getByRole("img", { name: "Мастер-портрет: Mia" });
+  expect(stand.tagName).toBe("SPAN");
+  expect(stand.classList.contains("portrait-placeholder")).toBe(true);
+  expect(document.querySelector(".portrait-backdrop")).toBeNull();
+  expect(document.querySelector("img")).toBeNull();
 });
 
 test("the band follows the frame: a frame that grows past the cap gets it, one that shrinks back loses it", () => {

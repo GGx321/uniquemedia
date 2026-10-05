@@ -18,8 +18,8 @@ export function Silhouette() {
 }
 
 /**
- * A neutral stand-in: the mock engine has no images, and a real one may fail to load. A span (`.portrait` is a block), so it
- * may sit inside a button: the gallery tile's photo is one.
+ * A neutral stand-in: the mock engine has no images, and a real one may fail to load. A span (`.portrait` is laid out as a
+ * box), so it may sit inside a button: the gallery tile's photo is one.
  */
 export function PortraitPlaceholder({ seed, label }: { seed: string; label: string }) {
   return (
@@ -74,11 +74,15 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
   const cap = natural === null ? null : drawCap(natural, dpr);
   const banded = useBanded(frame, cap);
   if (client.kind === "mock" || failed || src === null) return <PortraitPlaceholder seed={photoId} label={label} />;
+  // Each side is held on its own: a frame wider than the cap but not taller (or the other way) gets a box of the frame's height and
+  // the cap's width, and `cover` crops inside it; either way no side is stretched past the cap, and `useBanded` sees the band.
   const capStyle: CSSProperties | undefined = cap === null ? undefined : { maxWidth: `${cap.width}px`, maxHeight: `${cap.height}px` };
+  // Keyed by its address: another photo is a new element, so the last picture is never left on screen, uncapped, while it loads.
   return (
     <span ref={frame} className="portrait" data-fit={banded ? "capped" : undefined}>
-      {banded && <img className="portrait-backdrop" src={src} alt="" aria-hidden="true" decoding="async" draggable={false} />}
+      {banded && <img key={`backdrop-${src}`} className="portrait-backdrop" src={src} alt="" aria-hidden="true" decoding="async" draggable={false} />}
       <img
+        key={src}
         className="portrait-img"
         src={src}
         alt={label}
