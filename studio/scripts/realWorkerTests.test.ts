@@ -584,8 +584,7 @@ describe("the Electron-Node steps' bounds", () => {
     for (const m of inline) expect(Number(m[2])).toBeGreaterThan((MAX_ATTEMPTS * ATTEMPT_TIMEOUT_MS) / 60_000);
   });
 
-  // The release (CI-4): the installers are attached once, by a tag-only job that needs BOTH OSes and the (deterministic) heavy tier. The perf
-  // tier never gates anything: its budgets are measurements (one read 786 ms of 800 on Windows).
+  // The perf tier never gates anything: its budgets are measurements (one read 786 ms of 800 on Windows).
   async function workflowJobs(): Promise<Record<string, Record<string, unknown>>> {
     const parsed: unknown = Bun.YAML.parse(await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8"));
     if (typeof parsed !== "object" || parsed === null || !("jobs" in parsed) || typeof parsed.jobs !== "object" || parsed.jobs === null) throw new Error("no jobs in the workflow");
@@ -631,41 +630,55 @@ describe("the Electron-Node steps' bounds", () => {
     expect(scripts["test:studio:suite"]).toBe(`bun studio/scripts/realWorkerTests.ts --shards=3 --suite`);
   });
 
-  test("the release job exists, runs on tags only, and needs the build and the heavy tier", async () => {
-    const jobs = await workflowJobs();
-    const release = jobs.release;
-    expect(release).toBeDefined();
-    expect(release?.if).toBe("startsWith(github.ref, 'refs/tags/')");
-    // CI-5: the Windows suite shards are their own job (`test-windows`), so a release must wait for it too, not only for `build`.
-    expect(release?.needs).toEqual(["build", "test-windows", "heavy"]);
-    expect(release?.permissions).toEqual({ contents: "write" });
-    expect(release?.["continue-on-error"]).toBeUndefined();
-  });
+  // Owner decision 2026-10-05: the repo is public, so an installer uploaded as an artifact is downloadable by any logged-in GitHub user,
+  // and the macOS ffmpeg-static build is GPL+nonfree. Nothing in the workflow (or in a local action it could call) may publish or
+  // upload anything until a private distribution channel exists; these checks fail if a release job, an artifact transfer, a secret
+  // or a write permission comes back.
+  const PUBLISHERS = /actions\/upload-artifact|actions\/download-artifact|softprops\/action-gh-release/;
 
-  test("the release job checks both installers and attaches them with the options the build job had, and nothing else publishes", async () => {
+  test("nothing publishes: no release job, no artifact or release action in the workflow or in any local action", async () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     const jobs = await workflowJobs();
-    const steps = (jobs.release?.steps ?? []) as { uses?: string; with?: Record<string, unknown>; run?: string }[];
-    const download = steps.find((step) => step.uses === "actions/download-artifact@v4");
-    expect(download?.with).toEqual({ pattern: "studio-*", "merge-multiple": true, path: "release-studio" });
-    expect(steps.some((step) => step.run?.includes("a release needs a .dmg and an .exe") && step.run.includes("exit 1"))).toBe(true);
-    const publish = steps.find((step) => step.uses === "softprops/action-gh-release@v2");
-    expect(publish?.with).toMatchObject({ make_latest: false, fail_on_unmatched_files: true });
-    expect(String(publish?.with?.files)).toContain("release-studio/*.dmg");
-    expect(String(publish?.with?.files)).toContain("release-studio/*.exe");
-    // The only publisher: no other job attaches installers, and no job but the release one has write access.
-    expect(workflow.match(/softprops\/action-gh-release/g)).toHaveLength(1);
-    expect(workflow).toMatch(/^permissions:\r?\n {2}contents: read\r?$/m);
-    expect(Object.entries(jobs).filter(([, job]) => JSON.stringify(job.permissions ?? {}).includes("write")).map(([name]) => name)).toEqual(["release"]);
+    expect(jobs.release).toBeUndefined();
+    expect(workflow).not.toMatch(PUBLISHERS);
+    expect(workflow).not.toMatch(/\bgh\s+release\b/);
+    // A local composite action is a way around the workflow text: scan every file under .github/actions too.
+    const actionsDir = join(ROOT, ".github", "actions");
+    const localFiles = await Array.fromAsync(new Bun.Glob("**/*").scan({ cwd: actionsDir, onlyFiles: true })).catch(() => []);
+    for (const file of localFiles) {
+      const text = await readFile(join(actionsDir, file), "utf8");
+      expect([file, PUBLISHERS.test(text)]).toEqual([file, false]);
+      expect([file, /\bgh\s+release\b/.test(text)]).toEqual([file, false]);
+    }
+    // No job needs an artifact another job would have to hand over.
+    expect(Object.values(jobs).filter((job) => JSON.stringify(job.steps ?? []).includes("artifact"))).toEqual([]);
   });
 
-  test("the build job uploads the installers the release job downloads (the artifact names it matches)", async () => {
+  test("no secret reaches the workflow, and the token is read-only everywhere", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     const jobs = await workflowJobs();
-    const steps = (jobs.build?.steps ?? []) as { uses?: string; with?: Record<string, unknown> }[];
-    const upload = steps.find((step) => step.uses === "actions/upload-artifact@v4");
-    expect(String(upload?.with?.name)).toMatch(/^studio-/);
-    expect(String(upload?.with?.path)).toContain("release-studio/*.dmg");
-    expect(String(upload?.with?.path)).toContain("release-studio/*.exe");
+    // No `secrets.X` expression at all: the workflow uses none today, so any new one is a decision to review, not a drive-by.
+    expect(workflow).not.toMatch(/\bsecrets\./);
+    const parsed: unknown = Bun.YAML.parse(workflow);
+    if (typeof parsed !== "object" || parsed === null || !("permissions" in parsed)) throw new Error("no top-level permissions in the workflow");
+    expect(parsed.permissions).toEqual({ contents: "read" });
+    expect(Object.entries(jobs).filter(([, job]) => JSON.stringify(job.permissions ?? {}).includes("write")).map(([name]) => name)).toEqual([]);
+  });
+
+  test("the packaging never publishes: electron-builder runs with --publish never, no other --publish value exists, and the config has publish: null", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    expect(workflow).toMatch(/bunx electron-builder --config electron-builder\.studio\.yml --publish never\r?$/m);
+    const values = [...workflow.matchAll(/--publish[ =](\S+)/g)].map((m) => m[1]);
+    expect(values.length).toBeGreaterThan(0);
+    for (const value of values) expect(value).toBe("never");
+    const config = await readFile(join(ROOT, "electron-builder.studio.yml"), "utf8");
+    expect(config).toMatch(/^publish: null\r?$/m);
+  });
+
+  test("the tag trigger stays, as verification, and says why nothing is released", async () => {
+    const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
+    expect(workflow).toMatch(/- "studio-v\*"/);
+    expect(workflow).toContain("Studio releases are disabled while the repo is public; see owner decision 2026-10-05");
   });
 
   test("the perf job never gates a run: continue-on-error is true on every trigger, tags included; the heavy job blocks on tags and the schedule", async () => {

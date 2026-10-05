@@ -30,10 +30,14 @@ on:
           - scheduled
         default: default
   push:
+    # Studio releases are disabled while the repo is public; see owner decision 2026-10-05. A `studio-v*` tag still runs the
+    # build and the heavy tier as verification, but there is no `release` job and the installers are not uploaded anywhere
+    # (a public repo's artifacts are downloadable by any logged-in GitHub user, and the macOS ffmpeg-static build is GPL+nonfree).
+    # Re-enable only together with a private distribution channel.
     tags:
       - "studio-v*"
     # Studio builds on src/core and src/node, so a uniquifier-side change that
-    # breaks it must fail here before a release. GitHub does not apply `paths`
+    # breaks it must fail here before a Studio tag run is green. GitHub does not apply `paths`
     # to tag pushes, so tags always run.
     branches:
       - main
@@ -51,12 +55,12 @@ on:
   # (see the tiers above) runs on a timer instead of on every push.
   schedule:
     - cron: "17 6 * * 1"
-# Read-only for every job; the one that publishes (`release`, tags only) asks for write itself.
+# Read-only for every job. Nothing in this workflow publishes: no Release, and no installer is uploaded as an artifact.
 permissions:
   contents: read
 # A superseded run on a branch (a second dispatch or push of the same ref) is cancelled, so it stops spending
 # runner minutes on a result nobody will read. Main and tags are never cancelled: every push to main must finish,
-# so a red commit stays identifiable, and a release run must not be cut short. Their group is unique per run
+# so a red commit stays identifiable, and a tag run must not be cut short. Their group is unique per run
 # (run_id), not just non-cancelling: with a shared group and cancel-in-progress off, GitHub still drops an older
 # PENDING run when a newer one queues behind the running one, and that would skip a main commit's check.
 concurrency:
@@ -172,7 +176,7 @@ jobs:
       # on every retry.
       #
       # CI-5: not on Windows. There the same 3-shard-equivalent suite runs in the `test-windows` job below, as parallel jobs (every
-      # test file in exactly one of them: realWorkerTests.test.ts proves the partition), and `release` waits for it. macOS stays
+      # test file in exactly one of them: realWorkerTests.test.ts proves the partition). macOS stays
       # here: its whole suite is about 2.5 minutes, and a macOS minute bills 10x, so splitting it would cost more than it saves.
       - run: bun run test:studio:suite ./studio
         timeout-minutes: 150
@@ -225,7 +229,7 @@ jobs:
             echo "::error::installer size ${mib} MiB exceeds the ${budget} MiB budget"
             exit 1
           fi
-      # Launches the package as shipped, before anything is uploaded: fuses set,
+      # Launches the package as shipped (nothing is uploaded anywhere): fuses set,
       # the E2E override compiled out, the engine utilityProcess started from
       # inside app.asar, --remote-debugging-port refused. GitHub's macOS and
       # Windows runners have a desktop session, so the app starts as is.
@@ -272,14 +276,6 @@ jobs:
             app=release-studio/e2e/win-unpacked
           fi
           bun studio/scripts/smoke-engine.ts --app "$app"
-      - if: env.PACKAGE == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: studio-${{ matrix.os }}
-          path: |
-            release-studio/*.dmg
-            release-studio/*.exe
-          if-no-files-found: ignore
 
   # The Windows bun suite (CI-5), as parallel jobs: the suite `build` runs on macOS (`bun run test:studio:suite ./studio`, 3 shards one
   # after another) is here one shard per job, 4 in all. Before, `build (windows-latest)` ran the three shards in sequence (4.5, 6.2 and
@@ -326,47 +322,6 @@ jobs:
         run: bun run test:studio:suite:shard --shard=${{ matrix.shard }}/4 --suite ./studio
         timeout-minutes: 60
 
-  # The release (tags only): the installers the `build` job uploaded (PACKAGE is true on a tag), attached to the GitHub Release once
-  # BOTH OSes built, smoke-tested and uploaded theirs, every Windows suite shard (`test-windows`, CI-5) passed, and the heavy tier
-  # (deterministic: a fixed seed) passed. BEHAVIOUR CHANGE: this
-  # step used to run inside each `build` leg, so when one OS failed the other still published its own installer; now a failure on
-  # either OS (or in the heavy tier) publishes nothing at all. The perf tier is not a gate: its budgets are measurements, and one of
-  # them has read 786 ms of 800 on Windows. Moved here from the build job as it was (same files, same `make_latest`), plus a check
-  # that both installers are present and `fail_on_unmatched_files`, so a release cannot go out with half its files.
-  release:
-    name: release
-    if: startsWith(github.ref, 'refs/tags/')
-    needs: [build, test-windows, heavy]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: studio-*
-          merge-multiple: true
-          path: release-studio
-      - name: Check both installers are present
-        shell: bash
-        run: |
-          shopt -s nullglob
-          dmgs=(release-studio/*.dmg)
-          exes=(release-studio/*.exe)
-          ls -l release-studio
-          if [ "${#dmgs[@]}" -eq 0 ] || [ "${#exes[@]}" -eq 0 ]; then
-            echo "::error::a release needs a .dmg and an .exe: found ${#dmgs[@]} .dmg and ${#exes[@]} .exe in release-studio/"
-            exit 1
-          fi
-      - name: Attach installers to the GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          # The landing page reads the "latest" release, which must stay the uniquifier's.
-          make_latest: false
-          fail_on_unmatched_files: true
-          files: |
-            release-studio/*.dmg
-            release-studio/*.exe
-
   # The perf tier (see TEST TIERS at the top): the tests tagged `[perf]`, with
   # their tight wall-clock budgets ENFORCED and their numbers printed. These are
   # measurements of the runner as much as of the code (deadline headroom, the
@@ -386,8 +341,8 @@ jobs:
       matrix:
         os: ${{ fromJSON((github.event_name == 'schedule' || inputs.tier == 'scheduled' || startsWith(github.ref, 'refs/tags/')) && '["ubuntu-latest","windows-latest"]' || '["ubuntu-latest"]') }}
     runs-on: ${{ matrix.os }}
-    # Never blocks, on a release tag either: these budgets are measurements (one has read 786 ms of 800 on Windows), so they must not
-    # gate a release. The heavy job below is deterministic and does gate it (the `release` job needs it).
+    # Never blocks, on a `studio-v*` tag either: these budgets are measurements (one has read 786 ms of 800 on Windows), so they must not
+    # gate a tag run. The heavy job below is deterministic and does gate it.
     continue-on-error: true
     permissions:
       contents: read
@@ -484,8 +439,8 @@ jobs:
   # push does not need: the font byte-mutation fuzz and the sticker script run
   # in a fresh process. Platform-independent, so ubuntu only (1x of the private
   # repo's minutes; macOS bills 10x, Windows 2x). On the weekly schedule and on a
-  # release tag a failure turns the run red (GitHub only emails a failed scheduled
-  # run, and a release must not ship a regression); on a manual run of the
+  # `studio-v*` tag a failure turns the run red (GitHub only emails a failed scheduled
+  # run, and a tag must not pass over a regression); on a manual run of the
   # scheduled tier it does not.
   heavy:
     name: heavy
