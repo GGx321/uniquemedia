@@ -286,6 +286,51 @@ describe("runs.estimate", () => {
   });
 });
 
+// CS.1: the contract names custom categories, but the engine has no category library yet (CS.2 adds it), so every
+// custom ref is an unknown one: NOT_FOUND, free, before a price is fetched, a reserve is made or a folder is written.
+describe("a custom category in a run request, before the category library exists (CS.1)", () => {
+  const CUSTOM = "cat-paris-cafes";
+  const withCustom = (avatarId: string) => ({ ...request(avatarId), categories: ["home", CUSTOM] });
+
+  test("runs.estimate is NOT_FOUND for it and fetches no price", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    const refusal = failed(await engine.handle(command("runs.estimate", withCustom(avatarId))));
+    expect(refusal.error.code).toBe("NOT_FOUND");
+    expect(refusal.error.detail).toContain(CUSTOM);
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("runs.start is NOT_FOUND for it: no price fetched, nothing sent, no ledger line, no run folder", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    expect(failed(await engine.handle(command("runs.start", { ...withCustom(avatarId), acceptedWorstMicros: 10_000_000 }))).error.code).toBe("NOT_FOUND");
+    expect(net.calls).toHaveLength(0);
+    expect(readdirSync(join(dir(), "library", "runs"))).toEqual([]);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl"))).toEqual([]);
+  });
+
+  test("the refusal releases the avatar: a built-in run for it starts right after", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork());
+    expect(failed(await engine.handle(command("runs.start", { ...withCustom(avatarId), acceptedWorstMicros: 10_000_000 }))).error.code).toBe("NOT_FOUND");
+    // The refusal released the avatar: a built-in run for it starts, and ends.
+    const { jobId } = started(await engine.handle(startRun(avatarId)));
+    await jobEnd(events, jobId);
+  });
+
+  test("a built-in run's plan.json is the document main wrote: no categories key", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork());
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    await jobEnd(events, jobId);
+    const raw: Record<string, unknown> = JSON.parse(readFileSync(join(dir(), "library", "runs", runId, "plan.json"), "utf8"));
+    expect("categories" in raw).toBe(false);
+  });
+});
+
 // ---------- runs.start ----------
 
 describe("runs.start", () => {
