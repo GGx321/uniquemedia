@@ -61,6 +61,7 @@ import { promptSubject, PromptSubjectError } from "./avatars/prompts";
 import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { EngineFailure } from "./engineFailure";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
+import { validJobStates } from "./snapshotJobs";
 import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
@@ -2030,8 +2031,8 @@ export class Engine {
       drafts: view.drafts.map((draft) => ({ ...draft, estimate: nextBatch })),
       unreadableAvatars: view.unreadable,
       unreadableTotal: view.unreadableTotal,
-      // Avatar and photo run jobs of this engine's life.
-      jobs: this.#jobs.states(),
+      // Avatar and photo run jobs of this engine's life; a state that breaks the contract is left out (one would send every window offline).
+      jobs: validJobStates(this.#jobs.states(), (line) => console.error(`studio engine: ${line}`)),
       librarySwitchGeneration: this.#librarySwitchGeneration,
       // As of the last check: start, a settings update, or a render attempt (`#refreshExportStatus`).
       exportStatus: this.#exportStatus,
