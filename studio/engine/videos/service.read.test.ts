@@ -269,6 +269,16 @@ describe("videos.list, what can go wrong around it", () => {
     expect(performance.now() - started).toBeLessThan(2_000);
   });
 
+  test("an export check that fails fast (not a timeout) leaves the records `unchecked` with the whole budget still in hand: a root that could not be judged says nothing about a file", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: () => Promise.reject(new Error("boom")), listBudgetMs: 60_000 } });
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.fileState)).toEqual(["unchecked"]);
+  });
+
   test("a listing inside its budget is unchanged: every record is checked", async () => {
     const w = world();
     const r = serviceRig(w, { deps: { listBudgetMs: 60_000 } });
