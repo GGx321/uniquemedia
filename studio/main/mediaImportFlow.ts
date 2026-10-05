@@ -222,7 +222,7 @@ const DROP_NOT_TRUSTED: EngineError = { code: "VALIDATION", detail: "the drop di
  * shape, then the same path a pick takes (`importPickedPaths`, kind `any`), one pick or drop at a time. Never throws.
  */
 export async function handleDroppedMedia(raw: unknown, frame: SenderFrame, trusted: TrustedRenderer, deps: Omit<MediaImportFlowDeps, "pickFiles">): Promise<PickedOutcome> {
-  if (!isTrustedSender(frame, trusted, deps.platform)) return { ok: false, error: DROP_NOT_TRUSTED };
+  if (!isTrustedSender(frame, trusted)) return { ok: false, error: DROP_NOT_TRUSTED };
   const parsed = DroppedPayload.safeParse(raw);
   if (!parsed.success) return { ok: false, error: { code: "VALIDATION", detail: "a drop is the preload's paths and a count" } };
   const { paths, more } = parsed.data;

@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { CommandMessage, MAX_PICKED_FILES, MAX_REFUSED_FILES, mediaByteCap, MediaPickResult, PROTOCOL_VERSION, type PickedFileIdentity } from "../shared/engine";
 import { pickedIdentityOf } from "../engine/media/identity";
 import { handleDroppedMedia, handleMediaPickCommand, isMediaPickCommand, type MediaImportFlowDeps, type MediaImportReply } from "./mediaImportFlow";
+import { APP_PAGE_URL } from "./appProtocol";
 import type { SenderFrame, TrustedRenderer } from "./requests";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -15,11 +16,9 @@ useNativeGlobals();
 // without following a link and as a regular file (a folder or a link is `not-a-file`), its size from the open handle within the `any` cap,
 // its identity pinned, then the engine's `media.import`, one file after another. The answer is a pick's `MediaPickResult`.
 
-/** The app's page as the platform the test runs on writes it: a file URL with a drive letter on Windows (`isTrustedSender` reads it by the platform's rules). */
-const TRUSTED: TrustedRenderer = {
-  fileUrl: process.platform === "win32" ? "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html" : "file:///Applications/Studio.app/Contents/Resources/app.asar/out-studio/renderer/index.html",
-};
-const APP_FRAME: SenderFrame = { url: TRUSTED.fileUrl, isTopFrame: true, isAppWindow: true };
+/** The app's page (`studio-app://renderer/index.html`, appProtocol.ts), the same URL on every platform; no dev server. */
+const TRUSTED: TrustedRenderer = {};
+const APP_FRAME: SenderFrame = { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: true };
 
 let dir = "";
 beforeEach(async () => {
@@ -73,6 +72,8 @@ describe("who may drop", () => {
       { ...APP_FRAME, isTopFrame: false },
       { ...APP_FRAME, isAppWindow: false },
       { ...APP_FRAME, url: "https://evil.example/index.html" },
+      // The renderer file the page used to be: no `file:` page is the app's own.
+      { ...APP_FRAME, url: "file:///Applications/Studio.app/Contents/Resources/app.asar/out-studio/renderer/index.html" },
       { ...APP_FRAME, url: null },
     ]) {
       const h = harness();
@@ -180,7 +181,6 @@ describe("what main does with the dropped paths: a pick's own checks", () => {
 
   test("on Windows a network path from a drop (\\\\host, //host, \\\\?\\UNC) is refused before the disk is touched; a long local one (\\\\?\\C:) is looked at (review LOW-1)", async () => {
     // Opening a share would make Windows authenticate to the host (NTLM). The dialog may still pick from a share; a drop may not.
-    const winTrusted: TrustedRenderer = { fileUrl: "file:///C:/Program%20Files/Studio/resources/app.asar/out-studio/renderer/index.html" };
     const opened: string[] = [];
     const ops = {
       lstat: async (path: string) => {
@@ -195,8 +195,8 @@ describe("what main does with the dropped paths: a pick's own checks", () => {
     const h = harness();
     const reply = await handleDroppedMedia(
       { paths: ["\\\\fileserver\\share\\beach.jpg", "//fileserver/share/walk.mov", "\\\\?\\UNC\\fileserver\\share\\a.jpg", "\\/fileserver/share/b.jpg", "\\\\?\\C:\\Users\\me\\local.jpg"], more: 0 },
-      { url: winTrusted.fileUrl, isTopFrame: true, isAppWindow: true },
-      winTrusted,
+      APP_FRAME,
+      TRUSTED,
       { ...h.deps, platform: "win32", ops, noFollow: 0 },
     );
     if (!reply.ok) throw new Error(reply.error.code);
