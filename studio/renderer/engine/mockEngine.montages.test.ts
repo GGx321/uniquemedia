@@ -67,7 +67,7 @@ describe("montages.create", () => {
 
     const reply = await mock.client.request("montages.create", { avatarId: MIA.avatarId, photoIds: photos.map((p) => p.photoId) });
 
-    expect(reply).toEqual({ ok: false, error: { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photoIds", 1] }] } });
+    expect(reply).toEqual({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "in-video", issues: [{ code: "photo-unavailable", path: ["photoIds", 1] }] } });
     expect(draftEvents(mock.events)).toEqual([]);
     expect(await unwrap(mock.client.request("montages.list", {}))).toMatchObject({ items: [], total: 0 });
   });

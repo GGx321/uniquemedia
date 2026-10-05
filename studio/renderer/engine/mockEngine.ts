@@ -22,6 +22,7 @@ import {
   IMPORT_FALLBACK_PRICE,
   type ImportPhotoPicked,
   type JobResult,
+  commonPhotoReason,
   type JobState,
   LIBRARY_TOO_NEW_DETAIL,
   type LedgerUnavailable,
@@ -38,6 +39,7 @@ import {
   OWN_MUSIC_NOT_FOUND_DETAIL,
   OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
+  type PhotoUnavailableReason,
   type PhotoSummary,
   PROTOCOL_VERSION,
   type ReconcileReason,
@@ -1926,12 +1928,28 @@ export class MockEngine implements EngineBridge {
     return view.eligible && !view.used && !view.reserved;
   }
 
-  /** What an avatar whose usage is unknown answers a command that names photos: LIBRARY_TOO_NEW, or PHOTO_UNAVAILABLE for `issues` with the untrusted detail; null when its usage is sound or nothing is refused. */
+  /** The engine's `refusalReasonOf`: why an eligible photo that is not free is not: in a video, or held by a queued or running render (in a video first). */
+  private photoRefusalReason(avatarId: string, photoId: string): PhotoUnavailableReason | undefined {
+    const photo = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId);
+    if (photo === undefined) return undefined;
+    const view = this.photoView(photo);
+    if (!view.eligible) return undefined;
+    if (view.used) return "in-video";
+    return view.reserved ? "held-by-render" : undefined;
+  }
+
+  /** What an avatar whose usage is unknown answers a command that names photos: LIBRARY_TOO_NEW, or PHOTO_UNAVAILABLE for `issues` with the untrusted detail and reason; null when its usage is sound or nothing is refused. */
   private usageRefusal(avatarId: string, issues: readonly MontageIssue[]): EngineError | null {
     const availability = this.availabilityOf(avatarId);
     if (availability.state === "known") return null;
     if (availability.state === "too-new") return { code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL };
-    return issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues: [...issues], detail: usageUntrustedDetail(availability.reason) };
+    return issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues: [...issues], detail: usageUntrustedDetail(availability.reason), photoReason: availability.reason };
+  }
+
+  /** PHOTO_UNAVAILABLE for the refused photos of a sound avatar, with the reason they share (the engine's `commonPhotoReason`). */
+  private refusedPhotos(avatarId: string, refused: readonly { photoId: string; issue: MontageIssue }[]): EngineError {
+    const photoReason = commonPhotoReason(refused.map((r) => this.photoRefusalReason(avatarId, r.photoId)));
+    return { code: "PHOTO_UNAVAILABLE", issues: refused.map((r) => r.issue), ...(photoReason === undefined ? {} : { photoReason }) };
   }
 
   private avatarKnown(avatarId: string): boolean {
@@ -1948,13 +1966,13 @@ export class MockEngine implements EngineBridge {
 
   /** K11: a photo that is not an eligible, unused, unreserved scene photo of this avatar is refused, with its index in `photoIds`. */
   private photosRefusal(avatarId: string, photoIds: readonly string[]): EngineError | null {
-    const issues: MontageIssue[] = [];
+    const refused: { photoId: string; issue: MontageIssue }[] = [];
     photoIds.forEach((photoId, i) => {
-      if (!this.photoUsable(avatarId, photoId)) issues.push({ code: "photo-unavailable", path: ["photoIds", i] });
+      if (!this.photoUsable(avatarId, photoId)) refused.push({ photoId, issue: { code: "photo-unavailable", path: ["photoIds", i] } });
     });
     // `montages.create` judges nothing for an empty pick, whatever the avatar's usage.
     if (photoIds.length === 0) return null;
-    return this.usageRefusal(avatarId, issues) ?? (issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues });
+    return this.usageRefusal(avatarId, refused.map((r) => r.issue)) ?? (refused.length === 0 ? null : this.refusedPhotos(avatarId, refused));
   }
 
   private focusOf(avatarId: string, photoId: string): Focus | null {
@@ -2224,10 +2242,10 @@ export class MockEngine implements EngineBridge {
     if (refusal) return this.fail(c, refusal);
     const cells = sceneCells(spec);
     const unavailable = cells.filter((cell) => !this.photoUsable(spec.avatarId, cell.photoId));
-    const unavailableIssues = unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable" as const, path: cell.path }));
-    const usageRefusal = this.usageRefusal(spec.avatarId, unavailableIssues);
+    const refusedCells = unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ photoId: cell.photoId, issue: { code: "photo-unavailable" as const, path: cell.path } }));
+    const usageRefusal = this.usageRefusal(spec.avatarId, refusedCells.map((r) => r.issue));
     if (usageRefusal !== null) return this.fail(c, usageRefusal);
-    if (unavailable.length > 0) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: unavailableIssues });
+    if (unavailable.length > 0) return this.fail(c, this.refusedPhotos(spec.avatarId, refusedCells));
     if (this.renderJobs.filter(isActive).length >= this.renderQueueLimit) {
       return this.fail(c, { code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(this.renderQueueLimit) });
     }

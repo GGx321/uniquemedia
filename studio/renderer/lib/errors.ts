@@ -7,6 +7,7 @@ import {
   MONTAGE_ISSUE_MESSAGES_RU,
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
+  PHOTO_UNAVAILABLE_REASONS_RU,
   RENDER_TIMEOUT_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
   renderQueueLimitOf,
@@ -43,6 +44,8 @@ function baseText(error: EngineError): string {
     const limit = renderQueueLimitOf(error.detail);
     if (limit !== null) return `В очереди уже ${countOf(limit, RENDER_FORMS)}: это предел. Дождитесь, пока часть из них соберётся, или отмените лишние, и повторите. Ничего не потрачено и не сохранено.`;
   }
+  // A refused photo says why: one photo goes into one video, a render holds its photos, a broken record refuses the whole avatar.
+  if (error.code === "PHOTO_UNAVAILABLE" && error.photoReason !== undefined) return PHOTO_UNAVAILABLE_REASONS_RU[error.photoReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.

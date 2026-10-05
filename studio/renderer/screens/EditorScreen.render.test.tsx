@@ -264,7 +264,7 @@ describe("what a refusal says (nothing was queued: the button is ready again)", 
 
   test("PHOTO_UNAVAILABLE highlights the cells named by its issues and never shows its detail", async () => {
     await refused({ code: "PHOTO_UNAVAILABLE", detail: "an unreadable video record: Mia/2026-10-03_photo_001.mp4", issues: [{ code: "photo-unavailable", path: ["clips", 0, "cells", 1] }] });
-    await screen.findByText(/Это фото нельзя использовать в видео/);
+    await screen.findByText(/Это фото нельзя поставить в видео/);
     expect(screen.queryByText(/unreadable video record/) === null).toBe(true);
     expect(screen.queryByText(/photo_001/) === null).toBe(true);
     const clips = document.querySelectorAll(".ed-clip-slot");

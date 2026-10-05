@@ -1,5 +1,5 @@
 import { randomInt } from "node:crypto";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, LIBRARY_TOO_NEW_DETAIL, OWN_PHOTO_NOT_FOUND_DETAIL, PROTOCOL_VERSION, usageUntrustedDetail, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
+import { commonPhotoReason, DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, LIBRARY_TOO_NEW_DETAIL, type PhotoUnavailableReason, OWN_PHOTO_NOT_FOUND_DETAIL, PROTOCOL_VERSION, usageUntrustedDetail, type CommandPayload, type CommandResult, type UnsequencedEvent } from "../../shared/engine";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, type Focus, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { defaultSpec, ownPhotoCells, ownStickerCells, ownVideoClips } from "../../shared/montage";
 import { EngineFailure } from "../engineFailure";
@@ -202,12 +202,16 @@ export class MontageService {
     const availability = photoAvailability(library, avatarId);
     if (availability.state === "too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL });
     const issues: MontageIssue[] = [];
+    const reasons: (PhotoUnavailableReason | undefined)[] = [];
     photoIds.forEach((photoId, i) => {
-      if (availability.state !== "known" || !availability.usable(photoId)) issues.push({ code: "photo-unavailable", path: ["photoIds", i] });
+      if (availability.state === "known" && availability.usable(photoId)) return;
+      issues.push({ code: "photo-unavailable", path: ["photoIds", i] });
+      reasons.push(availability.state === "known" ? availability.why(photoId) : undefined);
     });
     if (issues.length === 0) return;
+    const photoReason = availability.state === "untrusted" ? availability.reason : commonPhotoReason(reasons);
     const detail = availability.state === "untrusted" ? usageUntrustedDetail(availability.reason) : undefined;
-    throw new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues, ...(detail === undefined ? {} : { detail }) });
+    throw new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues, ...(detail === undefined ? {} : { detail }), ...(photoReason === undefined ? {} : { photoReason }) });
   }
 
   #seed(): number {

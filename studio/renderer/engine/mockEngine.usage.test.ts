@@ -53,6 +53,7 @@ describe("an avatar whose usage is unknown", () => {
       error: {
         code: "PHOTO_UNAVAILABLE",
         detail: untrusted("index-stale"),
+        photoReason: "index-stale",
         issues: [
           { code: "photo-unavailable", path: ["photoIds", 0] },
           { code: "photo-unavailable", path: ["photoIds", 1] },
@@ -119,6 +120,23 @@ describe("an avatar whose usage is unknown", () => {
     const { photos } = await unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }));
 
     expect(photos.map((p) => p.eligible)).toEqual([true, true, true, true]);
+  });
+
+  test("every refusal names its reason code: the stale index, or the log that needs repair", async () => {
+    const stale = await unknownMock(["index-stale"]).client.request("montages.create", { avatarId: MIA.avatarId, photoIds: P });
+    const broken = await unknownMock(["record-unreadable"]).client.request("montages.create", { avatarId: MIA.avatarId, photoIds: P });
+
+    expect(stale).toMatchObject({ ok: false, error: { photoReason: "index-stale" } });
+    expect(broken).toMatchObject({ ok: false, error: { photoReason: "log-needs-repair" } });
+  });
+
+  test("videos.render names the same reason code as montages.create", async () => {
+    const mock = unknownMock(["record-unreadable"]);
+    const montageId = await draftWithPhotos(mock, P);
+
+    const reply = await mock.client.request("videos.render", { montageId });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "log-needs-repair" } });
   });
 
   test("a recovery that clears the last reason makes the photos usable again", async () => {

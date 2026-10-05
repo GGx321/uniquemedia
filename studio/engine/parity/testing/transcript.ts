@@ -260,7 +260,10 @@ function snapshotLine(result: Record<string, unknown>, norm: Normalizer): string
 /** An answer as a line. */
 export function answerLine(type: string, answer: Answer, norm: Normalizer): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason, musicReason, captionIssue } = answer.error;
+    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason } = answer.error;
+    // A photo's refusal reason is written only for the two that refuse the whole avatar (an untrusted usage): the golden lines of the in-video and
+    // held-by-render refusals were fixed before `photoReason` existed and stay as they are. Those two are held by the engine's and the mock's own tests.
+    const untrustedReason = photoReason === "index-stale" || photoReason === "log-needs-repair" ? photoReason : undefined;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     const text = code === "VALIDATION" || code.startsWith("MUSIC_") ? undefined : detail;
@@ -271,6 +274,7 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
         ...(exportReason === undefined ? {} : { exportReason }),
         ...(musicReason === undefined ? {} : { musicReason }),
         ...(captionIssue === undefined ? {} : { captionIssue }),
+        ...(untrustedReason === undefined ? {} : { photoReason: untrustedReason }),
       }),
     )}`;
   }
