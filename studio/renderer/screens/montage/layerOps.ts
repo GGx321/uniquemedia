@@ -121,6 +121,11 @@ export function addStickerLayer(spec: MontageDraft, atMs: number, stickerId: str
   return addLayer(spec, "sticker", atMs, (base) => ({ ...base, kind: "sticker", sticker: { source: "builtin", stickerId }, x: DEFAULT_STICKER.x, y: DEFAULT_STICKER.y, size: DEFAULT_STICKER.size }));
 }
 
+/** An own sticker from «Мои» (3f.6, M12) at the playhead: where and as large as a built-in one, by the same caps and room. */
+export function addOwnStickerLayer(spec: MontageDraft, atMs: number, mediaId: string): LayerEdit {
+  return addLayer(spec, "sticker", atMs, (base) => ({ ...base, kind: "sticker", sticker: { source: "own", mediaId }, x: DEFAULT_STICKER.x, y: DEFAULT_STICKER.y, size: DEFAULT_STICKER.size }));
+}
+
 export function removeLayer(spec: MontageDraft, index: number): MontageDraft {
   layerAt(spec, index);
   return withLayers(spec, spec.layers.filter((_, i) => i !== index));

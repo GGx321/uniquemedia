@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_SOURCE_OFFSET_MS, MontageDraft, type TrackSummary } from "../../../shared/engine";
 import { trackIssues } from "../../../shared/montage";
-import { highlightPicks, musicWindow, pickStartMs, pickTrack, type TrackFacts, trackRows } from "./musicOps";
+import { highlightPicks, musicWindow, ownTrackTooShort, pickOwnTrack, pickStartMs, pickTrack, type TrackFacts, trackRows } from "./musicOps";
 import { draftSpec, photoClip } from "./testkit";
 
 // 3d.5: choosing a track in the «Музыка» tab and the start in the music card (EditorMusic.dc.html; U4–U10, R44–R48). Free: the list
@@ -183,5 +183,39 @@ describe("the «Музыка» tab's rows (U4–U10: the E badge, no trending-on
     expect(trackRows(tracks, null, TOTAL, { hideExplicit: true }).map((r) => r.track.trackId)).toEqual(["track-a-000001", "track-c-000001", "track-d-000001"]);
     const own = trackRows(tracks, { source: "trending", trackId: "track-b-000001", startMs: 0 }, TOTAL, { hideExplicit: true });
     expect(own.map((r) => r.track.trackId)).toEqual(["track-a-000001", "track-b-000001", "track-c-000001", "track-d-000001"]);
+  });
+});
+
+describe("an own track from «Мои» (3f.6, M10–M11): from its start, never one shorter than the montage", () => {
+  const OWN = { mediaId: "media-track-0001", durationMs: 42_000 };
+
+  test("the music becomes the own track from 0; it replaces a trending one", () => {
+    const edit = pickOwnTrack(NINE_SIX, OWN);
+    if (!edit.ok) throw new Error(edit.reason);
+    expect(edit.spec.music).toEqual({ source: "own", mediaId: OWN.mediaId, startMs: 0 });
+    const replaced = pickOwnTrack({ ...NINE_SIX, music: { source: "trending", trackId: TRACK.trackId, startMs: 12_000 } }, OWN);
+    expect(replaced.ok && replaced.spec.music).toEqual({ source: "own", mediaId: OWN.mediaId, startMs: 0 });
+    expect(MontageDraft.safeParse(replaced.ok ? replaced.spec : null).success).toBe(true);
+  });
+
+  test("the own track already in the montage is the same draft: the start the owner chose stays", () => {
+    const chosen = { ...NINE_SIX, music: { source: "own" as const, mediaId: OWN.mediaId, startMs: 5_000 } };
+    const edit = pickOwnTrack(chosen, OWN);
+    expect(edit.ok && edit.spec).toBe(chosen);
+  });
+
+  test("a track under 4 s is too short for any montage (round 2: the engine now refuses one at import, but older libraries still hold some)", () => {
+    const short = { ...OWN, durationMs: 3_900 };
+    const twoSeconds = draftSpec([photoClip(0, "photo-mia-0001", 2_000)]);
+    expect(ownTrackTooShort(short, 2_000)).toBe(true);
+    expect(pickOwnTrack(twoSeconds, short)).toEqual({ ok: false, reason: "too-short" });
+    expect(ownTrackTooShort({ durationMs: 4_000 }, 2_000)).toBe(false);
+  });
+
+  test("a track shorter than the montage is refused (U10's rule for own tracks); exactly as long fits", () => {
+    expect(pickOwnTrack(NINE_SIX, { ...OWN, durationMs: TOTAL - 1 })).toEqual({ ok: false, reason: "too-short" });
+    expect(pickOwnTrack(NINE_SIX, { ...OWN, durationMs: TOTAL }).ok).toBe(true);
+    expect(ownTrackTooShort({ durationMs: TOTAL - 1 }, TOTAL)).toBe(true);
+    expect(ownTrackTooShort({ durationMs: TOTAL }, TOTAL)).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type Montage, type MontageIssue, type PhotoSummary, type VideoSummary } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type MediaSummary, type Montage, type MontageIssue, type PhotoSummary, type VideoSummary } from "../../shared/engine";
 import { ownVideoClips } from "../../shared/montage";
 import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
@@ -18,8 +18,10 @@ import { sameJson } from "./montage/json";
 import { LayerProperties } from "./montage/LayerProperties";
 import { addLayerRefusal } from "./montage/layerOps";
 import { type MediaTab, MediaPanel } from "./montage/MediaPanel";
+import { type BinDrag, dragKey, parseDragKey } from "./montage/mine";
+import { MineTab, type MineTabProps } from "./montage/MineTab";
 import { MusicProperties } from "./montage/MusicCard";
-import { musicVerdictOf, pickTrack, type TrackVerdict } from "./montage/musicOps";
+import { musicVerdictOf, pickOwnTrack, pickTrack, type TrackVerdict } from "./montage/musicOps";
 import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { changeTouches, draftMediaIds } from "./montage/ownMedia";
@@ -30,7 +32,22 @@ import { replaceSticker } from "./montage/stickerOps";
 import { StickerTab, type StickerTabProps } from "./montage/StickerTab";
 import { TextPreviewsProvider } from "./montage/textPreviews";
 import { TextTab, type TextTabProps } from "./montage/TextTab";
-import { addRefusal, appendPhotoClip, cellsOf, clipStartMs, insertPhotoClip, setCellPhoto, totalMs } from "./montage/clipOps";
+import {
+  addRefusal,
+  appendOwnPhotoClip,
+  appendPhotoClip,
+  appendVideoClip,
+  cellsOf,
+  clipStartMs,
+  type Edit,
+  insertOwnPhotoClip,
+  insertPhotoClip,
+  insertVideoClip,
+  type OwnVideoFacts,
+  setCellOwnPhoto,
+  setCellPhoto,
+  totalMs,
+} from "./montage/clipOps";
 import { PropertiesSlot } from "./montage/EditorSlots";
 import { Preview } from "./montage/Preview";
 import { draftTitle, layerAddLabel, layerName, outputLabel, outputParts, saveLabel } from "./montage/labels";
@@ -215,12 +232,22 @@ function TextTabAtPlayhead({ timeline, spec, ...props }: { timeline: TimelineSta
   return <TextTab spec={spec} playheadMs={restMs} addWhy={why} {...props} />;
 }
 
+/** Why no sticker can be added where the playhead rests (G10: at the cap it says what to do about it). */
+function stickerAddWhy(spec: Montage["spec"], restMs: number): string | null {
+  const refusal = addLayerRefusal(spec, "sticker", restMs);
+  return refusal === "layer-cap" ? "Не больше 10 стикеров в одном видео — уберите один, чтобы добавить другой." : layerAddLabel("sticker", refusal, totalMs(spec)).why;
+}
+
+/** The «Мои» tab (3f.6), with why no sticker can be added where the playhead rests (M12 follows the «GIF» tab's rules). */
+function MineTabAtPlayhead({ timeline, spec, ...props }: { timeline: TimelineState } & Omit<MineTabProps, "stickerWhy" | "playhead">) {
+  const restMs = usePlayheadRest(timeline.playhead);
+  return <MineTab spec={spec} playhead={timeline.playhead} stickerWhy={stickerAddWhy(spec, restMs)} {...props} />;
+}
+
 /** The «GIF» tab, and why no sticker can be added where the playhead rests (G10: at the cap it says what to do about it). */
 function StickerTabAtPlayhead({ timeline, spec, ...props }: { timeline: TimelineState; spec: Montage["spec"] } & Omit<StickerTabProps, "spec" | "addWhy">) {
   const restMs = usePlayheadRest(timeline.playhead);
-  const refusal = addLayerRefusal(spec, "sticker", restMs);
-  const why = refusal === "layer-cap" ? "Не больше 10 стикеров в одном видео — уберите один, чтобы добавить другой." : layerAddLabel("sticker", refusal, totalMs(spec)).why;
-  return <StickerTab spec={spec} addWhy={why} {...props} />;
+  return <StickerTab spec={spec} addWhy={stickerAddWhy(spec, restMs)} {...props} />;
 }
 
 function DraftEditor({
@@ -469,8 +496,13 @@ function DraftEditor({
   // 3f.3b fix round 1 (L8): «Обрезка» tells the preview which frame a drag is at, without re-rendering the editor.
   const [trimPeek] = useState(() => new TrimPeekStore());
   const focus = useFocusResolver(client, session, avatarId);
-  /** A free photo dragged out of the bin. */
-  const [dragPhoto, setDragPhoto] = useState<string | null>(null);
+  /**
+   * What is dragged out of the media panel: a free scene photo from «Фото», or an own photo or video from «Мои» (3f.6). The timeline and the
+   * preview carry its key back untouched (`dragKey`); a video never goes into a cell, so only a photo's key is offered to the cells.
+   */
+  const [drag, setDrag] = useState<BinDrag | null>(null);
+  const dragAny = drag === null ? null : dragKey(drag);
+  const dragCell = drag !== null && (drag.source === "scene" || drag.kind === "photo") ? dragAny : null;
   const selected = resolveSelection(state.spec, timeline.selection);
   const selectedCell = selected?.kind === "clip" ? cellsOf(selected.clip)[selected.cell] : undefined;
   const fillTarget = selected?.kind === "clip" && selectedCell !== undefined && selectedCell.photo === null ? { clip: selected.index, cell: selected.cell } : null;
@@ -532,6 +564,7 @@ function DraftEditor({
   }
 
   const currentSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "builtin" ? selectedLayer.sticker.stickerId : null;
+  const currentOwnSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "own" ? selectedLayer.sticker.mediaId : null;
 
   /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. */
   function selectClipAt(index: number, cell = 0): void {
@@ -557,6 +590,15 @@ function DraftEditor({
     if (index >= 0) selectClipAt(index);
   }
 
+  /** After a cell was filled: the selection moves on to the clip's next empty cell, if any. */
+  function selectAfterFill(spec: Montage["spec"], clipIndex: number, cell: number): void {
+    const clip = spec.clips[clipIndex];
+    const cells = clip === undefined ? [] : cellsOf(clip);
+    const next = cells.findIndex((c, i) => i > cell && c.photo === null);
+    const anyEmpty = cells.findIndex((c) => c.photo === null);
+    timeline.select(selectClip(spec, clipIndex, next >= 0 ? next : anyEmpty >= 0 ? anyEmpty : cell));
+  }
+
   /** A free scene photo into a cell; the selection moves on to the clip's next empty cell, if any. */
   function fillCell(clipIndex: number, cell: number, photoId: string): void {
     const photo = photoIndex?.get(photoId);
@@ -564,11 +606,83 @@ function DraftEditor({
     const result = setCellPhoto(session.state.spec, clipIndex, cell, photoId);
     if (!result.ok || !session.edit(result.spec)) return;
     focus.resolve(photoId);
-    const clip = result.spec.clips[clipIndex];
-    const cells = clip === undefined ? [] : cellsOf(clip);
-    const next = cells.findIndex((c, i) => i > cell && c.photo === null);
-    const anyEmpty = cells.findIndex((c) => c.photo === null);
-    timeline.select(selectClip(result.spec, clipIndex, next >= 0 ? next : anyEmpty >= 0 ? anyEmpty : cell));
+    selectAfterFill(result.spec, clipIndex, cell);
+  }
+
+  // ---------- «Мои» (3f.6): the owner's own files, by the same rules ----------
+
+  /** A new clip made by `edit` (an own photo or video), selected; one undo step. */
+  function placeOwn(result: Edit): string | null {
+    if (!result.ok || result.id === undefined || !session.edit(result.spec)) return null;
+    const index = result.spec.clips.findIndex((c) => c.clipId === result.id);
+    if (index >= 0) selectClipAt(index);
+    return result.id;
+  }
+
+  /** An own photo as a new clip at `boundary` (the end by default); its face focus is asked for at once (K6, as for a scene photo). */
+  function placeOwnPhoto(mediaId: string, boundary?: number): void {
+    const spec = session.state.spec;
+    if (placeOwn(boundary === undefined ? appendOwnPhotoClip(spec, mediaId) : insertOwnPhotoClip(spec, boundary, mediaId)) !== null) focus.resolveOwn(mediaId);
+  }
+
+  /** An own video as a new clip at `boundary` (the end by default): from its start, for min(2 s, the room, its length). */
+  function placeOwnVideo(video: OwnVideoFacts, boundary?: number): void {
+    const spec = session.state.spec;
+    placeOwn(boundary === undefined ? appendVideoClip(spec, video) : insertVideoClip(spec, boundary, video));
+  }
+
+  /** An own photo into a cell; the selection moves on as for a scene photo. */
+  function fillOwnCell(clipIndex: number, cell: number, mediaId: string): void {
+    const result = setCellOwnPhoto(session.state.spec, clipIndex, cell, mediaId);
+    if (!result.ok || !session.edit(result.spec)) return;
+    focus.resolveOwn(mediaId);
+    selectAfterFill(result.spec, clipIndex, cell);
+  }
+
+  /** A drag from the media panel dropped on «Кадры» at `boundary`: a scene photo, an own photo or an own video as a new clip there. */
+  function insertDropped(key: string, boundary: number): void {
+    const dropped = parseDragKey(key);
+    if (dropped === null) return;
+    if (dropped.source === "scene") placePhoto(dropped.photoId, boundary);
+    else if (dropped.kind === "photo") placeOwnPhoto(dropped.mediaId, boundary);
+    else placeOwnVideo(dropped, boundary);
+  }
+
+  /** A drag dropped on an empty cell: a photo fills it (a video has no cell; it is never offered one). */
+  function fillDropped(clipIndex: number, cell: number, key: string): void {
+    const dropped = parseDragKey(key);
+    if (dropped === null) return;
+    if (dropped.source === "scene") fillCell(clipIndex, cell, dropped.photoId);
+    else if (dropped.kind === "photo") fillOwnCell(clipIndex, cell, dropped.mediaId);
+  }
+
+  /** A click on a photo or video tile of «Мои»: a placed one selects its clip; a photo fills the waiting cell; else a new clip at the end. */
+  function pickOwnVisual(media: MediaSummary): void {
+    const spec = session.state.spec;
+    for (const [i, clip] of spec.clips.entries()) {
+      if (clip.kind === "video" && clip.mediaId === media.mediaId) {
+        selectClipAt(i);
+        return;
+      }
+      const cell = cellsOf(clip).findIndex((c) => c.photo?.source === "own" && c.photo.mediaId === media.mediaId);
+      if (cell >= 0) {
+        selectClipAt(i, cell);
+        return;
+      }
+    }
+    if (media.kind === "photo") {
+      if (fillTarget !== null) fillOwnCell(fillTarget.clip, fillTarget.cell, media.mediaId);
+      else placeOwnPhoto(media.mediaId);
+    } else if (media.kind === "video") placeOwnVideo({ mediaId: media.mediaId, durationMs: media.durationMs ?? 0 });
+  }
+
+  /** A track row of «Мои»: the music from its start (never one shorter than the montage), then selected. */
+  function chooseOwnTrack(media: MediaSummary): void {
+    const spec = session.state.spec;
+    const edit = pickOwnTrack(spec, { mediaId: media.mediaId, durationMs: media.durationMs ?? 0 });
+    if (!edit.ok) return;
+    if (edit.spec !== spec && !session.edit(edit.spec)) return;
+    timeline.select({ kind: "music" });
   }
 
   /** A click on a bin photo: a placed one selects its clip; a free one fills the selected empty cell or is appended. */
@@ -883,7 +997,19 @@ function DraftEditor({
                 onPick={pickPhoto}
                 fillTarget={fillTarget}
                 addBlock={addRefusal(state.spec)}
-                onDragPhoto={setDragPhoto}
+                onDragPhoto={(photoId) => setDrag(photoId === null ? null : { source: "scene", photoId })}
+              />
+            ) : tab === "mine" ? (
+              <MineTabAtPlayhead
+                timeline={timeline}
+                spec={state.spec}
+                fillTarget={fillTarget}
+                addBlock={addRefusal(state.spec)}
+                selectedSticker={currentOwnSticker}
+                onPickVisual={pickOwnVisual}
+                onDragVisual={setDrag}
+                onPickTrack={chooseOwnTrack}
+                onPickSticker={(mediaId) => void commands.addOwnSticker(mediaId)}
               />
             ) : tab === "music" ? (
               <MusicTab spec={state.spec} status={view.music} onPick={pickMusic} />
@@ -911,10 +1037,10 @@ function DraftEditor({
             spec={state.spec}
             timeline={timeline}
             focusPending={focus.pending}
-            dragPhoto={dragPhoto}
-            onFillCell={(clip, cell, photoId) => {
-              setDragPhoto(null);
-              fillCell(clip, cell, photoId);
+            dragPhoto={dragCell}
+            onFillCell={(clip, cell, key) => {
+              setDrag(null);
+              fillDropped(clip, cell, key);
             }}
             onSelectCell={(clip, cell) => selectClipAt(clip, cell)}
             videos={ownVideos}
@@ -929,8 +1055,8 @@ function DraftEditor({
               avatarId={avatarId}
               timeline={timeline}
               focusPending={focus.pending}
-              dragPhoto={dragPhoto}
-              onFillCell={fillCell}
+              dragPhoto={dragCell}
+              onFillCell={fillDropped}
               videos={ownVideos}
               videoProblems={clipVideoProblems}
               trimPeek={trimPeek}
@@ -963,10 +1089,10 @@ function DraftEditor({
           musicListVersion={view.music?.listFetchedAt ?? null}
           musicVerdict={musicVerdict}
           timeline={timeline}
-          dragPhoto={dragPhoto}
-          onInsertPhoto={(photoId, boundary) => {
-            setDragPhoto(null);
-            placePhoto(photoId, boundary);
+          dragPhoto={dragAny}
+          onInsertPhoto={(key, boundary) => {
+            setDrag(null);
+            insertDropped(key, boundary);
           }}
           onAddClip={() => openTab("photos")}
           onAddMusic={() => openTab("music")}

@@ -321,3 +321,48 @@ describe("the state React reads", () => {
     expect(seen.at(-1)).toBe("saved");
   });
 });
+
+describe("the focus found for a placed OWN photo (3f.6, K6 for «Мои»)", () => {
+  const FACE = { x: 0.45, y: 0.3 } as const;
+  const OWN = "media-photo-0001";
+  const ownClip = (index: number, focus: { x: number; y: number } | null = null) => ({ ...photoClip(index, "photo-mia-0001"), cell: { photo: { source: "own" as const, mediaId: OWN }, focus } });
+  const one = draftSpec([ownClip(0)]);
+  const focusOf = (spec: ReturnType<typeof draftSpec>, i: number) => {
+    const clip = spec.clips[i];
+    return clip?.kind === "photo" ? clip.cell.focus : undefined;
+  };
+
+  test("fills the own photo's cells in every version, without an undo step of its own, and is saved", () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(one);
+    expect(session.fillOwnFocus(OWN, FACE)).toBe(true);
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+    scheduler.runAll();
+    expect(saves.sent().at(-1)?.spec.clips[0]).toMatchObject({ cell: { focus: FACE } });
+    session.undo();
+    expect(session.state.spec).toEqual(version(0));
+    session.redo();
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+  });
+
+  test("a focus outside the frame, or a draft that is gone, changes nothing", () => {
+    const { session } = rig();
+    session.edit(one);
+    expect(session.fillOwnFocus(OWN, { x: -1, y: 0.5 })).toBe(false);
+    session.receive({ change: "removed", montageId: MONTAGE_ID, avatarId: one.avatarId });
+    expect(session.fillOwnFocus(OWN, FACE)).toBe(false);
+    expect(focusOf(session.state.spec, 0)).toBeNull();
+  });
+
+  test("an own photo's focus another window filled in is written into this window's versions, never an undo step", async () => {
+    const { scheduler, saves, session } = rig();
+    session.edit(one);
+    scheduler.runAll();
+    saves.ok();
+    await settle();
+    expect(session.receive({ change: "upserted", montage: montageOf(draftSpec([ownClip(0, FACE)]), null, "2026-09-30T11:00:00.000Z") })).toBe("adopted");
+    expect(focusOf(session.state.spec, 0)).toEqual(FACE);
+    session.undo();
+    expect(session.state.spec).toEqual(version(0));
+  });
+});

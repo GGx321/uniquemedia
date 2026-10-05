@@ -3,7 +3,7 @@ import { STICKER_MANIFEST } from "../../shared/stickers/manifest";
 import type { EngineClient } from "../engine/client";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
-import { coverUrl, ownStickerUrl, ownTrackUrl, ownVideoUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
+import { coverUrl, ownPhotoUrl, ownStickerUrl, ownTrackUrl, ownVideoUrl, photoUrl, posterUrl, stickerUrl, trackCoverUrl, trackUrl, videoUrl } from "./media";
 
 // 3d.3b: a built-in sticker's picture is asked for by id, never by a path (invariant 12): main's `studio-media://sticker/<id>`
 // route serves the catalogue, the dev mock a stand-in of its own.
@@ -30,6 +30,23 @@ describe("stickerUrl", () => {
 
 // 3f.4: the preview plays an own track by its media id through main's `media` route, never by a path (invariant 12). Only the real client has such a
 // route: the dev mock stores no audio, so its preview is silent, as it is for a trending track.
+
+describe("ownPhotoUrl (3f.6: the «Мои» tab's photo tiles)", () => {
+  const client = (kind: EngineClient["kind"]): Pick<EngineClient, "kind"> => ({ kind });
+
+  test("the real client asks main's media route by the media id (main resolves it through the record)", () => {
+    expect(ownPhotoUrl(client("window"), "media-00000007")).toBe("studio-media://media/media-00000007");
+  });
+
+  test("the dev mock stores no picture, and a build without an engine has none: no address", () => {
+    expect(ownPhotoUrl(client("mock"), "media-00000007")).toBeNull();
+    expect(ownPhotoUrl(client("unavailable"), "media-00000007")).toBeNull();
+  });
+
+  test("an id that is not one never becomes an address", () => {
+    for (const bad of ["../x", "a/b", "", "C:\\x", "x y", "MEDIA-0001", "media-00000007.jpg"]) expect([bad, ownPhotoUrl(client("window"), bad)]).toEqual([bad, null]);
+  });
+});
 
 describe("ownTrackUrl", () => {
   const client = (kind: EngineClient["kind"]): Pick<EngineClient, "kind"> => ({ kind });

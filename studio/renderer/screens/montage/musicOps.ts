@@ -157,6 +157,25 @@ export function pickTrack(spec: MontageDraft, track: TrackFacts): MusicEdit | { 
   return { ok: true, spec: { ...spec, music: { source: "trending", trackId: track.trackId, startMs: pickStartMs(track, total) } } };
 }
 
+/**
+ * An own track is too short for the montage when it is shorter than the montage (U10's rule, the «Музыка» tab's own), and always when it is
+ * shorter than the shortest montage that renders (4 s): the engine refuses such a track at import now, but an older library may still hold one.
+ */
+export function ownTrackTooShort(track: { readonly durationMs: number }, totalMs: number): boolean {
+  return track.durationMs < Math.max(totalMs, MIN_TOTAL_MS);
+}
+
+/**
+ * The draft's music as the own track `track` from «Мои» (3f.6, M11): from its start, `{source: "own", mediaId, startMs: 0}` (one undo step:
+ * it replaces the track there). The own track already in the draft is the same draft, so the start the owner chose stays. Refused when the
+ * track is shorter than the montage (M10).
+ */
+export function pickOwnTrack(spec: MontageDraft, track: { readonly mediaId: string; readonly durationMs: number }): MusicEdit | { readonly ok: false; readonly reason: "too-short" } {
+  if (spec.music?.source === "own" && spec.music.mediaId === track.mediaId) return { ok: true, spec };
+  if (ownTrackTooShort(track, totalMs(spec))) return { ok: false, reason: "too-short" };
+  return { ok: true, spec: { ...spec, music: { source: "own", mediaId: track.mediaId, startMs: 0 } } };
+}
+
 /** A quick pick of the music card (R47): where it would start the music, whether the montage then fits, and whether it starts there now. */
 export interface HighlightPick {
   readonly ms: number;

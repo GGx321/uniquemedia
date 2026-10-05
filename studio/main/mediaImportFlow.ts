@@ -1,6 +1,8 @@
 import { posix, win32 } from "node:path";
+import { z } from "zod";
 import {
   AbsolutePath,
+  Count,
   errorResponseFor,
   isUnsafePickedPath,
   MAX_PICKED_FILES,
@@ -10,6 +12,7 @@ import {
   type CommandMessage,
   type EngineError,
   type MediaPickKind,
+  type MediaPickResult,
   type MediaRefusal,
   type MediaUnsupportedReason,
   type PickedFileIdentity,
@@ -17,6 +20,7 @@ import {
 } from "../shared/engine";
 import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOps } from "../engine/library/openRegular";
 import { pickedIdentityOf } from "../engine/media/identity";
+import { isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 
 // Own media come in through main only (3f.1, invariant 34, K29). The window sends `media.pickImport {kind}` and nothing else, and is
 // never told a path. Main opens its own native dialog (per-kind filters, several files), and looks at EACH picked file before the engine
@@ -130,7 +134,20 @@ async function pickAndImport(command: MediaPickCommand, deps: MediaImportFlowDep
   const kind = command.payload.kind;
   const picked = await deps.pickFiles(kind);
   if (picked === null || picked.length === 0) return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
+  const outcome = await importPickedPaths(kind, picked, 0, deps);
+  if (!outcome.ok) return errorResponseFor(command, outcome.error);
+  return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: outcome.result };
+}
 
+/** What a pick or a drop came to: the pick's own result, or an error that is not about a file (nothing was done). */
+export type PickedOutcome = { ok: true; result: MediaPickResult } | { ok: false; error: EngineError };
+
+/**
+ * The paths a pick (main's dialog) or a drop (the preload's `webUtils` paths) named, each looked at by main and then handed to the engine,
+ * one after another: the ONE place both go through. `beyond` counts files no path was ever looked at for (a drop's files past what the
+ * preload maps), reported as `skipped` with the ones past what the answer lists. See `handleMediaPickCommand` for the rules.
+ */
+async function importPickedPaths(kind: MediaPickKind, picked: readonly string[], beyond: number, deps: Omit<MediaImportFlowDeps, "pickFiles">, refuseUnopened: (path: string) => boolean = () => false): Promise<PickedOutcome> {
   const jobIds: string[] = [];
   const refused: MediaRefusal[] = [];
   let taken = 0;
@@ -149,6 +166,11 @@ async function pickAndImport(command: MediaPickCommand, deps: MediaImportFlowDep
       continue;
     }
     taken++;
+    // A path the caller refuses before the disk is touched (a drop's network path on Windows) is not a file it will open.
+    if (refuseUnopened(path)) {
+      refused.push({ name, reason: "not-a-file" });
+      continue;
+    }
     const look = await preflightPickedFile(path, kind, deps);
     if (!look.ok) {
       refused.push({ name, reason: look.reason });
@@ -162,11 +184,56 @@ async function pickAndImport(command: MediaPickCommand, deps: MediaImportFlowDep
     } else {
       // Not about this file. With nothing done there is nothing to lose: the command fails with the error. Otherwise the jobs already started stay.
       if (jobIds.length === 0 && refused.length === 0) {
-        return errorResponseFor(command, reply.error ?? { code: "INTERNAL", detail: "the engine answered the import with neither a job nor a reason" });
+        return { ok: false, error: reply.error ?? { code: "INTERNAL", detail: "the engine answered the import with neither a job nor a reason" } };
       }
       refused.push({ name, reason: "failed" });
       stopped = "failed";
     }
   }
-  return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: true, jobIds, refused, skipped: picked.length - listed.length } };
+  return { ok: true, result: { picked: true, jobIds, refused, skipped: picked.length - listed.length + beyond } };
+}
+
+// ---------- files dropped onto «Мои» (3f.6 round 2, M13: the owner's decision of 2026-10-04) ----------
+// The window hands the preload `File` objects only; the preload maps each to the path Electron gave it (`webUtils.getPathForFile`: a file the
+// page built itself has none) and sends the paths here, over a channel of their own. A page cannot forge a path, and cannot reach the channel
+// (contextIsolation). Main answers only its app window's own top frame, and then treats the paths exactly as its own dialog's picks.
+
+/** What the preload sends for a drop (preload/dropped.ts): the dropped files' paths (as many as a pick's answer lists), and how many more were dropped. */
+const DroppedPayload = z.strictObject({
+  paths: z.array(z.string().min(1).max(32_767)).max(MAX_REFUSED_FILES),
+  more: Count.max(1_000_000),
+});
+
+/**
+ * A Windows path that names another machine: `\\host\share`, `//host/share`, `\\?\UNC\host\share` (and a device's `\\.\`). Opening one
+ * would make Windows connect to the host and authenticate to it (NTLM), so a DROP never reaches the disk with one (review LOW-1); main's own
+ * dialog may still pick from a share the owner browses to. A long local path (`\\?\C:\…`) is local. Off Windows, `//` is a plain `/`.
+ */
+export function isWindowsRemotePath(path: string, platform: NodeJS.Platform): boolean {
+  if (platform !== "win32") return false;
+  const normal = path.replace(/\//g, "\\");
+  return normal.startsWith("\\\\") && !/^\\\\\?\\[A-Za-z]:\\/.test(normal);
+}
+
+const DROP_NOT_TRUSTED: EngineError = { code: "VALIDATION", detail: "the drop did not come from the app's own window" };
+
+/**
+ * Files dropped onto the «Мои» drop zone: the sender's frame first (the app window's own top frame showing the app's page), the payload's
+ * shape, then the same path a pick takes (`importPickedPaths`, kind `any`), one pick or drop at a time. Never throws.
+ */
+export async function handleDroppedMedia(raw: unknown, frame: SenderFrame, trusted: TrustedRenderer, deps: Omit<MediaImportFlowDeps, "pickFiles">): Promise<PickedOutcome> {
+  if (!isTrustedSender(frame, trusted, deps.platform)) return { ok: false, error: DROP_NOT_TRUSTED };
+  const parsed = DroppedPayload.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: { code: "VALIDATION", detail: "a drop is the preload's paths and a count" } };
+  const { paths, more } = parsed.data;
+  if (paths.length === 0 && more === 0) return { ok: true, result: { picked: false } };
+  if (pickInProgress) return { ok: false, error: { code: "IN_FLIGHT", detail: "another import is being picked" } };
+  pickInProgress = true;
+  try {
+    return await importPickedPaths("any", paths, more, deps, (path) => isWindowsRemotePath(path, deps.platform));
+  } catch {
+    return { ok: false, error: { code: "INTERNAL", detail: "main failed to import the dropped files" } };
+  } finally {
+    pickInProgress = false;
+  }
 }

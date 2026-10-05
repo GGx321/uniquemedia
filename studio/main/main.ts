@@ -29,7 +29,7 @@ import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
 import { MEDIA_DIALOG_FILTERS } from "./mediaFilters";
-import { handleMediaPickCommand } from "./mediaImportFlow";
+import { handleDroppedMedia, handleMediaPickCommand } from "./mediaImportFlow";
 import { handleKeyCommand, KeyStore, SECRETS_FILE, type SafeStorageLike } from "./keyFlow";
 import { handleMusicKeyCommand, musicKeyStatusOf, openMusicKeyStore } from "./musicKeyFlow";
 import { createStickerLookup } from "./media/stickers";
@@ -438,6 +438,18 @@ async function startStudio(): Promise<void> {
       engine: (command) => engine.request(command),
     }),
   );
+  // 3f.6 round 2 (M13): files dropped onto «Мои». The preload sends the paths Electron gave the dropped `File`s; main answers only the app
+  // window's own top frame and takes them exactly as its own dialog's picks (mediaImportFlow.ts), one pick or drop at a time.
+  ipcMain.handle(CH.importDropped, (event, raw: unknown) => {
+    const closed = new AbortController();
+    const onClosed = (): void => closed.abort();
+    event.sender.once("destroyed", onClosed);
+    return handleDroppedMedia(raw, senderFrameOf(event), TRUSTED, {
+      engine: { importMedia: (file, signal) => engine.importMedia(file, signal) },
+      platform: process.platform,
+      signal: closed.signal,
+    }).finally(() => event.sender.removeListener("destroyed", onClosed));
+  });
   // Compiled in rather than app.getVersion(): in dev there is no package.json of
   // Studio's own, and the root package.json version belongs to the uniquifier.
   ipcMain.handle(CH.version, (event) => {

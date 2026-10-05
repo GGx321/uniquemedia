@@ -1,10 +1,13 @@
+import { z } from "zod";
 import {
   CommandMessage,
   type CommandPayload,
   type CommandResult,
   type CommandType,
+  EngineError as EngineErrorSchema,
   type EngineError,
   EventMessage,
+  MediaPickResult,
   type OkResponse,
   PROTOCOL_VERSION,
   ResponseMessage,
@@ -44,6 +47,23 @@ export interface EngineClient {
    * stickers are `studio-media://media/<mediaId>` (lib/media.ts). Null for a media the mock does not hold as a sticker.
    */
   ownStickerUrl?(mediaId: string): string | null;
+  /**
+   * 3f.6 round 2 (M13): imports files dropped onto «Мои». The window hands over the dropped `File` objects and nothing else; the real
+   * client's preload maps them to the paths the OS gave them, and main takes those as its own dialog's picks. Answers like a pick
+   * (`media.pickImport`), checked. Absent where no drop door exists (an older preload, a mock without one): the tab offers the dialog only.
+   */
+  importDropped?(files: readonly File[]): Promise<DropReply>;
+}
+
+/** What a drop came to: a pick's result, or the error that refused it. */
+export type DropReply = { readonly ok: true; readonly result: MediaPickResult } | { readonly ok: false; readonly error: EngineError };
+
+const DropReplySchema = z.discriminatedUnion("ok", [z.strictObject({ ok: z.literal(true), result: MediaPickResult }), z.strictObject({ ok: z.literal(false), error: EngineErrorSchema })]);
+
+/** A drop's answer as it crossed the bridge (a trust boundary), checked against a pick's result; anything else is INTERNAL. */
+export function parseDropReply(raw: unknown): DropReply {
+  const parsed = DropReplySchema.safeParse(raw);
+  return parsed.success ? parsed.data : internal("importDropped: the answer breaks the contract");
 }
 
 /** The wire: what `window.studio` exposes, and what the mock engine implements. */

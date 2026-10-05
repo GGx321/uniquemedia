@@ -1,4 +1,4 @@
-import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
+import { createEngineClient, type EngineBridge, type EngineClient, parseDropReply } from "./client";
 
 // `window.studio` is typed by the preload's current `StudioApi`, which grows as
 // T1 lands. Everything here reads it as `unknown` and checks each function at
@@ -35,7 +35,27 @@ export function readWindowBridge(): EngineBridge | null {
 /** The real engine client, or null when the preload does not expose one yet. */
 export function windowStudioClient(): EngineClient | null {
   const bridge = readWindowBridge();
-  return bridge ? createEngineClient(bridge, "window") : null;
+  if (!bridge) return null;
+  const client = createEngineClient(bridge, "window");
+  const importDropped = readDropDoor();
+  return importDropped === null ? client : { ...client, importDropped };
+}
+
+/**
+ * 3f.6 round 2 (M13): the preload's door for files dropped onto «Мои», or null when it has none. The `File` objects go in as they are (the
+ * preload asks Electron for their paths; the window never names one), and the answer is checked like any other crossing the bridge.
+ */
+function readDropDoor(): NonNullable<EngineClient["importDropped"]> | null {
+  const studio = studioObject();
+  const door = studio ? method(studio, "importDropped") : null;
+  if (!door) return null;
+  return async (files) => {
+    try {
+      return parseDropReply(await door([...files]));
+    } catch {
+      return { ok: false, error: { code: "INTERNAL", detail: "importDropped: the bridge failed" } };
+    }
+  };
 }
 
 /**

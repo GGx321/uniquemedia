@@ -2,21 +2,21 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "re
 import { Icon, type IconName } from "../../ui/Icon";
 
 // 3d.5: the editor's left panel (Editor.dc.html and its tab artboards; the reconciliation's P1–P5): the five tabs and the panel of
-// the one chosen. «Фото» (the bin), «Музыка» (the trending list), «GIF» (the built-in stickers) and «Текст» (the presets and the
-// text layers); «Мои» stays disabled «Скоро» until 3f. The tab is renderer state: choosing an item on the timeline never switches
-// it (as on the artboard), but the timeline's «+» and the properties' «Заменить…» open the tab they need.
+// the one chosen. «Фото» (the bin), «Мои» (the owner's own files, 3f.6), «Музыка» (the trending list), «GIF» (the built-in stickers)
+// and «Текст» (the presets and the text layers). The tab is renderer state: choosing an item on the timeline never switches it (as on
+// the artboard), but the timeline's «+» and the properties' «Заменить…» open the tab they need.
 
-export type MediaTab = "photos" | "music" | "gif" | "text";
+export type MediaTab = "photos" | "mine" | "music" | "gif" | "text";
 
-const TABS: readonly { id: MediaTab | "mine"; label: string; icon: IconName; soon?: string }[] = [
+const TABS: readonly { id: MediaTab; label: string; icon: IconName }[] = [
   { id: "photos", label: "Фото", icon: "image" },
-  { id: "mine", label: "Мои", icon: "folder", soon: "Свои файлы — скоро" },
+  { id: "mine", label: "Мои", icon: "folder" },
   { id: "music", label: "Музыка", icon: "music" },
   { id: "gif", label: "GIF", icon: "sparkle" },
   { id: "text", label: "Текст", icon: "text" },
 ];
 
-const OPEN: readonly MediaTab[] = ["photos", "music", "gif", "text"];
+const OPEN: readonly MediaTab[] = TABS.map((t) => t.id);
 
 export interface MediaPanelProps {
   readonly tab: MediaTab;
@@ -39,7 +39,7 @@ export function MediaPanel({ tab, onTab, focusTick, children }: MediaPanelProps)
     if (focusTick > 0) buttons.current.get(current.current)?.focus();
   }, [focusTick]);
 
-  // The tabs pattern: ←/→ (and Home/End) move between the tabs that are open and choose the one landed on.
+  // The tabs pattern: ←/→ (and Home/End) move between the tabs and choose the one landed on.
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     const at = OPEN.indexOf(tab);
     const moves: Record<string, number> = { ArrowRight: at + 1, ArrowLeft: at - 1, Home: 0, End: OPEN.length - 1 };
@@ -57,14 +57,6 @@ export function MediaPanel({ tab, onTab, focusTick, children }: MediaPanelProps)
       <div className="ed-tabs" role="tablist" aria-label="Тип медиа" onKeyDown={onKeyDown}>
         {TABS.map((item) => {
           const id = item.id;
-          if (id === "mine") {
-            return (
-              <button key={id} type="button" role="tab" className="mt" aria-selected={false} disabled title={item.soon}>
-                <Icon name={item.icon} size={17} strokeWidth={1.9} />
-                {item.label}
-              </button>
-            );
-          }
           const selected = id === tab;
           return (
             <button
