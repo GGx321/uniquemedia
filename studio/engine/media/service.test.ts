@@ -1284,7 +1284,8 @@ describe("a library's recovery can be stopped (review round 5)", () => {
       },
     });
     r.service.libraryOpened({ root: libraryRoot() });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    // The first recovery must be hashing before the re-open: a phase it reaches on its own, not a time the test guesses.
+    await waitFor(() => events.includes("start 1"));
     r.service.libraryOpened({ root: libraryRoot() });
     await r.service.settled();
     expect(events).toEqual(["start 1", "end 1", "start 2"]);

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { lstat, mkdir, open, readdir, readFile, rename, symlink, writeFile, type FileHandle } from "node:fs/promises";
+import { chmod, lstat, mkdir, open, readdir, readFile, rename, symlink, writeFile, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { MAX_LISTED_MEDIA, MediaSummary } from "../../shared/engine";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -1244,6 +1244,31 @@ describe("the restore, stopped and starved (review round 6)", () => {
     expect(await readdir(folder)).toEqual([`${summary.mediaId}.json`]);
   });
 
+  // A folder that cannot be read is not «no copy»: chmod 000 stands in for EBUSY/EIO from a sync client, a dataless iCloud folder or a share. (Not on Windows,
+  // where chmod does not refuse a listing; not as root, who reads it anyway.)
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "a quarantine stamp that cannot be listed leaves an orphan file in media/, and the next open that can list it brings the pair together",
+    async () => {
+      const summary = await records().commit(await photoInput());
+      const record = await readFile(join(mediaDir(), `${summary.mediaId}.json`), "utf8");
+      await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "gone.json"));
+      const folder = await stamp("2026-10-04T10-00-00-000Z", { [`${summary.mediaId}.json`]: record });
+      await chmod(folder, 0o000);
+      try {
+        const report = await records().recover();
+        expect(report.quarantinedOrphans).toBe(0);
+        expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`]);
+      } finally {
+        await chmod(folder, 0o755);
+      }
+      const reopened = records();
+      const again = await reopened.recover();
+      expect(again.restored).toBe(1);
+      expect((await names(mediaDir())).sort()).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`].sort());
+      expect(reopened.get(summary.mediaId)).toBeDefined();
+    },
+  );
+
   test("a stop that arrives while the quarantine is being listed for a dangling record does not make it a missing-file problem or move anything", async () => {
     const piece = await commitOf("photo bytes", "a.jpg");
     const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
@@ -1408,6 +1433,21 @@ describe("a copy that exists but was not brought back keeps its other half where
     expect(await readFile(join(folder, `${file}.mismatch`), "utf8")).toBe("an earlier mismatch");
     expect(await readFile(join(folder, `${file}.mismatch-1`), "utf8")).toBe("PHOTO BYTES");
     expect(await readdir(folder)).not.toContain(file);
+  });
+
+  test("a mismatching copy whose old name cannot be removed keeps ONE name: the new .mismatch link goes again, and opens do not pile names up", async () => {
+    const summary = await records().commit(await photoInput());
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "away.jpg"));
+    const file = `${summary.mediaId}.jpg`;
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [file]: "PHOTO BYTES" });
+    const locked = { unlink: async (path: string): Promise<void> => {
+      if (path === join(folder, file)) throw Object.assign(new Error("locked"), { code: "EPERM" });
+      const { unlink } = await import("node:fs/promises");
+      await unlink(path);
+    } };
+    await records({ fs: locked }).recover();
+    await records({ fs: locked }).recover();
+    expect(await readdir(folder)).toEqual([file]);
   });
 
   test("a copy that was replaced while it was hashed is not renamed: the new file is not the one that was read, and the next open judges it", async () => {

@@ -312,45 +312,55 @@ export class MediaRecords {
   }
 
   /** Whether `path` is a real folder (not a link or a junction) whose real path is inside the library root. */
-  async #plainFolderInRoot(path: string): Promise<boolean> {
+  /**
+   * Whether a quarantine folder may be read: `plain` (a plain folder inside the library), `refused` (a link, a junction, not a folder, or outside the library: never read, and
+   * known to hold nothing of ours), `absent` (it does not exist), or `unreadable` (it could not be looked at just now: what it holds is UNKNOWN, not «nothing»).
+   */
+  async #quarantineFolder(path: string): Promise<"plain" | "refused" | "absent" | "unreadable"> {
     try {
       const info = await lstat(path);
-      if (info.isSymbolicLink() || !info.isDirectory()) return false;
+      if (info.isSymbolicLink() || !info.isDirectory()) return "refused";
       const [root, real] = await Promise.all([realpath(this.#options.root), realpath(path)]);
       const inside = relative(root, real);
-      return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside);
-    } catch {
-      return false;
+      return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside) ? "plain" : "refused";
+    } catch (error) {
+      return hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR") ? "absent" : "unreadable";
     }
   }
 
   /**
    * The files the library's quarantine holds from `media/`, by name: every copy, NEWEST stamp first, as paths. What an open may bring back. Only plain folders inside the library
-   * are read (`quarantine/` and each `<stamp>/media`: a link or a junction is refused, as `media/` is), and only plain files in them. Empty when there is none or it cannot be read.
+   * are read (`quarantine/` and each `<stamp>/media`: a link or a junction is refused, as `media/` is), and only plain files in them. `complete` is false when a folder that may
+   * hold copies could not be listed (EBUSY, EIO, EACCES from a sync client, a dataless iCloud folder or a share): then a name that is not found may still have a copy there.
    */
-  async #quarantinedMedia(): Promise<Map<string, string[]>> {
+  async #quarantinedMedia(): Promise<{ found: Map<string, string[]>; complete: boolean }> {
     await this.#options.hooks?.beforeQuarantineScan?.();
     const found = new Map<string, string[]>();
     const parent = join(this.#options.root, QUARANTINE_DIR);
-    if (!(await this.#plainFolderInRoot(parent))) return found;
+    const top = await this.#quarantineFolder(parent);
+    if (top !== "plain") return { found, complete: top !== "unreadable" };
+    let complete = true;
     let stamps;
     try {
       stamps = (await readdir(parent, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort(compareStamps).reverse();
     } catch {
-      return found;
+      return { found, complete: false };
     }
     for (const stamp of stamps) {
       const folder = join(parent, stamp, MEDIA_DIR);
-      if (!(await this.#plainFolderInRoot(folder))) continue;
+      const state = await this.#quarantineFolder(folder);
+      if (state === "unreadable") complete = false;
+      if (state !== "plain") continue;
       let files;
       try {
         files = await readdir(folder, { withFileTypes: true });
-      } catch {
+      } catch (error) {
+        if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR")) complete = false;
         continue;
       }
       for (const file of files) if (file.isFile()) found.set(file.name, [...(found.get(file.name) ?? []), join(folder, file.name)]);
     }
-    return found;
+    return { found, complete };
   }
 
   /** Whether a quarantined copy of a record's FILE is that file: the size the record names, and the hash it names (a same-size copy a sync zero-filled is not it). */
@@ -394,7 +404,8 @@ export class MediaRecords {
       const target = n === 0 ? `${from}.mismatch` : `${from}.mismatch-${n}`;
       try {
         await (this.#options.fs?.link ?? link)(from, target);
-        await this.#unlink(from).catch(() => undefined);
+        // One name stays, never two: when the old name cannot be removed, the new one goes again (a lock or a sync client; the next open tries once more).
+        await this.#unlink(from).catch(() => this.#unlink(target).catch(() => undefined));
         return;
       } catch (error) {
         if (hasErrorCode(error, "EEXIST")) continue;
@@ -566,7 +577,7 @@ export class MediaRecords {
     let notSetAside = 0;
     let restored = 0;
     const quarantine = new Quarantine(this.#options.root, this.#options.now, this.#options.quarantineDurability);
-    let held: Map<string, string[]> | undefined;
+    let held: { found: Map<string, string[]>; complete: boolean } | undefined;
     const dangling: { recordName: string; file: string; bytes: number; sha256: string }[] = [];
     // Brings a piece back from the quarantine: the newest copy that `fits` (see `#fitsRecord` and `#fitsFile`). A partial copy a sync left in a newer or older stamp, a copy of the
     // right size with the wrong content, and a record that cannot be trusted are each skipped, and the next copy is tried.
@@ -574,8 +585,10 @@ export class MediaRecords {
     // sits in the quarantine, and the pair never meet again).
     // `kept` is not `none` either: a copy EXISTS but was not brought back (it did not fit, could not be read for a moment, or the move was refused by a lock or a sync client, or the
     // name is taken already). Only «no copy at all» lets an orphan file be set aside; with a copy in the quarantine the file stays in `media/` and the next open tries again.
+    // And «no copy» needs a COMPLETE look: a stamp that could not be listed may hold one, so an incomplete scan that brought nothing back is `kept`, never `none`.
     const bringBack = async (name: string, fits: (from: string) => Promise<boolean>): Promise<"restored" | "none" | "kept" | "stopped"> => {
-      const copies = (held ??= await this.#quarantinedMedia());
+      held ??= await this.#quarantinedMedia();
+      const copies = held.found;
       for (const from of copies.get(name) ?? []) {
         if (stopped()) return "stopped";
         const fitted = await fits(from);
@@ -587,7 +600,7 @@ export class MediaRecords {
         return "restored";
       }
       if (stopped()) return "stopped";
-      return (copies.get(name)?.length ?? 0) > 0 ? "kept" : "none";
+      return (copies.get(name)?.length ?? 0) > 0 || !held.complete ? "kept" : "none";
     };
     const enterJudged = async (recordName: string): Promise<void> => {
       const again = await this.#judge(recordName);
