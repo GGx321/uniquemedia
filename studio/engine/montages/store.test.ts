@@ -499,7 +499,7 @@ describe("DraftStore.list", () => {
     expect(logs.join("\n")).toMatch(/more draft files than/);
   });
 
-  test("once the reading budget is spent, the avatars after it are counted as skipped without being read", async () => {
+  test("once the reading budget is spent, the avatars after it are counted as not read, without being read", async () => {
     const { library, avatarIds } = await openWithAvatars(2);
     const [first = "", second = ""] = avatarIds;
     const name = (n: number) => `montage-${String(n).padStart(6, "0")}`;

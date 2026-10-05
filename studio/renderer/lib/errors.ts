@@ -27,15 +27,15 @@ const DRAFT_TOO_NEW_RU = "Этот черновик сохранён более 
 const DRAFT_CHANGING_RU = "Черновик как раз сохранялся, и его не удалось прочитать. Повторите — он откроется.";
 
 /**
- * 3d.6: what a render says when it is refused or fails. The general texts of IN_FLIGHT and of an answer that never came are
- * about paid requests and OpenRouter; a render touches neither, and each of these says what happened to the job.
+ * 3d.6: what a render says when it is refused or fails. The general text of an answer that never came, and of a TIMEOUT, are
+ * about OpenRouter and paid requests; a render touches neither, and each of these says what happened to the job.
  */
 const EXPORT_CHANGING_RU = "Папку «Готовые видео» как раз меняют. Ничего не сделано и не потрачено — повторите через секунду.";
 const RENDER_NOT_QUEUED_RU = "Движок не успел поставить рендер в очередь. Ничего не поставлено и не потрачено — повторите.";
 const NO_ANSWER_RU = "Движок не ответил вовремя. Команда могла выполниться: посмотрите на экран и в очередь слева, и повторите, только если ничего не изменилось.";
 const RENDER_TIMEOUT_RU = "Рендер не уложился во время: диск с библиотекой или ffmpeg не ответили. Ничего не потрачено — повторите; если библиотека на внешнем диске, проверьте его.";
 const RENDER_NO_SPACE_RU = "Для рендера не хватает места на системном диске (там лежат его временные файлы). Освободите место и повторите. Готовый файл не создан, ничего не потрачено.";
-const RENDER_FORMS =["рендер", "рендера", "рендеров"] as const;
+const RENDER_FORMS = ["рендер", "рендера", "рендеров"] as const;
 
 function baseText(error: EngineError): string {
   if (error.code === "IN_FLIGHT" && error.detail === EXPORT_CHANGING_DETAIL) return EXPORT_CHANGING_RU;
