@@ -438,6 +438,11 @@ export class MediaStaging {
       this.#owned.delete(targetName);
       throw error;
     }
+    // A write that came up short without an error is a full disk when the disk now says it has not even its margin left, and a broken one otherwise.
+    const shortWrite = async (detail: string): Promise<Refused> =>
+      (await isShortOfRoom(this.#options.freeBytes ?? freeBytesOf, this.#dir, this.#options.freeMarginBytes ?? DEFAULT_FREE_MARGIN_BYTES))
+        ? refuse("no-space", "the library's disk filled up while the file was being copied")
+        : refuse("unreadable", detail);
     const abandon = async (result: StageResult): Promise<StageResult> => {
       await out.close().catch(() => undefined);
       await this.#removeQuietly(part);
@@ -459,12 +464,12 @@ export class MediaStaging {
         total += bytesRead;
         if (total > limit) return await abandon(refuse("changed", "the file grew while it was being copied"));
         const { bytesWritten } = await out.write(chunk, 0, bytesRead);
-        if (bytesWritten !== bytesRead) return await abandon(refuse("unreadable", "the copy could not be written whole"));
+        if (bytesWritten !== bytesRead) return await abandon(await shortWrite("the copy could not be written whole"));
         hash.update(chunk.subarray(0, bytesRead));
         onProgress?.(total, size);
       }
       if (total !== size) return await abandon(refuse("changed", "the file changed while it was being copied"));
-      if ((await out.stat()).size !== total) return await abandon(refuse("unreadable", "the copy on disk is not the size of what was read"));
+      if ((await out.stat()).size !== total) return await abandon(await shortWrite("the copy on disk is not the size of what was read"));
       // Durable before it is renamed into its name: a record is only ever written for a copy that is on disk.
       await out.sync();
       await out.close();

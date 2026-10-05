@@ -643,6 +643,44 @@ describe("a copy that did not land whole", () => {
   });
 });
 
+describe("a short write on a disk that has no room left is a full disk", () => {
+  /** The room before the copy is plenty; once it has begun the disk says it is full. */
+  const fillsUp = (): (() => Promise<number>) => {
+    let asked = 0;
+    return async () => (asked++ === 0 ? 1e12 : 0);
+  };
+  function shortOut(reportsFull: boolean): (path: string) => Promise<FileHandle> {
+    return async (path) => {
+      const handle = await open(path, "wx");
+      return new Proxy(handle, {
+        get(target, prop) {
+          if (prop === "write") {
+            return async (buffer: Buffer, offset: number, length: number) => {
+              const half = Math.max(1, Math.floor(length / 2));
+              await target.write(buffer, offset, half);
+              return { bytesWritten: reportsFull ? length : half, buffer };
+            };
+          }
+          const value: unknown = Reflect.get(target, prop);
+          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        },
+      }) as FileHandle;
+    };
+  }
+
+  test("a write that says it wrote less than it was given, with the disk now short of its margin, is no-space", async () => {
+    const result = await staging({ freeBytes: fillsUp(), fs: { openOut: shortOut(false) } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("no-space");
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("a copy that is shorter on disk than what was read, with the disk now short of its margin, is no-space", async () => {
+    const result = await staging({ freeBytes: fillsUp(), fs: { openOut: shortOut(true) } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("no-space");
+    expect(await leftovers()).toEqual([]);
+  });
+});
+
 describe("a disk that fills up during the copy is told as a full disk", () => {
   const diskError = (code: string): Error => Object.assign(new Error(`${code}: no space left on device`), { code });
   /** An output file whose write (or sync) throws `code` once some bytes are in. */
