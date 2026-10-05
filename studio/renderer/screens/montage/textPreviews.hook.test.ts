@@ -34,6 +34,18 @@ describe("useRefusedCaptions", () => {
     expect(result.current.size).toBe(0);
   });
 
+  test("follows a layer added later: the refusal that arrives after the rerender is seen", async () => {
+    const queue = queueOf();
+    const first = layerWith("fine");
+    const added = { ...layerWith("tofu"), layerId: "layer-002" };
+    queue.request(first);
+    const { result, rerender } = renderHook(({ layers }) => useRefusedCaptions(queue, layers), { initialProps: { layers: [first] } });
+    await waitFor(() => expect(queue.get(first.layerId).shown).not.toBeNull());
+    rerender({ layers: [first, added] });
+    queue.request(added);
+    await waitFor(() => expect([...result.current]).toEqual([added.layerId]));
+  });
+
   test("drops the layer when its value is edited: the refusal of the older value is stale", async () => {
     const queue = queueOf();
     const refused = layerWith("tofu");

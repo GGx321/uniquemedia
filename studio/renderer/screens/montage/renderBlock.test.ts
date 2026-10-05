@@ -126,6 +126,14 @@ describe("the reasons, each on its own", () => {
       expect(renderBlock(input({ spec, verdict: { spec, issues: [] }, previewRefused: new Set(["layer-002"]) }))).toEqual({ text: "Текст 2: надпись не проходит проверку", settings: false });
     });
 
+    test("with a rule-bad caption and a preview-refused one, the earlier layer is told, whichever source found it", () => {
+      const bad = "a\nb\nc";
+      const ruleFirst = draftSpec(4, { layers: [textAt("layer-001", bad), textAt("layer-002", "fine by the local rules")] });
+      expect(renderBlock(input({ spec: ruleFirst, verdict: null, previewRefused: new Set(["layer-002"]) }))?.text).toBe("Текст 1: надпись не проходит проверку");
+      const previewFirst = draftSpec(4, { layers: [textAt("layer-001", "fine by the local rules"), textAt("layer-002", bad)] });
+      expect(renderBlock(input({ spec: previewFirst, verdict: null, previewRefused: new Set(["layer-001"]) }))?.text).toBe("Текст 1: надпись не проходит проверку");
+    });
+
     test("a refusal for a layer the spec no longer has blocks nothing", () => {
       const spec = draftSpec(4, { layers: [textAt("layer-001", "ok")] });
       expect(renderBlock(input({ spec, previewRefused: new Set(["layer-gone"]) }))).toBeNull();
