@@ -207,7 +207,7 @@ function assertCount(name: string, value: number): void {
 /** `1k`, `1.5k`, `low_2k`, `768`, `high_resolution`, … — the variant names whose resolution can be read. */
 const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+(?:\.\d+)?k|\d{3}|high_resolution)$/;
 /** Tiers named by a pixel size or a fractional K (`768`, `1.5k`): they sit around 1K, so a base price beside them is not known to be the 1K one. */
-const AROUND_1K_TIER = /^(?:\d{3}|\d+\.\d+k)$/;
+const AROUND_1K_TIER = /^(?:(?:[a-z]+_)?\d+\.\d+k|\d{3})$/;
 
 /**
  * Output price of a 1K image at a quality, never an underestimate: Studio

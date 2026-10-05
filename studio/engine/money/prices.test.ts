@@ -522,6 +522,19 @@ test("the same tiers WITH an explicit 1k tier price at that tier", () => {
   expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(48_000);
 });
 
+// Fix round 2: a quality prefix (`low_1.5k`, `hd_0.75k`) names an around-1K tier just as the bare one does.
+test.each([null, "low", "medium"] as const)("quality-prefixed fractional tiers with a base price and no 1k tier reserve the dearest tier (quality %p)", (quality) => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "low_1.5k", micros: 70_000 }, { variant: "medium_1.5k", micros: 70_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality, refs: 0 })).toBe(70_000);
+});
+
+test("a prefixed sub-1K fractional tier (hd_0.75k) beside a base price reserves the dearest too", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "hd_0.75k", micros: 60_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(60_000);
+});
+
 test("only sub-1K tiers and no 1k tier reserve the dearest of them", () => {
   const price: ImagePrice = { outputs: [{ variant: "512", micros: 10_000 }, { variant: "768", micros: 20_000 }], inputImageMicros: 0 };
 
