@@ -178,6 +178,23 @@ describe("photos.list", () => {
     expect("resolution" in (photos[0] ?? {})).toBe(false);
   });
 
+  test("a custom-category photo lists with the name its sidecar kept, beside a built-in one, and nothing is skipped (CS.1)", async () => {
+    const { avatarId, photoIds } = await seedAvatar({ count: 2 });
+    const sidecarPath = join(dir(), "library", "avatars", avatarId, "photos", `${photoIds[0]}.json`);
+    const sidecar = JSON.parse(await readFile(sidecarPath, "utf8")) as { source: { category: string; categoryName?: string } };
+    sidecar.source.category = "cat-paris-cafes";
+    sidecar.source.categoryName = "Кофейни Парижа";
+    await writeFile(sidecarPath, JSON.stringify(sidecar));
+
+    const { engine } = await startEngine(dir());
+    const response = await engine.handle(command("photos.list", { avatarId }));
+    const photos = listed(response);
+    expect(photos.find((p) => p.photoId === photoIds[0])).toMatchObject({ category: "cat-paris-cafes", categoryName: "Кофейни Парижа" });
+    expect(photos.find((p) => p.photoId === photoIds[1])).toMatchObject({ category: "home" });
+    expect("categoryName" in (photos.find((p) => p.photoId === photoIds[1]) ?? {})).toBe(false);
+    expect(skippedTotalOf(response)).toBe(0);
+  });
+
   test("a corrupt sidecar (a category the contract no longer recognises) is skipped, not a failure of the whole list, and counted in skippedTotal", async () => {
     const { avatarId, photoIds } = await seedAvatar({ count: 2 });
     const sidecarPath = join(dir(), "library", "avatars", avatarId, "photos", `${photoIds[0]}.json`);

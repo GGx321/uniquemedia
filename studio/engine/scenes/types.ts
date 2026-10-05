@@ -2,11 +2,16 @@
 // module so pools.ts (the data) and schema.ts (the zod contract) can both
 // import them without a circular dependency.
 
+import type { CustomCategoryId } from "../../shared/engine";
+
 /** Product decision, fixed: Home, Travel, Photoshoot, Glamour (18+, non-revealing
  *  in Stage 2), Fitness. Order here is canonical: a plan always emits its
  *  slots grouped by category in this order (planner.ts, "plan order"). */
 export const CATEGORIES = ["home", "travel", "photoshoot", "glamour", "fitness"] as const;
 export type Category = (typeof CATEGORIES)[number];
+
+/** What a plan slot names as its category: one of the five built-ins (by the engine's own names), or a custom category's id. */
+export type PlannerCategory = Category | CustomCategoryId;
 
 /** Who/what took the photo. Photoshoot draws only "photographer" and "candid"
  *  (its own deck, pools.ts); every other category draws from the default deck. */

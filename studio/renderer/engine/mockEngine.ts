@@ -37,6 +37,7 @@ import {
   type MusicStatus,
   OkResponse,
   OWN_MUSIC_NOT_FOUND_DETAIL,
+  isCustomCategory,
   OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
   type PhotoUnavailableReason,
@@ -50,7 +51,7 @@ import {
   type ResponseMessage,
   type RunRequest,
   type RunSummary,
-  SceneCategory,
+  splitCount,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
@@ -395,12 +396,9 @@ interface MockRunJob {
   cancelTimers: (() => void)[];
 }
 
-/** The planner's split (scenes/planner.ts's `distribute`): `count` spread as evenly as possible, the remainder to the categories earliest in canonical order. */
+/** The planner's split: the contract's shared `splitCount` (the engine's planner calls the very same function). */
 function mockRunSlots(count: number, categories: readonly RunCategory[]): MockRunSlot[] {
-  const ordered = SceneCategory.options.filter((c) => categories.includes(c));
-  const base = Math.floor(count / ordered.length);
-  const remainder = count % ordered.length;
-  return ordered.flatMap((category, i) => Array.from({ length: base + (i < remainder ? 1 : 0) }, () => ({ category, end: null })));
+  return splitCount(count, categories).flatMap(({ ref, count: n }) => Array.from({ length: n }, () => ({ category: ref, end: null })));
 }
 
 function mockFaceQa(slotIndex: number): PhotoQaSummary | null {
@@ -1706,7 +1704,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
       case "runs.estimate": {
         // No library open: the engine cannot find the avatar either.
-        const refusal = this.libraryOpen ? this.runnableRefusal(c.payload.avatarId) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
+        const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { estimate: this.runPrice(c.payload) });
       }
@@ -1719,6 +1717,7 @@ export class MockEngine implements EngineBridge {
           this.keyAndLedgerGate() ??
           this.libraryGate() ??
           this.runnableRefusal(request.avatarId) ??
+          this.categoryRefusal(request.categories) ??
           this.masterRefusal(request.avatarId) ??
           this.gateRefusal(this.settings.imageAgeCheck === "on") ??
           this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros) ??
@@ -2697,6 +2696,15 @@ export class MockEngine implements EngineBridge {
       return { code: "FACE_GATE_UNAVAILABLE", detail: this.faceGate.loadError === undefined ? base : `${base} (${this.faceGate.loadError})` };
     }
     return null;
+  }
+
+  /**
+   * A run may only name categories that exist. The mock, like the engine until CS.2 adds the category library, has no custom
+   * category, so every custom ref is unknown: NOT_FOUND, free, checked right after the avatar and before anything else.
+   */
+  private categoryRefusal(categories: readonly RunCategory[]): EngineError | null {
+    const unknown = categories.find(isCustomCategory);
+    return unknown === undefined ? null : { code: "NOT_FOUND", detail: `no custom category ${unknown}` };
   }
 
   /** runs.estimate/start/resume's avatar check: NOT_FOUND unless it is saved and active, DESCRIPTOR_INVALID for a descriptor to rewrite first. */

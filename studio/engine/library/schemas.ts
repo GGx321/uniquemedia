@@ -69,6 +69,12 @@ const GeneratedSourceSchema = z.object({
   prompt: NonEmpty,
   slot: NonEmpty.optional(),
   category: NonEmpty.optional(),
+  /**
+   * A custom category's name as the owner gave it when the photo was made (a plan's snapshot), so a category renamed or deleted later does
+   * not change it. Absent for the five built-ins and for every sidecar written before custom categories. This object is not strict, so an
+   * older build strips it on read.
+   */
+  categoryName: NonEmpty.optional(),
   /** Integer micro-dollars. */
   costMicros: z.int().nonnegative(),
 });

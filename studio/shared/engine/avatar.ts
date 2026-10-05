@@ -9,7 +9,7 @@ export const AdultAge = z.number().int().min(21).max(35);
  * BOM), no lone surrogates (they encode as U+FFFD), and no line or paragraph
  * separators (U+2028/2029 break a prompt line).
  */
-const NO_HIDDEN_CHARS = /^[^\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]*$/u;
+export const NO_HIDDEN_CHARS = /^[^\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]*$/u;
 
 /** Display name; never sent in prompts. */
 export const AvatarName = z

@@ -360,6 +360,40 @@ test("the writer's worst case is the real engine's 75,000 micro-dollars per chun
   expect(hundred.worstMicros).toBe(100 * 3 * 50_000 + 4 * 75_000);
 });
 
+// CS.1: the contract names custom categories, but there is no category library yet (CS.2), so like the engine the mock
+// treats every custom ref as unknown: NOT_FOUND, free, after the avatar check and before the price.
+describe("a custom category in a run request, before the category library exists", () => {
+  const WITH_CUSTOM = { ...REQUEST, categories: ["home" as const, "cat-paris-cafes" as const] };
+
+  test("runs.estimate is NOT_FOUND for it, naming it", async () => {
+    const { client } = makeMock();
+    const reply = await client.request("runs.estimate", WITH_CUSTOM);
+    expect(reply).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(reply.ok ? "" : (reply.error.detail ?? "")).toContain("cat-paris-cafes");
+  });
+
+  test("runs.start is NOT_FOUND for it, even at a price nobody accepted: no run is created", async () => {
+    const { client } = makeMock();
+    expect(await client.request("runs.start", { ...WITH_CUSTOM, acceptedWorstMicros: 0 })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(await runCount(client)).toBe(0);
+  });
+
+  test("an avatar that cannot run is refused for the avatar first, as the engine does", async () => {
+    const { client } = makeMock();
+    const reply = await client.request("runs.start", { ...WITH_CUSTOM, avatarId: "avatar-nobody", acceptedWorstMicros: 0 });
+    expect(reply).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
+    expect(reply.ok ? "" : (reply.error.detail ?? "")).not.toContain("cat-paris-cafes");
+  });
+
+  test("a built-in-only run still starts and splits like the planner: four of each of five categories for 20 photos", async () => {
+    const { scheduler, client } = makeMock();
+    await unwrap(client.request("runs.start", { ...REQUEST, acceptedWorstMicros: WORST_20 }));
+    scheduler.runAll();
+    const { photos } = await unwrap(client.request("photos.list", { avatarId: MIA.avatarId }));
+    expect(["home", "travel", "shoot", "glam", "fit"].map((c) => photos.filter((p) => p.category === c).length)).toEqual([4, 4, 4, 4, 4]);
+  });
+});
+
 describe("runs.start refusals, in the real engine's order", () => {
   test("FACE_GATE_UNAVAILABLE when no face gate is wired: free, no run is created", async () => {
     const { engine, client } = makeMock();

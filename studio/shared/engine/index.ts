@@ -2,6 +2,7 @@
 export * from "./ageText";
 export * from "./avatar";
 export * from "./avatarDelete";
+export * from "./categories";
 export * from "./commands";
 export * from "./envelope";
 export * from "./errorMessagesRu";

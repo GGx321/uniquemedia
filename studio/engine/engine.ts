@@ -8,9 +8,11 @@ import {
   AvatarTraits,
   errorResponseFor,
   EventLog,
+  isCustomCategory,
   parseEngineCommand,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
+  type CategoryRef,
   type MusicKeyStatus,
   type AvatarSummary,
   type CommandPayload,
@@ -1408,6 +1410,7 @@ export class Engine {
       case "runs.estimate": {
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
+        Engine.#assertCategoriesExist(command.payload.categories);
         const models = this.#avatarModels();
         const imageAgeCheck = this.#settings.imageAgeCheck;
         const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, command.payload, imageAgeCheck);
@@ -1899,6 +1902,16 @@ export class Engine {
    * (invariant 6). The run's cap is that accepted worst case, for its whole
    * life. The job runs on after the answer.
    */
+  /**
+   * A run may only name categories the engine knows. CS.1 widened the contract to custom category ids, but the category library
+   * they live in arrives with CS.2, so until then every custom id is unknown: NOT_FOUND, free, before any price is fetched, any
+   * reserve is made or any folder is written. (CS.2 replaces this with a lookup in the library.)
+   */
+  static #assertCategoriesExist(categories: readonly CategoryRef[]): void {
+    const unknown = categories.find(isCustomCategory);
+    if (unknown !== undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${unknown}` });
+  }
+
   async #startRun(payload: CommandPayload<"runs.start">): Promise<{ runId: string; jobId: string }> {
     const key = this.#usableKey("start a photo run");
     const budget = this.#paidBudget();
@@ -1906,6 +1919,7 @@ export class Engine {
     const { avatarId, count, categories, poses } = payload;
     const manifest = this.#runnableAvatar(library, avatarId);
     await this.#assertAvatarOnDisk(library, avatarId);
+    Engine.#assertCategoriesExist(categories);
     if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
     // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
     const imageAgeCheck = this.#settings.imageAgeCheck;

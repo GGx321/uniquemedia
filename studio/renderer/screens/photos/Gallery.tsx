@@ -6,7 +6,7 @@ import { ErrorNotice } from "../../ui/Notice";
 import { Portrait, Silhouette } from "../../ui/Portrait";
 import { PhotoViewer } from "./PhotoViewer";
 import { heldLabel, montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
-import { CATEGORY_LABEL } from "./runForm";
+import { photoCategoryLabel } from "./runForm";
 import { viewerPhotos, viewerPlace } from "./viewerModel";
 import { galleryPhotos, type GalleryFilter } from "./videosModel";
 
@@ -42,7 +42,7 @@ interface PhotoTileProps {
 }
 
 function PhotoTile({ photo, position, picked, refused, onToggle, mark, onOpen }: PhotoTileProps) {
-  const label = CATEGORY_LABEL[photo.category];
+  const label = photoCategoryLabel(photo);
   // A photo picked before it became unusable can still be unpicked.
   const why = montagePickRefusal(photo);
   // One photo, one video (Q1): a photo a video or a render holds is dimmed with how it is held, as in the editor's bin.
