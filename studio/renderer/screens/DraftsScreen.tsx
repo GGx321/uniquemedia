@@ -120,8 +120,11 @@ function DraftCard({
     if (!mounted.current) return;
     setDeleting(false);
     // Deleted: the list drops the card on its own (montage.changed removed refetches it).
-    if (!reply.ok) setError(reply.error);
-    else {
+    if (!reply.ok) {
+      // Refused: the question stays open, and its buttons, off while it was asked, take the focus back (review r1 LOW-4).
+      setError(reply.error);
+      focus.opened();
+    } else {
       setConfirming(false);
       onDeleted();
     }
