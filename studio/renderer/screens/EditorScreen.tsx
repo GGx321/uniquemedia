@@ -55,7 +55,7 @@ import { draftTitle, layerAddLabel, layerName, outputLabel, outputParts, saveLab
 import { RenderControls } from "./montage/RenderControls";
 import { layerProblems, photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
-import { isTextEntry } from "./montage/keys";
+import { isTextEntry, spacePlays } from "./montage/keys";
 import { resolveSelection, selectClip } from "./montage/selection";
 import { DraftSession } from "./montage/session";
 import { Timeline } from "./montage/Timeline";
@@ -483,6 +483,32 @@ function DraftEditor({
 
   // ---------- the timeline (3d.3a; 3d.3b: layers and music) ----------
   const timeline = useTimeline(state.spec);
+  const { playhead } = timeline;
+
+  // The owner's feedback (2026-10-05): Space plays and pauses the montage wherever the focus is, but where Space is the control's own
+  // (keys.ts `spacePlays`: typing, a checkbox or a radio, an open dialog or menu). On a focused button the key is taken, so the button is
+  // not ALSO pressed (the timeline's ▶ would start and stop at once); a held Space does not toggle again. Nothing to play leaves it alone.
+  useEffect(() => {
+    let taken = false;
+    const onDown = (event: KeyboardEvent): void => {
+      if (!spacePlays(event, document) || playhead.totalMs <= 0) return;
+      event.preventDefault();
+      taken = true;
+      if (!event.repeat) playhead.toggle();
+    };
+    // An engine that presses a focused button when Space is let go (not Chromium's: its press needs the key down) finds this key taken too.
+    const onUp = (event: KeyboardEvent): void => {
+      if (event.key !== " " || !taken) return;
+      taken = false;
+      event.preventDefault();
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, [playhead]);
   const musicLookup = useTrackSummary(client, state.spec.music, view.music?.listFetchedAt ?? null);
   // The engine's referential verdict on the layers and the track counts only for the spec it judged (as renderBlock reads it).
   const judgedNow = sameJson(verdict.spec, state.spec);

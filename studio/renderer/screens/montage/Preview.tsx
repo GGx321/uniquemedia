@@ -618,13 +618,16 @@ function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: 
 
   const sinceMove = moved !== null && moved.run === rest && step >= moved.at ? step - moved.at : Number.POSITIVE_INFINITY;
   const shown = !gesture && (!playing || hovered || step - rest < PLAY_PEEK_MS || sinceMove < PLAY_IDLE_MS);
+  const label = playing ? "Пауза" : "Воспроизвести";
   return (
     <span ref={wrap} className="pv-play-wrap">
       <button
         type="button"
         className={playing ? "pv-play pv-play-on" : "pv-play"}
         data-shown={shown}
-        aria-label={playing ? "Пауза" : "Воспроизвести"}
+        aria-label={label}
+        aria-keyshortcuts="Space"
+        title={`${label} · Пробел`}
         tabIndex={gesture ? -1 : undefined}
         onClick={timeline.togglePlay}
         onPointerEnter={() => setHovered(true)}
@@ -663,7 +666,7 @@ interface CellProps {
   readonly dropping: boolean;
   readonly onSize: (photoId: string, size: Size) => void;
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
-  /** Enter or Space on the cell (a pointer selects it on its press). */
+  /** Enter on the cell (a pointer selects it on its press; Space plays the montage, EditorScreen). */
   readonly onSelect: () => void;
   readonly onKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
   readonly onKeyUp: (event: KeyboardEvent<HTMLElement>) => void;
@@ -776,7 +779,7 @@ function ringAt(focus: Focus | null, window: Rect, source: Size): Point {
 interface LayerViewProps {
   readonly label: string;
   readonly selected: boolean;
-  /** Enter or Space on the layer (a press selects it as it starts a drag). */
+  /** Enter on the layer (a press selects it as it starts a drag; Space plays the montage, EditorScreen). */
   readonly onSelect: () => void;
   readonly onPress: (event: ReactPointerEvent<HTMLElement>, box: Rect) => void;
   readonly onCorner: (event: ReactPointerEvent<HTMLElement>, box: Rect) => void;

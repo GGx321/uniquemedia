@@ -70,11 +70,12 @@ function Strip({ clip, avatarId, widthPx }: { clip: Clip; avatarId: string; widt
   );
 }
 
-/** «Воспроизвести» / «Пауза»: re-renders when a playback starts or stops, nothing else. */
+/** «Воспроизвести» / «Пауза» (Space too, EditorScreen): re-renders when a playback starts or stops, nothing else. */
 function PlayButton({ timeline, empty }: { timeline: TimelineState; empty: boolean }) {
   const playing = usePlaying(timeline.playhead);
+  const label = playing ? "Пауза" : "Воспроизвести";
   return (
-    <button type="button" className="ed-play" aria-label={playing ? "Пауза" : "Воспроизвести"} disabled={empty} onClick={timeline.togglePlay}>
+    <button type="button" className="ed-play" aria-label={label} aria-keyshortcuts="Space" title={`${label} · Пробел`} disabled={empty} onClick={timeline.togglePlay}>
       {playing ? <PauseIcon size={16} /> : <PlayIcon size={16} />}
     </button>
   );
