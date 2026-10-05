@@ -2966,6 +2966,21 @@
   flex: 1 1 auto;
 }
 
+/* A low window (the large-screen audit's M6a, 1200 × 760): the sections keep their own height and the tab scrolls as a whole, so the
+   presets are never drawn over «Слои» and the list does not scroll inside a scroll. */
+.ed-media-text {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.ed-media-text > * {
+  flex-shrink: 0;
+}
+
+.ed-media-text .ed-text-list {
+  overflow-y: visible;
+}
+
 /* A scrolling list clips at its padding box: 4 px of padding (taken back by the margin) keep a row's outer focus ring inside it. */
 .ed-text-list {
   display: flex;
@@ -3364,6 +3379,14 @@
 .ed-music-note {
   font-size: 11px;
   line-height: 1.35;
+}
+
+/* A low window (the large-screen audit's M6b): the list keeps the room, the note about the paid refresh steps aside (the button still says
+   it is done in Settings, and Settings say the rest). */
+@media (max-height: 820px) {
+  .ed-music-note {
+    display: none;
+  }
 }
 
 /* the text's properties (R21–R32) */
