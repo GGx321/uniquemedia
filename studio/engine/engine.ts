@@ -1801,7 +1801,16 @@ export class Engine {
       const running = this.#jobs.runningJobOf(runId) !== null;
       const book = priced.get(JSON.stringify(models)) ?? null;
       // Ended by its cap only when prices are known: unpriced, the engine cannot tell and leaves the run resumable.
-      const remaining = open === 0 || book === null ? null : remainingPlan(book, plan, state, committed, ledger);
+      // A run whose model's prices cannot reserve its requests now (no listed price for a reference image) is unknown like an unpriced one:
+      // it must not make `runs.list` fail and hide the healthy runs. A resume of it is refused with PRICE_UNAVAILABLE by `#remaining`.
+      let remaining: ReturnType<typeof remainingPlan> | null = null;
+      if (open > 0 && book !== null) {
+        try {
+          remaining = remainingPlan(book, plan, state, committed, ledger);
+        } catch (error) {
+          if (!(error instanceof MoneyError && error.code === "PRICE_UNAVAILABLE")) throw error;
+        }
+      }
       const capExhausted = !running && open > 0 && remaining !== null && !money.budget.scopeNeedsReconcile({ runId }) && !capFundsResume(plan, committed, remaining.minToProgressMicros);
       return {
         runId,

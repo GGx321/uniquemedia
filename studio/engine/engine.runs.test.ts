@@ -1401,6 +1401,30 @@ describe("runs.list", () => {
     expect(runs.every((r) => r.remainingWorstMicros !== null && r.remainingWorstMicros > 0)).toBe(true);
   });
 
+  // Fix round 2: one saved run whose model's live prices lost the input_image row (a reference of unknown price cannot be reserved) must
+  // not hide the healthy runs: its remaining worst case is unknown (null), and the rest are listed.
+  test("a saved run whose model has no listed reference price is listed with an unknown remaining cost, and the other runs stay listed", async () => {
+    const a = await seedAvatar();
+    const b = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const one = await engineOver(net);
+    const first = await stoppedRun(one.engine, one.events, net, a);
+    await one.engine.applyControl({ kind: "control", type: "settings.update", settings: engineSettings(dir(), { imageAgeCheck: "off", imageModel: "x-ai/grok-imagine-image-quality" }) });
+    const second = await stoppedRun(one.engine, one.events, net, b);
+    const grok = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "money", "fixtures", "endpoints-grok-imagine-image-2.0.json"), "utf8"));
+    for (const endpoint of grok.endpoints) endpoint.pricing = endpoint.pricing.filter((row: { billable: string }) => row.billable !== "input_image");
+    const prices = (call: FetchCall): Reply => (call.url.endsWith("x-ai/grok-imagine-image-2.0/endpoints") ? { status: 200, body: grok } : OFFLINE);
+    const { engine } = await engineOver(runNetwork({ prices }), { bootId: "boot-0000-dddd" });
+
+    const runs = listed(await engine.handle(command("runs.list")));
+    const byId = new Map(runs.map((r) => [r.runId, r]));
+
+    expect(runs.map((r) => r.runId).sort()).toEqual([first, second].sort());
+    expect(byId.get(first)?.remainingWorstMicros).toBeNull();
+    expect(byId.get(first)?.resumable).toBe(true);
+    expect(byId.get(second)?.remainingWorstMicros ?? 0).toBeGreaterThan(0);
+  });
+
   function listed(response: ResponseMessage) {
     const answer = ok(response);
     if (answer.type !== "runs.list") throw new Error(`expected a runs.list answer, got ${answer.type}`);
