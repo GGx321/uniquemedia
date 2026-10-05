@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_DELETE_VIDEO_FILES, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { MAX_RECORD_FILES_READ } from "./videos/listing";
+import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET_MS } from "./videos/timeouts";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
@@ -181,5 +183,90 @@ describe("HostCall media.import and its reply", () => {
 describe("COMMAND_DEADLINE_MS['avatars.importAvatar'] covers the describe attempts and no age check", () => {
   test("a price load, then exactly the describe attempts at their slowest, plus the fixed slack", () => {
     expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
+  });
+});
+
+// «Удалить аватар»: main-only control messages. Main asks the engine what goes (`avatar.deletePrepare`), moves the avatar's folder to the system
+// Trash, and tells the engine whether it went (`avatar.deleteFinish`). The renderer is never in this: it only names an avatar.
+describe("HostCall: avatar.deletePrepare and avatar.deleteFinish", () => {
+  const prepare = { kind: "control" as const, type: "avatar.deletePrepare" as const, callId: "call-00000001", avatarId: "avatar-0001", token: "token-00000001" };
+  const finish = { kind: "control" as const, type: "avatar.deleteFinish" as const, callId: "call-00000002", avatarId: "avatar-0001", token: "token-00000001", outcome: "trashed" as const };
+
+  test("a prepare names an avatar and nothing else", () => {
+    expect(HostCall.safeParse(prepare).success).toBe(true);
+    expect(HostCall.safeParse({ ...prepare, path: "/x" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...prepare, avatarId: "../x" }).success).toBe(false);
+  });
+
+  test("a finish says whether the avatar's folder went to the Trash or stayed", () => {
+    expect(HostCall.safeParse(finish).success).toBe(true);
+    expect(HostCall.safeParse({ ...finish, outcome: "kept" }).success).toBe(true);
+    expect(HostCall.safeParse({ ...finish, outcome: "deleted" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...finish, outcome: undefined }).success).toBe(false);
+  });
+});
+
+describe("HostCall: the delete token and avatars.pruneMissing", () => {
+  const prepare = { kind: "control" as const, type: "avatar.deletePrepare" as const, callId: "call-00000001", avatarId: "avatar-0001", token: "token-00000001" };
+  const finish = { kind: "control" as const, type: "avatar.deleteFinish" as const, callId: "call-00000002", avatarId: "avatar-0001", token: "token-00000001", outcome: "kept" as const };
+
+  test("a prepare and a finish both carry a token, and a call without one is refused", () => {
+    expect(HostCall.safeParse({ ...prepare, token: undefined }).success).toBe(false);
+    expect(HostCall.safeParse({ ...finish, token: undefined }).success).toBe(false);
+  });
+
+  test("a token is an id: no path, no short or odd text", () => {
+    for (const token of ["../x", "short", "UPPER-CASE-TOKEN", "a".repeat(65), ""]) {
+      expect(HostCall.safeParse({ ...prepare, token }).success).toBe(false);
+      expect(HostCall.safeParse({ ...finish, token }).success).toBe(false);
+    }
+  });
+
+  test("avatars.pruneMissing takes a call id and nothing else", () => {
+    const prune = { kind: "control" as const, type: "avatars.pruneMissing" as const, callId: "call-00000003" };
+    expect(HostCall.safeParse(prune).success).toBe(true);
+    expect(HostCall.safeParse({ ...prune, avatarId: "avatar-0001" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...prune, path: "/x" }).success).toBe(false);
+    expect(HostCall.safeParse({ kind: "control", type: "avatars.pruneMissing" }).success).toBe(false);
+  });
+});
+
+describe("EngineReply.deletePlan", () => {
+  const reply = { kind: "control" as const, type: "reply" as const, callId: "call-00000001" };
+  const plan = { avatarId: "avatar-0001", libraryRoot: "/data/library", folder: "/data/library/avatars/avatar-0001", exportRoot: "/home/a/Studio/export", files: ["/home/a/Studio/export/mia/2026-10-05_photo_001.mp4"], unlisted: 0 };
+
+  test("carries the avatar's folder and its video files, as absolute paths", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: plan }).success).toBe(true);
+  });
+
+  test("the export root may be absent: no video file can be resolved then", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, exportRoot: null, files: [] } }).success).toBe(true);
+  });
+
+  test("refuses a relative path and a path with a .. segment", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, folder: "avatars/avatar-0001" } }).success).toBe(false);
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, files: ["/home/a/Studio/export/../secret.mp4"] } }).success).toBe(false);
+  });
+
+  test("refuses more files than one delete moves", () => {
+    const files = Array.from({ length: MAX_DELETE_VIDEO_FILES + 1 }, (_, i) => `/home/a/Studio/export/mia/v${i}.mp4`);
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, files } }).success).toBe(false);
+  });
+
+  test("refuses a key it does not know", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, extra: 1 } }).success).toBe(false);
+  });
+});
+
+describe("MAX_DELETE_VIDEO_FILES", () => {
+  test("is the number of record files one read takes, so the plan can list every file the engine can find", () => {
+    expect(MAX_DELETE_VIDEO_FILES).toBe(MAX_RECORD_FILES_READ);
+  });
+});
+
+describe("COMMAND_DEADLINE_MS['avatars.deletePreview']", () => {
+  test("outwaits the engine's own bounded look at the export folder and the record files", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.deletePreview"]).toBe(AVATAR_DELETE_PREPARE_DEADLINE_MS);
+    expect(AVATAR_DELETE_PREPARE_DEADLINE_MS).toBeGreaterThan(LIST_BUDGET_MS + EXPORT_CHECK_TIMEOUT_MS);
   });
 });

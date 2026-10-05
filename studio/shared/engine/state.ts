@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
+import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory } from "./categories";
 import { EngineError, ExportUnavailableReason } from "./errors";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
@@ -679,9 +680,6 @@ export const JobState = z
 
 // ---------- photos (2b placeholders) ----------
 
-/** Scene categories from the Photos mockup; revealing outfits are out of Stage 2. */
-export const SceneCategory = z.enum(["home", "travel", "shoot", "glam", "fit"]);
-
 /**
  * Which poses beyond front and three-quarter a run allows (T5c, owner
  * decision): a profile or a from-behind shot only when the run asks for it.
@@ -693,7 +691,7 @@ export const RunPoses = z.strictObject({ profile: z.boolean(), back: z.boolean()
 export const RunRequest = z.strictObject({
   avatarId: Id,
   count: z.number().int().min(1).max(100),
-  categories: z.array(SceneCategory).min(1).refine(unique, "categories must not repeat"),
+  categories: z.array(CategoryRef).min(1).max(MAX_RUN_CATEGORIES).refine(unique, "categories must not repeat"),
   poses: RunPoses,
 });
 
@@ -761,7 +759,12 @@ export const PhotoSummary = z
     photoId: Id,
     avatarId: Id,
     runId: Id.nullable(),
-    category: SceneCategory,
+    category: PhotoCategory,
+    /**
+     * The name the owner gave a custom category (or "Своя сцена" for an own scene), as the photo's sidecar kept it when the photo was made, so
+     * a category renamed or deleted later does not change it. Absent for the five built-ins: the renderer owns their names.
+     */
+    categoryName: CategoryName.optional(),
     createdAt: IsoDateTime,
     qa: PhotoQaSummary.optional(),
     /** Some committed video record lists this photo. Derived from the records, never from whether an MP4 still exists. */
@@ -790,6 +793,10 @@ export const PhotoSummary = z
   .refine((p) => !(p.rejected && p.eligible), {
     message: "a rejected photo is not eligible",
     path: ["eligible"],
+  })
+  .refine((p) => p.categoryName === undefined || !SceneCategory.safeParse(p.category).success, {
+    message: "a built-in category carries no label: its name is the renderer's",
+    path: ["categoryName"],
   });
 
 /** The flashapi quota: 30 requests per rolling 31 days (invariant 30). Shared so the engine and the renderer agree on the number. */

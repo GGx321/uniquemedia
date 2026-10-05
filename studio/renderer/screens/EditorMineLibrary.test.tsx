@@ -211,7 +211,7 @@ describe("placing on the screen (round 1, M4)", () => {
     expect(callsOf(engine, "montages.save")).toHaveLength(0);
   });
 
-  test("a video under 0.5 s and a track shorter than the montage are off in the UI: the video can be neither clicked nor dragged", async () => {
+  test("a video under 0.1 s and a track shorter than the montage are off in the UI: the video can be neither clicked nor dragged", async () => {
     const { engine, client } = await mineStudio();
     seedMine(engine);
     await openMine(engine, client);

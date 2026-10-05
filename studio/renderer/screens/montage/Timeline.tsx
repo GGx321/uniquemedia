@@ -495,7 +495,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
 
   const insertAt = lift !== null ? lift.boundary : dropAt;
   const clipCap = spec.clips.length >= MAX_CLIPS;
-  const addLabel = addBlock === null ? "Добавить кадр" : addBlock === "clip-cap" ? `Добавить кадр: не больше ${MAX_CLIPS}` : "Добавить кадр: ролик уже почти 15 с";
+  const addLabel = addBlock === null ? "Добавить кадр" : addBlock === "clip-cap" ? `Добавить кадр: не больше ${MAX_CLIPS}` : "Добавить кадр: в ролике уже 15 с";
   const evenTitle = spec.clips.length < 2 ? "Нужно хотя бы два кадра" : isEven(spec) ? "Кадры уже одной длины" : "Разделить длину ролика между кадрами поровну";
 
   return (

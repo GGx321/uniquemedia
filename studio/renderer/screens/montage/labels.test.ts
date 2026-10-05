@@ -3,6 +3,7 @@ import { MONTAGE_ISSUE_MESSAGES_RU, type Montage, type MontageDraft } from "../.
 import { NBSP } from "../../lib/format";
 import {
   actionWhyLabel,
+  addBlockedLabel,
   captionLine,
   clockLabel,
   dragRangeLabel,
@@ -19,6 +20,7 @@ import {
   outputParts,
   renderButtonLabel,
   saveLabel,
+  staggerRowLabel,
   stickerName,
   trackClock,
   trackName,
@@ -213,6 +215,19 @@ describe("the layer blocks", () => {
     expect(layerAddLabel("sticker", "no-room", 0)).toEqual({ name: "Добавить стикер: нет места", why: "Сначала добавьте кадр" });
   });
 
+  test("the stagger row names the step, and says so when the clip is too short for one (every cell shows at once)", () => {
+    expect(staggerRowLabel(2_000, 4)).toBe("Ячейки по очереди, шаг 0.3\u00a0с");
+    expect(staggerRowLabel(500, 4)).toBe("Ячейки по очереди, шаг 0.1\u00a0с");
+    expect(staggerRowLabel(100, 2)).toBe("Ячейки по очереди, шаг 0.03\u00a0с");
+    expect(staggerRowLabel(100, 4)).toBe("Ячейки по очереди: клип слишком короткий, ячейки сразу");
+    expect(staggerRowLabel(100, 3)).toBe("Ячейки по очереди: клип слишком короткий, ячейки сразу");
+  });
+
+  test("a full 15 s says so: no room is exactly none, since a 0.1 s clip fits in any gap", () => {
+    expect(actionWhyLabel("no-room")).toBe("В ролике уже 15 с — укоротите кадр");
+    expect(addBlockedLabel("no-room")).toBe("В ролике уже 15 с: на новый кадр нет места. Укоротите кадр, чтобы добавить фото.");
+  });
+
   test("the z-order steps say why they are off", () => {
     expect(actionWhyLabel("top")).toBe("Выше в это время ничего нет");
     expect(actionWhyLabel("bottom")).toBe("Ниже в это время ничего нет");
@@ -284,15 +299,15 @@ describe("an own video clip (3f.3b)", () => {
     expect(videoRoomLabel(15_000, 0, 0, 14_000)).toBe(nb("ролик 15.0 с из 15 · длиннее кадр уже не станет"));
   });
 
-  test("fix round 1 (L3): a video shorter than the shortest clip (0.5 s) is told apart: it cannot be in the montage at all", () => {
-    expect(videoRoomLabel(4_500, 10_500, 0, 400)).toBe(nb("ролик 4.5 с из 15 · видео короче 0.5 с"));
-    expect(videoRoomLabel(4_500, 10_500, 0, 499)).toBe(nb("ролик 4.5 с из 15 · видео короче 0.5 с"));
-    expect(videoRoomLabel(4_500, 10_500, 0, 500)).toBe(nb("ролик 4.5 с из 15 · видео уже целиком в кадре"));
-    expect(videoTag("video-too-short", 400)).toBe("video-under-min");
-    expect(videoTag("video-too-short", 500)).toBe("video-too-short");
+  test("fix round 1 (L3): a video shorter than the shortest clip (0.1 s) is told apart: it cannot be in the montage at all", () => {
+    expect(videoRoomLabel(4_500, 10_500, 0, 0)).toBe(nb("ролик 4.5 с из 15 · видео короче 0.1 с"));
+    expect(videoRoomLabel(4_500, 10_500, 0, 99)).toBe(nb("ролик 4.5 с из 15 · видео короче 0.1 с"));
+    expect(videoRoomLabel(4_500, 10_500, 0, 100)).toBe(nb("ролик 4.5 с из 15 · видео уже целиком в кадре"));
+    expect(videoTag("video-too-short", 99)).toBe("video-under-min");
+    expect(videoTag("video-too-short", 100)).toBe("video-too-short");
     expect(videoTag("video-too-short", null)).toBe("video-too-short");
-    expect(videoTag("media-unavailable", 400)).toBe("media-unavailable");
-    expect(VIDEO_TAG_TEXTS["video-under-min"]).toBe(nb("Видео короче 0.5 с — в ролик его не поставить"));
+    expect(videoTag("media-unavailable", 90)).toBe("media-unavailable");
+    expect(VIDEO_TAG_TEXTS["video-under-min"]).toBe(nb("Видео короче 0.1 с — в ролик его не поставить"));
     expect(VIDEO_TAG_TEXTS["video-too-short"]).toBe(MONTAGE_ISSUE_MESSAGES_RU["video-too-short"]);
     expect(VIDEO_TAG_TEXTS["media-unavailable"]).toBe(MONTAGE_ISSUE_MESSAGES_RU["media-unavailable"]);
   });
@@ -303,7 +318,7 @@ describe("an own video clip (3f.3b)", () => {
     expect(clipAria(2, clip, null)).toBe(nb("Кадр 3: видео, 2.0 с"));
     expect(clipAria(2, clip, "video-too-short", "latte-pour.mov")).toBe(nb("Кадр 3: видео короче кадра, 2.0 с"));
     expect(clipAria(2, clip, "media-unavailable")).toBe(nb("Кадр 3: файла больше нет, 2.0 с"));
-    expect(clipAria(2, clip, "video-under-min")).toBe(nb("Кадр 3: видео короче 0.5 с, 2.0 с"));
-    expect(VIDEO_PROBLEM_TAGS).toEqual({ "video-too-short": "⚠ видео короче кадра", "media-unavailable": "⚠ файла больше нет", "video-under-min": nb("⚠ видео короче 0.5 с") });
+    expect(clipAria(2, clip, "video-under-min")).toBe(nb("Кадр 3: видео короче 0.1 с, 2.0 с"));
+    expect(VIDEO_PROBLEM_TAGS).toEqual({ "video-too-short": "⚠ видео короче кадра", "media-unavailable": "⚠ файла больше нет", "video-under-min": nb("⚠ видео короче 0.1 с") });
   });
 });

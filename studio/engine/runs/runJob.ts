@@ -13,7 +13,7 @@ import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "..
 import { assembleRun } from "../scenes";
 import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
-import { contractCategory, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, planRoute, type RunPlan } from "./plan";
+import { contractCategory, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, planRoute, runWriterConfig, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
@@ -407,6 +407,8 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       sentences: state.sentences,
       writerDone: state.writerDone,
       ledger,
+      // Today's call shape and messages, naming a custom category by the plan's own snapshot.
+      ...runWriterConfig(plan.categories),
     },
   );
   if (!written.ok) {
@@ -419,7 +421,7 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   }
   let assembled: Map<number, string>;
   try {
-    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { cameraRealism: plan.cameraRealism === true }).map((a) => [a.slotIndex, a.prompt]));
+    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { cameraRealism: plan.cameraRealism === true, categories: plan.categories }).map((a) => [a.slotIndex, a.prompt]));
   } catch (error) {
     return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the scene prompts could not be assembled: ${messageOf(error)}`) } } };
   }
@@ -626,6 +628,8 @@ async function runGates(ctx: Context, slot: SlotState, attemptId: string, image:
 }
 
 function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: string, prompt: string, image: ImageOk, size: { width: number; height: number }, qa: PhotoQa): NewPhotoMeta {
+  // A custom category's photo keeps the owner's name for it, as the plan's snapshot had it, so renaming or deleting the category later never changes it.
+  const categoryName = ctx.plan.categories?.find((c) => c.ref === slot.slot.category)?.name;
   return {
     mediaType: image.mediaType,
     width: size.width,
@@ -640,6 +644,7 @@ function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: stri
       prompt,
       slot: slot.slot.attemptIdBase,
       category: contractCategory(slot.slot.category),
+      ...(categoryName === undefined ? {} : { categoryName }),
       costMicros: image.costMicros,
     },
     qa,

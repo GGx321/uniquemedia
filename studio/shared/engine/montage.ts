@@ -28,7 +28,8 @@ export const MIN_TOTAL_MS = 4_000;
 export const MAX_TOTAL_MS = 15_000;
 /** Every clip duration and layer time is a multiple of this: 3 frames at 30 fps, so frame counts are integers. */
 export const TIME_STEP_MS = 100;
-export const MIN_CLIP_MS = 500;
+/** The shortest clip is one time step (3 frames): the cuts are hard, so nothing needs a clip to be longer. */
+export const MIN_CLIP_MS = TIME_STEP_MS;
 export const MAX_CLIPS = 20;
 export const MIN_LAYER_MS = 300;
 export const MAX_TEXT_LAYERS = 10;

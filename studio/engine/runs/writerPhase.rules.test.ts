@@ -5,7 +5,7 @@ import { WRITER_CALL } from "../money/estimate";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type Money, type Step } from "../openrouter/testing/fakes";
 import { plan, type PlanSlot } from "../scenes";
 import { chunkSlots } from "../scenes/writer";
-import { writerAttemptIds } from "./plan";
+import { runWriterConfig, writerAttemptIds } from "./plan";
 import { runWriterPhase, type WriterPhase } from "./writerPhase";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -102,6 +102,8 @@ function phaseFor(j: WriterRun): WriterPhase {
     sentences: new Map(),
     writerDone: new Set(),
     ledger: { reserveOf: (id) => money.ledger.reserveOf(id), closeOf: (id) => money.ledger.closeOf(id) },
+    // What a run passes: today's call shape and messages (runs/plan.ts's runWriterConfig).
+    ...runWriterConfig(undefined),
   };
 }
 

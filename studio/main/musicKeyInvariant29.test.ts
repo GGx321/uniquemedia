@@ -109,6 +109,9 @@ async function wired() {
     exportFolder: async () => {
       throw new Error("not used");
     },
+    avatarDelete: async () => {
+      throw new Error("unreachable");
+    },
     reveal: async () => {
       throw new Error("not used");
     },

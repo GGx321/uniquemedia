@@ -6,6 +6,7 @@ import {
   MAX_MONTAGE_ISSUES,
   MAX_STICKER_LAYERS,
   MAX_TEXT_LAYERS,
+  MIN_CLIP_MS,
   Montage,
   MontageDraft,
   MontageIssue,
@@ -13,6 +14,7 @@ import {
   MontageShape,
   MontageSpec,
   montageIssues,
+  TIME_STEP_MS,
   MONTAGE_ISSUE_CODES,
   type MontageIssueCode,
 } from "./montage";
@@ -206,12 +208,21 @@ describe("clips", () => {
     expect(MontageDraft.safeParse(spec({ clips: clips(MAX_CLIPS + 1, 700) })).success).toBe(false);
   });
 
-  test("a clip may be 500 ms", () => {
-    expect(MontageDraft.safeParse(spec({ clips: [photoClip(1, 500)] })).success).toBe(true);
+  test("the shortest clip is one 100 ms time step (3 frames)", () => {
+    expect(MIN_CLIP_MS).toBe(100);
+    expect(MIN_CLIP_MS).toBe(TIME_STEP_MS);
   });
 
-  test("a clip shorter than 500 ms is refused", () => {
-    expect(MontageDraft.safeParse(spec({ clips: [photoClip(1, 400)] })).success).toBe(false);
+  test("a clip may be exactly 100 ms, in a draft", () => {
+    expect(MontageDraft.safeParse(spec({ clips: [photoClip(1, 100)] })).success).toBe(true);
+  });
+
+  test("a clip of 100 ms is allowed inside a complete spec of 4 s", () => {
+    expect(MontageSpec.safeParse(spec({ clips: [photoClip(1, 100), photoClip(2, 3_900)] })).success).toBe(true);
+  });
+
+  test.each([0, 90, 50, -100])("a clip of %d ms is refused: under the 100 ms minimum", (ms) => {
+    expect(MontageDraft.safeParse(spec({ clips: [photoClip(1, ms)] })).success).toBe(false);
   });
 
   test("a clip longer than 15 s is refused", () => {

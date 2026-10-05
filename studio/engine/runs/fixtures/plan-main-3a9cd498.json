@@ -1,0 +1,751 @@
+{
+  "schemaVersion": 1,
+  "runId": "run-00000001",
+  "avatarId": "avatar-0001",
+  "createdAt": "2026-09-24T12:00:00.000Z",
+  "request": {
+    "avatarId": "avatar-0001",
+    "count": 30,
+    "categories": [
+      "home",
+      "travel",
+      "shoot",
+      "glam",
+      "fit"
+    ],
+    "poses": {
+      "profile": true,
+      "back": true
+    }
+  },
+  "imageAgeCheck": "off",
+  "models": {
+    "image": "x-ai/grok-imagine-image-2.0",
+    "fallback": "bytedance-seed/seedream-5-0-pro",
+    "text": "x-ai/grok-4.3"
+  },
+  "capMicros": 10000000,
+  "plannedWorstMicros": 10000000,
+  "scenes": {
+    "version": 1,
+    "seed": 3,
+    "slots": [
+      {
+        "slotIndex": 1,
+        "category": "home",
+        "location": "a small balcony with potted plants",
+        "timeOfDay": "golden hour",
+        "activity": "leaning on the railing",
+        "outfit": "a plain white t-shirt and cotton shorts",
+        "shot": "candid",
+        "pose": "back",
+        "attemptIdBase": "slot-1",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 2,
+        "category": "home",
+        "location": "a living room couch with a laptop",
+        "timeOfDay": "midday",
+        "activity": "holding a ceramic coffee mug",
+        "outfit": "a grey lounge set",
+        "shot": "selfie",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-2",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 3,
+        "category": "home",
+        "location": "a bright kitchen",
+        "timeOfDay": "midday",
+        "activity": "slicing fruit on a cutting board",
+        "outfit": "an oversized cream knit sweater",
+        "shot": "friend",
+        "pose": "back",
+        "attemptIdBase": "slot-3",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 4,
+        "category": "home",
+        "location": "a bathroom with a large vanity mirror",
+        "timeOfDay": "evening",
+        "activity": "brushing her hair",
+        "outfit": "a cozy hoodie",
+        "shot": "mirror",
+        "pose": "front",
+        "attemptIdBase": "slot-4",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 5,
+        "category": "home",
+        "location": "an unmade bed with white linen",
+        "timeOfDay": "morning",
+        "activity": "scrolling her phone",
+        "outfit": "matching satin pajamas",
+        "shot": "friend",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-5",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 6,
+        "category": "home",
+        "location": "a reading nook by the window",
+        "timeOfDay": "midday",
+        "activity": "looking out of the window",
+        "outfit": "an oversized cream knit sweater",
+        "shot": "candid",
+        "pose": "front",
+        "attemptIdBase": "slot-6",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 7,
+        "category": "travel",
+        "location": "a hotel room with a full-length mirror",
+        "timeOfDay": "evening",
+        "activity": "putting on earrings",
+        "outfit": "a white button-up shirt",
+        "shot": "mirror",
+        "pose": "front",
+        "attemptIdBase": "slot-7",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 8,
+        "category": "travel",
+        "location": "a hotel balcony overlooking the sea",
+        "timeOfDay": "morning",
+        "activity": "leaning on the railing",
+        "outfit": "a straw hat and a summer dress",
+        "shot": "selfie",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-8",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 9,
+        "category": "travel",
+        "location": "the deck of a small boat",
+        "timeOfDay": "golden hour",
+        "activity": "letting the wind blow her hair",
+        "outfit": "a linen shirt and denim shorts",
+        "shot": "friend",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-9",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 10,
+        "category": "travel",
+        "location": "an airplane window seat",
+        "timeOfDay": "morning",
+        "activity": "looking out of the window",
+        "outfit": "a light linen sundress",
+        "shot": "candid",
+        "pose": "front",
+        "attemptIdBase": "slot-10",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 11,
+        "category": "travel",
+        "location": "a sandy beach at the waterline",
+        "timeOfDay": "midday",
+        "activity": "walking along the waterline",
+        "outfit": "a white button-up shirt",
+        "shot": "friend",
+        "pose": "back",
+        "attemptIdBase": "slot-11",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 12,
+        "category": "travel",
+        "location": "a mountain viewpoint",
+        "timeOfDay": "morning",
+        "activity": "holding a water bottle",
+        "outfit": "a straw hat and a summer dress",
+        "shot": "selfie",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-12",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 13,
+        "category": "photoshoot",
+        "location": "a studio with a seamless beige backdrop",
+        "timeOfDay": "studio lighting",
+        "activity": "posing with one hand in her hair",
+        "outfit": "a satin evening dress",
+        "shot": "candid",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-13",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 14,
+        "category": "photoshoot",
+        "location": "a concrete rooftop",
+        "timeOfDay": "golden hour",
+        "activity": "walking toward the camera",
+        "outfit": "a monochrome knit set",
+        "shot": "photographer",
+        "pose": "front",
+        "attemptIdBase": "slot-14",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 15,
+        "category": "photoshoot",
+        "location": "a city street, lit by direct on-camera flash",
+        "timeOfDay": "night",
+        "activity": "leaning against a wall",
+        "outfit": "a denim jacket and jeans",
+        "shot": "photographer",
+        "pose": "front",
+        "attemptIdBase": "slot-15",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 16,
+        "category": "photoshoot",
+        "location": "a wheat field",
+        "timeOfDay": "golden hour",
+        "activity": "looking over her shoulder",
+        "outfit": "a tailored black blazer over a white tee",
+        "shot": "photographer",
+        "pose": "front",
+        "attemptIdBase": "slot-16",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 17,
+        "category": "photoshoot",
+        "location": "a vintage cafe interior",
+        "timeOfDay": "evening",
+        "activity": "looking out of the window",
+        "outfit": "a trench coat",
+        "shot": "candid",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-17",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 18,
+        "category": "photoshoot",
+        "location": "a wheat field",
+        "timeOfDay": "golden hour",
+        "activity": "running her hand over the wheat",
+        "outfit": "a trench coat",
+        "shot": "candid",
+        "pose": "front",
+        "attemptIdBase": "slot-18",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 19,
+        "category": "glamour",
+        "location": "a bed with silk sheets",
+        "timeOfDay": "evening",
+        "activity": "stretching",
+        "outfit": "a fitted black bodycon dress",
+        "shot": "candid",
+        "pose": "front",
+        "attemptIdBase": "slot-19",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 20,
+        "category": "glamour",
+        "location": "a walk-in closet",
+        "timeOfDay": "evening",
+        "activity": "standing with one hand on her hip",
+        "outfit": "a mini skirt with a cropped top",
+        "shot": "mirror",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-20",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 21,
+        "category": "glamour",
+        "location": "a hotel room",
+        "timeOfDay": "evening",
+        "activity": "sitting on the edge of the bed",
+        "outfit": "a corset top with high-waisted trousers",
+        "shot": "friend",
+        "pose": "front",
+        "attemptIdBase": "slot-21",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 22,
+        "category": "glamour",
+        "location": "a bedroom with a full-length mirror",
+        "timeOfDay": "evening",
+        "activity": "adjusting her hair",
+        "outfit": "a fitted black bodycon dress",
+        "shot": "selfie",
+        "pose": "front",
+        "attemptIdBase": "slot-22",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 23,
+        "category": "glamour",
+        "location": "a bathroom with soft warm light",
+        "timeOfDay": "evening",
+        "activity": "applying lipstick",
+        "outfit": "a corset top with high-waisted trousers",
+        "shot": "friend",
+        "pose": "front",
+        "attemptIdBase": "slot-23",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 24,
+        "category": "glamour",
+        "location": "a bedroom with a full-length mirror",
+        "timeOfDay": "night",
+        "activity": "putting on earrings",
+        "outfit": "a mini skirt with a cropped top",
+        "shot": "friend",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-24",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 25,
+        "category": "fitness",
+        "location": "a yoga mat in a sunlit living room",
+        "timeOfDay": "morning",
+        "activity": "stretching",
+        "outfit": "running shorts and a tank top",
+        "shot": "selfie",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-25",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 26,
+        "category": "fitness",
+        "location": "a pilates studio",
+        "timeOfDay": "morning",
+        "activity": "resting between exercises",
+        "outfit": "biker shorts and a crop top",
+        "shot": "mirror",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-26",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 27,
+        "category": "fitness",
+        "location": "a park running path",
+        "timeOfDay": "morning",
+        "activity": "stretching her legs",
+        "outfit": "a loose hoodie over leggings",
+        "shot": "friend",
+        "pose": "front",
+        "attemptIdBase": "slot-27",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 28,
+        "category": "fitness",
+        "location": "a gym in front of a mirror",
+        "timeOfDay": "morning",
+        "activity": "adjusting her ponytail",
+        "outfit": "a matching athletic set",
+        "shot": "mirror",
+        "pose": "three-quarter",
+        "attemptIdBase": "slot-28",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 29,
+        "category": "fitness",
+        "location": "a home workout corner",
+        "timeOfDay": "evening",
+        "activity": "stretching after a workout",
+        "outfit": "running shorts and a tank top",
+        "shot": "friend",
+        "pose": "front",
+        "attemptIdBase": "slot-29",
+        "repeatedPair": false
+      },
+      {
+        "slotIndex": 30,
+        "category": "fitness",
+        "location": "a park running path",
+        "timeOfDay": "morning",
+        "activity": "stretching her legs",
+        "outfit": "a loose hoodie over leggings",
+        "shot": "candid",
+        "pose": "profile",
+        "attemptIdBase": "slot-30",
+        "repeatedPair": false
+      }
+    ]
+  },
+  "slotAttempts": [
+    {
+      "slotIndex": 1,
+      "attemptIds": [
+        "run-00000001:slot-1#1",
+        "run-00000001:slot-1#2",
+        "run-00000001:slot-1#3",
+        "run-00000001:slot-1#4",
+        "run-00000001:slot-1#5"
+      ]
+    },
+    {
+      "slotIndex": 2,
+      "attemptIds": [
+        "run-00000001:slot-2#1",
+        "run-00000001:slot-2#2",
+        "run-00000001:slot-2#3",
+        "run-00000001:slot-2#4",
+        "run-00000001:slot-2#5"
+      ]
+    },
+    {
+      "slotIndex": 3,
+      "attemptIds": [
+        "run-00000001:slot-3#1",
+        "run-00000001:slot-3#2",
+        "run-00000001:slot-3#3",
+        "run-00000001:slot-3#4",
+        "run-00000001:slot-3#5"
+      ]
+    },
+    {
+      "slotIndex": 4,
+      "attemptIds": [
+        "run-00000001:slot-4#1",
+        "run-00000001:slot-4#2",
+        "run-00000001:slot-4#3",
+        "run-00000001:slot-4#4",
+        "run-00000001:slot-4#5"
+      ]
+    },
+    {
+      "slotIndex": 5,
+      "attemptIds": [
+        "run-00000001:slot-5#1",
+        "run-00000001:slot-5#2",
+        "run-00000001:slot-5#3",
+        "run-00000001:slot-5#4",
+        "run-00000001:slot-5#5"
+      ]
+    },
+    {
+      "slotIndex": 6,
+      "attemptIds": [
+        "run-00000001:slot-6#1",
+        "run-00000001:slot-6#2",
+        "run-00000001:slot-6#3",
+        "run-00000001:slot-6#4",
+        "run-00000001:slot-6#5"
+      ]
+    },
+    {
+      "slotIndex": 7,
+      "attemptIds": [
+        "run-00000001:slot-7#1",
+        "run-00000001:slot-7#2",
+        "run-00000001:slot-7#3",
+        "run-00000001:slot-7#4",
+        "run-00000001:slot-7#5"
+      ]
+    },
+    {
+      "slotIndex": 8,
+      "attemptIds": [
+        "run-00000001:slot-8#1",
+        "run-00000001:slot-8#2",
+        "run-00000001:slot-8#3",
+        "run-00000001:slot-8#4",
+        "run-00000001:slot-8#5"
+      ]
+    },
+    {
+      "slotIndex": 9,
+      "attemptIds": [
+        "run-00000001:slot-9#1",
+        "run-00000001:slot-9#2",
+        "run-00000001:slot-9#3",
+        "run-00000001:slot-9#4",
+        "run-00000001:slot-9#5"
+      ]
+    },
+    {
+      "slotIndex": 10,
+      "attemptIds": [
+        "run-00000001:slot-10#1",
+        "run-00000001:slot-10#2",
+        "run-00000001:slot-10#3",
+        "run-00000001:slot-10#4",
+        "run-00000001:slot-10#5"
+      ]
+    },
+    {
+      "slotIndex": 11,
+      "attemptIds": [
+        "run-00000001:slot-11#1",
+        "run-00000001:slot-11#2",
+        "run-00000001:slot-11#3",
+        "run-00000001:slot-11#4",
+        "run-00000001:slot-11#5"
+      ]
+    },
+    {
+      "slotIndex": 12,
+      "attemptIds": [
+        "run-00000001:slot-12#1",
+        "run-00000001:slot-12#2",
+        "run-00000001:slot-12#3",
+        "run-00000001:slot-12#4",
+        "run-00000001:slot-12#5"
+      ]
+    },
+    {
+      "slotIndex": 13,
+      "attemptIds": [
+        "run-00000001:slot-13#1",
+        "run-00000001:slot-13#2",
+        "run-00000001:slot-13#3",
+        "run-00000001:slot-13#4",
+        "run-00000001:slot-13#5"
+      ]
+    },
+    {
+      "slotIndex": 14,
+      "attemptIds": [
+        "run-00000001:slot-14#1",
+        "run-00000001:slot-14#2",
+        "run-00000001:slot-14#3",
+        "run-00000001:slot-14#4",
+        "run-00000001:slot-14#5"
+      ]
+    },
+    {
+      "slotIndex": 15,
+      "attemptIds": [
+        "run-00000001:slot-15#1",
+        "run-00000001:slot-15#2",
+        "run-00000001:slot-15#3",
+        "run-00000001:slot-15#4",
+        "run-00000001:slot-15#5"
+      ]
+    },
+    {
+      "slotIndex": 16,
+      "attemptIds": [
+        "run-00000001:slot-16#1",
+        "run-00000001:slot-16#2",
+        "run-00000001:slot-16#3",
+        "run-00000001:slot-16#4",
+        "run-00000001:slot-16#5"
+      ]
+    },
+    {
+      "slotIndex": 17,
+      "attemptIds": [
+        "run-00000001:slot-17#1",
+        "run-00000001:slot-17#2",
+        "run-00000001:slot-17#3",
+        "run-00000001:slot-17#4",
+        "run-00000001:slot-17#5"
+      ]
+    },
+    {
+      "slotIndex": 18,
+      "attemptIds": [
+        "run-00000001:slot-18#1",
+        "run-00000001:slot-18#2",
+        "run-00000001:slot-18#3",
+        "run-00000001:slot-18#4",
+        "run-00000001:slot-18#5"
+      ]
+    },
+    {
+      "slotIndex": 19,
+      "attemptIds": [
+        "run-00000001:slot-19#1",
+        "run-00000001:slot-19#2",
+        "run-00000001:slot-19#3",
+        "run-00000001:slot-19#4",
+        "run-00000001:slot-19#5"
+      ]
+    },
+    {
+      "slotIndex": 20,
+      "attemptIds": [
+        "run-00000001:slot-20#1",
+        "run-00000001:slot-20#2",
+        "run-00000001:slot-20#3",
+        "run-00000001:slot-20#4",
+        "run-00000001:slot-20#5"
+      ]
+    },
+    {
+      "slotIndex": 21,
+      "attemptIds": [
+        "run-00000001:slot-21#1",
+        "run-00000001:slot-21#2",
+        "run-00000001:slot-21#3",
+        "run-00000001:slot-21#4",
+        "run-00000001:slot-21#5"
+      ]
+    },
+    {
+      "slotIndex": 22,
+      "attemptIds": [
+        "run-00000001:slot-22#1",
+        "run-00000001:slot-22#2",
+        "run-00000001:slot-22#3",
+        "run-00000001:slot-22#4",
+        "run-00000001:slot-22#5"
+      ]
+    },
+    {
+      "slotIndex": 23,
+      "attemptIds": [
+        "run-00000001:slot-23#1",
+        "run-00000001:slot-23#2",
+        "run-00000001:slot-23#3",
+        "run-00000001:slot-23#4",
+        "run-00000001:slot-23#5"
+      ]
+    },
+    {
+      "slotIndex": 24,
+      "attemptIds": [
+        "run-00000001:slot-24#1",
+        "run-00000001:slot-24#2",
+        "run-00000001:slot-24#3",
+        "run-00000001:slot-24#4",
+        "run-00000001:slot-24#5"
+      ]
+    },
+    {
+      "slotIndex": 25,
+      "attemptIds": [
+        "run-00000001:slot-25#1",
+        "run-00000001:slot-25#2",
+        "run-00000001:slot-25#3",
+        "run-00000001:slot-25#4",
+        "run-00000001:slot-25#5"
+      ]
+    },
+    {
+      "slotIndex": 26,
+      "attemptIds": [
+        "run-00000001:slot-26#1",
+        "run-00000001:slot-26#2",
+        "run-00000001:slot-26#3",
+        "run-00000001:slot-26#4",
+        "run-00000001:slot-26#5"
+      ]
+    },
+    {
+      "slotIndex": 27,
+      "attemptIds": [
+        "run-00000001:slot-27#1",
+        "run-00000001:slot-27#2",
+        "run-00000001:slot-27#3",
+        "run-00000001:slot-27#4",
+        "run-00000001:slot-27#5"
+      ]
+    },
+    {
+      "slotIndex": 28,
+      "attemptIds": [
+        "run-00000001:slot-28#1",
+        "run-00000001:slot-28#2",
+        "run-00000001:slot-28#3",
+        "run-00000001:slot-28#4",
+        "run-00000001:slot-28#5"
+      ]
+    },
+    {
+      "slotIndex": 29,
+      "attemptIds": [
+        "run-00000001:slot-29#1",
+        "run-00000001:slot-29#2",
+        "run-00000001:slot-29#3",
+        "run-00000001:slot-29#4",
+        "run-00000001:slot-29#5"
+      ]
+    },
+    {
+      "slotIndex": 30,
+      "attemptIds": [
+        "run-00000001:slot-30#1",
+        "run-00000001:slot-30#2",
+        "run-00000001:slot-30#3",
+        "run-00000001:slot-30#4",
+        "run-00000001:slot-30#5"
+      ]
+    }
+  ],
+  "writerChunks": [
+    {
+      "chunk": 1,
+      "slotIndexes": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15,
+        16,
+        17,
+        18,
+        19,
+        20,
+        21,
+        22,
+        23,
+        24,
+        25
+      ],
+      "attemptIds": [
+        "run-00000001:writer-1#1",
+        "run-00000001:writer-1#2",
+        "run-00000001:writer-1#3",
+        "run-00000001:writer-1#4"
+      ]
+    },
+    {
+      "chunk": 2,
+      "slotIndexes": [
+        26,
+        27,
+        28,
+        29,
+        30
+      ],
+      "attemptIds": [
+        "run-00000001:writer-2#1",
+        "run-00000001:writer-2#2",
+        "run-00000001:writer-2#3",
+        "run-00000001:writer-2#4"
+      ]
+    }
+  ]
+}

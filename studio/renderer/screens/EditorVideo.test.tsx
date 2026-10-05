@@ -255,9 +255,9 @@ describe("the properties", () => {
     expect(videoOf(await nextSave(engine))).toMatchObject({ trimStartMs: 1_700, durationMs: 2_100 });
     fireEvent.keyDown(slider("Конец отрезка"), { key: "Home" });
     fireEvent.keyUp(slider("Конец отрезка"), { key: "Home" });
-    // The shortest clip: 0.5 s from the start.
-    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 1_700, durationMs: 500 });
-    expect(within(props()).getByText("0.5 с из 14.0")).toBeDefined();
+    // The shortest clip: 0.1 s from the start.
+    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 1_700, durationMs: 100 });
+    expect(within(props()).getByText("0.1 с из 14.0")).toBeDefined();
   });
 
   test("a drag of an edge is one edit when let go, on the 100 ms grid and within the 15 s; a cancelled drag changes nothing", async () => {
@@ -406,13 +406,13 @@ describe("fix round 1", () => {
     expect(videoOf(await nextSave(engine))).toMatchObject({ trimStartMs: 1_700, durationMs: 2_100 });
     fireEvent.keyDown(edge(), { key: "Home" });
     fireEvent.keyUp(edge(), { key: "Home" });
-    // The shortest: 0.5 s ending where it ended, 3.8 s into the video.
-    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 3_300, durationMs: 500 });
+    // The shortest: 0.1 s ending where it ended, 3.8 s into the video.
+    expect(videoOf(await nextSave(engine, 1))).toMatchObject({ trimStartMs: 3_700, durationMs: 100 });
     // Dragged left 14 px of the 1048 px lanes (about 0.2 s): earlier in the video, the end still at 3.8 s.
     drag(edge(), -14, 71);
     const dragged = videoOf(await nextSave(engine, 2));
     expect(dragged.trimStartMs + dragged.durationMs).toBe(3_800);
-    expect(dragged.durationMs).toBe(700);
+    expect(dragged.durationMs).toBe(300);
   });
 
   test("L9: a window too narrow for both edges is judged on the strip as laid out, not on the artboard's width", async () => {
@@ -498,16 +498,16 @@ describe("fix round 1", () => {
     expect(left()).toBe(String(Number.parseFloat(centred)));
   });
 
-  test("L3: a video shorter than 0.5 s says so, never the contract's «сдвиньте начало фрагмента» it cannot follow", async () => {
+  test("L3: a video shorter than 0.1 s says so, never the contract's «сдвиньте начало фрагмента» it cannot follow", async () => {
     const { client, engine } = await studio();
-    engine.seedOwnMedia([{ kind: "video", name: "blink.mov", bytes: 200_000, facts: { width: 1_080, height: 1_920, durationMs: 400, sourceFps: 30 } }]);
+    engine.seedOwnMedia([{ kind: "video", name: "blink.mov", bytes: 200_000, facts: { width: 1_080, height: 1_920, durationMs: 90, sourceFps: 30 } }]);
     await openDraft(engine, client, clipsWith(ownClip("media-demo-0001", 500, 0)));
-    const block = within(timeline()).getByRole("button", { name: s("Кадр 2: видео короче 0.5 с, 0.5 с") });
-    expect(within(block).getByText("⚠ видео короче 0.5 с")).toBeDefined();
+    const block = within(timeline()).getByRole("button", { name: s("Кадр 2: видео короче 0.1 с, 0.5 с") });
+    expect(within(block).getByText("⚠ видео короче 0.1 с")).toBeDefined();
     await selectVideo();
-    expect(within(props()).getByText("Видео короче 0.5 с — в ролик его не поставить")).toBeDefined();
+    expect(within(props()).getByText("Видео короче 0.1 с — в ролик его не поставить")).toBeDefined();
     expect(within(props()).queryByText(MONTAGE_ISSUE_MESSAGES_RU["video-too-short"]) === null).toBe(true);
-    expect(within(props()).getByText("ролик 4.5 с из 15 · видео короче 0.5 с")).toBeDefined();
+    expect(within(props()).getByText("ролик 4.5 с из 15 · видео короче 0.1 с")).toBeDefined();
   });
 });
 

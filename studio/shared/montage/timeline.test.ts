@@ -3,7 +3,7 @@ import { MAX_TOTAL_MS, MIN_CLIP_MS, MIN_TOTAL_MS } from "../engine/montage";
 import { clipAtFrame, clipRanges, framesToMs, layerRange, layerVisibleAt, msToFrameFloor, msToFrames, totalFrames } from "./timeline";
 import { mulberry32, randInt } from "./random.testkit";
 
-/** Every valid duration: 500 ms to 15.0 s in 100 ms steps. */
+/** Every valid duration: 100 ms to 15.0 s in 100 ms steps. */
 const VALID_DURATIONS: number[] = [];
 for (let ms = MIN_CLIP_MS; ms <= MAX_TOTAL_MS; ms += 100) VALID_DURATIONS.push(ms);
 
@@ -15,7 +15,7 @@ describe("msToFrames", () => {
     }
   });
 
-  test("maps the boundaries: 0, the 500 ms minimum clip, 4.0 s and 15.0 s", () => {
+  test("maps the boundaries: 0, the 100 ms minimum clip, 500 ms, 4.0 s and 15.0 s", () => {
     expect(msToFrames(0)).toBe(0);
     expect(msToFrames(500)).toBe(15);
     expect(msToFrames(MIN_TOTAL_MS)).toBe(120);

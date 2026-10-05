@@ -3,7 +3,8 @@ import { youthWords } from "../../shared/engine";
 import { WRITER_CALL, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
-import type { Category, Shot } from "./types";
+import { categoryLabelOf, type CategoryLabelOf } from "./categories";
+import type { Shot } from "./types";
 import type { PlanSlot, Pose } from "./schema";
 import { revealingWordsIn } from "./words";
 
@@ -81,13 +82,6 @@ export const WRITER_JSON_SCHEMA: { name: string; schema: Record<string, unknown>
 
 // ---------- the prompt ----------
 
-const CATEGORY_LABEL: Record<Category, string> = {
-  home: "Home",
-  travel: "Travel",
-  photoshoot: "Photoshoot",
-  glamour: "Glamour",
-  fitness: "Fitness",
-};
 export const SHOT_LABEL: Record<Shot, string> = {
   friend: "photo taken by a friend",
   selfie: "front-camera selfie",
@@ -128,10 +122,10 @@ function writerSystemPrompt(): string {
   ].join("\n");
 }
 
-function slotForWriter(slot: PlanSlot): Record<string, unknown> {
+function slotForWriter(slot: PlanSlot, labelOf: CategoryLabelOf): Record<string, unknown> {
   return {
     slotIndex: slot.slotIndex,
-    category: CATEGORY_LABEL[slot.category],
+    category: labelOf(slot.category),
     location: slot.location,
     timeOfDay: slot.timeOfDay,
     shot: SHOT_LABEL[slot.shot],
@@ -174,8 +168,40 @@ export function emptyAnswerRefusal(): WriterRefusal {
   return { problems: ["empty"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
 }
 
+/** A refusal tells the model at most this many of the words it used, and each at most this many UTF-8 bytes. */
+export const REFUSAL_WORDS_MAX = 6;
+export const REFUSAL_WORD_BYTES_MAX = 16;
+
+/** `word` cut to at most `maxBytes` UTF-8 bytes, never in the middle of a character. */
+function clipBytes(word: string, maxBytes: number): string {
+  let bytes = 0;
+  let clipped = "";
+  for (const char of word) {
+    bytes += Buffer.byteLength(char, "utf8");
+    if (bytes > maxBytes) break;
+    clipped += char;
+  }
+  return clipped;
+}
+
+/**
+ * The words a refusal tells the model about. They are the model's own text (a youth rule quotes what the answer said), so
+ * they are bounded: each word clipped, the same word in another case told once (in the spelling it first came in), a word
+ * clipped to nothing dropped, and at most REFUSAL_WORDS_MAX of them. The re-ask's prompt is priced on bytes before it is
+ * sent, so what the model wrote must never decide how large it can grow.
+ */
+function toldWords(words: readonly string[]): string[] {
+  const told = new Map<string, string>();
+  for (const word of words) {
+    const clipped = clipBytes(word, REFUSAL_WORD_BYTES_MAX);
+    const key = clipped.toLowerCase();
+    if (clipped.length > 0 && !told.has(key)) told.set(key, clipped);
+  }
+  return [...told.values()].slice(0, REFUSAL_WORDS_MAX);
+}
+
 function quotedList(words: readonly string[]): string {
-  return words.map((w) => `"${w}"`).join(", ");
+  return toldWords(words).map((w) => `"${w}"`).join(", ");
 }
 
 function slotList(indices: readonly number[]): string {
@@ -199,9 +225,14 @@ export function writerRefusalText(refusal: WriterRefusal): string {
   return [...new Set(refusal.problems)].map((p) => REASON[p]?.(refusal) ?? p).join("; ");
 }
 
-/** The messages of one writer attempt; `refusal` is why the previous answer was rejected. */
-export function writerMessages(slots: readonly PlanSlot[], refusal: WriterRefusal = NO_REFUSAL): ChatMessage[] {
-  const lines = ["Slots:", JSON.stringify(slots.map(slotForWriter), null, 2)];
+/**
+ * The messages of one writer attempt; `refusal` is why the previous answer was
+ * rejected. `labelOf` says what each slot's category is called to the model:
+ * by default the five built-ins' fixed names (a custom slot is refused, never
+ * sent under a made-up name); a run passes the resolver of its plan's snapshot.
+ */
+export function writerMessages(slots: readonly PlanSlot[], refusal: WriterRefusal = NO_REFUSAL, labelOf: CategoryLabelOf = categoryLabelOf()): ChatMessage[] {
+  const lines = ["Slots:", JSON.stringify(slots.map((slot) => slotForWriter(slot, labelOf)), null, 2)];
   if (refusal.problems.length > 0) {
     lines.push("", `An earlier answer was rejected: ${writerRefusalText(refusal)}. Write a new answer that follows every rule.`);
   }

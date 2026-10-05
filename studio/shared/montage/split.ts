@@ -8,7 +8,7 @@ import { MIN_CLIP_MS, STEP_MS } from "./constants";
 // each to the FIRST clips. Hence the parts differ by at most 100 ms, the longer
 // ones come first, and the result depends on nothing but the arguments.
 
-/** `count` durations in ms that sum to `totalMs`, each a multiple of 100 ms and at least 500 ms. */
+/** `count` durations in ms that sum to `totalMs`, each a multiple of 100 ms and at least `MIN_CLIP_MS`. */
 export function splitEvenly(totalMs: number, count: number): number[] {
   if (!Number.isSafeInteger(totalMs) || totalMs < 0 || totalMs % STEP_MS !== 0) throw new RangeError(`totalMs must be a whole multiple of ${STEP_MS}, got ${totalMs}`);
   if (!Number.isSafeInteger(count) || count < 1) throw new RangeError(`count must be a whole number of at least 1, got ${count}`);

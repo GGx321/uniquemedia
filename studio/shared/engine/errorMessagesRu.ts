@@ -1,6 +1,6 @@
 import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason, PhotoUnavailableReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
-import type { MontageIssueCode } from "./montage";
+import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
 
 /** Russian user-facing text for each error code. Codes never carry text themselves. */
@@ -62,6 +62,8 @@ export const ERROR_MESSAGES_RU = {
   MUSIC_QUOTA_EXHAUSTED:
     "Запросы за музыкой сейчас недоступны: отправлено 30 за 31 день, или сервис музыки ответил, что запросов не осталось. Ничего не отправлено; когда можно снова, показывает Studio.",
   MEDIA_UNSUPPORTED: "Этот файл не удалось добавить. Причина указана рядом; в «Мои» ничего не попало.",
+  TRASH_UNAVAILABLE:
+    "Системная Корзина не приняла папку аватара (сетевой диск, том без Корзины или сбой перемещения). Аватар не удалён и остался как был: ничего не пропало.",
   MUSIC_UNAVAILABLE: "Не удалось получить список музыки; предыдущий список остался как был. Если запрос был отправлен, он засчитан в лимит. Попробуйте позже.",
 } as const satisfies Record<ErrorCode, string>;
 
@@ -120,8 +122,8 @@ export const MEDIA_REASONS_BY_KIND_RU: Partial<Record<MediaKind, Partial<Record<
     dimensions: "Видео больше 4K. Уменьшите разрешение до 4096 × 2160 и добавьте снова.",
     "too-small": "Кадр видео слишком маленький: каждая сторона должна быть не меньше 2 пикселей.",
     structure: "Видео устроено необычно, и добавить его нельзя: например, в нём несколько видеодорожек, нестандартный поворот или цвет, или оно собрано из частей. Пересохраните ролик обычным способом и добавьте снова.",
-    // The shortest clip is 0.5 s (`MIN_CLIP_MS`). The dot in «0.5» is the editor's (its own text for a short video says «0.5 с» too).
-    "too-short": "Видео короче 0.5 с — в ролик его не поставить.",
+    // The shortest clip is `MIN_CLIP_MS` (0.1 s). The dot in «0.1» is the editor's (its own text for a short video says «0.1 с» too).
+    "too-short": `Видео короче ${(MIN_CLIP_MS / 1000).toFixed(1)} с — в ролик его не поставить.`,
     // A file with sound that the video importer cannot read (an audio track beside a video track with no frames, say) is what the owner meant as music, most likely.
     format: "Это не видео, которое читает Studio: нужен MP4 или MOV с одной видеодорожкой. Если в файле только звук, добавьте как музыку.",
   },

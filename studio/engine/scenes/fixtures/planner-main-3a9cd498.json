@@ -1,0 +1,42 @@
+{
+ "source": "main 3a9cd498",
+ "excludePairsFrom": {
+  "seed": 5,
+  "count": 20,
+  "take": 12
+ },
+ "hashes": {
+  "home": "2a7acc4074aa9d04c1bd178d4db729da10241814a5e4e8dd6bb533db43f796c3",
+  "travel": "42ba5873ac00b7a731a91620e5e4b31c562370bb2e215bf0c604e575d989f42e",
+  "home,travel": "4d56deddd49f1745350a3d293cd0d12dfdf22692d4cd32f803e1cce8dc243533",
+  "photoshoot": "6087cdbe575a72e87688beab2fc1a7dd4807644f69e7366b6d0f50ef94c463a2",
+  "home,photoshoot": "2c97cb7bbab260da1166fbd58b35a1f79f93c4536ae981b3375c6819783c2f40",
+  "travel,photoshoot": "3accd4c5414a3ab8428c704dd4fc8ca0ddd21b87f92b25ae0c5c897b2a585863",
+  "home,travel,photoshoot": "ecc0bf27996cfa7188d5851ea6f53a0b76bf8c6518da88d8d5cfdb0166f04e58",
+  "glamour": "c94bd56ecc0342ce76c7ee1237bd49d0c677e76111d1c589d6571b86ac736f1e",
+  "home,glamour": "dca5fbcf326ffa9d07a174fae482e47bed22c8ae491405068e462e655e95f727",
+  "travel,glamour": "f9a5d8d2f75a79b55d0617de94479377fe74d2af0cf501bc75f0689ee87930ce",
+  "home,travel,glamour": "92e17e8ba30c93af3bc79b94f0d55aa0a7169314534dad90b264d896deda5477",
+  "photoshoot,glamour": "eaed33c4b2234f3cb25b8716aa5dc5261f43d682080e728c5571bd5b9755e4f8",
+  "home,photoshoot,glamour": "2fe8000c4d6f6bb3e7fba7edd2209fa1f62fa19b519451cb72ab8f80cb0c41ed",
+  "travel,photoshoot,glamour": "701864e69fbd9482faa8c9ee17a19e9c879c3ea068cf3a0fea34148a30173e8e",
+  "home,travel,photoshoot,glamour": "254557064b08dfc125c3dfd8d1d33213f376b7a2c885e535814f88380592827c",
+  "fitness": "0cf008f15d83e2dbb4047836a6290cca80716b07be7b5e53c3ba5570e75dc4ed",
+  "home,fitness": "d46977aa54a6ec839a18a33fb115194799bd8311be95956344ecc55111e567ad",
+  "travel,fitness": "2ed2d91bdeca2c2ebb052c38026fb22a99bcb8598a03856541cdb464bbed1b45",
+  "home,travel,fitness": "4e25fcb7b9cc66c0ba15e09389d23d0e5319015573c01f2996fad3dbe9e68ab3",
+  "photoshoot,fitness": "16a88078ff8ea01adcb588e9c4f57dded5ce02343835b964a24ea8bd1eb0e2a3",
+  "home,photoshoot,fitness": "ef3e9c9a74e07fe29d927762d923a0c6adc867ebf1a15451952f2aad696aca19",
+  "travel,photoshoot,fitness": "73c1844b382783a82308508c91e47fbf897931431b4b8983b6cb530929ca9afd",
+  "home,travel,photoshoot,fitness": "2672da7d7491fe877ffb5b5a6bfbbb496e20b51b3c8c6f74b0e580784b3a3764",
+  "glamour,fitness": "1e667bf90a47fda7de85bc660961ad0e28df242a00a43e0f6b3ed729eb665458",
+  "home,glamour,fitness": "cfbc667efea49f11e004797d9fea61a83332e915c285e799bd7369154b3b7d73",
+  "travel,glamour,fitness": "c095dd0eb6d0b338442d16ac0887a65b84b66c77d90b20c7e1ff9345e19672c0",
+  "home,travel,glamour,fitness": "758e5e33c2f9f2a67c5b90254a004549ef0652c89237c5d19a6b1773509ad2d2",
+  "photoshoot,glamour,fitness": "0381ce3cd4217833b5da5e179e21ebd42cbefb82325c7286a331c154adadf022",
+  "home,photoshoot,glamour,fitness": "c42bb710c6f4ccb2135e063a95b9ca259e474862f1269e18e3d60249276adc05",
+  "travel,photoshoot,glamour,fitness": "21990c5a82fe6de39d11234b26a523f8e791de4c61e77eb2ee43ea14fa74db78",
+  "home,travel,photoshoot,glamour,fitness": "a569cde9cd97939a5bdec91f46b7e3642bfef0ef9090ebe3c6d74384d5ca77fb",
+  "rev-order": "5b355b7e1cf1ab1bf916322e35de63e187d730824bf20657324f31f8574d59d3"
+ }
+}

@@ -109,7 +109,7 @@ function descriptorReply(descriptor: string, cost = 0.0021): Reply {
   return { status: 200, body: chatBody(JSON.stringify({ descriptor }), { cost }) };
 }
 
-async function startEngine(opts: { init?: Partial<EngineInit>; net?: ReturnType<typeof network>; key?: string | null } = {}) {
+async function startEngine(opts: { init?: Partial<EngineInit>; net?: ReturnType<typeof network>; key?: string | null; deps?: Partial<EngineDeps> } = {}) {
   const net = opts.net ?? network();
   const posted: unknown[] = [];
   let n = 0;
@@ -120,6 +120,7 @@ async function startEngine(opts: { init?: Partial<EngineInit>; net?: ReturnType<
     newId: () => `id-${String(++n).padStart(8, "0")}`,
     post: (message) => posted.push(message),
     fetch: net.fetch,
+    ...opts.deps,
   };
   const engine = await Engine.start(init(opts.init), deps);
   const key = opts.key === undefined ? KEY : opts.key;
@@ -678,20 +679,59 @@ describe("avatars.rewriteDescriptor", () => {
     ok(await rewriting);
   });
 
+  // The avatar's folder must still be on the disk when the paid call starts (an avatar whose folder went to the Trash is refused NOT_FOUND before any money: see
+  // the two tests below), so this failure is made AFTER that look, and the same on every platform: the library's own write is told to fail (its crash point
+  // `testHooks.beforeRename`, which the engine's `library` seam hands it), not a folder made read-only.
   test("a library write that fails after the paid call fails the command; the money stays settled and the paid descriptor is kept", async () => {
     const { avatarId } = await seedUnreadable("draft");
-    const { engine } = await startEngine({ net: network({ chat: [descriptorReply(GOOD)] }) });
-    // The avatars folder becomes a file: the rewrite cannot be written.
-    await rm(join(dir, "library", "avatars"), { recursive: true });
-    await writeFile(join(dir, "library", "avatars"), "not a folder");
+    let failWrites = false;
+    const { engine } = await startEngine({
+      net: network({ chat: [descriptorReply(GOOD)] }),
+      deps: {
+        library: {
+          testHooks: {
+            beforeRename: () => {
+              if (failWrites) throw new Error("the disk is full");
+            },
+          },
+        },
+      },
+    });
+    failWrites = true;
 
     const refused = failed(await engine.handle(rewriteDescriptor(avatarId)));
+
     expect(refused.error.code).toBe("INTERNAL");
     expect(ledgerLines().at(-1)).toMatchObject({ type: "settle", costMicros: 2_100 });
     const jobId = String(ledgerLines()[0]?.jobId);
     expect(refused.error.detail).toContain(`raw/${rawFileName(`${jobId}:rewrite`)}`);
     const kept = JSON.parse(await readFile(join(dir, "userData", "raw", rawFileName(`${jobId}:rewrite`)), "utf8"));
     expect(kept).toEqual({ avatarId, descriptor: { age: 25, text: GOOD } });
+  });
+
+  // «Удалить аватар»: only `avatar.json` is removed, so WITHOUT the guard the rewrite would carry on to its paid request (the control below).
+  test("an avatar whose manifest is gone from the disk is NOT_FOUND: nothing is sent and the ledger is not written", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const net = network({ chat: [descriptorReply(GOOD)] });
+    const { engine } = await startEngine({ net });
+    await rm(join(dir, "library", "avatars", avatarId, "avatar.json"));
+
+    const refused = failed(await engine.handle(rewriteDescriptor(avatarId)));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(refused.error.detail).toContain("no longer on the disk");
+    expect(net.chatCalls()).toEqual([]);
+    expect(ledgerLines()).toEqual([]);
+  });
+
+  test("the same stand with the manifest there: the rewrite pays (the control of the test above)", async () => {
+    const { avatarId } = await seedUnreadable("draft");
+    const net = network({ chat: [descriptorReply(GOOD)] });
+    const { engine } = await startEngine({ net });
+
+    ok(await engine.handle(rewriteDescriptor(avatarId)));
+
+    expect(net.chatCalls()).toHaveLength(1);
   });
 });
 

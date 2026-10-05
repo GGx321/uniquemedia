@@ -337,6 +337,30 @@ describe("buildPass1: a collage clip", () => {
     expect(graph).toContain("fade=t=in:s=9:n=3:alpha=1");
   });
 
+  test("a 100 ms collage of four has a 0-frame step: no fade at all (ffmpeg's fade refuses n=0), every cell is overlaid at once", () => {
+    const job = first(build([collageClip("a", "collage4", 100, "static", true)]));
+    const graph = graphOf(job.argv);
+    expect(graph).not.toContain("fade=");
+    expect(graph).not.toContain(":n=0");
+    for (let k = 0; k < 4; k++) expect(graph).toContain(`[c${k}]overlay=`);
+    expect(job.frames).toBe(3);
+  });
+
+  test("a 100 ms collage of two still staggers, by one frame: cell 1 fades in from frame 1 over 1 frame", () => {
+    const graph = graphOf(first(build([collageClip("a", "collage2", 100, "static", true)])).argv);
+    expect(graph).toContain("[raw0]format=yuva420p,fade=t=in:s=0:n=1:alpha=1[c0]");
+    expect(graph).toContain("[raw1]format=yuva420p,fade=t=in:s=1:n=1:alpha=1[c1]");
+  });
+
+  test("no staggered collage of any valid length writes a fade of fewer than 1 frame", () => {
+    for (let ms = MIN_CLIP_MS; ms <= 1_000; ms += 100) {
+      for (const layout of ["collage2", "collage3", "collage4"] as const) {
+        const graph = graphOf(first(build([collageClip("a", layout, ms, "kenburns", true)])).argv);
+        for (const m of graph.matchAll(/fade=t=in:s=(\d+):n=(\d+)/g)) expect(Number(m[2])).toBeGreaterThanOrEqual(1);
+      }
+    }
+  });
+
   test("without stagger, adds no fade at all", () => {
     expect(graphOf(first(build([collageClip("a", "collage3", 2000, "kenburns", false)])).argv)).not.toContain("fade=");
   });
@@ -392,13 +416,16 @@ describe("buildPass1: refusals", () => {
     expect(() => build([photoClip("a", 2050, "static")])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
   });
 
-  test.each([0, 100, MIN_CLIP_MS - 100])("refuses a clip of %d ms, below the 500 ms minimum (a zero would loop for ever)", (ms) => {
+  test.each([0, MIN_CLIP_MS - 10, MIN_CLIP_MS / 2])("refuses a clip of %d ms, below the 100 ms minimum (a zero would loop for ever)", (ms) => {
     expect(() => build([photoClip("a", ms, "static")])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
     expect(() => build([collageClip("a", "collage2", ms, "kenburns", true)])).toThrow(expect.objectContaining({ code: "BAD_DURATION" }));
   });
 
-  test("accepts a clip of exactly the minimum, 500 ms", () => {
-    expect(first(build([photoClip("a", MIN_CLIP_MS, "static")])).frames).toBe(15);
+  test("accepts a clip of exactly the minimum, 100 ms: 3 frames, as a photo and as a collage", () => {
+    expect(MIN_CLIP_MS).toBe(100);
+    expect(first(build([photoClip("a", MIN_CLIP_MS, "static")])).frames).toBe(3);
+    expect(first(build([photoClip("a", MIN_CLIP_MS, "kenburns")])).frames).toBe(3);
+    expect(first(build([collageClip("a", "collage4", MIN_CLIP_MS, "pan", true)])).frames).toBe(3);
   });
 
   test("refuses a negative, fractional or NaN duration as BAD_DURATION", () => {

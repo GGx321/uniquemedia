@@ -998,6 +998,38 @@ input[type="range"]::-webkit-slider-thumb {
   padding: 10px 12px;
 }
 
+/* «Удалить аватар»: the trash on the card's name row, and the confirmation under the counts (a draft's own pair: .draft-delete, .draft-confirm). */
+.ibtn.avatar-delete {
+  align-self: center;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.avatar-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.avatar-confirm-wait {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.avatar-confirm-error {
+  color: var(--danger);
+}
+
+.avatar-confirm .draft-actions {
+  display: flex;
+  gap: 6px;
+}
+
 /* Unreadable: no fixed photo shape, the dark surface takes what is left. */
 .avatar-card > .unreadable-ph {
   flex-grow: 1;
@@ -1997,20 +2029,6 @@ input[type="range"]::-webkit-slider-thumb {
   border-top: 1px solid var(--border);
   color: var(--text);
   font-size: 13px;
-}
-
-.photos-review {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 2px;
-  color: var(--text-2);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.photos-review .tag {
-  margin-left: auto;
 }
 
 .photos-go {

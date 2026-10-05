@@ -39,7 +39,7 @@ export function applyLibraryChange(library: MineLibrary, change: MediaStoreChang
 /**
  * What a click on a photo or video tile does (the «Фото» tab's rules, P12): `select` the clip a placed file is in; a photo `fill`s the
  * empty cell waiting for it; else `append` a clip at the end; `full` when no clip can be added; `too-short` for a video under the shortest
- * clip (0.5 s on the 100 ms grid), which is never placed.
+ * clip (`MIN_CLIP_MS`, 0.1 s on the 100 ms grid), which is never placed.
  */
 export type VisualAction = "select" | "fill" | "append" | "full" | "too-short";
 

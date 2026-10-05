@@ -1,8 +1,12 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
-import { plan, type PlanSlot } from "../scenes";
-import { buildRunPlan } from "./plan";
+import { plan, planWithPools, POOLS, type PlanSlot } from "../scenes";
+import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
+import { buildRunPlan, runWriterConfig } from "./plan";
 import { NetworkPool } from "./pools";
 import { runWriterPhase, type WriterPhase } from "./writerPhase";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -69,6 +73,7 @@ function phaseOf(count: number, overrides: Partial<WriterPhase> = {}): WriterPha
     sentences: new Map(),
     writerDone: new Set(),
     ledger: { reserveOf: (id) => money.ledger.reserveOf(id), closeOf: (id) => money.ledger.closeOf(id) },
+    ...runWriterConfig(run.categories),
     ...overrides,
   };
 }
@@ -210,6 +215,100 @@ describe("runWriterPhase", () => {
     const { result } = start([good, good], phaseOf(30), { pool });
     await result;
     expect(pool.active).toBe(0);
+  });
+});
+
+// CS.1: the call shape and the messages are the caller's. A run passes exactly
+// today's values, so what a built-in run sends must not move by one byte.
+describe("runWriterPhase: a built-in run's requests are byte-identical to main 3a9cd498", () => {
+  const sha = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+  const fixture: { bodies: string[]; reserves: { attemptId: string; worstMicros: number; model: string }[] } = JSON.parse(
+    readFileSync(join(import.meta.dir, "fixtures", "writer-main-3a9cd498.json"), "utf8"),
+  );
+
+  test("every request body, attempt id and reserve of a 30-slot run over all five categories, one chunk asked twice", async () => {
+    const run = buildRunPlan({
+      runId: RUN_ID,
+      avatarId: "avatar-0001",
+      createdAt: "2026-09-24T12:00:00.000Z",
+      request: { avatarId: "avatar-0001", count: 30, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: true, back: true } },
+      imageAgeCheck: "off",
+      models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
+      capMicros: 10_000_000,
+      plannedWorstMicros: 10_000_000,
+      scenes: plan({ seed: 3, count: 30, categories: ["home", "travel", "photoshoot", "glamour", "fitness"], poses: { profile: true, back: true } }),
+    });
+    const phase = { ...phaseOf(30), slots: run.scenes.slots, chunks: run.writerChunks, ...runWriterConfig(run.categories) };
+    const { net, result } = start([refusedAnswer, good, good], phase);
+
+    expect((await result).ok).toBe(true);
+    expect(net.calls.map((c) => sha(c.json()))).toEqual(fixture.bodies);
+    const reserved = money.lines().flatMap((l) => (l.type === "reserve" ? [{ attemptId: l.attemptId, worstMicros: l.worstMicros, model: l.model }] : []));
+    expect(reserved).toEqual(fixture.reserves);
+  });
+});
+
+describe("runWriterPhase: the call shape and the messages are the caller's", () => {
+  test("the ceilings go into the request and the reserve, and the attempts a chunk may use end it", async () => {
+    const base = phaseOf(3);
+    const { net, result } = start([refusedAnswer, good], { ...base, call: { maxTokens: 3_000, inputTokens: 5_000, maxAttempts: 1 } });
+    const answer = await result;
+
+    expect(answer).toMatchObject({ ok: false, stop: "exhausted", error: { code: "INTERNAL" } });
+    expect(net.calls).toHaveLength(1);
+    expect(net.calls[0]?.json().max_tokens).toBe(3_000);
+    const reserve = money.lines().find((l) => l.type === "reserve");
+    expect(reserve?.worstMicros).toBeLessThan(ATTEMPT_WORST);
+  });
+
+  test("more attempts than today's are used when the caller allows them", async () => {
+    const { net, result } = start([refusedAnswer, refusedAnswer, good], { ...phaseOf(3), call: { maxTokens: 8_000, inputTokens: 14_000, maxAttempts: 3 } });
+    expect((await result).ok).toBe(true);
+    expect(net.calls).toHaveLength(3);
+  });
+
+  test("the messages builder is asked for each attempt with the chunk's slots and why the last answer was rejected", async () => {
+    const asked: { slots: number[]; feedback: string[] | undefined }[] = [];
+    const base = phaseOf(3);
+    const messages: WriterPhase["messages"] = (slots, feedback) => {
+      asked.push({ slots: slots.map((s) => s.slotIndex), feedback: feedback?.problems });
+      return [
+        { role: "system", content: "marker-system" },
+        { role: "user", content: `Slots:\n${JSON.stringify(slots.map((s) => ({ slotIndex: s.slotIndex })))}` },
+      ];
+    };
+    const { net, result } = start([refusedAnswer, good], { ...base, messages });
+
+    expect((await result).ok).toBe(true);
+    expect(asked).toEqual([
+      { slots: [1, 2, 3], feedback: undefined },
+      { slots: [1, 2, 3], feedback: ["missing-slots"] },
+    ]);
+    expect(JSON.stringify(net.calls[0]?.json())).toContain("marker-system");
+  });
+
+  test("a custom category's label reaches the request, from the plan's own snapshot", async () => {
+    const custom = CUSTOM_REF;
+    const snapshot = customSnapshot();
+    const run = buildRunPlan({
+      runId: RUN_ID,
+      avatarId: "avatar-0001",
+      createdAt: "2026-10-05T12:00:00.000Z",
+      request: { avatarId: "avatar-0001", count: 3, categories: [custom], poses: { profile: false, back: false } },
+      categories: [snapshot],
+      imageAgeCheck: "off",
+      models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
+      capMicros: 10_000_000,
+      plannedWorstMicros: 10_000_000,
+      scenes: planWithPools({ seed: 4, count: 3, categories: [custom] }, { ...POOLS, [custom]: CUSTOM_POOL }),
+    });
+    const { net, result } = start([good], { ...phaseOf(3), slots: run.scenes.slots, chunks: run.writerChunks, ...runWriterConfig(run.categories) });
+
+    expect((await result).ok).toBe(true);
+    const text = JSON.stringify(net.calls[0]?.json());
+    expect(text).toContain("Paris cafes");
+    expect(text).not.toContain(custom);
+    expect(text).not.toContain("Кофейни");
   });
 });
 

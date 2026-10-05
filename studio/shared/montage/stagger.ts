@@ -7,12 +7,14 @@ import { msToFrames } from "./timeline";
 //
 // step = min(300 ms, durationMs / (n + 1)), rounded DOWN to a whole frame.
 // Because n x step <= n / (n + 1) of the clip, every cell is fully in
-// strictly before the clip ends, and with the smallest clip (500 ms = 15
-// frames) and the largest collage (4 cells) the step is still 3 frames.
-// Working in frames keeps it exact: floor(durationFrames / (n + 1)) equals the
-// floor of the millisecond rule converted to frames.
+// strictly before the clip ends. A clip of 500 ms (15 frames) or more keeps a
+// step of at least 3 frames with 4 cells; the shortest clip (100 ms = 3 frames)
+// is too short for 3 or 4 cells, whose step rounds down to 0 frames: there is
+// no stagger then and every cell is visible from the first frame (a reveal of
+// 0 frames). Working in frames keeps it exact: floor(durationFrames / (n + 1))
+// equals the floor of the millisecond rule converted to frames.
 
-/** When a cell fades in: `frames` long from `startFrame` (a clip-relative frame). 0 frames = visible from the start. */
+/** When a cell fades in: `frames` long from `startFrame` (a clip-relative frame). 0 frames = visible from the start (no stagger, or a clip too short for a step). */
 export interface CellReveal {
   readonly startFrame: number;
   readonly frames: number;
@@ -22,7 +24,7 @@ function assertCellCount(cellCount: number): void {
   if (!Number.isSafeInteger(cellCount) || cellCount < 1) throw new RangeError(`cellCount must be a whole number of at least 1, got ${cellCount}`);
 }
 
-/** The stagger step in frames for a clip of `durationMs` with `cellCount` cells: at least 1 for any valid clip. */
+/** The stagger step in frames for a clip of `durationMs` with `cellCount` cells: 0 when the clip is too short for one (100 ms with 3 or 4 cells), else 1 to 9. */
 export function staggerStepFrames(durationMs: number, cellCount: number): number {
   assertCellCount(cellCount);
   const capFrames = (STAGGER_MAX_STEP_MS / STEP_MS) * FRAMES_PER_STEP;

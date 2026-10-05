@@ -1,8 +1,9 @@
 import { type MontageDraft, type PhotoSummary, SceneCategory } from "../../../shared/engine";
+import { photoCategoryLabel } from "../photos/runForm";
 import { type AddRefusal, cellsOf } from "./clipOps";
 
-/** A scene photo's category (the contract's `SceneCategory`). */
-export type PhotoCategory = PhotoSummary["category"];
+/** What a scene photo carries as its category: a built-in, a custom category's id, or an own scene (the contract's `PhotoCategory`). */
+export type BinCategory = PhotoSummary["category"];
 
 // 3d.5: the «Фото» tab's bin (Editor.dc.html; the reconciliation's P6–P15), as pure data. Eligible scene photos only, numbered
 // in the list's order (the numbers name the tiles and stay put while the chips filter). Each photo is placed in this draft (its
@@ -12,7 +13,7 @@ export type PhotoCategory = PhotoSummary["category"];
 /** The chips: «Неиспользованные» (free photos only, P7) and one category (P8); the avatar's chip is fixed (CF15). */
 export interface BinFilter {
   readonly unusedOnly: boolean;
-  readonly category: PhotoCategory | null;
+  readonly category: BinCategory | null;
 }
 
 /** `placed`: in this draft; `free`: may go in; `used`: in a video; `reserved`: in a queued or running render. */
@@ -58,21 +59,40 @@ export function binTiles(photos: readonly PhotoSummary[], spec: MontageDraft, fi
     .filter((tile) => passes(tile.photo, filter));
 }
 
+/** One category chip: its id, the name it is shown by, and how many photos it holds among those the other chip leaves. */
+export interface BinFacet {
+  readonly category: BinCategory;
+  readonly label: string;
+  readonly count: number;
+}
+
+const isBuiltIn = (category: BinCategory): boolean => SceneCategory.safeParse(category).success;
+
 /**
  * The chips' counts: «Неиспользованные N» (the free eligible photos), and each category's photos among those the other chip
- * leaves, in the contract's order. Only categories that have photos are offered, and the chosen one always (even at 0).
+ * leaves. The categories are the ones the photos actually carry, so a custom category's or an own scene's photo is never hidden
+ * from the filter: the five built-ins first in the contract's order, then the custom ones and the own scenes by label. A
+ * category is shown by the label of its first photo in the list's order (the list is newest first, so a renamed category shows
+ * its latest name). Only categories that have photos are offered, and the chosen one always (even at 0).
  */
-export function binFacets(photos: readonly PhotoSummary[], filter: BinFilter): { unused: number; categories: { category: PhotoCategory; count: number }[] } {
+export function binFacets(photos: readonly PhotoSummary[], filter: BinFilter): { unused: number; categories: BinFacet[] } {
   const eligible = photos.filter((photo) => photo.eligible);
-  const categories = SceneCategory.options
-    .map((category) => ({ category, count: eligible.filter((photo) => passes(photo, filter, category)).length }))
+  const labels = new Map<BinCategory, string>();
+  for (const photo of eligible) if (!labels.has(photo.category)) labels.set(photo.category, photoCategoryLabel(photo));
+  const carried = new Set<BinCategory>(labels.keys());
+  if (filter.category !== null) carried.add(filter.category);
+  const labelOf = (category: BinCategory): string => labels.get(category) ?? photoCategoryLabel({ category });
+  const builtIns = SceneCategory.options.filter((category) => carried.has(category));
+  const others = [...carried].filter((category) => !isBuiltIn(category)).sort((a, b) => labelOf(a).localeCompare(labelOf(b), "ru") || a.localeCompare(b));
+  const categories = [...builtIns, ...others]
+    .map((category) => ({ category, label: labelOf(category), count: eligible.filter((photo) => passes(photo, filter, category)).length }))
     .filter((c) => c.count > 0 || c.category === filter.category);
   return { unused: eligible.filter(isFreePhoto).length, categories };
 }
 
 /**
  * What a click on a tile does: `select` the clip a placed photo is in; nothing for a `taken` one (in a video or a render); a free
- * one `fill`s the empty cell waiting for it, or is `append`ed as a new clip, unless the draft is `full` (20 clips, or no 0.5 s
+ * one `fill`s the empty cell waiting for it, or is `append`ed as a new clip, unless the draft is `full` (20 clips, or nothing
  * left of the 15 s).
  */
 export type TileAction = "select" | "fill" | "append" | "taken" | "full";

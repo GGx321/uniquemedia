@@ -10,6 +10,7 @@ import {
 } from "../shared/engine";
 import { randomUUID } from "node:crypto";
 import { COMMAND_DEADLINE_MS, EngineReply, HostCall, MEDIA_IMPORT_DEADLINE_MS, type EngineInit, type HostControl } from "../engine/control";
+import { AVATAR_DELETE_PREPARE_DEADLINE_MS } from "../engine/videos/timeouts";
 
 /** An unexpected exit is followed by one restart, after this delay; a second one is final. */
 export const RESTART_DELAY_MS = 1000;
@@ -109,6 +110,8 @@ export interface CallResult {
   /** Set only by `media.import`: the job its importer started, or (with `error`) why the file was turned away. */
   mediaJobId?: EngineReply["mediaJobId"];
   mediaReason?: EngineReply["mediaReason"];
+  /** Set only by `avatar.deletePrepare`'s own successful reply: the paths main may move to the Trash. For main only: never forwarded to a window. */
+  deletePlan?: EngineReply["deletePlan"];
 }
 
 interface PendingCall {
@@ -274,6 +277,28 @@ export class EngineHost<Transfer> {
     return this.#call(callId, { kind: "control", type: "media.import", callId, ...file }, MEDIA_IMPORT_DEADLINE_MS, abort).finally(() => signal?.removeEventListener("abort", abort));
   }
 
+  /**
+   * «Удалить аватар», step 1: asks the engine what goes with the avatar. `error` is null with a `deletePlan` on success; the avatar is then claimed by the
+   * engine until `finishAvatarDelete`. IN_FLIGHT (anything of the avatar runs, a library switch is under way), NOT_FOUND, or INTERNAL when the engine did not
+   * answer in time or is not running. Waits as long as the engine's own bounded look at the export folder and the record files can take.
+   */
+  prepareAvatarDelete(avatarId: string, token: string): Promise<CallResult> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "avatar.deletePrepare", callId, avatarId, token }, AVATAR_DELETE_PREPARE_DEADLINE_MS);
+  }
+
+  /** «Удалить аватар», step 2: what became of the avatar's folder. `trashed` makes the engine forget the avatar; `kept` puts it back. Always sent after a successful prepare. */
+  finishAvatarDelete(avatarId: string, token: string, outcome: "trashed" | "kept"): Promise<CallResult> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "avatar.deleteFinish", callId, avatarId, token, outcome });
+  }
+
+  /** After a delete whose finish the engine did not know: it forgets the avatars whose manifest is no longer on the disk (and announces each). */
+  pruneMissingAvatars(): Promise<CallResult> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "avatars.pruneMissing", callId });
+  }
+
   #call(callId: string, call: HostCall, boundMs?: number, onDeadline?: () => void): Promise<CallResult> {
     // Held to the contract BEFORE it is posted: the engine ignores what it cannot parse, and main would wait out the whole deadline for nothing.
     if (!HostCall.safeParse(call).success) return Promise.resolve({ error: { code: "VALIDATION", detail: "the call to the engine does not match the contract" } });
@@ -436,7 +461,7 @@ export class EngineHost<Transfer> {
     if (kind === "control") {
       const reply = EngineReply.safeParse(data);
       const entry = reply.success ? this.#calls.get(reply.data.callId) : undefined;
-      if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage, exportFolder: reply.data.exportFolder, mediaJobId: reply.data.mediaJobId, mediaReason: reply.data.mediaReason });
+      if (reply.success && entry !== undefined) this.#settleCall(entry, { error: reply.data.error ?? null, stage: reply.data.stage, exportFolder: reply.data.exportFolder, mediaJobId: reply.data.mediaJobId, mediaReason: reply.data.mediaReason, deletePlan: reply.data.deletePlan });
       else console.warn("studio: dropped an engine reply no call is waiting for");
       return;
     }

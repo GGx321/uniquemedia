@@ -124,6 +124,30 @@ describe("when a stat cannot tell, a hash decides, within a budget", () => {
     expect(hashed).toHaveLength(1); // 2 MiB fits in 3 MiB; the next 2 MiB does not
   });
 
+  test("a caller that must not guess (a delete) asks for `unchecked` once the budget is spent: a size match alone is not `present`", async () => {
+    const w = world();
+    const bytes = fakeVideoBytes(2 * 1024 * 1024);
+    const record = sampleRecord(w, { bytes });
+    place(w, record, bytes);
+    const { checker, hashed } = counting();
+
+    const state = await checker.check(record, rootRef(w), { verify: "cheap", budget: newHashBudget(10), whenSpent: "unchecked" });
+
+    expect(state).toBe("unchecked");
+    expect(hashed).toHaveLength(0);
+  });
+
+  test("with budget left, `whenSpent` changes nothing: the hash decides", async () => {
+    const w = world();
+    const bytes = fakeVideoBytes(2048);
+    const record = sampleRecord(w, { bytes });
+    place(w, record, bytes);
+
+    const state = await new FileStateChecker().check(record, rootRef(w), { verify: "cheap", budget: newHashBudget(1024 * 1024), whenSpent: "unchecked" });
+
+    expect(state).toBe("present");
+  });
+
   test("a budget-limited check that finds a size mismatch still says changed: the stat does not need the budget", async () => {
     const w = world();
     const record = sampleRecord(w);

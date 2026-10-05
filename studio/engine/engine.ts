@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -8,9 +8,11 @@ import {
   AvatarTraits,
   errorResponseFor,
   EventLog,
+  isCustomCategory,
   parseEngineCommand,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
+  type CategoryRef,
   type MusicKeyStatus,
   type AvatarSummary,
   type CommandPayload,
@@ -60,14 +62,15 @@ import {
 } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
 import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
+import { avatarDeleteCounts } from "./avatars/delete";
 import { EngineFailure } from "./engineFailure";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
 import { validJobStates } from "./snapshotJobs";
 import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
-import { EngineReply, HostCall, HostControl, isControlMessage, MEDIA_IMPORT_ENGINE_DEADLINE_MS, type EngineInit, type EngineSettings } from "./control";
-import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type Library, type LogIssue } from "./library";
+import { EngineReply, HostCall, HostControl, isControlMessage, MEDIA_IMPORT_ENGINE_DEADLINE_MS, type AvatarDeletePlan, type EngineInit, type EngineSettings } from "./control";
+import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type DetachedAvatar, type Library, type LibraryDeps, type LogIssue } from "./library";
 import type { ImageMediaType } from "./library/media";
 import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
@@ -266,6 +269,8 @@ export interface EngineDeps {
   };
   /** Test seams of the montage drafts: the focus resolver, the budget, the seed of a new draft, the draft write's crash point. */
   montages?: Partial<Pick<MontageServiceDeps, "focus" | "focusBudgetMs" | "randomSeed" | "commandDeadlineMs" | "commandMarginMs">> & Partial<Pick<DraftStoreDeps, "beforeRename">>;
+  /** Test seam of the library the engine opens: its crash points (`testHooks`), e.g. a write that fails after a paid call. */
+  library?: Pick<LibraryDeps, "testHooks">;
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -501,6 +506,28 @@ interface OpenedLibrary {
   unreadable: UnreadableAvatar[];
 }
 
+/** Whether the library's own folder and its `library.json` are on the disk now (false for an unmounted disk, a moved folder, a read that cannot be done). */
+async function libraryIsThere(root: string): Promise<boolean> {
+  try {
+    return (await lstat(root)).isDirectory() && (await lstat(join(root, LIBRARY_FILE))).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/** The one avatar delete between prepare and finish: `library` and `detached` are set once the avatar is out of the indexes (until then it is only preparing). */
+interface PendingDelete {
+  readonly avatarId: string;
+  /** Main's id of this delete: a finish carrying another one is not for it. */
+  readonly token: string;
+  library: Library | null;
+  detached: DetachedAvatar | null;
+  /** The plan has been made and is on its way to main: from here a finish is the ordinary end of the delete. */
+  planned: boolean;
+  /** Main ended the delete (`kept`) while the prepare was still waiting: the prepare puts everything back itself when it comes to its next look. */
+  abandoned: boolean;
+}
+
 /**
  * The engine's state and command dispatcher. Every message from main is
  * parsed here: control messages (the API key, settings) against
@@ -607,6 +634,14 @@ export class Engine {
   #paidCommands = 0;
   /** One createDraft at a time: a second click (the wizard left and opened again) must not buy a second descriptor. */
   #creatingDraft = false;
+  /**
+   * «Удалить аватар»: the one delete that is between main's `avatar.deletePrepare` and `avatar.deleteFinish`. The avatar is claimed (`#busyAvatars`, so no
+   * library switch and no other command changes it) and already out of the library's indexes (memory only), with what the indexes held kept in
+   * `detached` to put back if its folder stays. Null when no delete is under way; one at a time.
+   */
+  #pendingDelete: PendingDelete | null = null;
+  /** `montages.focus` requests running now, by avatar: an avatar with one is not deleted (it reads the avatar's photos). */
+  readonly #focusRequests = new Map<string, number>();
   /**
    * T6c: the one photo staged for import (`avatars.pickImportPhoto` →
    * `import.stagePhoto`), replaced whenever a later stage lands. Single-use:
@@ -1065,6 +1100,26 @@ export class Engine {
       }
       case "export.choose":
         return { kind: "control", type: "reply", callId: call.callId, ...(await this.#chooseExportFolder(call.path)) };
+      case "avatar.deletePrepare":
+        try {
+          return { kind: "control", type: "reply", callId: call.callId, deletePlan: await this.#deletePrepare(call.avatarId, call.token) };
+        } catch (error) {
+          return { kind: "control", type: "reply", callId: call.callId, error: engineErrorFrom(error) };
+        }
+      case "avatars.pruneMissing":
+        try {
+          await this.#pruneMissing();
+          return { kind: "control", type: "reply", callId: call.callId };
+        } catch (error) {
+          return { kind: "control", type: "reply", callId: call.callId, error: engineErrorFrom(error) };
+        }
+      case "avatar.deleteFinish":
+        try {
+          this.#deleteFinish(call.avatarId, call.token, call.outcome);
+          return { kind: "control", type: "reply", callId: call.callId };
+        } catch (error) {
+          return { kind: "control", type: "reply", callId: call.callId, error: engineErrorFrom(error) };
+        }
       case "media.import":
         return { kind: "control", type: "reply", callId: call.callId, ...(await this.#importMedia(call)) };
       case "import.stagePhoto": {
@@ -1367,6 +1422,7 @@ export class Engine {
       case "runs.estimate": {
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
+        Engine.#assertCategoriesExist(command.payload.categories);
         const models = this.#avatarModels();
         const imageAgeCheck = this.#settings.imageAgeCheck;
         const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, command.payload, imageAgeCheck);
@@ -1494,8 +1550,20 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.save(command.payload) };
       case "montages.delete":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.delete(command.payload.montageId) };
-      case "montages.focus":
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.focus(command.payload) };
+      case "montages.focus": {
+        // Counted from before the first await to the answer: an avatar delete refuses while a focus request of that avatar is out.
+        const { avatarId } = command.payload;
+        this.#focusRequests.set(avatarId, (this.#focusRequests.get(avatarId) ?? 0) + 1);
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.focus(command.payload) };
+        } finally {
+          const left = (this.#focusRequests.get(avatarId) ?? 1) - 1;
+          if (left <= 0) this.#focusRequests.delete(avatarId);
+          else this.#focusRequests.set(avatarId, left);
+        }
+      }
+      case "avatars.deletePreview":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#deletePreview(command.payload.avatarId) };
       case "montages.textPreview":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#textPreview.preview(command.payload.layer) };
       case "export.check": {
@@ -1855,12 +1923,24 @@ export class Engine {
    * (invariant 6). The run's cap is that accepted worst case, for its whole
    * life. The job runs on after the answer.
    */
+  /**
+   * A run may only name categories the engine knows. CS.1 widened the contract to custom category ids, but the category library
+   * they live in arrives with CS.2, so until then every custom id is unknown: NOT_FOUND, free, before any price is fetched, any
+   * reserve is made or any folder is written. (CS.2 replaces this with a lookup in the library.)
+   */
+  static #assertCategoriesExist(categories: readonly CategoryRef[]): void {
+    const unknown = categories.find(isCustomCategory);
+    if (unknown !== undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${unknown}` });
+  }
+
   async #startRun(payload: CommandPayload<"runs.start">): Promise<{ runId: string; jobId: string }> {
     const key = this.#usableKey("start a photo run");
     const budget = this.#paidBudget();
     const library = await this.#liveLibrary();
     const { avatarId, count, categories, poses } = payload;
     const manifest = this.#runnableAvatar(library, avatarId);
+    await this.#assertAvatarOnDisk(library, avatarId);
+    Engine.#assertCategoriesExist(categories);
     if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
     // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
     const imageAgeCheck = this.#settings.imageAgeCheck;
@@ -1937,6 +2017,7 @@ export class Engine {
     let launched = false;
     try {
       const manifest = this.#runnableAvatar(library, plan.avatarId);
+      await this.#assertAvatarOnDisk(library, plan.avatarId);
       this.#assertAgeGate(plan.imageAgeCheck);
       this.#assertFaceGate();
       const { state, estimate, priced, budget } = await this.#remaining(library, plan);
@@ -2332,6 +2413,7 @@ export class Engine {
     const library = await this.#liveLibrary();
     const { avatarId } = payload;
     const manifest = this.#manifestOrNotFound(library, avatarId);
+    await this.#assertAvatarOnDisk(library, avatarId);
     this.#assertRewritable(avatarId, manifest);
     // isRewritable (inside #assertRewritable) already proved this parses; re-parsed here only to get its typed data.
     const traits = AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age });
@@ -2554,6 +2636,7 @@ export class Engine {
     const { avatarId } = payload;
     const manifest = library.getAvatar(avatarId);
     if (manifest === undefined || manifest.status !== "draft") throw new EngineFailure({ code: "NOT_FOUND", detail: `no draft ${avatarId} in the open library` });
+    await this.#assertAvatarOnDisk(library, avatarId);
     this.#assertDescriptorReadable(manifest);
     const descriptor: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
     if (this.#draft(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the draft ${avatarId} does not fit the contract` });
@@ -2743,6 +2826,159 @@ export class Engine {
     } finally {
       this.#busyAvatars.delete(avatarId);
     }
+  }
+
+  // ---------- «Удалить аватар» ----------
+  //
+  // The folder goes to the system Trash, which only main can reach (`shell.trashItem`). So the delete is two control calls around main's move, and the
+  // order is what keeps a crash or a refusal from leaving a half state the engine misreads:
+  //   1. `avatar.deletePrepare`: refuse while anything of the avatar runs or is reserved; otherwise claim the avatar, take it out of the indexes (MEMORY ONLY:
+  //      the disk is untouched), resolve the video files (from the records, inside the export folder), and hand main the paths.
+  //   2. main moves the avatar's FOLDER first. Until it has, the disk is exactly as it was, so a crash anywhere before that leaves a normal avatar.
+  //   3. `avatar.deleteFinish`: `trashed` (the folder is in the Trash): forget the avatar for good and announce `avatar.removed`; `kept` (the Trash refused, or
+  //      main's own check of a path failed): put the avatar back in the indexes as it was. Main sends it whatever happened.
+  //   4. main moves the video files, AFTER the folder: a crash between leaves plain mp4 files without records (nothing is lost, the owner still has them),
+  //      never records that point at files that are gone.
+  // The ledger is not touched: no money moves, and its history stays.
+
+  /**
+   * Why the avatar cannot be deleted right now, as the detail of an IN_FLIGHT; null when nothing of it runs or is reserved. Anything of the avatar: a
+   * candidates job, a photo run or a render (queued or running), a focus request, a video intent a crash left pending, a library write in progress (a draft
+   * being saved, a reject mark, a video delete) or a render being prepared (it has not named its avatar yet). The claim on the avatar and another delete
+   * are the caller's to look at.
+   */
+  #deleteBusy(library: Library, avatarId: string): string | null {
+    if (this.#jobs.hasLiveJobFor(avatarId) || this.#renders.reservedPhotos(avatarId).size > 0) return "a photo run, a candidate job or a video render of this avatar is running";
+    if ((this.#focusRequests.get(avatarId) ?? 0) > 0) return "a focus request for this avatar is running";
+    if (library.pendingVideoCount(avatarId) > 0) return "a video of this avatar is still being saved";
+    if (this.#librarySmallWrites > 0 || this.#videos.preparing > 0) return "a draft, a mark or a video of the library is being written";
+    return null;
+  }
+
+  /** `avatars.deletePreview`: the counts the confirmation shows. Refuses like the delete does while the avatar is busy, so the dialog never offers what cannot work. */
+  async #deletePreview(avatarId: string): Promise<{ avatarId: string; photos: number; candidates: number; drafts: number; videos: number; videoFilesFound: number; videoFilesUnchecked: number }> {
+    const library = this.library;
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    if (this.#pendingDelete !== null || this.#busyAvatars.has(avatarId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: "an avatar is being deleted or changed; try again when it ends" });
+    const busy = this.#deleteBusy(library, avatarId);
+    if (busy !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
+    const counts = await avatarDeleteCounts(library, avatarId);
+    const found = await this.#videos.avatarFiles(library.root, avatarId);
+    // The avatar may have been deleted, or have started something, while the counts were read.
+    if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    // A record names one file: a stale used index must never make the files outnumber the videos.
+    return { avatarId, ...counts, videos: Math.max(counts.videos, found.files.length + found.unlisted), videoFilesFound: found.files.length, videoFilesUnchecked: found.unlisted };
+  }
+
+  /** `avatar.deletePrepare`: see the section's comment. Throws what the reply's `error` carries; on success the avatar stays claimed until `#deleteFinish`. */
+  async #deletePrepare(avatarId: string, token: string): Promise<AvatarDeletePlan> {
+    if (this.#pendingDelete !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: "an avatar is already being deleted; wait for it to finish" });
+    // The single slot is taken HERE, before the first await: a second prepare that arrives while this one awaits the library finds it taken.
+    const slot: PendingDelete = { avatarId, token, library: null, detached: null, planned: false, abandoned: false };
+    this.#pendingDelete = slot;
+    try {
+      // Claimed before the first await too: nothing else (a library switch included) may change the avatar from here to the finish.
+      this.#claimAvatar(avatarId, "a job or command is changing this avatar; delete it when that ends");
+    } catch (error) {
+      if (this.#pendingDelete === slot) this.#pendingDelete = null;
+      throw error;
+    }
+    // Main ended this delete (`kept`) while it waited: nothing is left to hand a plan to.
+    const assertNotAbandoned = (): void => {
+      if (slot.abandoned) throw new EngineFailure({ code: "NOT_FOUND", detail: "the delete was ended before its plan was made" });
+    };
+    try {
+      const library = await this.#liveLibrary();
+      assertNotAbandoned();
+      if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+      const busy = this.#deleteBusy(library, avatarId);
+      if (busy !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
+      // No await between the last look and this: nothing can start for the avatar in between. From here a render or a pick finds no avatar.
+      slot.library = library;
+      slot.detached = library.detachAvatar(avatarId);
+      const found = await this.#videos.avatarFiles(library.root, avatarId);
+      assertNotAbandoned();
+      slot.planned = true;
+      return { avatarId, libraryRoot: library.root, folder: library.avatarDirPath(avatarId), exportRoot: found.exportRoot, files: found.files, unlisted: found.unlisted };
+    } catch (error) {
+      // Nothing was moved: put the avatar back and let go of the slot and the claim.
+      if (slot.library !== null && slot.detached !== null) {
+        slot.library.reattachAvatar(slot.detached);
+        // Main may have been told `kept` already, before the avatar came back: the windows are shown it again.
+        if (slot.abandoned) this.#announceRestored(slot.library, avatarId);
+      }
+      if (this.#pendingDelete === slot) this.#pendingDelete = null;
+      this.#busyAvatars.delete(avatarId);
+      throw error;
+    }
+  }
+
+  /** An avatar a delete took out of the indexes is back (`kept`): the windows are shown it again, and a stale used index is read again on its own. */
+  #announceRestored(library: Library, avatarId: string): void {
+    if (library.getAvatar(avatarId)?.status === "draft") {
+      const draft = this.#draft(avatarId);
+      if (draft !== null) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
+    } else {
+      this.#announceAvatarOrLog(library, avatarId);
+    }
+    this.#videos.avatarRestored(library, avatarId);
+  }
+
+  /**
+   * `avatar.deleteFinish`: `trashed` forgets the avatar and announces it, `kept` puts it back and announces it again (a window reloaded between prepare and
+   * finish never saw it come back otherwise). The finish must carry the TOKEN of the prepare it ends: another one (a stray, a late one of an earlier delete)
+   * is NOT_FOUND and releases nothing. A `kept` that finds its prepare still waiting marks it abandoned and answers ok: the prepare releases everything itself.
+   * NOT_FOUND also when no such delete is pending (the engine restarted, or a repeat).
+   */
+  #deleteFinish(avatarId: string, token: string, outcome: "trashed" | "kept"): void {
+    const pending = this.#pendingDelete;
+    if (pending === null || pending.avatarId !== avatarId || pending.token !== token) throw new EngineFailure({ code: "NOT_FOUND", detail: `no delete of avatar ${avatarId} is pending` });
+    if (!pending.planned || pending.library === null || pending.detached === null) {
+      // Still preparing, with no plan handed over yet: only `kept` can end it (main moves nothing before it has a plan).
+      if (outcome !== "kept") throw new EngineFailure({ code: "NOT_FOUND", detail: `no delete of avatar ${avatarId} is pending` });
+      pending.abandoned = true;
+      return;
+    }
+    this.#pendingDelete = null;
+    try {
+      if (outcome === "kept") {
+        pending.library.reattachAvatar(pending.detached);
+        this.#announceRestored(pending.library, avatarId);
+        return;
+      }
+      this.#jobs.forgetFinishedFor(avatarId);
+      this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId } });
+    } finally {
+      this.#busyAvatars.delete(avatarId);
+    }
+  }
+
+  /**
+   * `avatars.pruneMissing` (main, after a folder went to the Trash that this engine no longer knew a delete for): forgets every avatar whose own manifest file
+   * is gone from the disk, announcing each with `avatar.removed`. An avatar a delete, a job or a command is under way for is left alone.
+   */
+  async #pruneMissing(): Promise<void> {
+    const library = this.library;
+    if (library === null) return;
+    // A library whose own folder or `library.json` is not there (an unmounted external disk, a moved folder) says nothing about its avatars: prune nothing.
+    if (!(await libraryIsThere(library.root))) return;
+    const held = (id: string): boolean => this.#busyAvatars.has(id) || this.#jobs.hasLiveJobFor(id) || this.#renders.reservedPhotos(id).size > 0 || library.pendingVideoCount(id) > 0;
+    for (const manifest of library.listAvatars()) {
+      const { id } = manifest;
+      if (held(id)) continue;
+      if (await library.manifestOnDisk(id)) continue;
+      // The look took a moment: the avatar may have become busy, or be gone, meanwhile.
+      if (held(id) || library.getAvatar(id) === undefined) continue;
+      library.detachAvatar(id);
+      this.#jobs.forgetFinishedFor(id);
+      this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId: id } });
+    }
+  }
+
+  /** A paid command for an avatar whose manifest is no longer on the disk (its folder went to the Trash, the delete's finish was lost) is refused before it reserves anything. */
+  async #assertAvatarOnDisk(library: Library, avatarId: string): Promise<void> {
+    if (!(await library.manifestOnDisk(avatarId))) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} is no longer on the disk` });
   }
 
   /** The saved avatar as the grid lists it, announced with avatar.changed. */
@@ -3126,7 +3362,7 @@ export class Engine {
       return { library: opened.library, identity, unreadable: opened.unreadable };
     }
     const reservedPhotos = this.#deps.reservedPhotos ?? ((avatarId: string) => this.#renders.reservedPhotos(avatarId));
-    const opening = openLibrary(path, { reservedPhotos }).then((opened) => {
+    const opening = openLibrary(path, { reservedPhotos, ...(this.#deps.library ?? {}) }).then((opened) => {
       // Fail-closed records and logs: said once per open, by avatar, relative file and reason class only (no absolute path, no content).
       for (const line of logIssueLines(opened.report.logIssues)) console.warn(line);
       return { library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) };

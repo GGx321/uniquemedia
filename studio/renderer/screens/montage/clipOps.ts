@@ -6,7 +6,7 @@ import { MAX_CLIPS, MAX_TOTAL_MS, MIN_CLIP_MS, splitEvenly, STEP_MS } from "../.
 // session. What every result keeps (the tests pin it):
 // - the contract's draft rules (`MontageDraft`): no scene photo twice, unique ids, at most 20 clips, layer caps;
 // - the editor's own limits, which a draft alone does not enforce: every clip a whole number of 100 ms steps and at
-//   least 0.5 s, and the clips together never longer than 15 s (a render's bound, kept while editing);
+//   least 0.1 s (`MIN_CLIP_MS`, one step), and the clips together never longer than 15 s (a render's bound, kept while editing);
 // - CF4: a photo or collage clip is never split, and its copy has empty cells, because both would repeat a photo.
 //
 // A refusal the owner can meet (a cap, no room, a photo already placed) is a `Refusal`; an index outside the
@@ -18,11 +18,11 @@ export type ClipLayout = "photo" | "collage2" | "collage3" | "collage4";
 /**
  * Why an edit was not made:
  * - `clip-cap`: 20 clips already;
- * - `no-room`: less than 0.5 s is left of the 15 s;
+ * - `no-room`: nothing is left of the 15 s (the shortest clip is one 0.1 s step, so any gap of a step takes one);
  * - `photo-in-draft`: the scene photo is already in the montage (one photo, once);
  * - `layer-cap`: 10 layers of that kind already;
  * - `not-splittable`: a photo or collage clip (CF4), or a point not strictly inside the item;
- * - `too-short`: a part of a split would be under its minimum (0.5 s for a clip, 0.3 s for a layer), or an own video is shorter than a clip's
+ * - `too-short`: a part of a split would be under its minimum (0.1 s for a clip, 0.3 s for a layer), or an own video is shorter than a clip's
  *   minimum (3f.6);
  * - `not-a-photo-clip`: a layout, motion or stagger change on a clip that has none.
  */
@@ -126,8 +126,8 @@ export function appendPhotoClip(spec: MontageDraft, photoId: string, focus: Focu
 }
 
 // ---------- the owner's own photos and videos (3f.6, «Мои») ----------
-// The same rules as a scene photo (P12, AM7): a new clip of min(2.0 s, the room) at a boundary, refused at 20 clips or under 0.5 s of
-// room. An own file may be placed more than once: only scene photos take part in one photo → one video.
+// The same rules as a scene photo (P12, AM7): a new clip of min(2.0 s, the room) at a boundary, refused at 20 clips or with no room
+// left. An own file may be placed more than once: only scene photos take part in one photo → one video.
 
 const ownCell = (mediaId: string, focus: Focus | null): Cell => ({ photo: { source: "own", mediaId }, focus });
 
@@ -226,7 +226,7 @@ export function maxDurationMs(spec: MontageDraft, index: number, limitMs?: numbe
   return limitMs === undefined ? max : Math.min(max, limitMs);
 }
 
-/** `wantedMs` as clip `index` may take it: the nearest 100 ms, at least 0.5 s, the total at most 15 s, and within `limitMs` when given. */
+/** `wantedMs` as clip `index` may take it: the nearest 100 ms, at least 0.1 s, the total at most 15 s, and within `limitMs` when given. */
 export function clampDuration(spec: MontageDraft, index: number, wantedMs: number, limitMs?: number): number {
   if (!Number.isFinite(wantedMs)) throw new RangeError(`a duration must be a finite number, got ${wantedMs}`);
   const max = maxDurationMs(spec, index, limitMs);

@@ -1138,29 +1138,15 @@ test("what the contract cannot do yet is drawn disabled and marked «скоро�
   expect(isDisabled(screen.getByRole("button", { name: "Пересоставить" }))).toBe(true);
   expect(isDisabled(screen.getByRole("button", { name: "Неиспользованные" }))).toBe(false);
   expect(isDisabled(screen.getByRole("button", { name: "Отклонённые" }))).toBe(false);
-  const review = screen.getByRole("switch", { name: "Сцены на проверку" });
-  // Owner decision: aria-disabled, not the native attribute — full opacity,
-  // not the near-invisible 45%-dimmed disabled track; the «скоро» tag alone says it is not available yet.
-  expect(isDisabled(review)).toBe(false);
-  expect(review.getAttribute("aria-disabled")).toBe("true");
-  expect(review.getAttribute("aria-checked")).toBe("false");
-  expect(screen.getAllByText("скоро").length).toBeGreaterThanOrEqual(3);
+  expect(screen.getAllByText("скоро").length).toBeGreaterThanOrEqual(2);
 });
 
-test("the «Сцены на проверку» switch cannot be toggled by click or keyboard (LOW-6, P3)", async () => {
+test("the generate card has no «Сцены на проверку» switch: a real scene review is planned separately, and a dead control would only mislead", async () => {
   await openPhotos();
   await priced();
-  const review = screen.getByRole("switch", { name: "Сцены на проверку" });
-
-  fireEvent.click(review);
-  expect(review.getAttribute("aria-checked")).toBe("false");
-
-  fireEvent.keyDown(review, { key: " " });
-  fireEvent.keyUp(review, { key: " " });
-  expect(review.getAttribute("aria-checked")).toBe("false");
-
-  fireEvent.keyDown(review, { key: "Enter" });
-  expect(review.getAttribute("aria-checked")).toBe("false");
+  expect(screen.queryByRole("switch", { name: "Сцены на проверку" }) === null).toBe(true);
+  expect(screen.queryByText("Сцены на проверку") === null).toBe(true);
+  expect(document.querySelector(".photos-review") === null).toBe(true);
 });
 
 // ---------- navigation ----------

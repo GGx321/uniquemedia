@@ -1,7 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { computePdqHash } from "../../src/core/pdq/pdq";
@@ -313,9 +313,79 @@ describe("runs.estimate", () => {
   });
 });
 
+// CS.1: the contract names custom categories, but the engine has no category library yet (CS.2 adds it), so every
+// custom ref is an unknown one: NOT_FOUND, free, before a price is fetched, a reserve is made or a folder is written.
+describe("a custom category in a run request, before the category library exists (CS.1)", () => {
+  const CUSTOM = "cat-paris-cafes";
+  const withCustom = (avatarId: string) => ({ ...request(avatarId), categories: ["home", CUSTOM] });
+
+  test("runs.estimate is NOT_FOUND for it and fetches no price", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    const refusal = failed(await engine.handle(command("runs.estimate", withCustom(avatarId))));
+    expect(refusal.error.code).toBe("NOT_FOUND");
+    expect(refusal.error.detail).toContain(CUSTOM);
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("runs.start is NOT_FOUND for it: no price fetched, nothing sent, no ledger line, no run folder", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    expect(failed(await engine.handle(command("runs.start", { ...withCustom(avatarId), acceptedWorstMicros: 10_000_000 }))).error.code).toBe("NOT_FOUND");
+    expect(net.calls).toHaveLength(0);
+    expect(readdirSync(join(dir(), "library", "runs"))).toEqual([]);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl"))).toEqual([]);
+  });
+
+  test("the refusal releases the avatar: a built-in run for it starts right after", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork());
+    expect(failed(await engine.handle(command("runs.start", { ...withCustom(avatarId), acceptedWorstMicros: 10_000_000 }))).error.code).toBe("NOT_FOUND");
+    // The refusal released the avatar: a built-in run for it starts, and ends.
+    const { jobId } = started(await engine.handle(startRun(avatarId)));
+    await jobEnd(events, jobId);
+  });
+
+  test("a built-in run's plan.json is the document main wrote: no categories key", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork());
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    await jobEnd(events, jobId);
+    const raw: Record<string, unknown> = JSON.parse(readFileSync(join(dir(), "library", "runs", runId, "plan.json"), "utf8"));
+    expect("categories" in raw).toBe(false);
+  });
+});
+
 // ---------- runs.start ----------
 
 describe("runs.start", () => {
+  // «Удалить аватар»: only `avatar.json` is removed, so without the guard the run would carry on to its paid writer request (the master photo is still there).
+  test("an avatar whose manifest is gone from the disk is NOT_FOUND: no request is sent, and nothing reaches the ledger", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    await rm(join(dir(), "library", "avatars", avatarId, "avatar.json"));
+
+    const refused = failed(await engine.handle(startRun(avatarId)));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(refused.error.detail).toContain("no longer on the disk");
+    expect(net.calls.filter((c) => c.method === "POST")).toEqual([]);
+    expect(existsSync(join(dir(), "userData", "ledger.jsonl"))).toBe(false);
+  });
+
+  test("the same stand with the manifest there: the run starts and its writer request goes out (the control of the test above)", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+
+    started(await engine.handle(startRun(avatarId)));
+
+    await until(() => net.writerCalls().length >= 1, "the writer request");
+  });
+
   test("PRICE_CHANGED when the accepted worst case is one micro under today's: nothing is written, nothing is sent", async () => {
     const avatarId = await seedAvatar();
     const net = runNetwork();
@@ -622,6 +692,36 @@ describe("runs.resume", () => {
     const ofRun = new Set(lines.flatMap((l) => (l.type === "reserve" && JSON.stringify(l.scope) === JSON.stringify({ runId }) && typeof l.attemptId === "string" ? [l.attemptId] : [])));
     const committed = lines.reduce((sum, l) => sum + (l.type === "settle" && typeof l.attemptId === "string" && ofRun.has(l.attemptId) && typeof l.costMicros === "number" ? l.costMicros : 0), 0);
     expect(committed).toBeLessThanOrEqual(cap);
+  });
+
+  // «Удалить аватар»: an avatar whose manifest is no longer on the disk (its folder went to the Trash, and the engine that lists it did not hear) is never paid
+  // for. Only `avatar.json` is removed, so WITHOUT the guard the resume would carry on to its paid request (its photos and master are still there).
+  test("an avatar whose manifest is gone from the disk: the resume is NOT_FOUND, nothing is sent, and no reserve is made", async () => {
+    const { avatarId, runId, received } = await interrupted({ hangFrom: 3 });
+    const second = await restarted(received);
+    second.advance(10 * 60_000);
+    ok(await second.engine.handle(command("money.reconcile")));
+    const reservesBefore = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
+    await rm(join(dir(), "library", "avatars", avatarId, "avatar.json"));
+
+    const refused = failed(await resume(second.engine, runId));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(refused.error.detail).toContain("no longer on the disk");
+    expect(second.net.calls.filter((c) => c.method === "POST")).toEqual([]);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve")).toHaveLength(reservesBefore);
+  });
+
+  test("the same stand with the manifest there: the resume goes on and pays (the control of the test above)", async () => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    const second = await restarted(received);
+    second.advance(10 * 60_000);
+    ok(await second.engine.handle(command("money.reconcile")));
+
+    const { jobId } = started(await resume(second.engine, runId));
+    await jobEnd(second.events, jobId);
+
+    expect(second.net.imageCalls().length).toBeGreaterThan(0);
   });
 
   // A chunk out of writer attempts with its slots still open (a crash mid-writer): the writer can never answer, and the

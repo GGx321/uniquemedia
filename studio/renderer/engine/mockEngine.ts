@@ -39,6 +39,7 @@ import {
   type MusicStatus,
   OkResponse,
   OWN_MUSIC_NOT_FOUND_DETAIL,
+  isCustomCategory,
   OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
   type PhotoUnavailableReason,
@@ -52,7 +53,7 @@ import {
   type ResponseMessage,
   type RunRequest,
   type RunSummary,
-  SceneCategory,
+  splitCount,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
@@ -402,12 +403,9 @@ interface MockRunJob {
   cancelTimers: (() => void)[];
 }
 
-/** The planner's split (scenes/planner.ts's `distribute`): `count` spread as evenly as possible, the remainder to the categories earliest in canonical order. */
+/** The planner's split: the contract's shared `splitCount` (the engine's planner calls the very same function). */
 function mockRunSlots(count: number, categories: readonly RunCategory[]): MockRunSlot[] {
-  const ordered = SceneCategory.options.filter((c) => categories.includes(c));
-  const base = Math.floor(count / ordered.length);
-  const remainder = count % ordered.length;
-  return ordered.flatMap((category, i) => Array.from({ length: base + (i < remainder ? 1 : 0) }, () => ({ category, end: null })));
+  return splitCount(count, categories).flatMap(({ ref, count: n }) => Array.from({ length: n }, () => ({ category: ref, end: null })));
 }
 
 function mockFaceQa(slotIndex: number): PhotoQaSummary | null {
@@ -668,6 +666,8 @@ export class MockEngine implements EngineBridge {
   private focusAvailable = true;
   private skippedDrafts = 0;
   private notListedDrafts = 0;
+  /** `keepVideoFilesOnDelete`: how many files the next `avatars.delete` says stayed behind. */
+  private videoFilesKeptNext = 0;
   /** The photos an unfinished video's pending intent holds (`holdPendingVideoPhotos`). */
   private readonly pendingVideoPhotos = new Set<string>();
   /** The montage drafts, in the order they were made; they outlive a restart, as the real engine's files do. */
@@ -1639,6 +1639,10 @@ export class MockEngine implements EngineBridge {
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: archived } });
         return this.ok(c, { avatar: archived });
       }
+      case "avatars.deletePreview":
+        return this.deletePreview(c, c.payload.avatarId);
+      case "avatars.delete":
+        return this.deleteAvatar(c, c.payload.avatarId);
       case "avatars.rewriteDescriptor": {
         const { avatarId } = c.payload;
         // The engine's order: the key and the ledger before it even looks up
@@ -1721,7 +1725,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
       case "runs.estimate": {
         // No library open: the engine cannot find the avatar either.
-        const refusal = this.libraryOpen ? this.runnableRefusal(c.payload.avatarId) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
+        const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { estimate: this.runPrice(c.payload) });
       }
@@ -1734,6 +1738,7 @@ export class MockEngine implements EngineBridge {
           this.keyAndLedgerGate() ??
           this.libraryGate() ??
           this.runnableRefusal(request.avatarId) ??
+          this.categoryRefusal(request.categories) ??
           this.masterRefusal(request.avatarId) ??
           this.gateRefusal(this.settings.imageAgeCheck === "on") ??
           this.priceGate(acceptedWorstMicros, this.runPrice(request).worstMicros) ??
@@ -1939,6 +1944,71 @@ export class MockEngine implements EngineBridge {
   private jobRunningFor(avatarId: string): boolean {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
     return this.jobs.some(active) || this.runJobs.some(active);
+  }
+
+  // ---------- «Удалить аватар» ----------
+  //
+  // The engine's `#deletePreview` and `#deletePrepare`/`#deleteFinish` with main's move to the system Trash behind them: the Trash is the command's own
+  // answer here (a test that wants it to refuse forces TRASH_UNAVAILABLE with `failNext`). The avatar and everything of it leave the mock together.
+
+  /** A test control: the NEXT `avatars.delete` reports `count` more video files that main found and could not move to the Trash (they stay as plain files). Used once. */
+  keepVideoFilesOnDelete(count: number): void {
+    this.videoFilesKeptNext = count;
+  }
+
+  /** Whether anything of the avatar runs or is reserved: a candidates job, a photo run, a render (queued or running), a video intent a crash left pending. */
+  private deleteBusy(avatarId: string): boolean {
+    const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
+    return this.jobRunningFor(avatarId) || this.renderJobs.some((j) => isActive(j) && j.avatarId === avatarId) || heldByIntent;
+  }
+
+  /** What would go with the avatar, counted as the engine counts it (`avatarDeleteCounts`). */
+  private deleteCounts(avatarId: string): { photos: number; candidates: number; drafts: number; videos: number } {
+    const draft = this.drafts.find((d) => d.avatarId === avatarId);
+    return {
+      photos: this.photos.filter((p) => p.avatarId === avatarId).length,
+      candidates: draft === undefined ? 0 : draft.candidates.length + draft.hiddenBelowThreshold,
+      drafts: [...this.montages.values()].filter((m) => m.spec.avatarId === avatarId).length,
+      videos: this.videos.filter((v) => v.summary.avatarId === avatarId).length,
+    };
+  }
+
+  private deletePreview(c: CommandMessage, avatarId: string): ResponseMessage {
+    // The engine reads `library` unchecked (a read), then looks the avatar up, then asks what runs.
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    if (!this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    if (this.deleteBusy(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run, a candidate job or a video render of this avatar is running; delete the avatar when it ends" });
+    this.checkExport();
+    const found = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present").length;
+    const counts = this.deleteCounts(avatarId);
+    return this.ok(c, { avatarId, ...counts, videoFilesFound: found, videoFilesUnchecked: 0 });
+  }
+
+  private deleteAvatar(c: CommandMessage, avatarId: string): ResponseMessage {
+    // `#liveLibrary()`: a switch under way first, then no library, then the avatar, then what runs.
+    const gone = this.mediaLibraryGate();
+    if (gone) return this.fail(c, gone);
+    if (!this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+    if (this.deleteBusy(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run, a candidate job or a video render of this avatar is running; delete the avatar when it ends" });
+    this.checkExport();
+    const present = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
+    for (const video of present) this.exportFiles.delete(video.summary.relPath);
+    const mine = new Set(this.photos.filter((p) => p.avatarId === avatarId).map((p) => p.photoId));
+    this.avatars = this.avatars.filter((a) => a.avatarId !== avatarId);
+    this.drafts = this.drafts.filter((d) => d.avatarId !== avatarId);
+    this.photos = this.photos.filter((p) => p.avatarId !== avatarId);
+    this.videos = this.videos.filter((v) => v.summary.avatarId !== avatarId);
+    this.montages = new Map([...this.montages].filter(([, m]) => m.spec.avatarId !== avatarId));
+    this.renderJobs = this.renderJobs.filter((j) => j.avatarId !== avatarId);
+    this.jobs = this.jobs.filter((j) => j.avatarId !== avatarId);
+    this.runJobs = this.runJobs.filter((j) => j.avatarId !== avatarId);
+    for (const photoId of mine) this.pendingVideoPhotos.delete(photoId);
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.removed", payload: { avatarId } });
+    const kept = this.videoFilesKeptNext;
+    this.videoFilesKeptNext = 0;
+    const folder = present[0]?.summary.relPath.split("/")[0] ?? null;
+    return this.ok(c, { avatarId, videoFilesTrashed: present.length, videoFilesKept: kept, videoFilesUnchecked: 0, videoFolder: folder });
   }
 
   // ---------- montage drafts (3d.1b) ----------
@@ -2647,6 +2717,15 @@ export class MockEngine implements EngineBridge {
       return { code: "FACE_GATE_UNAVAILABLE", detail: this.faceGate.loadError === undefined ? base : `${base} (${this.faceGate.loadError})` };
     }
     return null;
+  }
+
+  /**
+   * A run may only name categories that exist. The mock, like the engine until CS.2 adds the category library, has no custom
+   * category, so every custom ref is unknown: NOT_FOUND, free, checked right after the avatar and before anything else.
+   */
+  private categoryRefusal(categories: readonly RunCategory[]): EngineError | null {
+    const unknown = categories.find(isCustomCategory);
+    return unknown === undefined ? null : { code: "NOT_FOUND", detail: `no custom category ${unknown}` };
   }
 
   /** runs.estimate/start/resume's avatar check: NOT_FOUND unless it is saved and active, DESCRIPTOR_INVALID for a descriptor to rewrite first. */

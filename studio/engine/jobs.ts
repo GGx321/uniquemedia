@@ -126,6 +126,23 @@ export class JobRegistry {
     return n;
   }
 
+  /** Whether a candidates job, a photo run or a render of this avatar is queued or running. An own-media import belongs to no avatar. */
+  hasLiveJobFor(avatarId: string): boolean {
+    for (const { state } of this.#jobs.values()) {
+      if (state.kind === "import" || state.avatarId !== avatarId) continue;
+      if (state.status === "running" || state.status === "queued") return true;
+    }
+    return false;
+  }
+
+  /** Forgets the finished jobs (done, failed, cancelled) of an avatar that was deleted, so no snapshot lists a job of an avatar that is gone. A queued or running job stays. */
+  forgetFinishedFor(avatarId: string): void {
+    for (const [jobId, { state }] of [...this.#jobs]) {
+      if (state.kind === "import" || state.avatarId !== avatarId) continue;
+      if (state.status !== "running" && state.status !== "queued") this.#jobs.delete(jobId);
+    }
+  }
+
   /** A job's state as the snapshot lists it, or undefined for an unknown (or long-forgotten) job. */
   stateOf(jobId: string): JobState | undefined {
     return this.#jobs.get(jobId)?.state;

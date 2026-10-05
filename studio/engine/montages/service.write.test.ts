@@ -360,7 +360,7 @@ describe("montages.delete", () => {
 
     expect(answer).toEqual({ montageId: ID });
     expect(await filesOf(w)).toEqual([]);
-    expect(r.stamped().map((e) => [e.type, e.payload])).toEqual([["montage.changed", { change: "removed", montageId: ID, avatarId: w.avatar.id }]]);
+    expect(r.stamped().map((e): [string, unknown] => [e.type, e.payload])).toEqual([["montage.changed", { change: "removed", montageId: ID, avatarId: w.avatar.id }]]);
   });
 
   test("a draft that does not exist, or is already deleted, is NOT_FOUND and announces nothing", async () => {
