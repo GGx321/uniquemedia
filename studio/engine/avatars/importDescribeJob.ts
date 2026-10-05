@@ -11,7 +11,7 @@ import { importDescribeCall, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./plan";
 // T6c: the one-off vision call for an imported avatar (mirrors
 // descriptorJob.ts's own retry-with-feedback shape exactly, but there is no
 // traits input at all — everything comes from the attached photo — and the
-// image is sent again on every attempt, like the age check's own).
+// image is sent again on every attempt).
 
 export interface ImportDescribeJobDeps {
   /** The OpenRouter client's chat (T3): reserve on disk, send, settle. */

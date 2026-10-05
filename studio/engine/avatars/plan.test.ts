@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { Estimate, IMPORT_FALLBACK_PRICE } from "../../shared/engine";
+import { AGE_CHECK_FALLBACK_PRICE, Estimate, IMPORT_FALLBACK_PRICE } from "../../shared/engine";
 import { PriceBook, type ChatPrice, type ImagePrice, type PriceEntry } from "../money/prices";
 import {
   avatarJobEstimate,
@@ -194,7 +194,7 @@ describe("import an existing avatar (T6c)", () => {
   test("L8: IMPORT_FALLBACK_PRICE (shared with the renderer's mock and its UI text) matches the real computation exactly", () => {
     const estimate = importJobEstimate(FALLBACK, DEFAULTS);
     // The age check alone is still priced for the photo runs' own toggle (Settings text); it is no part of the import's whole.
-    expect({ expectedMicros: AGE_CHECK.expected, worstMicros: AGE_CHECK.worst }).toEqual(IMPORT_FALLBACK_PRICE.ageCheck);
+    expect({ expectedMicros: AGE_CHECK.expected, worstMicros: AGE_CHECK.worst }).toEqual(AGE_CHECK_FALLBACK_PRICE);
     expect({ expectedMicros: IMPORT_DESCRIBE.expected, worstMicros: IMPORT_DESCRIBE.worst }).toEqual(IMPORT_FALLBACK_PRICE.describe);
     expect({ expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros }).toEqual(IMPORT_FALLBACK_PRICE.whole);
     expect(estimate.pricesAsOf).toBe(IMPORT_FALLBACK_PRICE.asOf);

@@ -147,7 +147,7 @@ test.each(["NETWORK", "INTERNAL", "IMPORT_SUBJECT_INVALID"] satisfies ErrorCode[
     const { engine } = setup();
     await openImport();
     await pickPhoto();
-      fireEvent.change(nameInput(), { target: { value: "Zoe" } });
+    fireEvent.change(nameInput(), { target: { value: "Zoe" } });
     engine.failNextImportAfterConsuming({ code });
 
     fireEvent.click(importButton());

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Estimate, ResponseMessage } from "../shared/engine";
+import { IMPORT_DESCRIBE_MAX_SIDE } from "./avatars/importStaging";
 import { openLibrary } from "./library";
 import { PNG_1X1 } from "./library/testing/helpers";
 import { chatBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
@@ -121,6 +122,25 @@ describe("import.stagePhoto (main → engine control channel)", () => {
     await started.engine.receive({ kind: "control", type: "import.stagePhoto", callId: "call-00000001", bytes: portraitPng() });
 
     expect(replyFor(started.posted, "call-00000001")).toMatchObject({ stage: { stagingId: expect.any(String) as unknown as string, width: 60, height: 80 } });
+  });
+
+  // Since the age check left the import, the one staged JPEG is the describe call's: exactly one downscale, at IMPORT_DESCRIBE_MAX_SIDE.
+  test("a valid photo is downscaled exactly once, at the describe call's side", async () => {
+    const sides: number[] = [];
+    const started = await startEngine(dir(), {
+      net: network(),
+      deps: {
+        downscaleImportPhoto: (_bytes, maxSide) => {
+          sides.push(maxSide);
+          return Promise.resolve(Uint8Array.from([0xff, 0xd8, 0xff]));
+        },
+      },
+    });
+
+    await started.engine.receive({ kind: "control", type: "import.stagePhoto", callId: "call-00000020", bytes: portraitPng() });
+
+    expect(replyFor(started.posted, "call-00000020")?.stage).toBeDefined();
+    expect(sides).toEqual([IMPORT_DESCRIBE_MAX_SIDE]);
   });
 
   test("rejects bytes that are not a known image, without staging anything", async () => {

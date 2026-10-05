@@ -2,7 +2,7 @@ import { type ReactNode, type Ref, useEffect, useId, useRef, useState } from "re
 import {
   AbsolutePath,
   ApiKey,
-  IMPORT_FALLBACK_PRICE,
+  AGE_CHECK_FALLBACK_PRICE,
   MusicKey,
   NetworkConcurrency,
   type ApiKeyStatus,
@@ -636,14 +636,14 @@ function ConcurrencyRow({ settings }: { settings: Settings }) {
   );
 }
 
-// One image age check at the dated fallback table (IMPORT_FALLBACK_PRICE.ageCheck:
+// One image age check at the dated fallback table (AGE_CHECK_FALLBACK_PRICE:
 // the AGE_CHECK_CALL price a candidate's or a run photo's check pays). «до» means
 // a hard cap everywhere else in the app, but the fallback table is only used
 // when OpenRouter did not answer — the live price can be higher — so this is
 // «≈» (nearest, not rounded up): a range from the expected price to the worst
 // case, not the worst case alone prefixed with «≈» (which would overstate the
 // approximate cost).
-const AGE_CHECK_PRICE = formatUsdRange(IMPORT_FALLBACK_PRICE.ageCheck.expectedMicros, IMPORT_FALLBACK_PRICE.ageCheck.worstMicros, 3);
+const AGE_CHECK_PRICE = formatUsdRange(AGE_CHECK_FALLBACK_PRICE.expectedMicros, AGE_CHECK_FALLBACK_PRICE.worstMicros, 3);
 
 // Owner's decision (2026-09-27): the paid image age check is optional, off by
 // default — the app is his personal tool, and he judges age by eye, including

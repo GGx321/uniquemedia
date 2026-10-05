@@ -207,8 +207,8 @@ export interface EngineDeps {
   /** Bounds #liveLibrary's identity re-check; LIVE_LIBRARY_IDENTITY_TIMEOUT_MS unless a test says otherwise. */
   liveLibraryIdentityTimeoutMs?: number;
   /**
-   * T6c: downscales a staged import photo's raw bytes to a JPEG for one of
-   * its paid calls (the age check or the describe call), at `maxSide`.
+   * T6c: downscales a staged import photo's raw bytes to the JPEG its one
+   * paid call (the describe call) attaches, at `maxSide`.
    * Defaults to `studio/node/downscale.ts`'s real one (the same ffmpeg path
    * every candidate portrait's own downscale takes, and the one that really
    * kills ffmpeg on `signal`'s own abort); tests inject a failing fake here
@@ -444,12 +444,11 @@ const EXPORT_SWITCH_WAIT_MS = 30_000;
 export const EXPORT_CHECK_TIMEOUT_MS = 5_000;
 
 /**
- * T6c review round 2, M4: how long each of import.stagePhoto's two
- * downscales (the age check's own size, then the describe call's own larger
- * one) may take before it answers a clear error and stages nothing. Two of
- * these run sequentially per stage, so the worst case (20 s) stays
- * comfortably under main's own REQUEST_TIMEOUT_MS (30 s, engineHost.ts) for
- * this same control call.
+ * T6c review round 2, M4: how long import.stagePhoto's one downscale (the
+ * describe call's size; the age check's second one left with the import's age
+ * check, 2026-10-05) may take before it answers a clear error and stages
+ * nothing. The worst case (10 s) stays well under main's own
+ * REQUEST_TIMEOUT_MS (30 s, engineHost.ts) for this same control call.
  */
 export const IMPORT_DOWNSCALE_TIMEOUT_MS = 10_000;
 

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, jest, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { type ApiKeyStatus, ERROR_MESSAGES_RU, IMPORT_FALLBACK_PRICE } from "../../shared/engine";
+import { type ApiKeyStatus, AGE_CHECK_FALLBACK_PRICE, ERROR_MESSAGES_RU } from "../../shared/engine";
 import { defaultFaceGateConfig } from "../../engine/face/config";
 import { callsOf, flush, openSection, setup, inAct, describeElement, focusedLabel } from "../testing";
 
@@ -411,7 +411,7 @@ describe("image age check toggle", () => {
     // Pinned to the fallback table's own numbers, and the rendered text is a
     // literal, not computed with formatUsdRange itself — a bug in that
     // function must still be caught here, not just agree with itself.
-    expect(IMPORT_FALLBACK_PRICE.ageCheck).toEqual({ expectedMicros: 1_660, worstMicros: 5_250 });
+    expect(AGE_CHECK_FALLBACK_PRICE).toEqual({ expectedMicros: 1_660, worstMicros: 5_250 });
     expect(document.body.textContent).toContain("≈ $0.002–0.006 за фото");
     expect(screen.getByText(/по умолчанию выключена/i)).toBeDefined();
   });

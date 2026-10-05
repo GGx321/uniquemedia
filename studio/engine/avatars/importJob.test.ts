@@ -103,12 +103,11 @@ describe("the describe job's own failures propagate", () => {
     expect(net.calls).toHaveLength(1);
   });
 
-  test("a moderation refusal of the describe call fails without an age-check code", async () => {
-    const { result } = run([MODERATION]);
+  test("a moderation refusal of the describe call is MODERATION_REFUSED, authInvalid false, with no second attempt", async () => {
+    const { net, result } = run([MODERATION]);
 
-    const outcome = await result;
-    expect(outcome.ok).toBe(false);
-    if (!outcome.ok) expect(outcome.error.code).not.toBe("AGE_CHECK_FAILED");
+    expect(await result).toMatchObject({ ok: false, error: { code: "MODERATION_REFUSED" }, authInvalid: false });
+    expect(net.calls).toHaveLength(1);
   });
 
   test("rejected twice fails with INTERNAL, authInvalid false; both attempts reserved their worst case", async () => {
