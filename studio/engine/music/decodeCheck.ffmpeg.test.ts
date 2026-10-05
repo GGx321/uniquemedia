@@ -11,7 +11,7 @@ import { decodeAudio, DecodeError, hasUnreadableStreamLine, inspectStreams, PEAK
 import { box, concat, esdsBox, fullBox, graft, u32 } from "./testing/m4aBuilder";
 import { musicTracks } from "./fixtures";
 import { probeMp4Audio } from "./mp4aProbe";
-import { spawnSync } from "node:child_process";
+import { spawn as nodeSpawn, spawnSync } from "node:child_process";
 import { ffmpegPath } from "../../node/ffmpegBinary";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -792,6 +792,26 @@ describe("only the AAC decoder may open a track's bytes", () => {
   test.each(Object.entries(OTI))("the same in moov/udta, after the track (%s)", async (_name, oti) => {
     const path = await hiddenIn("moov", oti);
     await expect(inspectStreams({ path, signal: signal() })).rejects.toMatchObject({ kind: "not-aac" });
+  });
+
+  // Behaviour, not argv: the very argv `inspectStreams` hands ffmpeg is run for real on a file whose hidden `esds` names another decoder, and ffmpeg itself says
+  // it refuses to open that decoder. Without the whitelist the same run opens it, so dropping the flag from `inspectStreams` fails here and not only in the
+  // argv-shape test.
+  test.each(Object.entries(OTI))("the argv of the stream check makes real ffmpeg refuse the decoder a hidden esds names (%s), and without the whitelist it does not", async (_name, oti) => {
+    const path = await hiddenIn("trak", oti);
+    let argv: readonly string[] = [];
+    const spy: FfmpegSpawner = (command, given, options) => {
+      argv = given;
+      const child = nodeSpawn(command, [...given], { stdio: ["ignore", "pipe", "pipe"], env: options.env });
+      return child;
+    };
+    await inspectStreams({ path, signal: signal(), spawner: spy }).catch(() => undefined);
+    expect(argv.length).toBeGreaterThan(0);
+    const run = (args: readonly string[]): string => spawnSync(ffmpegPath(), [...args], { encoding: "utf8" }).stderr;
+    expect(run(argv)).toContain("not on whitelist");
+    const at = argv.indexOf("-codec_whitelist");
+    const without = argv.filter((_, i) => i !== at && i !== at + 1);
+    expect(run(without)).not.toContain("not on whitelist");
   });
 
   test("the walker refuses those files before ffmpeg is ever asked", async () => {
