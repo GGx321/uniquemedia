@@ -205,7 +205,7 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
       if (signal.aborted) throw error;
       // The time limit and a child that could not be run are the machine's; a decode that failed under `-xerror` is the file's.
       if (error instanceof FfmpegTimeoutError) throw new Refused("failed");
-      if (error instanceof FfmpegError) throw new Refused(await faultOf());
+      if (error instanceof FfmpegError) throw new Refused(isNoSpaceError(error) ? "no-space" : await faultOf());
       throw new Refused("failed");
     }
   }

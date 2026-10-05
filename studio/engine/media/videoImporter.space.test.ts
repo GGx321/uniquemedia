@@ -157,4 +157,32 @@ describe("room for what the importer writes", () => {
     const outcome = await createVideoImporter(options(async () => answers.shift() ?? 0, run))(rig.request);
     expect(outcome).toEqual({ ok: false, reason: "too-large" });
   });
+
+  test("an ffmpeg that exits 0 having written exactly the space limit is no-space: the file is cut short, and a cut file is never stored", async () => {
+    const run: Run = async (call) => void (await writeFile(call.output, new Uint8Array(600 - MARGIN)));
+    const rig = requestFor(tmp(), await chart());
+    expect(await createVideoImporter(options(async () => 600, run))(rig.request)).toEqual({ ok: false, reason: "no-space" });
+    expect(rig.released).toHaveLength(1);
+  });
+
+  test("a space limit between the cap and the cap plus its slack that stops the encode is too-large: the file already is over the cap", async () => {
+    // free - margin = 1050: above the cap (1000), below cap + slack (1100).
+    const run: Run = async (call) => {
+      await writeFile(call.output, new Uint8Array(1050));
+      throw new FfmpegError("ffmpeg exited 187", 187, "Error muxing a packet");
+    };
+    const outcome = await createVideoImporter(options(async () => 1050 + MARGIN, run))(requestFor(tmp(), await chart()).request);
+    expect(outcome).toEqual({ ok: false, reason: "too-large" });
+  });
+
+  test("ffmpeg's own «No space left on device» is no-space even on a disk that still says it has room, and its text goes nowhere", async () => {
+    const run: Run = async (call) => {
+      await writeFile(call.output, new Uint8Array(10));
+      throw new FfmpegError("ffmpeg exited 1", 1, "av_interleaved_write_frame(): No space left on device");
+    };
+    const rig = requestFor(tmp(), await chart());
+    const outcome = await createVideoImporter(options(async () => WORST_CASE * 10, run))(rig.request);
+    expect(outcome).toEqual({ ok: false, reason: "no-space" });
+    expect(JSON.stringify(outcome)).not.toContain("av_interleaved");
+  });
 });

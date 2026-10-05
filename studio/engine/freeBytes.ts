@@ -30,8 +30,12 @@ export async function isShortOfRoom(freeBytes: FreeBytes, dir: string, neededByt
   return free !== null && free < neededBytes;
 }
 
-/** Whether a thrown disk error is a full disk (or an exhausted quota). */
+/**
+ * Whether a thrown error is a full disk: the disk's own code (ENOSPC, or EDQUOT for an exhausted quota), or an ffmpeg that exited saying so. Only the fixed phrase of the C
+ * library's message is looked for in ffmpeg's stderr tail; that text itself never leaves the engine.
+ */
 export function isNoSpaceError(error: unknown): boolean {
-  if (!(error instanceof Error) || !("code" in error)) return false;
-  return error.code === "ENOSPC" || error.code === "EDQUOT";
+  if (!(error instanceof Error)) return false;
+  if ("code" in error && (error.code === "ENOSPC" || error.code === "EDQUOT")) return true;
+  return "stderrTail" in error && typeof error.stderrTail === "string" && /No space left on device/i.test(error.stderrTail);
 }

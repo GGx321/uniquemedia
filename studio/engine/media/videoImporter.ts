@@ -2,7 +2,7 @@ import { stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { fromFpsOf, MAX_STORED_VIDEO_BYTES, MEDIA_BYTE_CAPS, MIN_CLIP_MS, SAME_RATE_TOLERANCE } from "../../shared/engine";
-import { FREE_MARGIN_BYTES, freeBytesOf, isShortOfRoom, type FreeBytes } from "../freeBytes";
+import { FREE_MARGIN_BYTES, freeBytesOf, isNoSpaceError, isShortOfRoom, type FreeBytes } from "../freeBytes";
 import { observer, type MediaImporter } from "./imports";
 import { openFileSource } from "./video/fileSource";
 import { expectedFrames, judgeVideo, STORED_STOP_SLACK_BYTES, VIDEO_LIMITS, videoArgs, type VideoJudgement, type VideoPlan } from "./video/videoPlan";
@@ -163,7 +163,7 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
         timeoutMs: options.timeoutMs ?? plan.timeoutMs,
         ...(options.spawner === undefined ? {} : { spawner: options.spawner }),
       });
-    } catch {
+    } catch (error) {
       // ffmpeg's own words (a path, a string the file wrote) stay here: the owner is told a reason, never a message.
       if (signal.aborted) return fail("cancelled");
       // When `-fs` fires ffmpeg does not finish: it says "Error muxing a packet" and exits with an error (187 on 6.0). A work file that reached the cap is the cap's doing, and it is
@@ -172,8 +172,9 @@ export function createVideoImporter(options: VideoImporterOptions = {}): MediaIm
       if (stopped >= maxStoredBytes) return fail("too-large");
       // `-fs` stops the file AT its limit: a file at a limit below the cap is the room's doing.
       if (bySpace && stopped >= limit) return fail("no-space");
-      // The room asked for above covered the whole output, so a disk left under the margin is one the encode filled (or another writer did): a full disk, not a wrong file.
-      return fail((await isShortOfRoom(freeBytes, folder, margin)) ? "no-space" : "failed");
+      // ffmpeg said the disk is full, or the room asked for above covered the whole output and a disk left under the margin is one the encode filled (or another writer did):
+      // a full disk, not a wrong file.
+      return fail(isNoSpaceError(error) || (await isShortOfRoom(freeBytes, folder, margin)) ? "no-space" : "failed");
     }
     if (signal.aborted) return fail("cancelled");
 

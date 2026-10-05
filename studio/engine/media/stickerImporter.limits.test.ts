@@ -298,6 +298,12 @@ describe("a disk that fills under a write the room check let through (full-disk 
     expect(reasonOf(await run(flatGif([0, 1], [10, 10]), "gif", { fileSize: diskFull(code) }))).toBe("no-space");
   });
 
+  test("ffmpeg's own «No space left on device» in the raw decode is no-space even when the disk still says it has room", async () => {
+    let call = 0;
+    const spawner: FfmpegSpawner = (command, args, options) => (call++ === 0 ? recordingSpawner([])(command, args, options) : exitingChild(1, { stderrText: "av_interleaved_write_frame(): No space left on device" }));
+    expect(reasonOf(await run(flatGif([0, 1, 2], [10, 10, 10]), "gif", { spawner, freeBytes: async () => 1e12 }))).toBe("no-space");
+  });
+
   test("any other disk error there stays failed", async () => {
     expect(reasonOf(await run(flatGif([0, 1], [10, 10]), "gif", { fileSize: diskFull("EIO") }))).toBe("failed");
   });

@@ -595,6 +595,12 @@ describe("the photo importer: room for what it writes (M1 of the Stage 3 review)
     expect(outcome).toEqual({ ok: false, reason: "no-space" });
   });
 
+  test("ffmpeg's own «No space left on device» is no-space even when the disk still says it has room", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    const { outcome } = await runWith(picture, "jpeg", { spawner: () => failingChild(1, "av_interleaved_write_frame(): No space left on device"), freeBytes: async () => 1e12 });
+    expect(outcome).toEqual({ ok: false, reason: "no-space" });
+  });
+
   test("an ffmpeg that fails with room to spare is still failed", async () => {
     const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
     const { outcome } = await runWith(picture, "jpeg", { spawner: () => failingChild(1, "boom"), freeBytes: async () => 1e12 });
