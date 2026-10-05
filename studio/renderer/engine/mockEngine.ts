@@ -1797,13 +1797,17 @@ export class MockEngine implements EngineBridge {
         const { avatarId, photoId, rejected } = c.payload;
         const photo = this.libraryOpen ? this.photos.find((p) => p.photoId === photoId && p.avatarId === avatarId) : undefined;
         if (photo === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
-        if (photo.rejected === rejected) return this.ok(c, { photo: this.photoView(photo) });
-        const updated: PhotoSummary = { ...photo, rejected, eligible: !rejected };
-        // A photo that is in a video or held by a render was not counted as eligible and unused, and is not now: the count moves only for a free one.
-        const free = !this.photoView(photo).used && !this.photoView(photo).reserved;
-        this.photos = this.photos.map((p) => (p === photo ? updated : p));
-        this.shiftEligibleUnused(avatarId, free ? (rejected ? -1 : 1) : 0);
-        return this.ok(c, { photo: this.photoView(updated) });
+        let current = photo;
+        if (photo.rejected !== rejected) {
+          current = { ...photo, rejected, eligible: !rejected };
+          // A photo that is in a video or held by a render was not counted as eligible and unused, and is not now: the count moves only for a free one.
+          const free = !this.photoView(photo).used && !this.photoView(photo).reserved;
+          this.photos = this.photos.map((p) => (p === photo ? current : p));
+          this.shiftEligibleUnused(avatarId, free ? (rejected ? -1 : 1) : 0);
+        }
+        // The engine answers the photo as photos.list would show it: one whose sidecar it cannot read is marked, then refused.
+        if (this.unreadableSidecars.has(photoId)) return this.fail(c, { code: "INTERNAL", detail: `photo ${photoId} was marked but does not fit the contract` });
+        return this.ok(c, { photo: this.photoView(current) });
       }
       case "engine.snapshot":
         return this.ok(c, this.snapshot());

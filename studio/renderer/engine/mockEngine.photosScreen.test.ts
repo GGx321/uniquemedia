@@ -207,13 +207,19 @@ describe("setPhotoSidecarReadable (test support: a photo that leaves the gallery
     expect(list.skippedTotal).toBe(1);
   });
 
-  test("only photos.list skips it: the library still holds the photo, so a mark on it is set as the engine sets it", async () => {
+  test("only photos.list skips it: a mark on it is set, then answered INTERNAL, as the engine answers a photo it cannot summarise", async () => {
     const mock = makeMock();
     mock.engine.setPhotoSidecarReadable(P1, false);
-    const reply = await unwrap(mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P1, rejected: true }));
-    expect(reply.photo).toMatchObject({ photoId: P1, rejected: true });
+    const reply = await mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P1, rejected: true });
+    expect(reply.ok ? null : reply.error.code).toBe("INTERNAL");
+    // The same mark again changes nothing, and still cannot be answered.
+    const again = await mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P1, rejected: true });
+    expect(again.ok ? null : again.error.code).toBe("INTERNAL");
     expect((await listed(mock)).skippedTotal).toBe(1);
     expect((await avatarOf(mock))?.photoCount).toBe(6);
+    // Readable again: the mark was kept.
+    mock.engine.setPhotoSidecarReadable(P1, true);
+    expect((await listed(mock)).photos.find((p) => p.photoId === P1)?.rejected).toBe(true);
   });
 
   test("readable again: listed again, in its place, and no longer counted as skipped", async () => {
