@@ -393,10 +393,14 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     try {
       let forbiddenStrings: string[];
       try {
-        const photoStrings = await collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips));
+        // The library may sit on a drive that has gone quiet: the read runs under the staging bound (time and cancel), so a silent disk ends the job
+        // TIMEOUT or cancelled instead of holding the slot, the holds and the reservations for ever.
+        const photoStrings = await staging.run(() => collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips)));
         // The track's own text joins the photos' (invariant 14), each under its own quota: neither may be found in the finished video.
         forbiddenStrings = track === null ? photoStrings : combineForbiddenStrings(photoStrings, track.forbidden);
       } catch (error) {
+        // The bound passing or the owner's cancel is the signal's own reason: the queue maps it (TIMEOUT, cancelled).
+        if (staging.signal.aborted) throw error;
         log(`render ${plan.jobId}: a source photo could not be read (${error instanceof Error ? error.name : "error"})`);
         throw new RenderFailure({ code: "INTERNAL", detail: "a source photo could not be read" });
       }

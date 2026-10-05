@@ -69,6 +69,8 @@ interface Options {
   readonly stagingTimeoutMs?: (bytes: number) => number;
   /** Keeps the job folder when the job ends, so a test can see what an abandoned copy does after it. */
   readonly keepJobFolder?: boolean;
+  /** Cancels the job this many ms after it was submitted. */
+  readonly cancelAfterMs?: number;
 }
 
 async function run(options: Options) {
@@ -115,6 +117,7 @@ async function run(options: Options) {
   const execute = createRenderExecute(deps);
   queue.submit({ jobId: plan.jobId, ref: { videoId: plan.videoId, avatarId: plan.avatarId, montageId: null }, totalFrames: totalFramesOf(spec.clips), photoIds: [], mediaIds: [], execute: execute(plan) });
   const started = performance.now();
+  if (options.cancelAfterMs !== undefined) setTimeout(() => queue.cancel(plan.jobId), options.cancelAfterMs);
   await queue.idle();
   return { state: queue.states()[0], ffmpeg, asked, ms: performance.now() - started, w };
 }
@@ -209,6 +212,58 @@ describe("every staging read is under the bound", () => {
     release();
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(await readdir(w.renderTmp)).toEqual([]);
+  });
+});
+
+/** The world's library, with only the scene photos' verified read replaced (a silent disk). */
+function libraryWithPhotoRead(w: World, read: VideoRenderDeps["library"]["readPhotoVerified"]): VideoRenderDeps["library"] {
+  return {
+    root: w.library.root,
+    readPhotoVerified: read,
+    addVideoRecordToIndex: (...args) => w.library.addVideoRecordToIndex(...args),
+    reloadVideoRecords: (...args) => w.library.reloadVideoRecords(...args),
+    flagVideoIndexStale: (...args) => w.library.flagVideoIndexStale(...args),
+  };
+}
+
+describe("the scene photos' forbidden-strings read is under the bound and the cancel (stage 3 review 3-M4)", () => {
+  test("a scene photo whose read never returns ends the job TIMEOUT within the staging bound, with ffmpeg never started", async () => {
+    const w = world();
+    const { state, ffmpeg, ms } = await run({
+      spec: base,
+      deps: { library: libraryWithPhotoRead(w, () => new Promise(() => undefined)) },
+      stagingTimeoutMs: () => 150,
+    });
+
+    expect(state).toMatchObject({ status: "failed", error: { code: "TIMEOUT" } });
+    expect(ms).toBeLessThan(10_000);
+    expect(ffmpeg).toEqual([]);
+  });
+
+  test("a cancel while a scene photo's read is stuck ends the job cancelled at once, not at the bound", async () => {
+    const w = world();
+    const { state, ffmpeg, ms } = await run({
+      spec: base,
+      deps: { library: libraryWithPhotoRead(w, () => new Promise(() => undefined)) },
+      stagingTimeoutMs: () => 60_000,
+      cancelAfterMs: 100,
+    });
+
+    expect(state).toMatchObject({ status: "cancelled" });
+    expect(ms).toBeLessThan(10_000);
+    expect(ffmpeg).toEqual([]);
+  });
+
+  test("the job's tracker entries are released once the stuck read gave way", async () => {
+    const w = world();
+    const tracker = new CommitTracker();
+    await run({
+      spec: base,
+      deps: { tracker, library: libraryWithPhotoRead(w, () => new Promise(() => undefined)) },
+      stagingTimeoutMs: () => 100,
+    });
+
+    expect(tracker.hasJob("job-00000001")).toBe(false);
   });
 });
 
