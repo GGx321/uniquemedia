@@ -28,6 +28,8 @@ import { e2eIdentityProblem } from "./e2eIdentity";
 import { engineEnv } from "./engineEnv";
 import { handleExportFolderCommand } from "./exportFolderFlow";
 import { handleRevealCommand, handleRevealFolderCommand } from "./revealFlow";
+import { handleAvatarDeleteCommand, NODE_FLOW_FS } from "./avatarDeleteFlow";
+import { trashableOn } from "./trashSupport";
 import { forwardEngineOutput } from "./engineOutput";
 import { EngineHost } from "./engineHost";
 import { handleImportPhotoCommand } from "./importFlow";
@@ -437,6 +439,19 @@ async function startStudio(): Promise<void> {
           ),
           newId: randomUUID,
           platform: process.platform,
+        }),
+      // «Удалить аватар»: the engine says what goes, main checks each path against the folders the settings name and moves it to the system Trash
+      // (`shell.trashItem`), the avatar's folder first. Never a permanent delete: a place with no Trash is refused.
+      avatarDelete: (command) =>
+        handleAvatarDeleteCommand(command, {
+          engine: { prepareAvatarDelete: (avatarId) => engine.prepareAvatarDelete(avatarId), finishAvatarDelete: (avatarId, outcome) => engine.finishAvatarDelete(avatarId, outcome) },
+          libraryPath: () => settings.current.libraryPath,
+          exportPath: () => settings.current.exportPath,
+          fs: NODE_FLOW_FS,
+          trash: (path) => shell.trashItem(path),
+          trashable: (path) => trashableOn(process.platform, path, (folder) => stat(folder).then(() => true, () => false)),
+          platform: process.platform,
+          log: (line) => console.warn(`studio: ${line}`),
         }),
       stickerBytes: (command) => handleStickerBytesCommand(command, { stickers: stickerAssets }),
       // 3f.5: an own sticker's bytes, resolved through its record in the library the settings name now.

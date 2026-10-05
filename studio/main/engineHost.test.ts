@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { ENGINE_GONE_DETAIL, type AvatarTraits, type EngineCommandMessage, type EngineError, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
 import { COMMAND_DEADLINE_MS, MEDIA_IMPORT_DEADLINE_MS, type EngineInit } from "../engine/control";
-import { EXPORT_CHECK_TIMEOUT_MS } from "../engine/videos/timeouts";
+import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS } from "../engine/videos/timeouts";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
 import { CASE_PROBE_TIMEOUT_MS, DELETE_TIMEOUT_MS, LIST_BUDGET_MS, LIVE_LIBRARY_IDENTITY_TIMEOUT_MS, RECORD_CHECK_TIMEOUT_MS } from "../engine/videos/timeouts";
 import { REFERENCE_TIMEOUT_MS } from "../engine/runs/timeouts";
@@ -813,6 +813,71 @@ describe("calls to the engine (export.choose)", () => {
     await endBackoff();
     children[1]?.crash(1);
     expect(await host.chooseExport("/Volumes/Reels")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
+  });
+});
+
+// «Удалить аватар»: main asks the engine what goes with an avatar (`avatar.deletePrepare`: the plan of paths, for main only) and tells it how the
+// move to the Trash ended (`avatar.deleteFinish`).
+describe("calls to the engine (avatar.deletePrepare and avatar.deleteFinish)", () => {
+  const plan = { avatarId: "avatar-0001", libraryRoot: "/data/library", folder: "/data/library/avatars/avatar-0001", exportRoot: null, files: [], unlisted: 0 };
+
+  test("a prepare posts the avatar id with a call id and resolves with the plan", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.prepareAvatarDelete("avatar-0001");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    expect(call).toMatchObject({ kind: "control", type: "avatar.deletePrepare", avatarId: "avatar-0001" });
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, deletePlan: plan });
+
+    expect(await pending).toEqual({ error: null, deletePlan: plan });
+  });
+
+  test("a refusal is passed on, with no plan", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.prepareAvatarDelete("avatar-0001");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId, error: { code: "IN_FLIGHT", detail: "a render is running" } });
+
+    expect(await pending).toMatchObject({ error: { code: "IN_FLIGHT" }, deletePlan: undefined });
+  });
+
+  test("a prepare waits as long as the engine's own bounded look takes, not the default 30 s", async () => {
+    const { host, timers } = setup();
+    await host.start();
+    const pending = host.prepareAvatarDelete("avatar-0001");
+    await timers.advance(30_000);
+    await timers.advance(AVATAR_DELETE_PREPARE_DEADLINE_MS - 30_000);
+
+    expect(await pending).toMatchObject({ error: { code: "INTERNAL" } });
+  });
+
+  test("a finish posts the avatar id and the outcome", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.finishAvatarDelete("avatar-0001", "trashed");
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    expect(call).toMatchObject({ kind: "control", type: "avatar.deleteFinish", avatarId: "avatar-0001", outcome: "trashed" });
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId });
+
+    expect(await pending).toMatchObject({ error: null });
+  });
+
+  test("an engine that is gone answers INTERNAL to both", async () => {
+    const { host, children, endBackoff } = setup();
+    await host.start();
+    children[0]?.crash(1);
+    await endBackoff();
+    children[1]?.crash(1);
+
+    expect(await host.prepareAvatarDelete("avatar-0001")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
+    expect(await host.finishAvatarDelete("avatar-0001", "kept")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
   });
 });
 

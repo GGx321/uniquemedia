@@ -5,6 +5,7 @@ import type { ImportPhotoCommand } from "./importFlow";
 import type { KeyCommand } from "./keyFlow";
 import type { MediaPickCommand } from "./mediaImportFlow";
 import type { MusicKeyCommand } from "./musicKeyFlow";
+import type { AvatarDeleteCommand } from "./avatarDeleteFlow";
 import type { RevealCommand, RevealFolderCommand } from "./revealFlow";
 import type { SettingsCommand } from "./settingsFlow";
 import type { OwnStickerBytesCommand } from "./ownStickerBytesFlow";
@@ -32,6 +33,7 @@ function routesSpy() {
   const exportFolder: ExportFolderCommand[] = [];
   const reveal: RevealCommand[] = [];
   const revealFolder: RevealFolderCommand[] = [];
+  const avatarDelete: AvatarDeleteCommand[] = [];
   const mediaImport: MediaPickCommand[] = [];
   const stickerBytes: StickerBytesCommand[] = [];
   const ownStickerBytes: OwnStickerBytesCommand[] = [];
@@ -65,6 +67,10 @@ function routesSpy() {
       revealFolder.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { opened: "avatar" } };
     },
+    avatarDelete: async (command) => {
+      avatarDelete.push(command);
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId: command.payload.avatarId, videoFilesTrashed: 0, videoFilesKept: 0 } };
+    },
     mediaImport: async (command) => {
       mediaImport.push(command);
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { picked: false } };
@@ -82,7 +88,7 @@ function routesSpy() {
       return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "stub" } };
     },
   };
-  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, mediaImport, stickerBytes, ownStickerBytes, engine };
+  return { routes, mainOnly, musicKey, settings, importPhoto, exportFolder, reveal, revealFolder, avatarDelete, mediaImport, stickerBytes, ownStickerBytes, engine };
 }
 
 function command(type: string, payload: unknown = {}, id = "cmd-00000001"): unknown {
@@ -277,6 +283,39 @@ describe("handleRendererRequest", () => {
     expect(reveal).toEqual([]);
   });
 
+  test("avatars.delete is main's alone: it reaches the delete route and is never forwarded to the engine", async () => {
+    const { routes, mainOnly, settings, importPhoto, exportFolder, reveal, avatarDelete, engine } = routesSpy();
+    const response = await handleRendererRequest(command("avatars.delete", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: true, type: "avatars.delete", result: { avatarId: "avatar-0001" } });
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(avatarDelete.map((c) => c.payload)).toEqual([{ avatarId: "avatar-0001" }]);
+    expect([mainOnly, settings, importPhoto, exportFolder, reveal, engine]).toEqual([[], [], [], [], [], []]);
+  });
+
+  test("avatars.delete carrying a path or a list of files is refused by the contract before any route runs: the window names no path", async () => {
+    const { routes, avatarDelete, engine } = routesSpy();
+    for (const payload of [{ avatarId: "avatar-0001", path: "/Users/a/library/avatars/avatar-0001" }, { avatarId: "avatar-0001", files: ["/x.mp4"] }]) {
+      const response = await handleRendererRequest(command("avatars.delete", payload), APP_FRAME, PACKAGED, routes);
+      expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    }
+    expect([avatarDelete, engine]).toEqual([[], []]);
+  });
+
+  test("avatars.delete from a frame that is not the app's own window is refused before it reaches the route", async () => {
+    const { routes, avatarDelete } = routesSpy();
+    const stranger: SenderFrame = { url: "https://example.com/", isTopFrame: true, isAppWindow: true };
+    const response = await handleRendererRequest(command("avatars.delete", { avatarId: "avatar-0001" }), stranger, PACKAGED, routes);
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(avatarDelete).toEqual([]);
+  });
+
+  test("avatars.deletePreview is the engine's: it is forwarded, not answered by main", async () => {
+    const { routes, avatarDelete, engine } = routesSpy();
+    await handleRendererRequest(command("avatars.deletePreview", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
+    expect(engine.map((c) => c.type)).toEqual(["avatars.deletePreview"]);
+    expect(avatarDelete).toEqual([]);
+  });
+
   test("videos.revealFolder is main's alone (K17): it reaches its route and is never forwarded to the engine", async () => {
     const { routes, mainOnly, settings, importPhoto, exportFolder, reveal, revealFolder, engine } = routesSpy();
     const response = await handleRendererRequest(command("videos.revealFolder", { avatarId: "avatar-0001" }), APP_FRAME, PACKAGED, routes);
@@ -379,6 +418,9 @@ describe("handleRendererRequest", () => {
         throw new Error("unreachable");
       },
       exportFolder: async () => {
+        throw new Error("unreachable");
+      },
+      avatarDelete: async () => {
         throw new Error("unreachable");
       },
       reveal: async () => {
