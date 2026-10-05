@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MediaFileName, MediaPickKind, MediaUnsupportedReason, MusicKey, PickedFileIdentity, Settings, type EngineCommandMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
+import { POOL_MAX_ATTEMPTS } from "./scenes/poolCall";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
@@ -307,6 +308,10 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  // CS.2: the pool call is the descriptor's mould: a price load, then every pool attempt at its slowest. The estimate waits for a price load that times out.
+  "categories.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "categories.create": PRICE_FETCH_TIMEOUT_MS + POOL_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  "categories.regenerate": PRICE_FETCH_TIMEOUT_MS + POOL_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Sized like createDraft's descriptor part: the same job, the same attempt ceiling.
   "avatars.rewriteDescriptor": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // T6: each answers once its checks, a price load and its plan or journal reads are done; a run's job runs on
