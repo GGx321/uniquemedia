@@ -8,6 +8,7 @@ import {
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   PHOTO_UNAVAILABLE_REASONS_RU,
+  RENDER_NO_SPACE_DETAIL_PREFIX,
   RENDER_TIMEOUT_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
   renderQueueLimitOf,
@@ -33,13 +34,16 @@ const EXPORT_CHANGING_RU = "Папку «Готовые видео» как ра
 const RENDER_NOT_QUEUED_RU = "Движок не успел поставить рендер в очередь. Ничего не поставлено и не потрачено — повторите.";
 const NO_ANSWER_RU = "Движок не ответил вовремя. Команда могла выполниться: посмотрите на экран и в очередь слева, и повторите, только если ничего не изменилось.";
 const RENDER_TIMEOUT_RU = "Рендер не уложился во время: диск с библиотекой или ffmpeg не ответили. Ничего не потрачено — повторите; если библиотека на внешнем диске, проверьте его.";
-const RENDER_FORMS = ["рендер", "рендера", "рендеров"] as const;
+const RENDER_NO_SPACE_RU = "Для рендера не хватает места на системном диске (там лежат его временные файлы). Освободите место и повторите. Готовый файл не создан, ничего не потрачено.";
+const RENDER_FORMS =["рендер", "рендера", "рендеров"] as const;
 
 function baseText(error: EngineError): string {
   if (error.code === "IN_FLIGHT" && error.detail === EXPORT_CHANGING_DETAIL) return EXPORT_CHANGING_RU;
   if (error.code === "INTERNAL" && error.detail === RENDER_NOT_QUEUED_DETAIL) return RENDER_NOT_QUEUED_RU;
   if (error.code === "INTERNAL" && error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true) return NO_ANSWER_RU;
   if (error.code === "TIMEOUT" && error.detail?.startsWith(RENDER_TIMEOUT_DETAIL_PREFIX) === true) return RENDER_TIMEOUT_RU;
+  // No room for the render's temporary files: a retry fails the same way until space is freed.
+  if (error.code === "RENDER_FAILED" && error.detail?.startsWith(RENDER_NO_SPACE_DETAIL_PREFIX) === true) return RENDER_NO_SPACE_RU;
   if (error.code === "RENDER_QUEUE_FULL") {
     const limit = renderQueueLimitOf(error.detail);
     if (limit !== null) return `В очереди уже ${countOf(limit, RENDER_FORMS)}: это предел. Дождитесь, пока часть из них соберётся, или отмените лишние, и повторите. Ничего не потрачено и не сохранено.`;

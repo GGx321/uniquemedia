@@ -381,6 +381,12 @@ export const OWN_MUSIC_NOT_FOUND_DETAIL = "own music is not available yet";
  */
 export const RENDER_TIMEOUT_DETAIL_PREFIX = "the render ran past its time limit";
 
+/**
+ * What the detail of a RENDER_FAILED starts with when the render could not get room for its temporary files (the layers' peak, or the copy of an own file):
+ * a retry cannot help until disk space is freed, so the window says that instead of «Попробуйте ещё раз». The engine writes `: <what is needed>` after it.
+ */
+export const RENDER_NO_SPACE_DETAIL_PREFIX = "not enough free space for the render's temporary files";
+
 export const NO_ANSWER_DETAIL_PREFIX = "the engine did not answer within ";
 
 /** `RENDER_QUEUE_FULL`'s detail: it names the limit, which `renderQueueLimitOf` reads back for the window's text. */
