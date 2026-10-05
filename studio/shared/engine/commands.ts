@@ -351,7 +351,8 @@ const ENGINE_SPECS = [
   //   PHOTO_UNAVAILABLE (with `photo-unavailable` issues by cell path) a scene photo that is not an eligible, unused one
   //                     of this avatar, or one another queued or running render holds; also an avatar whose usage cannot be
   //                     trusted right now (an unreadable record or a stale index): then EVERY photo is refused. `photoReason` says
-  //                     which cause when the cells share one (`in-video`, `held-by-render`, `index-stale`, `log-needs-repair`);
+  //                     which cause when the cells share one (`in-video`, `held-by-render`, `pending-video` (no render holds it, a video
+  //                     that did not finish saving does: its pending intent), `index-stale`, `log-needs-repair`);
   //   RENDER_QUEUE_FULL (`detail` names the limit) too many renders are queued or running;
   //   LIBRARY_TOO_NEW   a video record was written by a newer Studio;
   //   IN_FLIGHT         the export folder is being changed (`EXPORT_CHANGING_DETAIL`), or the library was switched while the render was
