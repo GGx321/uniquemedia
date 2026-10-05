@@ -46,6 +46,27 @@ describe("montages.create: photoReason of PHOTO_UNAVAILABLE", () => {
     expect(error).toMatchObject({ code: "PHOTO_UNAVAILABLE", photoReason: "held-by-render" });
   });
 
+  test("a photo only an unfinished video's intent holds is pending-video", async () => {
+    const w = world();
+    const [a = ""] = worldPhotoIds(w);
+    w.library.holdPendingPhotos(w.avatar.id, "video-unfinished-1", [a]);
+
+    const error = await failureOf(montageRig(w).service.create({ avatarId: w.avatar.id, photoIds: [a] }));
+
+    expect(error).toMatchObject({ code: "PHOTO_UNAVAILABLE", photoReason: "pending-video" });
+  });
+
+  test("a photo that a render AND an unfinished intent hold is held-by-render: there is a render to cancel", async () => {
+    const w = world();
+    const [a = ""] = worldPhotoIds(w);
+    const { library } = await openLibrary(w.libraryRoot, { reservedPhotos: () => new Set([a]) });
+    library.holdPendingPhotos(w.avatar.id, "video-unfinished-1", [a]);
+
+    const error = await failureOf(montageRig(w, { library }).service.create({ avatarId: w.avatar.id, photoIds: [a] }));
+
+    expect(error).toMatchObject({ code: "PHOTO_UNAVAILABLE", photoReason: "held-by-render" });
+  });
+
   test("a rejected photo carries no reason", async () => {
     const w = world();
     const [a = ""] = worldPhotoIds(w);

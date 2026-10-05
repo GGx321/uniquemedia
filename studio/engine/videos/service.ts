@@ -639,7 +639,8 @@ export class VideoService {
     const missing = cells.filter((cell) => !free.has(cell.photoId));
     if (missing.length === 0) return;
     const states = library.photoStates(avatarId);
-    throw unavailable(missing, undefined, commonPhotoReason(missing.map((cell) => refusalReasonOf(states.get(cell.photoId)))));
+    const pending = library.pendingVideoPhotos(avatarId);
+    throw unavailable(missing, undefined, commonPhotoReason(missing.map((cell) => refusalReasonOf(states.get(cell.photoId), pending.has(cell.photoId)))));
   }
 
   // ---------- videos.cancel ----------

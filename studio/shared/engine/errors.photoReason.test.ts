@@ -6,7 +6,7 @@ import { EngineError } from "./errors";
 describe("EngineError.photoReason", () => {
   const cell = { code: "photo-unavailable", path: ["photoIds", 0] };
 
-  test.each(["in-video", "held-by-render", "index-stale", "log-needs-repair"])("PHOTO_UNAVAILABLE carries the reason %s", (photoReason) => {
+  test.each(["in-video", "held-by-render", "pending-video", "index-stale", "log-needs-repair"])("PHOTO_UNAVAILABLE carries the reason %s", (photoReason) => {
     expect(EngineError.safeParse({ code: "PHOTO_UNAVAILABLE", issues: [cell], photoReason }).success).toBe(true);
   });
 

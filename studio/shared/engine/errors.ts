@@ -240,12 +240,13 @@ export type MusicUnavailableReason = z.infer<typeof MusicUnavailableReason>;
  *
  * - in-video: the photo is already in a video (one photo, one video).
  * - held-by-render: a render that is queued or running holds the photo.
+ * - pending-video: no render holds the photo, but a video that did not finish saving (a pending commit intent, not yet adopted or dropped) does.
  * - index-stale: the avatar's used index is behind its videos and could not be read again: EVERY photo of the avatar is refused.
  * - log-needs-repair: a record or the reject log of the avatar cannot be read: EVERY photo of the avatar is refused.
  *
  * (A record from a newer Studio is not one of these: it is LIBRARY_TOO_NEW.)
  */
-export const PHOTO_UNAVAILABLE_REASONS = ["in-video", "held-by-render", "index-stale", "log-needs-repair"] as const;
+export const PHOTO_UNAVAILABLE_REASONS = ["in-video", "held-by-render", "pending-video", "index-stale", "log-needs-repair"] as const;
 export const PhotoUnavailableReason = z.enum(PHOTO_UNAVAILABLE_REASONS);
 export type PhotoUnavailableReason = z.infer<typeof PhotoUnavailableReason>;
 

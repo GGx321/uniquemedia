@@ -19,13 +19,15 @@ export type Availability =
   | { readonly state: "untrusted"; readonly reason: Extract<PhotoUnavailableReason, "index-stale" | "log-needs-repair">; usable(photoId: string): boolean };
 
 /**
- * Why an ELIGIBLE photo that is not free is not (`PhotoUnavailableReason`): it is in a video, or a queued or running render holds it. Undefined for a
+ * Why an ELIGIBLE photo that is not free is not (`PhotoUnavailableReason`): it is in a video, a queued or running render holds it, or only an unfinished video's intent does (`onlyPending`). Undefined for a
  * photo the one eligibility rule already refuses (rejected, master, foreign, missing: nothing the owner can wait out) and for a free one.
  */
-export function refusalReasonOf(state: PhotoState | undefined): PhotoUnavailableReason | undefined {
+export function refusalReasonOf(state: PhotoState | undefined, onlyPending: boolean): PhotoUnavailableReason | undefined {
   if (state === undefined || !state.eligible) return undefined;
   if (state.usedIn.length > 0) return "in-video";
-  return state.reserved ? "held-by-render" : undefined;
+  if (!state.reserved) return undefined;
+  // `reserved` also covers an unfinished video's intent: with no render holding the photo there is nothing to cancel.
+  return onlyPending ? "pending-video" : "held-by-render";
 }
 
 /** `usable` for a `known` state: eligible, unused and unreserved. For any other state: nothing is usable (fail closed). */
@@ -33,7 +35,8 @@ export function photoAvailability(library: Library, avatarId: string, log?: (lin
   try {
     const free = new Set(library.eligibleUnusedPhotos(avatarId).map((photo) => photo.id));
     const states = library.photoStates(avatarId);
-    return { state: "known", usable: (photoId) => free.has(photoId), why: (photoId) => refusalReasonOf(states.get(photoId)) };
+    const pending = library.pendingVideoPhotos(avatarId);
+    return { state: "known", usable: (photoId) => free.has(photoId), why: (photoId) => refusalReasonOf(states.get(photoId), pending.has(photoId)) };
   } catch (error) {
     if (error instanceof LibraryError) {
       const none = (): boolean => false;

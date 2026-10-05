@@ -25,6 +25,25 @@ describe("PHOTO_UNAVAILABLE photoReason", () => {
     expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "held-by-render" } });
   });
 
+  test("montages.create: a photo only an unfinished video's intent holds is pending-video", async () => {
+    const mock = makeMock();
+    mock.engine.holdPendingVideoPhotos(MIA.avatarId, [P1]);
+
+    const reply = await mock.client.request("montages.create", { avatarId: MIA.avatarId, photoIds: [P1, P2] });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "pending-video" } });
+  });
+
+  test("montages.create: a photo a queued render also holds stays held-by-render", async () => {
+    const mock = makeMock();
+    await renderDraft(mock, (await draftOf(mock, [P1, P2])).montageId);
+    mock.engine.holdPendingVideoPhotos(MIA.avatarId, [P2]);
+
+    const reply = await mock.client.request("montages.create", { avatarId: MIA.avatarId, photoIds: [P2, P3] });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "held-by-render" } });
+  });
+
   test("montages.create: a rejected photo carries no reason", async () => {
     const photos = [scenePhoto(1), scenePhoto(2, { rejected: true, eligible: false })];
     const mock = makeMock({ photos });

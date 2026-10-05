@@ -661,6 +661,8 @@ export class MockEngine implements EngineBridge {
   private focusAvailable = true;
   private skippedDrafts = 0;
   private notListedDrafts = 0;
+  /** The photos an unfinished video's pending intent holds (`holdPendingVideoPhotos`). */
+  private readonly pendingVideoPhotos = new Set<string>();
   /** The montage drafts, in the order they were made; they outlive a restart, as the real engine's files do. */
   private montages = new Map<string, Montage>();
   /** Drafts deleted in this engine's life: a video's record stops naming them. */
@@ -1107,6 +1109,11 @@ export class MockEngine implements EngineBridge {
    */
   setLibraryAvailable(available: boolean): void {
     this.libraryOpen = available;
+  }
+
+  /** An unfinished video's pending intent holds these photos of the avatar (the engine's `holdPendingPhotos`): reserved, with no render behind it. */
+  holdPendingVideoPhotos(_avatarId: string, photoIds: readonly string[]): void {
+    for (const photoId of photoIds) this.pendingVideoPhotos.add(photoId);
   }
 
   /** A library switch is being surveyed (the engine's `#switching`): the own-media commands wait with IN_FLIGHT until it ends. */
@@ -1912,10 +1919,15 @@ export class MockEngine implements EngineBridge {
   /** The photo as the windows see it: `used`, `usedIn` and `reserved` follow the mock's videos and queued or running renders, on top of what a seeded photo already says. */
   private photoView(photo: PhotoSummary): PhotoSummary {
     const usedIn = [...new Set([...photo.usedIn, ...this.videos.filter((v) => v.summary.avatarId === photo.avatarId && v.photoIds.includes(photo.photoId)).map((v) => v.summary.videoId)])];
-    const reserved = photo.reserved || this.renderJobs.some((j) => isActive(j) && j.avatarId === photo.avatarId && j.photoIds.includes(photo.photoId));
+    const reserved = photo.reserved || this.heldByRender(photo) || this.pendingVideoPhotos.has(photo.photoId);
     // The library's `photoStates` fails closed: while an avatar's reject marks cannot be read, no photo of it is eligible.
     const eligible = photo.eligible && !this.usageReasonsOf(photo.avatarId).includes("rejects-unreadable");
     return { ...photo, eligible, used: usedIn.length > 0, usedIn, reserved };
+  }
+
+  /** Whether a queued or running render of the mock holds this photo. */
+  private heldByRender(photo: PhotoSummary): boolean {
+    return this.renderJobs.some((j) => isActive(j) && j.avatarId === photo.avatarId && j.photoIds.includes(photo.photoId));
   }
 
   /** The reasons an avatar's photo usage cannot be trusted (none for a sound or an unknown avatar). */
@@ -1952,7 +1964,9 @@ export class MockEngine implements EngineBridge {
     const view = this.photoView(photo);
     if (!view.eligible) return undefined;
     if (view.used) return "in-video";
-    return view.reserved ? "held-by-render" : undefined;
+    if (!view.reserved) return undefined;
+    // Held by a pending video's intent alone: no render to cancel (the engine's `pendingVideoPhotos`).
+    return this.pendingVideoPhotos.has(photoId) && !photo.reserved && !this.heldByRender(photo) ? "pending-video" : "held-by-render";
   }
 
   /** What an avatar whose usage is unknown answers a command that names photos: LIBRARY_TOO_NEW, or PHOTO_UNAVAILABLE for `issues` with the untrusted detail and reason; null when its usage is sound or nothing is refused. */

@@ -21,6 +21,13 @@ test("a photo held by a render says the render is queued or running, and that a 
   expect(text).toContain("Выберите другое фото");
 });
 
+test("a photo held by an unfinished video says so and does not advise cancelling a render that does not exist", () => {
+  const text = errorText({ code: "PHOTO_UNAVAILABLE", issues: PHOTO_ISSUES, photoReason: "pending-video" });
+  expect(text).toContain("не успело сохраниться");
+  expect(text).not.toContain("Отмените");
+  expect(text).toContain("выберите другое фото");
+});
+
 test.each(["index-stale", "log-needs-repair"] as const)("a refusal from an avatar whose records cannot be trusted (%s) says every photo of the avatar is refused, not one", (photoReason) => {
   const text = errorText({ code: "PHOTO_UNAVAILABLE", issues: PHOTO_ISSUES, photoReason });
   expect(text).toContain("все фото этого аватара");
