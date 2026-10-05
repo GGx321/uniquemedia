@@ -179,8 +179,8 @@ export interface MusicTrackProps {
   /** The engine's verdict on the track for the spec on screen, or `judged: false` while it has not judged that spec. */
   readonly verdict: TrackVerdict;
   readonly onSelect: () => void;
-  /** «Добавить музыку»: the media panel's «Музыка» tab (SLOT 3d.5); absent, the button is «Скоро». */
-  readonly onAddMusic?: () => void;
+  /** «Добавить музыку»: the media panel's «Музыка» tab (3d.5). */
+  readonly onAddMusic: () => void;
 }
 
 const pct = (ms: number): string => `${(ms / TIMELINE_MS) * 100}%`;
@@ -214,8 +214,7 @@ export function MusicTrack({ session, spec, timeline, kit, pxPerMs, lookup, list
       <button
         type="button"
         className="ed-lane-music-add"
-        disabled={onAddMusic === undefined}
-        title={onAddMusic === undefined ? "Музыка — скоро: трек выбирается во вкладке «Музыка»" : total > 0 ? "Без музыки видео получит тишину той же длины" : undefined}
+        title={total > 0 ? "Без музыки видео получит тишину той же длины" : undefined}
         onClick={onAddMusic}
       >
         <Icon name="plus" size={13} strokeWidth={2.4} />

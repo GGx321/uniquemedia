@@ -154,8 +154,8 @@ export interface TimelineProps {
   readonly onInsertPhoto: (photoId: string, boundary: number) => void;
   /** «Добавить кадр»: take the owner to the photos. */
   readonly onAddClip: () => void;
-  /** «Добавить музыку»: the media panel's «Музыка» tab (3d.5); absent, the button is «Скоро». */
-  readonly onAddMusic?: () => void;
+  /** «Добавить музыку»: the media panel's «Музыка» tab (3d.5). */
+  readonly onAddMusic: () => void;
   /** The «Стикеры» «+»: the media panel's «GIF» tab (3d.5, L10), where a pick puts the sticker at the playhead. */
   readonly onAddSticker: () => void;
   /** Selects clip `index` and brings the playhead into it. */
@@ -701,7 +701,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                 listVersion={musicListVersion}
                 verdict={musicVerdict}
                 onSelect={() => timeline.select({ kind: "music" })}
-                {...(onAddMusic === undefined ? {} : { onAddMusic })}
+                onAddMusic={onAddMusic}
               />
             </div>
             {!empty && <div className="ed-tl-after" style={{ left: pct(total) }} aria-hidden="true" />}

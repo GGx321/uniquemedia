@@ -2673,16 +2673,6 @@
   gap: 8px;
 }
 
-.ed-props-sticker {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.ed-props-track {
-  font-weight: 600;
-}
-
 .ed-pgroup {
   display: flex;
   flex-direction: column;

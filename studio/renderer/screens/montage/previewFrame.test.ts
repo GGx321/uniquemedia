@@ -17,7 +17,7 @@ import {
 } from "../../../shared/montage";
 import { BUILTIN_STICKER_SIZE, stickerById } from "../../../shared/stickers/manifest";
 import { buildPass1 } from "../../../engine/render/pass1";
-import { cellSourceWindow, clipViewAt, previewFrameAt, stickerFrameIndex, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
+import { cellSourceWindow, clipViewAt, stickerFrameIndex, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
 import { collageClip, draftSpec, photoClip, stickerLayer, textLayer, videoClip } from "./testkit";
 
 // 3d.4: what the preview draws at a frame, from the SHARED geometry the engine renders with (studio/shared/montage): the clip
@@ -32,18 +32,6 @@ const OWN_PHOTO = "media-own-0002";
 const OWN_SIZE: Size = { w: 4000, h: 3000 };
 const ownSize = (mediaId: string): Size | null => (mediaId === OWN_PHOTO ? OWN_SIZE : null);
 const KENBURNS_IN: MotionPlan = { kind: "kenburns", direction: "in", zoomFromPermille: 1000, zoomToPermille: 1100 };
-
-describe("the frame the preview shows", () => {
-  test("the playhead's frame (30 fps, rounded down); the montage's last frame at or past its end; nothing for an empty draft", () => {
-    const spec = draftSpec(2);
-    expect(previewFrameAt(spec, 0)).toBe(0);
-    expect(previewFrameAt(spec, 1_049)).toBe(31);
-    expect(previewFrameAt(spec, 3_999)).toBe(119);
-    expect(previewFrameAt(spec, 4_000)).toBe(119);
-    expect(previewFrameAt(spec, 9_000)).toBe(119);
-    expect(previewFrameAt(draftSpec([]), 0)).toBe(null);
-  });
-});
 
 describe("the part of a photo a cell shows (the render's crop and motion)", () => {
   test("a static clip shows exactly the cover crop, around the face-less focus", () => {

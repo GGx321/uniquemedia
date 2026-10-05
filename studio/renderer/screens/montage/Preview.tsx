@@ -8,6 +8,7 @@ import { previewLook, refusedNow } from "../../engine/textPreviewQueue";
 import { ownPhotoUrl, ownStickerUrl, photoUrl, placeholderGradient, stickerUrl } from "../../lib/media";
 import { Icon, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
+import { useDevicePixelRatio } from "../../ui/useDevicePixelRatio";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { captionLine, layerName, stickerName } from "./labels";
 import { type CellView, clipViewAt, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
@@ -77,20 +78,6 @@ function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HT
     return () => observer.disconnect();
   }, [area, hints, withHints, ratio]);
   return size;
-}
-
-/** `window.devicePixelRatio`, followed when the window moves to a screen of another ratio (or the page is zoomed). */
-function useDevicePixelRatio(): number {
-  const [ratio, setRatio] = useState(() => window.devicePixelRatio || 1);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    // A query for the ratio as it is now: it stops matching (a change) when the ratio moves.
-    const query = window.matchMedia(`(resolution: ${ratio}dppx)`);
-    const onChange = (): void => setRatio(window.devicePixelRatio || 1);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, [ratio]);
-  return ratio;
 }
 
 /** The frame's inline size and the overlays' scale; nothing while the stage is not laid out (the stylesheet's own size stands). */

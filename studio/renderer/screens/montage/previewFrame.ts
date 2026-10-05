@@ -11,12 +11,10 @@ import {
   layerVisibleAt,
   motionWindow,
   type MotionPlan,
-  msToFrameFloor,
   type Rect,
   type Size,
   stickerBox,
   textBox,
-  totalFrames,
   videoClipCrop,
 } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
@@ -61,13 +59,6 @@ export interface ClipView {
   readonly frames: number;
   readonly localFrame: number;
   readonly cells: readonly CellView[];
-}
-
-/** The frame on screen at playhead `ms`: the montage's last frame at or past its end; null for a draft with no clip. */
-export function previewFrameAt(spec: MontageDraft, ms: number): number | null {
-  const total = totalFrames(spec.clips);
-  if (total === 0) return null;
-  return Math.min(total - 1, msToFrameFloor(Math.max(0, ms)));
 }
 
 /**
