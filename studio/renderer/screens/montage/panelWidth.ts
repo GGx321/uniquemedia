@@ -5,7 +5,7 @@
 // as the stage long before it is as wide), and never so wide that the stage loses the room the preview needs.
 
 export const MEDIA_WIDTH: { readonly min: number; readonly default: number; readonly max: number } = { min: 280, default: 280, max: 560 };
-/** The properties panel's width (montage.css `.ed-props`). */
+/** The properties panel's width: montage.css `.ed-props`, pinned to it by a test (EditorSplitter.test.tsx). */
 export const PROPS_PX = 300;
 /** What the stage keeps beside the two panels, at least: room for the preview and the «Подсказки» switches. */
 export const STAGE_ROOM_PX = 360;

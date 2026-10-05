@@ -1,4 +1,4 @@
-import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { trackPointer } from "./gesture";
 import { clampMediaWidth, keyedWidth, MEDIA_WIDTH, mediaWidthMax, storedMediaWidth, viewerStorage, writeMediaWidth } from "./panelWidth";
 
@@ -13,6 +13,8 @@ const RESIZING = "ed-col-resizing";
 export interface MediaWidth {
   /** The width the panel is drawn at now. */
   readonly width: number;
+  /** The viewer's choice, which a narrow window draws narrower (`width`) without forgetting it. */
+  readonly chosen: number;
   /** The widest it may be in the editor as it is laid out now. */
   readonly max: number;
   /** The viewer's chosen width, held to the room there is when drawn; `store` also keeps it (null: back to the default, nothing kept). */
@@ -28,6 +30,7 @@ export function useMediaWidth(): MediaWidth {
   const max = mediaWidthMax(bodyPx);
   return {
     width: clampMediaWidth(chosen, max),
+    chosen,
     max,
     choose(px, store) {
       setChosen(px ?? MEDIA_WIDTH.default);
@@ -35,6 +38,28 @@ export function useMediaWidth(): MediaWidth {
     },
     measured: setBodyPx,
   };
+}
+
+/** The editor body `node` sits in (its row of panels), measured as it is laid out and on every resize: what sets the panel's room. */
+function useBodyWidth(node: RefObject<HTMLElement | null>, measured: (bodyPx: number | null) => void): void {
+  useLayoutEffect(() => {
+    const body = node.current?.parentElement;
+    if (body === null || body === undefined || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const px = entries[0]?.contentRect.width;
+      if (px !== undefined) measured(px > 0 ? px : null);
+    });
+    observer.observe(body);
+    return () => observer.disconnect();
+  }, [node, measured]);
+}
+
+/** The panel's stand-in while the draft loads: already at the width the panel will be drawn at, so nothing jumps when the draft comes. */
+export function MediaStandIn() {
+  const node = useRef<HTMLDivElement>(null);
+  const { width, measured } = useMediaWidth();
+  useBodyWidth(node, measured);
+  return <div ref={node} className="ed-media" style={{ width }} />;
 }
 
 export interface PanelSplitterProps {
@@ -47,19 +72,8 @@ export function PanelSplitter({ size, controls }: PanelSplitterProps) {
   const node = useRef<HTMLDivElement>(null);
   const gesture = useRef<(() => void) | null>(null);
   const [dragging, setDragging] = useState(false);
-  const { width, max, choose, measured } = size;
-
-  // The body the splitter sits in (the editor's row of panels) sets how wide the panel may be: measured as it is laid out, and on every resize.
-  useLayoutEffect(() => {
-    const body = node.current?.parentElement;
-    if (body === null || body === undefined || typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver((entries) => {
-      const px = entries[0]?.contentRect.width;
-      if (px !== undefined) measured(px > 0 ? px : null);
-    });
-    observer.observe(body);
-    return () => observer.disconnect();
-  }, [measured]);
+  const { width, chosen, max, choose, measured } = size;
+  useBodyWidth(node, measured);
 
   useEffect(
     () => () => {
@@ -73,25 +87,29 @@ export function PanelSplitter({ size, controls }: PanelSplitterProps) {
     if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.focus();
+    // The drag moves the panel from where it is DRAWN; what goes back on a cancel is the viewer's choice (review round 1, LOW 3), which a
+    // narrow window draws narrower.
     const from = width;
+    const before = chosen;
     const startX = event.clientX;
-    let last = from;
+    let moved = false;
     gesture.current?.();
     setDragging(true);
     document.documentElement.classList.add(RESIZING);
     gesture.current = trackPointer(
       event,
       (move) => {
-        last = clampMediaWidth(from + move.clientX - startX, max);
-        choose(last, false);
+        if (move.clientX !== startX) moved = true;
+        if (moved) choose(clampMediaWidth(from + move.clientX - startX, max), false);
       },
       (end) => {
         gesture.current = null;
         setDragging(false);
         document.documentElement.classList.remove(RESIZING);
-        // The system took the pointer: the width the drag started from, nothing kept.
-        if (end === null) choose(from, false);
-        else choose(clampMediaWidth(from + end.clientX - startX, max), true);
+        // The system took the pointer: the viewer's choice as it was, nothing kept.
+        if (end === null) choose(before, false);
+        // A press that never moved (a click, the first half of a double click) changes and keeps nothing.
+        else if (moved || end.clientX !== startX) choose(clampMediaWidth(from + end.clientX - startX, max), true);
       },
     );
   }

@@ -190,6 +190,55 @@ describe("the splitter between the media panel and the stage", () => {
     expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe("500");
   });
 
+  // Review round 1 (LOW 3): the drag started from the width DRAWN (held to a narrow window), so a press that never moved stored that narrowed
+  // width over the viewer's choice, and a cancelled drag put the narrowed width back as the choice.
+  test("a press that does not move stores nothing: the viewer's wider choice survives a narrow window", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "560");
+    const body = layOutBody(968);
+    await editor();
+    const room = 968 - PROPS_PX - STAGE_ROOM_PX;
+    expect(now()).toBe(room);
+    fireEvent.pointerDown(splitter(), { pointerId: 6, button: 0, clientX: 500, clientY: 300 });
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointerup", { pointerId: 6, clientX: 500, clientY: 300 }));
+    });
+    expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe("560");
+    body.resize(2_000);
+    expect(now()).toBe(560);
+  });
+
+  test("a cancelled drag in a narrow window puts back the viewer's choice, not the narrowed width", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "500");
+    const body = layOutBody(1_000);
+    await editor();
+    dragBy(-30, 7, "cancel");
+    expect(now()).toBe(1_000 - PROPS_PX - STAGE_ROOM_PX);
+    body.resize(2_000);
+    expect(now()).toBe(500);
+    expect(localStorage.getItem(MEDIA_WIDTH_KEY)).toBe("500");
+  });
+
+  test("while the draft loads, the panel's stand-in is already at the width it will be drawn at (held to the window)", async () => {
+    localStorage.setItem(MEDIA_WIDTH_KEY, "560");
+    layOutBody(968);
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1, P2]);
+    await openDrafts();
+    await screen.findByRole("heading", { level: 3, name: /Mia/ });
+    engine.delayNext("montages.get", 60_000);
+    fireEvent.click(screen.getByRole("button", { name: "Открыть" }));
+    await flush();
+    const stub = document.querySelector(".editor-loading .ed-media");
+    if (!(stub instanceof HTMLElement)) throw new Error(`no loading stand-in for ${made.montageId}`);
+    expect(stub.style.width).toBe(`${968 - PROPS_PX - STAGE_ROOM_PX}px`);
+  });
+
+  test("the properties panel's width the room is counted with is the stylesheet's", async () => {
+    const css = await Bun.file(new URL("../montage.css", import.meta.url)).text();
+    const rule = /\n\.ed-props \{([^}]*)\}/.exec(css)?.[1] ?? "";
+    expect(/\bwidth: (\d+)px;/.exec(rule)?.[1]).toBe(String(PROPS_PX));
+  });
+
   test("with the storage blocked (every access throws), the editor opens at the default and the splitter still works", async () => {
     const original = Object.getOwnPropertyDescriptor(window, "localStorage");
     Object.defineProperty(window, "localStorage", {
