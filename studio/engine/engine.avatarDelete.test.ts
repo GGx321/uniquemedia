@@ -371,7 +371,8 @@ describe("a paid command for an avatar whose folder is no longer on the disk", (
   test("avatars.generateCandidates: with the folder gone it is NOT_FOUND before it reserves or sends anything", async () => {
     const seeded = await seed();
     const started = await start();
-    await rm(join(libraryDir(), "avatars", seeded.draftId), { recursive: true });
+    // Only the manifest is removed, so without the guard the batch would carry on to its paid image requests (the control above).
+    await rm(join(libraryDir(), "avatars", seeded.draftId, "avatar.json"));
 
     const refused = failed(await started.engine.handle(generate(seeded.draftId)));
 
@@ -771,10 +772,17 @@ describe("a `kept` that arrives while its prepare is still waiting", () => {
     await g.atGate;
 
     const kept = await ask(started, finishCall(seeded.avatarId, "kept", "token-aaaaaaaa"));
+    const mark = started.posted.length;
     g.release();
     await preparing;
 
     expect(kept.error).toBeUndefined();
+    // the avatar was never taken out, so it is not announced as coming back
+    const announced = started.posted.slice(mark).flatMap((m) => {
+      const e = EventMessage.safeParse(m);
+      return e.success ? [e.data.type] : [];
+    });
+    expect(announced).not.toContain("avatar.changed");
     expect(replyOf(started, late).error).toBeDefined();
     expect(replyOf(started, late).deletePlan).toBeUndefined();
     expect((await avatarsOf(started)).avatars.map((a) => a.avatarId)).toEqual([seeded.avatarId]);

@@ -67,7 +67,7 @@ import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, MEDIA_IMPORT_ENGINE_DEADLINE_MS, type AvatarDeletePlan, type EngineInit, type EngineSettings } from "./control";
-import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type DetachedAvatar, type Library, type LogIssue } from "./library";
+import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type DetachedAvatar, type Library, type LibraryDeps, type LogIssue } from "./library";
 import type { ImageMediaType } from "./library/media";
 import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
@@ -265,6 +265,8 @@ export interface EngineDeps {
   };
   /** Test seams of the montage drafts: the focus resolver, the budget, the seed of a new draft, the draft write's crash point. */
   montages?: Partial<Pick<MontageServiceDeps, "focus" | "focusBudgetMs" | "randomSeed" | "commandDeadlineMs" | "commandMarginMs">> & Partial<Pick<DraftStoreDeps, "beforeRename">>;
+  /** Test seam of the library the engine opens: its crash points (`testHooks`), e.g. a write that fails after a paid call. */
+  library?: Pick<LibraryDeps, "testHooks">;
 }
 
 /** How long one `videos.render` may spend filling the focus of its photos. Under main's 30 s command deadline, so the answer (or the refusal) always arrives before main gives up. */
@@ -3319,7 +3321,7 @@ export class Engine {
       return { library: opened.library, identity, unreadable: opened.unreadable };
     }
     const reservedPhotos = this.#deps.reservedPhotos ?? ((avatarId: string) => this.#renders.reservedPhotos(avatarId));
-    const opening = openLibrary(path, { reservedPhotos }).then((opened) => {
+    const opening = openLibrary(path, { reservedPhotos, ...(this.#deps.library ?? {}) }).then((opened) => {
       // Fail-closed records and logs: said once per open, by avatar, relative file and reason class only (no absolute path, no content).
       for (const line of logIssueLines(opened.report.logIssues)) console.warn(line);
       return { library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) };
