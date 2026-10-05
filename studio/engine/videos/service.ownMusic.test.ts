@@ -434,16 +434,25 @@ describe("videos.render: a refusal after the admission lets the track go", () =>
 describe("a render's own track that changed after the admission", () => {
   test("a library file whose bytes changed fails the job before ffmpeg, as media-unavailable and with no path, and lets the track go", async () => {
     const w = world();
-    let release: () => void = () => undefined;
-    const gate = new Promise<void>((resolve) => (release = resolve));
-    const media = await fakeMedia(w, () => rigRef.rig.queue, { [TRACK]: heldTrack() });
-    const { rig, calls } = recordingRig(w, media, { gate });
-
-    const answer = await rig.service.render({ spec: trackSpec(w) });
+    const held = await fakeMedia(w, () => rigRef.rig.queue, { [TRACK]: heldTrack() });
+    // `execute` reads the track itself (`openTrack`), BEFORE `runJob`, as soon as the queue starts the job: a gate on `runJob` comes too late to order a write after
+    // `render` returns (on a slow runner the job read the old bytes first and ended done). So the bytes change INSIDE the admission, once the lookup has answered
+    // with the record (its sha256 is the old bytes') and before it returns: the job cannot start until `render` has queued it, so it always reads the changed file.
     const changed = Uint8Array.from(M4A);
     changed[19] = 99;
-    await writeFile(media.files.get(TRACK) ?? "", changed);
-    release();
+    const media: FakeMedia = {
+      ...held,
+      port: {
+        lookup: async (mediaId, kind, onFound) => {
+          const found = await held.port.lookup(mediaId, kind, onFound);
+          await writeFile(held.files.get(TRACK) ?? "", changed);
+          return found;
+        },
+      },
+    };
+    const { rig, calls } = recordingRig(w, media);
+
+    const answer = await rig.service.render({ spec: trackSpec(w) });
     await rig.queue.idle();
 
     const state = rig.jobs.stateOf(answer.jobId);
