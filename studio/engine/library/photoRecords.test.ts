@@ -178,6 +178,19 @@ describe("photoSummaryFrom: custom and own categories", () => {
     expect(summary).toMatchObject({ category: "own", categoryName: "Своя сцена" });
   });
 
+  test("a name the contract would refuse (over 40 chars, blank, hidden characters) is dropped, and the photo is still listed", () => {
+    for (const categoryName of ["я".repeat(41), "   ", "two\nlines", "a\u202eb"]) {
+      const summary = photoSummaryFrom(runPhotoSidecar({ source: generatedSource({ category: CUSTOM, categoryName }) }), FRESH);
+      expect(summary?.category).toBe(CUSTOM);
+      expect(summary !== null && "categoryName" in summary).toBe(false);
+    }
+  });
+
+  test("a name of exactly 40 chars is kept", () => {
+    const categoryName = "я".repeat(40);
+    expect(photoSummaryFrom(runPhotoSidecar({ source: generatedSource({ category: CUSTOM, categoryName }) }), FRESH)).toMatchObject({ categoryName });
+  });
+
   test("every one of the five built-in values still lists as before, with no label key", () => {
     for (const category of ["home", "travel", "shoot", "glam", "fit"] as const) {
       const summary = photoSummaryFrom(runPhotoSidecar({ source: generatedSource({ category }) }), FRESH);

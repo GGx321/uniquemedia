@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { NO_HIDDEN_CHARS } from "./avatar";
 
 // Scene categories on the contract: the five built-ins the Photos mockup
 // draws, and the owner's own categories (per library, shared by every
@@ -54,7 +55,11 @@ export const CATEGORY_NAME_MAX = 40;
 export const POOL_TEXT_MAX = 40;
 
 /** The owner's name for a custom category, as the UI and a photo's label show it. */
-export const CategoryName = z.string().min(1).max(CATEGORY_NAME_MAX);
+export const CategoryName = z
+  .string()
+  .max(CATEGORY_NAME_MAX)
+  .regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters")
+  .refine((s) => s.trim().length > 0, "must not be blank");
 
 /** The category's English label, as the writer is told it: printable ASCII, no leading or trailing space. */
 export const CategoryLabel = z

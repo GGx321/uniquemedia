@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   CATEGORY_LABEL_MAX,
+  CATEGORY_NAME_MAX,
   CategoryLabel,
+  CategoryName,
   CategoryRef,
   CategorySnapshot,
   CustomCategoryId,
@@ -62,6 +64,24 @@ describe("CategoryRef and PhotoCategory", () => {
   });
 });
 
+describe("CategoryName: the owner's own wording, as AvatarName guards a name", () => {
+  test("accepts any script up to 40 chars", () => {
+    expect(CategoryName.safeParse("Кофейни Парижа").success).toBe(true);
+    expect(CategoryName.safeParse("я".repeat(CATEGORY_NAME_MAX)).success).toBe(true);
+    expect(CategoryName.safeParse("я".repeat(CATEGORY_NAME_MAX + 1)).success).toBe(false);
+  });
+
+  test("refuses an empty or blank name", () => {
+    for (const blank of ["", " ", "   ", "\u00a0", "\u3000"]) expect(CategoryName.safeParse(blank).success).toBe(false);
+  });
+
+  test("refuses control, invisible and bidi characters and line separators", () => {
+    for (const bad of ["two\nlines", "tab\there", "a\u202eb", "a\u200bb", "a\u2028b", "a\u2029b", "a\u0000b", "a\ufeffb", "a\u2066b"]) {
+      expect(CategoryName.safeParse(bad).success).toBe(false);
+    }
+  });
+});
+
 describe("CategoryLabel and CategorySnapshot", () => {
   test("a label is 1 to 24 printable ASCII chars", () => {
     expect(CategoryLabel.safeParse("Paris cafes").success).toBe(true);
@@ -91,7 +111,8 @@ describe("orderCategories", () => {
   });
 
   test("puts the custom ones after the built-ins, in the order given", () => {
-    expect(orderCategories([CUSTOM_B, "fit", CUSTOM_A, "home"])).toEqual(["home", "fit", CUSTOM_B, CUSTOM_A]);
+    // CUSTOM_A sorts after CUSTOM_B alphabetically, so only the order given can put it first.
+    expect(orderCategories([CUSTOM_A, "fit", CUSTOM_B, "home"])).toEqual(["home", "fit", CUSTOM_A, CUSTOM_B]);
   });
 
   test("keeps each category once", () => {

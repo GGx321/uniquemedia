@@ -1,4 +1,4 @@
-import { MAX_PHOTO_USED_IN, PhotoSummary, SceneCategory, type PhotoQaSummary } from "../../shared/engine";
+import { CategoryName, MAX_PHOTO_USED_IN, PhotoSummary, SceneCategory, type PhotoQaSummary } from "../../shared/engine";
 import type { PhotoState } from "./eligibility";
 import type { PhotoQa, PhotoSidecar } from "./schemas";
 
@@ -51,15 +51,16 @@ export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState): Phot
   // one starting with ":") falls straight through to the Id check below and
   // is rejected there, the same as any other malformed runId.
   const runId = sidecar.source.attemptId.split(":")[0];
-  // Only a custom or own category carries the name its sidecar kept; the five built-ins are named by the renderer, so a stray label on one is dropped, not a reason to lose the photo.
+  // Only a custom or own category carries the name its sidecar kept, and only a name the contract accepts: the five built-ins are named
+  // by the renderer, and a stray or over-long name must never be a reason to lose the photo, so it is dropped.
   const { category, categoryName } = sidecar.source;
-  const labelled = categoryName !== undefined && category !== undefined && !SceneCategory.safeParse(category).success;
+  const named = categoryName !== undefined && category !== undefined && !SceneCategory.safeParse(category).success && CategoryName.safeParse(categoryName).success;
   const parsed = PhotoSummary.safeParse({
     photoId: sidecar.id,
     avatarId: sidecar.avatarId,
     runId,
     category,
-    ...(labelled ? { categoryName } : {}),
+    ...(named ? { categoryName } : {}),
     createdAt: sidecar.createdAt,
     qa: qaSummaryOf(sidecar.qa),
     used: state.usedIn.length > 0,
