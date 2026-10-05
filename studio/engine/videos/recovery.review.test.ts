@@ -77,7 +77,7 @@ describe("recovery and a live commit exclude each other (per export root)", () =
     }
     const target = { folder, root: w.exportRoot, rootId: w.rootId, caseInsensitive: false };
     const input = (job: string, video: string): CommitInput => ({ jobId: job, videoId: video, avatarId: w.avatar.id, videoKind: "photo", date: "2026-09-29", createdAt: "2026-09-29T10:00:00.000Z", frames: 30, durationMs: 1000, montageId: null, music: null, spec: specOf(w.avatar.id, [w.photos[0]?.id ?? ""]), forbiddenStrings: [] });
-    const deps = () => ({ fs: faultyFs(), libraryRoot: w.libraryRoot, verify: acceptingVerify, onClaimed: (p: string) => tracker.addPlaceholder(p) });
+    const deps = () => ({ fs: faultyFs(), libraryRoot: w.libraryRoot, library: w.library, verify: acceptingVerify, onClaimed: (p: string) => tracker.addPlaceholder(p) });
     let release: () => void = () => undefined;
     const gate = new Promise<void>((resolve) => (release = resolve));
     const a = commitVideo(target, input("job-0000000a", "video-0000000a"), { ...deps(), hooks: { reached: async (s) => (s === "name-claimed" ? gate : undefined) } });
@@ -204,7 +204,7 @@ describe("adoption", () => {
     const folder = await openFolder(w);
     writeTemp(folder, "job-00000002", bytes);
     const target = { folder, root: w.exportRoot, rootId: w.rootId, caseInsensitive: false };
-    await commitVideo(target, { ...first.input, jobId: "job-00000002", videoId: "video-00000002" }, { fs: NODE_COMMIT_FS, libraryRoot: w.libraryRoot, verify: acceptingVerify });
+    await commitVideo(target, { ...first.input, jobId: "job-00000002", videoId: "video-00000002" }, { fs: NODE_COMMIT_FS, libraryRoot: w.libraryRoot, library: w.library, verify: acceptingVerify });
     const report = await recoverVideos({ library: await w.reopen(), exportRoot: rootRef(w) });
     expect(report.adopted).toEqual([]);
     expect(await libraryVideoFiles(w)).toEqual(["video-00000002.json"]);

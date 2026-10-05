@@ -127,6 +127,7 @@ describe("the lock key ignores the case flag, and waits are bounded and abortabl
     const out = await commitVideo(target, r.input, {
       fs: r.fs,
       libraryRoot: w.libraryRoot,
+      library: w.library,
       verify: async (path) => (await import("./testing/kit")).acceptingVerify(path),
       onClaimed: (p) => tracker.addPlaceholder(p),
       hooks: {

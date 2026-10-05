@@ -317,7 +317,7 @@ export async function rig(world: () => World, over: { bytes?: Uint8Array; forbid
     input,
     logs,
     target: () => target,
-    run: (extra = {}) => commitVideo(target, input, { fs, libraryRoot: w.libraryRoot, verify: acceptingVerify, log: (line) => logs.push(line), ...extra }),
+    run: (extra = {}) => commitVideo(target, input, { fs, libraryRoot: w.libraryRoot, library: w.library, verify: acceptingVerify, log: (line) => logs.push(line), ...extra }),
   };
 }
 

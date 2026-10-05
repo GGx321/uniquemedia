@@ -803,6 +803,16 @@ export class Library {
     return this.#videosByAvatar.get(avatarId)?.length ?? 0;
   }
 
+  /**
+   * The export files that the video records of EVERY avatar name (root id and path inside the root), from the used index. Two avatars may share an
+   * export folder, so the numbering of file names must look at all of them. Records that do not say where their file is are left out.
+   */
+  namedVideoFiles(): Array<{ rootId: string; relPath: string }> {
+    const named: Array<{ rootId: string; relPath: string }> = [];
+    for (const records of this.#videosByAvatar.values()) for (const record of records) if (record.file !== undefined) named.push(record.file);
+    return named;
+  }
+
   /** How many of the avatar's video records were rendered from this draft (whatever state their files are in). */
   videoCountForMontage(avatarId: string, montageId: string): number {
     return (this.#videosByAvatar.get(avatarId) ?? []).filter((record) => record.montageId === montageId).length;

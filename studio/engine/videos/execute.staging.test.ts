@@ -219,6 +219,8 @@ describe("every staging read is under the bound", () => {
 function libraryWithPhotoRead(w: World, read: VideoRenderDeps["library"]["readPhotoVerified"]): VideoRenderDeps["library"] {
   return {
     root: w.library.root,
+    listAvatars: () => w.library.listAvatars(),
+    namedVideoFiles: () => w.library.namedVideoFiles(),
     readPhotoVerified: read,
     addVideoRecordToIndex: (...args) => w.library.addVideoRecordToIndex(...args),
     reloadVideoRecords: (...args) => w.library.reloadVideoRecords(...args),

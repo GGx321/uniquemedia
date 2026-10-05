@@ -50,6 +50,8 @@ const VideoRecordShape = z.looseObject({
   spec: RecordSpecShape,
   /** Only the draft's name matters here; a value that is not an id reads as "no draft" and never makes the record unreadable. */
   montageId: LibraryIdSchema.nullable().optional().catch(null),
+  /** Where the file lives, by root and relative path: only the export file names' numbering reads it, so a value that does not fit reads as "unknown" and never makes the record unreadable. */
+  file: z.looseObject({ rootId: z.string(), relPath: z.string() }).optional().catch(undefined),
 });
 
 /** One record, reduced to what the index needs. */
@@ -59,6 +61,8 @@ export interface VideoRecordUse {
   photoIds: string[];
   /** The draft it was rendered from; null for a headless spec, or a record written before drafts existed. */
   montageId?: string | null;
+  /** The export file the record names (root id and path inside the root); absent when the record does not say. */
+  file?: { rootId: string; relPath: string };
 }
 
 /**
@@ -142,7 +146,10 @@ export async function readVideoRecordFile(avatarDir: string, avatarId: string, n
     const cells = clip.kind === "photo" ? [clip.cell] : clip.kind === "collage" ? clip.cells : [];
     for (const cell of cells) if (cell.photo.source === "scene") photoIds.add(cell.photo.photoId);
   }
-  return { kind: "record", record: { videoId: record.id, photoIds: [...photoIds], montageId: record.montageId ?? null } };
+  return {
+    kind: "record",
+    record: { videoId: record.id, photoIds: [...photoIds], montageId: record.montageId ?? null, ...(record.file === undefined ? {} : { file: { rootId: record.file.rootId, relPath: record.file.relPath } }) },
+  };
 }
 
 /** The problem `videos/` itself is when it is not a folder (a file where the folder goes). */

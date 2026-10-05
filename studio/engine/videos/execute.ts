@@ -122,7 +122,7 @@ export interface RenderPlan {
 }
 
 export interface VideoRenderDeps {
-  readonly library: Pick<Library, "root" | "readPhotoVerified"> & IndexPort;
+  readonly library: Pick<Library, "root" | "readPhotoVerified" | "listAvatars" | "namedVideoFiles"> & IndexPort;
   readonly tracker: CommitTracker;
   /** `userData/render-tmp`. Required: there is no `os.tmpdir` fallback. */
   readonly renderTmpDir: string;
@@ -504,6 +504,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         {
           fs,
           libraryRoot: deps.library.root,
+          library: deps.library,
           signal: commitSignal,
           log,
           onClaimed: (path) => {
