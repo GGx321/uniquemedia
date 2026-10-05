@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { MediaSummary } from "../../shared/engine";
+import { MEDIA_BYTE_CAPS, MediaSummary } from "../../shared/engine";
 import type { FfmpegChild, FfmpegSpawner } from "../../node/runFfmpeg";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { heavyTest } from "../../testing/bunTiers";
@@ -540,5 +540,64 @@ describe("the photo importer: what the review of 3f.2 found (round 1)", () => {
       return spawn(command, argv, { ...rest, ...(env === undefined ? {} : { env }), stdio: [...options.stdio] });
     };
     expect((await runWith(picture, "jpeg", { spawner })).outcome).toEqual({ ok: false, reason: "failed" });
+  });
+});
+
+describe("the photo importer: room for what it writes (M1 of the Stage 3 review)", () => {
+  const MARGIN = 50;
+  const recordingSpawner = (calls: string[][], onSpawn: () => void = () => undefined): FfmpegSpawner => (command, args, options) => {
+    calls.push([...args]);
+    onSpawn();
+    const { env, ...rest } = options;
+    return spawn(command, [...args], { ...rest, ...(env === undefined ? {} : { env }), stdio: [...options.stdio] });
+  };
+
+  test("a JPEG with less room than its raw work file, the stored file's cap and the margin is refused no-space before the work file is made", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    const calls: string[][] = [];
+    const need = 32 * 32 * 3 + MEDIA_BYTE_CAPS.photo + MARGIN;
+    const hand = await handoff(tmp(), picture, { format: "jpeg" });
+    const outcome = await importerWith({ spawner: recordingSpawner(calls), freeBytes: async () => need - 1, freeMarginBytes: MARGIN })(hand.request);
+    expect(outcome).toEqual({ ok: false, reason: "no-space" });
+    expect(hand.works).toHaveLength(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  test("exactly that much room is enough", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    const need = 32 * 32 * 3 + MEDIA_BYTE_CAPS.photo + MARGIN;
+    expect((await runWith(picture, "jpeg", { freeBytes: async () => need, freeMarginBytes: MARGIN })).outcome.ok).toBe(true);
+  });
+
+  test("a disk that cannot say how much is free does not stop the import", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    expect((await runWith(picture, "jpeg", { freeBytes: async () => null })).outcome.ok).toBe(true);
+  });
+
+  test("a WebP with less room than the largest PNG ffmpeg may make of it and the margin is refused no-space before ffmpeg runs", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 48, 32, "webp");
+    const calls: string[][] = [];
+    const hand = await handoff(tmp(), picture, { format: "webp" });
+    const outcome = await importerWith({ spawner: recordingSpawner(calls), maxDecodedPngBytes: 1_000, freeBytes: async () => 1_000 + MARGIN - 1, freeMarginBytes: MARGIN })(hand.request);
+    expect(outcome).toEqual({ ok: false, reason: "no-space" });
+    expect(calls).toHaveLength(0);
+    expect(hand.works).toHaveLength(0);
+  });
+
+  test("an ffmpeg that fails on a disk that has filled meanwhile is no-space, not failed", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    let full = false;
+    const spawner: FfmpegSpawner = () => {
+      full = true;
+      return failingChild(1, "No space left on device");
+    };
+    const { outcome } = await runWith(picture, "jpeg", { spawner, freeBytes: async () => (full ? 0 : 1e12) });
+    expect(outcome).toEqual({ ok: false, reason: "no-space" });
+  });
+
+  test("an ffmpeg that fails with room to spare is still failed", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    const { outcome } = await runWith(picture, "jpeg", { spawner: () => failingChild(1, "boom"), freeBytes: async () => 1e12 });
+    expect(outcome).toEqual({ ok: false, reason: "failed" });
   });
 });

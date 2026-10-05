@@ -600,9 +600,10 @@ export class MediaService {
 function endOfCommitFailure(error: unknown): End {
   if (error instanceof MediaCommitError) {
     if (error.code === "cancelled") return { status: "cancelled" };
+    if (error.code === "no-space") return { status: "failed", reason: "no-space", detail: error.message };
     if (error.code === "disk") return { status: "failed", reason: "unreadable", detail: error.message };
     return { status: "failed", reason: "failed", detail: error.message };
   }
-  if (error instanceof MediaDiskError) return { status: "failed", reason: "unreadable", detail: error.message };
+  if (error instanceof MediaDiskError) return { status: "failed", reason: error.code === "ENOSPC" || error.code === "EDQUOT" ? "no-space" : "unreadable", detail: error.message };
   return { status: "failed", reason: "failed", detail: "the media could not be stored" };
 }

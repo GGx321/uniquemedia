@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, open, readdir, realpath, statfs, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { Id, isUnsafePickedPath, MEDIA_BYTE_CAPS, type MediaKind, type MediaPickKind, type MediaUnsupportedReason, type PickedFileIdentity } from "../../shared/engine";
-import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOps } from "../library/openRegular";
+import { FREE_MARGIN_BYTES, freeBytesOf, isNoSpaceError, isShortOfRoom } from "../freeBytes";
+import { openRegularNoFollow,UnsafeOpenError, type OpenRegularOps } from "../library/openRegular";
 import { renameWithRetry } from "../library/renameRetry";
 import { unlinkWithRetry } from "../library/unlinkRetry";
 import { pickedIdentityOf, sameIdentity } from "./identity";
@@ -141,7 +142,7 @@ export interface MediaStagingOptions {
 }
 
 const DEFAULT_CHUNK_BYTES = 1024 * 1024;
-const DEFAULT_FREE_MARGIN_BYTES = 64 * 1024 * 1024;
+const DEFAULT_FREE_MARGIN_BYTES = FREE_MARGIN_BYTES;
 /** The shape of a name this module makes: `.<id>.part` while it is copied, `<id>.media` when it is whole. Nothing else is ever removed. */
 const STAGED_NAME = /^\.?[a-z0-9-]{8,64}\.(part|media)$/;
 
@@ -174,12 +175,8 @@ function refusalOfOpen(error: unknown): Refused {
 /** What a thrown disk or folder error is, as a refusal (never with a path). */
 function refusalOfError(error: unknown): Refused {
   if (error instanceof UnsafeStagingError) return refuse("unreadable", "the library's staging folder cannot be used");
+  if (isNoSpaceError(error)) return refuse("no-space", "the library's disk filled up while the file was being copied");
   return refuse("unreadable", `the picked file could not be read${errorCode(error) === undefined ? "" : ` (${errorCode(error)})`}`);
-}
-
-async function defaultFreeBytes(dir: string): Promise<number | null> {
-  const stats = await statfs(dir);
-  return Number(stats.bavail) * Number(stats.bsize);
 }
 
 export class MediaStaging {
@@ -422,8 +419,7 @@ export class MediaStaging {
     await this.#safeDir(true);
 
     // Room first: a 2 GiB copy onto a nearly full disk would fill it and fail late.
-    const free = await (this.#options.freeBytes ?? defaultFreeBytes)(this.#dir).catch(() => null);
-    if (free !== null && free < size + (this.#options.freeMarginBytes ?? DEFAULT_FREE_MARGIN_BYTES)) {
+    if (await isShortOfRoom(this.#options.freeBytes ?? freeBytesOf, this.#dir, size + (this.#options.freeMarginBytes ?? DEFAULT_FREE_MARGIN_BYTES))) {
       return refuse("no-space", "the library's disk has too little free room for the copy");
     }
 

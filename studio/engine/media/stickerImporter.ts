@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstat, open, stat, statfs, writeFile } from "node:fs/promises";
+import { lstat, open, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { inspectApng, inspectApngRaw, STICKER_FPS, STICKER_LIMITS, type ApngRejectCode } from "../../shared/stickers/apng";
 import { inspectGif, type GifInfo, type GifRejectCode } from "../../shared/stickers/gif";
 import { quantiseByAccumulatedTime, type FrameDuration } from "../../shared/stickers/quantise";
+import { FREE_MARGIN_BYTES, freeBytesOf, type FreeBytes } from "../freeBytes";
 import { MAX_ANIMATION_LOOP_PIXELS } from "../render/layerPass";
 import { EncodeTooLargeError } from "../stickers/encodeErrors";
 import type { StickerEncodeJob } from "../stickers/encodeGate";
@@ -48,7 +49,7 @@ const DEFAULT_FFMPEG_TIMEOUT_MS = 90_000;
 const MAX_PIXELS = Math.ceil(STICKER_LIMITS.maxSide / 64) * 64 * STICKER_LIMITS.maxSide;
 const MIN_SIDE = 2;
 /** The room left on the disk beyond the raw frames, so a full disk is told before the decode starts and not by its failure. */
-export const RAW_FREE_MARGIN_BYTES = 64 * 1024 * 1024;
+export const RAW_FREE_MARGIN_BYTES = FREE_MARGIN_BYTES;
 
 export interface StickerImporterDeps {
   /** Encodes the frames of a raw file as an APNG, off the engine's event loop (`createStickerEncodeGate(...).encode`); a test passes its own. */
@@ -58,7 +59,7 @@ export interface StickerImporterDeps {
   /** How long one ffmpeg call may run before it is killed; 90 s by default. */
   readonly ffmpegTimeoutMs?: number | undefined;
   /** The free bytes of the disk `dir` is on, or null when that cannot be told; the file system's own when absent. */
-  readonly freeBytes?: ((dir: string) => Promise<number | null>) | undefined;
+  readonly freeBytes?: FreeBytes | undefined;
   /** The size of a file; `stat`'s when absent. */
   readonly fileSize?: ((path: string) => Promise<number>) | undefined;
 }
@@ -75,16 +76,6 @@ class Refused extends Error {
 }
 
 const HARDENED_HEAD: readonly string[] = ["-hide_banner", "-nostdin", "-v", "error", "-threads", "1", "-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file"];
-
-/** The free bytes of the disk `dir` is on; null when it cannot be told. */
-async function freeBytesOf(dir: string): Promise<number | null> {
-  try {
-    const info = await statfs(dir);
-    return Number(info.bavail) * Number(info.bsize);
-  } catch {
-    return null;
-  }
-}
 
 /** What the reader kept of a source: its canvas and each frame's duration, whatever the container. */
 interface Source {

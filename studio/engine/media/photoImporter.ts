@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import { readFile, stat, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../shared/engine";
 import { DecodeWorkerError } from "../decode/decodeGate";
 import { runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import type { FaceGateImage } from "../face";
+import { FREE_MARGIN_BYTES, freeBytesOf, isNoSpaceError, isShortOfRoom, type FreeBytes } from "../freeBytes";
 import { imageSize } from "../library/media";
 import { readOrientation, type ExifContainer } from "./exif";
 import { observer, type MediaImporter, type MediaImportRequest } from "./imports";
@@ -55,6 +57,10 @@ export interface PhotoImporterDeps {
   readonly ffmpegTimeoutMs?: number | undefined;
   /** The most bytes the PNG ffmpeg makes of a WebP may have before it is read; `MAX_DECODED_PNG_BYTES` by default. A test knob. */
   readonly maxDecodedPngBytes?: number | undefined;
+  /** Free bytes of a volume; `freeBytesOf` (statfs) by default. The files the importer writes are checked for room before they are made (M1 of the Stage 3 review). */
+  readonly freeBytes?: FreeBytes | undefined;
+  /** What is kept free beyond what a write needs; `FREE_MARGIN_BYTES` (64 MiB) by default. */
+  readonly freeMarginBytes?: number | undefined;
 }
 
 /** A photo the importer turns away, with the reason the owner is told. */
@@ -98,8 +104,23 @@ export function storedSize(width: number, height: number): { width: number; heig
 export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
   const timeoutMs = deps.ffmpegTimeoutMs ?? DEFAULT_FFMPEG_TIMEOUT_MS;
 
-  async function ffmpeg(argv: readonly string[], output: string, signal: AbortSignal): Promise<void> {
-    await runFfmpegArgv({ argv: [...argv, output], output, signal, timeoutMs, ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }) });
+  const freeBytes = deps.freeBytes ?? freeBytesOf;
+  const margin = deps.freeMarginBytes ?? FREE_MARGIN_BYTES;
+
+  /** Refuses `no-space` when the disk the work files are on SAYS it cannot take `bytes` more and the margin. */
+  async function needRoom(request: MediaImportRequest, bytes: number): Promise<void> {
+    if (await isShortOfRoom(freeBytes, dirname(request.staged.path), bytes + margin)) throw new Refused("no-space");
+  }
+
+  async function ffmpeg(request: MediaImportRequest, argv: readonly string[], output: string): Promise<void> {
+    const { signal } = request;
+    try {
+      await runFfmpegArgv({ argv: [...argv, output], output, signal, timeoutMs, ...(deps.spawner === undefined ? {} : { spawner: deps.spawner }) });
+    } catch (error) {
+      // Every write was checked for room first, so a disk left under the margin is one that filled meanwhile: a full disk, not a wrong picture.
+      if (!signal.aborted && (await isShortOfRoom(freeBytes, dirname(request.staged.path), margin))) throw new Refused("no-space");
+      throw error;
+    }
   }
 
   async function run(request: MediaImportRequest): Promise<ReturnType<MediaImporter>> {
@@ -125,12 +146,14 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
       if (info === null) throw new Refused("format");
       if (info.animated) throw new Refused("animated-webp");
       judgeSize(info);
+      // The PNG is as large as its decoded pixels, up to the ceiling that is checked after it is written.
+      await needRoom(request, deps.maxDecodedPngBytes ?? MAX_DECODED_PNG_BYTES);
       const png = await request.workFile();
       signal.throwIfAborted();
       await ffmpeg(
+        request,
         [...HARDENED_HEAD, "-f", "webp_pipe", "-c:v", "webp", "-noautorotate", "-i", staged.path, "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-map_metadata", "-1", "-c:v", "png", "-f", "image2pipe"],
         png.path,
-        signal,
       );
       // What ffmpeg made is looked at before it is read whole: a header that lied about its size cannot make the engine read a bomb.
       const made = await stat(png.path);
@@ -155,6 +178,8 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
     progress.report(1);
 
     const upright = orientedRgb(decoded.data, decoded.width, decoded.height, orientation);
+    // The raw picture and the JPEG made of it (never over the stored file's cap) are on disk together.
+    await needRoom(request, upright.rgb.length + MEDIA_BYTE_CAPS.photo);
     const raw = await request.workFile();
     signal.throwIfAborted();
     // `wx`: the name is the job's own and new; a file or a link already at it is refused, never written through.
@@ -165,6 +190,7 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
     signal.throwIfAborted();
     const resize = target.width === upright.width && target.height === upright.height ? [] : ["-vf", `scale=${target.width}:${target.height}:flags=lanczos`];
     await ffmpeg(
+      request,
       [
         ...HARDENED_HEAD,
         "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size", `${upright.width}x${upright.height}`, "-i", raw.path,
@@ -173,7 +199,6 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
         "-c:v", "mjpeg", "-q:v", "2", "-pix_fmt", "yuvj420p", "-f", "mjpeg",
       ],
       out.path,
-      signal,
     );
     signal.throwIfAborted();
 
@@ -199,7 +224,9 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
       // A cancel wins over whatever the stop produced (a killed child, a read that was aborted).
       if (request.signal.aborted) return { ok: false, reason: "cancelled" };
       // Only the reason travels: an ffmpeg's stderr and an fs error's message may name a path.
-      return { ok: false, reason: error instanceof Refused ? error.reason : "failed" };
+      if (error instanceof Refused) return { ok: false, reason: error.reason };
+      // A disk that fills under a write the room check let through is still a full disk.
+      return { ok: false, reason: isNoSpaceError(error) ? "no-space" : "failed" };
     }
   };
 }

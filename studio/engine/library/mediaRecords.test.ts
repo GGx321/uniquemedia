@@ -243,6 +243,20 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     expect((await quarantinedMedia()).some((n) => n.endsWith(".jpg"))).toBe(true);
   });
 
+  test("a disk that is full while the record is written is a no-space failure, and nothing is left behind", async () => {
+    const failing = records({
+      hooks: {
+        beforeRecordRename: () => {
+          throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+        },
+      },
+    });
+    const error = await failing.commit(await photoInput()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaCommitError);
+    expect(error instanceof MediaCommitError ? error.code : null).toBe("no-space");
+    expect(await names(mediaDir())).toEqual([]);
+  });
+
   test("a failed commit cleans up after itself when it can: nothing is left behind", async () => {
     const failing = records({
       hooks: {

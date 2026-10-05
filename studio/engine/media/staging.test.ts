@@ -643,6 +643,52 @@ describe("a copy that did not land whole", () => {
   });
 });
 
+describe("a disk that fills up during the copy is told as a full disk", () => {
+  const diskError = (code: string): Error => Object.assign(new Error(`${code}: no space left on device`), { code });
+  /** An output file whose write (or sync) throws `code` once some bytes are in. */
+  function failingOut(code: string, where: "write" | "sync"): (path: string) => Promise<FileHandle> {
+    return async (path) => {
+      const handle = await open(path, "wx");
+      return new Proxy(handle, {
+        get(target, prop) {
+          if (prop === where) {
+            return async () => {
+              throw diskError(code);
+            };
+          }
+          const value: unknown = Reflect.get(target, prop);
+          return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        },
+      }) as FileHandle;
+    };
+  }
+
+  test.each(["ENOSPC", "EDQUOT"])("%s while writing the copy is refused as no-space, not unreadable, and leaves nothing", async (code) => {
+    const result = await staging({ fs: { openOut: failingOut(code, "write") } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("no-space");
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("ENOSPC while flushing the copy is refused as no-space", async () => {
+    const result = await staging({ fs: { openOut: failingOut("ENOSPC", "sync") } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("no-space");
+    expect(await leftovers()).toEqual([]);
+  });
+
+  test("ENOSPC while creating the copy is refused as no-space", async () => {
+    const openOut = async (): Promise<FileHandle> => {
+      throw diskError("ENOSPC");
+    };
+    const result = await staging({ fs: { openOut } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("no-space");
+  });
+
+  test("any other disk error while writing stays unreadable", async () => {
+    const result = await staging({ fs: { openOut: failingOut("EIO", "write") } }).stage({ path: await put("a.jpg", jpeg(500)), kind: "photo" });
+    expect(refusal(result)).toBe("unreadable");
+  });
+});
+
 describe("room for the copy", () => {
   test("a library disk with less free than the file and the margin is refused as no-space before a byte is copied", async () => {
     const copied: number[] = [];

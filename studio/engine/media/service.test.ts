@@ -424,6 +424,23 @@ describe("a refusal or a failure of the job leaves nothing", () => {
     expect(JSON.stringify(r.events).includes(tmp())).toBe(false);
   });
 
+  test("a disk that fills up while the record is saved: failed as no-space, nothing stored, nothing left staged", async () => {
+    const r = rig({
+      records: {
+        hooks: {
+          beforeRecordRename: () => {
+            throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+          },
+        },
+      },
+    });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(failedWith(r, jobId)).toMatchObject({ code: "MEDIA_UNSUPPORTED", mediaReason: "no-space" });
+    expect(await stored()).toEqual([]);
+    expect(await staged()).toEqual([]);
+  });
+
   test("a disk with no room for the copy: failed with no-space before a byte is written", async () => {
     const r = rig({ staging: { freeBytes: async () => 10, freeMarginBytes: 5 } });
     const jobId = await started(r, await callFor("a.jpg", jpeg(500)));

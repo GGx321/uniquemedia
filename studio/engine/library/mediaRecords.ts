@@ -6,6 +6,7 @@ import { z } from "zod";
 import { Id, MAX_LISTED_MEDIA, MediaFileName, MediaKind, MediaSummary } from "../../shared/engine";
 import type { MediaFormat } from "../media/sniff";
 import { MAX_ENVELOPE_STEPS } from "../music/trackRecord";
+import { isNoSpaceError } from "../freeBytes";
 import { fsyncDir, fsyncFile, hasErrorCode, isTempName, writeJsonAtomic } from "./durableFs";
 import { isFromNewerVersion, MEDIA_DIR, MEDIA_RECORD_SCHEMA_VERSION, MEDIA_STAGING_DIR } from "./layout";
 import { openRegularNoFollow, type OpenRegularOps } from "./openRegular";
@@ -162,7 +163,7 @@ export interface MediaCommitInput {
   readonly waveform?: readonly number[] | undefined;
 }
 
-export type MediaCommitFailure = "invalid" | "unsafe" | "exists" | "cancelled" | "disk";
+export type MediaCommitFailure = "invalid" | "unsafe" | "exists" | "cancelled" | "disk" | "no-space";
 
 /** A commit that did not happen, and nothing of it is left. `code` says why; the message names no path. */
 export class MediaCommitError extends Error {
@@ -608,6 +609,7 @@ export class MediaRecords {
       if (this.#options.hooks?.treatAsCrash?.(error) === true) throw error;
       await this.#takeBack(id, stored ? target : null);
       if (error instanceof MediaCommitError) throw error;
+      if (isNoSpaceError(error)) throw new MediaCommitError("no-space", "the library's disk is full; the media could not be stored");
       throw new MediaCommitError("disk", `the media could not be stored (${errorCodeOf(error) ?? "error"})`);
     } finally {
       this.#inFlight.delete(id);
