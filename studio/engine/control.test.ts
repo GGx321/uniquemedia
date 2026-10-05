@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_DELETE_VIDEO_FILES, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { MAX_RECORD_FILES_READ } from "./videos/listing";
 import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET_MS } from "./videos/timeouts";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
@@ -227,6 +228,12 @@ describe("EngineReply.deletePlan", () => {
 
   test("refuses a key it does not know", () => {
     expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, extra: 1 } }).success).toBe(false);
+  });
+});
+
+describe("MAX_DELETE_VIDEO_FILES", () => {
+  test("is the number of record files one read takes, so the plan can list every file the engine can find", () => {
+    expect(MAX_DELETE_VIDEO_FILES).toBe(MAX_RECORD_FILES_READ);
   });
 });
 

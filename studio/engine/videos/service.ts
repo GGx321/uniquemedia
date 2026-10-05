@@ -33,9 +33,9 @@ import { ownPhotoCopyName, ownPhotoSourceOf, type OwnPhotoSource } from "./ownPh
 import { ownStickerSourceOf, type OwnStickerSource } from "./ownStickers";
 import { ownTrackSourceOf, type OwnTrackSource } from "./ownTrack";
 import { ownVideoSourceOf, type OwnVideoSource } from "./ownVideos";
-import { newHashBudget, type FileStateChecker } from "./fileState";
+import { newHashBudget, recordFilePath, type FileStateChecker } from "./fileState";
 import type { LayerDeps } from "./layers";
-import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
+import { MAX_RECORD_FILES_READ, readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
 import type { CommitTracker, LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
@@ -825,6 +825,57 @@ export class VideoService {
       this.#announce(library, outcome.avatarId);
       return { videoId, fileDeleted: outcome.fileDeleted, fileState: outcome.fileState };
     });
+  }
+
+  /**
+   * «Удалить аватар»: the avatar's video files that are in the CURRENT export folder, as absolute paths, resolved here from the avatar's records and never
+   * from anything a caller names. A file is listed only when the cheap check reads it `present` (the root's marker matches, no link on the way, the size and
+   * the stored mtime or hash agree): a file that is gone, changed, in another export folder, or not looked at in time is left where it is. The whole look is under
+   * `LIST_BUDGET_MS`. Read only: nothing is written or moved. `unlisted` counts the records whose file was not listed because more than `max` were present or
+   * the budget ran out. An export folder that is unusable or does not answer lists nothing (`exportRoot: null`): nothing is guessed.
+   */
+  async avatarFiles(libraryRoot: string, avatarId: string, options: { max?: number } = {}): Promise<{ files: string[]; exportRoot: string | null; unlisted: number }> {
+    const enteredAt = performance.now();
+    const max = options.max ?? MAX_RECORD_FILES_READ;
+    const left = (): number => (this.#deps.listBudgetMs ?? LIST_BUDGET_MS) - (performance.now() - enteredAt);
+    let root: ExportRootRef | null = null;
+    try {
+      const look = await within(left(), () => this.#lookRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
+      if (look.kind === "root") root = look.ref;
+    } catch (error) {
+      this.#deps.log(`the export folder could not be looked at for an avatar delete (${kindOf(error)}); its video files are left where they are`);
+    }
+    if (root === null) return { files: [], exportRoot: null, unlisted: 0 };
+    let records: VideoRecord[];
+    try {
+      records = (await within(left(), () => (this.#deps.readRecordFiles ?? readVideoRecordFiles)(libraryRoot, avatarId), () => Object.assign(new Error("the records read did not answer"), { code: "ETIMEDOUT" }))).records;
+    } catch (error) {
+      this.#deps.log(`the records of avatar ${avatarId} could not be read for an avatar delete (${kindOf(error)}); its video files are left where they are`);
+      return { files: [], exportRoot: root.root, unlisted: 0 };
+    }
+    const budget = newHashBudget();
+    const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
+    const files: string[] = [];
+    let unlisted = 0;
+    for (const record of records) {
+      const remainingMs = left();
+      if (remainingMs <= 0) {
+        unlisted++;
+        continue;
+      }
+      let state: FileState;
+      try {
+        state = await within(Math.min(checkMs, remainingMs), () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
+      } catch (error) {
+        this.#deps.log(`the file of ${record.id} could not be checked for an avatar delete (${kindOf(error)}); it is left where it is`);
+        unlisted++;
+        continue;
+      }
+      if (state !== "present") continue;
+      if (files.length >= max) unlisted++;
+      else files.push(recordFilePath(record, root).file);
+    }
+    return { files, exportRoot: root.root, unlisted };
   }
 
   #deleteFailure(videoId: string, error: unknown): EngineFailure {
