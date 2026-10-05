@@ -441,8 +441,34 @@ describe("a layer's other actions and states", () => {
   });
 });
 
+describe("a caption that breaks the caption rules", () => {
+  const badCaption = { ...textLayer(0, 0, 1_000), value: "Привет" };
+  const renderButton = (): HTMLElement => screen.getByRole("button", { name: "Рендер" });
+
+  test("is marked on its block with the engine's reason", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [badCaption] });
+    await waitFor(() => expect(blockNames(texts())).toEqual(["Текст 1: «Привет», 0.0–1.0 с, надпись не проходит проверку"]));
+    expect(texts().querySelectorAll(".ed-blk-flagged").length).toBe(1);
+  });
+
+  test("blocks «Рендер» and says which text it is", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [badCaption] });
+    await waitFor(() => expect(renderButton().hasAttribute("disabled") || renderButton().getAttribute("aria-disabled") === "true").toBe(true));
+    expect(screen.getAllByText("Текст 1: надпись не проходит проверку").length).toBeGreaterThan(0);
+  });
+
+  test("a valid caption is not marked", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000)] });
+    await flush();
+    expect(texts().querySelectorAll(".ed-blk-flagged").length).toBe(0);
+  });
+});
+
 describe("the music track", () => {
-  const music = (startMs: number) => ({ music: { source: "trending" as const, trackId: TRACK.trackId, startMs } });
+  const music =(startMs: number) => ({ music: { source: "trending" as const, trackId: TRACK.trackId, startMs } });
 
   // 3d.5 (L24): the seam 3d.3b left «Скоро» opens the «Музыка» tab now.
   test("no music: «Добавить музыку» opens the «Музыка» tab and takes the focus there", async () => {

@@ -7,6 +7,7 @@ import type { TrackLookup } from "../music/renderTrack";
 import { ownStickerIssues } from "../../shared/montage/ownStickers";
 import { ownVideoIssues } from "../../shared/montage/ownVideos";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
+import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
 
 // The engine's verdict on a draft (`montages.get`, `montages.list`): the structural issues a render would raise
 // (`montageIssues(spec, "spec")`, the same function `videos.render` uses), what a render refuses for a part whose slice
@@ -16,8 +17,8 @@ import { stickerIssues } from "../../shared/stickers/stickerIssues";
 // Referential checks, by the issue code the contract reserves for them (K7), and where each stands:
 //   photo-unavailable    DONE  a scene photo that is not eligible, is in a video, or is held by a render.
 //   sticker-unavailable  DONE  for a built-in sticker (its manifest is in the build). An own sticker: see below.
-//   caption-invalid      TODO(3b.3): the caption rules (charset, emoji coverage, youth words, the number table) do not
-//                        exist yet; the check is `layers.i.value` against them, wired when 3b.3 and 3b.4b land.
+//   caption-invalid      DONE  a text layer whose caption breaks the shared caption rules (`layers.i.value`), by `draftCaptionIssues`, the function
+//                        `videos.render` and the mock use too. The emoji font is not asked here: `emoji-missing` stays the rasteriser's.
 //   media-unavailable    DONE  for an own PHOTO (`clips.i.cell`, `clips.i.cells.j`): the library does not hold it as a photo (3f.2).
 //   media-unavailable   DONE  for an own VIDEO clip (`clips.i`): the library does not hold it as a video the render can read (3f.3b), judged after the photos.
 //   media-unavailable    DONE  for an own STICKER (`layers.i.sticker`): the library does not hold it as a sticker (3f.5), judged after the
@@ -50,7 +51,7 @@ function photoCells(spec: Pick<MontageDraft, "clips">): PhotoCell[] {
 
 /**
  * The referential issues of a draft, in order: photos (clips, then cells: a scene photo that is not usable, an own photo the library does
- * not hold), then stickers (layers), then the music track. Not bounded here. `holdsOwnPhoto` says whether the library holds a media as a
+ * not hold), then stickers and captions (layers), then the music track. Not bounded here. `holdsOwnPhoto` says whether the library holds a media as a
  * photo, `holdsOwnSticker` as a sticker (3f.5), `ownTrack` as a track a render can read and how long it is (3f.4), `ownVideo` as a video a render can read and how long
  * it is (3f.3b); absent, none is held (an engine with no media store refuses an own photo, video, sticker or track the way a render does).
  */
@@ -74,6 +75,7 @@ export function referentialIssues(
   issues.push(...ownVideoIssues(spec, (mediaId) => ownVideo?.(mediaId) ?? null));
   issues.push(...stickerIssues(spec));
   issues.push(...ownStickerIssues(spec, (mediaId) => holdsOwnSticker?.(mediaId) ?? false));
+  issues.push(...draftCaptionIssues(spec));
   issues.push(...trackIssues(spec, tracks === undefined ? undefined : (trackId) => tracks.stored(trackId), ownTrack));
   return issues;
 }

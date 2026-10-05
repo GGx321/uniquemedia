@@ -308,6 +308,42 @@ describe("draftIssues: a built-in sticker that is gone", () => {
   });
 });
 
+describe("draftIssues: a caption that breaks the caption rules", () => {
+  const text = (n: number, value: string) => ({ layerId: `layer-${String(n).padStart(3, "0")}`, kind: "text" as const, startMs: 0, endMs: 1_000, value, font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 });
+  const sticker = (n: number, stickerId: string) => ({ layerId: `layer-${String(n).padStart(3, "0")}`, kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId }, x: 0.5, y: 0.5, size: 0.2 });
+
+  test("a valid caption is no issue", () => {
+    const w = world();
+
+    expect(issuesOf(w, draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text(1, "Hello")] }))).toEqual([]);
+  });
+
+  test("a caption with a character outside the charset is caption-invalid at its layer's value", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text(1, "\u041f\u0440\u0438\u0432\u0435\u0442")] });
+
+    expect(issuesOf(w, spec)).toEqual([{ code: "caption-invalid", path: ["layers", 0, "value"] }]);
+  });
+
+  test("only the bad one of several text layers is reported, at its index among all layers", () => {
+    const w = world();
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text(1, "Fine"), sticker(2, "heart-pulse"), text(3, "a".repeat(61)), text(4, "Also fine")] });
+
+    expect(issuesOf(w, spec)).toEqual([{ code: "caption-invalid", path: ["layers", 2, "value"] }]);
+  });
+
+  test("the issues come stickers, captions, track", () => {
+    const w = world();
+    const spec = draftOf(w, {
+      clips: [photoClip(1, photoId(w, 0))],
+      layers: [text(1, "a\nb\nc"), sticker(2, "no-such-sticker")],
+      music: { source: "trending", trackId: "track-0000001", startMs: 0 },
+    });
+
+    expect(issuesOf(w, spec).map((i) => i.code)).toEqual(["sticker-unavailable", "caption-invalid", "track-unavailable"]);
+  });
+});
+
 describe("draftIssues: the bound", () => {
   /** `n` distinct photos that the library does not have, in collages of 4 and then single clips: every cell is unavailable. */
   function withUnavailableCells(w: World, n: number, durationMs = 500): MontageDraft {

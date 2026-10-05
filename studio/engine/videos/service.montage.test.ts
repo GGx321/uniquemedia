@@ -119,6 +119,19 @@ describe("videos.render of a saved draft", () => {
     expect(r.queue.states()).toEqual([]);
   });
 
+  test("a draft with a bad caption is MONTAGE_INVALID caption-invalid at its layer, like a spec with the same caption", async () => {
+    const w = world();
+    const store = drafts();
+    const layer = { layerId: "layer-001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "a\nb\nc", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+    await store.write(w.library, montageOf("montage-0000001", { ...specFor(w), layers: [layer] }));
+    const r = serviceRig(w, { deps: { drafts: store } });
+
+    const error = await failureOf(r.service.render({ montageId: "montage-0000001" }));
+
+    expect(error).toMatchObject({ code: "MONTAGE_INVALID", issues: [{ code: "caption-invalid", path: ["layers", 0, "value"] }] });
+    expect(r.queue.states()).toEqual([]);
+  });
+
   test("a draft whose photo was rejected since is PHOTO_UNAVAILABLE at its cell", async () => {
     const w = world();
     const store = drafts();
@@ -241,6 +254,7 @@ describe("montages.save while a render of the draft runs", () => {
 
 describe("get's issues cover what videos.render refuses, for every kind of part", () => {
   const sticker = { layerId: "layer-001", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "own" as const, mediaId: "media-0000003" }, x: 0.5, y: 0.5, size: 0.2 };
+  const badCaption = { layerId: "layer-002", kind: "text" as const, startMs: 0, endMs: 1_000, value: "Acme \u00a9", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
   const goneSticker = { ...sticker, sticker: { source: "builtin" as const, stickerId: "no-such-sticker" } };
   const own = (photo: PhotoRef | null) => ({ photo, focus: null });
   const ownMedia = { source: "own" as const, mediaId: "media-0000001" };
@@ -254,6 +268,7 @@ describe("get's issues cover what videos.render refuses, for every kind of part"
     return [
       ["an own sticker layer", { ...base, layers: [sticker] }],
       ["a built-in sticker the set does not have", { ...base, layers: [goneSticker] }],
+      ["a caption that breaks the caption rules", { ...base, layers: [badCaption] }],
       ["music", { ...base, music: { source: "trending", trackId: "track-0000001", startMs: 0 } }],
       ["an own video clip", { ...base, clips: [clip, { clipId: "clip-0000008", kind: "video", mediaId: "media-0000002", trimStartMs: 0, focus: null, durationMs: 1_000, transitionIn: "cut" }] }],
       ["an own photo in a photo clip's cell", { ...base, clips: [{ ...clip, cell: own(ownMedia) } as MontageDraft["clips"][number]] }],
@@ -264,7 +279,7 @@ describe("get's issues cover what videos.render refuses, for every kind of part"
     ];
   }
 
-  for (const label of ["an own sticker layer", "a built-in sticker the set does not have", "music", "an own video clip", "an own photo in a photo clip's cell", "an own photo in a collage's cell j", "a spec that is too short", "a draft with no clips", "more than 64 issues"]) {
+  for (const label of ["an own sticker layer", "a built-in sticker the set does not have", "a caption that breaks the caption rules", "music", "an own video clip", "an own photo in a photo clip's cell", "an own photo in a collage's cell j", "a spec that is too short", "a draft with no clips", "more than 64 issues"]) {
     test(`${label}: every issue the render refuses is in the draft's issues`, async () => {
       const w = world();
       const m = montageRig(w);

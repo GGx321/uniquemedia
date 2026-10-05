@@ -2,6 +2,7 @@ import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, UnsequencedEvent } from "../../shared/engine";
 import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail } from "../../shared/engine";
+import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
 import { ownPhotoCells, ownPhotoIssues } from "../../shared/montage/ownPhotos";
@@ -297,8 +298,8 @@ export class VideoService {
     const { spec } = source;
     // The read waited in the draft's queue: whatever it used of the command's time is gone, so out of time is said as that.
     if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
-    // In the order `montages.get` reports them: structure, what has not landed (N9), the stickers the set lacks, the music track.
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...this.#trackIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
+    // In the order `montages.get` reports them: structure, what has not landed (N9), the stickers the set lacks, the captions that break the rules, the music track.
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...draftCaptionIssues(spec), ...this.#trackIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });

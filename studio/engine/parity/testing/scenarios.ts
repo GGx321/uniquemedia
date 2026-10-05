@@ -1573,7 +1573,39 @@ const OWN_IMPORT_STAGE_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS];
+// ---------- Stage 3 close: the caption check at render start ----------
+
+/** A text layer of the editor's spec. */
+const textLayerOf = (layerId: string, value: string): Record<string, unknown> => ({ layerId, kind: "text", startMs: 0, endMs: 1_000, value, font: "manrope", style: "none", color: "#ffffff", x: 0.5, y: 0.5, scale: 1 });
+
+/** Appended after the 3f.6 scenarios: the golden transcripts above are append-only. */
+const CAPTION_CHECK_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "captions: a draft whose caption breaks the caption rules reports caption-invalid at that layer, and a render of it is refused at once with the same issue",
+    async run(t, w) {
+      const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      const stored = objectAt(montageOf(await t.call("montages.get", { montageId })), "spec");
+      // "Privet" in Cyrillic (outside the charset), a good caption, a third line: two bad layers around a good one.
+      const cyrillic = "Привет";
+      t.note("a good caption is no issue");
+      await t.call("montages.save", { montageId, spec: { ...stored, layers: [textLayerOf("layer-00000001", "Hello")] }, name: null });
+      await t.call("montages.get", { montageId });
+      t.note("two bad captions around a good one: an issue at each bad layer, in layer order, and the render is refused with them before anything is queued");
+      await t.call("montages.save", { montageId, spec: { ...stored, layers: [textLayerOf("layer-00000001", cyrillic), textLayerOf("layer-00000002", "Hello"), textLayerOf("layer-00000003", "a\nb\nc")] }, name: null });
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      t.note("a spec given to the render directly is refused the same way");
+      await t.call("videos.render", { spec: { ...stored, layers: [textLayerOf("layer-00000001", cyrillic)] } });
+      t.note("the caption is fixed: no issue, and the render is queued");
+      await t.call("montages.save", { montageId, spec: { ...stored, layers: [textLayerOf("layer-00000001", "Hello")] }, name: null });
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      await t.settle();
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

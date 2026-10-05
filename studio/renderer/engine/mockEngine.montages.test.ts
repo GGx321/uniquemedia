@@ -168,6 +168,17 @@ describe("montages.get", () => {
     expect(got.issues).toEqual([{ code: "photo-unavailable", path: ["clips", 0, "cell"] }]);
   });
 
+  test("reports a bad caption as caption-invalid at its layer's value, and not a good one", async () => {
+    const mock = makeMock();
+    const montage = await create(mock, [PHOTO_IDS[0] ?? ""]);
+    const text = (layerId: string, value: string) => ({ layerId, kind: "text" as const, startMs: 0, endMs: 1_000, value, font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 });
+    await unwrap(mock.client.request("montages.save", { montageId: montage.montageId, spec: { ...montage.spec, layers: [text("layer-0001", "Fine"), text("layer-0002", "a\nb\nc")] }, name: null }));
+
+    const got = await unwrap(mock.client.request("montages.get", { montageId: montage.montageId }));
+
+    expect(got.issues).toEqual([{ code: "caption-invalid", path: ["layers", 1, "value"] }]);
+  });
+
   test("puts the referential issues after the structural ones", async () => {
     const mock = makeMock();
     const montage = await create(mock, [PHOTO_IDS[0] ?? ""]);

@@ -1,5 +1,6 @@
 import { MONTAGE_ISSUE_MESSAGES_RU, montageIssues, type ExportStatus, type MontageDraft, type MontageIssue, type MontageIssueCode, type PhotoSummary } from "../../../shared/engine";
 import { notYetSupportedIssues } from "../../../shared/montage";
+import { draftCaptionIssues } from "../../../shared/text/draftCaptionIssues";
 import { sameJson } from "./json";
 
 // Why «Рендер» is disabled (3d.2 shows it; 3d.6 adds the queue and the job states). Only the FIRST reason is
@@ -221,7 +222,8 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
     return reason(photoText(first, input.usedVideo), clips);
   }
 
-  const caption = engine("caption-invalid");
+  // The shared rules judge the spec as it is now (the engine refuses the render by the same function), so an edit blocks at once; the verdict's own issue covers the rest.
+  const caption = draftCaptionIssues(spec)[0] ?? engine("caption-invalid");
   if (caption) return reason(engineText(spec, caption));
   const layer = find("layer-too-short", "layer-outside-timeline");
   if (layer) {

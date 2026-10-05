@@ -216,6 +216,30 @@ describe("videos.render", () => {
     expect(issues.map((i) => i.code)).toEqual(["layer-outside-timeline", "sticker-unavailable", "track-unavailable"]);
   });
 
+  test("refuses a draft with a bad caption at once: MONTAGE_INVALID caption-invalid at the layer's value, and queues nothing", async () => {
+    const mock = makeMock();
+    const draft = await draftOf(mock, [P1]);
+    const bad = { layerId: "layer-0001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "a\nb\nc", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+    await unwrap(mock.client.request("montages.save", { montageId: draft.montageId, spec: { ...draft.spec, layers: [bad] }, name: null }));
+
+    const reply = await mock.client.request("videos.render", { montageId: draft.montageId });
+
+    expect(reply).toMatchObject({ ok: false, error: { code: "MONTAGE_INVALID", issues: [{ code: "caption-invalid", path: ["layers", 0, "value"] }] } });
+  });
+
+  test("a bad caption comes after the stickers the set lacks and before the track, as in the engine", async () => {
+    const mock = makeMock();
+    const draft = await draftOf(mock, [P1]);
+    const bad = { layerId: "layer-0001", kind: "text" as const, startMs: 0, endMs: 1_000, value: "a\nb\nc", font: "manrope" as const, style: "none" as const, color: "#ffffff", x: 0.5, y: 0.5, scale: 1 };
+    const gone = { layerId: "layer-0003", kind: "sticker" as const, startMs: 0, endMs: 1_000, sticker: { source: "builtin" as const, stickerId: "no-such-sticker" }, x: 0.5, y: 0.5, size: 0.2 };
+    await unwrap(mock.client.request("montages.save", { montageId: draft.montageId, spec: { ...draft.spec, layers: [bad, gone], music: { source: "trending" as const, trackId: "track-0000001", startMs: 0 } }, name: null }));
+
+    const reply = await mock.client.request("videos.render", { montageId: draft.montageId });
+
+    const issues = reply.ok ? [] : (reply.error.issues ?? []);
+    expect(issues.map((i) => i.code)).toEqual(["sticker-unavailable", "caption-invalid", "track-unavailable"]);
+  });
+
   test("refuses a draft that is not there with NOT_FOUND", async () => {
     const mock = makeMock();
 

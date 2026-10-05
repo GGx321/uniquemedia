@@ -107,6 +107,26 @@ describe("the reasons, each on its own", () => {
     expect(renderBlock(input({ spec, verdict: { spec, issues } }))?.text).toBe("Текст 2: надпись не проходит проверку");
   });
 
+  describe("a caption the shared rules refuse is judged from the spec itself, so an edit blocks the button before the engine is asked again", () => {
+    const textAt = (layerId: string, value: string) => ({ layerId, kind: "text" as const, startMs: 0, endMs: 1_000, value, font: "manrope" as const, style: "plaque" as const, color: "#ffffff", x: 0.5, y: 0.3, scale: 1 });
+
+    test("with no verdict yet", () => {
+      const spec = draftSpec(4, { layers: [textAt("layer-001", "ok"), textAt("layer-002", "Привет")] });
+      expect(renderBlock(input({ spec, verdict: null }))).toEqual({ text: "Текст 2: надпись не проходит проверку", settings: false });
+    });
+
+    test("with a verdict of an older spec that knew nothing of the caption", () => {
+      const older = draftSpec(4, { layers: [textAt("layer-001", "ok")] });
+      const spec = draftSpec(4, { layers: [textAt("layer-001", "a\nb\nc")] });
+      expect(renderBlock(input({ spec, verdict: { spec: older, issues: [] } }))?.text).toBe("Текст 1: надпись не проходит проверку");
+    });
+
+    test("a good caption blocks nothing", () => {
+      const spec = draftSpec(4, { layers: [textAt("layer-001", "ok")] });
+      expect(renderBlock(input({ spec, verdict: null }))).toBeNull();
+    });
+  });
+
   test("a layer past the end of the clips, a missing track, a track too short", () => {
     const withText = draftSpec(4, { layers: [{ layerId: "layer-001", kind: "text", startMs: 7_000, endMs: 9_000, value: "hi", font: "manrope", style: "plaque", color: "#ffffff", x: 0.5, y: 0.5, scale: 1 }] });
     expect(renderBlock(input({ spec: withText, verdict: null }))?.text).toBe("Текст 1 заканчивается после конца ролика");

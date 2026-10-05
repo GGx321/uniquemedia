@@ -158,6 +158,33 @@ describe("videos.render: N9 refuses nothing any more (3f.3b lifted the last part
     await expectNothingTouched(r);
   });
 
+  test("a caption that breaks the caption rules is MONTAGE_INVALID caption-invalid at its layer's value, before anything is touched", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const bad = { ...textLayer(1), value: "Привет" }; // Cyrillic: outside the charset
+
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [bad] } }));
+
+    expect(error.code).toBe("MONTAGE_INVALID");
+    expect(error.issues).toEqual([{ code: "caption-invalid", path: ["layers", 0, "value"] }]);
+    expect(r.checks).toHaveLength(0);
+    await expectNothingTouched(r);
+  });
+
+  test("a caption of 61 graphemes and a third line are each refused at their own layer, a good caption between them is not", async () => {
+    const w = world();
+    const r = serviceRig(w);
+    const tooLong = { ...textLayer(1), value: "a".repeat(61) };
+    const threeLines = { ...textLayer(3), value: "a\nb\nc" };
+
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [tooLong, textLayer(2), threeLines] } }));
+
+    expect(error.issues).toEqual([
+      { code: "caption-invalid", path: ["layers", 0, "value"] },
+      { code: "caption-invalid", path: ["layers", 2, "value"] },
+    ]);
+  });
+
   test("every kind of refusal at once comes in one order: structure, the stickers the set lacks, the music track", async () => {
     const w = world();
     const r = serviceRig(w);

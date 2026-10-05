@@ -59,6 +59,7 @@ import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
 import { defaultSpec, estimateBytes, estimateBytesUpper, notYetSupportedIssues, ownPhotoCells, ownPhotoIssues, ownStickerCells, ownStickerIssues, ownTrackIssues, ownVideoClips, ownVideoIssues, totalFrames, trackIssues, trendingTrackIssues } from "../../shared/montage";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
+import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
 import { windowPeaks } from "../../shared/music/trackShape";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
 import { mockOwnStickerBytes, mockStickerBytes, mockStickerUrl } from "./mockStickers";
@@ -1936,6 +1937,8 @@ export class MockEngine implements EngineBridge {
     referential.push(...stickerIssues(spec));
     // An own sticker is the library's, judged by the engine's own function against what the mock holds as stickers (3f.5).
     referential.push(...ownStickerIssues(spec, (mediaId) => this.ownMedia.holdsSticker(mediaId)));
+    // A caption that breaks the caption rules: the engine's own function, after the stickers and before the track.
+    referential.push(...draftCaptionIssues(spec));
     // The store's tracks are the mock's own: the engine's function judges a trending track against what is held.
     // An own track (3f.4) is judged against the mock's own library, by the same function.
     referential.push(...trackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId), (mediaId) => this.ownMedia.holdsTrack(mediaId)));
@@ -2154,9 +2157,9 @@ export class MockEngine implements EngineBridge {
     } else {
       spec = payload.spec;
     }
-    // The engine's order (`videos.render`): structure, what has not landed (N9), the stickers the set lacks, the music track (judged
-    // against the mock's own store, as `montages.get` does: a stored track renders).
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...trendingTrackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId))].slice(
+    // The engine's order (`videos.render`): structure, what has not landed (N9), the stickers the set lacks, the captions that break the
+    // rules, the music track (judged against the mock's own store, as `montages.get` does: a stored track renders).
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...draftCaptionIssues(spec), ...trendingTrackIssues(spec, (trackId) => storedTrack(this.music.tracks, trackId))].slice(
       0,
       MAX_MONTAGE_ISSUES,
     );
