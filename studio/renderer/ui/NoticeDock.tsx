@@ -24,15 +24,16 @@ interface Cards {
   setExpanded(expanded: boolean): void;
 }
 
-interface Dock {
-  readonly node: HTMLElement | null;
-  readonly offer: (node: HTMLElement | null) => void;
-  /** The keys of the window's notices shown so far in this window. */
-  readonly seen: Set<string>;
-  readonly cards: Cards;
-}
-
-const DockContext = createContext<Dock | null>(null);
+// Four contexts, so a consumer re-renders only for what it reads (review r2 NIT): the screen that offers a dock never re-renders as cards come
+// and go; the window's notices only when the dock comes or goes; the cards and «Ещё N» whenever the stack changes.
+/** How a screen offers its dock (stable). */
+const DockOfferContext = createContext<((node: HTMLElement | null) => void) | null>(null);
+/** The dock a screen offers now, if any. */
+const DockNodeContext = createContext<HTMLElement | null>(null);
+/** The keys of the window's notices shown so far in this window (one stable set). */
+const DockSeenContext = createContext<Set<string> | null>(null);
+/** The dock's cards. */
+const DockCardsContext = createContext<Cards | null>(null);
 /** Inside the dock: a notice there is one of its cards. */
 const InDockContext = createContext(false);
 /** Drawn by `Docked`: a window notice, which a dock may draw again elsewhere. */
@@ -72,13 +73,21 @@ export function NoticeDockProvider({ children }: { children: ReactNode }) {
   useLayoutEffect(() => {
     if (expanded && shown < 2) setExpanded(false);
   }, [expanded, shown]);
-  const value = useMemo(() => ({ node, offer, seen, cards: { order, minimized, expanded, register, minimize, restore, setExpanded } }), [node, seen, order, minimized, expanded, register, minimize, restore]);
-  return <DockContext.Provider value={value}>{children}</DockContext.Provider>;
+  const cards = useMemo(() => ({ order, minimized, expanded, register, minimize, restore, setExpanded }), [order, minimized, expanded, register, minimize, restore]);
+  return (
+    <DockOfferContext.Provider value={offer}>
+      <DockSeenContext.Provider value={seen}>
+        <DockNodeContext.Provider value={node}>
+          <DockCardsContext.Provider value={cards}>{children}</DockCardsContext.Provider>
+        </DockNodeContext.Provider>
+      </DockSeenContext.Provider>
+    </DockOfferContext.Provider>
+  );
 }
 
 /** The window's notices: in the dock a screen offers while it is mounted, else where they stand. */
 export function Docked({ children }: { children: ReactNode }) {
-  const node = useContext(DockContext)?.node ?? null;
+  const node = useContext(DockNodeContext);
   const own = <DockedContext.Provider value={true}>{children}</DockedContext.Provider>;
   return node === null ? own : createPortal(<InDockContext.Provider value={true}>{own}</InDockContext.Provider>, node);
 }
@@ -92,7 +101,7 @@ const noOffer = (): void => undefined;
 
 /** A callback ref for the element a screen offers as the dock: set while it is mounted, withdrawn when it goes. */
 export function useNoticeDock(): (node: HTMLElement | null) => void {
-  return useContext(DockContext)?.offer ?? noOffer;
+  return useContext(DockOfferContext) ?? noOffer;
 }
 
 /**
@@ -100,9 +109,9 @@ export function useNoticeDock(): (node: HTMLElement | null) => void {
  * remounts it), polite (`status`), so a screen reader does not take it for a new alert. Notices with no key, and the screens' own, keep theirs.
  */
 export function useNoticeRole(key: string | undefined, role: "alert" | "status"): "alert" | "status" {
-  const dock = useContext(DockContext);
+  const seen = useContext(DockSeenContext);
   const docked = useContext(DockedContext);
-  const seenBefore = (k: string | undefined): boolean => docked && k !== undefined && dock !== null && dock.seen.has(k);
+  const seenBefore = (k: string | undefined): boolean => docked && k !== undefined && seen !== null && seen.has(k);
   // Decided per key (review r2 LOW-1): a key that changes in place (the notice happened again) is judged anew, before it is marked seen.
   const [judged, setJudged] = useState(() => ({ key, again: seenBefore(key) }));
   let again = judged.again;
@@ -111,8 +120,8 @@ export function useNoticeRole(key: string | undefined, role: "alert" | "status")
     setJudged({ key, again });
   }
   useLayoutEffect(() => {
-    if (docked && key !== undefined) dock?.seen.add(key);
-  }, [dock, docked, key]);
+    if (docked && key !== undefined) seen?.add(key);
+  }, [seen, docked, key]);
   return again ? "status" : role;
 }
 
@@ -127,11 +136,11 @@ export interface DockCard {
 
 /** What a notice is in the dock: null outside it. `key` is its condition and code; one without a key is a card of its own while it is mounted. */
 export function useDockCard(key: string | undefined): DockCard | null {
-  const dock = useContext(DockContext);
+  const allCards = useContext(DockCardsContext);
   const inDock = useContext(InDockContext);
   const fallback = useId();
   const id = key ?? `notice-${fallback}`;
-  const cards = inDock ? (dock?.cards ?? null) : null;
+  const cards = inDock ? allCards : null;
   const register = cards?.register;
   useLayoutEffect(() => (register === undefined ? undefined : register(id)), [register, id]);
   const minimizeKey = cards?.minimize;
@@ -153,7 +162,7 @@ const NOTICE_FORMS = ["уведомление", "уведомления", "ув�
 
 /** «Ещё N уведомлений» under the newest card, or «Свернуть список уведомлений» once the stack is unfolded; nothing for a single card. */
 export function DockMore() {
-  const cards = useContext(DockContext)?.cards ?? null;
+  const cards = useContext(DockCardsContext);
   if (cards === null) return null;
   const shown = cards.order.filter((k) => !cards.minimized.has(k)).length;
   if (shown < 2) return null;
