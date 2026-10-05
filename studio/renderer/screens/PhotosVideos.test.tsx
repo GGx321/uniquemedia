@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { USAGE_UNKNOWN_REASONS_RU, type AvatarSummary, type PhotoSummary } from "../../shared/engine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll, setup, tick } from "../testing";
+import { callsOf, describeElement, flush, focusedLabel, runAll, setup, tick } from "../testing";
 
 // 3e.2: the Photos screen as the owner uses it: the header's counts from the avatar's summary (refreshed by `avatar.changed`),
 // the «использование неизвестно» state with its two recoveries, the gallery's filters with reject and restore, and the «Видео»
@@ -351,6 +351,45 @@ describe("the «Видео» tab", () => {
     expect(dialog).toBeDefined();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("dialog") === null).toBe(true);
+  });
+
+  test("the player holds the focus like the photo viewer: Tab moves natively, comes round past either end, and closing gives the focus back to «Смотреть»", async () => {
+    const h = await openMia({ tab: "videos" });
+    await act(async () => {
+      await rendered(h, [scenePhoto(1).photoId], "пляж");
+    });
+    const watch = within(await screen.findByRole("article", { name: "пляж" })).getByRole("button", { name: "Смотреть видео «пляж»" });
+    watch.focus();
+    fireEvent.click(watch);
+    const dialog = screen.getByRole("dialog", { name: "пляж" });
+    const close = within(dialog).getByRole("button", { name: "Закрыть" });
+    const edge = (which: "start" | "end"): HTMLElement => {
+      const found = dialog.querySelector<HTMLElement>(`[data-focus-edge="${which}"]`);
+      if (found === null) throw new Error(`no ${which} edge`);
+      return found;
+    };
+    expect(focusedLabel()).toBe(describeElement(close));
+    // Tab is never held back: a real video's own controls are walked by the browser.
+    expect(fireEvent.keyDown(close, { key: "Tab" })).toBe(true);
+    // «Закрыть» is the only control (the dev mock plays no video): past either end the focus comes round to it.
+    edge("end").focus();
+    expect(focusedLabel()).toBe(describeElement(close));
+    edge("start").focus();
+    expect(focusedLabel()).toBe(describeElement(close));
+    // Behind it the window is inert: the card's button cannot take the focus.
+    expect(watch.closest("[inert]") === null).toBe(false);
+    watch.focus();
+    expect(focusedLabel()).toBe(describeElement(close));
+    // A press that starts in the player and is let go on the dark does not close it; a press on the dark does.
+    const scrim = document.querySelector(".player-scrim");
+    if (scrim === null) throw new Error("no scrim");
+    fireEvent.pointerDown(within(dialog).getByRole("heading", { level: 2 }));
+    fireEvent.pointerUp(scrim);
+    fireEvent.click(scrim);
+    expect(screen.queryByRole("dialog") === null).toBe(false);
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(watch.closest("[inert]") === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(watch));
   });
 
   test("renders on their way are cards: running with its frames and «Отменить», queued «после 1 рендера» with «Убрать из очереди»", async () => {

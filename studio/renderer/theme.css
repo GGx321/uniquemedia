@@ -82,6 +82,8 @@
   /* the page's own black scrims: a dimmed photo, a tag over a photo, the timeline's hatching past the end */
   --scrim-50: rgba(9, 9, 12, 0.5);
   --scrim-72: rgba(9, 9, 12, 0.72);
+  /* the photo viewer's scrim: deeper than the player's, so nothing behind competes with the photo */
+  --scrim-92: rgba(9, 9, 12, 0.92);
   --hatch-dark: rgba(9, 9, 12, 0.55);
   --hatch-light: rgba(9, 9, 12, 0.25);
   /* the video frame itself (the collage gutters are black in the render), a sketch cell, a ruler label past the end */

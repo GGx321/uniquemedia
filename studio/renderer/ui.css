@@ -16,6 +16,16 @@
   border: 0;
 }
 
+/* A modal dialog's focus edges (useModalDialog's FocusEdge): focusable, never seen, out of the dialog's own layout. */
+.focus-edge {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  outline: none;
+}
+
 .mono {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1032,8 +1042,10 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--muted);
 }
 
+/* A span (it may sit inside a button, as the gallery tile's photo does), laid out as a block. */
 .portrait {
   position: relative;
+  display: block;
   width: 100%;
   height: 100%;
   overflow: hidden;

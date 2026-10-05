@@ -9,8 +9,9 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
-import { Gallery, type GalleryList, type MarkControl, type PendingSlots } from "./photos/Gallery";
+import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
+import type { MarkControl, MarkFailure } from "./photos/photoState";
 import { DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
 import { useMounted } from "./photos/shared";
@@ -72,7 +73,7 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   const [filter, setFilter] = useState<GalleryFilter>("all");
   /** Photos whose reject mark is being set (3e.2). */
   const [marking, setMarking] = useState<ReadonlySet<string>>(new Set());
-  const [markError, setMarkError] = useState<EngineError | null>(null);
+  const [markError, setMarkError] = useState<MarkFailure | null>(null);
   /** This avatar's runs, for the resume rows. */
   const [runs, setRuns] = useState<readonly RunSummary[]>([]);
   const [runsError, setRunsError] = useState<EngineError | null>(null);
@@ -228,7 +229,7 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
       return next;
     });
     if (!reply.ok) {
-      setMarkError(reply.error);
+      setMarkError({ photoId: photo.photoId, error: reply.error });
       return;
     }
     const updated = reply.result.photo;
@@ -247,6 +248,7 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   const mark: MarkControl = {
     marking,
     blocked: avatar.usage.state === "unknown" && avatar.usage.reasons.includes("rejects-unreadable") ? "Журнал отметок повреждён: сначала восстановите отметки" : null,
+    failure: markError,
     onMark: (photo, rejected) => void markPhoto(photo, rejected),
   };
 
@@ -394,7 +396,7 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
               <div className="photos-gallery-col">
                 {markError !== null && (
                   <ErrorNotice
-                    error={markError}
+                    error={markError.error}
                     actions={
                       <button type="button" className="btn btn-s" onClick={() => setMarkError(null)}>
                         Закрыть

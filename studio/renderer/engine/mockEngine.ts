@@ -639,6 +639,8 @@ export class MockEngine implements EngineBridge {
   /** Every stored run photo, oldest first (photos.list answers newest first). */
   private photos: PhotoSummary[];
   private readonly skippedPhotos: Record<string, number>;
+  /** Stored run photos whose sidecar cannot be read now (`setPhotoSidecarReadable`): `photos.list` alone skips them. */
+  private readonly unreadableSidecars = new Set<string>();
   private runImagePrice = MOCK_RUN_IMAGE;
   /** The next run job's trailing `count` open slots end without a photo. */
   private failedRunSlotsNext = 0;
@@ -1116,6 +1118,18 @@ export class MockEngine implements EngineBridge {
   /** The avatar's master photo is gone from the library: runs.start answers NOT_FOUND up front; a resume starts and its job fails NOT_FOUND. */
   removeMaster(avatarId: string): void {
     this.mastersMissing.add(avatarId);
+  }
+
+  /**
+   * A stored run photo's sidecar can no longer be read (`readable` false), or can again: while it cannot, `photos.list` leaves
+   * the photo out and counts it in `skippedTotal`, as the engine's `#photoSummaries` does with a sidecar that does not fit the
+   * contract. Only the list skips it: the library still holds the photo (its counts, its mark, a montage of it), as the
+   * engine's does. Nothing is announced: a window sees it at its next `photos.list`. Test support for a photo that leaves the
+   * gallery while a window shows it, and comes back.
+   */
+  setPhotoSidecarReadable(photoId: string, readable: boolean): void {
+    if (readable) this.unreadableSidecars.delete(photoId);
+    else this.unreadableSidecars.add(photoId);
   }
 
   /**
@@ -1632,8 +1646,10 @@ export class MockEngine implements EngineBridge {
         // NOT_FOUND only for an id the library does not have at all: a draft, an active and an archived avatar all get their list.
         const known = this.libraryOpen && (this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId));
         if (!known) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-        const photos = this.photos.filter((p) => p.avatarId === avatarId).reverse().slice(0, MAX_LISTED_PHOTOS).map((p) => this.photoView(p));
-        return this.ok(c, { photos, skippedTotal: this.skippedPhotos[avatarId] ?? 0 });
+        const own = this.photos.filter((p) => p.avatarId === avatarId);
+        const readable = own.filter((p) => !this.unreadableSidecars.has(p.photoId));
+        const photos = readable.reverse().slice(0, MAX_LISTED_PHOTOS).map((p) => this.photoView(p));
+        return this.ok(c, { photos, skippedTotal: (this.skippedPhotos[avatarId] ?? 0) + own.length - readable.length });
       }
       case "runs.list":
         // L7: an unavailable ledger answers no runs at all, like the real
@@ -1767,13 +1783,17 @@ export class MockEngine implements EngineBridge {
         const { avatarId, photoId, rejected } = c.payload;
         const photo = this.libraryOpen ? this.photos.find((p) => p.photoId === photoId && p.avatarId === avatarId) : undefined;
         if (photo === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
-        if (photo.rejected === rejected) return this.ok(c, { photo: this.photoView(photo) });
-        const updated: PhotoSummary = { ...photo, rejected, eligible: !rejected };
-        // A photo that is in a video or held by a render was not counted as eligible and unused, and is not now: the count moves only for a free one.
-        const free = !this.photoView(photo).used && !this.photoView(photo).reserved;
-        this.photos = this.photos.map((p) => (p === photo ? updated : p));
-        this.shiftEligibleUnused(avatarId, free ? (rejected ? -1 : 1) : 0);
-        return this.ok(c, { photo: this.photoView(updated) });
+        let current = photo;
+        if (photo.rejected !== rejected) {
+          current = { ...photo, rejected, eligible: !rejected };
+          // A photo that is in a video or held by a render was not counted as eligible and unused, and is not now: the count moves only for a free one.
+          const free = !this.photoView(photo).used && !this.photoView(photo).reserved;
+          this.photos = this.photos.map((p) => (p === photo ? current : p));
+          this.shiftEligibleUnused(avatarId, free ? (rejected ? -1 : 1) : 0);
+        }
+        // The engine answers the photo as photos.list would show it: one whose sidecar it cannot read is marked, then refused.
+        if (this.unreadableSidecars.has(photoId)) return this.fail(c, { code: "INTERNAL", detail: `photo ${photoId} was marked but does not fit the contract` });
+        return this.ok(c, { photo: this.photoView(current) });
       }
       case "engine.snapshot":
         return this.ok(c, this.snapshot());

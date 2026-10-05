@@ -15,12 +15,15 @@ export function Silhouette() {
   );
 }
 
-/** A neutral stand-in: the mock engine has no images, and a real one may fail to load. */
+/**
+ * A neutral stand-in: the mock engine has no images, and a real one may fail to load. A span (`.portrait` is a block), so it
+ * may sit inside a button: the gallery tile's photo is one.
+ */
 export function PortraitPlaceholder({ seed, label }: { seed: string; label: string }) {
   return (
-    <div className="portrait portrait-placeholder" role="img" aria-label={label} style={{ background: placeholderGradient(seed) }}>
+    <span className="portrait portrait-placeholder" role="img" aria-label={label} style={{ background: placeholderGradient(seed) }}>
       <Silhouette />
-    </div>
+    </span>
   );
 }
 
@@ -31,8 +34,8 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
   const src = photoUrl(avatarId, photoId);
   if (client.kind === "mock" || failed || src === null) return <PortraitPlaceholder seed={photoId} label={label} />;
   return (
-    <div className="portrait">
+    <span className="portrait">
       <img className="portrait-img" src={src} alt={label} loading="lazy" decoding="async" onError={() => setFailed(true)} />
-    </div>
+    </span>
   );
 }

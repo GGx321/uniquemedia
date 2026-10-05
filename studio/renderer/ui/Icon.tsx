@@ -5,6 +5,8 @@ const PATHS = {
   plus: <path d="M12 5v14M5 12h14" />,
   minus: <path d="M5 12h14" />,
   back: <path d="M15 18l-6-6 6-6" />,
+  /** `back` mirrored: the photo viewer's «Следующее фото». */
+  forward: <path d="M9 18l6-6-6-6" />,
   dice: (
     <>
       <rect x="4" y="4" width="16" height="16" rx="3" />

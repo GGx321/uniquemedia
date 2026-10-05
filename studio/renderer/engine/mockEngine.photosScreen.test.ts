@@ -195,3 +195,39 @@ describe("videos.revealFolder (main's, as the mock plays it)", () => {
     expect(away.ok ? null : away.error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "missing" });
   });
 });
+
+describe("setPhotoSidecarReadable (test support: a photo that leaves the gallery while a window shows it, and comes back)", () => {
+  const listed = async (mock: Mock) => unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }));
+
+  test("an unreadable sidecar: photos.list leaves the photo out and counts it in skippedTotal, as the engine does", async () => {
+    const mock = makeMock();
+    mock.engine.setPhotoSidecarReadable(P1, false);
+    const list = await listed(mock);
+    expect(list.photos.map((p) => p.photoId)).toEqual([...PHOTO_IDS].reverse().filter((id) => id !== P1));
+    expect(list.skippedTotal).toBe(1);
+  });
+
+  test("only photos.list skips it: a mark on it is set, then answered INTERNAL, as the engine answers a photo it cannot summarise", async () => {
+    const mock = makeMock();
+    mock.engine.setPhotoSidecarReadable(P1, false);
+    const reply = await mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P1, rejected: true });
+    expect(reply.ok ? null : reply.error.code).toBe("INTERNAL");
+    // The same mark again changes nothing, and still cannot be answered.
+    const again = await mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P1, rejected: true });
+    expect(again.ok ? null : again.error.code).toBe("INTERNAL");
+    expect((await listed(mock)).skippedTotal).toBe(1);
+    expect((await avatarOf(mock))?.photoCount).toBe(6);
+    // Readable again: the mark was kept.
+    mock.engine.setPhotoSidecarReadable(P1, true);
+    expect((await listed(mock)).photos.find((p) => p.photoId === P1)?.rejected).toBe(true);
+  });
+
+  test("readable again: listed again, in its place, and no longer counted as skipped", async () => {
+    const mock = makeMock();
+    mock.engine.setPhotoSidecarReadable(P1, false);
+    mock.engine.setPhotoSidecarReadable(P1, true);
+    const list = await listed(mock);
+    expect(list.photos.map((p) => p.photoId)).toEqual([...PHOTO_IDS].reverse());
+    expect(list.skippedTotal).toBe(0);
+  });
+});
