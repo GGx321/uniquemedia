@@ -447,6 +447,27 @@ describe("a gallery that changes under the viewer", () => {
     expect(announced()).toBe("");
   });
 
+  test("a photo that left the gallery and comes back does not open the viewer again", async () => {
+    const h = await openMia({ photos: photos(3) });
+    const lost = scenePhoto(2).photoId;
+    /** Another window marks the third photo: avatar.changed, and the gallery is listed again. */
+    const relist = async (rejected: boolean): Promise<void> => {
+      await act(async () => {
+        await h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: scenePhoto(3).photoId, rejected });
+      });
+      await flush();
+    };
+    fireEvent.click(openButton(2));
+    act(() => h.engine.setPhotoSidecarReadable(lost, false));
+    await relist(true);
+    expect(closed()).toBe(true);
+
+    act(() => h.engine.setPhotoSidecarReadable(lost, true));
+    await relist(false);
+    expect(document.querySelector(`button.photo-open[data-photo-id="${lost}"]`) === null).toBe(false);
+    expect(closed()).toBe(true);
+  });
+
   test("a photo gone from the gallery while on screen closes the viewer; the focus goes to the photo now in its place", async () => {
     const h = await openMia({ photos: photos(3) });
     fireEvent.click(openButton(2));
