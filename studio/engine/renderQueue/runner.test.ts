@@ -262,6 +262,34 @@ describe("runRenderJob: the job folder and the output", () => {
     expect(warnings[0]?.[1]).toBeInstanceOf(Error);
   });
 
+  test("a temp output whose removal never returns (a dead export volume) is given up on at the bound: reported, and the render's own error still comes out", async () => {
+    const r = rig();
+    const warnings: Array<[string, unknown]> = [];
+    const { deps } = depsWith((call) => call.child.exit(1), {
+      removeFile: () => new Promise<void>(() => undefined),
+      removeFileTimeoutMs: 50,
+      warn: (what, error) => warnings.push([what, error]),
+    });
+
+    const started = performance.now();
+    await expect(runRenderJob(r.input, deps)).rejects.toBeInstanceOf(FfmpegError);
+
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(warnings.map(([what]) => what)).toEqual(["unfinished output"]);
+  });
+
+  test("a temp output whose removal never returns does not hold back a render that otherwise failed by cancel", async () => {
+    const cancel = new AbortController();
+    const r = rig({ signal: cancel.signal });
+    const { deps } = depsWith(() => cancel.abort(new Error("cancelled")), {
+      removeFile: () => new Promise<void>(() => undefined),
+      removeFileTimeoutMs: 50,
+      warn: () => undefined,
+    });
+
+    await expect(runRenderJob(r.input, deps)).rejects.toThrow("cancelled");
+  });
+
   test("a folder that cannot be removed after a good render is reported, and the render still succeeds", async () => {
     const r = rig();
     const warnings: string[] = [];

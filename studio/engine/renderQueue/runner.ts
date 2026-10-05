@@ -125,6 +125,11 @@ export interface RenderRunDeps {
   readonly removeTree?: (path: string) => Promise<void>;
   /** Removes the temp output (a file only, never a folder), tolerating one that is not there. A rejection is reported, never thrown. */
   readonly removeFile?: (path: string) => Promise<void>;
+  /**
+   * How long the removal of the temp output may take before the runner gives up on it (`REMOVE_OUTPUT_TIMEOUT_MS` by default). The output lives on the export
+   * volume, which may be a dropped network drive whose `rm` never returns: the job must end, not wait. A temp left behind is swept by the next open's recovery.
+   */
+  readonly removeFileTimeoutMs?: number;
   /** Where a cleanup that failed is reported (`what` names it); the render's own outcome is unchanged. */
   readonly warn?: (what: "job folder" | "unfinished output", error: unknown) => void;
   /** The user's home folder, masked as `~` in errors; `os.homedir()` unless a test fakes it. */
@@ -398,6 +403,19 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     // sweep gets what was left.
     activeStaging?.release();
     await removeTree(clipDir).catch((error: unknown) => warn("job folder", error));
-    if (!succeeded) await removeFile(input.output).catch((error: unknown) => warn("unfinished output", error));
+    if (!succeeded) await boundedRemoval(removeFile(input.output), deps.removeFileTimeoutMs ?? REMOVE_OUTPUT_TIMEOUT_MS).catch((error: unknown) => warn("unfinished output", error));
   }
+}
+
+/** The default bound of the temp output's removal: `rm` retries for about half a second, so a healthy volume is far inside it. */
+export const REMOVE_OUTPUT_TIMEOUT_MS = 10_000;
+
+/** `removal` raced against `ms`: a removal that does not return (a dead volume) rejects, so the job's end never waits on it. A late failure of the abandoned removal is swallowed. */
+function boundedRemoval(removal: Promise<void>, ms: number): Promise<void> {
+  removal.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`the removal did not answer within ${ms} ms`)), ms);
+  });
+  return Promise.race([removal, expired]).finally(() => clearTimeout(timer));
 }
