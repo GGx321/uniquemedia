@@ -169,6 +169,10 @@ describe("isAppPage: the one URL main trusts as the app's own page (requests.ts)
     ["a port", "studio-app://renderer:80/index.html"],
     ["a dot-dot path that a parser would fold into the page", "studio-app://renderer/assets/../index.html"],
     ["an encoded name", "studio-app://renderer/index%2Ehtml"],
+    // The page's URL inside another one: only the whole URL may be the page.
+    ["another scheme ending in the app's", "x-studio-app://renderer/index.html"],
+    ["the page's URL as a data: URL's text", "data:,studio-app://renderer/index.html"],
+    ["the page's URL as another page's fragment", "about:blank#studio-app://renderer/index.html"],
     ["the page as a file URL", "file:///Applications/Studio.app/Contents/Resources/app.asar/out-studio/renderer/index.html"],
     ["the page under the media scheme", "studio-media://renderer/index.html"],
     ["a web page", "https://renderer/index.html"],
@@ -183,14 +187,18 @@ describe("the scheme's registration", () => {
   test("a standard, secure scheme (an origin of its own, a secure context), and nothing that opens it wider", () => {
     expect(APP_SCHEME).toBe("studio-app");
     expect(APP_SCHEME_PRIVILEGES).toMatchObject({ standard: true, secure: true });
-    for (const wider of ["bypassCSP", "corsEnabled", "allowServiceWorkers", "stream"]) expect(APP_SCHEME_PRIVILEGES).not.toHaveProperty(wider);
+    // No supportFetchAPI either: the page cannot `fetch` its own scheme (the smoke checks it in the real app).
+    for (const wider of ["bypassCSP", "corsEnabled", "supportFetchAPI", "allowServiceWorkers", "stream"]) expect(APP_SCHEME_PRIVILEGES).not.toHaveProperty(wider);
   });
 
   test("main registers both schemes in its one call, serves this one from the renderer folder and loads the page from it", async () => {
     const source = await readFile(resolve(import.meta.dirname, "main.ts"), "utf8");
     expect(source).toContain("{ scheme: APP_SCHEME, privileges: APP_SCHEME_PRIVILEGES }");
     expect(source.match(/registerSchemesAsPrivileged\(/g)).toHaveLength(1);
-    expect(source).toContain("protocol.handle(APP_SCHEME,");
+    // The root is the renderer's build folder itself: one level up would serve main's and the engine's code.
+    expect(source).toContain('const RENDERER_DIR = join(import.meta.dirname, "../renderer");');
+    expect(source.match(/protocol\.handle\(APP_SCHEME, .*\);/g)).toEqual(["protocol.handle(APP_SCHEME, (request) => handleAppRequest(request, RENDERER_DIR));"]);
+    expect(source.match(/RENDERER_DIR/g)).toHaveLength(2);
     expect(source).toContain("win.loadURL(APP_PAGE_URL)");
     // The page is never a `file:` URL again.
     expect(source).not.toContain("loadFile(");
