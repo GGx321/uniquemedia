@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Id } from "../../shared/engine";
 import { freeBytesOf } from "../freeBytes";
@@ -405,8 +405,28 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     // Work abandoned by a cancel or by the bound is still cleaning up what it made: let it finish (bounded) before the folder is removed, so the two
     // removals never race (see `StagingBound.settled`).
     await activeStaging?.settled();
-    await removeTree(clipDir).catch((error: unknown) => warn("job folder", error));
+    let removed = true;
+    await removeTree(clipDir).catch((error: unknown) => {
+      removed = false;
+      warn("job folder", error);
+    });
+    // A removal that said it worked may still have left the folder (a recursive rm that loses an entry to another remover's unlink): look, and once more if so.
+    if (removed && (await stillThere(clipDir))) {
+      warn("job folder", new Error("the job folder survived its removal; it is removed again"));
+      await activeStaging?.settled();
+      await removeTree(clipDir).catch((error: unknown) => warn("job folder", error));
+    }
     if (!succeeded) await boundedRemoval(removeFile(input.output), deps.removeFileTimeoutMs ?? REMOVE_OUTPUT_TIMEOUT_MS).catch((error: unknown) => warn("unfinished output", error));
+  }
+}
+
+/** Whether `path` is still on the disk (a path that cannot be looked at counts as gone: the removal's own report is the one that matters). */
+async function stillThere(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
   }
 }
 

@@ -300,6 +300,43 @@ describe("runRenderJob: the job folder and the output", () => {
     await expect(endsSoon(runRenderJob(r.input, deps))).rejects.toThrow("cancelled");
   });
 
+  test("a folder that survived a removal that reported success is removed once more, and the survival is reported (review round 2, L6)", async () => {
+    const r = rig();
+    const warnings: string[] = [];
+    let removals = 0;
+    const { deps } = depsWith(goodFfmpeg, {
+      // The first removal says it worked and leaves the folder (what Bun's recursive rm does when an entry is unlinked by someone else meanwhile).
+      removeTree: async (path) => {
+        if (++removals === 2) rmSync(path, { recursive: true, force: true });
+      },
+      warn: (what) => warnings.push(what),
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(removals).toBe(2);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(warnings).toEqual(["job folder"]);
+  });
+
+  test("a folder that is gone after the first removal is removed once, with no report", async () => {
+    const r = rig();
+    const warnings: string[] = [];
+    let removals = 0;
+    const { deps } = depsWith(goodFfmpeg, {
+      removeTree: async (path) => {
+        removals++;
+        rmSync(path, { recursive: true, force: true });
+      },
+      warn: (what) => warnings.push(what),
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(removals).toBe(1);
+    expect(warnings).toEqual([]);
+  });
+
   test("a folder that cannot be removed after a good render is reported, and the render still succeeds", async () => {
     const r = rig();
     const warnings: string[] = [];
