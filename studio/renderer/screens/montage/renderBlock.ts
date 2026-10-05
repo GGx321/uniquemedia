@@ -33,6 +33,8 @@ export interface RenderBlockInput {
    * видео» (the video's own title, K12, comes with 3e.2); null while unknown.
    */
   readonly usedVideo: UsedVideo | null;
+  /** The text layers whose caption the engine's preview refused as it stands now (`refusedCaptionLayers`); absent: none. */
+  readonly previewRefused?: ReadonlySet<string>;
 }
 
 export type UsedVideo = "this-draft" | { readonly file: string };
@@ -222,9 +224,14 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
     return reason(photoText(first, input.usedVideo), clips);
   }
 
-  // The shared rules judge the spec as it is now (the engine refuses the render by the same function), so an edit blocks at once; the verdict's own issue covers the rest.
-  const caption = draftCaptionIssues(spec)[0] ?? engine("caption-invalid");
-  if (caption) return reason(engineText(spec, caption));
+  // A caption is judged from two sources, the earliest layer first. The shared rules judge the spec as it is now (the engine refuses the
+  // render by the same function, so its verdict adds nothing and is not read): an edit blocks at once. The engine's preview verdict
+  // covers what the rules cannot know here, a cluster the real emoji font lacks (`emoji-missing`), which the job would refuse later.
+  const refused = input.previewRefused;
+  const previewAt = refused === undefined ? -1 : spec.layers.findIndex((l) => l.kind === "text" && refused.has(l.layerId));
+  const ruleAt = draftCaptionIssues(spec)[0]?.path[1];
+  const captionAt = typeof ruleAt === "number" && (previewAt < 0 || ruleAt < previewAt) ? ruleAt : previewAt;
+  if (captionAt >= 0) return reason(engineText(spec, { code: "caption-invalid", path: ["layers", captionAt, "value"] }));
   const layer = find("layer-too-short", "layer-outside-timeline");
   if (layer) {
     const name = layerName(spec, numberAt(layer.path, 1));

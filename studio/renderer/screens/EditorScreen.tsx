@@ -30,7 +30,7 @@ import { TrimPeekStore } from "./montage/trimPeek";
 import { PhotoBin } from "./montage/PhotoBin";
 import { replaceSticker } from "./montage/stickerOps";
 import { StickerTab, type StickerTabProps } from "./montage/StickerTab";
-import { TextPreviewsProvider } from "./montage/textPreviews";
+import { TextPreviewsProvider, useRefusedCaptions, useTextPreviewQueue } from "./montage/textPreviews";
 import { TextTab, type TextTabProps } from "./montage/TextTab";
 import {
   addRefusal,
@@ -716,7 +716,11 @@ function DraftEditor({
   // (the draft's name may have changed since), any other is called by its file name in «Готовые видео».
   const usedVideo: UsedVideo | null = holder === undefined ? null : holder.montageId === montageId ? "this-draft" : { file: fileLabel(holder) };
 
+  // The draft's one queue of text previews is made here, above its provider, so «Рендер» can wait for the same verdict the caption panel shows.
+  const previewQueue = useTextPreviewQueue(client, avatarId);
+  const previewRefused = useRefusedCaptions(previewQueue, state.spec.layers);
   const block = renderBlock({
+    previewRefused,
     spec: state.spec,
     exportStatus: view.exportStatus,
     avatarActive: avatar?.status !== "archived",
@@ -818,7 +822,7 @@ function DraftEditor({
   }
 
   return (
-    <TextPreviewsProvider client={client} avatarId={avatarId}>
+    <TextPreviewsProvider queue={previewQueue}>
       <div className="editor">
         <EditorHeader
           session={session}

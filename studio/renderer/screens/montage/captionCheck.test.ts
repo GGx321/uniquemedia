@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { CAPTION_ISSUES, CAPTION_ISSUES_RU, type EngineError } from "../../../shared/engine";
 import type { TextPreviewOutcome } from "../../engine/textPreview";
-import { type LayerPreview, NO_PREVIEW } from "../../engine/textPreviewQueue";
+import { type LayerPreview, NO_PREVIEW, previewLook } from "../../engine/textPreviewQueue";
 import { errorText } from "../../lib/errors";
-import { type CaptionCheck, captionCheckOf, captionNotice, NO_CHECK } from "./captionCheck";
+import { type CaptionCheck, captionCheckOf, captionNotice, NO_CHECK, refusedCaptionLayers } from "./captionCheck";
+import { stickerLayer, textLayer } from "./testkit";
 
 // 3d.5: the text panel shows the ENGINE's verdict on the caption inline (the pending note: a draft caption that breaks the rules
 // was refused only at render time). Every committed caption is asked of `montages.textPreview`; the answer to the latest ask is the
@@ -66,5 +67,49 @@ describe("what the panel says", () => {
     expect(captionNotice("empty", shown)).toEqual({ tone: "error", text: `Надпись не может быть пустой — напишите текст или удалите слой.${keep}`, pending: false });
     expect(captionNotice("blank", shown).text).toBe(`В надписи одни пробелы — рисовать нечего. Напишите текст или удалите слой.${keep}`);
     expect(captionNotice("too-long", shown).text).toBe(`${CAPTION_ISSUES_RU["too-long"]}${keep}`);
+  });
+});
+
+describe("the layers whose caption the engine's preview refused, as it stands now", () => {
+  const layer = (index: number, value: string) => ({ ...textLayer(index, 0, 1_000), value });
+  const stickerOnly = stickerLayer(5, 0, 1_000);
+  /** A queue state in which the layer's newest ask, for `look`, was answered `answer`. */
+  const answeredFor = (look: string, answer: TextPreviewOutcome): LayerPreview => {
+    if (answer.kind === "superseded") return NO_PREVIEW;
+    return { asked: 1, look, shown: { ask: 1, look, answer }, picture: null };
+  };
+
+  test("a refusal of the layer's current look is listed", () => {
+    const bad = layer(0, "tofu");
+    const states = new Map([[bad.layerId, answeredFor(previewLook(bad), invalid("emoji-missing"))]]);
+    expect([...refusedCaptionLayers([bad], (id) => states.get(id) ?? NO_PREVIEW)]).toEqual([bad.layerId]);
+  });
+
+  test("a refusal of an older value is stale and blocks nothing", () => {
+    const older = layer(0, "old");
+    const edited = { ...older, value: "new" };
+    const states = new Map([[older.layerId, answeredFor(previewLook(older), invalid("emoji-missing"))]]);
+    expect(refusedCaptionLayers([edited], (id) => states.get(id) ?? NO_PREVIEW).size).toBe(0);
+  });
+
+  test("a picture, a failed drawing, a layer never asked and a sticker are not listed", () => {
+    const drawn = layer(0, "a");
+    const broken = layer(1, "b");
+    const unasked = layer(2, "c");
+    const states = new Map([
+      [drawn.layerId, answeredFor(previewLook(drawn), PICTURE)],
+      [broken.layerId, answeredFor(previewLook(broken), failed({ code: "RENDER_FAILED", detail: "timeout" }))],
+    ]);
+    expect(refusedCaptionLayers([drawn, broken, unasked, stickerOnly], (id) => states.get(id) ?? NO_PREVIEW).size).toBe(0);
+  });
+
+  test("only the refused one of several is listed", () => {
+    const good = layer(0, "good");
+    const bad = layer(1, "bad");
+    const states = new Map([
+      [good.layerId, answeredFor(previewLook(good), PICTURE)],
+      [bad.layerId, answeredFor(previewLook(bad), invalid("emoji-missing"))],
+    ]);
+    expect([...refusedCaptionLayers([good, bad], (id) => states.get(id) ?? NO_PREVIEW)]).toEqual([bad.layerId]);
   });
 });

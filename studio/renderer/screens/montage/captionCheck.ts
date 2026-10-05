@@ -1,5 +1,5 @@
-import { CAPTION_ISSUES_RU, type CaptionIssue, type EngineError } from "../../../shared/engine";
-import type { LayerPreview } from "../../engine/textPreviewQueue";
+import { CAPTION_ISSUES_RU, type CaptionIssue, type EngineError, type MontageDraft } from "../../../shared/engine";
+import { type LayerPreview, previewLook } from "../../engine/textPreviewQueue";
 import { errorText } from "../../lib/errors";
 import type { CaptionRefusal } from "./textOps";
 
@@ -60,4 +60,20 @@ export function captionNotice(local: CaptionRefusal | null, check: CaptionCheck)
   if (verdict === undefined || verdict.kind === "ok") return { tone: null, text: null, pending };
   if (verdict.kind === "invalid") return { tone: "error", text: CAPTION_ISSUES_RU[verdict.issue], pending };
   return { tone: "warn", text: verdict.error.code === "RENDER_FAILED" ? DRAW_FAILED : `Надпись пока не проверена. ${errorText(verdict.error)}`, pending };
+}
+
+/**
+ * The text layers whose caption the engine's preview refused as a caption rule (TEXT_INVALID), judged for the layer's look NOW: an answer
+ * for an older value is stale and counts for nothing, and a drawing that failed or a transport failure is not the caption's fault. This is
+ * what the committed check cannot know (`emoji-missing` needs the real font): the render is refused for it later, in the job, so «Рендер»
+ * waits for the same verdict the panel already shows.
+ */
+export function refusedCaptionLayers(layers: readonly MontageDraft["layers"][number][], previewOf: (layerId: string) => LayerPreview): ReadonlySet<string> {
+  const refused = new Set<string>();
+  for (const layer of layers) {
+    if (layer.kind !== "text") continue;
+    const { shown } = previewOf(layer.layerId);
+    if (shown !== null && shown.look === previewLook(layer) && shown.answer.kind === "invalid") refused.add(layer.layerId);
+  }
+  return refused;
 }

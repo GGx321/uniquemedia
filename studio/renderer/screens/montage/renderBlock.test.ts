@@ -111,7 +111,7 @@ describe("the reasons, each on its own", () => {
     const textAt = (layerId: string, value: string) => ({ layerId, kind: "text" as const, startMs: 0, endMs: 1_000, value, font: "manrope" as const, style: "plaque" as const, color: "#ffffff", x: 0.5, y: 0.3, scale: 1 });
 
     test("with no verdict yet", () => {
-      const spec = draftSpec(4, { layers: [textAt("layer-001", "ok"), textAt("layer-002", "Привет")] });
+      const spec = draftSpec(4, { layers: [textAt("layer-001", "ok"), textAt("layer-002", String.fromCodePoint(0x41f, 0x440, 0x438, 0x432, 0x435, 0x442))] });
       expect(renderBlock(input({ spec, verdict: null }))).toEqual({ text: "Текст 2: надпись не проходит проверку", settings: false });
     });
 
@@ -119,6 +119,16 @@ describe("the reasons, each on its own", () => {
       const older = draftSpec(4, { layers: [textAt("layer-001", "ok")] });
       const spec = draftSpec(4, { layers: [textAt("layer-001", "a\nb\nc")] });
       expect(renderBlock(input({ spec, verdict: { spec: older, issues: [] } }))?.text).toBe("Текст 1: надпись не проходит проверку");
+    });
+
+    test("a caption the engine's preview refused (a cluster the font lacks) blocks the button and names its text", () => {
+      const spec = draftSpec(4, { layers: [textAt("layer-001", "ok"), textAt("layer-002", "fine by the local rules")] });
+      expect(renderBlock(input({ spec, verdict: { spec, issues: [] }, previewRefused: new Set(["layer-002"]) }))).toEqual({ text: "Текст 2: надпись не проходит проверку", settings: false });
+    });
+
+    test("a refusal for a layer the spec no longer has blocks nothing", () => {
+      const spec = draftSpec(4, { layers: [textAt("layer-001", "ok")] });
+      expect(renderBlock(input({ spec, previewRefused: new Set(["layer-gone"]) }))).toBeNull();
     });
 
     test("a good caption blocks nothing", () => {
