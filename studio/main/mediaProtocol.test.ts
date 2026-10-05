@@ -6,6 +6,7 @@ import { videoPaths } from "../engine/videos/record";
 import { canSymlink, countingFs, recordFor, useMediaWorld, type MediaWorld } from "./media/testing";
 import { fakeVideoBytes } from "../engine/videos/testing/kit";
 import { useNativeGlobals, useNativeWebClasses } from "../testing/nativeGlobals";
+import { createDiskGate } from "./media/diskGate";
 import { CHUNK_BYTES } from "./media/respond";
 import { createStickerLookup } from "./media/stickers";
 import { handleMediaRequest, MEDIA_SCHEME, MEDIA_SCHEME_PRIVILEGES, type MediaDeps, type MediaRequest } from "./mediaProtocol";
@@ -608,5 +609,132 @@ describe("the scheme's privileges and the renderer's policy", () => {
       if (name !== "img-src" && name !== "media-src") expect([name, values.includes("studio-media:")]).toEqual([name, false]);
     }
     expect(directives["default-src"]).toEqual(["'self'"]);
+  });
+});
+
+// Stage 3 whole-slice review L5: a library or export folder on a share that stops answering must not freeze main. The protocol's file work goes through a gate
+// (media/diskGate.ts): a bounded number of operations in flight, a deadline per request, 503 when it waited for a slot in vain, 504 when its own operation ran
+// past the deadline, and a slot held until the operation really ends. The disk is played here by the injected `fs`, whose `realpath` and `lstat` can be made to
+// stand still the way a dead share's do.
+describe("a share that stops answering", () => {
+  const photoUrl = `studio-media://photo/${AVATAR}/${PHOTO}`;
+  const stalled = (): { promise: Promise<void>; release(): void } => {
+    let release: () => void = () => undefined;
+    const promise = new Promise<void>((resolveStall) => {
+      release = resolveStall;
+    });
+    return { promise, release };
+  };
+  const gateOf = (maxConcurrent = 2, deadlineMs = 60): MediaDeps["gate"] => createDiskGate({ maxConcurrent, deadlineMs, maxQueued: 16 });
+  const pause = (ms: number): Promise<void> => new Promise((resolveWait) => setTimeout(resolveWait, ms));
+
+  beforeEach(() => writeFile(join(w.libraryRoot, "avatars", AVATAR, "photos", `${PHOTO}.png`), PNG));
+
+  test("a request whose disk never answers is a 504 within the deadline, with no body and no detail", async () => {
+    const stall = stalled();
+    const started = Date.now();
+    const response = await get(photoUrl, {}, { gate: gateOf(), fs: countingFs({ beforeRealpath: () => stall.promise }) });
+    expect(response.status).toBe(504);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(await response.text()).toBe("");
+    expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    stall.release();
+  });
+
+  test("the disk is asked by at most the gate's limit of requests at once: the rest are 503 and never reach it", async () => {
+    const stall = stalled();
+    let reached = 0;
+    const fs = countingFs({
+      beforeRealpath: () => {
+        reached++;
+        return stall.promise;
+      },
+    });
+    const gate = gateOf(2, 60);
+    const answers = await Promise.all(Array.from({ length: 6 }, () => get(photoUrl, {}, { gate, fs })));
+    expect(answers.map((r) => r.status).sort()).toEqual([503, 503, 503, 503, 504, 504]);
+    expect(reached).toBe(2);
+    expect(answers.find((r) => r.status === 503)?.headers.get("Retry-After")).not.toBeNull();
+    stall.release();
+  });
+
+  test("a busy answer has no body and nothing that names a path", async () => {
+    const stall = stalled();
+    const gate = gateOf(1, 40);
+    const fs = countingFs({ beforeRealpath: () => stall.promise });
+    const [, busy] = await Promise.all([get(photoUrl, {}, { gate, fs }), get(photoUrl, {}, { gate, fs })]);
+    expect(busy.status).toBe(503);
+    expect(await busy.text()).toBe("");
+    expect(busy.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    stall.release();
+  });
+
+  test("when the share comes back the slots come back with it, and the next request is served", async () => {
+    const stall = stalled();
+    const gate = gateOf(2, 40);
+    const hung = countingFs({ beforeRealpath: () => stall.promise });
+    await Promise.all([get(photoUrl, {}, { gate, fs: hung }), get(photoUrl, {}, { gate, fs: hung })]);
+    expect((await get(photoUrl, {}, { gate })).status).toBe(503);
+    stall.release();
+    await pause(20);
+    const served = await get(photoUrl, {}, { gate });
+    expect(served.status).toBe(200);
+    expect(new Uint8Array(await served.arrayBuffer())).toEqual(PNG);
+  });
+
+  test("a healthy disk serves a burst of requests larger than the gate's limit: they wait their turn, none is refused", async () => {
+    const gate = createDiskGate({ maxConcurrent: 2, deadlineMs: 5000, maxQueued: 64 });
+    const answers = await Promise.all(Array.from({ length: 24 }, () => get(photoUrl, {}, { gate })));
+    expect(answers.map((r) => r.status)).toEqual(Array.from({ length: 24 }, () => 200));
+  });
+
+  test("a read in the middle of a stream that never answers ends the stream with an error instead of hanging it", async () => {
+    await commitVideo();
+    const stall = stalled();
+    let stalling = false;
+    // The route's own disk work and the first chunk are served; from then on every lstat (each read starts with one) stands still.
+    const fs = countingFs({
+      afterLstat: async () => {
+        if (stalling) await stall.promise;
+      },
+    });
+    const response = await get(videoUrl(), {}, { gate: gateOf(2, 80), fs });
+    expect(response.status).toBe(200);
+    const reader = response.body?.getReader();
+    expect((await reader?.read())?.value?.length).toBe(CHUNK_BYTES);
+    stalling = true;
+    const next = (async (): Promise<string> => {
+      try {
+        await reader?.read();
+        return "answered";
+      } catch {
+        return "errored";
+      }
+    })();
+    const outcome = await Promise.race([next, pause(3000).then(() => "hung")]);
+    stall.release();
+    expect(outcome).toBe("errored");
+  });
+
+  test("an aborted request that is still waiting for a slot never touches the disk", async () => {
+    const stall = stalled();
+    const gate = gateOf(1, 5000);
+    void get(photoUrl, {}, { gate, fs: countingFs({ beforeRealpath: () => stall.promise }) });
+    await pause(10);
+    const controller = new AbortController();
+    let reachedByAborted = 0;
+    const waiting = get(photoUrl, { signal: controller.signal }, {
+      gate,
+      fs: countingFs({
+        beforeRealpath: async () => {
+          reachedByAborted++;
+        },
+      }),
+    });
+    controller.abort();
+    expect((await waiting).status).toBe(404);
+    stall.release();
+    await pause(30);
+    expect(reachedByAborted).toBe(0);
   });
 });

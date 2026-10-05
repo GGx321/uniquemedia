@@ -1,3 +1,5 @@
+import type { ByteSource } from "./media/diskSource";
+import { createDiskGate, DiskGateError, type DiskGate } from "./media/diskGate";
 import { respond } from "./media/respond";
 import { resolveMedia, type MediaDeps } from "./media/resolve";
 import { MEDIA_SCHEME, parseMediaRoute } from "./media/route";
@@ -32,6 +34,21 @@ function notFound(): Response {
   return new Response(null, { status: 404, headers: { "X-Content-Type-Options": "nosniff" } });
 }
 
+/** The disk did not answer in time (504), or the protocol had no slot for the request (503): no body, no path, and a hint to ask again. */
+function unavailable(status: 503 | 504, extra: Record<string, string>): Response {
+  return new Response(null, { status, headers: { "X-Content-Type-Options": "nosniff", ...extra } });
+}
+
+/**
+ * Two of libuv's four threads at most are ever held by this protocol's file work, so main's own (settings, keys, the app's assets) always has the rest. A
+ * request has ten seconds from its ask, waiting included: a sleeping disk or a NAS waking up answers well inside that, a dead share does not. 64 may wait; a
+ * longer queue means the page asked for far more than it can show, and the rest are told to come back.
+ */
+export const MEDIA_DISK_SLOTS = 2;
+export const MEDIA_DISK_DEADLINE_MS = 10_000;
+const MEDIA_DISK_MAX_QUEUED = 64;
+const SHARED_GATE: DiskGate = createDiskGate({ maxConcurrent: MEDIA_DISK_SLOTS, deadlineMs: MEDIA_DISK_DEADLINE_MS, maxQueued: MEDIA_DISK_MAX_QUEUED });
+
 /**
  * The `protocol.handle` handler for `studio-media://` (invariant 28). The URL is parsed to a route and its ids
  * (media/route.ts: nothing else of it survives), the route makes a file of them (media/resolve.ts) that must lie in
@@ -43,11 +60,20 @@ export async function handleMediaRequest(request: MediaRequest, deps: MediaDeps)
   if (request.method !== "GET") return notFound();
   const route = parseMediaRoute(request.url);
   if (route === null) return notFound();
+  const gate = deps.gate ?? SHARED_GATE;
+  const signal = request.signal;
   try {
-    const served = await resolveMedia(route, deps);
+    // The route's disk work (the record, the root marker, every step of the path) is ONE gated operation, and so is every chunk read below: a share that
+    // stops answering costs `MEDIA_DISK_SLOTS` threads at most and an answer within the deadline, never main's whole thread pool.
+    const served = await gate.run(() => resolveMedia(route, deps), signal);
     if (served === null) return notFound();
-    return respond(served.source, { contentType: served.contentType, range: request.headers?.get("Range") ?? null, signal: request.signal ?? null });
-  } catch {
+    const source: ByteSource = { size: served.source.size, read: (offset, length) => gate.run(() => served.source.read(offset, length), signal) };
+    return respond(source, { contentType: served.contentType, range: request.headers?.get("Range") ?? null, signal: signal ?? null });
+  } catch (error) {
+    if (error instanceof DiskGateError) {
+      if (error.reason === "busy") return unavailable(503, { "Retry-After": "1" });
+      if (error.reason === "timeout") return unavailable(504, {});
+    }
     return notFound();
   }
 }

@@ -3,6 +3,7 @@ import { servedMediaRecord } from "../../engine/library/mediaRecords";
 import { VideoRecordSchema } from "../../engine/videos/record";
 import { readRootId } from "../../engine/videos/rootMarker";
 import { openDiskSource, type ByteSource, type MediaFsOps } from "./diskSource";
+import type { DiskGate } from "./diskGate";
 import { KINDS, type KindKey, type MediaKind } from "./kinds";
 import type { MediaRoute } from "./route";
 
@@ -33,6 +34,8 @@ export interface MediaDeps {
   /** The built-in stickers by id. */
   sticker(stickerId: string): Promise<ByteSource | null>;
   fs?: MediaFsOps;
+  /** Bounds the file work of a request: how many run at once, and for how long (diskGate.ts). The shared gate of the protocol by default. */
+  gate?: DiskGate;
 }
 
 export interface Served {
