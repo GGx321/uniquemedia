@@ -157,7 +157,7 @@ describe("runRenderJob with music: the gain reaches pass 2", () => {
     await runRenderJob(r.input, deps);
 
     const argv = pass2Of(calls);
-    expect(argv.slice(argv.indexOf("-max_alloc"), argv.indexOf("-max_alloc") + 9)).toEqual(["-max_alloc", "67108864", "-protocol_whitelist", "file", "-f", "mov", "-c:a", "aac", "-i"]);
+    expect(argv.slice(argv.indexOf("-max_alloc"), argv.indexOf("-max_alloc") + 11)).toEqual(["-max_alloc", "67108864", "-protocol_whitelist", "file", "-codec_whitelist", "aac", "-f", "mov", "-c:a", "aac", "-i"]);
     expect(argv[argv.indexOf("-i", argv.indexOf("-max_alloc")) + 1]).toBe(r.track);
     expect(argv.slice(argv.indexOf("-map"), argv.indexOf("-map") + 4)).toEqual(["-map", "[v]", "-map", "1:a:0"]);
   });

@@ -101,7 +101,7 @@ describe("the input flags of a stored track (the hardening of decodeCheck.ts)", 
   test("force the mov demuxer, allow only the file protocol, force the AAC decoder and cap allocations, all before -i", () => {
     const args = musicInputArgs(TRACK);
     expect(args.slice(-2)).toEqual(["-i", TRACK]);
-    expect(args.slice(0, -2)).toEqual(["-max_alloc", "67108864", "-protocol_whitelist", "file", "-f", "mov", "-c:a", "aac"]);
+    expect(args.slice(0, -2)).toEqual(["-max_alloc", "67108864", "-protocol_whitelist", "file", "-codec_whitelist", "aac", "-f", "mov", "-c:a", "aac"]);
     expect(args.slice(0, -2)).toEqual([...MUSIC_INPUT_ARGS]);
   });
 
@@ -149,6 +149,8 @@ describe("buildMusicMeasure: the ebur128 true-peak pass over the clip segment", 
       "67108864",
       "-protocol_whitelist",
       "file",
+      "-codec_whitelist",
+      "aac",
       "-f",
       "mov",
       "-c:a",

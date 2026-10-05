@@ -74,7 +74,7 @@ describe("buildPass2 with music starting at 0", () => {
 
   test("reads the track under the store's hardening, all before its -i", () => {
     expect(optionsBeforeInput(job.argv, 1)).toEqual([...MUSIC_INPUT_ARGS]);
-    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-max_alloc", "67108864", "-protocol_whitelist", "file", "-f", "mov", "-c:a", "aac"]);
+    expect(optionsBeforeInput(job.argv, 1)).toEqual(["-max_alloc", "67108864", "-protocol_whitelist", "file", "-codec_whitelist", "aac", "-f", "mov", "-c:a", "aac"]);
   });
 
   test("maps the video the graph builds and the track's first audio stream explicitly, and nothing else", () => {

@@ -28,10 +28,11 @@ export const MUSIC_TARGET_TRUE_PEAK_DB = -1.5;
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
 /**
- * The flags that go before the track's `-i`; `decodeCheck.ts` runs its decode and its inspection under the same ones. `-protocol_whitelist`,
- * `-f` and `-c:a` are options of THIS input; `-max_alloc` is global to the process, so in pass 2 it caps the video side too.
+ * The flags that go before the track's `-i`. `decodeCheck.ts` hardens its decode the same way (its stream inspection runs the whitelists but not the forced
+ * `-c:a`, so that what the file names stays visible). `-protocol_whitelist`, `-codec_whitelist`, `-f` and `-c:a` are options of THIS input: no codec but AAC
+ * may be opened for it, whatever the file says its stream is. `-max_alloc` is global to the process, so in pass 2 it caps the video side too.
  */
-export const MUSIC_INPUT_ARGS: readonly string[] = ["-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file", "-f", "mov", "-c:a", "aac"];
+export const MUSIC_INPUT_ARGS: readonly string[] = ["-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file", "-codec_whitelist", "aac", "-f", "mov", "-c:a", "aac"];
 
 /** 48 kHz: 48 samples per millisecond. */
 const SAMPLES_PER_MS = 48;
