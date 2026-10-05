@@ -1098,11 +1098,19 @@
   cursor: pointer;
 }
 
-/* Inside the cell and in its own place in the stack (review round 1): a focused cell is no longer lifted over the play control, the layers,
-   the zones and the stripes. */
+/* The focus ring inside the cell, over its photo but in the cell's own place in the stack (review round 1). An outline paints before the
+   cell's positioned photo, so the photo hid it; and the old `z-index: 1` lifted a focused cell over the play control, the layers, the zones
+   and the stripes. A positioned last child draws it instead: after the photo, before everything that follows the cell. */
 .pv-cell:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
+  outline: none;
+}
+
+.pv-cell:focus-visible::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  box-shadow: inset 0 0 0 2px var(--accent);
+  pointer-events: none;
 }
 
 .pv-cell-on {
