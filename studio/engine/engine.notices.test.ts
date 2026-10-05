@@ -82,10 +82,10 @@ describe("noteUnhandledRejection", () => {
     const logged: string[] = [];
     let logSeen: () => void = () => undefined;
     const loggedOnce = new Promise<void>((resolve) => (logSeen = resolve));
-    const realError = console.error;
-    console.error = (...args: unknown[]) => {
+    const realError = console.warn;
+    console.warn = (...args: unknown[]) => {
       logged.push(args.join(" "));
-      logSeen();
+      if (logged[logged.length - 1]?.includes("could not be posted") === true) logSeen();
     };
     try {
       const { engine } = await startEngine(dir(), {
@@ -104,12 +104,32 @@ describe("noteUnhandledRejection", () => {
       let giveUp: ReturnType<typeof setTimeout> | undefined;
       const never = new Promise<never>((_, reject) => (giveUp = setTimeout(() => reject(new Error("the trailing announcement never ran")), 10_000)));
       await Promise.race([loggedOnce, never]).finally(() => clearTimeout(giveUp));
-      expect(logged.some((line) => line.includes("trailing"))).toBe(true);
+      expect(logged.some((line) => line.includes("could not be posted"))).toBe(true);
       expect(logged.join("\n")).not.toContain("the port is closed"); // the error's kind, never its message
       expect(delivered).toBe(1);
     } finally {
-      console.error = realError;
+      console.warn = realError;
     }
+  });
+
+  test("an event that the port refuses does not make the emitter throw: only the log refusing an event does, so no caller retries it into a duplicate", async () => {
+    const { engine } = await startEngine(dir(), {
+      deps: {
+        post: () => {
+          throw new Error("the port is closed");
+        },
+      },
+    });
+    const realWarn = console.warn;
+    const warned: string[] = [];
+    console.warn = (...args: unknown[]) => void warned.push(args.join(" "));
+    try {
+      expect(() => engine.noteUnhandledRejection()).not.toThrow();
+    } finally {
+      console.warn = realWarn;
+    }
+    expect(warned.some((line) => line.includes("could not be posted"))).toBe(true);
+    expect(ok(await engine.handle(command("engine.snapshot")))).toMatchObject({ result: { notices: [{ code: "engine-internal-error", count: 1 }] } });
   });
 
   test("a shutdown drops the trailing announcement: nothing is posted after the engine said it is stopping", async () => {

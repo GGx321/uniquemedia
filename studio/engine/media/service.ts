@@ -557,12 +557,14 @@ export class MediaService {
         told = this.#event("job.cancelled", ref);
         break;
     }
-    // A terminal event that the log refused leaves no gap in the sequence (a refused event uses no seq), so a window would stay on «running» for ever. The fallback is the
-    // smallest event the contract is sure to take; the window then shows the job as ended, and its next snapshot says how.
-    if (!told) {
-      const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: "failed", detail: "the import ended but its result could not be reported" };
-      this.#event("job.failed", { ...ref, error });
-    }
+    // A terminal event that the log refused leaves no gap in the sequence (a refused event uses no seq), so a window would stay on «running» for ever. The engine's emit throws
+    // only for that refusal (a port that is down is not one), so a send that failed here sent nothing and another event can take its place.
+    if (told) return;
+    // A job that succeeded is told as a success first, built from the media itself (the registry's copy of the result may be what the log refused); only when that fails too
+    // is it the smallest `job.failed`.
+    if (end.status === "done" && this.#event("job.done", { jobId, result: { kind: "import", mediaId: end.media.mediaId, media: end.media } })) return;
+    const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: "failed", detail: "the import ended but its result could not be reported" };
+    this.#event("job.failed", { ...ref, error });
   }
 
   // ---------- the turn: one import at a time ----------

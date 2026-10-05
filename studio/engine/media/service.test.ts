@@ -1296,6 +1296,25 @@ describe("an event that cannot be sent never jams the queue (L1 of the Stage 3 r
     expect(await until(() => r.jobs.stateOf(b)?.status === "done" && r.jobs.activeImports() === 0)).toBe(true);
   });
 
+  test("a job.done that cannot be sent once is sent again built from the stored media itself, and no job.failed follows it", async () => {
+    let refused = false;
+    const r: Rig = rig({
+      emit: (event) => {
+        if (event.type === "job.done" && !refused) {
+          refused = true;
+          throw broken();
+        }
+        r.events.push(event);
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    expect(await until(() => r.jobs.stateOf(a)?.status === "done")).toBe(true);
+    const done = r.events.filter((event) => event.type === "job.done" && event.payload.jobId === a);
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ payload: { result: { kind: "import", media: { kind: "photo" } } } });
+    expect(r.events.filter((event) => event.type === "job.failed")).toHaveLength(0);
+  });
+
   test("a terminal event that cannot be sent is replaced by a minimal job.failed, so the window does not stay on «running»", async () => {
     const r = rig({
       emit: (event) => {
