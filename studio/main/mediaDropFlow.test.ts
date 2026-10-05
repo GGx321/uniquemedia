@@ -251,7 +251,16 @@ describe("what main does with the dropped paths: a pick's own checks", () => {
       },
     };
     const first = drop({ paths: [path], more: 0 }, held);
-    await engineCalled;
+    // Bounded, so a drop that never reaches the engine fails here with its reason instead of hanging until the 60 s test timeout.
+    let gaveUp: ReturnType<typeof setTimeout> | undefined;
+    const outcome = await Promise.race([
+      engineCalled.then(() => "reached" as const),
+      new Promise<"never">((resolve) => {
+        gaveUp = setTimeout(() => resolve("never"), 10_000);
+      }),
+    ]);
+    clearTimeout(gaveUp);
+    if (outcome === "never") throw new Error("the first drop did not reach the engine within 10 s: its file checks never finished");
     const second = await drop({ paths: [path], more: 0 }, harness().deps);
     expect(second.ok ? "ok" : second.error.code).toBe("IN_FLIGHT");
     const command = CommandMessage.parse({ v: PROTOCOL_VERSION, id: "msg-000002", kind: "command", type: "media.pickImport", payload: { kind: "any" } });
