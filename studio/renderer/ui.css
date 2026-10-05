@@ -1782,8 +1782,11 @@ input[type="range"]::-webkit-slider-thumb {
   width: 190px;
 }
 
+/* The mockup's 336px up to 1440, then half of every extra pixel of window up to 560px (the five chips are ~500px): from
+   about 1800 the chips share one row and their note one line, so the card gets shorter and uses the width it has. The shot
+   column takes the rest; the price column stays put, its right edge in line with the gallery's. */
 .photos-gen-cats {
-  width: 336px;
+  width: clamp(336px, calc(336px + (100vw - 1440px) / 2), 560px);
 }
 
 .photos-stepper {
@@ -2062,8 +2065,10 @@ input[type="range"]::-webkit-slider-thumb {
   gap: 10px;
 }
 
+/* The mockup's 142.5 x 224 tile as a shape: a column that grows to fill the row (up to ~190px wide) keeps the same crop of
+   the 9:16 photo instead of a wider, shorter band of it. */
 .photo-tile {
-  height: 224px;
+  aspect-ratio: 142.5 / 224;
   border: 2px solid transparent;
   border-radius: 10px;
   background: var(--photo-queued); /* B3: no separate "empty" token — reuses the artboard's own image-less tile */

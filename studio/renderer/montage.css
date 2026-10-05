@@ -68,6 +68,20 @@
   text-align: right;
 }
 
+/* Narrower than the mockup, the header has no room for the reason beside the button (it broke into three 93px lines at
+   1200): it goes under the button instead, as wide as the button, and the name's counts get their line back. */
+@media (max-width: 1279px) {
+  .photos-montage:has(> .photos-montage-why) {
+    flex-direction: column-reverse;
+    align-items: flex-end;
+    gap: 4px;
+  }
+
+  .photos-montage-why {
+    text-wrap: balance;
+  }
+}
+
 .photo-pick:disabled {
   opacity: 0.35;
   cursor: not-allowed;
