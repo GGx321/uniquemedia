@@ -374,14 +374,14 @@ export class MediaService {
 
   async #execute(jobId: string, area: Area, opened: OpenedMedia, name: string, signal: AbortSignal): Promise<End> {
     if (!(await this.#turn(signal))) return { status: "cancelled" };
-    // Its turn came: a job that waited is announced again, now running.
-    if (this.#deps.jobs.startImportRunning(jobId)) this.#announce(jobId);
     const works: WorkFile[] = [];
     // Sealed when the job ends: an importer that was dropped (it ignored the cancel) and asks for a file later gets none, so nothing is
     // created that no cleanup would ever take (a held name is skipped by the staging's sweep).
     let sealed = false;
     let staged: StagedMedia | null = null;
     try {
+      // Its turn came: a job that waited is announced again, now running. Inside the `try`, so that nothing between taking the turn and the cleanup can keep the turn.
+      if (this.#deps.jobs.startImportRunning(jobId)) this.#announce(jobId);
       let lastPercent = 0;
       const copy = await opened.copy({
         signal,
@@ -591,8 +591,16 @@ export class MediaService {
     if (payload !== null) this.#event("job.progress", payload);
   }
 
+  /**
+   * Sends an event. A watcher is an observer: an event that cannot be sent (the log refused it, the schema did) is logged and never thrown, so that it cannot stop the
+   * import that told it (L1 of the Stage 3 review: a throw between «took the turn» and the cleanup kept the turn for ever and blocked every later import and a library switch).
+   */
   #event<T extends UnsequencedEvent["type"]>(type: T, payload: Extract<UnsequencedEvent, { type: T }>["payload"]): void {
-    this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type, payload } as UnsequencedEvent);
+    try {
+      this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type, payload } as UnsequencedEvent);
+    } catch (error) {
+      this.#deps.log(`an event could not be sent (${type}, ${errorCodeOf(error)})`);
+    }
   }
 }
 

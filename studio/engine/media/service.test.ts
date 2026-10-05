@@ -1115,6 +1115,88 @@ describe("what an unexpected failure logs (L-12)", () => {
   });
 });
 
+describe("an event that cannot be sent never jams the queue (L1 of the Stage 3 review)", () => {
+  const broken = (): Error => Object.assign(new Error("the event log is full"), { code: "EIO" });
+  const within = async <T,>(work: Promise<T>, ms = 2000): Promise<T | "timed out"> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"timed out">((resolve) => {
+      timer = setTimeout(() => resolve("timed out"), ms);
+    });
+    try {
+      return await Promise.race([work, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  test("the announcement of a started import fails: the import still starts, runs and ends, and the library is free again", async () => {
+    const r = rig({
+      emit: (event) => {
+        if (event.type === "job.progress") throw broken();
+      },
+    });
+    const ids: string[] = [];
+    for (const name of ["a.jpg", "b.jpg", "c.jpg"]) {
+      ids.push(await started(r, await callFor(name, jpeg(300 + ids.length))));
+      expect(await within(r.service.settled())).not.toBe("timed out");
+    }
+    for (const id of ids) expect(r.jobs.stateOf(id)).toMatchObject({ status: "done" });
+    expect(r.jobs.activeImports()).toBe(0);
+  });
+
+  test("the announcement of a waiting import turning to running fails: it still runs, and the next import gets its turn", async () => {
+    const gate = deferred();
+    const importer: MediaImporter = async () => {
+      await gate.promise;
+      return { ok: true, facts: PHOTO_FACTS };
+    };
+    let waiting: string | undefined;
+    const r = rig({
+      importers: { photo: importer },
+      emit: (event) => {
+        if (event.type === "job.progress" && event.payload.kind === "import" && event.payload.jobId === waiting && event.payload.queued !== true) throw broken();
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    const b = await started(r, await callFor("b.jpg", jpeg(310)));
+    waiting = b;
+    const c = await started(r, await callFor("c.jpg", jpeg(320)));
+    gate.resolve();
+    expect(await within(r.service.settled())).not.toBe("timed out");
+    for (const id of [a, b, c]) expect(r.jobs.stateOf(id)).toMatchObject({ status: "done" });
+    expect(r.jobs.activeImports()).toBe(0);
+  });
+
+  test("the event that ends a job fails: the job is over all the same, the next one runs, and nothing is left unhandled", async () => {
+    const unhandled: unknown[] = [];
+    const listener = (reason: unknown): void => void unhandled.push(reason);
+    process.on("unhandledRejection", listener);
+    try {
+      await endsWithABrokenEvent(unhandled);
+    } finally {
+      process.off("unhandledRejection", listener);
+    }
+  });
+
+  async function endsWithABrokenEvent(unhandled: unknown[]): Promise<void> {
+    const r = rig({
+      emit: (event) => {
+        if (event.type === "job.done") throw broken();
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    expect(await within(r.service.settled())).not.toBe("timed out");
+    const b = await started(r, await callFor("b.jpg", jpeg(310)));
+    expect(await within(r.service.settled())).not.toBe("timed out");
+    expect(r.jobs.stateOf(a)).toMatchObject({ status: "done" });
+    expect(r.jobs.stateOf(b)).toMatchObject({ status: "done" });
+    expect(r.jobs.activeImports()).toBe(0);
+    // Let a rejection that nobody handles surface.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(unhandled).toEqual([]);
+  }
+});
+
 describe("a full queue (the review's queue items)", () => {
   /** An importer every job waits in until `release`. */
   function held(): { importer: MediaImporter; release: () => void } {
