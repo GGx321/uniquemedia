@@ -7,6 +7,7 @@ import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
 import { ManualScheduler } from "../engine/scheduler";
 import { callsOf, describeElement, flush, focusedLabel, setup, tick } from "../testing";
 import { ANNOUNCE_MS } from "../ui/useAnnouncer";
+import { MEDIA_RETRY_DELAY_MS } from "../ui/useMediaRetry";
 
 // The photo viewer on the Photos screen's «Фото» tab: a click on a tile's photo opens it full size over the screen, with
 // «Фото N из M», its category and the tile's badges; ← and → step through the gallery as its filter shows it (no wrap);
@@ -552,7 +553,11 @@ describe("a photo that will not load", () => {
     const img = within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" });
     expect(img.tagName).toBe("IMG");
     expect(img.getAttribute("src")).toBe(`studio-media://photo/${MIA.avatarId}/${scenePhoto(2).photoId}`);
+    // A failed load is tried once more after a pause (503/504 from a busy disk); the second failure is the placeholder (ui/useMediaRetry.ts).
     fireEvent.error(img);
+    expect(within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" }).tagName).toBe("IMG");
+    await act(() => new Promise<void>((resolve) => setTimeout(resolve, MEDIA_RETRY_DELAY_MS + 60)));
+    fireEvent.error(within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" }));
     expect(within(viewer()).getByRole("img", { name: "Фото 1 из 2: Дом" }).classList.contains("portrait-placeholder")).toBe(true);
     expect(within(viewer()).getByText("Фото не открылось")).toBeDefined();
 

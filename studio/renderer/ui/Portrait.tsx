@@ -4,6 +4,7 @@ import { coversFrame, drawCap, type PixelSize } from "../lib/imageFit";
 import { photoUrl, placeholderGradient } from "../lib/media";
 import { type ContentSize, observeSize } from "./observeSize";
 import { useDevicePixelRatio } from "./useDevicePixelRatio";
+import { useMediaRetry } from "./useMediaRetry";
 
 /** The neutral figure over a placeholder; screens tint it with CSS (unreadable tiles, drawing slots). */
 export function Silhouette() {
@@ -78,12 +79,13 @@ function useFrameFit(frame: RefObject<HTMLElement | null>, src: string | null, c
  */
 export function Portrait({ avatarId, photoId, label }: { avatarId: string; photoId: string; label: string }) {
   const { client } = useEngine();
-  const [failedSrc, setFailedSrc] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<{ src: string; natural: PixelSize } | null>(null);
   const frame = useRef<HTMLSpanElement>(null);
   const src = photoUrl(avatarId, photoId);
-  // A failure and a natural size belong to the picture they came from: another photo id gets its own chance and its own load.
-  const failed = src !== null && failedSrc === src;
+  // A failure and a natural size belong to the picture they came from: another photo id gets its own chance and its own load. A failed load is tried once
+  // more after a pause (a busy or slow disk answers 503/504, which an `<img>` cannot tell from a missing file) before it is a placeholder.
+  const retry = useMediaRetry(src);
+  const failed = retry.failed;
   const natural = loaded !== null && loaded.src === src && !failed ? loaded.natural : null;
   // The ratio is followed only once there is a picture whose cap depends on it.
   const dpr = useDevicePixelRatio(natural !== null);
@@ -98,7 +100,7 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
     <span ref={frame} className="portrait" data-fit={banded ? "capped" : undefined}>
       {backdrop && <img key={`backdrop-${src}`} className="portrait-backdrop" src={src} alt="" aria-hidden="true" decoding="async" draggable={false} />}
       <img
-        key={src}
+        key={`${src}#${retry.key}`}
         className="portrait-img"
         src={src}
         alt={label}
@@ -106,7 +108,7 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
         decoding="async"
         style={capStyle}
         onLoad={(e) => setLoaded({ src, natural: { width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight } })}
-        onError={() => setFailedSrc(src)}
+        onError={retry.onError}
       />
     </span>
   );

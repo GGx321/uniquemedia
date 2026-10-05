@@ -8,6 +8,7 @@ import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { PortraitPlaceholder } from "../../ui/Portrait";
 import { useAnnouncer } from "../../ui/useAnnouncer";
+import { useMediaRetry } from "../../ui/useMediaRetry";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
 import { CATEGORY_LABEL } from "./runForm";
@@ -240,9 +241,9 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
 /** The photo at full size, or the placeholder, large: always in the dev mock (it has no pictures), and when the file will not load. */
 function ViewerPhoto({ photo, label }: { photo: PhotoSummary; label: string }) {
   const { client } = useEngine();
-  const [failed, setFailed] = useState(false);
   const src = photoUrl(photo.avatarId, photo.photoId);
-  const broken = failed || src === null;
+  const retry = useMediaRetry(src);
+  const broken = retry.failed || src === null;
   if (client.kind === "mock" || broken) {
     return (
       <div className="viewer-ph">
@@ -255,5 +256,5 @@ function ViewerPhoto({ photo, label }: { photo: PhotoSummary; label: string }) {
       </div>
     );
   }
-  return <img className="viewer-img" src={src} alt={label} decoding="async" onError={() => setFailed(true)} />;
+  return <img key={retry.key} className="viewer-img" src={src} alt={label} decoding="async" onError={retry.onError} />;
 }

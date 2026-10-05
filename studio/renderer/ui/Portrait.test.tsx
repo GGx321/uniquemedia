@@ -5,6 +5,7 @@ import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { EngineProvider } from "../engine/react";
 import { ManualScheduler } from "../engine/scheduler";
 import { Portrait } from "./Portrait";
+import { MEDIA_RETRY_DELAY_MS } from "./useMediaRetry";
 
 // The large-screen audit (H2): a library picture is never drawn noticeably past its own pixels (lib/imageFit.ts). Once a portrait has
 // loaded, its frame is measured against the picture's cap for the screen's pixel ratio. A picture that cannot fill its frame within
@@ -121,6 +122,9 @@ function renderPortraits(photoIds: readonly string[]): { show: (next: readonly s
   const { rerender, unmount } = render(tree(photoIds));
   return { show: (next) => rerender(tree(next)), unmount };
 }
+
+/** Waits out the pause before a failed picture is asked for again. */
+const retryPause = (): Promise<void> => act(() => new Promise<void>((resolve) => setTimeout(resolve, MEDIA_RETRY_DELAY_MS + 60)));
 
 /** One portrait whose photo id can change in place (a draft card's last candidate). */
 function renderPortrait(photoId: string = PHOTO): { show: (next: string) => void; unmount: () => void } {
@@ -394,7 +398,7 @@ test("another photo in the same place is a new picture: it waits for its own siz
   expect(fit(second)).toBeNull();
 });
 
-test("a picture that will not load falls back to the placeholder, with no backdrop left behind", () => {
+test("a picture that will not load falls back to the placeholder, with no backdrop left behind", async () => {
   pixelRatio(2);
   layOut({ width: 212, height: 224 });
   renderPortrait();
@@ -402,7 +406,11 @@ test("a picture that will not load falls back to the placeholder, with no backdr
   load(img, 246, 281);
   expect(hasBackdrop(img)).toBe(true);
 
+  // One failure is a second try after a pause (a busy or slow disk answers 503/504); only the second is the placeholder (useMediaRetry.ts).
   fireEvent.error(img);
+  expect(picture().tagName).toBe("IMG");
+  await retryPause();
+  fireEvent.error(picture());
 
   const stand = screen.getByRole("img", { name: LABEL });
   expect(stand.tagName).toBe("SPAN");
@@ -411,10 +419,12 @@ test("a picture that will not load falls back to the placeholder, with no backdr
   expect(document.querySelector("img") === null).toBe(true);
 });
 
-test("a photo that would not load does not hold back the next one in the same place", () => {
+test("a photo that would not load does not hold back the next one in the same place", async () => {
   pixelRatio(2);
   layOut({ width: 212, height: 224 });
   const view = renderPortrait();
+  fireEvent.error(picture());
+  await retryPause();
   fireEvent.error(picture());
   expect(screen.getByRole("img", { name: LABEL }).tagName).toBe("SPAN");
 

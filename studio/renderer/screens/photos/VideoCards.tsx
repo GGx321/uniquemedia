@@ -7,6 +7,7 @@ import { errorText } from "../../lib/errors";
 import { countOf, NBSP } from "../../lib/format";
 import { coverUrl, placeholderGradient, posterUrl } from "../../lib/media";
 import { Icon, PlayIcon, Spin } from "../../ui/Icon";
+import { useMediaRetry } from "../../ui/useMediaRetry";
 import { ClipPoster } from "../montage/ClipPoster";
 import { draftMeta, draftName, whenLabel } from "../montage/labels";
 import { deleteConfirmText, durationPill, failedRenderLine, videoCardView, videoMeta } from "./videosModel";
@@ -19,12 +20,13 @@ const RENDER_FORMS = ["рендера", "рендеров", "рендеров"] 
 /** The poster of a card: the record's poster frame when it has one, else its first clip as rendered (the drafts' still), else a stand-in. */
 function Poster({ avatarId, videoId, hasPoster, clip, children }: { avatarId: string; videoId: string | null; hasPoster: boolean; clip: VideoSummary["firstClip"]; children?: ReactNode }) {
   const { client } = useEngine();
-  const [failed, setFailed] = useState(false);
-  const poster = hasPoster && videoId !== null && client.kind !== "mock" && !failed ? posterUrl(avatarId, videoId) : null;
+  const address = hasPoster && videoId !== null && client.kind !== "mock" ? posterUrl(avatarId, videoId) : null;
+  const retry = useMediaRetry(address);
+  const poster = retry.failed ? null : address;
   return (
     <div className="ph video-poster" aria-hidden="true">
       {poster !== null ? (
-        <img className="video-poster-img" src={poster} alt="" decoding="async" onError={() => setFailed(true)} />
+        <img key={retry.key} className="video-poster-img" src={poster} alt="" decoding="async" loading="lazy" onError={retry.onError} />
       ) : clip !== null ? (
         <ClipPoster clip={clip} avatarId={avatarId} />
       ) : (
@@ -38,17 +40,18 @@ function Poster({ avatarId, videoId, hasPoster, clip, children }: { avatarId: st
 /** «Birds of a Feather · Billie Eilish» with the track's cover and its «E»; «без музыки» for a silent video. */
 function MusicLine({ music, tracks }: { music: VideoSummary["music"]; tracks: ReadonlyMap<string, TrackSummary> }) {
   const { client } = useEngine();
-  const [failed, setFailed] = useState(false);
+  const track = music === null || music.trackId === null ? undefined : tracks.get(music.trackId);
+  const address = music !== null && music.trackId !== null && track?.hasCover === true && client.kind !== "mock" ? coverUrl(music.trackId) : null;
+  const retry = useMediaRetry(address);
   if (music === null) return <span className="faint video-nomusic">без музыки</span>;
-  const track = music.trackId === null ? undefined : tracks.get(music.trackId);
-  const cover = music.trackId !== null && track?.hasCover === true && client.kind !== "mock" && !failed ? coverUrl(music.trackId) : null;
+  const cover = retry.failed ? null : address;
   const text = music.artist === null ? music.title : `${music.title} · ${music.artist}`;
   return (
     <div className="video-music">
       {cover === null ? (
         <span className="video-cover" aria-hidden="true" style={{ background: placeholderGradient(music.trackId ?? music.title) }} />
       ) : (
-        <img className="video-cover" src={cover} alt="" onError={() => setFailed(true)} />
+        <img key={retry.key} className="video-cover" src={cover} alt="" loading="lazy" onError={retry.onError} />
       )}
       <span className="muted video-music-text" lang="en">
         {text}

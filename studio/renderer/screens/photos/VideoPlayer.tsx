@@ -1,10 +1,11 @@
-import { useId, useRef, useState } from "react";
+import { useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import type { VideoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { videoUrl } from "../../lib/media";
 import { Icon } from "../../ui/Icon";
 import { FocusEdge } from "../../ui/FocusEdge";
+import { useMediaRetry } from "../../ui/useMediaRetry";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { draftName } from "../montage/labels";
 
@@ -20,8 +21,9 @@ export function VideoPlayer({ video, onClose }: { video: VideoSummary; onClose: 
   const scrimRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
-  const [failed, setFailed] = useState(false);
   const src = videoUrl(video.avatarId, video.videoId);
+  const retry = useMediaRetry(src);
+  const failed = retry.failed;
   const name = draftName(video.title);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose });
   const backdrop = useBackdropClose(onClose, [scrimRef]);
@@ -43,7 +45,7 @@ export function VideoPlayer({ video, onClose }: { video: VideoSummary; onClose: 
         <div className="player-frame">
           {playable ? (
             // The file has no captions track: on-video text is burnt in.
-            <video className="player-video" src={src ?? undefined} controls autoPlay playsInline onError={() => setFailed(true)} />
+            <video key={retry.key} className="player-video" src={src ?? undefined} controls autoPlay playsInline onError={retry.onError} />
           ) : (
             <p className="player-none">{failed ? "Файл не открылся: он изменён, переименован или папка «Готовые видео» недоступна." : "Видео показывает только приложение с движком."}</p>
           )}
