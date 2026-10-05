@@ -100,7 +100,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   // change to any of them (Settings, another window) asks again, and the old
   // price is not shown meanwhile.
   const settings = view.settings;
-  const key = `${requestKey(request)}|${settings?.imageAgeCheck ?? ""}|${settings?.imageModel ?? ""}|${settings?.textModel ?? ""}`;
+  const key = `${requestKey(request)}|${settings?.imageAgeCheck ?? ""}|${settings?.imageModel ?? ""}|${settings?.imageQuality ?? ""}|${settings?.textModel ?? ""}`;
   // LOW-10: a layout effect, not a render-body assignment — still committed
   // before `start`'s own async continuations can ever read it (they only
   // resume after an await, always later than any synchronous commit), but
@@ -262,10 +262,10 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const reviewLabel = `${ids}-review`;
   const reviewSoon = `${ids}-review-soon`;
   const imageModel = view.settings ? modelName(view.settings.imageModel) : null;
-  // The engine's own route (runs/plan.ts's runRoute) sends quality "low" for
-  // the settings' own image model, but quality null once that model already
-  // is the Seedream fallback — nothing lower to fall back to (L3).
-  const imageQuality = view.settings && view.settings.imageModel !== SEEDREAM_FALLBACK_IMAGE_MODEL ? "low · " : "";
+  // The engine's own route (runs/plan.ts's runRoute) sends the settings' image quality (null for a model with no quality knob) to the
+  // settings' own image model, but none once that model already is the Seedream fallback — nothing lower to fall back to (L3).
+  const imageQuality =
+    view.settings && view.settings.imageQuality !== null && view.settings.imageModel !== SEEDREAM_FALLBACK_IMAGE_MODEL ? `${view.settings.imageQuality} · ` : "";
 
   return (
     <>
