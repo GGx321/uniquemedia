@@ -5,6 +5,8 @@ import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { RenderFailure } from "../renderQueue/queue";
 import type { VerifiedFile } from "../verify";
+import { NODE_COMMIT_FS } from "./commitFs";
+import { commitIntent, writeIntent } from "./intents";
 import { commitVideo, VerifyRefusedError, type CommitInput, type CommitStep } from "./commit";
 import { videoPaths, VideoRecordSchema } from "./record";
 import {
@@ -19,6 +21,7 @@ import {
   listTree,
   openFolder,
   rig,
+  sampleRecord,
   sha256Of,
   useWorld,
   writeTemp,
@@ -131,6 +134,77 @@ describe("the commit's happy path", () => {
     const [x, y] = await Promise.all([a.run(), commitVideo(a.target(), bInput, { fs: faultyFs(), libraryRoot: w.libraryRoot, verify: acceptingVerify })]);
     expect(new Set([x.record.file.relPath, y.record.file.relPath]).size).toBe(2);
     expect((await exportFiles(w)).sort()).toEqual([x.record.file.relPath, y.record.file.relPath].sort());
+  });
+});
+
+describe("a number that a record or an intent of the day still names is never reused (stage 3 review 3-M2)", () => {
+  /** A record committed for real, whose file the OWNER has since deleted in Finder: only the record is left. */
+  async function recordWithoutFile(w: World, n: number, over: { kind?: string; date?: string } = {}): Promise<string> {
+    const relPath = `Mia/${over.date ?? "2026-09-29"}_${over.kind ?? "photo"}_${String(n).padStart(3, "0")}.mp4`;
+    const record = sampleRecord(w, { videoId: `video-000000a${n}`, jobId: `job-000000a${n}`, relPath });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    await commitIntent(NODE_COMMIT_FS, w.libraryRoot, w.avatar.id, record.id);
+    return relPath;
+  }
+
+  test("a record names _001 though its file is gone: the next video takes _002, never _001", async () => {
+    const r = await rig(world);
+    const taken = await recordWithoutFile(r.w, 1);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+    expect(out.record.file.relPath).not.toBe(taken);
+  });
+
+  test("an intent in .pending names _001 though its file is not there (yet): the next video takes _002", async () => {
+    const r = await rig(world);
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, sampleRecord(r.w, { videoId: "video-000000b1", jobId: "job-000000b1" }));
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+  });
+
+  test("the numbers go on from the highest one a record names: a gap below it is not filled", async () => {
+    const r = await rig(world);
+    await recordWithoutFile(r.w, 3);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_004.mp4");
+  });
+
+  test("a record of another day or another kind does not move the counter", async () => {
+    const r = await rig(world);
+    await recordWithoutFile(r.w, 5, { date: "2026-09-28" });
+    await recordWithoutFile(r.w, 6, { kind: "mix" });
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe(FINAL);
+  });
+
+  test("a record of another export root does not move the counter (its number is another folder's)", async () => {
+    const r = await rig(world);
+    const other = sampleRecord(r.w, { videoId: "video-000000c1", jobId: "job-000000c1", rootId: "11111111-2222-4333-8444-555555555555", relPath: "Mia/2026-09-29_photo_007.mp4" });
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, other);
+    await commitIntent(NODE_COMMIT_FS, r.w.libraryRoot, r.w.avatar.id, other.id);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe(FINAL);
+  });
+
+  test("a record file that is not a usable record is left out of the count, and the commit goes on", async () => {
+    const r = await rig(world);
+    const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
+    mkdirSync(paths.videosDir, { recursive: true });
+    writeFileSync(paths.record("video-000000d1"), "{ not json");
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe(FINAL);
   });
 });
 

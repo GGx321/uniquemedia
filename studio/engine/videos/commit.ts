@@ -10,6 +10,7 @@ import { VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import { RenderFailure } from "../renderQueue/queue";
 import { verifyAndHashMp4, type VerifiedFile, type VerifyExpected, type VerifyReasonCode } from "../verify";
 import type { CommitFs, FileFacts, FileIdentity } from "./commitFs";
+import { highestNamedNumber } from "./exportNumbers";
 import { commitIntent, writeIntent } from "./intents";
 import { parseRecordSpec, partNameOf, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
 import { withRootLock } from "./rootLock";
@@ -366,6 +367,10 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
           await inPhase("export", async () => deps.beforeClaim?.());
           // 3. Claim the name: an empty placeholder, exclusively. The folder is checked first.
           await inPhase("export", checkFolder);
+          // A number that a record or an intent of the day still names is not free, whatever the folder shows (the owner may have deleted that file): the counter starts above it.
+          const highestNamed = await inPhase("library", () =>
+            highestNamedNumber(deps.libraryRoot, input.avatarId, { rootId: target.rootId, folderName: folder.name, date: input.date, kind: input.videoKind, caseInsensitive: target.caseInsensitive }),
+          );
           // The point of no return: the last look at a cancel, and the call that says "saving", with nothing awaited between.
           signal?.throwIfAborted();
           deps.onSaving?.();
@@ -381,7 +386,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
                 folder,
                 date: input.date,
                 kind: input.videoKind,
-                ...(deps.claimStartAt === undefined ? {} : { startAt: deps.claimStartAt }),
+                startAt: Math.max(deps.claimStartAt ?? 1, highestNamed + 1),
               });
             } catch (error) {
               if (error instanceof ExportNamesExhaustedError) throw new RenderFailure({ code: "INTERNAL", detail: "no free export name is left for today" });
