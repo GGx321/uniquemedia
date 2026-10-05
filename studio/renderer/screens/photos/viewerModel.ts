@@ -26,9 +26,10 @@ export function viewerPlace(list: readonly PhotoSummary[], photoId: string): Vie
 
 /**
  * What the arrows step through: the gallery's photos under its filter (`shown`, in the gallery's order), and the photo on
- * screen even when an action taken in the viewer moved it out of that filter (rejected under «Неиспользованные», restored
- * under «Отклонённые»): it keeps its gallery place until the owner steps away from it, so a mark never closes the viewer
- * under him. A photo gone from the gallery itself (`all`) is not brought back.
+ * screen even when it no longer matches that filter, for whatever reason (rejected in the viewer under «Неиспользованные»,
+ * restored under «Отклонённые», marked or put into a video by another window): it keeps its gallery place until the owner
+ * steps away from it, so a change of state never closes the viewer under him. A photo gone from the gallery itself (`all`)
+ * is not brought back.
  */
 export function viewerPhotos(all: readonly PhotoSummary[], shown: readonly PhotoSummary[], currentId: string | null): readonly PhotoSummary[] {
   if (currentId === null || shown.some((p) => p.photoId === currentId)) return shown;
