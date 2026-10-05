@@ -226,6 +226,8 @@ export class Library {
   readonly #brokenRejectLogs = new Map<string, string>();
   /** Each avatar's readable video records: what "used" is derived from. */
   readonly #videosByAvatar = new Map<string, VideoRecordUse[]>();
+  /** The photos of commit intents that are still pending (a crash's leftover recovery has not settled, or deferred), by video id: held like a reservation until the intent is adopted or dropped. */
+  readonly #pendingHolds = new Map<string, { readonly avatarId: string; readonly photoIds: readonly string[] }>();
   /** Avatars with a file in videos/ that is not a usable record, with the reason: their usage cannot be trusted. */
   readonly #videoProblems = new Map<string, VideoRecordProblem[]>();
   /** Avatars whose used index missed a video that IS committed on disk (the commit's index update and its reload both failed), with those videos. */
@@ -680,7 +682,9 @@ export class Library {
    */
   photoStates(avatarId: string): Map<string, PhotoState> {
     const masterPhotoId = this.#avatars.get(avatarId)?.masterPhotoId ?? null;
-    const reserved = this.#reservedPhotos(avatarId);
+    const reserved = new Set(this.#reservedPhotos(avatarId));
+    // A pending commit intent's photos are held as a reservation is (fail closed): its file may be adopted any time, and one photo goes into one video.
+    for (const hold of this.#pendingHolds.values()) if (hold.avatarId === avatarId) for (const photoId of hold.photoIds) reserved.add(photoId);
     const marksReadable = !this.#brokenRejectLogs.has(avatarId);
     const usedIn = new Map<string, string[]>();
     for (const { videoId, photoIds } of this.#videosByAvatar.get(avatarId) ?? []) {
@@ -858,11 +862,28 @@ export class Library {
     return [...(this.#videoIndexStale.get(avatarId) ?? [])].sort();
   }
 
+  /**
+   * A commit intent is pending (written, not yet a record): its photos count as reserved until `releasePendingPhotos`, which recovery calls when it
+   * adopts the intent (the record then makes them used) or drops it. Without this the photos of an intent that recovery DEFERRED (the export folder
+   * absent at start) would look free all session, a new render would take them, and the intent adopted later would put one photo in two videos.
+   * Holding the same video id again replaces its photos.
+   */
+  holdPendingPhotos(avatarId: string, videoId: string, photoIds: readonly string[]): void {
+    this.#pendingHolds.set(videoId, { avatarId, photoIds: [...photoIds] });
+  }
+
+  /** Ends the hold of one pending intent (adopted or dropped); one that was never held changes nothing. */
+  releasePendingPhotos(videoId: string): void {
+    this.#pendingHolds.delete(videoId);
+  }
+
   /** Task 3a.8b's delete: the record is gone from disk, so its photos are freed. An unknown record changes nothing. */
   removeVideoRecordFromIndex(avatarId: string, videoId: string): void {
     // The generation moves even when the index never knew the record: a reload that already read it must not bring it back.
     this.#videosByAvatar.set(avatarId, (this.#videosByAvatar.get(avatarId) ?? []).filter((r) => r.videoId !== videoId));
     this.#videoGeneration.set(avatarId, (this.#videoGeneration.get(avatarId) ?? 0) + 1);
+    // A delete also removes a leftover intent of the same video (delete.ts), so a hold made for it ends with it.
+    this.#pendingHolds.delete(videoId);
   }
 
   /**

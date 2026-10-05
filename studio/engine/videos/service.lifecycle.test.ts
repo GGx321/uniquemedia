@@ -376,6 +376,35 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
   });
 });
 
+describe("an intent recovery deferred (stage 3 review 3-M3: one photo, one video)", () => {
+  test("with the export folder absent at start, the intent's photos stay held all session: a new render with them is refused, and the intent is adopted later into ONE video", async () => {
+    const w = world();
+    const bytes = new Uint8Array(2048).fill(7);
+    const crashed = sampleRecord(w, { bytes, videoId: "video-0000000a", jobId: "job-0000000a" });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, crashed);
+    mkdirSync(join(w.exportRoot, "Mia"), { recursive: true });
+    writeFileSync(join(w.exportRoot, FINAL), bytes);
+    const library = await w.reopen();
+    const r = serviceRig(w, { library });
+
+    // The start finds the export folder absent: the intent is deferred.
+    r.service.startup(library, { ok: false, reason: "missing" });
+    await r.service.settled();
+    // The folder is back by the time the owner renders, and asks for the SAME photo.
+    const error = await r.service.render({ spec: specFor(w) }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(EngineFailure);
+    expect(error).toMatchObject({ error: { code: "PHOTO_UNAVAILABLE" } });
+    // The next open settles the intent: its video is the only one that has the photo.
+    r.service.libraryOpened(library);
+    await r.service.settled();
+    expect(library.photoStates(w.avatar.id).get(photoId(w, 0))).toMatchObject({ reserved: false, usedIn: [crashed.id] });
+  });
+});
+
 describe("startup", () => {
   test("sweeps render-tmp beside the recovery, leaving the folder of a job that is running", async () => {
     const w = world();

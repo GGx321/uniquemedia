@@ -117,6 +117,82 @@ describe("recovery and a live commit exclude each other (per export root)", () =
   });
 });
 
+describe("the photos of a pending intent are held until recovery resolves it (stage 3 review 3-M3)", () => {
+  const photo = (w: World, library: { photoStates(id: string): Map<string, { reserved: boolean; usedIn: string[] }> }) => library.photoStates(w.avatar.id).get(w.photos[0]?.id ?? "");
+
+  test("an intent deferred because the export folder is absent keeps its photos out of reach: reserved, not free, for as long as it is pending", async () => {
+    const w = world();
+    const bytes = fakeVideoBytes(2048);
+    const record = sampleRecord(w, { bytes });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const library = await w.reopen();
+
+    const report = await recoverVideos({ library, exportRoot: null });
+
+    expect(report.deferred).toEqual([{ videoId: record.id, reason: "export-unavailable" }]);
+    expect(photo(w, library)).toMatchObject({ reserved: true, usedIn: [] });
+    expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).not.toContain(w.photos[0]?.id);
+  });
+
+  test("an intent for another export root is held the same way", async () => {
+    const w = world();
+    const record = sampleRecord(w, { rootId: "11111111-2222-4333-8444-555555555555" });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const library = await w.reopen();
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) });
+
+    expect(report.deferred).toEqual([{ videoId: record.id, reason: "other-root" }]);
+    expect(photo(w, library)?.reserved).toBe(true);
+  });
+
+  test("the hold ends when the intent is adopted: the photos are USED by the record, not reserved, and in one video only", async () => {
+    const w = world();
+    const bytes = fakeVideoBytes(2048);
+    const record = sampleRecord(w, { bytes });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    mkdirSync(join(w.exportRoot, "Mia"), { recursive: true });
+    writeFileSync(join(w.exportRoot, FINAL), bytes);
+    const library = await w.reopen();
+    await recoverVideos({ library, exportRoot: null });
+    expect(photo(w, library)?.reserved).toBe(true);
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) });
+
+    expect(report.adopted).toEqual([record.id]);
+    expect(photo(w, library)).toMatchObject({ reserved: false, usedIn: [record.id] });
+  });
+
+  test("the hold ends when the intent is dropped: its photos are free again", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const library = await w.reopen();
+    await recoverVideos({ library, exportRoot: null });
+    expect(photo(w, library)?.reserved).toBe(true);
+
+    // The root is usable now and the intent's file never existed.
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) });
+
+    expect(report.dropped).toEqual([{ videoId: record.id, reason: "no-file" }]);
+    expect(photo(w, library)).toMatchObject({ reserved: false, usedIn: [] });
+  });
+
+  test("an intent a running job owns is not held by recovery: the queue's reservation covers it, and a rollback must not leave the photos stuck", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const tracker = new CommitTracker();
+    tracker.addJob(record.jobId, record.id);
+    const library = await w.reopen();
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w), live: tracker });
+
+    expect(report.deferred).toEqual([{ videoId: record.id, reason: "live" }]);
+    expect(photo(w, library)?.reserved).toBe(false);
+  });
+});
+
 describe("adoption", () => {
   test("a record that already names the same file stops a second intent from being adopted (two records, one file)", async () => {
     const w = world();

@@ -57,7 +57,7 @@ export interface ExportRootRef {
 }
 
 export interface RecoverInput {
-  readonly library: Pick<Library, "root" | "listAvatars"> & IndexPort;
+  readonly library: Pick<Library, "root" | "listAvatars" | "holdPendingPhotos" | "releasePendingPhotos"> & IndexPort;
   /** The current export root, or null when the last check refused it (its intents are then kept). */
   readonly exportRoot: ExportRootRef | null;
   /** The renders running now (`CommitTracker`). */
@@ -355,7 +355,13 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           }
           const parsed = VideoRecordSchema.safeParse(value);
           if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) loaded.push({ ...base, left: "unreadable" });
-          else loaded.push({ ...base, record: parsed.data });
+          else {
+            loaded.push({ ...base, record: parsed.data });
+            // Until this intent is adopted or dropped, its photos are held: its file may be adopted at any time, and a run that defers it
+            // (the export folder absent, another root, a busy lock) must not leave them looking free all session. A job that is running
+            // owns its intent, and the queue holds its photos: a hold here would outlive a rollback.
+            if (live?.hasJob(parsed.data.jobId) !== true) input.library.holdPendingPhotos(avatar.id, videoId, scenePhotoIds(parsed.data.spec.clips));
+          }
         } catch (error) {
           if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked: nothing to settle
           if (signal.aborted) throw error;
@@ -464,7 +470,12 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         continue;
       }
       try {
+        const deferredBefore = report.deferred.length;
         await settleIntent(file, avatarIds);
+        // Adopted (its record makes the photos used), dropped, gone, or a live job's: the hold ends. Deferred for anything else, it stays;
+        // a settle that failed stays held too (the catch below), since nothing is known about the intent.
+        const deferred = report.deferred.slice(deferredBefore).find((entry) => entry.videoId === file.videoId);
+        if (file.videoId !== undefined && (deferred === undefined || deferred.reason === "live")) input.library.releasePendingPhotos(file.videoId);
       } catch (error) {
         if (signal.aborted) return;
         skip("intent", error);

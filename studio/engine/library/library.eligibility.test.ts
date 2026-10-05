@@ -432,6 +432,46 @@ describe("reserved: photos a queued or running render holds", () => {
     expect(asked).toEqual([avatar.id]);
   });
 
+  test("the photos of a pending commit intent are held until it is resolved: reserved, not eligible-unused, and free again once released (stage 3 review 3-M3)", async () => {
+    const { library, avatar } = await savedAvatar();
+    const held = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
+    const free = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
+
+    library.holdPendingPhotos(avatar.id, "video-00000001", [held.id]);
+
+    expect(library.photoStates(avatar.id).get(held.id)).toMatchObject({ reserved: true, eligible: true, usedIn: [] });
+    expect(ids(library.eligibleUnusedPhotos(avatar.id))).toEqual([free.id]);
+
+    library.releasePendingPhotos("video-00000001");
+
+    expect(ids(library.eligibleUnusedPhotos(avatar.id))).toEqual([held.id, free.id]);
+  });
+
+  test("a pending hold is per intent: releasing one leaves the photos of another held, and a photo two intents name stays held until both are released", async () => {
+    const { library, avatar } = await savedAvatar();
+    const a = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
+    const b = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
+    library.holdPendingPhotos(avatar.id, "video-0000000a", [a.id, b.id]);
+    library.holdPendingPhotos(avatar.id, "video-0000000b", [b.id]);
+
+    library.releasePendingPhotos("video-0000000a");
+    expect(ids(library.eligibleUnusedPhotos(avatar.id))).toEqual([a.id]);
+
+    library.releasePendingPhotos("video-0000000b");
+    expect(ids(library.eligibleUnusedPhotos(avatar.id))).toEqual([a.id, b.id]);
+  });
+
+  test("a hold is kept for the avatar it was made for only, and releasing an intent that was never held changes nothing", async () => {
+    const { library, avatar } = await savedAvatar({}, "Mia");
+    const other = await library.createAvatar({ ...SAMPLE_AVATAR, name: "Zoe" });
+    const photo = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
+
+    library.holdPendingPhotos(other.id, "video-00000001", [photo.id]);
+    library.releasePendingPhotos("video-00000009");
+
+    expect(ids(library.eligibleUnusedPhotos(avatar.id))).toEqual([photo.id]);
+  });
+
   test("with no provider nothing is reserved", async () => {
     const { library, avatar } = await savedAvatar();
     const photo = await library.addPhoto(avatar.id, PNG_1X1, scene(PASSING));
