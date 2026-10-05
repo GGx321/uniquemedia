@@ -8,7 +8,7 @@ import type { FfmpegChild, FfmpegSpawner } from "../../node/runFfmpeg";
 import { configureFfmpegEnv } from "../../node/ffmpegEnv";
 import { fixtureBytes } from "../media/fixtures/music";
 import { decodeAudio, DecodeError, hasUnreadableStreamLine, inspectStreams, PEAK_STEP_MS, streamTypesOf } from "./decodeCheck";
-import { box, concat, fullBox, u32 } from "./testing/m4aBuilder";
+import { box, concat, esdsBox, fullBox, graft, u32 } from "./testing/m4aBuilder";
 import { musicTracks } from "./fixtures";
 import { probeMp4Audio } from "./mp4aProbe";
 import { spawnSync } from "node:child_process";
@@ -100,14 +100,17 @@ describe("audio that is not what the list claimed", () => {
 
   // Re-review 6: not only the arguments. A real MP3 muxed into an mp4 (the mov muxer stores it under an `mp4a` entry with
   // objectTypeIndication 0x6b) is what `-c:a aac` refuses: ffmpeg exits with no samples instead of decoding it.
-  test("a real MP3 inside an mp4a entry is not decoded: the walker refuses it, and the AAC-only decoder exits with no output on its own", async () => {
+  // Two gates, each held on its own. Since the stream check names the codec (`not-aac`, under `-codec_whitelist aac`), a real MP3 stops there; the decode's own
+  // `-c:a aac` + whitelist is what remains if that gate is ever wrong, so it is tested with the stream check stood in for.
+  test("a real MP3 inside an mp4a entry is not decoded: the walker refuses it, the stream check refuses it as not-aac, and the AAC-only decode exits with no output on its own", async () => {
     dir = await mkdtemp(join(tmpdir(), "studio-decode-"));
     const path = join(dir, "mp3.m4a");
     const made = spawnSync(ffmpegPath(), ["-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-c:a", "libmp3lame", "-f", "mp4", path]);
     expect(made.status).toBe(0);
     const probe = probeMp4Audio(new Uint8Array(await readFile(path)));
     expect(probe.ok).toBe(false);
-    expect((await failureOf(decodeAudio({ path, expectedMs: 2_000, signal: signal() }))).kind).toBe("exit");
+    expect((await failureOf(decodeAudio({ path, expectedMs: 2_000, signal: signal() }))).kind).toBe("not-aac");
+    expect((await failureOf(decodeAudio({ streams: oneAudio, path, expectedMs: 2_000, signal: signal() }))).kind).toBe("exit");
   });
 
   test("a truncated file does not pass for the whole track", async () => {
@@ -717,5 +720,82 @@ describe("a file that writes ffmpeg's dump", () => {
       const made = spawnSync(ffmpegPath(), ["-nostdin", "-hide_banner", "-f", "mov", "-i", path]);
       expect(made.stderr.byteLength).toBeLessThan(8 * 1024);
     }
+  });
+});
+
+// Stage 3 whole-slice review M1: the stream check is the only gate that runs ffmpeg's own probing on bytes from the CDN, and ffmpeg opens whatever decoder the
+// FILE names (a second `esds` makes it DTS, Vorbis, MP3). Only the AAC decoder may ever see these bytes: `-codec_whitelist aac` keeps every other decoder from
+// being opened, and the stream line must say `aac`.
+describe("only the AAC decoder may open a track's bytes", () => {
+  const dumpOf = (...lines: string[]): FfmpegSpawner => {
+    return () => {
+      const child = new EventEmitter() as EventEmitter & FfmpegChild & { exitCode: number | null; stdout: PassThrough; stderr: PassThrough };
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      child.exitCode = null;
+      child.kill = () => true;
+      queueMicrotask(() => {
+        child.stderr.write(`${lines.join("\n")}\nAt least one output file must be specified\n`);
+        child.stdout.end();
+        child.exitCode = 1;
+        child.emit("close", 1, null);
+      });
+      return child;
+    };
+  };
+
+  test("the stream check allows no codec but aac, before the input", async () => {
+    let args: readonly string[] = [];
+    const spawner: FfmpegSpawner = (command, given, options) => {
+      args = given;
+      return dumpOf("  Stream #0:0: Audio: aac (LC), 44100 Hz, stereo")(command, given, options);
+    };
+    await inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner });
+    expect(args.slice(args.indexOf("-codec_whitelist"), args.indexOf("-codec_whitelist") + 2)).toEqual(["-codec_whitelist", "aac"]);
+    expect(args.indexOf("-codec_whitelist")).toBeLessThan(args.indexOf("-i"));
+  });
+
+  test("the decode allows no codec but aac either, before the input, beside the forced AAC decoder", async () => {
+    let args: readonly string[] = [];
+    const { spawner } = fakeSpawner({ stdout: [pcm(8)], onSpawn: (given) => void (args = given) });
+    await decodeAudio({ streams: oneAudio, path: "/tmp/x.m4a", expectedMs: 8_000, signal: signal(), spawner });
+    expect(args.slice(args.indexOf("-codec_whitelist"), args.indexOf("-codec_whitelist") + 2)).toEqual(["-codec_whitelist", "aac"]);
+    expect(args.indexOf("-codec_whitelist")).toBeLessThan(args.indexOf("-i"));
+    expect(args.slice(args.indexOf("-c:a"), args.indexOf("-c:a") + 2)).toEqual(["-c:a", "aac"]);
+  });
+
+  test.each(["vorbis", "dca (DTS)", "mp3float", "mp3", "ac3", "eac3", "aac_latm", "opus", "flac"])("an audio stream whose codec ffmpeg reads as %s is refused as not-aac", async (codec) => {
+    const spawner = dumpOf(`  Stream #0:0[0x1](und): Audio: ${codec} (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 91 kb/s (default)`);
+    await expect(inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).rejects.toMatchObject({ kind: "not-aac" });
+    expect((await failureOf(decodeAudio({ path: "/tmp/x.m4a", expectedMs: 8_000, signal: signal(), spawner }))).kind).toBe("not-aac");
+  });
+
+  test.each(["aac (LC)", "aac (HE-AAC)", "aac (HE-AACv2)", "aac"])("an audio stream read as %s passes", async (codec) => {
+    const spawner = dumpOf(`  Stream #0:0[0x1](und): Audio: ${codec} (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 64 kb/s (default)`);
+    expect(await inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).toEqual(["Audio"]);
+  });
+
+  test("a line that says aac only later in its text is not aac", async () => {
+    const spawner = dumpOf("  Stream #0:0: Audio: vorbis (aac / 0x6134706D), 44100 Hz, stereo");
+    await expect(inspectStreams({ path: "/tmp/x.m4a", signal: signal(), spawner })).rejects.toMatchObject({ kind: "not-aac" });
+  });
+
+  const OTI = { dts: 0xa9, vorbis: 0xdd, mp3: 0x6b } as const;
+  const hiddenIn = async (where: "trak" | "moov", oti: number): Promise<string> => tempFile(graft(new Uint8Array(await readFile(musicTracks.hot.file)), box("udta", esdsBox(oti)), where));
+
+  test.each(Object.entries(OTI))("a real track with a second esds (%s) hidden in trak/udta is refused by the stream check, not decoded as what the file says", async (_name, oti) => {
+    const path = await hiddenIn("trak", oti);
+    await expect(inspectStreams({ path, signal: signal() })).rejects.toMatchObject({ kind: "not-aac" });
+    expect((await failureOf(decodeAudio({ path, expectedMs: musicTracks.hot.durationMs, signal: signal() }))).kind).toBe("not-aac");
+  });
+
+  test.each(Object.entries(OTI))("the same in moov/udta, after the track (%s)", async (_name, oti) => {
+    const path = await hiddenIn("moov", oti);
+    await expect(inspectStreams({ path, signal: signal() })).rejects.toMatchObject({ kind: "not-aac" });
+  });
+
+  test("the walker refuses those files before ffmpeg is ever asked", async () => {
+    const path = await hiddenIn("trak", OTI.dts);
+    expect(probeMp4Audio(new Uint8Array(await readFile(path))).ok).toBe(false);
   });
 });

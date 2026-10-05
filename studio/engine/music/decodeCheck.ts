@@ -28,7 +28,7 @@ export const DECODE_TIMEOUT_MS = 30_000;
 /** One allocation may take at most this much: 64 MiB is far above what a real track needs and far below a container bomb. */
 const MAX_ALLOC_BYTES = 64 * 1024 * 1024;
 
-export type DecodeFailureKind = "spawn" | "exit" | "timeout" | "aborted" | "too-long" | "no-audio" | "duration-mismatch" | "extra-stream" | "dump-too-large" | "bad-dump";
+export type DecodeFailureKind = "spawn" | "exit" | "timeout" | "aborted" | "too-long" | "no-audio" | "duration-mismatch" | "extra-stream" | "not-aac" | "dump-too-large" | "bad-dump";
 
 /** A decode that did not prove the file is audio of the claimed length. `message` names the kind, never a path or ffmpeg's own text. */
 export class DecodeError extends Error {
@@ -90,6 +90,9 @@ function decodeNow(options: DecodeOptions): Promise<DecodeResult> {
     String(MAX_ALLOC_BYTES),
     "-protocol_whitelist",
     "file",
+    // No codec but AAC may be opened, whatever the file says its stream is (a second `esds` can name DTS, Vorbis or MP3): the same door as the render's input.
+    "-codec_whitelist",
+    "aac",
     "-f",
     "mov",
     // The AAC decoder for the stream, and no other: a stream that is not AAC ends with no output.
@@ -229,14 +232,24 @@ export function hasUnreadableStreamLine(dump: string): boolean {
   return dump.split("\n").some((line) => STREAM_LINE_START.test(withoutLineEnd(line)) && parseStreamLine(line) === null);
 }
 
-/** The index and kind of each stream line in ffmpeg's input dump, in the order printed. */
-export function streamsOf(dump: string): { index: number; kind: string }[] {
-  const streams: { index: number; kind: string }[] = [];
+/** Every stream line of ffmpeg's input dump (index, kind, the text after the kind), in the order printed. */
+function streamLinesOf(dump: string): { index: number; kind: string; rest: string }[] {
+  const streams: { index: number; kind: string; rest: string }[] = [];
   for (const line of dump.split("\n")) {
     const parsed = parseStreamLine(line);
-    if (parsed !== null) streams.push({ index: parsed.index, kind: parsed.kind });
+    if (parsed !== null) streams.push(parsed);
   }
   return streams;
+}
+
+/** The index and kind of each stream line in ffmpeg's input dump, in the order printed. */
+export function streamsOf(dump: string): { index: number; kind: string }[] {
+  return streamLinesOf(dump).map((stream) => ({ index: stream.index, kind: stream.kind }));
+}
+
+/** The codec name a stream line starts with after its kind (`aac` of ` aac (HE-AAC) (mp4a / 0x6134706D), ...`); `aac_latm` and the like are other names. */
+function codecOf(rest: string): string {
+  return /^\s*([A-Za-z0-9_]+)/.exec(rest)?.[1] ?? "";
 }
 
 /** The kind of each stream in ffmpeg's input dump (`Audio`, `Video`, `Subtitle`, `Data`, `Attachment`, ...), in order. */
@@ -261,7 +274,9 @@ export function inspectStreams(options: InspectOptions): Promise<string[]> {
   if (!isAbsolute(options.path)) return Promise.reject(new TypeError("inspectStreams: the path must be absolute"));
   if (options.signal.aborted) return Promise.reject(new DecodeError("aborted"));
   const timeoutMs = Math.min(options.timeoutMs ?? INSPECT_TIMEOUT_MS, INSPECT_TIMEOUT_MS);
-  const args = ["-nostdin", "-hide_banner", "-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file", "-f", "mov", "-i", options.path];
+  // `-codec_whitelist aac` and NO `-c:a`: with the whitelist, ffmpeg never opens a decoder the file named (a stream that says `vorbis` stays `vorbis` in the dump and
+  // is refused below as `not-aac`), whereas a forced `-c:a aac` would print `aac` for any stream and hide what the file claimed.
+  const args = ["-nostdin", "-hide_banner", "-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file", "-codec_whitelist", "aac", "-f", "mov", "-i", options.path];
   const spawner = options.spawner ?? nodeSpawner;
   return new Promise<string[]>((resolve, reject) => {
     let child: ReturnType<FfmpegSpawner>;
@@ -301,11 +316,15 @@ export function inspectStreams(options: InspectOptions): Promise<string[]> {
       if (failure !== null) return reject(failure);
       // ffmpeg ends with an error (no output file was given), so its exit code says nothing: the dump does.
       if (hasUnreadableStreamLine(dump)) return reject(new DecodeError("bad-dump", "ffmpeg printed a stream line this check cannot read"));
-      const streams = streamsOf(dump);
+      const streams = streamLinesOf(dump);
       // The streams ffmpeg lists are numbered 0..n-1 in order, once each. Anything else (a stream missing, a number twice, a
       // line a metadata key printed on its own) means the dump is not a plain list of the file's streams.
       if (streams.some((stream, position) => stream.index !== position)) {
         return reject(new DecodeError("bad-dump", "ffmpeg's stream numbers are not 0 to n-1 in order"));
+      }
+      // An audio stream is AAC or the file is refused: with the codec whitelist ffmpeg did not open another decoder, but it still says what the file named.
+      if (streams.some((stream) => stream.kind === "Audio" && codecOf(stream.rest) !== "aac")) {
+        return reject(new DecodeError("not-aac", "ffmpeg reads an audio stream that is not AAC"));
       }
       resolve(streams.map((stream) => stream.kind));
     });

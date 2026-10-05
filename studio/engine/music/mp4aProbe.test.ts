@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { musicTracks } from "./fixtures";
 import { probeMp4Audio } from "./mp4aProbe";
-import { box, buildM4a, concat, fullBox, largeBox, u32 } from "./testing/m4aBuilder";
+import { box, buildM4a, concat, esdsBox, fullBox, graft, largeBox, u32 } from "./testing/m4aBuilder";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -360,5 +360,62 @@ describe("the walk is bounded whatever the file says", () => {
       )
     );
     expect(refusalOf(bad)).toBe("esds-unreadable");
+  });
+});
+
+// Stage 3 whole-slice review M1: a box that decides a stream's decoder (`esds`), or that introduces the stream (`stsd`, `hdlr`), is read by ffmpeg wherever it
+// sits in a `trak`, and the LAST one wins. The walker reads the one at its schema's address, so a second `esds` hidden in `trak/udta` or `mp4a/wave` could make
+// ffmpeg open a DTS, Vorbis or MP3 decoder on bytes the walker took for AAC. Each stream part is where the walker reads it, or nowhere (the rule of `videoProbe`).
+describe("a stream part hidden where the walker does not read it", () => {
+  const OTI = { dts: 0xa9, vorbis: 0xdd, mp3: 0x6b, mpeg2Aac: 0x66 } as const;
+
+  test.each(Object.entries(OTI))("a second esds (objectTypeIndication %s) in trak/udta is refused", (_name, oti) => {
+    expect(refusalOf(buildM4a({ trakExtra: [box("udta", esdsBox(oti))] }))).toBe("hidden-track-box");
+  });
+
+  test.each(Object.entries(OTI))("a second esds (objectTypeIndication %s) in the sample entry's wave box is refused", (_name, oti) => {
+    expect(refusalOf(buildM4a({ entryExtra: [box("wave", esdsBox(oti))] }))).toBe("hidden-track-box");
+  });
+
+  test("a second esds in moov/udta, after the track, is refused: ffmpeg applies it to the last stream", () => {
+    expect(refusalOf(buildM4a({ moovExtra: [box("udta", esdsBox(OTI.dts))] }))).toBe("hidden-track-box");
+    expect(refusalOf(graft(bytesOf(musicTracks.hot.file), box("udta", esdsBox(OTI.vorbis)), "moov"))).toBe("hidden-track-box");
+  });
+
+  test("a second esds directly in the trak, in the mdia, and in the stsd is refused", () => {
+    expect(refusalOf(buildM4a({ trakExtra: [esdsBox(OTI.dts)] }))).toBe("hidden-track-box");
+    expect(refusalOf(buildM4a({ mdiaExtra: [esdsBox(OTI.dts)] }))).toBe("hidden-track-box");
+    expect(refusalOf(buildM4a({ stblExtra: [esdsBox(OTI.dts)] }))).toBe("hidden-track-box");
+  });
+
+  test("a second stsd, mdhd, minf or stbl in a place that is not theirs is refused", () => {
+    expect(refusalOf(buildM4a({ trakExtra: [box("stsd", new Uint8Array(8))] }))).toBe("hidden-track-box");
+    expect(refusalOf(buildM4a({ trakExtra: [box("udta", box("mdhd", new Uint8Array(24)))] }))).toBe("hidden-track-box");
+    expect(refusalOf(buildM4a({ trakExtra: [box("minf")] }))).toBe("hidden-track-box");
+    expect(refusalOf(buildM4a({ mdiaExtra: [box("stbl")] }))).toBe("hidden-track-box");
+  });
+
+  test.each(["soun", "vide", "subt"])("a second hdlr naming the media type %s, hidden in trak/udta, is refused", (subtype) => {
+    const hdlr = fullBox("hdlr", 0, concat(u32(0), new TextEncoder().encode(subtype), new Uint8Array(13)));
+    expect(refusalOf(buildM4a({ trakExtra: [box("udta", hdlr)] }))).toBe("hidden-handler");
+  });
+
+  test("the same hidden esds in a REAL track (the synthetic HE-AAC fixture) is refused", () => {
+    const file = bytesOf(musicTracks.hot.file);
+    expect(probeMp4Audio(file).ok).toBe(true);
+    for (const oti of Object.values(OTI)) {
+      expect(refusalOf(graft(file, box("udta", esdsBox(oti)), "trak"))).toBe("hidden-track-box");
+    }
+  });
+
+  test("tags a re-cut file carries still pass: a udta with a metadata handler (mdir) and an encoder tag is no stream part", () => {
+    const mdir = fullBox("hdlr", 0, concat(u32(0), new TextEncoder().encode("mdir"), new Uint8Array(13)));
+    const tags = box("udta", box("meta", concat(u32(0), mdir, box("ilst", box("©too", box("data", new Uint8Array(12)))))));
+    expect(refusalOf(buildM4a({ trakExtra: [tags] }))).toBe("accepted");
+    expect(refusalOf(buildM4a({ moovExtra: [tags] }))).toBe("accepted");
+  });
+
+  test("an esds in the wave box of a hidden-free entry is the only way the tests above differ: a plain wave box (frma) passes", () => {
+    expect(refusalOf(buildM4a({ entryExtra: [box("wave", box("frma", new TextEncoder().encode("mp4a")))] }))).toBe("accepted");
   });
 });

@@ -40,7 +40,30 @@ export type ProbeRefusal =
   | "not-aac"
   | "unsupported-profile"
   | "unsupported-format"
-  | "external-data-reference";
+  | "external-data-reference"
+  | "hidden-track-box"
+  | "hidden-handler";
+
+/**
+ * Where each box that makes or changes a stream may be: the one place the walker reads it from. ffmpeg's mov demuxer reads these wherever they are in the
+ * file's `moov` (its parse table does not look at the level) and the LAST one wins, so a second `esds` hidden in `trak/udta`, in the sample entry's `wave`
+ * or in `moov/udta` swaps the stream's decoder for DTS, Vorbis or MP3 after the walker approved the real one. MEASURED on the bundled ffmpeg: an `esds` in
+ * `moov/udta` after the track made the stream `vorbis`. A copy anywhere else is refused (`hidden-track-box`), whatever it says.
+ */
+const STREAM_PART_HOMES: Readonly<Record<string, string | undefined>> = {
+  mdhd: "moov/trak/mdia",
+  minf: "moov/trak/mdia",
+  stbl: "moov/trak/mdia/minf",
+  stsd: "moov/trak/mdia/minf/stbl",
+  esds: "moov/trak/mdia/minf/stbl/stsd/mp4a",
+};
+/** The boxes ffmpeg reads the children of as a list, at any level (`mov_read_default`); `meta`, `stsd` and the sample entry are told apart below. */
+const LIST_CONTAINERS: ReadonlySet<string> = new Set(["trak", "mdia", "minf", "stbl", "dinf", "edts", "tref", "udta", "sinf", "schi", "wave", "traf", "mvex", "moof", "iprp", "ipco"]);
+const MAX_WALK_DEPTH = 16;
+/** Handler subtypes that name a MEDIA type: a metadata handler (`mdir`, `mdta`) beside tags names none and changes nothing about a track. */
+const MEDIA_HANDLER_TYPES: ReadonlySet<string> = new Set(["vide", "soun", "subp", "clcp", "m1a ", "text", "sbtl", "meta", "subt", "pict", "auxv"]);
+/** The subtypes of a data handler, as an ordinary MOV has one in `minf`. */
+const DATA_HANDLER_SUBTYPES: ReadonlySet<string> = new Set(["alis", "url ", "rsrc"]);
 
 export interface Mp4AudioInfo {
   readonly codec: "mp4a";
@@ -241,6 +264,66 @@ function refuseCoverArt(bytes: Uint8Array, view: DataView, boxes: readonly BoxRe
   }
 }
 
+/**
+ * The boxes inside `[start, end)` as ffmpeg's `mov_read_default` reads a list it does not check first: a size of 0, or one past the parent, is the rest of the
+ * parent; a size under a header ends the list. Never throws for the shape of the list, only for its length.
+ */
+function lenientChildren(bytes: Uint8Array, view: DataView, start: number, end: number, budget: { visited: number }): BoxRef[] {
+  const found: BoxRef[] = [];
+  for (let at = start; end - at >= 8; ) {
+    if (found.length >= MAX_CHILDREN || ++budget.visited > MAX_VISITED) throw new Refusal("too-many-boxes");
+    const left = end - at;
+    const size32 = view.getUint32(at);
+    const header = size32 === 1 ? 16 : 8;
+    if (left < header) break;
+    const declared = size32 === 1 ? view.getBigUint64(at + 8) : BigInt(size32);
+    const size = declared === 0n || declared > BigInt(left) ? left : Number(declared);
+    if (size < header) break;
+    found.push({ type: latin1(bytes, at + 4, at + 8), body: at + header, end: at + size });
+    at += size;
+  }
+  return found;
+}
+
+/** What ffmpeg's `mov_read_meta` reads of a `meta` box: it looks for an `hdlr` tag on a 4-byte step from the payload's start and reads the rest of the box as a list from there. */
+function metaChildren(bytes: Uint8Array, view: DataView, box: BoxRef, budget: { visited: number }): BoxRef[] {
+  for (let k = 0; box.end - box.body - k > 8; k += 4) {
+    const at = box.body + k;
+    if (bytes[at] === 0x68 && bytes[at + 1] === 0x64 && bytes[at + 2] === 0x6c && bytes[at + 3] === 0x72) return lenientChildren(bytes, view, at - 4, box.end, budget);
+  }
+  return [];
+}
+
+/**
+ * Refuses a stream part (`esds`, `stsd`, `mdhd`, `minf`, `stbl`) anywhere in the `moov` but its home, and a handler (`hdlr`) that names a media type anywhere but
+ * `mdia` (a data handler in `minf` and a metadata handler inside a `meta` are ordinary). One walk of the whole `moov` the way ffmpeg reads it, in the one visit
+ * budget. The sample entry is walked from the end of its fixed fields, where its `esds` and a `wave` box are.
+ */
+function refuseHiddenStreamParts(bytes: Uint8Array, view: DataView, moov: BoxRef, budget: { visited: number }): void {
+  const visit = (kids: readonly BoxRef[], path: string, inMeta: boolean, depth: number): void => {
+    if (depth > MAX_WALK_DEPTH) throw new Refusal("too-many-boxes");
+    for (const kid of kids) {
+      const home = STREAM_PART_HOMES[kid.type];
+      if (home !== undefined && path !== home) throw new Refusal("hidden-track-box");
+      if (kid.type === "hdlr") {
+        const subtype = kid.end - kid.body >= 12 ? latin1(bytes, kid.body + 8, kid.body + 12) : "";
+        const isMedia = MEDIA_HANDLER_TYPES.has(subtype);
+        const allowed = inMeta ? !isMedia : path === "moov/trak/mdia" || (path === "moov/trak/mdia/minf" && DATA_HANDLER_SUBTYPES.has(subtype));
+        if (!allowed) throw new Refusal("hidden-handler");
+      } else if (kid.type === "meta") {
+        visit(metaChildren(bytes, view, kid, budget), `${path}/meta`, true, depth + 1);
+      } else if (kid.type === "stsd") {
+        if (kid.end - kid.body >= 8) visit(lenientChildren(bytes, view, kid.body + 8, kid.end, budget), `${path}/stsd`, inMeta, depth + 1);
+      } else if (kid.type === "mp4a" && path.endsWith("/stsd")) {
+        if (kid.end - kid.body >= 28) visit(lenientChildren(bytes, view, kid.body + 28, kid.end, budget), `${path}/mp4a`, inMeta, depth + 1);
+      } else if (LIST_CONTAINERS.has(kid.type)) {
+        visit(lenientChildren(bytes, view, kid.body, kid.end, budget), `${path}/${kid.type}`, inMeta, depth + 1);
+      }
+    }
+  };
+  visit(lenientChildren(bytes, view, moov.body, moov.end, budget), "moov", false, 0);
+}
+
 function walk(bytes: Uint8Array): Mp4AudioInfo {
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   if (bytes.byteLength < 16) throw new Refusal("bad-box");
@@ -276,6 +359,8 @@ function walk(bytes: Uint8Array): Mp4AudioInfo {
   // Tags without a picture (the encoder's `©too`) are harmless and are what a re-cut file carries. Cover art by `covr` is
   // refused above and a too-short `meta` here; any other spelling of a picture is ffmpeg's to refuse (`decodeCheck.ts`).
   refuseCoverArt(bytes, view, inMoov, budget, 0);
+  // Every stream part where the walker reads it, or the file is refused: what ffmpeg decodes must be what was walked.
+  refuseHiddenStreamParts(bytes, view, moov, budget);
   const traks = inMoov.filter((child) => child.type === "trak");
   // Counted before any is read: a file of a hundred tracks is refused for that, not for what the first one lacks.
   if (traks.length > MAX_TRACKS) throw new Refusal("too-many-tracks");

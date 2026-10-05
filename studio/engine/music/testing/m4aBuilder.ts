@@ -81,6 +81,13 @@ export function audioSpecificConfig(aot: number, freqIndex: number, channelConfi
   return out;
 }
 
+/** An `esds` box for the given objectTypeIndication and AudioSpecificConfig: the box that tells a demuxer which decoder a stream gets. */
+export function esdsBox(oti: number, aot = 2, freqIndex = 4, channels = 2): Uint8Array {
+  const asc = audioSpecificConfig(aot, freqIndex, channels);
+  const decoderConfig = descriptor(0x04, concat(u8(oti, 0x15, 0, 0, 0), u32(0), u32(0), descriptor(0x05, asc)));
+  return fullBox("esds", 0, descriptor(0x03, concat(u16(1), u8(0), decoderConfig, descriptor(0x06, u8(2)))));
+}
+
 export interface M4aOptions {
   /** The `hdlr` handler type; `soun` for audio. */
   handler?: string;
@@ -104,6 +111,8 @@ export interface M4aOptions {
   extraTracks?: string[];
   /** Repeat one box of the first track inside its parent (`mdia`, `hdlr`, `mdhd`, `minf`, `dinf`, `dref`, `stbl`, `stsd`, `esds`). */
   dupBox?: string;
+  /** Extra boxes inside the first track's sample entry (`mp4a`), after its `esds`. */
+  entryExtra?: Uint8Array[];
   /** Extra boxes inside the first `trak`, and inside its `mdia`. */
   trakExtra?: Uint8Array[];
   mdiaExtra?: Uint8Array[];
@@ -121,7 +130,7 @@ export interface M4aOptions {
 
 const SAMPLE_RATE_INDEX: Readonly<Record<number, number>> = { 96000: 0, 88200: 1, 64000: 2, 48000: 3, 44100: 4, 32000: 5, 24000: 6, 22050: 7, 16000: 8, 12000: 9, 11025: 10, 8000: 11 };
 
-function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | "aot" | "channels" | "sampleRate" | "timescale" | "duration" | "drefFlags">> & Pick<M4aOptions, "noEsds" | "dupBox" | "trakExtra" | "mdiaExtra" | "minfExtra" | "stblExtra" | "dinfExtra">): Uint8Array {
+function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | "aot" | "channels" | "sampleRate" | "timescale" | "duration" | "drefFlags">> & Pick<M4aOptions, "noEsds" | "dupBox" | "entryExtra" | "trakExtra" | "mdiaExtra" | "minfExtra" | "stblExtra" | "dinfExtra">): Uint8Array {
   const twice = (type: string, one: Uint8Array): Uint8Array => (options.dupBox === type ? concat(one, one) : one);
   const freqIndex = SAMPLE_RATE_INDEX[options.sampleRate] ?? 4;
   const asc = audioSpecificConfig(options.aot, freqIndex, options.channels);
@@ -137,6 +146,7 @@ function track(options: Required<Pick<M4aOptions, "handler" | "entry" | "oti" | 
     u16(0),
     u32((options.sampleRate & 0xffff) * 65536),
     options.noEsds === true ? new Uint8Array(0) : twice("esds", esds),
+    ...(options.entryExtra ?? []),
   );
   const stsd = twice("stsd", fullBox("stsd", 0, concat(u32(1), box(options.entry, entryBody))));
   const dref = twice("dref", fullBox("dref", 0, concat(u32(options.drefFlags.length), ...options.drefFlags.map((flags) => fullBox("url ", flags)))));
@@ -165,7 +175,46 @@ export function buildM4a(options: M4aOptions = {}): Uint8Array {
   };
   // Extra tracks are plain: only the first track carries a repeated box.
   const extra = (options.extraTracks ?? []).map((handler) => track({ ...full, handler }));
-  const first = { ...full, ...(options.dupBox === undefined ? {} : { dupBox: options.dupBox }), ...(options.trakExtra === undefined ? {} : { trakExtra: options.trakExtra }), ...(options.mdiaExtra === undefined ? {} : { mdiaExtra: options.mdiaExtra }), ...(options.minfExtra === undefined ? {} : { minfExtra: options.minfExtra }), ...(options.stblExtra === undefined ? {} : { stblExtra: options.stblExtra }), ...(options.dinfExtra === undefined ? {} : { dinfExtra: options.dinfExtra }) };
+  const first = { ...full, ...(options.dupBox === undefined ? {} : { dupBox: options.dupBox }), ...(options.entryExtra === undefined ? {} : { entryExtra: options.entryExtra }), ...(options.trakExtra === undefined ? {} : { trakExtra: options.trakExtra }), ...(options.mdiaExtra === undefined ? {} : { mdiaExtra: options.mdiaExtra }), ...(options.minfExtra === undefined ? {} : { minfExtra: options.minfExtra }), ...(options.stblExtra === undefined ? {} : { stblExtra: options.stblExtra }), ...(options.dinfExtra === undefined ? {} : { dinfExtra: options.dinfExtra }) };
   const ftyp = options.noFtyp === true ? new Uint8Array(0) : box("ftyp", concat(ascii("isom"), u32(512), ascii("isom"), ascii("iso2"), ascii("mp41")));
   return concat(ftyp, box("moov", concat(track(first), ...extra, ...(options.moovExtra ?? []))), box("mdat", options.mdat ?? new Uint8Array(16)), ...(options.topExtra ?? []));
+}
+
+/**
+ * A real file with `extra` appended inside its first `trak`, or at the end of its `moov` (after the tracks): the parent's and the moov's sizes are corrected
+ * and, when the samples sit after the `moov`, every chunk offset is moved by the same amount, so the result still plays. Used to hide a box (a second `esds`,
+ * a stray `hdlr`) where the walker's schema has no place for it, in a file whose audio is real.
+ */
+export function graft(file: Uint8Array, extra: Uint8Array, inside: "trak" | "moov"): Uint8Array {
+  const out = Uint8Array.from(file);
+  const view = new DataView(out.buffer);
+  const type = (at: number): string => String.fromCharCode(...out.subarray(at + 4, at + 8));
+  let moov = -1;
+  let mdat = -1;
+  for (let at = 0; at + 8 <= out.byteLength; at += view.getUint32(at)) {
+    if (type(at) === "moov") moov = at;
+    if (type(at) === "mdat") mdat = at;
+  }
+  if (moov < 0) throw new Error("no moov");
+  let trak = -1;
+  for (let at = moov + 8; at < moov + view.getUint32(moov); at += view.getUint32(at)) {
+    if (type(at) === "trak") {
+      trak = at;
+      break;
+    }
+  }
+  if (trak < 0) throw new Error("no trak");
+  const parent = inside === "trak" ? trak : moov;
+  const parentEnd = parent + view.getUint32(parent);
+  const grown = concat(out.subarray(0, parentEnd), extra, out.subarray(parentEnd));
+  const gv = new DataView(grown.buffer);
+  gv.setUint32(parent, view.getUint32(parent) + extra.byteLength);
+  if (parent !== moov) gv.setUint32(moov, view.getUint32(moov) + extra.byteLength);
+  if (mdat > moov) {
+    const stco = Buffer.from(grown).indexOf("stco", moov, "latin1") - 4;
+    if (stco < moov) throw new Error("no stco");
+    const count = gv.getUint32(stco + 12);
+    for (let i = 0; i < count; i++) gv.setUint32(stco + 16 + i * 4, gv.getUint32(stco + 16 + i * 4) + extra.byteLength);
+  }
+  return grown;
 }
