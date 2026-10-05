@@ -107,10 +107,56 @@ test("takes the highest price per variant when several providers serve the model
   expect(parseImageEndpoints(body, "acme/img")).toEqual({ outputs: [{ variant: "1k", micros: 50_000 }], inputImageMicros: 10_000 });
 });
 
-test("a model without an input_image price charges nothing per reference", () => {
+// Review round 1, M1: a reference price that is NOT LISTED is unknown, never free. An EXPLICIT input_image row of 0 is a price the
+// provider states (seedream-5-0-flash and 4.5 list one), so it is valid; a missing row is not.
+test("a model without an input_image row has no reference price (null), not a free one", () => {
   const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }] }] };
 
+  expect(parseImageEndpoints(body, "acme/img").inputImageMicros).toBeNull();
+});
+
+test("an explicit input_image row of 0 is a stated price: a free reference", () => {
+  const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }, { billable: "input_image", unit: "image", cost_usd: 0 }] }] };
+
   expect(parseImageEndpoints(body, "acme/img").inputImageMicros).toBe(0);
+});
+
+test("when one of several endpoints lists no input_image row, the reference price is unknown (null)", () => {
+  const priced = { pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] };
+  const unpriced = { pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }] };
+
+  expect(parseImageEndpoints({ id: "acme/img", endpoints: [priced, unpriced] }, "acme/img").inputImageMicros).toBeNull();
+});
+
+test("an output_image price of 0 is refused: it would reserve nothing", () => {
+  const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0 }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] }] };
+
+  expect(() => parseImageEndpoints(body, "acme/img")).toThrow("0");
+});
+
+test("a variant priced 0 among others is refused too", () => {
+  const body = {
+    id: "acme/img",
+    endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.05, variant: "1k" }, { billable: "output_image", unit: "image", cost_usd: 0, variant: "2k" }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] }],
+  };
+
+  expect(() => parseImageEndpoints(body, "acme/img")).toThrow("0");
+});
+
+test("the worst case of a request WITH a reference is PRICE_UNAVAILABLE when the reference price is not listed; without one it is the output price", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }], inputImageMicros: null };
+
+  expect(() => imageWorstCase(price, { quality: null, refs: 1 })).toThrow(MoneyError);
+  expect(() => imageWorstCase(price, { quality: null, refs: 1 })).toThrow("reference");
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(30_000);
+});
+
+test("a price book refuses to reserve a reference-carrying request on a model with no listed reference price", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }], inputImageMicros: null };
+  const book = new PriceBook(new Map([["acme/img", { price, source: "live" as const }]]), new Map());
+
+  expect(() => book.imageWorstCase({ model: "acme/img", quality: null, refs: 1 })).toThrow(MoneyError);
+  expect(book.imageWorstCase({ model: "acme/img", quality: null, refs: 0 })).toBe(30_000);
 });
 
 test("rejects an endpoints body for a different model", () => {
@@ -462,8 +508,30 @@ test("the fallback table matches the live responses saved on its date", () => {
   }
 });
 
+// Review round 1, M2: the base price stands for 1K only beside tiers that name a LARGER size (seedream's high_resolution); a set with
+// sub-1K or fractional-K tiers and no explicit 1k tier gives nothing to map 1K to, so the dearest tier is reserved.
+test("fractional-K and 3-digit tiers with a base price but no explicit 1k tier reserve the dearest tier, not the base", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "768", micros: 20_000 }, { variant: "1.5k", micros: 70_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(70_000);
+});
+
+test("the same tiers WITH an explicit 1k tier price at that tier", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "768", micros: 20_000 }, { variant: "1k", micros: 48_000 }, { variant: "1.5k", micros: 70_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(48_000);
+});
+
+test("only sub-1K tiers and no 1k tier reserve the dearest of them", () => {
+  const price: ImagePrice = { outputs: [{ variant: "512", micros: 10_000 }, { variant: "768", micros: 20_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(20_000);
+});
+
 test("flux-3: sub-1K and fractional-K tiers are recognised, so the 1k price is the worst case, not the 4k one", () => {
   const price = parseImageEndpoints(fixture("endpoints-flux-3-image.json"), "black-forest-labs/flux-3-image");
 
-  expect(imageWorstCase(price, { quality: null, refs: 1 })).toBe(48_000);
+  // flux-3 lists no input_image row: its output tier is 48_000, but a request with a reference cannot be reserved (M1).
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(48_000);
+  expect(() => imageWorstCase(price, { quality: null, refs: 1 })).toThrow(MoneyError);
 });

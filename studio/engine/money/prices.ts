@@ -15,8 +15,12 @@ export type PriceSource = "live" | "fallback";
 export interface ImagePrice {
   /** Output-image prices by variant (`low_1k`, `2k`, `high_resolution`, …; null = no variant). */
   outputs: { variant: string | null; micros: number }[];
-  /** Price of one input (reference) image. */
-  inputImageMicros: number;
+  /**
+   * Price of one input (reference) image: the highest of the endpoints' `input_image` rows. `null` when some endpoint lists NO such
+   * row: the price of a reference is then unknown, never free, and a request that carries one cannot be reserved (`imageWorstCase`).
+   * An explicit row of 0 is a price the provider states, and is kept as 0.
+   */
+  inputImageMicros: number | null;
 }
 
 /**
@@ -74,7 +78,9 @@ const EndpointsBody = z.object({
  * Image pricing of one model. When several providers serve it, each variant
  * takes the highest price. A billable other than output_image/input_image, or
  * a unit other than "image", throws: a worst case that ignores part of the
- * bill is not a worst case.
+ * bill is not a worst case. An output_image price of 0 throws too (it would
+ * reserve nothing), and a model any of whose endpoints lists no input_image
+ * row gets `inputImageMicros: null`, not 0 (see `ImagePrice`).
  */
 export function parseImageEndpoints(body: unknown, model: string): ImagePrice {
   const parsed = EndpointsBody.safeParse(body);
@@ -82,22 +88,26 @@ export function parseImageEndpoints(body: unknown, model: string): ImagePrice {
   if (parsed.data.id !== model) throw new Error(`Endpoints body is for ${parsed.data.id}, expected ${model}`);
 
   const outputs = new Map<string | null, number>();
-  let inputImageMicros = 0;
+  let inputImageMicros: number | null = 0;
   for (const endpoint of parsed.data.endpoints) {
+    let listsInput = false;
     for (const entry of endpoint.pricing) {
       if (entry.unit !== undefined && entry.unit !== "image") {
         throw new Error(`${model}: ${entry.billable} is priced per ${entry.unit}, not per image`);
       }
       const micros = costToMicros(entry.cost_usd);
       if (entry.billable === "output_image") {
+        if (micros === 0) throw new Error(`${model}: output_image is priced 0, which would reserve nothing`);
         const variant = entry.variant ?? null;
         outputs.set(variant, Math.max(outputs.get(variant) ?? 0, micros));
       } else if (entry.billable === "input_image") {
-        inputImageMicros = Math.max(inputImageMicros, micros);
+        listsInput = true;
+        inputImageMicros = inputImageMicros === null ? null : Math.max(inputImageMicros, micros);
       } else {
         throw new Error(`${model}: unsupported billable "${entry.billable}"`);
       }
     }
+    if (!listsInput) inputImageMicros = null;
   }
   if (outputs.size === 0) throw new Error(`${model}: no output_image price`);
   return { outputs: [...outputs].map(([variant, micros]) => ({ variant, micros })), inputImageMicros };
@@ -196,6 +206,8 @@ function assertCount(name: string, value: number): void {
 
 /** `1k`, `1.5k`, `low_2k`, `768`, `high_resolution`, … — the variant names whose resolution can be read. */
 const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+(?:\.\d+)?k|\d{3}|high_resolution)$/;
+/** Tiers named by a pixel size or a fractional K (`768`, `1.5k`): they sit around 1K, so a base price beside them is not known to be the 1K one. */
+const AROUND_1K_TIER = /^(?:\d{3}|\d+\.\d+k)$/;
 
 /**
  * Output price of a 1K image at a quality, never an underestimate: Studio
@@ -207,6 +219,8 @@ const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+(?:\.\d+)?k|\d{3}|high_resolution
  * - `<quality>_1k` variants exist: the requested quality; if it is missing
  *   or null, the dearest of them or the base price, whichever is higher;
  * - a `1k` variant;
+ * - tiers named `768` or `1.5k` with no `1k` tier: nothing says which price a
+ *   1K request pays, so the dearest price (review round 1, M2);
  * - the variant-less base price (Seedream: base = 1K, `high_resolution` =
  *   2K);
  * - otherwise the dearest price.
@@ -225,13 +239,17 @@ export function imageOutputMicros(price: ImagePrice, quality: ImageQuality | nul
   }
   const plain = find("1k");
   if (plain !== undefined) return plain;
+  if (outputs.some((o) => o.variant !== null && AROUND_1K_TIER.test(o.variant))) return dearest(outputs);
   if (base !== undefined) return base;
   return dearest(outputs);
 }
 
 export function imageWorstCase(price: ImagePrice, req: Omit<ImageWorstCaseRequest, "model">): number {
   assertCount("refs", req.refs);
-  return imageOutputMicros(price, req.quality) +req.refs * price.inputImageMicros;
+  if (req.refs > 0 && price.inputImageMicros === null) {
+    throw new MoneyError("PRICE_UNAVAILABLE", "the endpoints list no input_image price: the price of a reference image is unknown, so a request with one cannot be reserved");
+  }
+  return imageOutputMicros(price, req.quality) + req.refs * (price.inputImageMicros ?? 0);
 }
 
 /** Cost of one chat call with these token and image counts, rounded up to a whole micro-dollar. */
