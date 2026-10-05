@@ -682,7 +682,13 @@ describe("the play control on the preview", () => {
     expect(shown()).toBe("true");
   });
 
-  test("hidden, it takes no press: one in the middle of a cell selects the cell and plays nothing", async () => {
+  // The test DOM hit-tests nothing, so what makes a hidden or inert control click-through is the stylesheet's: it is pinned here (review
+  // round 2 nit), and the press in the middle of the frame then reaches the cell.
+  test("hidden or inert it is click-through (the stylesheet), so a press in the middle of a cell selects the cell and plays nothing", async () => {
+    const css = await Bun.file(new URL("../montage.css", import.meta.url)).text();
+    const rule = (selector: string): string => css.split(`\n${selector} {`)[1]?.split("}")[0] ?? "";
+    expect(rule('.pv-play[data-shown="false"]:not(:focus-visible)')).toContain("pointer-events: none;");
+    expect(rule('.pv-play[data-inert="true"]')).toContain("pointer-events: none;");
     const { client, engine } = await studio();
     await openDraft(engine, client);
     expect(shown()).toBe("false");
@@ -705,11 +711,13 @@ describe("the play control on the preview", () => {
     expect(shown()).toBe("true");
   });
 
-  test("an empty cell under the middle of the frame keeps its drop hint: no control over it, and a photo dropped there lands", async () => {
+  // Review round 2 (follow-up 3): the control was unmounted over such a cell, which dropped the keyboard focus to the page. It stays mounted,
+  // inert (hidden on hover, click-through), and shows only for the keyboard's focus.
+  test("an empty cell under the middle of the frame keeps its drop hint: the control is hidden and inert there, and a photo dropped there lands", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { clips: [{ ...photoClip(0, P1, 4_000), cell: { photo: null, focus: null } }] });
     fireEvent.pointerEnter(stage());
-    expect(preview().querySelector(".pv-play") === null).toBe(true);
+    expect([shown(), control().getAttribute("data-inert")]).toEqual(["false", "true"]);
     const bin = screen.getByRole("list", { name: "Фото аватара" });
     const pick = within(bin).getAllByRole("button").find((b) => !b.hasAttribute("disabled"));
     if (pick === undefined) throw new Error("no photo to drag in the bin");
@@ -719,8 +727,49 @@ describe("the play control on the preview", () => {
     fireEvent.drop(empty);
     await flush();
     expect(inPreview("Кадр 1").getAttribute("aria-label")).toBe("Кадр 1");
-    // Filled, the cell no longer needs its hint: the control is back.
-    expect(preview().querySelector(".pv-play") === null).toBe(false);
+    // Filled, the cell no longer needs its hint: the control is back for the pointer over the frame.
+    fireEvent.dragEnd(pick);
+    fireEvent.pointerEnter(stage());
+    expect([shown(), control().getAttribute("data-inert")]).toEqual(["true", "false"]);
+  });
+
+  test("the keyboard's focus on the control survives the playhead reaching an empty cell under the middle", async () => {
+    frames = manualFrames();
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { clips: [photoClip(0, P1, 2_000), { ...photoClip(1, P2, 2_000), cell: { photo: null, focus: null } }] });
+    control().focus();
+    fireEvent.click(control());
+    for (let i = 0; i < 75; i++) frames.advance(34);
+    expect(within(preview()).getByRole("button", { name: /^Кадр 2/ }).getAttribute("aria-label")).toBe("Кадр 2: пустая");
+    expect(document.activeElement === control()).toBe(true);
+    expect(control().getAttribute("data-inert")).toBe("true");
+  });
+
+  // Review round 2 (follow-up 5): a touch screen has no hover. A tap leaves the paused ▶ up, and while playing a tap brings the ❚❚ up.
+  test("touch: the paused ▶ stays after a tap; a mouse moving again goes back to hover", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.pointerEnter(stage(), { pointerType: "touch" });
+    fireEvent.pointerDown(stage(), { pointerId: 5, pointerType: "touch", buttons: 1 });
+    fireEvent.pointerUp(stage(), { pointerId: 5, pointerType: "touch" });
+    fireEvent.pointerLeave(stage(), { pointerType: "touch" });
+    expect(shown()).toBe("true");
+    fireEvent.pointerMove(stage(), { pointerId: 1, pointerType: "mouse", buttons: 0 });
+    fireEvent.pointerLeave(stage(), { pointerType: "mouse" });
+    expect(shown()).toBe("false");
+  });
+
+  test("touch: while playing, a tap on the frame brings the ❚❚ up", async () => {
+    frames = manualFrames();
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
+    for (let i = 0; i < 40; i++) frames.advance(34);
+    expect(shown()).toBe("false");
+    fireEvent.pointerDown(stage(), { pointerId: 6, pointerType: "touch", buttons: 1 });
+    fireEvent.pointerUp(stage(), { pointerId: 6, pointerType: "touch" });
+    frames.advance(34);
+    expect(shown()).toBe("true");
   });
 
   test("paused, a ▶ in the frame plays the montage the timeline plays; then it is ❚❚, and stops it", async () => {

@@ -1486,6 +1486,11 @@
   pointer-events: none;
 }
 
+/* During a drag, or over an empty cell's drop hint: click-through and drop-through even while a keyboard focus shows it. */
+.pv-play[data-inert="true"] {
+  pointer-events: none;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .pv-play {
     transition: none;

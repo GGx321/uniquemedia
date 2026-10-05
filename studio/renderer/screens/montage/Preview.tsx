@@ -540,9 +540,9 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           onDrop={(e) => dropOn(e, cell)}
         />
       ))}
-      {/* After the cells and before the layers: drawn above the picture, under every caption and sticker (they keep their presses). Not over
-          an empty cell's drop hint in the middle of the frame. */}
-      {!emptyUnderCentre(view?.cells ?? []) && <PreviewPlay timeline={timeline} gesture={drag !== null || dragPhoto !== null} />}
+      {/* After the cells and before the layers: drawn above the picture, under every caption and sticker (they keep their presses). Over an
+          empty cell's drop hint in the middle of the frame it stays mounted (a keyboard focus on it survives) but inert. */}
+      <PreviewPlay timeline={timeline} gesture={drag !== null || dragPhoto !== null} blocked={emptyUnderCentre(view?.cells ?? [])} />
       {layers.map(({ index, layer }) => {
         const handlers = {
           label: layerLabel(live, index),
@@ -593,9 +593,11 @@ function emptyUnderCentre(cells: readonly CellView[]): boolean {
  * the pointer is over the frame (so it never rests on the face, and a press in the middle of the frame reaches the cell otherwise); while
  * playing, ❚❚ for a moment after the start and while the pointer moves over the frame (and a little after). Hovered or keyboard-focused (the
  * stylesheet) it stays; otherwise it is gone and takes no press. It is `timeline.togglePlay`, the one playback the timeline's button drives. Any
- * drag on the frame or from the bin (`gesture`) hides it, so a drop in the middle of the frame lands on the cell there.
+ * drag on the frame or from the bin (`gesture`) hides it, so a drop in the middle of the frame lands on the cell there. Over an empty cell's drop
+ * hint (`blocked`) it is inert: never shown for the pointer and click-through, yet still mounted and shown for a keyboard focus (review round 2).
+ * A touch screen has no hover: after a touch the paused ▶ stays up, and while playing a tap brings the ❚❚ up, until a mouse moves again.
  */
-function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: boolean }) {
+function PreviewPlay({ timeline, gesture, blocked }: { timeline: TimelineState; gesture: boolean; blocked: boolean }) {
   const playing = usePlaying(timeline.playhead);
   const step = usePlayheadStep(timeline.playhead);
   const rest = usePlayheadRest(timeline.playhead);
@@ -603,6 +605,8 @@ function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: 
   const [hovered, setHovered] = useState(false);
   /** The pointer is over the frame. */
   const [over, setOver] = useState(false);
+  /** The frame was last touched rather than pointed at (a touch screen: no hover to show the ▶ by). */
+  const [touch, setTouch] = useState(false);
   /** The playhead's step when the pointer last moved over the frame in THIS playback. */
   const [movedAt, setMovedAt] = useState<number | null>(null);
   // Every playback starts with no pointer move of its own: they are told apart by their starts, not by where they started (review round 1).
@@ -616,27 +620,47 @@ function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: 
   useEffect(() => {
     const stage = wrap.current?.parentElement;
     if (stage === null || stage === undefined) return;
-    const onEnter = (): void => setOver(true);
+    /** While playing, the ❚❚ comes up for a while from now. */
+    const reveal = (): void => {
+      const now = timeline.playhead.get();
+      if (now.playing) setMovedAt(clockMs(now.ms));
+    };
+    const onEnter = (event: PointerEvent): void => {
+      setOver(true);
+      if (event.pointerType === "touch") setTouch(true);
+    };
     const onLeave = (): void => setOver(false);
     const onMove = (event: PointerEvent): void => {
       setOver(true);
-      if (event.buttons !== 0) return;
-      const now = timeline.playhead.get();
-      if (!now.playing) return;
-      setMovedAt(clockMs(now.ms));
+      if (event.pointerType !== "touch") setTouch(false);
+      if (event.buttons === 0) reveal();
+    };
+    const onDown = (event: PointerEvent): void => {
+      if (event.pointerType === "touch") setTouch(true);
+    };
+    // A tap has no move before it: its release is what brings the ❚❚ up.
+    const onUp = (event: PointerEvent): void => {
+      if (event.pointerType !== "touch") return;
+      setTouch(true);
+      reveal();
     };
     stage.addEventListener("pointerenter", onEnter);
     stage.addEventListener("pointerleave", onLeave);
     stage.addEventListener("pointermove", onMove);
+    stage.addEventListener("pointerdown", onDown);
+    stage.addEventListener("pointerup", onUp);
     return () => {
       stage.removeEventListener("pointerenter", onEnter);
       stage.removeEventListener("pointerleave", onLeave);
       stage.removeEventListener("pointermove", onMove);
+      stage.removeEventListener("pointerdown", onDown);
+      stage.removeEventListener("pointerup", onUp);
     };
   }, [timeline.playhead]);
 
+  const inert = gesture || blocked;
   const sinceMove = movedAt !== null && step >= movedAt ? step - movedAt : Number.POSITIVE_INFINITY;
-  const shown = !gesture && (hovered || (playing ? step - rest < PLAY_PEEK_MS || sinceMove < PLAY_IDLE_MS : over));
+  const shown = !inert && (hovered || (playing ? step - rest < PLAY_PEEK_MS || sinceMove < PLAY_IDLE_MS : over || touch));
   const label = playing ? "Пауза" : "Воспроизвести";
   return (
     <span ref={wrap} className="pv-play-wrap">
@@ -644,6 +668,7 @@ function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: 
         type="button"
         className={playing ? "pv-play pv-play-on" : "pv-play"}
         data-shown={shown}
+        data-inert={inert}
         aria-label={label}
         aria-keyshortcuts="Space"
         title={`${label} · Пробел`}
