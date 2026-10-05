@@ -484,6 +484,314 @@
   text-align: center;
 }
 
+/* ── the photo viewer ──
+   No artboard draws one: it is the player's language (a panel card on the scrim, the picture in a black frame, .ibtn
+   «Закрыть») with the Photos sheet's tile facts beside the photo. A run photo is 9:16, so the frame is 9:16 at the window's
+   full height and the facts take a 272 px column instead of rows above and below it; the step arrows sit on the scrim on
+   either side. Radii, heights and colours are the components sheet's: card 14, frame 10, button 9, list checkbox 5. */
+
+/* The tile's photo is the button that opens it: the whole tile under the pick and the mark, a zoom cursor, a slight lift. */
+.photo-open {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: zoom-in;
+}
+
+.photo-open .portrait {
+  transition: transform 0.24s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+
+.photo-open:hover .portrait {
+  transform: scale(1.025);
+}
+
+/* The tile clips anything drawn outside the photo, so the window's focus ring (2 px, 2 px off) goes on the tile itself: an
+   outline, which reads apart from a picked tile's accent border. */
+.photo-open:focus-visible {
+  outline: none;
+}
+
+.photo-tile:has(> .photo-open:focus-visible) {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* What lies over the photo lets a click through to it; the pick and the mark keep their own. */
+.photo-tile .photo-badges,
+.photo-tile .photo-label,
+.photo-tile .photo-refused {
+  pointer-events: none;
+}
+
+.viewer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: var(--scrim-92);
+  animation: viewer-fade 0.14s ease-out;
+}
+
+.viewer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: 100%;
+  max-height: 100%;
+  animation: viewer-rise 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.viewer:focus,
+.player:focus {
+  outline: none;
+}
+
+.viewer-card {
+  display: flex;
+  gap: 16px;
+  min-height: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow-frame);
+}
+
+/* As tall as the window allows (the scrim's 24 px and the card's 14 px off each side), or as wide as the arrows (2 × 56),
+   the card's padding and gap (44) and the facts column (272) leave room for; never past 1600 px. The photo inside is
+   contained and never enlarged past its own pixels. Picked: the accent ring of the tile; refused: the warning ring. */
+.viewer-frame {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: min(calc(100vh - 76px), calc((100vw - 478px) * 16 / 9), 1600px);
+  aspect-ratio: 9 / 16;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 10px;
+  background: var(--frame-black);
+}
+
+.viewer-frame-on {
+  border-color: var(--accent);
+}
+
+.viewer-frame-refused {
+  border-color: var(--warn);
+}
+
+.viewer-img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  animation: viewer-fade 0.16s ease-out;
+}
+
+.viewer-ph {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.viewer-ph .portrait-silhouette {
+  height: 70%;
+}
+
+.viewer-failed {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  color: var(--danger);
+  transform: translateX(-50%);
+}
+
+.viewer-side {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 272px;
+  min-height: 0;
+  padding-top: 2px;
+}
+
+.viewer-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.viewer-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* .card-title's face; tabular figures, so stepping does not make the title jitter. */
+.viewer-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* The tile wraps «лицо не проверялось» in a 92 px box to clear its pick; the column has the room for one line. */
+.viewer-meta .photo-face-none {
+  max-width: none;
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.viewer-refused {
+  color: var(--warn);
+}
+
+.viewer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.viewer-actions .btn {
+  justify-content: flex-start;
+  width: 100%;
+}
+
+/* The tile's pick box in a list's size. */
+.viewer-check {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--pick-ring);
+  border-radius: 5px;
+  color: var(--accent-ink);
+}
+
+/* Picked: .chip-on's tint, the box filled like the tile's. */
+.viewer-pick[aria-pressed="true"],
+.viewer-pick[aria-pressed="true"]:hover:not(:disabled) {
+  border-color: var(--accent-ring);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+.viewer-pick[aria-pressed="true"] .viewer-check {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+/* Rejecting is the one step that takes a photo out of play: it warms to the danger colour under the pointer. */
+.viewer-mark:not(.viewer-mark-on):hover:not(:disabled):not([aria-disabled="true"]) {
+  border-color: var(--danger-35);
+  background: var(--danger-08);
+  color: var(--danger);
+}
+
+.viewer-mark[aria-disabled="true"] {
+  cursor: progress;
+}
+
+.viewer-why {
+  margin: -2px 0 2px;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.viewer-keys {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  margin: auto 0 0;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.viewer-keys kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+}
+
+.viewer-nav {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--panel-2);
+  color: var(--text-2);
+  cursor: pointer;
+}
+
+.viewer-nav:hover:not(:disabled) {
+  background: var(--panel-3);
+  color: var(--text);
+}
+
+.viewer-nav:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+@keyframes viewer-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes viewer-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.985);
+  }
+}
+
 /* ── the avatar tile's «K видео» ── */
 
 .avatar-videos {
@@ -503,7 +811,18 @@
 
 @media (prefers-reduced-motion: reduce) {
   .photo-mark,
-  .video-play {
+  .video-play,
+  .photo-open .portrait {
     transition: none;
+  }
+
+  .photo-open:hover .portrait {
+    transform: none;
+  }
+
+  .viewer-scrim,
+  .viewer,
+  .viewer-img {
+    animation: none;
   }
 }
