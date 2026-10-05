@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { sweepPartFiles } from "../renderQueue/sweep";
@@ -177,6 +177,76 @@ describe("the photos of a pending intent are held until recovery resolves it (st
     expect(report.left).toHaveLength(1);
     expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
     expect(photo(w, library)?.reserved).toBe(true);
+  });
+
+  test.each(["EIO", "EBUSY"])("an lstat of the intent that fails (%s) holds all the avatar's photos too (review round 1 of the follow-ups, M1)", async (code) => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    const fs = faultyFs();
+    fs.override({ lstat: async (path) => (path.includes(".pending") ? Promise.reject(errnoError(code)) : NODE_COMMIT_FS.lstat(path)) });
+
+    await recoverVideos({ library, exportRoot: rootRef(w) }, { fs });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+    expect(photo(w, library)?.reserved).toBe(true);
+  });
+
+  test("a .pending folder that cannot be listed (EACCES) holds all the avatar's photos, and a later listing that works releases them", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    const broken = { readFile: NODE_LIBRARY_READ_FS.readFile, readdir: (path: string) => (path.endsWith(".pending") ? Promise.reject(errnoError("EACCES")) : NODE_LIBRARY_READ_FS.readdir(path)) };
+
+    await recoverVideos({ library, exportRoot: null }, { libraryFs: broken });
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toEqual([]);
+
+    // The folder lists again, and holds no intent any more: nothing is pending, nothing is held.
+    rmSync(videoPaths(w.libraryRoot, w.avatar.id).intent("video-00000001"), { force: true });
+    await recoverVideos({ library, exportRoot: null });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
+  });
+
+  test.each([
+    ["broken JSON", "{ not json"],
+    ["a record that fails its schema", JSON.stringify({ schemaVersion: 1, id: "video-00000001", nonsense: true })],
+  ])("an intent no version can ever adopt (%s) is left, WITHOUT a hold: the avatar is not locked for ever (review round 1 of the follow-ups, M2)", async (_name, text) => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    writeFileSync(videoPaths(w.libraryRoot, w.avatar.id).intent(record.id), text);
+    const library = await w.reopen();
+
+    const report = await recoverVideos({ library, exportRoot: rootRef(w) });
+
+    expect(report.left).toEqual([{ file: `avatars/${w.avatar.id}/videos/.pending/${record.id}.json`, reason: "unreadable" }]);
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
+  });
+
+  test("an intent a live commit consumed between the lstat and the read is skipped, not held (M3a)", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, {}));
+    const library = await w.reopen();
+    const libraryFs = { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => Promise.reject(errnoError("ENOENT")) };
+
+    const report = await recoverVideos({ library, exportRoot: null }, { libraryFs });
+
+    expect(report.left).toEqual([]);
+    expect(library.eligibleUnusedPhotos(w.avatar.id)).toHaveLength(w.photos.length);
+  });
+
+  test("a targeted settle never widens a hold: one transient read error leaves the exact photos held, not all of them (LOW-1)", async () => {
+    const w = world();
+    const record = sampleRecord(w, {});
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    const library = await w.reopen();
+    library.holdPendingPhotos(w.avatar.id, record.id, [w.photos[0]?.id ?? ""]);
+    const libraryFs = { readdir: NODE_LIBRARY_READ_FS.readdir, readFile: () => Promise.reject(errnoError("EBUSY")) };
+
+    await recoverVideos({ library, exportRoot: rootRef(w), only: { videoIds: [record.id] } }, { libraryFs });
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).toEqual(w.photos.slice(1).map((p) => p.id));
   });
 
   test("once the intent reads again, the hold narrows to the photos it names", async () => {

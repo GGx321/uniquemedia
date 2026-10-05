@@ -332,10 +332,21 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
       signal.throwIfAborted();
       const paths = videoPaths(input.library.root, avatar.id);
       let names: Array<{ name: string; isFile: boolean }>;
+      const dirHold = `pending-dir:${avatar.id}`;
       try {
         names = await lib.readdir(paths.pendingDir);
+        // The folder lists: whatever hold a failed listing made is over (the intents it holds are held one by one below).
+        input.library.releasePendingPhotos(dirHold);
       } catch (error) {
-        if (!hasErrorCode(error, "ENOENT") && !hasErrorCode(error, "ENOTDIR")) skip("pending folder", error);
+        if (signal.aborted) throw error;
+        if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) {
+          input.library.releasePendingPhotos(dirHold);
+          continue;
+        }
+        skip("pending folder", error);
+        // Which intents are in a folder that cannot be listed is unknown, so which photos they name is too: fail closed, all of the avatar's, until a listing works.
+        // (A targeted settle never widens a hold.)
+        if (only === null) input.library.holdPendingPhotos(avatar.id, dirHold, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
         continue;
       }
       for (const { name, isFile } of names.sort((x, y) => (x.name < y.name ? -1 : 1))) {
@@ -356,32 +367,42 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
         const videoId = match[1];
         if (only !== null && !only.has(videoId)) continue;
         const base = { avatarId: avatar.id, name, relative, kind: "intent" as const, videoId };
-        // An intent that cannot be read (a transient error, a file too big, one from a newer Studio) may name any photo of the avatar: fail closed, hold them ALL until
-        // a later read of it says which (the hold of the same video id is then replaced by the exact one) or it is gone.
-        const unreadable = (left: "unreadable" | "too-new"): void => {
+        // An intent that MAY still be adopted but cannot be read now (a transient error, a file too big, one from a newer Studio) may name any photo of the avatar: fail
+        // closed, hold them ALL until a later read of it says which (the hold of the same video id is then replaced by the exact one) or it is gone. A targeted settle never
+        // widens a hold (its own exact hold stands). An intent NO version can adopt (broken JSON, a record that fails its schema, one that names another id or avatar) is only
+        // `left`, with no hold: nothing could ever release it, and the avatar would be locked for good.
+        const unreadable = (left: "unreadable" | "too-new", hold: boolean): void => {
           loaded.push({ ...base, left });
-          input.library.holdPendingPhotos(avatar.id, videoId, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
+          if (hold && only === null) input.library.holdPendingPhotos(avatar.id, videoId, input.library.photosByAvatar(avatar.id).map((photo) => photo.id));
         };
         try {
           const info = await fs.lstat(paths.intent(videoId));
           if (info.size > MAX_INTENT_BYTES || !info.isFile) {
-            unreadable("unreadable");
+            unreadable("unreadable", true);
+            continue;
+          }
+          let text: string;
+          try {
+            text = await lib.readFile(paths.intent(videoId));
+          } catch (error) {
+            if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked (a commit that finished linked it): nothing to settle, nothing to hold
+            if (hasErrorCode(error, "ETIMEDOUT") || signal.aborted) throw error;
+            unreadable("unreadable", true);
             continue;
           }
           let value: unknown;
           try {
-            value = JSON.parse(await lib.readFile(paths.intent(videoId)));
-          } catch (error) {
-            if (hasErrorCode(error, "ETIMEDOUT") || signal.aborted) throw error;
-            unreadable("unreadable");
+            value = JSON.parse(text);
+          } catch {
+            unreadable("unreadable", false);
             continue;
           }
           if (isFromNewerVersion(value, VIDEO_RECORD_SCHEMA_VERSION)) {
-            unreadable("too-new");
+            unreadable("too-new", true);
             continue;
           }
           const parsed = VideoRecordSchema.safeParse(value);
-          if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) unreadable("unreadable");
+          if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) unreadable("unreadable", false);
           else {
             loaded.push({ ...base, record: parsed.data });
             // Until this intent is adopted or dropped, its photos are held: its file may be adopted at any time, and a run that defers it
@@ -393,6 +414,8 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked: nothing to settle
           if (signal.aborted) throw error;
           skip("intent", error);
+          // The lstat (or another step) failed: nothing is known of the intent, so it is held like one that could not be read.
+          unreadable("unreadable", true);
         }
       }
     }
