@@ -733,6 +733,59 @@ Tests first:
 Review notes (opus): the scope reuse (`avatarJobId`) and that the ledger format is unchanged; the
 salvage rule never keeps an item that breaks `PoolSchema`.
 
+#### CS.2 built (2026-10-06, branch `feat/studio-custom-categories-engine`)
+
+What shipped. Protocol v5 stays open and additive.
+
+- **Contract**: `categories.list` (`{categories, unreadable, interrupted[], busy}`), `categories.estimate`, `categories.create`,
+  `categories.regenerate` (both answer `{category, spentMicros}`: what THIS call cost; the category's own `spentMicros` is its total),
+  `categories.update`, `categories.delete`, and a seventh command, `categories.dismissInterrupted {jobId}`, which the CS.0 contract notes need
+  («Убрать» forgets the record). Event `category.changed` (`upserted {category}` | `removed {categoryId}`). Error code `POOL_REJECTED`
+  (Russian text in `errorMessagesRu.ts`). `EngineError.spentMicros` (additive): on every failure of a paid category call from the moment
+  its call started, 0 for a provider refusal, absent on the refusals before it. Shared: `CategoryDescription` (1..500, line break allowed),
+  `CategoryPool`/`CategoryPlace`/`PoolShot` (counts 5..7 places, 3..6 outfits, deck of 5, 1..3 times, 2..4 activities, one free hand per
+  place, a mirror place when the deck can draw a mirror shot), `CategorySummary {categoryId, name, description, label, style, pool, model,
+  spentMicros, createdAt, updatedAt}`, `CategoryInterrupted`, `CategoryBusy`, `categoryNameKey` (the one name-uniqueness rule), `MAX_CUSTOM_CATEGORIES`.
+- **Engine**: `library/categories.ts` (`CategoryStore`, one record per category, one lock for the folder, atomic writes, unreadable and newer
+  records counted and kept, names unique per library, the 50 limit, `pending-<jobId>.json` records of calls in flight; the survey moves its crash
+  temps), `scenes/poolGen.ts` (prompt, strict `scene_pool` schema, `readPoolAnswer` with salvage and the `twoHanded` normalisation),
+  `scenes/poolCall.ts` (`POOL_MAX_ATTEMPTS`, `poolCall`, kept light because `control.ts` reads it), `scenes/categoryJob.ts` (two attempts, the
+  descriptor job's mould), `scenes/categoryPlan.ts` (price), `money/jobSpend.ts` (what the ledger booked for a job id: the one source of every
+  «потрачено»). `#categoryCall` serialises create/regenerate (IN_FLIGHT, counted in `#paidCommands`); the call's scope is `{avatarJobId}`
+  (ledger format unchanged), capped at the accepted worst; the pending record is written before the first send and removed on any outcome; a
+  paid pool that cannot be stored is kept in `raw/<jobId>:category`. A failed regenerate keeps the old pool and adds its cost to the category's
+  total (event `upserted`). `runs.estimate`/`runs.start` look custom refs up in the library (unknown or deleted → NOT_FOUND, after the avatar
+  checks, before any price), plan from the pool and write the `categories` snapshot. `control.ts` deadlines as the descriptor's.
+- **Mock and parity**: `MockCategories` (deterministic pool from name + description), controls `setCategoryPrice`, `failNextCategoryCall`,
+  `seedInterruptedCategory`; the store follows `category.changed` through `subscribeCategories`. `mockOpenRouter.ts` answers `scene_pool`. Two
+  golden scenarios appended (+44 lines, nothing changed).
+- **Smoke**: `runCategoryScenario` (`--only category`): create, list, a run of 5 photos with the category, label-only writer, canary, money.
+
+Money numbers (fallback prices): `POOL_CALL` 10,000 tokens in / 4,000 out = $0.0225 an attempt, $0.045 for two (the estimate and the
+default cap, accepted worst = cap), typical 1,800 + 1,500 tokens = $0.006. Floor pin (`poolGen.floor.test.ts`): worst prompt = a 500-char
+description of 3-byte chars (CJK) with the worst feedback (all 8 reasons, 6 words of 32 bytes) = **6,442 tokens**, margin **3,558** under the
+10,000 ceiling (the pin requires 3,000; Cyrillic measures 5,942); the reserve of that prompt equals the ceiling's price (22,500 µ$).
+
+Deviations from the plan, and why:
+1. **The category's name is not sent to the pool call** (§4.1 step 3 says name + description; §4.4 and the CS.0 dialog say the name is UI-only):
+   only the description goes; the canary and the smoke pin it.
+2. The seventh command, `categories.dismissInterrupted`, and `categories.list`'s `busy` (so a second dialog can say what it waits for) are
+   additions the design notes ask for.
+3. The pool is salvaged item by item without any rewriting: no normalisation of quotes or accents, a bad item is dropped; a mirror deck with no
+   mirror place is refused (never given a place it did not name). Repeats and items past the pool's largest size are ignored.
+4. The floor pin is measured with 3-byte characters, not only Cyrillic: a 500-char description can cost 1,500 bytes.
+5. `categories.estimate` is not in the parity golden: the mock's prices are «live» by design, the engine's offline ones the table.
+6. Not shown in the transcript of the golden: events (the existing rig records none).
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7032 + 6115 + 5627 = 18774 tests
+passing, 0 failing; the E2E smoke's category scenario, 25 of 25 checks (unpackaged E2E build); the packaged smoke and the Windows and macOS CI
+dispatch are recorded in the task's report.
+
+Tests seen red first: the contract, `readPoolAnswer`, the floor pin, the store, `categoryJob`, `jobSpend`, `categoryPlan`, the engine
+commands (red: INTERNAL «not implemented yet»), the deadlines, the mock, the store listeners, the mock OpenRouter route. Written after the
+code and checked red afterwards by switching the lookup back to CS.1's refusal: the custom-run tests in `engine.runs.test.ts`. Passing at once by
+nature: the canary tests (a leak-free property) and the smoke scenario.
+
 ### CS.3 — Categories UI (designer, opus)
 
 Scope: chips (built-ins, then custom, counts from `splitCount`); «+ Своя» dialog with price,
