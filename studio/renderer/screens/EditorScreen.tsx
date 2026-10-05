@@ -58,6 +58,7 @@ import { useDraftFlushes } from "./montage/flushes";
 import { isTextEntry, spacePlays } from "./montage/keys";
 import { resolveSelection, selectClip } from "./montage/selection";
 import { DraftSession } from "./montage/session";
+import { useDraftSessions } from "./montage/sessions";
 import { Timeline } from "./montage/Timeline";
 import { seekInto } from "./montage/timelineScale";
 import { usePlayheadRest } from "./montage/usePlayhead";
@@ -271,14 +272,22 @@ function DraftEditor({
   const mounted = useMounted();
   const { montageId } = initial;
   const avatarId = initial.spec.avatarId;
-  const [session] = useState(
-    () =>
-      new DraftSession({
-        montage: initial,
-        scheduler: realScheduler,
-        send: (id, content) => client.request("montages.save", { montageId: id, spec: content.spec, name: content.name }),
-      }),
-  );
+  // Slice review 5-M2: an editor of this draft that closed in this window (the owner went to Settings and came back) left its session and its
+  // place: they go on, with the undo history. The draft as the engine holds it now goes through the session's own rules (an echo of its last
+  // save changes nothing; a save made elsewhere meanwhile is taken, on top of the history).
+  const sessions = useDraftSessions();
+  const [kept] = useState(() => sessions.resume(montageId));
+  const [session] = useState(() => {
+    if (kept !== null) {
+      kept.session.receive({ change: "upserted", montage: initial });
+      return kept.session;
+    }
+    return new DraftSession({
+      montage: initial,
+      scheduler: realScheduler,
+      send: (id, content) => client.request("montages.save", { montageId: id, spec: content.spec, name: content.name }),
+    });
+  });
   const state = useSyncExternalStore(
     useCallback((listener: () => void) => session.subscribe(listener), [session]),
     () => session.state,
@@ -482,7 +491,7 @@ function DraftEditor({
   for (const cell of flagged) if (!clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
 
   // ---------- the timeline (3d.3a; 3d.3b: layers and music) ----------
-  const timeline = useTimeline(state.spec);
+  const timeline = useTimeline(state.spec, undefined, kept?.place ?? null);
   const { playhead } = timeline;
 
   // The owner's feedback (2026-10-05): Space plays and pauses the montage wherever the focus is, but where Space is the control's own
@@ -540,7 +549,17 @@ function DraftEditor({
 
   // ---------- the media panel (3d.5) ----------
   const commands = useSelectionCommands(session, timeline);
-  const [tab, setTab] = useState<MediaTab>("photos");
+  const [tab, setTab] = useState<MediaTab>(kept?.place.tab ?? "photos");
+  // Closing, the editor leaves its session and its place with the window, for the next editor of this draft here (slice review 5-M2).
+  const place = useRef({ tab, timeline });
+  place.current = { tab, timeline };
+  useEffect(
+    () => () => {
+      const { tab: lastTab, timeline: last } = place.current;
+      sessions.keep(montageId, { session, place: { tab: lastTab, selection: last.selection, playheadMs: playheadStep(last), zoom: last.zoom } });
+    },
+    [sessions, montageId, session],
+  );
   /** Bumped when the timeline's «+» or a «Заменить…» asks for a tab: the focus goes to it. */
   const [tabFocus, setTabFocus] = useState(0);
   const [binFilter, setBinFilter] = useState<BinFilter>({ unusedOnly: false, category: null });
@@ -1185,6 +1204,7 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
   const view = useEngineView();
   const { client } = useEngine();
   const flushes = useDraftFlushes();
+  const sessions = useDraftSessions();
   const ready = view.phase === "ready";
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -1203,7 +1223,11 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
           // Being saved right now: a moment later it reads whole.
           retries += 1;
           cancelPause = realScheduler.schedule(CHANGING_PAUSE_MS, () => get(lost));
-        } else setLoad({ kind: "error", error: reply.error });
+        } else {
+          // A deleted draft has no editor to go on with.
+          if (reply.error.code === "NOT_FOUND") sessions.forget(montageId);
+          setLoad({ kind: "error", error: reply.error });
+        }
       });
     };
     // An editor of this draft that just closed may still be saving its last edit: read the draft after that.
@@ -1214,7 +1238,7 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
       alive = false;
       cancelPause?.();
     };
-  }, [ready, loaded, client, flushes, montageId, attempt]);
+  }, [ready, loaded, client, flushes, sessions, montageId, attempt]);
 
   if (load.kind === "ready") {
     const avatar = view.avatars.find((a) => a.avatarId === load.montage.spec.avatarId) ?? null;

@@ -24,11 +24,13 @@ import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type Dollar
 import { listLine, musicFailureText, quotaView, recoveryText, refreshGate, refreshLabel, refusalText } from "../lib/music";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { bound } from "../lib/traits";
-import type { SettingsFocus } from "../navigation";
+import { type SettingsFocus, useNavigate } from "../navigation";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { EngineOffline } from "../ui/EngineOffline";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { draftTitle } from "./montage/labels";
+import { useDraftSessions } from "./montage/sessions";
 
 /**
  * `/credits` is account-wide, so a difference up to $0.01 from the ledger is
@@ -1404,7 +1406,24 @@ function MusicCard({ settings, headingRef }: { settings: Settings; headingRef: R
   );
 }
 
-export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
+/**
+ * «← К черновику» (slice review 5-M2): Settings was entered from this draft's editor, which sends the owner here for the trending list, the export
+ * folder or an error's card. The editor this window kept for the draft names it; back there, the draft goes on where it was (its undo included).
+ */
+function BackToDraft({ montageId }: { montageId: string }) {
+  const navigate = useNavigate();
+  const view = useEngineView();
+  const kept = useDraftSessions().peek(montageId);
+  const avatar = kept === null ? null : (view.avatars.find((a) => a.avatarId === kept.session.state.spec.avatarId)?.name ?? null);
+  return (
+    <button type="button" className="back-link" onClick={() => navigate({ name: "editor", montageId })}>
+      <Icon name="back" size={14} strokeWidth={2.2} />
+      {kept === null ? "К черновику" : `К черновику ${draftTitle(avatar, kept.session.state.name)}`}
+    </button>
+  );
+}
+
+export function SettingsScreen({ focus, back }: { focus?: SettingsFocus; back?: { readonly montageId: string } }) {
   const { store } = useEngine();
   const view = useEngineView();
   // The key and the money share one card now («OpenRouter и расходы»): an error link to either lands on its heading.
@@ -1432,7 +1451,10 @@ export function SettingsScreen({ focus }: { focus?: SettingsFocus }) {
   return (
     <div className="page page-bounded">
       <header className="page-head">
-        <ScreenTitle>Настройки</ScreenTitle>
+        <div>
+          {back !== undefined && <BackToDraft montageId={back.montageId} />}
+          <ScreenTitle>Настройки</ScreenTitle>
+        </div>
       </header>
 
       {view.phase === "connecting" && <p className="muted">Загружаем настройки…</p>}

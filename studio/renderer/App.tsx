@@ -3,13 +3,14 @@ import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { sidebarCounts } from "./engine/renderJobs";
 import { readStudioVersion } from "./engine/windowStudio";
-import { createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
+import { arriving, createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
 import { DraftsScreen } from "./screens/DraftsScreen";
 import { EditorScreen } from "./screens/EditorScreen";
 import { DraftFlushes, DraftFlushesProvider } from "./screens/montage/flushes";
+import { DraftSessions, DraftSessionsProvider } from "./screens/montage/sessions";
 import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
@@ -103,7 +104,7 @@ function Screen({ route, lastPhotos }: { route: Route; lastPhotos: string | null
     case "avatarImport":
       return <AvatarImport />;
     case "settings":
-      return <SettingsScreen focus={route.focus} />;
+      return <SettingsScreen focus={route.focus} back={route.back} />;
     case "photos":
       return <PhotosScreen avatarId={route.avatarId} tab={route.tab ?? "photos"} />;
     case "montages":
@@ -208,10 +209,12 @@ function SidebarStatus() {
 export function App({ client }: { client: EngineClient }) {
   const [route, setRoute] = useState<Route>({ name: "avatars" });
   // Every way to another screen, the sidebar included, goes through the leave guard of the screen on show (3d.2
-  // review: the montage editor's unsaved edit).
-  const [navigation] = useState(() => createNavigation(setRoute));
+  // review: the montage editor's unsaved edit). Settings entered from a draft remembers it (`arriving`, slice review 5-M2).
+  const [navigation] = useState(() => createNavigation((next) => setRoute((current) => arriving(current, next))));
   // The saves of montage editors that closed, so the same draft opened again waits for them.
   const [draftFlushes] = useState(() => new DraftFlushes());
+  // Their sessions and places, so the same draft opened again in this window goes on where it was (slice review 5-M2).
+  const [draftSessions] = useState(() => new DraftSessions());
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -291,7 +294,9 @@ export function App({ client }: { client: EngineClient }) {
             <EngineNoticesBar />
             <RenderNotices viewing={route.name === "editor" ? route.montageId : null} />
             <DraftFlushesProvider value={draftFlushes}>
-              <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+              <DraftSessionsProvider value={draftSessions}>
+                <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+              </DraftSessionsProvider>
             </DraftFlushesProvider>
           </main>
         </div>

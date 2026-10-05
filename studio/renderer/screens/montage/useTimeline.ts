@@ -27,15 +27,29 @@ export interface TimelineState {
   togglePlay(): void;
 }
 
-export function useTimeline(spec: MontageDraft, clock: FrameClock = windowFrameClock): TimelineState {
+/** Where a timeline starts: an editor of the same draft that closed in this window left it there (slice review 5-M2). */
+export interface TimelineStart {
+  readonly selection: Selection | null;
+  readonly playheadMs: number;
+  readonly zoom: number;
+}
+
+export function useTimeline(spec: MontageDraft, clock: FrameClock = windowFrameClock, start: TimelineStart | null = null): TimelineState {
   const total = totalMs(spec);
-  const [selection, select] = useState<Selection | null>(null);
-  const [zoom, setZoomState] = useState(MIN_ZOOM);
+  const [selection, select] = useState<Selection | null>(start?.selection ?? null);
+  const [zoom, setZoomState] = useState(() => clampZoom(start?.zoom ?? MIN_ZOOM));
   const [playhead] = useState(() => new PlayheadStore(clock));
+  /** The playhead's start, put once the store knows the montage's length (it is snapped into it). */
+  const startAt = useRef(start?.playheadMs ?? null);
 
   // The store knows the montage's length before the screen is painted: a change stops a playback and pulls the playhead back
   // inside a shorter montage (playhead.ts).
-  useLayoutEffect(() => playhead.setTotal(total), [playhead, total]);
+  useLayoutEffect(() => {
+    playhead.setTotal(total);
+    if (startAt.current === null) return;
+    playhead.seek(startAt.current);
+    startAt.current = null;
+  }, [playhead, total]);
   useEffect(() => () => playhead.dispose(), [playhead]);
 
   const seek = useCallback((ms: number) => playhead.seek(ms), [playhead]);

@@ -2,12 +2,15 @@ import { createContext, useContext, useEffect, useRef } from "react";
 
 export type SectionId = "avatars" | "photo" | "montage" | "autopilot" | "settings";
 
-/** Where the main pane is. `focus` scrolls Settings to the card an error pointed at. */
+/**
+ * Where the main pane is. `focus` scrolls Settings to the card an error pointed at; `back` is the draft whose editor sent the owner there, for
+ * «К черновику» (`arriving` sets it).
+ */
 export type Route =
   | { name: "avatars"; saved?: string }
   | { name: "avatarNew"; draftId: string | null }
   | { name: "avatarImport" }
-  | { name: "settings"; focus?: SettingsFocus }
+  | { name: "settings"; focus?: SettingsFocus; back?: { readonly montageId: string } }
   /** T8b: an avatar's photos; null opens the one shown last, else the first active avatar. `tab` (3e.2): the «Видео» tab, opened from the avatar tile's «K видео». */
   | { name: "photos"; avatarId: string | null; tab?: PhotosTab }
   /** 3d.2: the drafts screen (the sidebar's «Монтаж», EditorEmpty). */
@@ -103,6 +106,18 @@ export function useLeaveGuard(guard: LeaveGuard): void {
   const latest = useRef(guard);
   latest.current = guard;
   useEffect(() => register((target) => latest.current(target)), [register]);
+}
+
+/**
+ * Where the window goes from `from` when asked for `to` (slice review 5-M2): Settings entered from a draft's editor, by any way (its links to the
+ * trending list, the export folder or an error's card, or the sidebar), remembers the draft for «К черновику»; a link to another of Settings' own
+ * cards keeps it. Every other route is the one asked for.
+ */
+export function arriving(from: Route, to: Route): Route {
+  if (to.name !== "settings" || to.back !== undefined) return to;
+  if (from.name === "editor") return { ...to, back: { montageId: from.montageId } };
+  if (from.name === "settings" && from.back !== undefined) return { ...to, back: from.back };
+  return to;
 }
 
 export function sectionOf(route: Route): SectionId {
