@@ -1,5 +1,6 @@
 import { defaultSpec, estimateBytesUpper } from "../../../shared/montage";
 import { STICKER_MANIFEST } from "../../../shared/stickers";
+import { IMAGE_MODEL_SCENARIOS } from "./scenarios.imageModels";
 import type { Control, RigOptions, World } from "./rigs";
 import { PARITY_DECODED_APART, parityListTracks } from "./tracks";
 import type { Answer, Transcript } from "./transcript";
@@ -1679,7 +1680,7 @@ const USAGE_UNKNOWN_SCENARIOS: readonly Scenario[] = [
   usageUnknownScenario("an avatar whose reject marks cannot be read: no photo is eligible, and a pick, a draft and a render refuse them", "rejects-unreadable"),
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...IMAGE_MODEL_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {
