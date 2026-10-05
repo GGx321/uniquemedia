@@ -1,11 +1,13 @@
-import { useId } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type { AvatarSummary, EngineError, PhotoSummary } from "../../../shared/engine";
 import { countOf } from "../../lib/format";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
 import { Portrait, Silhouette } from "../../ui/Portrait";
+import { PhotoViewer } from "./PhotoViewer";
 import { heldLabel, montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
 import { CATEGORY_LABEL } from "./runForm";
+import { viewerPhotos, viewerPlace } from "./viewerModel";
 import { galleryPhotos, type GalleryFilter } from "./videosModel";
 
 /** What photos.list last answered: the photos it could list, and how many more it could not. */
@@ -28,7 +30,18 @@ const FILTERS: readonly { id: GalleryFilter; label: string }[] = [
   { id: "rejected", label: "Отклонённые" },
 ];
 
-function PhotoTile({ photo, position, picked, refused, onToggle, mark }: { photo: PhotoSummary; position: number; picked: boolean; refused: boolean; onToggle: (photoId: string) => void; mark: MarkControl }) {
+interface PhotoTileProps {
+  photo: PhotoSummary;
+  position: number;
+  picked: boolean;
+  refused: boolean;
+  onToggle: (photoId: string) => void;
+  mark: MarkControl;
+  /** Open the photo in the viewer. */
+  onOpen: (photoId: string) => void;
+}
+
+function PhotoTile({ photo, position, picked, refused, onToggle, mark, onOpen }: PhotoTileProps) {
   const label = CATEGORY_LABEL[photo.category];
   // A photo picked before it became unusable can still be unpicked.
   const why = montagePickRefusal(photo);
@@ -47,7 +60,10 @@ function PhotoTile({ photo, position, picked, refused, onToggle, mark }: { photo
     .join(" ");
   return (
     <div className={classes}>
-      <Portrait avatarId={photo.avatarId} photoId={photo.photoId} label={`Фото ${position}: ${label}`} />
+      {/* The photo itself opens the viewer; the pick and the mark below are its siblings, never inside it. */}
+      <button type="button" className="photo-open" data-photo-id={photo.photoId} aria-label={`Открыть фото ${position}: ${label}`} aria-haspopup="dialog" onClick={() => onOpen(photo.photoId)}>
+        <Portrait avatarId={photo.avatarId} photoId={photo.photoId} label={`Фото ${position}: ${label}`} />
+      </button>
       {(held !== null || photo.rejected) && <span className="photo-held-dim" aria-hidden="true" />}
       <button
         type="button"
@@ -136,10 +152,15 @@ interface GalleryProps {
  * similarity badge — or «лицо не проверялось» when the gate did not judge it
  * (a profile or back shot, or a photo from before the gate). The filter
  * (3e.2) shows every photo, the ones a montage may still take, or the owner's
- * rejected ones; a tile's own button rejects or restores it.
+ * rejected ones; a tile's own button rejects or restores it. A click on a
+ * tile's photo opens it in the viewer (PhotoViewer), which steps through the
+ * photos as the filter shows them.
  */
 export function Gallery({ gallery, error, pending, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark }: GalleryProps) {
   const titleId = useId(); // L12: was the hardcoded "gallery-title"
+  const sectionRef = useRef<HTMLElement>(null);
+  /** The photo open in the viewer, by id: a list that changes under it moves its number, never what it shows. */
+  const [viewing, setViewing] = useState<string | null>(null);
   const loading = gallery === null && error === null;
   const photos = galleryPhotos(gallery?.photos ?? [], filter, usage);
   const skipped = filter === "all" ? (gallery?.skippedTotal ?? 0) : 0;
@@ -148,9 +169,21 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
   const nothing = emptyText(filter, usage);
   // A photo's number is its place in the whole gallery, whatever the filter shows.
   const positions = new Map((gallery?.photos ?? []).map((p, i) => [p.photoId, i + 1]));
+  const place = viewing === null ? null : viewerPlace(viewerPhotos(gallery?.photos ?? [], photos, viewing), viewing);
+  // The photo on screen left the gallery (its sidecar unreadable now, say): the viewer closes, and stays closed if it returns.
+  const gone = viewing !== null && place === null;
+  useEffect(() => {
+    if (gone) setViewing(null);
+  }, [gone]);
+
+  /** Where the focus goes when the viewer closes: the tile of the photo it showed, else the tile now in that photo's place. */
+  const tileFor = (photoId: string, index: number): HTMLElement | null => {
+    const tiles = Array.from(sectionRef.current?.querySelectorAll<HTMLButtonElement>("button.photo-open") ?? []);
+    return tiles.find((tile) => tile.dataset.photoId === photoId) ?? tiles[Math.min(index, tiles.length - 1)] ?? null;
+  };
 
   return (
-    <section className="photos-gallery" aria-labelledby={titleId} aria-busy={loading}>
+    <section ref={sectionRef} className="photos-gallery" aria-labelledby={titleId} aria-busy={loading}>
       <div className="photos-sec-head">
         <h2 id={titleId} className="card-title">
           Галерея
@@ -201,6 +234,7 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
                 refused={refused?.has(photo.photoId) ?? false}
                 onToggle={onToggle}
                 mark={mark}
+                onOpen={setViewing}
               />
             ))}
             {skipped > 0 && (
@@ -214,6 +248,19 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
             )}
           </div>
         )
+      )}
+
+      {place !== null && (
+        <PhotoViewer
+          place={place}
+          picked={picked.has(place.photo.photoId)}
+          refused={refused?.has(place.photo.photoId) ?? false}
+          onToggle={onToggle}
+          mark={mark}
+          onShow={setViewing}
+          onClose={() => setViewing(null)}
+          returnFocus={tileFor}
+        />
       )}
     </section>
   );
