@@ -46,23 +46,45 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   const nextRef = useRef<HTMLButtonElement>(null);
   /** The control inside the viewer that had the focus last. */
   const lastFocused = useRef<EventTarget | null>(null);
+  /** The photo on screen came from the owner's own step (not from a list that changed under it): say which it is. */
+  const stepped = useRef(false);
+  const [announcement, setAnnouncement] = useState("");
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus: () => returnFocus(photo.photoId, index) });
   // The dialog's empty band round the arrows looks like the dark around it, and closes like it.
   const backdrop = useBackdropClose(onClose, [scrimRef, dialogRef]);
+
+  const step = (photoId: string | null): void => {
+    if (photoId === null) return;
+    stepped.current = true;
+    onShow(photoId);
+  };
 
   // ← and →, wherever the focus is inside the viewer.
   useEffect(() => {
     const onKey = (event: KeyboardEvent): void => {
       if (event.defaultPrevented) return;
-      const step = viewerStep(event);
-      if (step === null) return;
+      const direction = viewerStep(event);
+      if (direction === null) return;
       event.preventDefault();
-      const target = step === "prev" ? prevId : nextId;
-      if (target !== null) onShow(target);
+      const target = direction === "prev" ? prevId : nextId;
+      if (target === null) return;
+      stepped.current = true;
+      onShow(target);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [prevId, nextId, onShow]);
+
+  const category = CATEGORY_LABEL[photo.category];
+  const title = `Фото ${index + 1} из ${total}`;
+
+  // Only the owner's own step is announced, once its photo is on screen: a running job's new photo moves the number too, and
+  // would chatter. Keyed on the photo alone: its title and category come with it.
+  useEffect(() => {
+    if (!stepped.current) return;
+    stepped.current = false;
+    setAnnouncement(`${title}: ${category}`);
+  }, [photo.photoId]);
 
   // A control that turns off under the focus drops it to the page in Chromium. An arrow at its end hands it to the other
   // arrow (stepping on is what the owner was doing); any other control (a pick a render now holds, say) to «Закрыть», so the
@@ -78,8 +100,6 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
     (other !== null && !other.disabled ? other : closeRef.current)?.focus();
   });
 
-  const category = CATEGORY_LABEL[photo.category];
-  const title = `Фото ${index + 1} из ${total}`;
   // A photo picked before it became unusable can still be unpicked, as on its tile.
   const why = montagePickRefusal(photo);
   const marking = mark.marking.has(photo.photoId);
@@ -100,7 +120,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
         }}
       >
         <FocusEdge edge="start" />
-        <button ref={prevRef} type="button" className="viewer-nav" aria-label="Предыдущее фото" aria-keyshortcuts="ArrowLeft" disabled={prevId === null} onClick={() => prevId !== null && onShow(prevId)}>
+        <button ref={prevRef} type="button" className="viewer-nav" aria-label="Предыдущее фото" aria-keyshortcuts="ArrowLeft" disabled={prevId === null} onClick={() => step(prevId)}>
           <Icon name="back" size={20} strokeWidth={2.2} />
         </button>
 
@@ -112,7 +132,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
           <div className="viewer-side">
             <header className="viewer-head">
               <div className="viewer-title-row">
-                <h2 id={titleId} className="viewer-title" aria-live="polite">
+                <h2 id={titleId} className="viewer-title">
                   {title}
                 </h2>
                 <button ref={closeRef} type="button" className="ibtn" aria-label="Закрыть" aria-keyshortcuts="Escape" onClick={onClose}>
@@ -124,6 +144,9 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
                 <PhotoBadges photo={photo} />
                 {refused && <span className="pill photo-badge viewer-refused">недоступно</span>}
               </div>
+              <p className="sr-only" aria-live="polite">
+                {announcement}
+              </p>
             </header>
 
             <div className="viewer-actions">
@@ -179,7 +202,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
           </div>
         </div>
 
-        <button ref={nextRef} type="button" className="viewer-nav" aria-label="Следующее фото" aria-keyshortcuts="ArrowRight" disabled={nextId === null} onClick={() => nextId !== null && onShow(nextId)}>
+        <button ref={nextRef} type="button" className="viewer-nav" aria-label="Следующее фото" aria-keyshortcuts="ArrowRight" disabled={nextId === null} onClick={() => step(nextId)}>
           <Icon name="forward" size={20} strokeWidth={2.2} />
         </button>
         <FocusEdge edge="end" />

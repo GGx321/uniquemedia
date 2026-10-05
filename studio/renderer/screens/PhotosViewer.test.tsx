@@ -60,6 +60,8 @@ function focusEdge(edge: "start" | "end"): void {
   if (found === null) throw new Error(`no ${edge} edge`);
   found.focus();
 }
+/** The live region that announces the owner's steps. */
+const announced = (): string => viewer().querySelector("[aria-live]")?.textContent ?? "";
 
 describe("opening a photo", () => {
   test("a click on a tile's photo opens it in a modal viewer: «Фото N из M», its category and the tile's badges, the photo large", async () => {
@@ -298,6 +300,17 @@ describe("stepping through the gallery", () => {
     expect(focusedLabel()).toBe(describeElement(inViewer("Закрыть")));
   });
 
+  test("an owner's step is announced, with the category; nothing else is", async () => {
+    await openMia({ photos: three });
+    fireEvent.click(openButton(1, "Фитнес"));
+    expect(within(viewer()).getByRole("heading", { level: 2 }).hasAttribute("aria-live")).toBe(false);
+    expect(announced()).toBe("");
+    press("ArrowRight");
+    expect(announced()).toBe("Фото 2 из 3: Путешествия");
+    fireEvent.click(prev());
+    expect(announced()).toBe("Фото 1 из 3: Фитнес");
+  });
+
   test("the arrows follow the gallery's filter: under «Отклонённые» only the rejected photos, numbered among themselves", async () => {
     // Newest first: 4, 3 (rejected), 2, 1 (rejected).
     await openMia({ photos: photos(4, (i) => (i % 2 === 1 ? { rejected: true, eligible: false } : {})) });
@@ -430,6 +443,8 @@ describe("a gallery that changes under the viewer", () => {
 
     await waitFor(() => expect(viewerTitle()).toBe("Фото 3 из 3"));
     expect(within(viewer()).getByText("Путешествия")).toBeDefined();
+    // The number moved without the owner: nothing is announced.
+    expect(announced()).toBe("");
   });
 
   test("a photo gone from the gallery while on screen closes the viewer; the focus goes to the photo now in its place", async () => {
