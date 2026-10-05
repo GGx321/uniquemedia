@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, relativeImportsOf, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionEngineProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, productionRendererPageProblems, relativeImportsOf, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -8,7 +8,8 @@ useNativeGlobals();
 // once DEBUGGABLE is inlined to `false` and the dead `if` is folded away (see
 // buildFlags.test.ts, which checks this against a real build), plus the one
 // unrelated, pre-existing read of `--user-data-dir` through the same
-// `app.commandLine` object, and the `isPackaged` line another check reads.
+// `app.commandLine` object, the `isPackaged` line another check reads, and
+// the lines that serve and load the window's page from `studio-app://renderer`.
 const CLEAN_MAIN = `
 for (const name of [
 	"remote-debugging-port",
@@ -20,6 +21,18 @@ var devToolsFlag = false;
 new BrowserWindow({ webPreferences: { devTools: false } });
 var userDataSwitch = app.commandLine.getSwitchValue("user-data-dir");
 else if (!app.isPackaged) app.setPath("userData", join(x, "uniquemedia-studio-dev"));
+var APP_SCHEME = "studio-app";
+var APP_PAGE_URL = \`\${APP_SCHEME}://renderer/index.html\`;
+protocol.registerSchemesAsPrivileged([{
+	scheme: MEDIA_SCHEME,
+	privileges: MEDIA_SCHEME_PRIVILEGES
+}, {
+	scheme: APP_SCHEME,
+	privileges: APP_SCHEME_PRIVILEGES
+}]);
+	protocol.handle(APP_SCHEME, (request) => handleAppRequest(request, RENDERER_DIR));
+	if (devServerUrl) win.loadURL(devServerUrl);
+	else win.loadURL(APP_PAGE_URL);
 `;
 
 describe("productionMainProblems: the remote-debugging refusal must match one strict, whitelisted shape", () => {
@@ -100,6 +113,58 @@ describe("productionMainProblems: the remote-debugging refusal must match one st
     // but this pins the exact reason it is allowed.
     expect(CLEAN_MAIN).toContain('app.commandLine.getSwitchValue("user-data-dir")');
     expect(productionMainProblems(CLEAN_MAIN).some((p) => p.includes("accesses commandLine"))).toBe(false);
+  });
+});
+
+// The 3f.6 security review read /etc/hosts from the real app: on a `file:` page the CSP's 'self' is every file on the disk.
+describe("productionMainProblems: the window's page comes from the app's own scheme, never from a file: URL", () => {
+  test("passes the real shape", () => {
+    expect(productionMainProblems(CLEAN_MAIN).filter((p) => p.includes("page") || p.includes("scheme"))).toEqual([]);
+  });
+
+  test("fails a main that loads the page from a file", () => {
+    const mutated = CLEAN_MAIN.replace("else win.loadURL(APP_PAGE_URL);", "else win.loadFile(RENDERER_FILE);");
+    expect(productionMainProblems(mutated)).toEqual(["main loads a file: page (loadFile)", "the window does not load the app's own page (studio-app://renderer/index.html)"]);
+  });
+
+  test("fails a main that loads a file: URL by loadURL", () => {
+    const mutated = CLEAN_MAIN.replace("else win.loadURL(APP_PAGE_URL);", "else win.loadURL(pathToFileURL(RENDERER_FILE).href);");
+    expect(productionMainProblems(mutated)).toEqual(["main builds a file: URL (pathToFileURL)", "the window does not load the app's own page (studio-app://renderer/index.html)"]);
+  });
+
+  test("fails a main whose page is another URL", () => {
+    const mutated = CLEAN_MAIN.replace("var APP_PAGE_URL = `${APP_SCHEME}://renderer/index.html`;", 'var APP_PAGE_URL = "file:///index.html";');
+    expect(productionMainProblems(mutated)).toEqual(["the app's own page is not studio-app://renderer/index.html"]);
+  });
+
+  test("fails a main that does not register the scheme, or does not answer it", () => {
+    const unregistered = CLEAN_MAIN.replace("scheme: APP_SCHEME,\n\tprivileges: APP_SCHEME_PRIVILEGES", "scheme: OTHER,\n\tprivileges: APP_SCHEME_PRIVILEGES");
+    expect(productionMainProblems(unregistered)).toEqual(["the app's scheme is not registered as privileged"]);
+    const unanswered = CLEAN_MAIN.replace("protocol.handle(APP_SCHEME,", "protocol.handle(OTHER,");
+    expect(productionMainProblems(unanswered)).toEqual(["nothing answers the app's scheme"]);
+  });
+});
+
+describe("productionRendererPageProblems: the shipped page's CSP", () => {
+  const page = (csp: string): string => `<!doctype html><html><head><meta charset="utf-8" /><meta http-equiv="Content-Security-Policy" content="${csp}" /></head></html>`;
+  const CLEAN = "default-src 'self'; img-src 'self' data: studio-media:; media-src studio-media:; style-src 'self' 'unsafe-inline'; frame-src 'none'; child-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+
+  test("passes the real policy", () => {
+    expect(productionRendererPageProblems(page(CLEAN))).toEqual([]);
+  });
+
+  test("fails a page with no policy", () => {
+    expect(productionRendererPageProblems("<!doctype html><title>x</title>")).toEqual(["the page has no Content-Security-Policy"]);
+  });
+
+  test("names every directive that is not shut", () => {
+    const open = CLEAN.replace("frame-src 'none'; child-src 'none'; ", "").replace("base-uri 'none'", "base-uri 'self'");
+    expect(productionRendererPageProblems(page(open))).toEqual(["frame-src is not 'none'", "child-src is not 'none'", "base-uri is not 'none'"]);
+  });
+
+  test("fails a policy that lets file: URLs or any origin in", () => {
+    expect(productionRendererPageProblems(page(CLEAN.replace("img-src 'self'", "img-src 'self' file:")))).toEqual(["img-src names file:"]);
+    expect(productionRendererPageProblems(page(CLEAN.replace("default-src 'self'", "default-src *")))).toEqual(["default-src is not 'self'", "default-src names *"]);
   });
 });
 

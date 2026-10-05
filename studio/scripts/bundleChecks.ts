@@ -134,11 +134,30 @@ function refusalShapeProblems(main: string): string[] {
   return problems;
 }
 
+/**
+ * Problems with where main serves and loads the window's page: `studio-app://renderer/index.html`, a scheme registered
+ * with its own privileges and answered by main (studio/main/appProtocol.ts), and never a `file:` URL, where the page's
+ * CSP 'self' is every file on the disk (the 3f.6 security review read /etc/hosts from the real app).
+ */
+function rendererOriginProblems(main: string): string[] {
+  const problems: string[] = [];
+  if (main.includes("loadFile(")) problems.push("main loads a file: page (loadFile)");
+  if (main.includes("pathToFileURL(")) problems.push("main builds a file: URL (pathToFileURL)");
+  if (!/^var APP_SCHEME = "studio-app";$/m.test(main) || !main.includes("var APP_PAGE_URL = `${APP_SCHEME}://renderer/index.html`;")) {
+    problems.push("the app's own page is not studio-app://renderer/index.html");
+  }
+  if (!main.includes("win.loadURL(APP_PAGE_URL)")) problems.push("the window does not load the app's own page (studio-app://renderer/index.html)");
+  if (!/\{\s*scheme: APP_SCHEME,\s*privileges: APP_SCHEME_PRIVILEGES\s*\}/.test(main)) problems.push("the app's scheme is not registered as privileged");
+  if (!main.includes("protocol.handle(APP_SCHEME,")) problems.push("nothing answers the app's scheme");
+  return problems;
+}
+
 /** Problems with out-studio/main/main.js of a production build; empty when every door is shut. */
 export function productionMainProblems(main: string): string[] {
   const problems = forbiddenMarkerProblems(main);
   if (!/devTools: (false|!1)\b/.test(main)) problems.push("DevTools are not compiled off");
   problems.push(...refusalShapeProblems(main));
+  problems.push(...rendererOriginProblems(main));
   // `app.isPackaged` depends only on the executable's name: it may choose
   // where an unpackaged run keeps its data, never whether a door is open.
   const packaged = main.split("\n").filter((line) => line.includes("isPackaged"));
@@ -239,6 +258,29 @@ export function productionRendererCssProblems(css: string): string[] {
   // Not `\.woff2\b`: a data: URI names it as a MIME type ("data:font/woff2;base64,…"),
   // with no leading dot the way a hashed asset filename has one.
   if (!/woff2/i.test(withoutComments)) problems.push("no woff2 font reference survived the build");
+  return problems;
+}
+
+/** The directives the shipped page's CSP must shut, and the one it must keep to the page's own origin. */
+const SHUT_DIRECTIVES = ["frame-src", "child-src", "object-src", "base-uri", "form-action"] as const;
+
+/**
+ * Problems with the production renderer's index.html (studio/renderer/index.html as built): its CSP keeps everything to the
+ * page's own origin (`studio-app://renderer`, studio/main/appProtocol.ts), shuts frames, children, plugins, `<base>` and
+ * forms, and names no `file:` URL and no wildcard anywhere (the 3f.6 security review: an injected `file:` iframe ran with
+ * the bridge).
+ */
+export function productionRendererPageProblems(html: string): string[] {
+  const csp = /http-equiv="Content-Security-Policy" content="([^"]*)"/.exec(html)?.[1];
+  if (csp === undefined) return ["the page has no Content-Security-Policy"];
+  const directives = new Map(csp.split(";").map((part) => part.trim().split(/\s+/)).map(([name = "", ...values]) => [name, values] as const));
+  const problems: string[] = [];
+  if (directives.get("default-src")?.join(" ") !== "'self'") problems.push("default-src is not 'self'");
+  for (const name of SHUT_DIRECTIVES) if (directives.get(name)?.join(" ") !== "'none'") problems.push(`${name} is not 'none'`);
+  for (const [name, values] of directives) {
+    if (values.some((value) => value.toLowerCase().startsWith("file:"))) problems.push(`${name} names file:`);
+    if (values.some((value) => value.includes("*"))) problems.push(`${name} names *`);
+  }
   return problems;
 }
 

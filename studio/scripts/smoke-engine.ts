@@ -13,6 +13,10 @@
  *   Content-Range), a video with no record is a 404, and the poster and a built-in sticker (from the asar when
  *   packaged) load;
  * - main refuses a command that breaks the contract;
+ * - the page's own origin (the 3f.6 security review, `checkRendererOrigin`): the window's page is studio-app://renderer/index.html,
+ *   its own scripts, styles and fonts and the bridge work, and from inside it a system file (/etc/hosts, C:\Windows\win.ini) and a
+ *   photo outside the library are refused by their `file:` URLs (fetch, XHR, `<img>`), a traversal through the app's scheme is a 404,
+ *   and an injected `<iframe>` of a local HTML file or of the app's own page never runs, so its request never reaches main;
  * - the `videos.*` commands are wired in the engine: refusals only (an empty list, NOT_FOUND, the N9 "not yet
  *   supported" answer), nothing rendered or written (the real renders are the render scenario below);
  * - settings.setApiKey stores only ciphertext and hands the key to the engine;
@@ -60,7 +64,8 @@
  * (STUDIO_E2E=1: DevTools and the test switches kept, never shipped).
  * --production checks a production build instead: its bundles (main, preload
  * and renderer, every debug door compiled out, see bundleChecks.ts), and with
- * --app the real package: its fuses, that it launches its engine with remote
+ * --app the real package: its fuses (`file:` pages get no extra privileges among them), its page's CSP and main loading that page
+ * from studio-app://, never file:, that it launches its engine with remote
  * debugging refused, and that the refusal is a clean one-line message, not a
  * stack trace.
  *
@@ -86,6 +91,7 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, normalize, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { FACE_MODELS } from "../engine/face/modelSource";
 import { openLibrary } from "../engine/library";
 import { SAMPLE_AVATAR, SAMPLE_SOURCE, samplePhotoMeta } from "../engine/library/testing/sampleData";
@@ -103,6 +109,7 @@ import { Ledger } from "../engine/money/ledger";
 import { timeoutSignal } from "../engine/money/timeoutSignal";
 import { RunEventSchema, type RunEvent } from "../engine/runs/journal";
 import { defaultSettings, saveSettings } from "../main/settingsStore";
+import { APP_PAGE_URL, APP_SCHEME, isAppPage } from "../main/appProtocol";
 import { PROTOCOL_VERSION } from "../shared/engine";
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { musicLists } from "../engine/music/fixtures";
@@ -110,7 +117,7 @@ import { parseFlashapiList } from "../engine/music/listSchema";
 import { EXCERPTS, excerptOf } from "../engine/music/testing/storeKit";
 import { startMockCdn, withExcerptDurations, withFutureExpiry } from "./mockCdn";
 import { startMockFlashapi } from "./mockFlashapi";
-import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
+import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, productionRendererPageProblems, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockRequest } from "./mockOpenRouter";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
@@ -391,7 +398,7 @@ async function connectPage(port: number): Promise<Cdp> {
     if (!Array.isArray(targets)) return null;
     for (const t of targets) {
       if (typeof t === "object" && t !== null && "type" in t && t.type === "page" && "url" in t && typeof t.url === "string" &&
-        t.url.endsWith("/renderer/index.html") && "webSocketDebuggerUrl" in t && typeof t.webSocketDebuggerUrl === "string") {
+        isAppPage(t.url) && "webSocketDebuggerUrl" in t && typeof t.webSocketDebuggerUrl === "string") {
         return t.webSocketDebuggerUrl;
       }
     }
@@ -533,6 +540,108 @@ async function removeTemp(dir: string): Promise<void> {
   }
 }
 
+/** A system file every machine of the OS has: what a page that could read `file:` URLs would read first. */
+const SYSTEM_FILE_URL = process.platform === "win32" ? "file:///C:/Windows/win.ini" : "file:///etc/hosts";
+/** A budget no other step sets: the injected `file:` frame below asks main for it, and it must never land. */
+const FRAME_BUDGET_MICROS = 13_131_313;
+
+/**
+ * The page's own origin (the 3f.6 security review), from inside the real page with its real CSP and webPreferences, as any script
+ * injected into it would run: the page is `studio-app://renderer/index.html`, its own scripts, styles and fonts and the bridge work,
+ * and it reads no `file:` URL at all: not a system file, not a photo outside the library (fetch, XHR, `<img>`), not through the app's
+ * scheme by a traversal (each such URL is answered 404 by main), and an injected `<iframe>` of a local HTML file or of the app's own
+ * page never loads, so its script never reaches the bridge as the top frame.
+ */
+async function checkRendererOrigin(cdp: Cdp, scratch: string): Promise<void> {
+  const outsidePhoto = join(scratch, "outside-the-library.png");
+  await writeFile(outsidePhoto, PNG);
+  const evilPage = join(scratch, "downloaded.html");
+  await writeFile(
+    evilPage,
+    `<!doctype html><script>parent.postMessage("the file: frame ran", "*"); parent.studio.request({ v: ${PROTOCOL_VERSION}, id: "smoke-frame-0001", kind: "command", type: "settings.setBudget", payload: { monthlyBudgetMicros: ${FRAME_BUDGET_MICROS} } });</script>`,
+  );
+  const budgetBefore = field(await req(cdp, "settings.get"), "result", "monthlyBudgetMicros");
+  const appResponses: { url: string; status: number }[] = [];
+  cdp.on((method, params) => {
+    if (method !== "Network.responseReceived") return;
+    const url = field(params, "response", "url");
+    if (typeof url === "string" && url.startsWith(`${APP_SCHEME}:`)) appResponses.push({ url, status: Number(field(params, "response", "status")) });
+  });
+  const traversals = [
+    `${APP_SCHEME}://renderer/../../../../../../etc/hosts`,
+    `${APP_SCHEME}://renderer/%2e%2e/%2e%2e/%2e%2e/etc/hosts`,
+    `${APP_SCHEME}://renderer/..%2f..%2f..%2fetc%2fhosts`,
+    `${APP_SCHEME}://renderer/..%5c..%5c..%5cWindows%5cwin.ini`,
+    `${APP_SCHEME}://renderer/assets/..\\..\\..\\Windows\\win.ini`,
+    `${APP_SCHEME}://renderer/C:/Windows/win.ini`,
+  ];
+  const page = await cdp.evaluate(`(async () => {
+    const fetched = async (url) => { try { const r = await fetch(url); return "read " + r.status + " (" + (await r.arrayBuffer()).byteLength + " B)"; } catch (e) { return "refused"; } };
+    const xhr = (url) => new Promise((done) => { try { const q = new XMLHttpRequest(); q.open("GET", url); q.onload = () => done("read " + q.responseText.length); q.onerror = () => done("refused"); q.send(); } catch (e) { done("refused"); } });
+    const img = (url) => new Promise((done) => { const i = new Image(); i.onload = () => done("loaded"); i.onerror = () => done("refused"); i.src = url; });
+    const violations = [];
+    addEventListener("securitypolicyviolation", (e) => violations.push(e.violatedDirective));
+    const framed = (url) => new Promise((done) => {
+      const timer = setTimeout(() => done("never ran"), 3000);
+      addEventListener("message", (e) => { clearTimeout(timer); done("ran: " + String(e.data)); }, { once: true });
+      const f = document.createElement("iframe");
+      f.src = url;
+      document.body.appendChild(f);
+    });
+    await document.fonts.ready;
+    const result = {
+      href: location.href,
+      origin: location.origin,
+      rendered: document.getElementById("root")?.children.length ?? 0,
+      script: document.querySelector("script[type=module]")?.src ?? null,
+      styles: [...document.styleSheets].filter((s) => (s.href ?? "").startsWith("${APP_SCHEME}://renderer/assets/") && s.cssRules.length > 0).length,
+      fonts: [...document.fonts].filter((f) => f.status === "loaded").length,
+      bridge: typeof window.studio?.request,
+      systemFetch: await fetched(${JSON.stringify(SYSTEM_FILE_URL)}),
+      systemXhr: await xhr(${JSON.stringify(SYSTEM_FILE_URL)}),
+      photoFetch: await fetched(${JSON.stringify(pathToFileURL(outsidePhoto).href)}),
+      photoXhr: await xhr(${JSON.stringify(pathToFileURL(outsidePhoto).href)}),
+      photoImg: await img(${JSON.stringify(pathToFileURL(outsidePhoto).href)}),
+      ownSchemeFetch: await fetched("${APP_PAGE_URL}"),
+      traversals: await Promise.all(${JSON.stringify(traversals)}.map(img)),
+      fileFrame: await framed(${JSON.stringify(pathToFileURL(evilPage).href)}),
+      appFrame: await framed("${APP_PAGE_URL}"),
+    };
+    for (const f of document.querySelectorAll("iframe")) f.remove();
+    return { ...result, violations };
+  })()`);
+  check("origin: the window's page is studio-app://renderer/index.html, an origin of its own", field(page, "href") === APP_PAGE_URL && field(page, "origin") === `${APP_SCHEME}://renderer`, page);
+  check(
+    "origin: the app's own module script ran, its styles and fonts loaded from the scheme, and the preload bridge is there",
+    Number(field(page, "rendered")) > 0 && String(field(page, "script")).startsWith(`${APP_SCHEME}://renderer/assets/`) && Number(field(page, "styles")) > 0 && Number(field(page, "fonts")) > 0 && field(page, "bridge") === "function",
+    page,
+  );
+  check(`origin: the page cannot read ${SYSTEM_FILE_URL} (fetch and XHR refused)`, field(page, "systemFetch") === "refused" && field(page, "systemXhr") === "refused", page);
+  check("origin: the page cannot read a photo outside the library by its file: URL (fetch, XHR and <img> refused)", field(page, "photoFetch") === "refused" && field(page, "photoXhr") === "refused" && field(page, "photoImg") === "refused", page);
+  check("origin: the page cannot fetch its own scheme either (no supportFetchAPI)", field(page, "ownSchemeFetch") === "refused", page);
+  await Bun.sleep(300);
+  // Everything the app's scheme answered that is not the bundle itself: each traversal, however Chromium wrote it.
+  const strays = appResponses.filter((r) => r.url !== APP_PAGE_URL && !r.url.startsWith(`${APP_SCHEME}://renderer/assets/`));
+  check(
+    "origin: no traversal through the app's scheme loads: main answers each one that reaches it with a 404",
+    JSON.stringify(field(page, "traversals")) === JSON.stringify(traversals.map(() => "refused")) && strays.length > 0 && strays.every((r) => r.status === 404),
+    { traversals: field(page, "traversals"), strays },
+  );
+  check("origin: an injected <iframe> of a local HTML file never runs", field(page, "fileFrame") === "never ran", page);
+  const violations = field(page, "violations");
+  check(
+    "origin: an injected <iframe> of the app's own page is blocked by frame-src 'none'",
+    field(page, "appFrame") === "never ran" && Array.isArray(violations) && violations.includes("frame-src"),
+    page,
+  );
+  const budgetAfter = field(await req(cdp, "settings.get"), "result", "monthlyBudgetMicros");
+  check(
+    "origin: the file: frame's request never reached main (the budget it asked for was not set)",
+    typeof budgetBefore === "number" && budgetAfter === budgetBefore && budgetAfter !== FRAME_BUDGET_MICROS,
+    { budgetBefore, budgetAfter },
+  );
+}
+
 /**
  * One Range request to a `studio-media://` URL, byte for byte. The window's own fetch is refused by its CSP and the scheme has no CORS
  * grant, and Electron opens no second tab, so the one window is sent to the URL itself (a page ON the video's origin, where a same-origin
@@ -671,10 +780,17 @@ async function rendererCssText(target: Target): Promise<string> {
   return files.map((p) => asarText(target, p.replace(/^\//, ""))).join("\n");
 }
 
+/** The renderer's built page (its CSP), read from disk or, packaged, from the asar. */
+async function rendererPageText(target: Target): Promise<string> {
+  return target.asar === null ? readFile(join(ROOT, "out-studio", "renderer", "index.html"), "utf8") : asarText(target, join("out-studio", "renderer", "index.html"));
+}
+
 /** Every debug door compiled out of a production build's bundles (bundleChecks.ts), wherever they were read from. */
-function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string, rendererCss: string, sharedChunks: string): void {
+function checkProductionBundles(where: string, main: string, engine: string, preload: string, renderer: string, rendererCss: string, sharedChunks: string, rendererPage: string): void {
   const mainProblems = productionMainProblems(main);
-  check(`${where}: main has every debug door compiled out (no test switch, no env renderer URL, DevTools off, remote debugging refused)`, mainProblems.length === 0, mainProblems);
+  check(`${where}: main has every debug door compiled out (no test switch, no env renderer URL, DevTools off, remote debugging refused) and loads the page from studio-app://, never file:`, mainProblems.length === 0, mainProblems);
+  const pageProblems = productionRendererPageProblems(rendererPage);
+  check(`${where}: the page's CSP keeps it to its own origin (frames, children, plugins, <base> and forms shut; no file:)`, pageProblems.length === 0, pageProblems);
   const engineProblems = productionEngineBundleProblems(engine, sharedChunks);
   check(`${where}: the engine and its shared chunks were built without the E2E flag (no base-URL override, no test-only commit hold)`, engineProblems.length === 0, engineProblems);
   const timingProblems = productionMoneyTimingProblems(sharedChunks);
@@ -776,6 +892,7 @@ async function productionCheck(target: Target): Promise<void> {
       await rendererBundleText(target),
       await rendererCssText(target),
       await sharedChunkText(target),
+      await rendererPageText(target),
     );
     const builtTextAssets = [
       ...(await readdir(join(ROOT, "out-studio", "engine", "fonts")).catch(() => [])).map((f) => `/out-studio/engine/fonts/${f}`),
@@ -822,6 +939,7 @@ async function productionCheck(target: Target): Promise<void> {
     await rendererBundleText(target),
     await rendererCssText(target),
     await sharedChunkText(target),
+    await rendererPageText(target),
   );
   const packagedEntries = new Set(listPackage(target.asar, { isPack: false }).map((p) => p.replaceAll("\\", "/")));
   checkTextWorker(
@@ -3056,6 +3174,9 @@ async function main(): Promise<void> {
     check("the window cannot read the media scheme by script (no corsEnabled)", field(stickerBytes, "fetched") === "refused", stickerBytes);
     // The record was only there for this section: later checks (and a restarted engine) must find the library as it was.
     await rm(recordPath);
+
+    // 3c. The page's own origin (the 3f.6 security review): no `file:` read, no `file:` frame, the app itself unharmed.
+    await checkRendererOrigin(cdp, tmp);
 
     // 4. Key flow.
     const set = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
