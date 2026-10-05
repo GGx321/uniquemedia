@@ -29,6 +29,49 @@ const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
 process.on("unhandledRejection", onUnhandled);
 afterEach(() => void unhandled.splice(0));
 
+describe("stagingBound.settled (the abandoned work's own cleanup is given its turn before the job folder is removed)", () => {
+  test("resolves once the work that lost the race has ended, not before: after a cancel the work is still cleaning up", async () => {
+    const controller = new AbortController();
+    const bound = stagingBound(60_000, controller.signal);
+    const order: string[] = [];
+    const running = bound
+      .run(async (signal) => {
+        await new Promise<void>((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
+        await new Promise((resolve) => setTimeout(resolve, 30));
+        order.push("work cleaned up");
+      })
+      .catch(() => order.push("job ended"));
+    controller.abort(new Error("cancelled"));
+    await running;
+
+    await bound.settled(2_000);
+    order.push("folder removal");
+
+    expect(order).toEqual(["job ended", "work cleaned up", "folder removal"]);
+  });
+
+  test("gives up on work that never ends after the grace: a dead disk's read must not hold the job", async () => {
+    const controller = new AbortController();
+    const bound = stagingBound(60_000, controller.signal);
+    const running = bound.run(() => never<void>()).catch(() => undefined);
+    controller.abort(new Error("cancelled"));
+    await running;
+
+    const started = performance.now();
+    await bound.settled(60);
+
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("resolves at once when nothing was started, and never rejects for work that failed", async () => {
+    const bound = stagingBound(60_000, new AbortController().signal);
+    await bound.settled(1_000);
+    await bound.run(async () => Promise.reject(new Error("failed"))).catch(() => undefined);
+
+    await expect(bound.settled(1_000)).resolves.toBeUndefined();
+  });
+});
+
 describe("stagingBound.run", () => {
   test("answers what the work answers, and hands it a signal that is not aborted", async () => {
     const bound = stagingBound(1_000, new AbortController().signal);

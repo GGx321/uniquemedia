@@ -282,6 +282,43 @@ describe("a render job with an own video that does not pass", () => {
     await expectNothingLeft(r);
   });
 
+  test("a cancel while the mezzanine is being copied: the copy removes its own file BEFORE the job folder is removed, never both at once (Bun's recursive rm silently leaves a folder whose entry is unlinked meanwhile)", async () => {
+    await writeFile(libraryFile, MEZZANINE);
+    const order: string[] = [];
+    const r = rig({
+      runDeps: {
+        removeTree: async (path) => {
+          order.push("job folder removal");
+          await rm(path, { recursive: true, force: true });
+        },
+      },
+      io: {
+        freeBytes: async () => null,
+        chunkBytes: 512,
+        remove: async (path) => {
+          order.push("copy removal");
+          await rm(path, { force: true });
+        },
+        openDest: async (path) => {
+          const real = await open(path, "wx");
+          let writes = 0;
+          return {
+            write: async (buffer, offset, length) => {
+              if (++writes === 2) r.queue.cancel("job-00000001");
+              return real.write(buffer, offset, length);
+            },
+            close: () => real.close(),
+          };
+        },
+      },
+    });
+    r.submit();
+    await r.queue.idle();
+    expect(r.states()[0]).toMatchObject({ status: "cancelled" });
+    expect(order).toEqual(["copy removal", "job folder removal"]);
+    await expectNothingLeft(r);
+  });
+
   test("a cancel while the mezzanine is being copied ends the job cancelled, and nothing is left", async () => {
     await writeFile(libraryFile, MEZZANINE);
     const r = rig({

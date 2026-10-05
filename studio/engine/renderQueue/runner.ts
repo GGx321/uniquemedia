@@ -402,6 +402,9 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     // the error (or the success) the job is ending with; the next start's
     // sweep gets what was left.
     activeStaging?.release();
+    // Work abandoned by a cancel or by the bound is still cleaning up what it made: let it finish (bounded) before the folder is removed, so the two
+    // removals never race (see `StagingBound.settled`).
+    await activeStaging?.settled();
     await removeTree(clipDir).catch((error: unknown) => warn("job folder", error));
     if (!succeeded) await boundedRemoval(removeFile(input.output), deps.removeFileTimeoutMs ?? REMOVE_OUTPUT_TIMEOUT_MS).catch((error: unknown) => warn("unfinished output", error));
   }
