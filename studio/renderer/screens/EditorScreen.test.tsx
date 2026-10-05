@@ -76,7 +76,7 @@ describe("the header", () => {
     const { client } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
-    const clipList =(): HTMLElement => screen.getByRole("list", { name: "Кадры" });
+    const clipList = (): HTMLElement => screen.getByRole("list", { name: "Кадры" });
     const firstClip = (): HTMLElement => within(clipList()).getAllByRole("button", { name: /^Кадр 1/ })[0] ?? document.body;
     fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
     screen.getByRole("textbox", { name: "Название черновика" }).focus();

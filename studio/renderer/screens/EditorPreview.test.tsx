@@ -964,7 +964,7 @@ describe("3-H1: an own photo in a cell is the render's crop of the real photo", 
 });
 
 describe("own stickers", () => {
-  const ownLayer =(index: number, mediaId: string, over: Partial<ReturnType<typeof stickerLayer>> = {}) => ({ ...stickerLayer(index, 0, 4_000), sticker: { source: "own" as const, mediaId }, ...over });
+  const ownLayer = (index: number, mediaId: string, over: Partial<ReturnType<typeof stickerLayer>> = {}) => ({ ...stickerLayer(index, 0, 4_000), sticker: { source: "own" as const, mediaId }, ...over });
 
   /** Stores an own sticker the mock's way (a scripted file picked in the dialog), to the end of its job; its media id. */
   async function storeSticker(harness: Awaited<ReturnType<typeof studio>>, facts: { width: number; height: number; loopFrames: number; delayFrames: number[] }): Promise<string> {

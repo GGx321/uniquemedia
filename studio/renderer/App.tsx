@@ -270,71 +270,71 @@ export function App({ client }: { client: EngineClient }) {
       <ForgetOnLibrarySwitch onSwitch={forgetLibrary} />
       <NavigationProvider value={navigation}>
         <NoticeDockProvider>
-        <div className="shell">
-          <aside className="sidebar">
-            <div className="logo">
-              <span className="logo-mark" aria-hidden="true">
-                <Icon name="sun" size={18} strokeWidth={2.2} />
-              </span>
-              <span className="logo-text">
-                <span className="logo-name">studio</span>
-                <span className="logo-by">by uniquemedia</span>
-              </span>
-            </div>
-
-            <nav className="nav" aria-label="Разделы">
-              {SECTIONS.map((s) => {
-                const isActive = s.id === active;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={isActive ? "nav-item active" : "nav-item"}
-                    aria-current={isActive ? "page" : undefined}
-                    onClick={() => navigation.navigate(routeFor(s.id, lastPhotos.current))}
-                  >
-                    <svg
-                      className="nav-icon"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+          <div className="shell">
+            <aside className="sidebar">
+              <div className="logo">
+                <span className="logo-mark" aria-hidden="true">
+                  <Icon name="sun" size={18} strokeWidth={2.2} />
+                </span>
+                <span className="logo-text">
+                  <span className="logo-name">studio</span>
+                  <span className="logo-by">by uniquemedia</span>
+                </span>
+              </div>
+  
+              <nav className="nav" aria-label="Разделы">
+                {SECTIONS.map((s) => {
+                  const isActive = s.id === active;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={isActive ? "nav-item active" : "nav-item"}
+                      aria-current={isActive ? "page" : undefined}
+                      onClick={() => navigation.navigate(routeFor(s.id, lastPhotos.current))}
                     >
-                      {s.icon}
-                    </svg>
-                    <span>{s.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-
-            <div className="sidebar-foot">
-              <SidebarStatus />
-              {client.kind === "mock" && (
-                <p className="demo-badge" title="Движок не подключён: данные демонстрационные, деньги не тратятся, картинок нет">
-                  <span className="demo-dot" aria-hidden="true" />
-                  Демо-движок
-                </p>
-              )}
-              <div className="version">{versionLabel}</div>
-            </div>
-          </aside>
-
-          <main className="content">
-            <EngineNoticesBar />
-            <RenderNotices viewing={route.name === "editor" ? route.montageId : null} />
-            <DraftFlushesProvider value={draftFlushes}>
-              <DraftSessionsProvider value={draftSessions}>
-                <MontagePicksProvider value={montagePicks}>
-                  <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
-                </MontagePicksProvider>
-              </DraftSessionsProvider>
-            </DraftFlushesProvider>
-          </main>
-        </div>
+                      <svg
+                        className="nav-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        {s.icon}
+                      </svg>
+                      <span>{s.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+  
+              <div className="sidebar-foot">
+                <SidebarStatus />
+                {client.kind === "mock" && (
+                  <p className="demo-badge" title="Движок не подключён: данные демонстрационные, деньги не тратятся, картинок нет">
+                    <span className="demo-dot" aria-hidden="true" />
+                    Демо-движок
+                  </p>
+                )}
+                <div className="version">{versionLabel}</div>
+              </div>
+            </aside>
+  
+            <main className="content">
+              <EngineNoticesBar />
+              <RenderNotices viewing={route.name === "editor" ? route.montageId : null} />
+              <DraftFlushesProvider value={draftFlushes}>
+                <DraftSessionsProvider value={draftSessions}>
+                  <MontagePicksProvider value={montagePicks}>
+                    <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                  </MontagePicksProvider>
+                </DraftSessionsProvider>
+              </DraftFlushesProvider>
+            </main>
+          </div>
         </NoticeDockProvider>
       </NavigationProvider>
     </EngineProvider>
