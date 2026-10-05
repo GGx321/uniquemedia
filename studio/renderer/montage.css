@@ -1161,12 +1161,6 @@
   transform: translateX(-50%);
 }
 
-.pv-own {
-  position: absolute;
-  inset: 0;
-  background: var(--photo-dim);
-}
-
 /* an own video clip (3f.3b, V4): the `<video>` of its mezzanine, the whole video placed so the frame shows the render's crop; under it, the ground
    that stands in until its first frame (and wherever there is no picture), cut from the same place; the cell's button lies over both */
 .pv-cell-video {

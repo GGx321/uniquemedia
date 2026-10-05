@@ -9,12 +9,14 @@ import {
   FRAME_W,
   motionWindow,
   type MotionPlan,
+  type Rect,
   type Size,
   stickerBox,
   textBox,
   videoClipCrop,
 } from "../../../shared/montage";
 import { BUILTIN_STICKER_SIZE, stickerById } from "../../../shared/stickers/manifest";
+import { buildPass1 } from "../../../engine/render/pass1";
 import { cellSourceWindow, clipViewAt, previewFrameAt, stickerFrameIndex, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
 import { collageClip, draftSpec, photoClip, stickerLayer, textLayer, videoClip } from "./testkit";
 
@@ -25,6 +27,10 @@ import { collageClip, draftSpec, photoClip, stickerLayer, textLayer, videoClip }
 
 const PHOTO: Size = { w: 1024, h: 1536 };
 const size = (): Size => PHOTO;
+/** An own photo (3f.6) and its stored size, as its record gives it: a landscape picture, so a portrait cell takes a narrow strip of it. */
+const OWN_PHOTO = "media-own-0002";
+const OWN_SIZE: Size = { w: 4000, h: 3000 };
+const ownSize = (mediaId: string): Size | null => (mediaId === OWN_PHOTO ? OWN_SIZE : null);
 const KENBURNS_IN: MotionPlan = { kind: "kenburns", direction: "in", zoomFromPermille: 1000, zoomToPermille: 1100 };
 
 describe("the frame the preview shows", () => {
@@ -70,6 +76,35 @@ describe("the part of a photo a cell shows (the render's crop and motion)", () =
           expect(window.h * (g.canvas.h / g.crop.h)).toBeCloseTo(canvas.h, 6);
         }
       }
+    }
+  });
+});
+
+describe("3-H1: the preview cuts an own photo where the render does", () => {
+  /** Pass 1's crop of each cell, read from the filter graph it builds for clip 0 (`crop=w:h:x:y:exact=1`, in the photo's stored pixels). */
+  function renderCrops(spec: MontageDraft): Rect[] {
+    const [job] = buildPass1({
+      seed: spec.seed,
+      clips: spec.clips,
+      // The render's sources: a scene photo at PHOTO, an own photo at its RECORD's size (`ownPhotoSourceOf`), each a private copy.
+      resolvePhoto: (ref) => (ref.source === "own" ? { path: `/tmp/job/own-${ref.mediaId}.jpg`, width: OWN_SIZE.w, height: OWN_SIZE.h } : { path: `/tmp/job/${ref.photoId}.jpg`, width: PHOTO.w, height: PHOTO.h }),
+      clipDir: "/tmp/job",
+    });
+    const graph = job?.argv[job.argv.indexOf("-filter_complex") + 1] ?? "";
+    return [...graph.matchAll(/crop=(\d+):(\d+):(\d+):(\d+):exact=1/g)].map((m) => ({ w: Number(m[1]), h: Number(m[2]), x: Number(m[3]), y: Number(m[4]) }));
+  }
+  const ownCell = (focus: { x: number; y: number } | null) => ({ photo: { source: "own" as const, mediaId: OWN_PHOTO }, focus });
+
+  test("a still own photo, full frame or in a collage cell, around its focus or the fallback: the preview's window IS the render's crop", () => {
+    const specs = [
+      draftSpec([{ ...photoClip(0, "photo-a-0001"), motion: "static", cell: ownCell(null) }]),
+      draftSpec([{ ...photoClip(0, "photo-a-0001"), motion: "static", cell: ownCell({ x: 0.82, y: 0.3 }) }]),
+      draftSpec([{ ...collageClip(0, [null, null, null], 3_000, false), motion: "static", cells: [ownCell({ x: 0.1, y: 0.9 }), { photo: { source: "scene", photoId: "photo-b-0001" }, focus: null }, ownCell(null)] }]),
+    ];
+    for (const spec of specs) {
+      const crops = renderCrops(spec);
+      expect(crops.length).toBeGreaterThan(0);
+      expect(clipViewAt(spec, 0, size, undefined, ownSize)?.cells.map((c) => c.window)).toEqual(crops);
     }
   });
 });
@@ -120,9 +155,31 @@ describe("the clip under the playhead", () => {
     expect(clipViewAt(off, 0, size)?.cells.map((c) => c.alphaPermille)).toEqual([1000, 1000, 1000]);
   });
 
-  test("an own photo in a cell is own media: drawn as a neutral surface", () => {
-    const own = draftSpec([{ ...photoClip(0, "photo-a-0001"), cell: { photo: { source: "own", mediaId: "media-own-0002" }, focus: null } }]);
-    expect(clipViewAt(own, 0, size)?.cells).toEqual([{ index: 0, rect: { x: 0, y: 0, w: FRAME_W, h: FRAME_H }, content: { kind: "own" }, source: null, window: null, alphaPermille: 1000 }]);
+  test("3-H1: an own photo shows the render's window of its STORED size (its record's), cropped around its focus and moving as a scene photo does", () => {
+    const focus = { x: 0.3, y: 0.4 };
+    const spec = draftSpec([{ ...photoClip(0, "photo-a-0001"), cell: { photo: { source: "own", mediaId: OWN_PHOTO }, focus } }]);
+    const clip = spec.clips[0];
+    if (clip === undefined || clip.kind !== "photo") throw new Error("setup");
+    const full = { x: 0, y: 0, w: FRAME_W, h: FRAME_H };
+    for (const frame of [0, 17, 59]) {
+      const view = clipViewAt(spec, frame, size, undefined, ownSize);
+      expect(view?.cells).toEqual([
+        { index: 0, rect: full, content: { kind: "ownPhoto", mediaId: OWN_PHOTO, focus }, source: OWN_SIZE, window: cellSourceWindow({ w: FRAME_W, h: FRAME_H }, OWN_SIZE, focus, clipMotionPlan(spec.seed, clip), frame, 60), alphaPermille: 1000 },
+      ]);
+    }
+    // The scene photos' sizes are never asked for it, and before its record is read nothing is guessed.
+    expect(clipViewAt(spec, 0, () => PHOTO)?.cells[0]).toMatchObject({ content: { kind: "ownPhoto" }, source: null, window: null });
+  });
+
+  test("3-H1: an own photo in a collage cell is cut for that cell, next to a scene photo cut for its own", () => {
+    const spec = draftSpec([{ ...collageClip(0, ["photo-a-0001", null], 3_000, false), cells: [{ photo: { source: "scene", photoId: "photo-a-0001" }, focus: null }, { photo: { source: "own", mediaId: OWN_PHOTO }, focus: null }] }]);
+    const clip = spec.clips[0];
+    if (clip === undefined) throw new Error("setup");
+    const [first, second] = clipCellRects(clip);
+    if (first === undefined || second === undefined) throw new Error("setup");
+    const plan = clipMotionPlan(spec.seed, clip);
+    const view = clipViewAt(spec, 10, size, undefined, ownSize);
+    expect(view?.cells.map((c) => c.window)).toEqual([cellSourceWindow({ w: first.w, h: first.h }, PHOTO, null, plan, 10, 90), cellSourceWindow({ w: second.w, h: second.h }, OWN_SIZE, null, plan, 10, 90)]);
   });
 
   test("3f.3b: an own video fills the whole frame with the render's crop of its stored size (videoClipCrop, static), once that size is known", () => {

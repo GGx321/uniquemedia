@@ -157,6 +157,23 @@ describe("placing own files (M7, M11, M12): each is one undo step", () => {
     expect(saved.clips).toHaveLength(2);
   });
 
+  test("3-H1: an own photo in a cell is judged for its face as a scene photo is («ищем лицо…» until the answer), and the cell shows the photo", async () => {
+    const { client, engine, scheduler } = await studio();
+    seed(engine);
+    await openMine(engine, client, { clips: [collageClip(0, [null, IDS[0] ?? ""], 4_000, false), photoClip(1, IDS[1] ?? "", 2_000)] });
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 1: коллаж 2/ }));
+    await flush();
+    engine.delayNext("montages.focus", 1_000);
+    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: в ячейку 1 кадра 1" }));
+    await flush();
+    const props = (): HTMLElement => screen.getByRole("complementary", { name: "Свойства" });
+    expect(within(props()).getByText("ищем лицо…")).toBeDefined();
+    expect(within(props()).getByRole("img", { name: "Ячейка 1" })).toBeDefined();
+    act(() => scheduler.runAll());
+    await flush();
+    expect(within(props()).queryByText("ищем лицо…") === null).toBe(true);
+  });
+
   test("dragged onto «Кадры», a video becomes a clip at the boundary under the pointer", async () => {
     const { client, engine } = await studio();
     seed(engine);
