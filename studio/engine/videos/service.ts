@@ -45,7 +45,7 @@ import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery"
 // and the export check come in as dependencies, so each mapping is tested with a fake.
 //
 // `videos.render` is ONE step before `submit`, and nothing is claimed, reserved or written until `submit` answers ok:
-//   1. the spec's structure, N9 and the built-in stickers it names (pure);
+//   1. the spec's structure, N9, the built-in stickers it names, the captions the shared rules refuse and a trending track against the store (no disk);
 //   2. the export folder, checked afresh (invariant 35), its marker's id going into the plan; then the avatar (active only);
 //   3. eligibility and used (invariant 18) through the library's own refusal-aware function, BEFORE any focus work;
 //   4. the focus is filled, under what is left of the command's own deadline;

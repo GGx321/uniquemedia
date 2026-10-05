@@ -327,7 +327,7 @@ describe("draftIssues: a caption that breaks the caption rules", () => {
 
   test("only the bad one of several text layers is reported, at its index among all layers", () => {
     const w = world();
-    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text(1, "Fine"), sticker(2, "heart-pulse"), text(3, "a".repeat(61)), text(4, "Also fine")] });
+    const spec = draftOf(w, { clips: [photoClip(1, photoId(w, 0))], layers: [text(1, "Fine"), sticker(2, "heart-pulse"), text(3, "a\nb\nc"), text(4, "Also fine")] });
 
     expect(issuesOf(w, spec)).toEqual([{ code: "caption-invalid", path: ["layers", 2, "value"] }]);
   });

@@ -161,7 +161,7 @@ describe("videos.render: N9 refuses nothing any more (3f.3b lifted the last part
   test("a caption that breaks the caption rules is MONTAGE_INVALID caption-invalid at its layer's value, before anything is touched", async () => {
     const w = world();
     const r = serviceRig(w);
-    const bad = { ...textLayer(1), value: "Привет" }; // Cyrillic: outside the charset
+    const bad = { ...textLayer(1), value: String.fromCodePoint(0x41f, 0x440, 0x438, 0x432, 0x435, 0x442) }; // Cyrillic: outside the charset
 
     const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [bad] } }));
 
@@ -174,10 +174,10 @@ describe("videos.render: N9 refuses nothing any more (3f.3b lifted the last part
   test("a caption of 61 graphemes and a third line are each refused at their own layer, a good caption between them is not", async () => {
     const w = world();
     const r = serviceRig(w);
-    const tooLong = { ...textLayer(1), value: "a".repeat(61) };
+    const copyright = { ...textLayer(1), value: `Acme ${String.fromCodePoint(0xa9)}` };
     const threeLines = { ...textLayer(3), value: "a\nb\nc" };
 
-    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [tooLong, textLayer(2), threeLines] } }));
+    const error = await failureOf(r.service.render({ spec: { ...specFor(w), layers: [copyright, textLayer(2), threeLines] } }));
 
     expect(error.issues).toEqual([
       { code: "caption-invalid", path: ["layers", 0, "value"] },
@@ -185,17 +185,17 @@ describe("videos.render: N9 refuses nothing any more (3f.3b lifted the last part
     ]);
   });
 
-  test("every kind of refusal at once comes in one order: structure, the stickers the set lacks, the music track", async () => {
+  test("every kind of refusal at once comes in one order: structure, the stickers the set lacks, the captions, the music track", async () => {
     const w = world();
     const r = serviceRig(w);
-    const pastEnd = { ...textLayer(1), startMs: 3_000, endMs: SPEC_MS + 100 };
+    const pastEnd = { ...textLayer(1), startMs: 3_000, endMs: SPEC_MS + 100, value: "a\nb\nc" }; // past the end, and a third line
     const ownVideo = { clipId: "clip-00000001", kind: "video" as const, mediaId: "media-0000001", trimStartMs: 0, focus: null, durationMs: SPEC_MS, transitionIn: "cut" as const };
     const spec = { ...specFor(w), clips: [ownVideo], layers: [pastEnd, stickerLayer(3)], music: { source: "trending" as const, trackId: "track-0000001", startMs: 0 } };
 
     const error = await failureOf(r.service.render({ spec }));
 
     expect(error.code).toBe("MONTAGE_INVALID");
-    expect(error.issues?.map((i) => i.code)).toEqual(["layer-outside-timeline", "sticker-unavailable", "track-unavailable"]);
+    expect(error.issues?.map((i) => i.code)).toEqual(["layer-outside-timeline", "sticker-unavailable", "caption-invalid", "track-unavailable"]);
   });
 
   test("a layer that ends after the clips do is refused, never clamped: MONTAGE_INVALID layer-outside-timeline at its end", async () => {

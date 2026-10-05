@@ -1586,7 +1586,7 @@ const CAPTION_CHECK_SCENARIOS: readonly Scenario[] = [
       const montageId = await draft(t, w, [photo(w, 1), photo(w, 2)]);
       const stored = objectAt(montageOf(await t.call("montages.get", { montageId })), "spec");
       // "Privet" in Cyrillic (outside the charset), a good caption, a third line: two bad layers around a good one.
-      const cyrillic = "Привет";
+      const cyrillic = String.fromCodePoint(0x41f, 0x440, 0x438, 0x432, 0x435, 0x442);
       t.note("a good caption is no issue");
       await t.call("montages.save", { montageId, spec: { ...stored, layers: [textLayerOf("layer-00000001", "Hello")] }, name: null });
       await t.call("montages.get", { montageId });
@@ -1596,6 +1596,12 @@ const CAPTION_CHECK_SCENARIOS: readonly Scenario[] = [
       await t.call("videos.render", { montageId });
       t.note("a spec given to the render directly is refused the same way");
       await t.call("videos.render", { spec: { ...stored, layers: [textLayerOf("layer-00000001", cyrillic)] } });
+      t.note("a sticker the set lacks, a bad caption (the earlier layer) and a track the store lacks: the order of the issues is stickers, captions, track, for get and for render");
+      const goneSticker = { layerId: "layer-00000002", kind: "sticker", startMs: 0, endMs: 1_000, sticker: { source: "builtin", stickerId: "no-such-sticker" }, x: 0.5, y: 0.5, size: 0.2 };
+      const mixed = { ...stored, layers: [textLayerOf("layer-00000001", "a\nb\nc"), goneSticker], music: { source: "trending", trackId: "4199287736976977", startMs: 0 } };
+      await t.call("montages.save", { montageId, spec: mixed, name: null });
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
       t.note("the caption is fixed: no issue, and the render is queued");
       await t.call("montages.save", { montageId, spec: { ...stored, layers: [textLayerOf("layer-00000001", "Hello")] }, name: null });
       await t.call("montages.get", { montageId });
