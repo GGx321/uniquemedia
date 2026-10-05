@@ -1,7 +1,7 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
-import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, UnsequencedEvent } from "../../shared/engine";
-import { EXPORT_CHANGING_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail } from "../../shared/engine";
+import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, PhotoUnavailableReason, UnsequencedEvent } from "../../shared/engine";
+import { commonPhotoReason, EXPORT_CHANGING_DETAIL, LIBRARY_TOO_NEW_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail, usageUntrustedDetail } from "../../shared/engine";
 import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
@@ -24,6 +24,7 @@ import type { RenderQueue, RenderQueueEvent } from "../renderQueue/queue";
 import { sweepRenderTmp } from "../renderQueue/sweep";
 import { TEXT_PREVIEW_DIR } from "../text/preview";
 import { stickerIssues } from "../../shared/stickers/stickerIssues";
+import { refusalReasonOf } from "../montages/availability";
 import type { DraftStore } from "../montages/store";
 import type { CommitFs } from "./commitFs";
 import { deleteVideo, findVideoRecord, VideoDiskError, VideoFileUnreachableError, VideoNotFoundError, VideoRecordUnreadableError } from "./delete";
@@ -241,8 +242,13 @@ function kindOf(error: unknown): string {
   return "code" in error && typeof error.code === "string" ? error.code : error.name;
 }
 
-const unavailable = (cells: readonly SceneCell[], detail?: string): EngineFailure =>
-  new EngineFailure({ code: "PHOTO_UNAVAILABLE", issues: cells.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable", path: cell.path })), ...(detail === undefined ? {} : { detail }) });
+const unavailable = (cells: readonly SceneCell[], detail?: string, photoReason?: PhotoUnavailableReason): EngineFailure =>
+  new EngineFailure({
+    code: "PHOTO_UNAVAILABLE",
+    issues: cells.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable", path: cell.path })),
+    ...(detail === undefined ? {} : { detail }),
+    ...(photoReason === undefined ? {} : { photoReason }),
+  });
 
 /** `work`, or `onTimeout()` once `ms` have passed (at once for `ms <= 0`); `work` itself is never cancelled. */
 async function within<T>(ms: number, work: () => Promise<T>, onTimeout: () => Error): Promise<T> {
@@ -586,7 +592,7 @@ export class VideoService {
     if (!result.ok) {
       if (result.code === "QUEUE_FULL") throw new EngineFailure({ code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(result.limit) });
       const held = new Set(result.photoIds);
-      throw unavailable(cells.filter((cell) => held.has(cell.photoId)), "another render that is queued or running holds this photo");
+      throw unavailable(cells.filter((cell) => held.has(cell.photoId)), "another render that is queued or running holds this photo", "held-by-render");
     }
 
     // A render that has to wait is announced now; one that started already was, by its `started` event.
@@ -620,16 +626,21 @@ export class VideoService {
       free = new Set(library.eligibleUnusedPhotos(avatarId).map((photo) => photo.id));
     } catch (error) {
       if (error instanceof LibraryError) {
-        if (error.code === "library-too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: "a video record of this avatar was written by a newer version of Studio" });
+        if (error.code === "library-too-new") throw new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL });
         if (error.code === "index-stale" || error.code === "log-needs-repair") {
+          // A draft of only own files names no scene photo: there is no cell to refuse (an empty `issues` is not an error the contract has).
+          if (cells.length === 0) return;
           // The library's message names a record file; the code is what the owner's window may be told.
-          throw unavailable(cells, `the usage of this avatar's photos cannot be trusted right now (${error.code})`);
+          throw unavailable(cells, usageUntrustedDetail(error.code), error.code);
         }
       }
       throw error;
     }
     const missing = cells.filter((cell) => !free.has(cell.photoId));
-    if (missing.length > 0) throw unavailable(missing);
+    if (missing.length === 0) return;
+    const states = library.photoStates(avatarId);
+    const pending = library.pendingVideoPhotos(avatarId);
+    throw unavailable(missing, undefined, commonPhotoReason(missing.map((cell) => refusalReasonOf(states.get(cell.photoId), pending.has(cell.photoId)))));
   }
 
   // ---------- videos.cancel ----------

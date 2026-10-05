@@ -22,7 +22,9 @@ import {
   IMPORT_FALLBACK_PRICE,
   type ImportPhotoPicked,
   type JobResult,
+  commonPhotoReason,
   type JobState,
+  LIBRARY_TOO_NEW_DETAIL,
   type LedgerUnavailable,
   MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
@@ -37,6 +39,7 @@ import {
   OWN_MUSIC_NOT_FOUND_DETAIL,
   OWN_PHOTO_NOT_FOUND_DETAIL,
   type PhotoQaSummary,
+  type PhotoUnavailableReason,
   type PhotoSummary,
   PROTOCOL_VERSION,
   type ReconcileReason,
@@ -53,6 +56,7 @@ import {
   type UnreadableAvatar,
   type UnsequencedEvent,
   type UsageUnknownReason,
+  usageUntrustedDetail,
   type VideoSummary,
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
@@ -137,7 +141,7 @@ type RunCategory = RunRequest["categories"][number];
  * 1K); a slot's worst case is every one of its paid attempts
  * (the real engine's RUN_ATTEMPTS_PER_SLOT); the scene writer's expected
  * share per photo and its worst case per chunk of photos it writes at once.
- * With the Photos mockup's own numbers: 20 photos are ≈ $1.01, до $3.07.
+ * With the Photos mockup's own numbers: 20 photos are ≈ $1.01, up to $3.07.
  */
 export const MOCK_RUN_IMAGE = 50_000;
 export const MOCK_RUN_ATTEMPTS_PER_SLOT = 3;
@@ -648,6 +652,7 @@ export class MockEngine implements EngineBridge {
   private seedCounter = 0;
   /** Test controls for the refusals a run start or resume can meet before it spends anything: see `setLibraryAvailable`, `setFaceGateAvailable`, `setAgeGateAvailable`, `removeMaster`. */
   private libraryOpen = true;
+  private librarySwitching = false;
   private faceGate: { available: boolean; loadError?: string } = { available: true };
   private ageGateAvailable = true;
   private readonly mastersMissing = new Set<string>();
@@ -655,6 +660,9 @@ export class MockEngine implements EngineBridge {
   private readonly masterPreflight = new Map<string, EngineError>();
   private focusAvailable = true;
   private skippedDrafts = 0;
+  private notListedDrafts = 0;
+  /** The photos an unfinished video's pending intent holds (`holdPendingVideoPhotos`). */
+  private readonly pendingVideoPhotos = new Set<string>();
   /** The montage drafts, in the order they were made; they outlive a restart, as the real engine's files do. */
   private montages = new Map<string, Montage>();
   /** Drafts deleted in this engine's life: a video's record stops naming them. */
@@ -1103,6 +1111,24 @@ export class MockEngine implements EngineBridge {
     this.libraryOpen = available;
   }
 
+  /** An unfinished video's pending intent holds these photos of the avatar (the engine's `holdPendingPhotos`): reserved, with no render behind it. */
+  holdPendingVideoPhotos(avatarId: string, photoIds: readonly string[]): void {
+    // The photos stop being free: the avatar's unused count follows and the avatar is announced, as the engine does when its holds change.
+    const before = this.avatars.find((a) => a.avatarId === avatarId)?.eligibleUnusedCount;
+    this.movingUsage(avatarId, photoIds, () => {
+      for (const photoId of photoIds) this.pendingVideoPhotos.add(photoId);
+    });
+    if (before !== this.avatars.find((a) => a.avatarId === avatarId)?.eligibleUnusedCount) this.announceAvatar(avatarId);
+  }
+
+  /**
+   * A library switch is being surveyed (the engine's `#switching`): `media.list` and `media.delete` wait with IN_FLIGHT until it ends. MEDIA ONLY: the mock does not
+   * model the other writes' refusal during a switch (the engine's `#liveLibrary` gives it to every write), so a renderer test of one of those needs its own control.
+   */
+  setLibrarySwitching(switching: boolean): void {
+    this.librarySwitching = switching;
+  }
+
   /**
    * No face gate wired into photo runs (the models or onnxruntime-web failed
    * to load at engine start): runs.start and runs.resume answer
@@ -1157,6 +1183,11 @@ export class MockEngine implements EngineBridge {
   /** `count` draft files could not be read: `montages.list` reports them as `skippedTotal` and leaves them out, never fails. */
   setSkippedDrafts(count: number): void {
     this.skippedDrafts = Math.max(0, count);
+  }
+
+  /** `count` draft files were not even read (there were more than a listing reads): `montages.list` reports them as `notListedTotal`, only when above 0. */
+  setNotListedDrafts(count: number): void {
+    this.notListedDrafts = Math.max(0, count);
   }
 
   /**
@@ -1450,10 +1481,15 @@ export class MockEngine implements EngineBridge {
         for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
         return this.ok(c, { mediaId: c.payload.mediaId, apngBase64: btoa(binary) });
       }
-      case "media.list":
+      case "media.list": {
+        const refusal = this.mediaLibraryGate();
+        if (refusal) return this.fail(c, refusal);
         return this.ok(c, this.ownMedia.list(c.payload.kind, c.payload.mediaIds));
+      }
       case "media.delete": {
         const { mediaId } = c.payload;
+        const refusal = this.mediaLibraryGate();
+        if (refusal) return this.fail(c, refusal);
         if (!this.ownMedia.has(mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
         // The engine asks the render queue's reserved set after it knows the media is there: a queued or running render that names it refuses.
         if (this.renderJobs.some((job) => isActive(job) && job.mediaIds.includes(mediaId))) return this.fail(c, { code: "IN_FLIGHT", detail: "a queued or running render uses this media; delete it when the render ends" });
@@ -1788,6 +1824,8 @@ export class MockEngine implements EngineBridge {
         const { avatarId, photoId, rejected } = c.payload;
         const photo = this.libraryOpen ? this.photos.find((p) => p.photoId === photoId && p.avatarId === avatarId) : undefined;
         if (photo === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene photo ${photoId} of avatar ${avatarId} in the open library` });
+        // The library refuses a mark while the reject log cannot be read (a mark may hide in the unreadable part): nothing is written.
+        if (this.usageReasonsOf(avatarId).includes("rejects-unreadable")) return this.fail(c, { code: "INTERNAL", detail: `rejected.jsonl of avatar ${avatarId} needs repair` });
         let current = photo;
         if (photo.rejected !== rejected) {
           current = { ...photo, rejected, eligible: !rejected };
@@ -1891,16 +1929,69 @@ export class MockEngine implements EngineBridge {
   /** The photo as the windows see it: `used`, `usedIn` and `reserved` follow the mock's videos and queued or running renders, on top of what a seeded photo already says. */
   private photoView(photo: PhotoSummary): PhotoSummary {
     const usedIn = [...new Set([...photo.usedIn, ...this.videos.filter((v) => v.summary.avatarId === photo.avatarId && v.photoIds.includes(photo.photoId)).map((v) => v.summary.videoId)])];
-    const reserved = photo.reserved || this.renderJobs.some((j) => isActive(j) && j.avatarId === photo.avatarId && j.photoIds.includes(photo.photoId));
-    return { ...photo, used: usedIn.length > 0, usedIn, reserved };
+    const reserved = photo.reserved || this.heldByRender(photo) || this.pendingVideoPhotos.has(photo.photoId);
+    // The library's `photoStates` fails closed: while an avatar's reject marks cannot be read, no photo of it is eligible.
+    const eligible = photo.eligible && !this.usageReasonsOf(photo.avatarId).includes("rejects-unreadable");
+    return { ...photo, eligible, used: usedIn.length > 0, usedIn, reserved };
   }
 
-  /** The engine's `photoAvailability(...).usable`: an eligible scene photo of the avatar that is in no video and held by no render. */
+  /** Whether a queued or running render of the mock holds this photo. */
+  private heldByRender(photo: PhotoSummary): boolean {
+    return this.renderJobs.some((j) => isActive(j) && j.avatarId === photo.avatarId && j.photoIds.includes(photo.photoId));
+  }
+
+  /** The reasons an avatar's photo usage cannot be trusted (none for a sound or an unknown avatar). */
+  private usageReasonsOf(avatarId: string): readonly UsageUnknownReason[] {
+    const usage = this.avatars.find((a) => a.avatarId === avatarId)?.usage;
+    return usage?.state === "unknown" ? usage.reasons : [];
+  }
+
+  /**
+   * The engine's `photoAvailability` (engine/montages/availability.ts), from the usage the avatar was seeded with: a record from a newer
+   * Studio is `too-new` (it wins), a stale index is `untrusted` as `index-stale`, and any other reason (a record or the reject marks that
+   * cannot be read) is `untrusted` as `log-needs-repair`. The mock has no disk to read the index again from, so a stale index stays stale.
+   */
+  private availabilityOf(avatarId: string): { state: "known" } | { state: "too-new" } | { state: "untrusted"; reason: "index-stale" | "log-needs-repair" } {
+    const reasons = this.usageReasonsOf(avatarId);
+    if (reasons.includes("library-too-new")) return { state: "too-new" };
+    if (reasons.includes("index-stale")) return { state: "untrusted", reason: "index-stale" };
+    return reasons.length === 0 ? { state: "known" } : { state: "untrusted", reason: "log-needs-repair" };
+  }
+
+  /** The engine's `photoAvailability(...).usable`: an eligible scene photo of the avatar that is in no video and held by no render, while its usage can be trusted. */
   private photoUsable(avatarId: string, photoId: string): boolean {
+    if (this.availabilityOf(avatarId).state !== "known") return false;
     const photo = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId);
     if (photo === undefined) return false;
     const view = this.photoView(photo);
     return view.eligible && !view.used && !view.reserved;
+  }
+
+  /** The engine's `refusalReasonOf`: why an eligible photo that is not free is not: in a video, or held by a queued or running render (in a video first). */
+  private photoRefusalReason(avatarId: string, photoId: string): PhotoUnavailableReason | undefined {
+    const photo = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photoId);
+    if (photo === undefined) return undefined;
+    const view = this.photoView(photo);
+    if (!view.eligible) return undefined;
+    if (view.used) return "in-video";
+    if (!view.reserved) return undefined;
+    // Held by a pending video's intent alone: no render to cancel (the engine's `pendingVideoPhotos`).
+    return this.pendingVideoPhotos.has(photoId) && !photo.reserved && !this.heldByRender(photo) ? "pending-video" : "held-by-render";
+  }
+
+  /** What an avatar whose usage is unknown answers a command that names photos: LIBRARY_TOO_NEW, or PHOTO_UNAVAILABLE for `issues` with the untrusted detail and reason; null when its usage is sound or nothing is refused. */
+  private usageRefusal(avatarId: string, issues: readonly MontageIssue[]): EngineError | null {
+    const availability = this.availabilityOf(avatarId);
+    if (availability.state === "known") return null;
+    if (availability.state === "too-new") return { code: "LIBRARY_TOO_NEW", detail: LIBRARY_TOO_NEW_DETAIL };
+    return issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues: [...issues], detail: usageUntrustedDetail(availability.reason), photoReason: availability.reason };
+  }
+
+  /** PHOTO_UNAVAILABLE for the refused photos of a sound avatar, with the reason they share (the engine's `commonPhotoReason`). */
+  private refusedPhotos(avatarId: string, refused: readonly { photoId: string; issue: MontageIssue }[], all: readonly { photoId: string }[] = refused): EngineError {
+    // The reason is judged over every refused cell, as the engine does, though the answer lists at most MAX_MONTAGE_ISSUES of them.
+    const photoReason = commonPhotoReason(all.map((r) => this.photoRefusalReason(avatarId, r.photoId)));
+    return { code: "PHOTO_UNAVAILABLE", issues: refused.map((r) => r.issue), ...(photoReason === undefined ? {} : { photoReason }) };
   }
 
   private avatarKnown(avatarId: string): boolean {
@@ -1917,11 +2008,13 @@ export class MockEngine implements EngineBridge {
 
   /** K11: a photo that is not an eligible, unused, unreserved scene photo of this avatar is refused, with its index in `photoIds`. */
   private photosRefusal(avatarId: string, photoIds: readonly string[]): EngineError | null {
-    const issues: MontageIssue[] = [];
+    const refused: { photoId: string; issue: MontageIssue }[] = [];
     photoIds.forEach((photoId, i) => {
-      if (!this.photoUsable(avatarId, photoId)) issues.push({ code: "photo-unavailable", path: ["photoIds", i] });
+      if (!this.photoUsable(avatarId, photoId)) refused.push({ photoId, issue: { code: "photo-unavailable", path: ["photoIds", i] } });
     });
-    return issues.length === 0 ? null : { code: "PHOTO_UNAVAILABLE", issues };
+    // `montages.create` judges nothing for an empty pick, whatever the avatar's usage.
+    if (photoIds.length === 0) return null;
+    return this.usageRefusal(avatarId, refused.map((r) => r.issue)) ?? (refused.length === 0 ? null : this.refusedPhotos(avatarId, refused));
   }
 
   private focusOf(avatarId: string, photoId: string): Focus | null {
@@ -2000,7 +2093,7 @@ export class MockEngine implements EngineBridge {
       issues: this.draftIssues(montage.spec),
       videoCount: this.videos.filter((v) => v.montageId === montage.montageId).length,
     }));
-    return this.ok(c, { items, total: drafts.length, skippedTotal: this.skippedDrafts });
+    return this.ok(c, { items, total: drafts.length, skippedTotal: this.skippedDrafts, ...(this.notListedDrafts > 0 ? { notListedTotal: this.notListedDrafts } : {}) });
   }
 
   private montagesSave(c: CommandMessage, payload: { montageId: string; spec: MontageDraft; name: string | null }): ResponseMessage {
@@ -2043,7 +2136,8 @@ export class MockEngine implements EngineBridge {
       return this.ok(c, { focus: this.ownMedia.hasFace(photo.mediaId) ? { ...MOCK_FOCUS } : null });
     }
     const known = this.photos.find((p) => p.avatarId === avatarId && p.photoId === photo.photoId);
-    if (known === undefined || !known.eligible) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
+    // Eligibility as the windows see it (`photoView`): none is eligible while the reject marks cannot be read, as the library's `isEligible` has it.
+    if (known === undefined || !this.photoView(known).eligible) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["photo"] }] });
     return this.ok(c, { focus: this.focusOf(avatarId, photo.photoId) });
   }
 
@@ -2191,7 +2285,10 @@ export class MockEngine implements EngineBridge {
     if (refusal) return this.fail(c, refusal);
     const cells = sceneCells(spec);
     const unavailable = cells.filter((cell) => !this.photoUsable(spec.avatarId, cell.photoId));
-    if (unavailable.length > 0) return this.fail(c, { code: "PHOTO_UNAVAILABLE", issues: unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ code: "photo-unavailable" as const, path: cell.path })) });
+    const refusedCells = unavailable.slice(0, MAX_MONTAGE_ISSUES).map((cell) => ({ photoId: cell.photoId, issue: { code: "photo-unavailable" as const, path: cell.path } }));
+    const usageRefusal = this.usageRefusal(spec.avatarId, refusedCells.map((r) => r.issue));
+    if (usageRefusal !== null) return this.fail(c, usageRefusal);
+    if (unavailable.length > 0) return this.fail(c, this.refusedPhotos(spec.avatarId, refusedCells, unavailable));
     if (this.renderJobs.filter(isActive).length >= this.renderQueueLimit) {
       return this.fail(c, { code: "RENDER_QUEUE_FULL", detail: renderQueueFullDetail(this.renderQueueLimit) });
     }
@@ -2438,9 +2535,11 @@ export class MockEngine implements EngineBridge {
     if (cleared) {
       const [first, ...rest] = reasons.filter((r) => r !== reason);
       const usage: AvatarSummary["usage"] = first === undefined ? { state: "ok" } : { state: "unknown", reasons: [first, ...rest] };
+      // The reason goes first: a photo's eligibility (`photoView`) follows the avatar's reasons.
+      this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, usage } : a));
       // Trusted again: the photos a montage may use count once more (eligible, in no video and no render).
       const eligibleUnusedCount = usage.state === "ok" ? this.photos.filter((p) => p.avatarId === avatarId).map((p) => this.photoView(p)).filter((p) => p.eligible && !p.used && !p.reserved).length : 0;
-      this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, usage, eligibleUnusedCount } : a));
+      this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, eligibleUnusedCount } : a));
       this.announceAvatar(avatarId);
     }
     return this.ok(c, { avatarId, ...answer(cleared) });
@@ -2497,6 +2596,15 @@ export class MockEngine implements EngineBridge {
   }
 
   // ---------- photo runs (T8b) ----------
+
+  /**
+   * The engine's `withLibrary` for the own-media commands (the library's records, read or written): while a library switch is being surveyed
+   * they wait with IN_FLIGHT, and with no library open they are LIBRARY_UNAVAILABLE, the switch checked first.
+   */
+  private mediaLibraryGate(): EngineError | null {
+    if (this.librarySwitching) return { code: "IN_FLIGHT", detail: "a library switch is being surveyed; write commands wait for it to finish" };
+    return this.libraryGate();
+  }
 
   /** The engine's `#liveLibrary()`: no library open refuses a paid run command before it looks at what the command names. */
   private libraryGate(): EngineError | null {
@@ -2602,7 +2710,8 @@ export class MockEngine implements EngineBridge {
   private shiftEligibleUnused(avatarId: string, delta: number): void {
     const avatar = this.avatars.find((a) => a.avatarId === avatarId);
     if (avatar === undefined) return;
-    const updated = { ...avatar, eligibleUnusedCount: Math.max(0, avatar.eligibleUnusedCount + delta) };
+    // While the avatar's usage cannot be trusted its count is 0 whatever is marked (the library's `eligibleUnusedCount`).
+    const updated = avatar.usage.state === "unknown" ? avatar : { ...avatar, eligibleUnusedCount: Math.max(0, avatar.eligibleUnusedCount + delta) };
     this.avatars = this.avatars.map((a) => (a === avatar ? updated : a));
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: updated } });
   }

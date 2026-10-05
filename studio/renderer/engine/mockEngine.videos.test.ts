@@ -163,7 +163,7 @@ describe("videos.render", () => {
 
     const reply = await mock.client.request("videos.render", { montageId: second.montageId });
 
-    expect(reply).toEqual({ ok: false, error: { code: "PHOTO_UNAVAILABLE", issues: [{ code: "photo-unavailable", path: ["clips", 0, "cell"] }] } });
+    expect(reply).toEqual({ ok: false, error: { code: "PHOTO_UNAVAILABLE", photoReason: "in-video", issues: [{ code: "photo-unavailable", path: ["clips", 0, "cell"] }] } });
     expect(eventsAfter(mock, mark)).toEqual([]);
     expect(await renderJobsOf(mock)).toHaveLength(1);
   });

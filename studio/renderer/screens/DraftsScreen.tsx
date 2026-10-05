@@ -26,6 +26,8 @@ interface DraftList {
   readonly items: readonly MontageListItem[];
   readonly total: number;
   readonly skippedTotal: number;
+  /** Draft files the listing did not read (more than it reads): not known to be bad. */
+  readonly notListedTotal: number;
   /** Per avatar whose drafts have a refused photo: its photos by id, to say why (rejected, in a video). */
   readonly photos: PhotoIndex;
 }
@@ -33,6 +35,7 @@ interface DraftList {
 const DRAFT_FORMS = ["черновик", "черновика", "черновиков"] as const;
 const RENDER_FORMS = ["рендер идёт", "рендера идут", "рендеров идут"] as const;
 const SKIPPED_FORMS = ["черновик не читается", "черновика не читаются", "черновиков не читаются"] as const;
+const NOT_LISTED_FORMS = ["черновик не показан: файлов слишком много", "черновика не показаны: файлов слишком много", "черновиков не показаны: файлов слишком много"] as const;
 
 /** The drafts, and the photos of the avatars whose drafts the engine flagged (a failed photos.list only loses the wording). */
 async function loadDrafts(client: EngineClient): Promise<{ ok: true; list: DraftList } | { ok: false; error: EngineError }> {
@@ -42,7 +45,7 @@ async function loadDrafts(client: EngineClient): Promise<{ ok: true; list: Draft
   const answers = await Promise.all(flagged.map(async (avatarId) => ({ avatarId, reply: await client.request("photos.list", { avatarId }) })));
   const photos = new Map<string, ReadonlyMap<string, PhotoSummary>>();
   for (const { avatarId, reply: listed } of answers) if (listed.ok) photos.set(avatarId, new Map(listed.result.photos.map((p) => [p.photoId, p])));
-  return { ok: true, list: { items: reply.result.items, total: reply.result.total, skippedTotal: reply.result.skippedTotal, photos } };
+  return { ok: true, list: { items: reply.result.items, total: reply.result.total, skippedTotal: reply.result.skippedTotal, notListedTotal: reply.result.notListedTotal ?? 0, photos } };
 }
 
 /** The render of this draft still queued or running, the newest if several. */
@@ -418,6 +421,7 @@ export function DraftsScreen({ lastAvatarId }: { lastAvatarId: string | null }) 
           </h2>
           <span className="mono muted">{list === null ? "…" : `${items.length} · сохраняются сами`}</span>
           {list !== null && list.skippedTotal > 0 && <span className="mono faint">ещё {countOf(list.skippedTotal, SKIPPED_FORMS)}</span>}
+          {list !== null && list.notListedTotal > 0 && <span className="mono faint">ещё {countOf(list.notListedTotal, NOT_LISTED_FORMS)}</span>}
         </div>
         {error !== null && (
           <ErrorNotice

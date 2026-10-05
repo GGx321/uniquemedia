@@ -1,6 +1,7 @@
 import type { MediaSummary } from "../../../shared/engine";
 import type { Size } from "../../../shared/montage";
 import type { EngineClient } from "../../engine/client";
+import type { EngineStore } from "../../engine/store";
 import { type MediaRecords, useMediaRecords } from "./ownMedia";
 
 // 3-H1: what the editor knows of the own photos its draft's cells hold, from their records: the STORED size (the importer's upright JPEG), which is what
@@ -30,6 +31,6 @@ export function ownPhotoSize(photos: OwnPhotos, mediaId: string): Size | null {
 }
 
 /** The own photos the draft's cells hold, by media id: asked by id, followed by `media.changed`. */
-export function useOwnPhotos(client: Pick<EngineClient, "request" | "subscribe">, mediaIds: readonly string[]): OwnPhotos {
-  return useMediaRecords(client, "photo", mediaIds, ownPhotoOf);
+export function useOwnPhotos(client: Pick<EngineClient, "request">, mediaIds: readonly string[], store: Pick<EngineStore, "subscribeMedia">): OwnPhotos {
+  return useMediaRecords(client, "photo", mediaIds, ownPhotoOf, store);
 }

@@ -1,4 +1,4 @@
-import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason } from "./errors";
+import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason, PhotoUnavailableReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import type { MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -25,7 +25,8 @@ export const ERROR_MESSAGES_RU = {
   LEDGER_WRITE_FAILED: "Не удалось записать журнал расходов на диск. Платные запросы остановлены.",
   PRICE_UNAVAILABLE: "Не удалось узнать цену модели, поэтому запрос не отправлен.",
   PRICE_CHANGED: "Цена выросла выше подтверждённой. Проверьте новую оценку и подтвердите снова.",
-  IN_FLIGHT: "Дождитесь завершения текущих платных запросов.",
+  // True for every source of IN_FLIGHT (a library switch, an import, a render, a paid request): most of them cost no money.
+  IN_FLIGHT: "Studio сейчас занята другим действием (например, платными запросами или импортом): дождитесь, когда оно закончится, и повторите.",
   LIBRARY_UNAVAILABLE: "Папка библиотеки недоступна. Выберите папку в Настройках — до этого ничего не тратится.",
   DESCRIPTOR_INVALID: "Описание аватара не проходит текущую проверку возраста, поэтому по нему ничего не генерируется. Описание нужно переписать.",
   IMPORT_SUBJECT_INVALID: "На фото должна быть ровно одна взрослая женщина — без других людей в кадре. Импорт отменён, ничего не сохранено.",
@@ -43,11 +44,15 @@ export const ERROR_MESSAGES_RU = {
   FACE_GATE_UNAVAILABLE: "Проверка совпадения лица недоступна: запуск не может продолжаться без неё. Перезапустите Studio; если ошибка повторится, переустановите приложение. Ничего не потрачено.",
   MASTER_FACE_UNUSABLE: "На главном фото этого аватара не удалось найти лицо для проверки совпадения. Создайте нового аватара или импортируйте другое фото. Ничего не потрачено.",
   MONTAGE_INVALID: "Монтаж не готов к рендеру: исправьте отмеченные проблемы.",
+  // The general text, for a refusal with no `photoReason` (a rejected, missing or foreign photo, or cells refused for different causes):
+  // `PHOTO_UNAVAILABLE_REASONS_RU` has one per cause the engine names.
   PHOTO_UNAVAILABLE:
-    "Это фото нельзя использовать в видео. В видео идут только сгенерированные сцены этого аватара: не отклонённые вами и прошедшие проверку возраста.",
-  EXPORT_UNAVAILABLE: "Папка «Готовые видео» недоступна. Проверьте её в Настройках: видео не сохранено, ничего не потрачено.",
+    "Это фото нельзя поставить в видео: оно уже в другом видео (одно фото идёт только в одно видео), занято рендером в очереди, отклонено вами или больше не подходит. Выберите другое.",
+  // Said to a render, to «Удалить» and to «Папка «Готовые видео»»: it claims nothing about a video, only that no money moved.
+  EXPORT_UNAVAILABLE: "Папка «Готовые видео» недоступна. Проверьте её в Настройках: ничего не потрачено.",
   RENDER_FAILED: "Не удалось собрать видео. Готовый файл не создан, ничего не потрачено. Попробуйте ещё раз.",
-  RENDER_VERIFY_FAILED: "Собранное видео не прошло проверку и не сохранено. Попробуйте ещё раз.",
+  // The check is the same next time: a retry helps only when the file changed under it; otherwise the montage has to change.
+  RENDER_VERIFY_FAILED: "Собранное видео не прошло проверку и не сохранено. Если повтор даст то же, измените монтаж или обновите Studio.",
   RENDER_QUEUE_FULL: "В очереди уже слишком много видео. Дождитесь, пока часть из них соберётся, или отмените лишние, и повторите. Ничего не потрачено и не сохранено.",
   LIBRARY_TOO_NEW: "Часть записей видео создана более новой версией Studio. Обновите приложение: до этого такие записи не показываются и не удаляются, а новые видео этого аватара не собираются.",
   TEXT_INVALID: "Надпись не подходит для видео. Исправьте текст надписи.",
@@ -151,6 +156,21 @@ export const CAPTION_ISSUES_RU = {
   "too-many-lines": "В надписи больше двух строк. Уберите лишние переносы строки.",
 } as const satisfies Record<CaptionIssue, string>;
 
+/**
+ * Why a photo was refused, for PHOTO_UNAVAILABLE's `photoReason`: each text names the cause and the way out. The last two refuse EVERY photo of the
+ * avatar, so replacing one photo cannot help and the text says so; `pending-video` may refuse every photo too (an unreadable intent holds them all),
+ * so its text does not promise that another photo is free.
+ */
+export const PHOTO_UNAVAILABLE_REASONS_RU = {
+  "in-video": "Это фото уже в другом видео: одно фото идёт только в одно видео. Выберите другое фото или удалите то видео — тогда фото освободится.",
+  "held-by-render": "Это фото сейчас занято рендером: он стоит в очереди или идёт. Отмените тот рендер — тогда фото освободится; если он соберётся, фото останется в том видео. Выберите другое фото.",
+  "pending-video":
+    "Это фото держит видео, которое не успело сохраниться до конца. Оно освободится, когда Studio доделает или отменит это видео — это происходит при запуске Studio. Если пришло уведомление «Незавершённое видео не прочитано», следуйте ему. Пока выберите другое фото, если оно свободно.",
+  "index-stale": "Studio сейчас не может проверить, какие фото этого аватара уже в видео: она ещё перечитывает записи. Пока так, не подходят все фото этого аватара, а не одно. Подождите немного и повторите.",
+  "log-needs-repair":
+    "Записи об этом аватаре повреждены или недоступны, и Studio не знает, какие его фото уже в видео, поэтому не подходят все фото этого аватара, а не одно. Откройте «Фото» этого аватара: там написано, что случилось и что можно сделать.",
+} as const satisfies Record<PhotoUnavailableReason, string>;
+
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {
   "no-clips": "В монтаже нет ни одного кадра.",
@@ -165,7 +185,7 @@ export const MONTAGE_ISSUE_MESSAGES_RU = {
   "duplicate-clip-id": "Два кадра с одним идентификатором.",
   "duplicate-layer-id": "Два слоя с одним идентификатором.",
   "photo-repeated": "Одно и то же фото стоит в монтаже больше одного раза.",
-  "photo-unavailable": "Это фото нельзя использовать в видео: оно не подходит или было отклонено.",
+  "photo-unavailable": "Это фото нельзя поставить в видео: оно уже в другом видео, занято рендером, отклонено или больше не подходит.",
   "not-yet-supported": "Эта часть монтажа пока не поддерживается.",
   "caption-invalid": "Надпись не проходит проверку: замените её текст.",
   "media-unavailable": "Файла, который стоит в этом месте монтажа, больше нет среди ваших файлов.",

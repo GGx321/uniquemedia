@@ -873,6 +873,14 @@ export class Library {
     this.#pendingHolds.set(videoId, { avatarId, photoIds: [...photoIds] });
   }
 
+  /** The photos held ONLY by pending intents: held by no queued or running render, so there is no render to cancel (`photoStates` reads them as reserved too). */
+  pendingVideoPhotos(avatarId: string): ReadonlySet<string> {
+    const render = this.#reservedPhotos(avatarId);
+    const only = new Set<string>();
+    for (const hold of this.#pendingHolds.values()) if (hold.avatarId === avatarId) for (const photoId of hold.photoIds) if (!render.has(photoId)) only.add(photoId);
+    return only;
+  }
+
   /** Ends the hold of one pending intent (adopted or dropped); one that was never held changes nothing. */
   releasePendingPhotos(videoId: string): void {
     this.#pendingHolds.delete(videoId);

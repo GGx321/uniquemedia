@@ -1,4 +1,6 @@
+import type { PhotoUnavailableReason } from "../../shared/engine";
 import { LibraryError, type Library } from "../library";
+import type { PhotoState } from "../library/eligibility";
 
 // Whether an avatar's scene photos may go into a video, as the montage commands ask it (`montages.create`'s refusal,
 // `montages.get` and `montages.list`'s issues). ONE question, answered by the library's own refusal-aware function
@@ -12,15 +14,30 @@ import { LibraryError, type Library } from "../library";
 // window's Render reason is what the render will say.
 
 export type Availability =
-  | { readonly state: "known"; usable(photoId: string): boolean }
+  | { readonly state: "known"; usable(photoId: string): boolean; why(photoId: string): PhotoUnavailableReason | undefined }
   | { readonly state: "too-new"; usable(photoId: string): boolean }
-  | { readonly state: "untrusted"; readonly reason: "index-stale" | "log-needs-repair"; usable(photoId: string): boolean };
+  | { readonly state: "untrusted"; readonly reason: Extract<PhotoUnavailableReason, "index-stale" | "log-needs-repair">; usable(photoId: string): boolean };
+
+/**
+ * Why an ELIGIBLE photo that is not free is not (`PhotoUnavailableReason`): it is in a video, a queued or running render holds it, or only an unfinished video's intent does (`onlyPending`). Undefined for a
+ * photo the one eligibility rule already refuses (rejected, master, foreign, missing: nothing the owner can wait out) and for a free one.
+ */
+export function refusalReasonOf(state: PhotoState | undefined, onlyPending: boolean): PhotoUnavailableReason | undefined {
+  if (state === undefined || !state.eligible) return undefined;
+  if (state.usedIn.length > 0) return "in-video";
+  if (!state.reserved) return undefined;
+  // `reserved` also covers an unfinished video's intent: with no render holding the photo there is nothing to cancel.
+  return onlyPending ? "pending-video" : "held-by-render";
+}
 
 /** `usable` for a `known` state: eligible, unused and unreserved. For any other state: nothing is usable (fail closed). */
 export function photoAvailability(library: Library, avatarId: string, log?: (line: string) => void): Availability {
   try {
     const free = new Set(library.eligibleUnusedPhotos(avatarId).map((photo) => photo.id));
-    return { state: "known", usable: (photoId) => free.has(photoId) };
+    // The states and the pending holds are read only when a reason is asked for (a refusal), not for every listing that merely asks `usable`.
+    let held: { states: Map<string, PhotoState>; pending: ReadonlySet<string> } | undefined;
+    const holds = (): { states: Map<string, PhotoState>; pending: ReadonlySet<string> } => (held ??= { states: library.photoStates(avatarId), pending: library.pendingVideoPhotos(avatarId) });
+    return { state: "known", usable: (photoId) => free.has(photoId), why: (photoId) => refusalReasonOf(holds().states.get(photoId), holds().pending.has(photoId)) };
   } catch (error) {
     if (error instanceof LibraryError) {
       const none = (): boolean => false;

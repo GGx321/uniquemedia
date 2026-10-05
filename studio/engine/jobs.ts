@@ -155,7 +155,7 @@ export class JobRegistry {
 
   /**
    * Records how many slots are done; the `job.progress` payload (with the job's kind, avatar and run), or null for a job that is not running.
-   * A render's `done` is clamped: it never goes back and never exceeds `total`.
+   * A render's `done` is clamped: it never goes back and never exceeds `total`; any other job's never exceeds `total` either (a count past it would break the contract).
    */
   progress(jobId: string, reported: number): JobProgress | null {
     const entry = this.#jobs.get(jobId);
@@ -165,7 +165,7 @@ export class JobRegistry {
     // A render's `done` is clamped to its total; an import's too, and in its prepare stage to one under it: the last unit belongs to the job's
     // end (the record is stored), so a window never sees a full bar of a job that is still working.
     const ceiling = entry.state.kind === "import" && entry.state.stage === "prepare" ? entry.state.total - 1 : entry.state.total;
-    const done = entry.state.kind === "render" || entry.state.kind === "import" ? Math.min(ceiling, Math.max(entry.state.done, counted)) : counted;
+    const done = entry.state.kind === "render" || entry.state.kind === "import" ? Math.min(ceiling, Math.max(entry.state.done, counted)) : Math.min(entry.state.total, counted);
     entry.state = { ...entry.state, done };
     const { total } = entry.state;
     switch (entry.state.kind) {

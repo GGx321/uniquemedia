@@ -1,6 +1,6 @@
 import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
-import { Id } from "../../shared/engine";
+import { Id, RENDER_NO_SPACE_DETAIL_PREFIX } from "../../shared/engine";
 import { freeBytesOf } from "../freeBytes";
 import type { Clip } from "../../shared/engine/montage";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type RunFfmpegArgvOptions } from "../../node/runFfmpeg";
@@ -335,7 +335,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     if (layerPlan.jobs.length > 0) {
       const free = await (deps.freeBytes ?? freeBytesOf)(clipDir);
       if (free !== null && free < layerPlan.peakDiskBytes) {
-        throw new RenderFailure({ code: "RENDER_FAILED", detail: `not enough free space for the render's temporary files: about ${Math.ceil(layerPlan.peakDiskBytes / MIB)} MiB are needed` });
+        throw new RenderFailure({ code: "RENDER_FAILED", detail: `${RENDER_NO_SPACE_DETAIL_PREFIX}: about ${Math.ceil(layerPlan.peakDiskBytes / MIB)} MiB are needed` });
       }
     }
 

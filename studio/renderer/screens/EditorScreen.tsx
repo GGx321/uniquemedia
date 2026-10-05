@@ -557,7 +557,7 @@ function DraftEditor({
   const flaggedLayers = layerProblems(verdict.spec, judged, previewRefused);
   // 3f.3b: the own videos the clips play (their records, by id), and what the render refuses each video clip for: the engine's verdict on the spec on
   // screen, else the window's guess from the records.
-  const ownVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId));
+  const ownVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId), store);
   const clipVideoProblems = videoProblems(state.spec, verdict, ownVideos);
   // 3f.3b fix round 1 (L8): «Обрезка» tells the preview which frame a drag is at, without re-rendering the editor.
   const [trimPeek] = useState(() => new TrimPeekStore());
@@ -814,6 +814,7 @@ function DraftEditor({
     spec: state.spec,
     exportStatus: view.exportStatus,
     avatarActive: avatar?.status !== "archived",
+    ...(avatar == null ? {} : { avatarUsage: avatar.usage }),
     verdict,
     photos: photoIndex,
     usedVideo,
