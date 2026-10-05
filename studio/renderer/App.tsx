@@ -159,7 +159,8 @@ function EngineNoticesBar() {
  * montage) belongs to it, not to the new one, whose ids may be the same: `onSwitch` forgets it. The first folder heard is no switch.
  */
 function ForgetOnLibrarySwitch({ onSwitch }: { onSwitch: () => void }) {
-  const libraryPath = useEngineView().settings?.libraryPath ?? null;
+  // Compared without trailing separators (review r2 NIT): the same folder written with one is no switch.
+  const libraryPath = useEngineView().settings?.libraryPath.replace(/(?<=.)[\\/]+$/, "") ?? null;
   const last = useRef<string | null>(null);
   useEffect(() => {
     if (libraryPath === null) return;

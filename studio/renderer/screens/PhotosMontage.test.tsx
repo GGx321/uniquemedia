@@ -90,6 +90,19 @@ describe("from the Photos screen", () => {
     expect(screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent).toBe("Монтаж из выбранных · 0");
   });
 
+  test("review r2 NIT: the same folder written with a trailing slash is no library switch: the picks stay", async () => {
+    const { client } = await studio();
+    await openSection("Фото");
+    const picks = await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
+    fireEvent.click(picks[0] ?? document.body);
+    await openSection("Настройки");
+    await screen.findByRole("heading", { level: 1, name: "Настройки" });
+    await asAnotherWindow(() => client.request("settings.setLibraryPath", { path: "/Users/studio/Studio/library/" }));
+    await openSection("Фото");
+    await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
+    expect(screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent).toBe("Монтаж из выбранных · 1");
+  });
+
   test("it is disabled with nothing picked, and above 20 photos with the reason next to it", async () => {
     await studio({ photos: freePhotos(21) });
     await openSection("Фото");
