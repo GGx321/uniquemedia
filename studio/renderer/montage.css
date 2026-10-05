@@ -1030,13 +1030,18 @@
   background: var(--sidebar);
 }
 
-/* 306 × 544 as drawn; a lower window keeps 9:16 and shrinks the frame instead of cutting it. */
+/* 306 × 544 as drawn, until the stage is laid out: then Preview.tsx fits it to the stage (previewFit.ts) in its inline style, with
+   `--pv-k`, its width over the artboard's 306 px. The overlays' pixel-sized parts scale by `--pv-ui`: the same scale, held between 0.85 (a
+   label stays legible in the smallest window) and 2.2. */
 .ed-frame {
+  --pv-k: 1;
+  --pv-ui: clamp(0.85, var(--pv-k), 2.2);
+
   position: relative;
   height: min(544px, 100%);
   aspect-ratio: 9 / 16;
   overflow: hidden;
-  border-radius: 20px;
+  border-radius: calc(20px * var(--pv-k));
   background: var(--frame-black);
   box-shadow:
     0 0 0 1px var(--seg-on),
@@ -1174,10 +1179,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
+  gap: calc(5px * var(--pv-ui));
   width: 76%;
-  padding: 14px 12px 12px;
-  border-radius: 14px;
+  padding: calc(14px * var(--pv-ui)) calc(12px * var(--pv-ui)) calc(12px * var(--pv-ui));
+  border-radius: calc(14px * var(--pv-ui));
   background: var(--scrim-60);
   box-shadow: inset 0 0 0 1px var(--pv-video-edge);
   text-align: center;
@@ -1189,10 +1194,10 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: calc(32px * var(--pv-ui));
+  height: calc(32px * var(--pv-ui));
   margin-bottom: 3px;
-  border-radius: 10px;
+  border-radius: calc(10px * var(--pv-ui));
   background: var(--accent-soft);
   color: var(--accent-text);
 }
@@ -1206,7 +1211,7 @@
   max-width: 100%;
   overflow: hidden;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--pv-ui));
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1216,7 +1221,7 @@
   max-width: 100%;
   overflow: hidden;
   color: var(--muted);
-  font-size: 9.5px;
+  font-size: calc(9.5px * var(--pv-ui));
   letter-spacing: -0.02em;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1224,7 +1229,7 @@
 
 .pv-video-note {
   color: var(--faint);
-  font-size: 10.5px;
+  font-size: calc(10.5px * var(--pv-ui));
   line-height: 1.35;
 }
 
@@ -1244,16 +1249,16 @@
 
 .pv-empty {
   position: absolute;
-  inset: 6px;
+  inset: calc(6px * var(--pv-ui));
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: calc(6px * var(--pv-ui));
   border: 1.5px dashed var(--dashed);
-  border-radius: 6px;
+  border-radius: calc(6px * var(--pv-ui));
   color: var(--faint);
-  font-size: 11px;
+  font-size: calc(11px * var(--pv-ui));
   pointer-events: none;
 }
 
@@ -1273,9 +1278,9 @@
 
 .pv-face {
   position: absolute;
-  width: 24px;
-  height: 24px;
-  margin: -12px 0 0 -12px;
+  width: calc(24px * var(--pv-ui));
+  height: calc(24px * var(--pv-ui));
+  margin: calc(-12px * var(--pv-ui)) 0 0 calc(-12px * var(--pv-ui));
   border: 2px solid var(--accent);
   border-radius: 50%;
   box-shadow:
@@ -1297,14 +1302,14 @@
 
 .pv-face-pill {
   position: absolute;
-  height: 20px;
-  padding: 0 7px;
-  font-size: 10px;
-  transform: translate(-50%, 18px);
+  height: calc(20px * var(--pv-ui));
+  padding: 0 calc(7px * var(--pv-ui));
+  font-size: calc(10px * var(--pv-ui));
+  transform: translate(-50%, calc(18px * var(--pv-ui)));
 }
 
 .pv-face-pill-up {
-  transform: translate(-50%, -38px);
+  transform: translate(-50%, calc(-38px * var(--pv-ui)));
 }
 
 /* layers (V6–V10): the engine's caption picture or the sticker's canvas in the layer's box, the selection drawn around it */
@@ -1358,8 +1363,8 @@
 .pv-corner {
   position: absolute;
   z-index: 2;
-  width: 10px;
-  height: 10px;
+  width: calc(10px * var(--pv-ui));
+  height: calc(10px * var(--pv-ui));
   border: 1.5px solid var(--accent);
   border-radius: 2px;
   background: var(--text);
@@ -1368,13 +1373,13 @@
 }
 
 .pv-corner-tl {
-  top: -8px;
-  left: -8px;
+  top: calc(-8px * var(--pv-ui));
+  left: calc(-8px * var(--pv-ui));
 }
 
 .pv-corner-br {
-  right: -8px;
-  bottom: -8px;
+  right: calc(-8px * var(--pv-ui));
+  bottom: calc(-8px * var(--pv-ui));
 }
 
 .pv-layer-zone .pv-corner {
@@ -1432,9 +1437,9 @@
   position: absolute;
   top: 50%;
   left: 50%;
-  height: 20px;
-  padding: 0 8px;
-  font-size: 10px;
+  height: calc(20px * var(--pv-ui));
+  padding: 0 calc(8px * var(--pv-ui));
+  font-size: calc(10px * var(--pv-ui));
   transform: translate(-50%, -50%);
 }
 

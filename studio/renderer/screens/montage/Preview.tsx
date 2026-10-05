@@ -1,4 +1,4 @@
-import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Focus, Layer, MontageDraft, TextLayer } from "../../../shared/engine";
 import { clipRanges, FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, videoClipWindow, zonesHit } from "../../../shared/montage";
 import { ownStickerCells } from "../../../shared/montage/ownStickers";
@@ -15,6 +15,7 @@ import { dragFocus, dragLayerCentre, placeLayer, type Point, resizeFactor, setCe
 import { PreviewAudio } from "./PreviewAudio";
 import { PreviewVideo } from "./PreviewVideo";
 import { type OwnVideos, videoLookup } from "./ownVideos";
+import { fitPreview, PREVIEW_ARTBOARD_W, previewScale } from "./previewFit";
 import { storedFrames } from "./videoSync";
 import type { TrimPeekStore } from "./trimPeek";
 import { resolveSelection } from "./selection";
@@ -38,9 +39,65 @@ import { type TimelineState, useSelectionCommands } from "./useTimeline";
 // - «Зоны Reels» and «Полоски слайдов», preview-only and switchable.
 // A layer drags (one undo step when let go) and scales by its corners; the selected cell's crop drags by its face point (Q3: no
 // zoom). Nothing is saved until a drag ends, and a cancelled one changes nothing. Only this part re-renders per frame.
+// The owner's feedback (2026-10-05): the frame fits the stage (previewFit.ts), live as the window resizes or moves to a screen of another
+// pixel ratio; `--pv-k` (its width over the artboard's 306 px) scales the overlays' pixel-sized parts, while everything placed in montage
+// coordinates is drawn in percent of the frame and scales by itself.
 
 /** The artboard's preview width: what a pixel of the pointer is worth before the frame is laid out (and in tests). */
-const PREVIEW_W = 306;
+const PREVIEW_W = PREVIEW_ARTBOARD_W;
+/** The space kept between the «Подсказки» block and the frame. */
+const HINTS_GAP_PX = 12;
+
+/** The preview area's content box, and what the frame keeps clear on each side of it for the hints. */
+interface StageBox {
+  readonly w: number;
+  readonly h: number;
+  readonly gutter: number;
+}
+
+/**
+ * The preview area as laid out, on every resize of it or of the hints (which drop their words in a narrow area): its content box, and the
+ * hints' reach into it from the left (the frame keeps that much clear on both sides, so it stays centred). Null until it is laid out.
+ */
+function useStageBox(area: RefObject<HTMLElement | null>, hints: RefObject<HTMLElement | null>, withHints: boolean): StageBox | null {
+  const [box, setBox] = useState<StageBox | null>(null);
+  useLayoutEffect(() => {
+    const node = area.current;
+    if (node === null || typeof ResizeObserver === "undefined") return;
+    let content: { width: number; height: number } | null = null;
+    const observer = new ResizeObserver((entries) => {
+      const own = entries.find((entry) => entry.target === node);
+      if (own !== undefined) content = { width: own.contentRect.width, height: own.contentRect.height };
+      if (content === null) return;
+      const reach = hints.current?.getBoundingClientRect();
+      const left = node.getBoundingClientRect().left + (Number.parseFloat(getComputedStyle(node).paddingLeft) || 0);
+      const gutter = reach === undefined || reach.width <= 0 ? 0 : Math.max(0, reach.right + HINTS_GAP_PX - left);
+      const next = { w: content.width, h: content.height, gutter };
+      setBox((now) => (now !== null && now.w === next.w && now.h === next.h && now.gutter === next.gutter ? now : next));
+    });
+    observer.observe(node);
+    if (withHints && hints.current !== null) observer.observe(hints.current);
+    return () => observer.disconnect();
+  }, [area, hints, withHints]);
+  return box;
+}
+
+/** `window.devicePixelRatio`, followed when the window moves to a screen of another ratio (or the page is zoomed). */
+function useDevicePixelRatio(): number {
+  const [ratio, setRatio] = useState(() => window.devicePixelRatio || 1);
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+    // A query for the ratio as it is now: it stops matching (a change) when the ratio moves.
+    const query = window.matchMedia(`(resolution: ${ratio}dppx)`);
+    const onChange = (): void => setRatio(window.devicePixelRatio || 1);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, [ratio]);
+  return ratio;
+}
+
+/** The frame's inline size and the overlays' scale; nothing while the stage is not laid out (the stylesheet's own size stands). */
+type FrameStyle = CSSProperties & { readonly "--pv-k": number };
 /** The dev mock has no pictures: its stand-ins are drawn at a scene photo's 9:16 size. */
 const MOCK_PHOTO: Size = { w: 768, h: 1344 };
 /** An arrow key moves a layer or a crop this many frame pixels (Shift: `BIG_STEP_PX`). */
@@ -133,6 +190,8 @@ export interface PreviewProps {
 
 export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: PreviewProps) {
   const frameRef = useRef<HTMLDivElement>(null);
+  const areaRef = useRef<HTMLElement>(null);
+  const hintsRef = useRef<HTMLDivElement>(null);
   const [zones, setZones] = useState(true);
   const [bars, setBars] = useState(true);
   const { client } = useEngine();
@@ -141,10 +200,14 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
   // Every caption's picture is asked for up front, so it is there before the playhead reaches it.
   usePrefetchTextPreviews(spec.layers.filter((l): l is TextLayer => l.kind === "text"));
   const empty = spec.clips.length === 0;
+  const stage = useStageBox(areaRef, hintsRef, !empty);
+  const ratio = useDevicePixelRatio();
+  const size = stage === null ? null : fitPreview({ stage, render: { w: FRAME_W, h: FRAME_H }, dpr: ratio, gutter: stage.gutter });
+  const frameStyle: FrameStyle | undefined = size === null ? undefined : { width: size.w, height: size.h, "--pv-k": previewScale(size.w) };
 
   return (
-    <section className="ed-preview" aria-label="Превью">
-      <div className="ed-frame" ref={frameRef}>
+    <section ref={areaRef} className="ed-preview" aria-label="Превью">
+      <div className="ed-frame" ref={frameRef} style={frameStyle}>
         {empty ? (
           <div className="ed-frame-empty">
             <span className="tile-icon ed-frame-empty-icon" aria-hidden="true">
@@ -172,7 +235,7 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
         )}
       </div>
       {!empty && (
-        <div className="pv-hints" role="group" aria-label="Подсказки">
+        <div ref={hintsRef} className="pv-hints" role="group" aria-label="Подсказки">
           <span className="lbl">Подсказки</span>
           <HintSwitch label="Зоны Reels" on={zones} onChange={setZones} />
           <HintSwitch label="Полоски слайдов" on={bars} onChange={setBars} />
