@@ -55,9 +55,18 @@ export function mockFolderName(avatarName: string, avatarId: string): string {
   return isSafeName(byId) ? byId : "avatar";
 }
 
-/** `<folder>/<date>_<kind>_<NNN>.mp4`, the first counter no file holds, like the engine's name claim. */
-export function mockRelPath(folder: string, date: string, kind: string, taken: ReadonlySet<string>): string {
-  for (let n = 1; ; n++) {
+/**
+ * `<folder>/<date>_<kind>_<NNN>.mp4`, like the engine's name claim: the counter starts above the highest number a record of that folder, day and kind
+ * still names (`named`: the relative paths of the records, whatever became of their files, so a number is never refilled), then takes the first one no file holds.
+ */
+export function mockRelPath(folder: string, date: string, kind: string, taken: ReadonlySet<string>, named: Iterable<string> = []): string {
+  const prefix = `${folder}/${date}_${kind}_`;
+  let highest = 0;
+  for (const path of named) {
+    const digits = path.startsWith(prefix) && path.endsWith(".mp4") ? path.slice(prefix.length, -".mp4".length) : "";
+    if (/^\d{3,}$/.test(digits)) highest = Math.max(highest, Number(digits));
+  }
+  for (let n = highest + 1; ; n++) {
     const path = `${folder}/${date}_${kind}_${String(n).padStart(3, "0")}.mp4`;
     if (!taken.has(path)) return path;
   }
