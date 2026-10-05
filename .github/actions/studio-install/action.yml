@@ -1,0 +1,32 @@
+name: studio-install
+description: >-
+  bun install that survives a failed ffmpeg-static download. ffmpeg-static's postinstall fetches its binary from GitHub
+  releases on every install (about 6 jobs per run) and one such download failed on main ("Failed to download ffmpeg
+  b6.1.1"). A second plain `bun install` does NOT rerun a failed postinstall (it exits 0, "no changes", with no binary),
+  and a download that dies mid-stream leaves a truncated file behind. So the retry first removes
+  node_modules/ffmpeg-static, which makes bun reinstall the package and run its postinstall again. Whatever the attempt,
+  the install only counts as done when the binary actually runs (`-version`), so a missing or truncated file fails the
+  step instead of passing it. No cache: nothing restored from a cache is ever executed here.
+runs:
+  using: composite
+  steps:
+    - name: Install dependencies
+      shell: bash
+      run: |
+        install_deps() { bun install --frozen-lockfile; }
+        # Runs the ffmpeg-static binary: a presence check would pass on a truncated download.
+        ffmpeg_works() {
+          local bin
+          bin=$(bun -e "console.log(require('ffmpeg-static') ?? '')") || return 1
+          [ -n "$bin" ] && "$bin" -version > /dev/null 2>&1
+        }
+        if ! { install_deps && ffmpeg_works; }; then
+          echo "::warning::bun install or the ffmpeg-static binary failed, retrying once"
+          sleep 10
+          rm -rf node_modules/ffmpeg-static
+          install_deps
+        fi
+        if ! ffmpeg_works; then
+          echo "::error::the ffmpeg-static binary is missing or does not run after bun install"
+          exit 1
+        fi

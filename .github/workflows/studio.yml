@@ -98,7 +98,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - run: bun install
+      - uses: ./.github/actions/studio-install
       # T7b, the face gate: the two model binaries (38.7 MB + 233 KB) are
       # never committed (studio/engine/face/modelSource.ts, .gitignore) — CI
       # fetches them into the same cache path bun test/build:studio read,
@@ -306,7 +306,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - run: bun install
+      - uses: ./.github/actions/studio-install
       # The face worker's tests need the two models, like the build job's (same cache key, same step: see the build job for why the fetch
       # runs on a hit too).
       - name: Cache face gate models
@@ -353,7 +353,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - run: bun install
+      - uses: ./.github/actions/studio-install
       # The face worker's perf test needs the two models, like the build job's tests do (same cache, same step).
       - name: Cache face gate models
         uses: actions/cache@v4
@@ -419,7 +419,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - run: bun install
+      - uses: ./.github/actions/studio-install
       - name: Cache face gate models
         uses: actions/cache@v4
         with:
@@ -456,7 +456,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: .bun-version
-      - run: bun install
+      - uses: ./.github/actions/studio-install
       - name: Heavy tests (bun)
         run: bun run test:studio:suite ./studio
         timeout-minutes: 60
@@ -504,7 +504,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
-      - run: bun install
+      - uses: ./.github/actions/studio-install
       - name: Check the ffmpeg and ffprobe binaries are present
         shell: bash
         run: |

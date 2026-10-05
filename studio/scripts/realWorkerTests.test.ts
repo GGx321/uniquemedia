@@ -618,7 +618,7 @@ describe("the Electron-Node steps' bounds", () => {
     expect(Number(job?.["timeout-minutes"])).toBeLessThanOrEqual(120);
     // The same suite, the same models: the jobs hold the steps a shard needs.
     const steps = (job?.steps ?? []) as { run?: string; uses?: string }[];
-    expect(steps.some((step) => step.run === "bun install")).toBe(true);
+    expect(steps.some((step) => step.uses === "./.github/actions/studio-install")).toBe(true);
     expect(steps.some((step) => step.run === "bun run models:face")).toBe(true);
     // The one place the bun suite is skipped is the Windows leg of build; macOS still runs it there, whole.
     const suite = ((jobs.build?.steps ?? []) as { run?: string; if?: string }[]).filter((step) => step.run === "bun run test:studio:suite ./studio");
@@ -679,6 +679,48 @@ describe("the Electron-Node steps' bounds", () => {
     const workflow = await readFile(join(ROOT, ".github", "workflows", "studio.yml"), "utf8");
     expect(workflow).toMatch(/- "studio-v\*"/);
     expect(workflow).toContain("Studio releases are disabled while the repo is public; see owner decision 2026-10-05");
+  });
+
+  // ffmpeg-static's postinstall downloads its binary from GitHub on every install; one such download failed on main. Every job installs
+  // through one composite action: a frozen install, one retry that first removes the package (a second plain `bun install` does not rerun
+  // a failed postinstall), and a check that EXECUTES the binary (a presence check passes on a truncated download). No cache: nothing
+  // restored from a cache is ever executed.
+  test("every job installs through studio-install, never a bare bun install", async () => {
+    const jobs = await workflowJobs();
+    for (const [name, job] of Object.entries(jobs)) {
+      const steps = (job.steps ?? []) as { run?: string; uses?: string }[];
+      if (steps.some((step) => step.run?.startsWith("bun "))) {
+        expect([name, steps.some((step) => /^bun (install|i)\b/.test(step.run ?? ""))]).toEqual([name, false]);
+        expect([name, steps.some((step) => step.uses === "./.github/actions/studio-install")]).toEqual([name, true]);
+      }
+    }
+  });
+
+  test("the studio-install action: frozen install, a retry that clears ffmpeg-static, a binary that must run, no cache, no secrets, bash on every step", async () => {
+    const text = await readFile(join(ROOT, ".github", "actions", "studio-install", "action.yml"), "utf8");
+    const parsed: unknown = Bun.YAML.parse(text);
+    if (typeof parsed !== "object" || parsed === null || !("runs" in parsed) || typeof parsed.runs !== "object" || parsed.runs === null || !("steps" in parsed.runs) || !Array.isArray(parsed.runs.steps)) throw new Error("studio-install is not a composite action with steps");
+    const steps: { run?: string; uses?: string; shell?: string }[] = parsed.runs.steps;
+    expect(steps.length).toBeGreaterThan(0);
+    // A composite step without `shell:` is rejected by the runner, and the scripts below are bash.
+    for (const step of steps) expect(step.shell).toBe("bash");
+    // Nothing is restored from a cache and nothing is uploaded: no `uses:` step at all, no restore-keys, no secret.
+    expect(steps.filter((step) => step.uses !== undefined)).toEqual([]);
+    expect(text).not.toMatch(/restore-keys|actions\/cache/);
+    expect(text).not.toMatch(/\bsecrets\./);
+    const script = steps.map((step) => step.run ?? "").join("\n");
+    // Every install is frozen: a lockfile that does not match package.json fails the job instead of being rewritten.
+    const installs = [...script.matchAll(/(?:^\s*|\{\s*|&&\s*|\|\|\s*)bun install\b[^;\n]*/gm)].map((m) => m[0]);
+    expect(installs.length).toBeGreaterThan(0);
+    for (const install of installs) expect(install).toContain("--frozen-lockfile");
+    // The retry removes the package before reinstalling, so its postinstall runs again and a partial binary is gone.
+    expect(script).toMatch(/rm -rf node_modules\/ffmpeg-static\r?\n\s+install_deps/);
+    expect(script).toMatch(/sleep \d+\r?\n\s+rm -rf node_modules\/ffmpeg-static/);
+    // The binary is executed, and a failure is an error annotation plus a non-zero exit, after the retry.
+    expect(script).toContain('"$bin" -version');
+    expect(script).toMatch(/if ! ffmpeg_works; then\r?\n\s+echo "::error::[^\n]*"\r?\n\s+exit 1\r?\n\s*fi/);
+    // The retry does not hide a failure: its install is not followed by `|| true`.
+    expect(script).not.toMatch(/\|\|\s*true/);
   });
 
   test("the perf job never gates a run: continue-on-error is true on every trigger, tags included; the heavy job blocks on tags and the schedule", async () => {
