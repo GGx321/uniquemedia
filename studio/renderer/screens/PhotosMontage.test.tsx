@@ -33,6 +33,31 @@ describe("from the Photos screen", () => {
     expect(document.querySelector(".ed-output")?.textContent?.replace(/\s/g, " ")).toBe("1080×1920 · 30 fps · 8.0 с · ≈ 3.5 МБ");
   });
 
+  test("slice review 5-L3: the photos picked are kept by the window while it runs, per avatar: a trip to Settings and back keeps them; a draft made of them clears them", async () => {
+    const { engine } = await studio();
+    await openSection("Фото");
+    const picks = await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
+    fireEvent.click(picks[1] ?? document.body);
+    fireEvent.click(picks[0] ?? document.body);
+    expect(screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent).toBe("Монтаж из выбранных · 2");
+
+    await openSection("Настройки");
+    await screen.findByRole("heading", { level: 1, name: "Настройки" });
+    await openSection("Фото");
+    await screen.findAllByRole("button", { name: /Выбрать для монтажа|Снять выбор/ });
+    const montage = screen.getByRole("button", { name: /Монтаж из выбранных/ });
+    expect(montage.textContent).toBe("Монтаж из выбранных · 2");
+    // In the order they were picked.
+    fireEvent.click(montage);
+    await screen.findByRole("heading", { level: 1, name: "Mia · без названия" });
+    const gallery = freePhotos(6).map((p) => p.photoId).reverse();
+    expect(callsOf(engine, "montages.create").at(-1)?.payload.photoIds).toEqual([gallery[1], gallery[0]]);
+
+    await openSection("Фото");
+    await screen.findAllByRole("button", { name: /Выбрать для монтажа/ });
+    expect(screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent).toBe("Монтаж из выбранных · 0");
+  });
+
   test("it is disabled with nothing picked, and above 20 photos with the reason next to it", async () => {
     await studio({ photos: freePhotos(21) });
     await openSection("Фото");

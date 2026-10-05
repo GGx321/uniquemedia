@@ -11,6 +11,7 @@ import { DraftsScreen } from "./screens/DraftsScreen";
 import { EditorScreen } from "./screens/EditorScreen";
 import { DraftFlushes, DraftFlushesProvider } from "./screens/montage/flushes";
 import { DraftSessions, DraftSessionsProvider } from "./screens/montage/sessions";
+import { MontagePicks, MontagePicksProvider } from "./screens/photos/picks";
 import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
@@ -224,6 +225,8 @@ export function App({ client }: { client: EngineClient }) {
   const [draftFlushes] = useState(() => new DraftFlushes());
   // Their sessions and places, so the same draft opened again in this window goes on where it was (slice review 5-M2).
   const [draftSessions] = useState(() => new DraftSessions());
+  // The photos picked for a montage on each avatar's Photos screen, kept while the window runs (slice review 5-L3).
+  const [montagePicks] = useState(() => new MontagePicks());
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -305,7 +308,9 @@ export function App({ client }: { client: EngineClient }) {
             <RenderNotices viewing={route.name === "editor" ? route.montageId : null} />
             <DraftFlushesProvider value={draftFlushes}>
               <DraftSessionsProvider value={draftSessions}>
-                <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                <MontagePicksProvider value={montagePicks}>
+                  <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                </MontagePicksProvider>
               </DraftSessionsProvider>
             </DraftFlushesProvider>
           </main>

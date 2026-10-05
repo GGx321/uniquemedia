@@ -12,6 +12,7 @@ import { ScreenTitle } from "../ui/ScreenTitle";
 import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
+import { useMontagePicks } from "./photos/picks";
 import { DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
 import { useMounted } from "./photos/shared";
@@ -88,8 +89,13 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
    * progress, say).
    */
   const [knownAtOpen] = useState<ReadonlySet<string>>(() => new Set(view.jobs.map((j) => j.jobId)));
-  /** Photos picked for a montage, in the order they were picked: «Монтаж из выбранных» places them in that order. */
-  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * Photos picked for a montage, in the order they were picked: «Монтаж из выбранных» places them in that order. Kept by the window for this avatar
+   * while it runs (slice review 5-L3): leaving the screen and coming back finds them as they were.
+   */
+  const picks = useMontagePicks();
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => picks.get(avatarId));
+  useEffect(() => picks.set(avatarId, picked), [picks, avatarId, picked]);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<EngineError | null>(null);
   /** The picked photos `montages.create` refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11). */
@@ -192,6 +198,8 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
     if (!mounted.current) return;
     setCreating(false);
     if (reply.ok) {
+      // A draft is made of them: the picks are done with (the screen goes before its own state could say so).
+      picks.set(avatarId, new Set());
       navigate({ name: "editor", montageId: reply.result.montage.montageId, created: true });
       return;
     }
