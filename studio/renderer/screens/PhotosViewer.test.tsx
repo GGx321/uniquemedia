@@ -226,6 +226,18 @@ describe("closing", () => {
     press("Escape");
     expect(Array.from(document.body.children).some((el) => el.hasAttribute("inert"))).toBe(false);
   });
+
+  test("closing with no tile left where the photo was gives the focus to the filter that shows none", async () => {
+    // Newest first: place 2 is the first photo made, the only rejected one.
+    await openMia({ photos: [scenePhoto(1, { rejected: true, eligible: false }), scenePhoto(2)] });
+    fireEvent.click(screen.getByRole("button", { name: "Отклонённые" }));
+    fireEvent.click(openButton(2));
+    fireEvent.click(inViewer("Вернуть из отклонённых"));
+    await flush();
+    press("Escape");
+    expect(closed()).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Отклонённые" })));
+  });
 });
 
 describe("stepping through the gallery", () => {
@@ -267,6 +279,23 @@ describe("stepping through the gallery", () => {
     fireEvent.click(next());
     expect(next().hasAttribute("disabled")).toBe(true);
     expect(focusedLabel()).toBe(describeElement(prev()));
+  });
+
+  test("any other control that turns off under the focus hands it to «Закрыть», so the next Space or Enter never steps", async () => {
+    const h = await openMia();
+    fireEvent.click(openButton(2));
+    const pick = inViewer("Выбрать для монтажа");
+    fireEvent.click(pick);
+    // Another window rejects the picked photo: here it stays picked, so its pick stays on to be undone.
+    await act(async () => {
+      await h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: scenePhoto(5).photoId, rejected: true });
+    });
+    await flush();
+    expect(within(viewer()).getByText("отклонено")).toBeDefined();
+    pick.focus();
+    fireEvent.click(pick);
+    expect(pick.hasAttribute("disabled")).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(inViewer("Закрыть")));
   });
 
   test("the arrows follow the gallery's filter: under «Отклонённые» only the rejected photos, numbered among themselves", async () => {

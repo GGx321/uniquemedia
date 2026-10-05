@@ -176,10 +176,19 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
     if (gone) setViewing(null);
   }, [gone]);
 
-  /** Where the focus goes when the viewer closes: the tile of the photo it showed, else the tile now in that photo's place. */
+  /**
+   * Where the focus goes when the viewer closes: the tile of the photo it showed, else the tile now in that photo's place,
+   * else (no tile left under the filter) the filter's own pressed button.
+   */
   const tileFor = (photoId: string, index: number): HTMLElement | null => {
-    const tiles = Array.from(sectionRef.current?.querySelectorAll<HTMLButtonElement>("button.photo-open") ?? []);
-    return tiles.find((tile) => tile.dataset.photoId === photoId) ?? tiles[Math.min(index, tiles.length - 1)] ?? null;
+    const section = sectionRef.current;
+    const tiles = Array.from(section?.querySelectorAll<HTMLButtonElement>("button.photo-open") ?? []);
+    return (
+      tiles.find((tile) => tile.dataset.photoId === photoId) ??
+      tiles[Math.min(index, tiles.length - 1)] ??
+      section?.querySelector<HTMLElement>('.photos-sec-action button[aria-pressed="true"]') ??
+      null
+    );
   };
 
   return (

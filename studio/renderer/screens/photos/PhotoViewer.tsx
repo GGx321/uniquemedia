@@ -44,6 +44,8 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   const closeRef = useRef<HTMLButtonElement>(null);
   const prevRef = useRef<HTMLButtonElement>(null);
   const nextRef = useRef<HTMLButtonElement>(null);
+  /** The control inside the viewer that had the focus last. */
+  const lastFocused = useRef<EventTarget | null>(null);
   useModalDialog({ dialog: dialogRef, initialFocus: closeRef, onClose, returnFocus: () => returnFocus(photo.photoId, index) });
   // The dialog's empty band round the arrows looks like the dark around it, and closes like it.
   const backdrop = useBackdropClose(onClose, [scrimRef, dialogRef]);
@@ -62,15 +64,18 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
     return () => window.removeEventListener("keydown", onKey);
   }, [prevId, nextId, onShow]);
 
-  // A control that turns off under the focus (the arrow at an end, a pick a render now holds) drops it to the page in
-  // Chromium: hand it to the other arrow, else «Закрыть», so the keyboard stays in the viewer.
+  // A control that turns off under the focus drops it to the page in Chromium. An arrow at its end hands it to the other
+  // arrow (stepping on is what the owner was doing); any other control (a pick a render now holds, say) to «Закрыть», so the
+  // next Space or Enter never steps or marks by surprise.
   useEffect(() => {
     const root = dialogRef.current;
     if (root === null) return;
     const active = document.activeElement;
-    const held = active instanceof HTMLElement && root.contains(active) && !(active instanceof HTMLButtonElement && active.disabled);
-    if (held) return;
-    [prevRef.current, nextRef.current, closeRef.current].find((button) => button !== null && !button.disabled)?.focus();
+    const off = active instanceof HTMLButtonElement && active.disabled;
+    if (active instanceof HTMLElement && root.contains(active) && !off) return;
+    const was = off && root.contains(active) ? active : lastFocused.current;
+    const other = was === prevRef.current ? nextRef.current : was === nextRef.current ? prevRef.current : null;
+    (other !== null && !other.disabled ? other : closeRef.current)?.focus();
   });
 
   const category = CATEGORY_LABEL[photo.category];
@@ -83,7 +88,17 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
 
   return createPortal(
     <div ref={scrimRef} className="viewer-scrim" role="presentation" {...backdrop}>
-      <div ref={dialogRef} className="viewer" role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1}>
+      <div
+        ref={dialogRef}
+        className="viewer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onFocus={(event) => {
+          lastFocused.current = event.target;
+        }}
+      >
         <FocusEdge edge="start" />
         <button ref={prevRef} type="button" className="viewer-nav" aria-label="Предыдущее фото" aria-keyshortcuts="ArrowLeft" disabled={prevId === null} onClick={() => prevId !== null && onShow(prevId)}>
           <Icon name="back" size={20} strokeWidth={2.2} />
