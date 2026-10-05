@@ -63,6 +63,7 @@ export function listedCandidates(body: unknown): ListedImageModel[] | null {
   const list = ListBody.safeParse(body);
   if (!list.success) return null;
   const candidates: ListedImageModel[] = [];
+  const seen = new Set<string>();
   for (const item of list.data.data) {
     const parsed = ListedModel.safeParse(item);
     if (!parsed.success) continue;
@@ -75,7 +76,11 @@ export function listedCandidates(body: unknown): ListedImageModel[] | null {
       p.aspect_ratio?.values.includes(WANTED_ASPECT_RATIO) === true &&
       (p.input_references?.max ?? 0) >= PHOTO_REFERENCES;
     // The id goes into a URL (`/images/models/<id>/endpoints`) and into the contract: one that is not a model id is never used.
-    if (takesRequest && ModelId.safeParse(id).success) candidates.push({ id, name: displayName(name) });
+    // An id listed twice is kept once (the first): two identical entries would make the whole catalogue break its contract.
+    if (takesRequest && ModelId.safeParse(id).success && !seen.has(id)) {
+      seen.add(id);
+      candidates.push({ id, name: displayName(name) });
+    }
   }
   return candidates;
 }

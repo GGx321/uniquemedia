@@ -308,3 +308,26 @@ test("more than 100 priced models are cut to 100, the tested ones first, and the
   expect(ids(catalogue)).toContain(GROK);
   expect(ImageModelCatalogue.safeParse(catalogue).success).toBe(true);
 });
+
+// ---------- fix round 2: a duplicated id ----------
+
+test("an id listed twice in the live list is served once (the first), and the answer passes the schema", async () => {
+  const base = Listed.parse(LIST);
+  const grok = base.data.find((m) => m.id === GROK);
+  if (grok === undefined) throw new Error("the fixture lacks grok");
+  const list = { data: [...base.data, { ...grok, name: "Grok again" }] };
+  const urls: string[] = [];
+  const fetch: FetchLike = async (url) => {
+    urls.push(url);
+    if (url === `${BASE}/images/models`) return { ok: true, status: 200, json: async () => list };
+    const id = /\/images\/models\/(.+)\/endpoints$/.exec(url)?.[1];
+    if (id === undefined) throw new Error(`unexpected GET ${url}`);
+    return { ok: true, status: 200, json: async () => fixture(endpointsFile(id)) };
+  };
+  const { catalogue } = await loadImageCatalogue({ fetch, baseUrl: BASE });
+
+  expect(ids(catalogue).filter((id) => id === GROK)).toHaveLength(1);
+  expect(catalogue.models.find((m) => m.id === GROK)?.name).toContain("Grok Imagine Image 2.0");
+  expect(ImageModelCatalogue.safeParse(catalogue).success).toBe(true);
+  expect(urls.filter((u) => u.endsWith(`${GROK}/endpoints`))).toHaveLength(1);
+});
