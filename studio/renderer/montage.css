@@ -744,11 +744,71 @@
   color: var(--danger);
 }
 
-.ed-notices {
+/* Slice review 5-L1: every notice in the editor (its own and the window's, which join through the dock) floats over the top of the preview
+   stage as a stack of cards, so none takes the frame's room (one used to squeeze it by a quarter at 1200 × 760). The stack ignores the pointer
+   between its cards; each card is opaque (the notice's tint over the panel) and lifted off the picture. */
+.ed-dock {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  left: 12px;
+  z-index: 30;
   display: flex;
+  max-height: calc(100% - 20px);
   flex-direction: column;
+  align-items: center;
   gap: 8px;
-  padding: 10px 16px 0;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.ed-dock-window {
+  display: contents;
+}
+
+.ed-dock .notice {
+  width: min(100%, 560px);
+  flex-shrink: 0;
+  gap: 8px;
+  padding: 8px 10px 8px 12px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.5);
+  pointer-events: auto;
+}
+
+/* Compact: the title, the text and the actions run on in one line where they fit, and wrap where they do not. */
+.ed-dock .notice-body {
+  flex: 1;
+  flex-flow: row wrap;
+  align-items: center;
+  gap: 2px 10px;
+}
+
+.ed-dock .notice-text {
+  flex: 1 1 220px;
+}
+
+.ed-dock .notice-icon {
+  margin-top: 2px;
+}
+
+.ed-dock .notice-warn {
+  background: linear-gradient(var(--warn-08), var(--warn-08)), var(--panel);
+}
+
+.ed-dock .notice-danger {
+  background: linear-gradient(var(--danger-08), var(--danger-08)), var(--panel);
+}
+
+.ed-dock .notice-info {
+  background: linear-gradient(var(--info-08), var(--info-08)), var(--panel);
+}
+
+.ed-dock .notice-ok {
+  background: linear-gradient(var(--ok-08), var(--ok-08)), var(--panel);
+}
+
+.ed-dock .notice-actions {
+  margin: 0 0 0 auto;
 }
 
 .ed-body {

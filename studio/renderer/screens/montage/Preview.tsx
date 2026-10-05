@@ -169,6 +169,8 @@ const pictureStyle = (window: Rect, source: Size): CSSProperties => ({
 });
 
 export interface PreviewProps {
+  /** The editor's notices (slice review 5-L1): drawn over the top of the stage, so they never take the frame's room. */
+  readonly dock?: ReactNode;
   readonly session: DraftSession;
   readonly spec: MontageDraft;
   readonly timeline: TimelineState;
@@ -185,7 +187,7 @@ export interface PreviewProps {
   readonly trimPeek: TrimPeekStore;
 }
 
-export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: PreviewProps) {
+export function Preview({ dock, session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: PreviewProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLElement>(null);
   const hintsRef = useRef<HTMLDivElement>(null);
@@ -203,6 +205,7 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
 
   return (
     <section ref={areaRef} className="ed-preview" aria-label="Превью">
+      {dock}
       <div className="ed-frame" ref={frameRef} style={frameStyle}>
         {empty ? (
           <div className="ed-frame-empty">

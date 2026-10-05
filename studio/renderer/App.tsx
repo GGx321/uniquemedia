@@ -16,6 +16,7 @@ import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
 import { formatUsd } from "./lib/money";
 import { dismissalKey, EngineNotices } from "./ui/EngineNotices";
+import { Docked, NoticeDockProvider } from "./ui/NoticeDock";
 import { RenderNotices } from "./ui/RenderNotices";
 import { Icon } from "./ui/Icon";
 import { ScreenTitle } from "./ui/ScreenTitle";
@@ -145,7 +146,11 @@ function screenKey(route: Route): string {
 function EngineNoticesBar() {
   const view = useEngineView();
   const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
-  return <EngineNotices notices={view.notices} dismissed={dismissed} onDismiss={(notice) => setDismissed((now) => new Set(now).add(dismissalKey(notice)))} />;
+  return (
+    <Docked>
+      <EngineNotices notices={view.notices} dismissed={dismissed} onDismiss={(notice) => setDismissed((now) => new Set(now).add(dismissalKey(notice)))} />
+    </Docked>
+  );
 }
 
 const TASK_FORMS = ["задача", "задачи", "задач"] as const;
@@ -241,6 +246,7 @@ export function App({ client }: { client: EngineClient }) {
   return (
     <EngineProvider client={client}>
       <NavigationProvider value={navigation}>
+        <NoticeDockProvider>
         <div className="shell">
           <aside className="sidebar">
             <div className="logo">
@@ -304,6 +310,7 @@ export function App({ client }: { client: EngineClient }) {
             </DraftFlushesProvider>
           </main>
         </div>
+        </NoticeDockProvider>
       </NavigationProvider>
     </EngineProvider>
   );

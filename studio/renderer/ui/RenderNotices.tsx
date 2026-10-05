@@ -6,6 +6,7 @@ import { isActiveJob, type JobView } from "../engine/store";
 import { errorSettingsFocus, errorText, settingsLinkLabel } from "../lib/errors";
 import { useNavigate } from "../navigation";
 import { Notice } from "./Notice";
+import { Docked } from "./NoticeDock";
 
 /** While a render is saving, the window looks again this often to see whether the phase has outlasted its limit. */
 export const STALL_POLL_MS = 5_000;
@@ -63,7 +64,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
   }
 
   return (
-    <>
+    <Docked>
       {state.notices.map((notice) => {
         const job = view.jobs.find((j) => j.jobId === notice.jobId);
         if (job === undefined) return null;
@@ -129,6 +130,6 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
           </Notice>
         );
       })}
-    </>
+    </Docked>
   );
 }

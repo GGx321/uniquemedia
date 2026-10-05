@@ -11,6 +11,7 @@ import { type Route, useLeaveGuard, useNavigate } from "../navigation";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
+import { useNoticeDock } from "../ui/NoticeDock";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { type BinFilter, isFreePhoto } from "./montage/bin";
 import { ClipProperties } from "./montage/ClipProperties";
@@ -883,6 +884,172 @@ function DraftEditor({
     if (!reply.ok) setRevealError(reply.error);
   }
 
+  const dock = useNoticeDock();
+  // Every notice the editor raises, and the dock the window notices join (slice review 5-L1): they float over the top of the preview, never a
+  // row that squeezes it. Slice review 5-M1: the store went offline after the draft opened (the engine restarted while main could not answer);
+  // it drops the events until the owner retries, so a render's progress and its end would freeze unseen: said as on every other screen.
+  const notices = (
+    <div className="ed-dock">
+      {view.phase === "offline" && (
+        <>
+          <EngineOffline view={view} />
+        </>
+      )}
+      {lost !== null && (
+        <>
+          <Notice
+            tone="warn"
+            title="Последнее изменение не сохранилось"
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setLost(null)}>
+                Понятно
+              </button>
+            }
+          >
+            {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
+          </Notice>
+        </>
+      )}
+      {verdictFailed && verdictError !== null && (
+        <>
+          <ErrorNotice
+            error={verdictError}
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
+                Повторить
+              </button>
+            }
+          />
+        </>
+      )}
+      {(gone || state.save.kind === "failed" || renderError !== null) && (
+        <>
+          {gone ? (
+            <Notice
+              tone="warn"
+              title="Черновик удалён"
+              actions={
+                <button type="button" className="btn btn-s" onClick={() => navigate({ name: "montages" })}>
+                  К черновикам
+                </button>
+              }
+            >
+              Его удалили на экране черновиков или в другом окне. Изменения здесь больше не сохраняются.
+            </Notice>
+          ) : state.save.kind === "failed" ? (
+            <ErrorNotice
+              error={state.save.error}
+              actions={
+                quitRefused ? (
+                  <>
+                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                      Сохранить ещё раз
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-s btn-d"
+                      onClick={() => {
+                        allowClose.current = true;
+                        quitWithoutSaving();
+                      }}
+                    >
+                      Выйти без сохранения
+                    </button>
+                  </>
+                ) : closeRefused ? (
+                  <>
+                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                      Сохранить ещё раз
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-s btn-d"
+                      onClick={() => {
+                        allowClose.current = true;
+                        window.close();
+                      }}
+                    >
+                      Закрыть без сохранения
+                    </button>
+                  </>
+                ) : blockedLeave === null ? (
+                  <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                    Сохранить ещё раз
+                  </button>
+                ) : (
+                  <>
+                    {/* The guard saves again on the way out: saved, the window goes where the owner was going. */}
+                    <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
+                      Сохранить и перейти
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-s btn-d"
+                      onClick={() => {
+                        leftBehind.current = true;
+                        navigate(blockedLeave, { force: true });
+                      }}
+                    >
+                      Уйти без сохранения
+                    </button>
+                  </>
+                )
+              }
+            />
+          ) : (
+            renderError !== null && (
+              <ErrorNotice
+                error={renderError}
+                actions={
+                  <button type="button" className="btn btn-s" onClick={() => setRenderError(null)}>
+                    Закрыть
+                  </button>
+                }
+              />
+            )
+          )}
+        </>
+      )}
+      {(control.kind === "failed" || revealError !== null) && (
+        <>
+          {control.kind === "failed" && renderJob !== null && (
+            <ErrorNotice
+              error={control.error}
+              actions={
+                <button type="button" className="btn btn-s" onClick={() => setDismissed(renderJob.jobId)}>
+                  Закрыть
+                </button>
+              }
+            />
+          )}
+          {revealError !== null &&
+            (revealError.code === "NOT_FOUND" ? (
+              <Notice
+                tone="warn"
+                actions={
+                  <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                    Закрыть
+                  </button>
+                }
+              >
+                Файла нет в папке «Готовые видео»: его удалили или переместили.
+              </Notice>
+            ) : (
+              <ErrorNotice
+                error={revealError}
+                actions={
+                  <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                    Закрыть
+                  </button>
+                }
+              />
+            ))}
+        </>
+      )}
+      <div ref={dock} className="ed-dock-window" />
+    </div>
+  );
+
   return (
     <TextPreviewsProvider queue={previewQueue}>
       <div className="editor">
@@ -899,164 +1066,6 @@ function DraftEditor({
           onCancel={() => void cancelRender()}
           onReveal={(videoId) => void revealVideo(videoId)}
         />
-        {/* Slice review 5-M1: the store went offline after the draft opened (the engine restarted while main could not answer). It drops the
-            events until the owner retries, so a render's progress and its end would freeze unseen: said as on every other screen, with «Повторить». */}
-        {view.phase === "offline" && (
-          <div className="ed-notices">
-            <EngineOffline view={view} />
-          </div>
-        )}
-        {lost !== null && (
-          <div className="ed-notices">
-            <Notice
-              tone="warn"
-              title="Последнее изменение не сохранилось"
-              actions={
-                <button type="button" className="btn btn-s" onClick={() => setLost(null)}>
-                  Понятно
-                </button>
-              }
-            >
-              {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
-            </Notice>
-          </div>
-        )}
-        {verdictFailed && verdictError !== null && (
-          <div className="ed-notices">
-            <ErrorNotice
-              error={verdictError}
-              actions={
-                <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
-                  Повторить
-                </button>
-              }
-            />
-          </div>
-        )}
-        {(gone || state.save.kind === "failed" || renderError !== null) && (
-          <div className="ed-notices">
-            {gone ? (
-              <Notice
-                tone="warn"
-                title="Черновик удалён"
-                actions={
-                  <button type="button" className="btn btn-s" onClick={() => navigate({ name: "montages" })}>
-                    К черновикам
-                  </button>
-                }
-              >
-                Его удалили на экране черновиков или в другом окне. Изменения здесь больше не сохраняются.
-              </Notice>
-            ) : state.save.kind === "failed" ? (
-              <ErrorNotice
-                error={state.save.error}
-                actions={
-                  quitRefused ? (
-                    <>
-                      <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                        Сохранить ещё раз
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-s btn-d"
-                        onClick={() => {
-                          allowClose.current = true;
-                          quitWithoutSaving();
-                        }}
-                      >
-                        Выйти без сохранения
-                      </button>
-                    </>
-                  ) : closeRefused ? (
-                    <>
-                      <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                        Сохранить ещё раз
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-s btn-d"
-                        onClick={() => {
-                          allowClose.current = true;
-                          window.close();
-                        }}
-                      >
-                        Закрыть без сохранения
-                      </button>
-                    </>
-                  ) : blockedLeave === null ? (
-                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                      Сохранить ещё раз
-                    </button>
-                  ) : (
-                    <>
-                      {/* The guard saves again on the way out: saved, the window goes where the owner was going. */}
-                      <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
-                        Сохранить и перейти
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-s btn-d"
-                        onClick={() => {
-                          leftBehind.current = true;
-                          navigate(blockedLeave, { force: true });
-                        }}
-                      >
-                        Уйти без сохранения
-                      </button>
-                    </>
-                  )
-                }
-              />
-            ) : (
-              renderError !== null && (
-                <ErrorNotice
-                  error={renderError}
-                  actions={
-                    <button type="button" className="btn btn-s" onClick={() => setRenderError(null)}>
-                      Закрыть
-                    </button>
-                  }
-                />
-              )
-            )}
-          </div>
-        )}
-        {(control.kind === "failed" || revealError !== null) && (
-          <div className="ed-notices">
-            {control.kind === "failed" && renderJob !== null && (
-              <ErrorNotice
-                error={control.error}
-                actions={
-                  <button type="button" className="btn btn-s" onClick={() => setDismissed(renderJob.jobId)}>
-                    Закрыть
-                  </button>
-                }
-              />
-            )}
-            {revealError !== null &&
-              (revealError.code === "NOT_FOUND" ? (
-                <Notice
-                  tone="warn"
-                  actions={
-                    <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
-                      Закрыть
-                    </button>
-                  }
-                >
-                  Файла нет в папке «Готовые видео»: его удалили или переместили.
-                </Notice>
-              ) : (
-                <ErrorNotice
-                  error={revealError}
-                  actions={
-                    <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
-                      Закрыть
-                    </button>
-                  }
-                />
-              ))}
-          </div>
-        )}
         <div className="ed-body">
           <MediaPanel tab={tab} onTab={setTab} focusTick={tabFocus}>
             {tab === "photos" ? (
@@ -1107,6 +1116,7 @@ function DraftEditor({
             )}
           </MediaPanel>
           <Preview
+            dock={notices}
             session={session}
             spec={state.spec}
             timeline={timeline}

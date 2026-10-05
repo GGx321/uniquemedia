@@ -608,6 +608,31 @@ describe("the engine away after the draft opened (slice review 5-M1)", () => {
   });
 });
 
+describe("notices in the editor float over the preview (slice review 5-L1)", () => {
+  test("the window's notices and the editor's own sit in one dock over the top of the preview, never in a row above the editor; elsewhere they are back on top", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    const dock = (): Element | null => document.querySelector(".ed-preview > .ed-dock");
+    expect(dock()).not.toBeNull();
+
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    const engineNotice = (await screen.findByText("Движок перезапускался")).closest(".notice");
+    expect(engineNotice?.parentElement?.closest(".ed-dock")).toBe(dock());
+    expect(document.querySelector(".content > .notice")).toBeNull();
+
+    // The editor's own: a render the engine refused.
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    const own = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice");
+    expect(own?.closest(".ed-dock")).toBe(dock());
+
+    fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
+    await screen.findByRole("heading", { level: 1, name: "Монтаж" });
+    expect((await screen.findByText("Движок перезапускался")).closest(".notice")?.parentElement?.classList.contains("content")).toBe(true);
+  });
+});
+
 describe("a draft that cannot be opened", () => {
   test("a draft deleted before it opened: said plainly, with the way back", async () => {
     const { client, engine } = await studio();
