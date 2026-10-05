@@ -226,9 +226,11 @@ export function photoMetadataStrings(bytes: Uint8Array): string[] {
  * (`Library.readPhotoVerified`); a photo that cannot be read rejects, because its
  * text would otherwise go unchecked.
  */
-export async function collectForbiddenStrings(readPhoto_: (photoId: string) => Promise<Uint8Array>, photoIds: readonly string[]): Promise<string[]> {
+export async function collectForbiddenStrings(readPhoto_: (photoId: string) => Promise<Uint8Array>, photoIds: readonly string[], signal?: AbortSignal): Promise<string[]> {
   const collector = new Collector();
   for (const photoId of photoIds) {
+    // A cancel or the staging bound stops the reading between two photos: the abandoned work reads no more.
+    signal?.throwIfAborted();
     if (collector.full) break;
     readPhoto(await readPhoto_(photoId), collector);
   }

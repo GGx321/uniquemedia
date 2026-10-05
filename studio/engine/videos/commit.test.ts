@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { SAMPLE_AVATAR } from "../library/testing/helpers";
 import { rename } from "node:fs/promises";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { RenderFailure } from "../renderQueue/queue";
 import type { VerifiedFile } from "../verify";
+import { NODE_COMMIT_FS } from "./commitFs";
+import { NODE_NUMBER_FS } from "./exportNumbers";
+import { commitIntent, writeIntent } from "./intents";
 import { commitVideo, VerifyRefusedError, type CommitInput, type CommitStep } from "./commit";
 import { videoPaths, VideoRecordSchema } from "./record";
 import {
@@ -19,6 +23,7 @@ import {
   listTree,
   openFolder,
   rig,
+  sampleRecord,
   sha256Of,
   useWorld,
   writeTemp,
@@ -128,9 +133,180 @@ describe("the commit's happy path", () => {
     const folder = await openFolder(w);
     writeTemp(folder, "job-00000002", fakeVideoBytes(3000, 9));
     const bInput: CommitInput = { ...a.input, jobId: "job-00000002", videoId: "video-00000002" };
-    const [x, y] = await Promise.all([a.run(), commitVideo(a.target(), bInput, { fs: faultyFs(), libraryRoot: w.libraryRoot, verify: acceptingVerify })]);
+    const [x, y] = await Promise.all([a.run(), commitVideo(a.target(), bInput, { fs: faultyFs(), libraryRoot: w.libraryRoot, library: w.library, verify: acceptingVerify })]);
     expect(new Set([x.record.file.relPath, y.record.file.relPath]).size).toBe(2);
     expect((await exportFiles(w)).sort()).toEqual([x.record.file.relPath, y.record.file.relPath].sort());
+  });
+});
+
+describe("a number that a record or an intent of the day still names is never reused (stage 3 review 3-M2)", () => {
+  /** A record committed for real, whose file the OWNER has since deleted in Finder: only the record is left. */
+  async function recordWithoutFile(w: World, n: number, over: { kind?: string; date?: string } = {}): Promise<string> {
+    const relPath = `Mia/${over.date ?? "2026-09-29"}_${over.kind ?? "photo"}_${String(n).padStart(3, "0")}.mp4`;
+    const record = sampleRecord(w, { videoId: `video-000000a${n}`, jobId: `job-000000a${n}`, relPath });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, record);
+    await commitIntent(NODE_COMMIT_FS, w.libraryRoot, w.avatar.id, record.id);
+    // What the engine's own index update does after a commit (and the open of the library does for every record).
+    await w.library.reloadVideoRecords(w.avatar.id);
+    return relPath;
+  }
+
+  test("a record names _001 though its file is gone: the next video takes _002, never _001", async () => {
+    const r = await rig(world);
+    const taken = await recordWithoutFile(r.w, 1);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+    expect(out.record.file.relPath).not.toBe(taken);
+  });
+
+  test("an intent in .pending names _001 though its file is not there (yet): the next video takes _002", async () => {
+    const r = await rig(world);
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, sampleRecord(r.w, { videoId: "video-000000b1", jobId: "job-000000b1" }));
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+  });
+
+  test("the numbers go on from the highest one a record names: a gap below it is not filled", async () => {
+    const r = await rig(world);
+    await recordWithoutFile(r.w, 3);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_004.mp4");
+  });
+
+  test("a record of another day or another kind does not move the counter", async () => {
+    const r = await rig(world);
+    await recordWithoutFile(r.w, 5, { date: "2026-09-28" });
+    await recordWithoutFile(r.w, 6, { kind: "mix" });
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe(FINAL);
+  });
+
+  test("a record of another export root does not move the counter (its number is another folder's)", async () => {
+    const r = await rig(world);
+    const other = sampleRecord(r.w, { videoId: "video-000000c1", jobId: "job-000000c1", rootId: "11111111-2222-4333-8444-555555555555", relPath: "Mia/2026-09-29_photo_007.mp4" });
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, other);
+    await commitIntent(NODE_COMMIT_FS, r.w.libraryRoot, r.w.avatar.id, other.id);
+    await r.w.library.reloadVideoRecords(r.w.avatar.id);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe(FINAL);
+  });
+
+  test("two avatars share one export folder: the second avatar's video never takes a number the first avatar's record still names (review round 1, M1)", async () => {
+    const r = await rig(world);
+    const second = await r.w.library.createAvatar({ ...SAMPLE_AVATAR, name: "Mia" });
+    const taken = await recordWithoutFile(r.w, 1);
+
+    const out = await commitVideo(r.target(), { ...r.input, avatarId: second.id, videoId: "video-000000e1" }, { fs: r.fs, libraryRoot: r.w.libraryRoot, library: r.w.library, verify: acceptingVerify });
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+    expect(out.record.file.relPath).not.toBe(taken);
+  });
+
+  test("a pending intent of ANOTHER avatar in the same folder counts too", async () => {
+    const r = await rig(world);
+    const second = await r.w.library.createAvatar({ ...SAMPLE_AVATAR, name: "Mia" });
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, { ...sampleRecord(r.w, { videoId: "video-000000f1", jobId: "job-000000f1" }), avatarId: second.id });
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+  });
+
+  test.skipIf(process.platform === "win32")("a pending intent that cannot be read is logged and left out: the commit still succeeds", async () => {
+    const r = await rig(world);
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, sampleRecord(r.w, { videoId: "video-000000g1", jobId: "job-000000g1" }));
+    const intent = videoPaths(r.w.libraryRoot, r.w.avatar.id).intent("video-000000g1");
+    chmodSync(intent, 0o000);
+
+    try {
+      const out = await r.run();
+      expect(out.record.file.relPath).toBe(FINAL);
+      expect(r.logs.some((line) => line.includes("could not be read and are not counted"))).toBe(true);
+    } finally {
+      chmodSync(intent, 0o600);
+    }
+  });
+
+  test("a cancel during the scan comes out as the cancel's own reason, not wrapped in a library failure (review round 2, M1)", async () => {
+    const r = await rig(world);
+    const stop = new AbortController();
+    const reason = new Error("the owner cancelled");
+
+    // The cancel lands after the lock was taken: inside the claim's steps, where the scan then finds the signal fired.
+    const error = await failureOf(r.run({ signal: stop.signal, beforeClaim: async () => stop.abort(reason) }));
+
+    expect(error).toBe(reason);
+    expect(await exportFiles(r.w)).toEqual([]);
+  });
+
+  test("a hung read of .pending ends for the signal with its reason, and the root lock is free: a second commit goes through", async () => {
+    const r = await rig(world);
+    const stop = new AbortController();
+    const reason = new Error("deadline");
+    const hang = { readdir: () => new Promise<Array<{ name: string; isFile: boolean }>>(() => undefined), lstat: NODE_NUMBER_FS.lstat, readFile: NODE_NUMBER_FS.readFile };
+    setTimeout(() => stop.abort(reason), 50);
+
+    const error = await failureOf(r.run({ signal: stop.signal, numberFs: hang }));
+    expect(error).toBe(reason);
+
+    writeTemp(r.target().folder, r.input.jobId, r.bytes);
+    const out = await r.run();
+    expect(out.record.file.relPath).toBe(FINAL);
+  });
+
+  test("a .pending folder that cannot be listed is logged and skipped: it does not fail every commit (review round 2, L8)", async () => {
+    const r = await rig(world);
+    const broken = { ...NODE_NUMBER_FS, readdir: (): Promise<Array<{ name: string; isFile: boolean }>> => Promise.reject(errnoError("EIO")) };
+
+    const out = await r.run({ numberFs: broken });
+
+    expect(out.record.file.relPath).toBe(FINAL);
+    expect(r.logs.some((line) => line.includes("could not be listed"))).toBe(true);
+  });
+
+  test("an avatar whose used index is stale has its videos/ folder read from disk for the numbers: a record the index missed still counts (review round 2, L1)", async () => {
+    const r = await rig(world);
+    const record = sampleRecord(r.w, { videoId: "video-000000h1", jobId: "job-000000h1" });
+    // The record is on disk but the index never learned of it, and the avatar is flagged.
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, record);
+    await commitIntent(NODE_COMMIT_FS, r.w.libraryRoot, r.w.avatar.id, record.id);
+    r.w.library.flagVideoIndexStale(r.w.avatar.id, record.id);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+  });
+
+  test("the scan stops for the commit's own signal: a cancelled commit claims nothing", async () => {
+    const r = await rig(world);
+    const stop = new AbortController();
+    stop.abort(new Error("stopped"));
+
+    const error = await failureOf(r.run({ signal: stop.signal }));
+
+    expect(error).toBeInstanceOf(Error);
+    expect(await exportFiles(r.w)).toEqual([]);
+  });
+
+  test("a record file that is not a usable record is left out of the count, and the commit goes on", async () => {
+    const r = await rig(world);
+    const paths = videoPaths(r.w.libraryRoot, r.w.avatar.id);
+    mkdirSync(paths.videosDir, { recursive: true });
+    writeFileSync(paths.record("video-000000d1"), "{ not json");
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe(FINAL);
   });
 });
 

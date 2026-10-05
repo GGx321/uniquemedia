@@ -57,7 +57,7 @@ export interface ExportRootRef {
 }
 
 export interface RecoverInput {
-  readonly library: Pick<Library, "root" | "listAvatars"> & IndexPort;
+  readonly library: Pick<Library, "root" | "listAvatars" | "holdPendingPhotos" | "releasePendingPhotos"> & IndexPort;
   /** The current export root, or null when the last check refused it (its intents are then kept). */
   readonly exportRoot: ExportRootRef | null;
   /** The renders running now (`CommitTracker`). */
@@ -73,6 +73,11 @@ export interface RecoverInput {
    * instead of leaving its photos free until the next open.
    */
   readonly only?: { readonly videoIds: readonly string[] };
+  /**
+   * Only reads the library's `.pending` and holds the photos of the intents (`holdPendingPhotos`), then ends: the export root is not looked at and no lock is taken.
+   * The service runs it first, so the holds exist even while a slow export root is still being checked at the start.
+   */
+  readonly holdOnly?: boolean;
 }
 
 export interface RecoverDeps {
@@ -115,7 +120,7 @@ export interface LibraryReadFs {
   readFile(path: string): Promise<string>;
 }
 
-const NODE_LIBRARY_READ_FS: LibraryReadFs = {
+export const NODE_LIBRARY_READ_FS: LibraryReadFs = {
   readdir: async (path) => (await readdir(path, { withFileTypes: true })).map((e) => ({ name: e.name, isFile: e.isFile() })),
   readFile: (path) => readFile(path, "utf8"),
 };
@@ -185,10 +190,12 @@ async function hasPublishSibling(fs: CommitFs, root: string): Promise<boolean> {
 }
 
 /**
- * Whether another record of the library (and, with `includeIntents`, another commit intent) names `(rootId, relPath)`, other
- * than `exceptVideoId`: a file must belong to one video.
+ * Whether another record of the library (and, with `includeIntents`, another commit intent) names `(rootId, relPath)` AND the same bytes
+ * (`sha256`), other than `exceptVideoId`: a file must belong to one video. A record that names the path with other bytes does not own
+ * the file that stands there (its own file was deleted, and a later one took the name): it must not make this one's verified file
+ * look claimed, or the video would lose its record while its file lives on.
  */
-async function otherNamesFile(lib: LibraryReadFs, libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, exceptVideoId: string, includeIntents: boolean): Promise<boolean> {
+async function otherNamesFile(lib: LibraryReadFs, libraryRoot: string, avatarIds: readonly string[], rootId: string, relPath: string, sha256: string, caseInsensitive: boolean, exceptVideoId: string, includeIntents: boolean): Promise<boolean> {
   for (const avatarId of avatarIds) {
     const paths = videoPaths(libraryRoot, avatarId);
     for (const dir of includeIntents ? [paths.videosDir, paths.pendingDir] : [paths.videosDir]) {
@@ -203,7 +210,7 @@ async function otherNamesFile(lib: LibraryReadFs, libraryRoot: string, avatarIds
         if (name === `${exceptVideoId}.json`) continue;
         try {
           const parsed = VideoRecordSchema.safeParse(JSON.parse(await lib.readFile(join(dir, name))));
-          if (parsed.success && parsed.data.file.rootId === rootId && parsed.data.file.relPath === relPath) return true;
+          if (parsed.success && parsed.data.file.rootId === rootId && (caseInsensitive ? parsed.data.file.relPath.toLowerCase() === relPath.toLowerCase() : parsed.data.file.relPath === relPath) && parsed.data.file.sha256 === sha256) return true;
         } catch (error) {
           if (!(error instanceof SyntaxError) && !hasErrorCode(error, "ENOENT")) throw error;
         }
@@ -288,6 +295,23 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
   };
 
   if (signal.aborted) return finished();
+  const live = input.live;
+  /** Intents whose file was gone when the settle looked: consumed by a commit that finished, so nothing is pending any more. */
+  const gone = new Set<string>();
+  // The library is read FIRST, with no lock held and before the export root is looked at: it reads the library only, and it is what holds the pending intents'
+  // photos (`loadPending`). A root that hangs or errors must not end the run before the holds are made, or the photos would look free all session.
+  // A library that does not answer ends the run here, having blocked nobody.
+  let pending: PendingFile[];
+  try {
+    pending = await loadPending();
+  } catch (error) {
+    if (!signal.aborted) skip("library", error);
+    return finished();
+  }
+  if (signal.aborted) return finished();
+  // A run that only holds: the library's pending intents are read and their photos held, and nothing else is looked at (no export root, no lock).
+  if (input.holdOnly === true) return finished();
+
   let root: UsableRoot | null;
   try {
     root = await io(() => usableRoot(fs, input.exportRoot, log));
@@ -295,7 +319,6 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     skip("export root", error);
     return finished();
   }
-  const live = input.live;
   /** A path under the real root, as the running jobs know it: through the root as the settings spell it. */
   const configured = (path: string): string => (root === null ? path : join(root.ref.root, nodePath.relative(root.real, path)));
 
@@ -353,7 +376,13 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
           }
           const parsed = VideoRecordSchema.safeParse(value);
           if (!parsed.success || parsed.data.id !== videoId || parsed.data.avatarId !== avatar.id) loaded.push({ ...base, left: "unreadable" });
-          else loaded.push({ ...base, record: parsed.data });
+          else {
+            loaded.push({ ...base, record: parsed.data });
+            // Until this intent is adopted or dropped, its photos are held: its file may be adopted at any time, and a run that defers it
+            // (the export folder absent, another root, a busy lock) must not leave them looking free all session. A job that is running
+            // owns its intent, and the queue holds its photos: a hold here would outlive a rollback.
+            if (live?.hasJob(parsed.data.jobId) !== true) input.library.holdPendingPhotos(avatar.id, videoId, scenePhotoIds(parsed.data.spec.clips));
+          }
         } catch (error) {
           if (hasErrorCode(error, "ENOENT")) continue; // consumed while we looked: nothing to settle
           if (signal.aborted) throw error;
@@ -376,7 +405,7 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     try {
       await fs.lstat(intentPath);
     } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) return;
+      if (hasErrorCode(error, "ENOENT")) return void gone.add(videoId);
       throw error;
     }
 
@@ -421,9 +450,9 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     // never name one file. Its stored mtime (which survives a rename) settles a tie between intents, and nothing more.
     const isVerifiedFile = facts.size === record.file.bytes && (await io(() => hashFile(file))) === record.file.sha256;
     if (!isVerifiedFile) return drop("mismatch");
-    if (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, false)) return drop("file-claimed");
+    if (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, record.file.sha256, root.ref.caseInsensitive, videoId, false)) return drop("file-claimed");
     // Right bytes, other mtime (DST on FAT32, a copy round trip): still ours, unless another intent names the same file and this one cannot show it is the one.
-    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== facts.mtimeMs && (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, videoId, true))) {
+    if (record.file.mtimeMs !== undefined && record.file.mtimeMs !== facts.mtimeMs && (await otherNamesFile(lib, input.library.root, avatarIds, record.file.rootId, record.file.relPath, record.file.sha256, root.ref.caseInsensitive, videoId, true))) {
       // Two intents, one file, and neither can show it is the one: both wait (whichever is looked at first), nothing is dropped or adopted.
       return void report.deferred.push({ videoId, reason: "file-shared" });
     }
@@ -463,6 +492,11 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
       }
       try {
         await settleIntent(file, avatarIds);
+        // The hold ends only when the intent is RESOLVED: adopted (its record makes the photos used), dropped, or gone from the disk. An intent that was deferred,
+        // that could not be read (`left`: nothing is known about it, and a transient error is no verdict), that a live job owns, or whose settle failed (the catch
+        // below) keeps whatever hold it has.
+        const id = file.videoId;
+        if (id !== undefined && (report.adopted.includes(id) || report.dropped.some((entry) => entry.videoId === id) || gone.has(id))) input.library.releasePendingPhotos(id);
       } catch (error) {
         if (signal.aborted) return;
         skip("intent", error);
@@ -614,16 +648,6 @@ export async function recoverVideos(input: RecoverInput, deps: RecoverDeps = {})
     // 4. Studio's own scratch in the root
     await sweepRootScratch(ready);
   }
-
-  // The library is read first, with no lock held; a library that does not answer ends the run here, having blocked nobody.
-  let pending: PendingFile[];
-  try {
-    pending = await loadPending();
-  } catch (error) {
-    if (!signal.aborted) skip("library", error);
-    return finished();
-  }
-  if (signal.aborted) return finished();
 
   try {
     if (root === null) {

@@ -6,7 +6,7 @@ import { EngineFailure } from "../engineFailure";
 import type { MontageDraft } from "../../shared/engine/montage";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
-import type { RecoveryReport } from "./recovery";
+import { recoverVideos, type RecoveryReport } from "./recovery";
 import type { VideoRecord } from "./record";
 import { errnoError, faultyFs, FINAL, sampleRecord, specOf, useWorld, type World } from "./testing/kit";
 import { DEFAULT_STALE_RETRY_DELAYS_MS } from "./service";
@@ -353,6 +353,59 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
     expect(signal?.aborted).toBe(true);
   });
 
+  test("a settle cut by its bound leaves the photos HELD after job.failed: a re-render with them is refused (review round 1, M2)", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    const r = serviceRig(w, {
+      size: 2,
+      deps: {
+        renderOverrides: { fs, stepDeadlineMs: 50, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
+        recover: { run: () => new Promise<RecoveryReport>(() => undefined) },
+      },
+    });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))).toMatchObject({ reserved: true, usedIn: [] });
+    const again = await r.service.render({ spec: specFor(w) }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+    expect(again).toBe("PHOTO_UNAVAILABLE");
+  });
+
+  test("scenario B: the commit failed after the rename on a refusing disk and the settle DEFERRED the intent: the job fails, a re-render with the same photos is refused, and the later adoption makes one video (review round 1)", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    const r = serviceRig(w, {
+      size: 2,
+      deps: {
+        renderOverrides: { fs, hooks: { reached: (step) => void (step === "renamed" && (() => { throw boom(); })()) } },
+        // The settle cannot judge the export folder: recovery defers the intent.
+        recover: { run: (input, recoverDeps) => recoverVideos({ ...input, exportRoot: null }, recoverDeps) },
+      },
+    });
+
+    const { jobId, videoId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+
+    const again = await r.service.render({ spec: specFor(w) }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+    expect(again).toBe("PHOTO_UNAVAILABLE");
+    // The next open, with the export folder in view, adopts the file: its video is the only one that has the photo.
+    const reopened = serviceRig(w, { library: w.library });
+    reopened.service.libraryOpened(w.library);
+    await reopened.service.settled();
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))).toMatchObject({ reserved: false, usedIn: [videoId] });
+  });
+
   test("the usual failure, whose rollback removed everything, starts no recovery at all", async () => {
     const w = world();
     let runs = 0;
@@ -373,6 +426,141 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
     await r.service.settled();
 
     expect(runs).toBe(0);
+  });
+});
+
+describe("an intent recovery deferred (stage 3 review 3-M3: one photo, one video)", () => {
+  test("with the export folder absent at start, the intent's photos stay held all session: a new render with them is refused, and the intent is adopted later into ONE video", async () => {
+    const w = world();
+    const bytes = new Uint8Array(2048).fill(7);
+    const crashed = sampleRecord(w, { bytes, videoId: "video-0000000a", jobId: "job-0000000a" });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, crashed);
+    mkdirSync(join(w.exportRoot, "Mia"), { recursive: true });
+    writeFileSync(join(w.exportRoot, FINAL), bytes);
+    const library = await w.reopen();
+    const r = serviceRig(w, { library });
+
+    // The start finds the export folder absent: the intent is deferred.
+    r.service.startup(library, { ok: false, reason: "missing" });
+    await r.service.settled();
+    // The folder is back by the time the owner renders, and asks for the SAME photo.
+    const error = await r.service.render({ spec: specFor(w) }).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+
+    expect(error).toBeInstanceOf(EngineFailure);
+    expect(error).toMatchObject({ error: { code: "PHOTO_UNAVAILABLE" } });
+    // The next open settles the intent: its video is the only one that has the photo.
+    r.service.libraryOpened(library);
+    await r.service.settled();
+    expect(library.photoStates(w.avatar.id).get(photoId(w, 0))).toMatchObject({ reserved: false, usedIn: [crashed.id] });
+  });
+});
+
+describe("the hold of a pending intent does not wait on a disk that fails or hangs (review round 2, M2)", () => {
+  const boom = (): Error => new Error("the disk broke after the intent");
+  const refusing = () => {
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    return fs;
+  };
+  const refused = (r: ReturnType<typeof serviceRig>, w: World): Promise<string> =>
+    r.service.render({ spec: specFor(w) }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+
+  test.each([
+    ["an lstat that fails (EIO)", () => Promise.reject(errnoError("EIO")), undefined],
+    ["an lstat that never answers", () => new Promise<never>(() => undefined), 50],
+  ] as const)("%s: the job fails and the photos stay held", async (_name, intentLstat, stepDeadlineMs) => {
+    const w = world();
+    const r = serviceRig(w, {
+      size: 2,
+      deps: { intentLstat, renderOverrides: { fs: refusing(), ...(stepDeadlineMs === undefined ? {} : { stepDeadlineMs }), hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } } },
+    });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))?.reserved).toBe(true);
+    expect(await refused(r, w)).toBe("PHOTO_UNAVAILABLE");
+  });
+
+  test("recovery that hangs on the export root at the start still holds the photos: the library is read before the root is asked (the start-up window)", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const library = await w.reopen();
+    const r = serviceRig(w, { library, deps: { checkExport: () => new Promise<never>(() => undefined) } });
+
+    r.service.libraryOpened(library);
+    await until(() => library.photoStates(w.avatar.id).get(photoId(w, 0))?.reserved === true, "the photos to be held");
+
+    expect(library.eligibleUnusedPhotos(w.avatar.id).map((p) => p.id)).not.toContain(photoId(w, 0));
+  });
+});
+
+describe("a cancel while the commit scans the numbers (review round 2, M1)", () => {
+  test("the job ends cancelled, not failed with a library error", async () => {
+    const w = world();
+    let scanning: () => void = () => undefined;
+    const reachedScan = new Promise<void>((resolve) => (scanning = resolve));
+    const numberFs = {
+      readdir: (): Promise<Array<{ name: string; isFile: boolean }>> => (scanning(), new Promise(() => undefined)),
+      lstat: async () => ({ size: 0, isFile: true }),
+      readFile: async () => "",
+    };
+    const r = serviceRig(w, { deps: { renderOverrides: { numberFs } } });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await reachedScan;
+    r.service.cancel(jobId);
+    await r.queue.idle();
+
+    expect(r.jobs.stateOf(jobId)?.status).toBe("cancelled");
+  });
+});
+
+describe("holds that a recovery made are announced (review round 1, L3)", () => {
+  test("a deferred intent holds its avatar's photos: the avatar is announced so its eligibleUnusedCount refreshes", async () => {
+    const w = world();
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const library = await w.reopen();
+    const r = serviceRig(w, { library });
+    const before = library.eligibleUnusedCount(w.avatar.id);
+
+    r.service.startup(library, { ok: false, reason: "missing" });
+    await r.service.settled();
+
+    expect(library.eligibleUnusedCount(w.avatar.id)).toBe(before - 1);
+    expect(r.announced).toContain(w.avatar.id);
+  });
+
+  test("a hold that does not move the free count is announced too: the photo was already out of reach, but its state is «reserved» now (review round 2, N5)", async () => {
+    const w = world();
+    await w.library.setRejected(w.avatar.id, photoId(w, 0), true);
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const library = await w.reopen();
+    const r = serviceRig(w, { library });
+    const before = library.eligibleUnusedCount(w.avatar.id);
+
+    r.service.startup(library, { ok: false, reason: "missing" });
+    await r.service.settled();
+
+    expect(library.eligibleUnusedCount(w.avatar.id)).toBe(before);
+    expect(r.announced).toContain(w.avatar.id);
+  });
+
+  test("a clean start announces nothing", async () => {
+    const w = world();
+    const r = serviceRig(w, { library: await w.reopen() });
+
+    r.service.startup(w.library, { ok: true, root: w.exportRoot, rootId: w.rootId });
+    await r.service.settled();
+
+    expect(r.announced).toEqual([]);
   });
 });
 

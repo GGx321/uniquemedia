@@ -5,6 +5,7 @@ import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
+import { VIDEOS_DELETE_DEADLINE_MS } from "./videos/timeouts";
 
 // Messages between main and the engine that are not part of the
 // renderer-facing contract (studio/shared/engine). They never reach the
@@ -278,4 +279,7 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "runs.start": PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + COMMAND_SLACK_MS,
   "runs.resume": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "runs.list": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  // The export check and then the bounded delete (a full hash on a slow drive): main must outwait both, or the engine's own timeout text
+  // («look at the video list before trying again») never reaches the window.
+  "videos.delete": VIDEOS_DELETE_DEADLINE_MS,
 };

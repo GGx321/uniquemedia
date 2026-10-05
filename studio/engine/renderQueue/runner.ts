@@ -1,4 +1,4 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { Id } from "../../shared/engine";
 import { freeBytesOf } from "../freeBytes";
@@ -125,6 +125,11 @@ export interface RenderRunDeps {
   readonly removeTree?: (path: string) => Promise<void>;
   /** Removes the temp output (a file only, never a folder), tolerating one that is not there. A rejection is reported, never thrown. */
   readonly removeFile?: (path: string) => Promise<void>;
+  /**
+   * How long the removal of the temp output may take before the runner gives up on it (`REMOVE_OUTPUT_TIMEOUT_MS` by default). The output lives on the export
+   * volume, which may be a dropped network drive whose `rm` never returns: the job must end, not wait. A temp left behind is swept by the next open's recovery.
+   */
+  readonly removeFileTimeoutMs?: number;
   /** Where a cleanup that failed is reported (`what` names it); the render's own outcome is unchanged. */
   readonly warn?: (what: "job folder" | "unfinished output", error: unknown) => void;
   /** The user's home folder, masked as `~` in errors; `os.homedir()` unless a test fakes it. */
@@ -397,7 +402,43 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     // the error (or the success) the job is ending with; the next start's
     // sweep gets what was left.
     activeStaging?.release();
-    await removeTree(clipDir).catch((error: unknown) => warn("job folder", error));
-    if (!succeeded) await removeFile(input.output).catch((error: unknown) => warn("unfinished output", error));
+    // Work abandoned by a cancel or by the bound is still cleaning up what it made: let it finish (bounded) before the folder is removed, so the two
+    // removals never race (see `StagingBound.settled`).
+    await activeStaging?.settled();
+    let removed = true;
+    await removeTree(clipDir).catch((error: unknown) => {
+      removed = false;
+      warn("job folder", error);
+    });
+    // A removal that said it worked may still have left the folder (a recursive rm that loses an entry to another remover's unlink): look, and once more if so.
+    if (removed && (await stillThere(clipDir))) {
+      warn("job folder", new Error("the job folder survived its removal; it is removed again"));
+      await activeStaging?.settled();
+      await removeTree(clipDir).catch((error: unknown) => warn("job folder", error));
+    }
+    if (!succeeded) await boundedRemoval(removeFile(input.output), deps.removeFileTimeoutMs ?? REMOVE_OUTPUT_TIMEOUT_MS).catch((error: unknown) => warn("unfinished output", error));
   }
+}
+
+/** Whether `path` is still on the disk (a path that cannot be looked at counts as gone: the removal's own report is the one that matters). */
+async function stillThere(path: string): Promise<boolean> {
+  try {
+    await lstat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The default bound of the temp output's removal: `rm` retries for about half a second, so a healthy volume is far inside it. */
+export const REMOVE_OUTPUT_TIMEOUT_MS = 10_000;
+
+/** `removal` raced against `ms`: a removal that does not return (a dead volume) rejects, so the job's end never waits on it. A late failure of the abandoned removal is swallowed. */
+function boundedRemoval(removal: Promise<void>, ms: number): Promise<void> {
+  removal.catch(() => undefined);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expired = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`the removal did not answer within ${ms} ms`)), ms);
+  });
+  return Promise.race([removal, expired]).finally(() => clearTimeout(timer));
 }

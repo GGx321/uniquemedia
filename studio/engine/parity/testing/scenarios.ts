@@ -291,6 +291,23 @@ const BASE_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: "a file name's number is never refilled: the video rendered after the first one is deleted gets _003, not _001",
+    async run(t, w) {
+      const first = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      await t.call("videos.render", { montageId: first });
+      await t.settle();
+      const one = newestVideoId(await t.call("videos.list", { avatarId: w.avatarId }));
+      const second = await draft(t, w, [photo(w, 3), photo(w, 4)]);
+      await t.call("videos.render", { montageId: second });
+      await t.settle();
+      await t.call("videos.delete", { videoId: one, mode: "video" });
+      const third = await draft(t, w, [photo(w, 1), photo(w, 2)]);
+      await t.call("videos.render", { montageId: third });
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+    },
+  },
+  {
     name: "a full queue refuses the next render and reserves nothing",
     async run(t, w) {
       const drafts: string[] = [];

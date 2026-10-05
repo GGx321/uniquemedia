@@ -861,7 +861,7 @@ export class MockEngine implements EngineBridge {
       const focused = withFocus(spec, new Map(photoIds.map((id) => [id, { x: 0.5, y: 0.35 }])));
       const kind = videoKindOf(spec.clips);
       const createdAt = new Date(START_OF_TIME - item.daysAgo * 86_400_000).toISOString();
-      const relPath = mockRelPath(mockFolderName(mia.name, mia.avatarId), createdAt.slice(0, 10), kind, this.exportFiles);
+      const relPath = mockRelPath(mockFolderName(mia.name, mia.avatarId), createdAt.slice(0, 10), kind, this.exportFiles, this.namedPaths());
       this.exportFiles.add(relPath);
       const summary: VideoSummary = {
         videoId: this.nextId("video"),
@@ -2310,12 +2310,17 @@ export class MockEngine implements EngineBridge {
     this.pumpRenders();
   }
 
+  /** The paths the records of the current export folder name: what the engine's file numbers go on from. */
+  private namedPaths(): string[] {
+    return this.videos.filter((v) => v.rootId === this.exportRootId).map((v) => v.summary.relPath);
+  }
+
   /** The record of `job`'s video lands: the file is named, the record kept, `video.changed` sent (the caller announces the avatar). */
   private recordVideo(job: MockRenderJob): { relPath: string; bytes: number; durationMs: number; kind: string } {
     const { spec } = job;
     const avatar = this.avatars.find((a) => a.avatarId === job.avatarId);
     const kind = videoKindOf(spec.clips);
-    const relPath = mockRelPath(mockFolderName(avatar?.name ?? "", job.avatarId), new Date(this.clock).toISOString().slice(0, 10), kind, this.exportFiles);
+    const relPath = mockRelPath(mockFolderName(avatar?.name ?? "", job.avatarId), new Date(this.clock).toISOString().slice(0, 10), kind, this.exportFiles, this.namedPaths());
     this.exportFiles.add(relPath);
     const durationMs = spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
     const bytes = estimateBytes(spec.clips);

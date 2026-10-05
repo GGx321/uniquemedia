@@ -14,6 +14,7 @@ import { RenderFailure, type RenderContext } from "../renderQueue/queue";
 import { stagingBound, type StagingBound } from "../renderQueue/stagingBound";
 import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/runner";
 import type { VerifiedFile, VerifyExpected } from "../verify";
+import type { NumberFs } from "./exportNumbers";
 import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import type { OpenRegularOps } from "../library/openRegular";
@@ -88,6 +89,8 @@ export interface RenderPlan {
    * into its own folder; `resolvePhoto` points at the copy (`ownPhotoCopyName`), never at the library file. Absent: none.
    */
   readonly ownPhotos?: readonly OwnPhotoSource[];
+  /** The stored sizes of the scene photos the spec names, summed: their read (the forbidden strings) spends the same staging budget as the copies. Absent: 0. */
+  readonly scenePhotoBytes?: number;
   /**
    * The own stickers the spec names (3f.5), each as the admission found it: the library file, its canvas, loop and sha256. The job verifies
    * each when it resolves the layers and writes the verified bytes into its own folder (`layers.ts`); ffmpeg never reads the library file. Absent: none.
@@ -122,7 +125,7 @@ export interface RenderPlan {
 }
 
 export interface VideoRenderDeps {
-  readonly library: Pick<Library, "root" | "readPhotoVerified"> & IndexPort;
+  readonly library: Pick<Library, "root" | "readPhotoVerified" | "listAvatars" | "namedVideoFiles" | "usageReasons"> & IndexPort;
   readonly tracker: CommitTracker;
   /** `userData/render-tmp`. Required: there is no `os.tmpdir` fallback. */
   readonly renderTmpDir: string;
@@ -176,6 +179,8 @@ export interface VideoRenderDeps {
    * the adopted record, or null when it was dropped, deferred or nothing was left. The signal says to stop (the step deadline).
    */
   readonly settleLeftover?: (input: SettleInput, signal: AbortSignal) => Promise<VideoRecord | null>;
+  /** The disk calls of the commit's number scan; the real ones unless a test plays a library disk that does not answer. */
+  readonly numberFs?: NumberFs;
   /** Creates the empty temp exclusively (no link followed); the real one unless a test plays a volume. */
   readonly createTemp?: (path: string) => Promise<void>;
 }
@@ -188,6 +193,8 @@ export interface SettleInput {
   readonly videoId: string;
   readonly jobId: string;
   readonly exportRoot: ExportRootRef;
+  /** The scene photos of the video's spec: held while the intent is pending, whatever the settle makes of it. */
+  readonly photoIds: readonly string[];
 }
 
 /** The settle, cut at `ms`: a settle that does not answer is told to stop and counts as nothing settled (the job fails; the next open settles it). Never throws. */
@@ -393,10 +400,14 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     try {
       let forbiddenStrings: string[];
       try {
-        const photoStrings = await collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips));
+        // The library may sit on a drive that has gone quiet: the read runs under the staging bound (time and cancel), so a silent disk ends the job
+        // TIMEOUT or cancelled instead of holding the slot, the holds and the reservations for ever.
+        const photoStrings = await staging.run((signal) => collectForbiddenStrings((photoId) => deps.library.readPhotoVerified(photoId), scenePhotoIds(plan.spec.clips), signal));
         // The track's own text joins the photos' (invariant 14), each under its own quota: neither may be found in the finished video.
         forbiddenStrings = track === null ? photoStrings : combineForbiddenStrings(photoStrings, track.forbidden);
       } catch (error) {
+        // The bound passing or the owner's cancel is the signal's own reason: the queue maps it (TIMEOUT, cancelled).
+        if (staging.signal.aborted) throw error;
         log(`render ${plan.jobId}: a source photo could not be read (${error instanceof Error ? error.name : "error"})`);
         throw new RenderFailure({ code: "INTERNAL", detail: "a source photo could not be read" });
       }
@@ -471,7 +482,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         deadlineTimer = deadlineTimers.set(() => {
           if (pastNoReturn) return;
           deadlineFired = true;
-          const failure = new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "saving the video took too long: the export folder does not answer" });
+          const failure = new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "saving the video took too long: the export folder or the library does not answer" });
           log(`render ${plan.jobId}: the commit passed its deadline of ${deadlineMs} ms before it claimed a name; the job is failed and the commit is asked to stop`);
           stop.abort(failure);
           reject(failure);
@@ -500,6 +511,8 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         {
           fs,
           libraryRoot: deps.library.root,
+          library: deps.library,
+          ...(deps.numberFs === undefined ? {} : { numberFs: deps.numberFs }),
           signal: commitSignal,
           log,
           onClaimed: (path) => {
@@ -545,7 +558,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         // A deadline before the claim and a cancel leave nothing to settle.
         const cancelled = context.signal.aborted && error === context.signal.reason;
         if (deadlineFired || cancelled || deps.settleLeftover === undefined) throw error;
-        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive } }, stepMs, log);
+        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive }, photoIds: scenePhotoIds(plan.spec.clips) }, stepMs, log);
         if (adopted === null) throw error;
         // The video exists: the job is done, not failed.
         try {
@@ -570,6 +583,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
     // ONE time bound for all the job's staging, from the SUM of the bytes it will read: the own photos', videos' and stickers' copies and a track's bytes. Each read runs raced
     // against it (here, and in the runner for the copies into the job folder), so a read that never returns ends the job TIMEOUT instead of holding the render slot for ever.
     const stagedBytes =
+      (plan.scenePhotoBytes ?? 0) +
       (plan.ownPhotos ?? []).reduce((sum, own) => sum + own.bytes, 0) +
       (plan.ownVideos ?? []).reduce((sum, own) => sum + own.bytes, 0) +
       (plan.ownStickers ?? []).reduce((sum, own) => sum + own.bytes, 0) +

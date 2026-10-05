@@ -79,6 +79,16 @@ function depsWith(script: (call: SpawnCall, index: number) => void, extra: Parti
   return { deps: { run, ...extra }, calls };
 }
 
+/** `job` raced against the test's own timer: a run that never ends fails the test in 2 s ("did not end"), instead of hanging it until the runner's timeout. */
+function endsSoon<T>(job: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("the run did not end within 2000 ms")), 2_000);
+  });
+  job.catch(() => undefined);
+  return Promise.race([job, late]).finally(() => clearTimeout(timer));
+}
+
 describe("runRenderJob: the passes", () => {
   test("runs pass 1 for each clip into the job folder, then pass 2 into the given output, in that order", async () => {
     const r = rig();
@@ -260,6 +270,71 @@ describe("runRenderJob: the job folder and the output", () => {
 
     expect(warnings.map(([what]) => what)).toEqual(["job folder", "unfinished output"]);
     expect(warnings[0]?.[1]).toBeInstanceOf(Error);
+  });
+
+  test("a temp output whose removal never returns (a dead export volume) is given up on at the bound: reported, and the render's own error still comes out", async () => {
+    const r = rig();
+    const warnings: Array<[string, unknown]> = [];
+    const { deps } = depsWith((call) => call.child.exit(1), {
+      removeFile: () => new Promise<void>(() => undefined),
+      removeFileTimeoutMs: 50,
+      warn: (what, error) => warnings.push([what, error]),
+    });
+
+    const started = performance.now();
+    await expect(endsSoon(runRenderJob(r.input, deps))).rejects.toBeInstanceOf(FfmpegError);
+
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(warnings.map(([what]) => what)).toEqual(["unfinished output"]);
+  });
+
+  test("a temp output whose removal never returns does not hold back a render that otherwise failed by cancel", async () => {
+    const cancel = new AbortController();
+    const r = rig({ signal: cancel.signal });
+    const { deps } = depsWith(() => cancel.abort(new Error("cancelled")), {
+      removeFile: () => new Promise<void>(() => undefined),
+      removeFileTimeoutMs: 50,
+      warn: () => undefined,
+    });
+
+    await expect(endsSoon(runRenderJob(r.input, deps))).rejects.toThrow("cancelled");
+  });
+
+  test("a folder that survived a removal that reported success is removed once more, and the survival is reported (review round 2, L6)", async () => {
+    const r = rig();
+    const warnings: string[] = [];
+    let removals = 0;
+    const { deps } = depsWith(goodFfmpeg, {
+      // The first removal says it worked and leaves the folder (what Bun's recursive rm does when an entry is unlinked by someone else meanwhile).
+      removeTree: async (path) => {
+        if (++removals === 2) rmSync(path, { recursive: true, force: true });
+      },
+      warn: (what) => warnings.push(what),
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(removals).toBe(2);
+    expect(existsSync(r.jobDir)).toBe(false);
+    expect(warnings).toEqual(["job folder"]);
+  });
+
+  test("a folder that is gone after the first removal is removed once, with no report", async () => {
+    const r = rig();
+    const warnings: string[] = [];
+    let removals = 0;
+    const { deps } = depsWith(goodFfmpeg, {
+      removeTree: async (path) => {
+        removals++;
+        rmSync(path, { recursive: true, force: true });
+      },
+      warn: (what) => warnings.push(what),
+    });
+
+    await runRenderJob(r.input, deps);
+
+    expect(removals).toBe(1);
+    expect(warnings).toEqual([]);
   });
 
   test("a folder that cannot be removed after a good render is reported, and the render still succeeds", async () => {

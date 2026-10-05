@@ -199,6 +199,87 @@ describe("videos.list, what can go wrong around it", () => {
     );
   });
 
+  test("the whole listing has ONE budget: once it is spent the remaining records read `unchecked` without a look at the disk (stage 3 review 4-M4)", async () => {
+    const w = world();
+    const checker = new FileStateChecker();
+    let looked = 0;
+    const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, {
+      check: (): Promise<FileState> => (looked++, new Promise<FileState>(() => undefined)),
+    });
+    const r = serviceRig(w, { deps: { checker: stuck, recordCheckTimeoutMs: 150, listBudgetMs: 400 } });
+    for (let i = 1; i <= 10; i++) {
+      const n = String(i).padStart(2, "0");
+      await committed(w, { videoId: `video-000000${n}`, jobId: `job-000000${n}`, relPath: `Mia/2026-09-29_photo_0${n}.mp4` });
+    }
+
+    const started = performance.now();
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos).toHaveLength(10);
+    expect(videos.every((v) => v.fileState === "unchecked")).toBe(true);
+    // Not every record was looked at: the budget cut the listing (what is asserted is the count of looks, not the clock).
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(looked).toBeLessThan(10);
+  });
+
+  test("a read of the records that never returns fails the list within the budget with the engine's own INTERNAL, not main's NO_ANSWER (review round 1, L7)", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { readRecordFiles: () => new Promise(() => undefined), listBudgetMs: 80 } });
+
+    const started = performance.now();
+    const error = await failureOf(r.service.list(w.avatar.id));
+
+    expect(error.code).toBe("INTERNAL");
+    expect(error.detail).toContain("ETIMEDOUT");
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("once the budget is spent no draft is looked at any more: the record keeps the draft id as written", async () => {
+    const w = world();
+    let looked = 0;
+    const checker = new FileStateChecker();
+    const stuck: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, { check: (): Promise<FileState> => new Promise<FileState>(() => undefined) });
+    const drafts = {
+      find: async () => null,
+      exists: async () => (looked++, true),
+      wasRemoved: () => false,
+      exclusive: async <T>(_id: string, work: () => Promise<T>) => work(),
+    };
+    const r = serviceRig(w, { deps: { checker: stuck, recordCheckTimeoutMs: 400, listBudgetMs: 400, drafts } });
+    const record = sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+    await writeIntent(NODE_COMMIT_FS, w.libraryRoot, { ...record, montageId: "montage-00000001" });
+    await commitIntent(NODE_COMMIT_FS, w.libraryRoot, w.avatar.id, record.id);
+    await w.library.reloadVideoRecords(w.avatar.id);
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.montageId)).toEqual(["montage-00000001"]);
+    expect(looked).toBe(0);
+  });
+
+  test("an export check that never answers is cut by the listing's budget: the records come back `unchecked`, not main's NO_ANSWER (review round 2, L7)", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: () => new Promise<never>(() => undefined), listBudgetMs: 400 } });
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+
+    const started = performance.now();
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.fileState)).toEqual(["unchecked"]);
+    expect(performance.now() - started).toBeLessThan(2_000);
+  });
+
+  test("a listing inside its budget is unchanged: every record is checked", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { listBudgetMs: 60_000 } });
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+    await committed(w, { videoId: "video-0000000b", jobId: "job-0000000b", relPath: "Mia/2026-09-29_photo_002.mp4" });
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.fileState)).toEqual(["present", "present"]);
+  });
+
   test("a stale used index is read again on demand before the list is answered", async () => {
     const w = world();
     let reloads = 0;
@@ -303,6 +384,21 @@ describe("videos.get: one video by id (3e.2: «Открыть в папке» fo
     const { record } = await committed(w);
 
     expect((await r.service.get(record.id)).fileState).toBe("elsewhere");
+  });
+});
+
+describe("videos.delete, the case probe", () => {
+  test("a case probe that never answers is cut at its bound and the cautious answer is used: the delete still goes through (review round 1, L9)", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { caseProbe: { isCaseInsensitive: () => new Promise<boolean>(() => undefined) }, caseProbeTimeoutMs: 60 } });
+    const { record, path } = await committed(w);
+
+    const started = performance.now();
+    const answer = await r.service.delete(record.id, "video");
+
+    expect(answer).toMatchObject({ videoId: record.id, fileDeleted: true });
+    expect(existsSync(path)).toBe(false);
+    expect(performance.now() - started).toBeLessThan(3_000);
   });
 });
 

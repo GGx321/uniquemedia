@@ -523,6 +523,19 @@ describe("videos.render: focus, then the check again, then submit, with no await
     expect(error.code).toBe("PHOTO_UNAVAILABLE");
   });
 
+  test("the staging bound is asked for the scene photos' stored bytes (their read spends it), through the plan the service builds (review round 1, L8)", async () => {
+    const w = world();
+    const asked: number[] = [];
+    const r = serviceRig(w, { deps: { renderOverrides: { runDeps: { stagingTimeoutMs: (bytes) => (asked.push(bytes), 60_000), run: async () => { throw new Error("stop here"); } } } } });
+
+    await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    const stored = w.library.getPhoto(photoId(w, 0))?.bytes ?? 0;
+    expect(stored).toBeGreaterThan(0);
+    expect(asked).toEqual([stored]);
+  });
+
   test("resolves each photo to its file and its STORED size, and the job's frames are the one number the queue was given", async () => {
     const w = world();
     const resolved: unknown[] = [];

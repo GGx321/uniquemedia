@@ -111,6 +111,7 @@ import type { RenderTrackSource } from "./music/renderTrack";
 import { MusicService, type MusicListSink } from "./music/service";
 import { createTextPreviewService, TEXT_PREVIEW_DIR, type PreviewGate, type TextPreviewService } from "./text/preview";
 import { RasterError } from "./text/rasterTypes";
+import { EXPORT_CHECK_TIMEOUT_MS, LIVE_LIBRARY_IDENTITY_TIMEOUT_MS } from "./videos/timeouts";
 
 /** Events kept for `engine.events` catch-up; an older `afterSeq` gets `gap` and refetches the snapshot. */
 export const EVENT_LOG_CAPACITY = 1000;
@@ -435,13 +436,11 @@ const DRAFT_NAME = "Draft";
 /** How long generateCandidates' ffmpeg preflight (M8) may take before it answers a clear error and spends nothing. */
 export const PREFLIGHT_TIMEOUT_MS = 10_000;
 
-/** How long #liveLibrary's identity re-check (one stat, one realpath) may take before it is read as "cannot be identified right now" (review LOW 15). */
-export const LIVE_LIBRARY_IDENTITY_TIMEOUT_MS = 5_000;
+export { LIVE_LIBRARY_IDENTITY_TIMEOUT_MS };
 /** How long after an ok `export.choose` renders wait for the `settings.update` that follows (main's own deadline for a call). */
 const EXPORT_SWITCH_WAIT_MS = 30_000;
 
-/** Bounds one export folder check (start, a settings update, a render attempt): a stale network share must not block any of them. */
-export const EXPORT_CHECK_TIMEOUT_MS = 5_000;
+export { EXPORT_CHECK_TIMEOUT_MS };
 
 /**
  * T6c review round 2, M4: how long import.stagePhoto's one downscale (the

@@ -13,6 +13,6 @@ test("each photo the engine would refuse says why", () => {
   expect(montagePickRefusal(scenePhoto(1, { rejected: true, eligible: false }))).toBe("Фото отклонено — в монтаж не попадает");
   expect(montagePickRefusal(scenePhoto(1, { used: true, usedIn: ["video-0000001"] }))).toBe("Фото уже в видео: одно фото — одно видео");
   expect(montagePickRefusal(scenePhoto(1, { usedIn: ["video-0000001"] }))).toBe("Фото уже в видео: одно фото — одно видео");
-  expect(montagePickRefusal(scenePhoto(1, { reserved: true }))).toBe("Фото сейчас в рендере");
+  expect(montagePickRefusal(scenePhoto(1, { reserved: true }))).toBe("Фото занято: в рендере или ждёт незавершённое видео");
   expect(montagePickRefusal(scenePhoto(1, { eligible: false }))).toBe("Это фото не подходит для видео");
 });

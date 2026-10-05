@@ -26,7 +26,17 @@ export interface StagingBound {
   run<T>(work: (signal: AbortSignal) => Promise<T>): Promise<T>;
   /** Stops the clock: the staging is over. Safe to call again. */
   release(): void;
+  /**
+   * Resolves once every piece of work started under the bound has ended, or after `graceMs` (`SETTLE_GRACE_MS` by default), whichever is first. Never rejects.
+   * A job that ends by cancel or by the bound leaves its work running for a moment: it notices the signal at its next chunk and removes what it made. The job's
+   * folder is removed AFTER that (the runner waits here), so the work's own cleanup and the folder's removal never run at once: two removers of one tree race, and
+   * a recursive remove that loses an entry to the other can leave the folder behind. Work that does not end (a dead disk's read) is given up on after the grace.
+   */
+  settled(graceMs?: number): Promise<void>;
 }
+
+/** How long the end of a job waits for abandoned staging work to finish its own cleanup. Real time: the bound's injected clock is for the staging itself. */
+export const SETTLE_GRACE_MS = 500;
 
 /** A bound of `ms` over `cancel` (the job's own signal), shared by every `run` of one job. */
 export function stagingBound(ms: number, cancel: AbortSignal, timers: StagingTimers = REAL_TIMERS): StagingBound {
@@ -34,6 +44,8 @@ export function stagingBound(ms: number, cancel: AbortSignal, timers: StagingTim
   let handle: unknown;
   let armed = false;
   let released = false;
+  /** The work that was started and has not ended yet (a piece that lost the race is still in it until it really ends). */
+  const inFlight = new Set<Promise<unknown>>();
   const signal = AbortSignal.any([cancel, over.signal]);
   return {
     signal,
@@ -53,12 +65,27 @@ export function stagingBound(ms: number, cancel: AbortSignal, timers: StagingTim
       // The race forgets the work once it has lost; its late failure must still be handled. (`Promise.race` itself subscribes to both promises, so today these two
       // `catch`es are belt and braces, and removing one cannot be seen from outside; they keep the guarantee if the race is ever rewritten. The tests pin the guarantee.)
       working.catch(() => undefined);
+      inFlight.add(working);
+      void working.then(
+        () => void inFlight.delete(working),
+        () => void inFlight.delete(working),
+      );
       return Promise.race([working, ended]);
     },
     release(): void {
       if (released) return;
       released = true;
       if (armed) timers.clear(handle);
+    },
+    async settled(graceMs: number = SETTLE_GRACE_MS): Promise<void> {
+      if (inFlight.size === 0) return;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const grace = new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, graceMs);
+      });
+      const ended = Promise.allSettled([...inFlight]).then(() => undefined);
+      await Promise.race([ended, grace]);
+      clearTimeout(timer);
     },
   };
 }

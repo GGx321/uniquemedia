@@ -298,6 +298,9 @@ describe("failures reach the queue as the contract's errors", () => {
     let ran = false;
     const library: VideoRenderDeps["library"] = {
       root: w.library.root,
+      listAvatars: () => w.library.listAvatars(),
+      namedVideoFiles: () => w.library.namedVideoFiles(),
+      usageReasons: (id) => w.library.usageReasons(id),
       readPhotoVerified: () => Promise.reject(new Error(`cannot open ${w.dir}/secret`)),
       addVideoRecordToIndex: (a, b) => w.library.addVideoRecordToIndex(a, b),
       reloadVideoRecords: (a) => w.library.reloadVideoRecords(a),
@@ -329,6 +332,9 @@ describe("the source photos' own text is handed to the verifier", () => {
     const photo = jpegWithArtist("Jane Q. Photographer");
     const library: VideoRenderDeps["library"] = {
       root: w.library.root,
+      listAvatars: () => w.library.listAvatars(),
+      namedVideoFiles: () => w.library.namedVideoFiles(),
+      usageReasons: (id) => w.library.usageReasons(id),
       readPhotoVerified: async () => photo,
       addVideoRecordToIndex: (a, b) => w.library.addVideoRecordToIndex(a, b),
       reloadVideoRecords: (a) => w.library.reloadVideoRecords(a),
@@ -355,6 +361,9 @@ describe("the used index throwing after the record is committed", () => {
     const w = world();
     const library: VideoRenderDeps["library"] = {
       root: w.library.root,
+      listAvatars: () => w.library.listAvatars(),
+      namedVideoFiles: () => w.library.namedVideoFiles(),
+      usageReasons: (id) => w.library.usageReasons(id),
       readPhotoVerified: (id) => w.library.readPhotoVerified(id),
       addVideoRecordToIndex: () => {
         throw new Error("index exploded");

@@ -38,6 +38,7 @@ import { readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./lis
 import type { CommitTracker, LiveCommits } from "./live";
 import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
+import { CASE_PROBE_TIMEOUT_MS, DELETE_TIMEOUT_MS, LIST_BUDGET_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
 
 // The command layer of the video pipeline (Stage 3 plan, 3a.8b.2): `videos.render`, `videos.cancel`, `videos.list` and
 // `videos.delete`, the render queue's events as the contract's `job.*` and `video.changed`, and what happens around a
@@ -116,7 +117,7 @@ export interface VideoServiceDeps {
   readonly log: (line: string) => void;
   readonly fs?: CommitFs;
   /** Test seams of the render itself (ffmpeg, the verifier, the commit's steps, its deadlines). */
-  readonly renderOverrides?: Partial<Pick<VideoRenderDeps, "fs" | "folderFs" | "runJob" | "runDeps" | "verify" | "hooks" | "claimStartAt" | "commitDeadlineMs" | "stepDeadlineMs" | "createTemp" | "inspectStreams" | "ownVideoIo">>;
+  readonly renderOverrides?: Partial<Pick<VideoRenderDeps, "fs" | "folderFs" | "runJob" | "runDeps" | "verify" | "hooks" | "claimStartAt" | "commitDeadlineMs" | "stepDeadlineMs" | "createTemp" | "inspectStreams" | "ownVideoIo" | "numberFs">>;
   readonly recover?: { readonly run?: typeof recoverVideos; readonly deps?: RecoverDeps };
   /** Waits before each background retry of a stale used index; `DEFAULT_STALE_RETRY_DELAYS_MS` when absent. The last delay repeats until the index is in step. */
   readonly staleRetryDelaysMs?: readonly number[];
@@ -129,6 +130,14 @@ export interface VideoServiceDeps {
   readonly deleteTimeoutMs?: number;
   /** How long one record's file check may take in a listing; `RECORD_CHECK_TIMEOUT_MS` when absent. */
   readonly recordCheckTimeoutMs?: number;
+  /** The one budget of a whole `videos.list`, from its entry; `LIST_BUDGET_MS` when absent. */
+  readonly listBudgetMs?: number;
+  /** How long the probe of the export volume's case rule may take in `#freshRoot`; `CASE_PROBE_TIMEOUT_MS` when absent. */
+  readonly caseProbeTimeoutMs?: number;
+  /** How the commit intent's file is looked at before a settle; `lstat` when absent (a test plays a disk that fails or does not answer). */
+  readonly intentLstat?: (path: string) => Promise<unknown>;
+  /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
+  readonly readRecordFiles?: typeof readVideoRecordFiles;
 }
 
 /** Waits before the background retries of a stale used index; the last one repeats until the records are read. */
@@ -137,10 +146,7 @@ export const DEFAULT_STALE_RETRY_DELAYS_MS: readonly number[] = [2_000, 10_000, 
 export const RENDER_COMMAND_DEADLINE_MS = 25_000;
 /** Kept back for eligibility, the sources and `submit` once the focus is done. */
 export const RENDER_COMMAND_MARGIN_MS = 2_000;
-/** One record's file check in a listing or a `videos.get`; a disk that does not answer reads `unchecked` (K15). */
-export const RECORD_CHECK_TIMEOUT_MS = 5_000;
-/** A delete's disk work (a full hash of a file up to 64 MiB, two unlinks, flushes). */
-export const DELETE_TIMEOUT_MS = 60_000;
+export { DELETE_TIMEOUT_MS, RECORD_CHECK_TIMEOUT_MS };
 /** How long after the focus budget the abort net waits. */
 const FOCUS_NET_SLACK_MS = 25;
 /** Reading the used index again on demand before a render or a list. */
@@ -534,6 +540,7 @@ export class VideoService {
         return own === undefined ? undefined : { path: join(renderTmpDir, jobId, ownPhotoCopyName(own.mediaId)), width: own.width, height: own.height };
       },
       ownPhotos: [...ownPhotos.values()],
+      scenePhotoBytes: scenePhotoIds(filled.clips).reduce((sum, id) => sum + (library.getPhoto(id)?.bytes ?? 0), 0),
       // An own video clip: the mezzanine as the admission found it; the job streams a verified copy into its own folder, the library file is never an ffmpeg input.
       ownVideos: [...ownVideos.values()],
       ownStickers: [...ownStickers.values()],
@@ -631,12 +638,19 @@ export class VideoService {
   // ---------- videos.list ----------
 
   async list(avatarId: string): Promise<VideoSummary[]> {
+    const enteredAt = performance.now();
+    const listBudgetMs = this.#deps.listBudgetMs ?? LIST_BUDGET_MS;
     const library = this.#deps.openLibrary();
     if (library?.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
     await this.#readIndexAgain(library, avatarId);
     let read;
     try {
-      read = await readVideoRecordFiles(library.root, avatarId);
+      // The library's disk is under the same budget: a read that never returns ends the list with the engine's own error, not main's NO_ANSWER.
+      read = await within(
+        listBudgetMs - (performance.now() - enteredAt),
+        () => (this.#deps.readRecordFiles ?? readVideoRecordFiles)(library.root, avatarId),
+        () => Object.assign(new Error("the records read did not answer"), { code: "ETIMEDOUT" }),
+      );
     } catch (error) {
       // A raw fs error names the library's absolute path, which `maskHome` cannot know for `/Volumes` or `/var`: only the code is told.
       this.#deps.log(`videos.list: the records of avatar ${avatarId} could not be read (${kindOf(error)})`);
@@ -645,21 +659,44 @@ export class VideoService {
     if (read.skipped > 0) this.#deps.log(`videos.list: ${read.skipped} record file(s) of avatar ${avatarId} could not be used and are left out`);
     if (read.truncated) this.#deps.log(`videos.list: avatar ${avatarId} has more record files than one listing reads; the newest are listed`);
     // One fresh look at the export root, one hash budget for the whole listing.
-    const root = await this.#freshRoot();
+    // The look at the export root is inside the listing's budget too: a root that does not answer is "cannot judge" (null), and every record reads `unchecked`.
+    let root: ExportRootRef | null = null;
+    // A root that could not be judged in time says nothing about any file (K15): every record reads `unchecked`, never «elsewhere» (which is what a refused root says).
+    let rootJudged = true;
+    try {
+      root = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#freshRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
+    } catch (error) {
+      rootJudged = false;
+      this.#deps.log(`videos.list: the export folder could not be looked at in time (${kindOf(error)}); the files are left unchecked`);
+    }
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
     const drafts = new Map<string, boolean>();
+    let spentLogged = false;
+    /** A look that was cut at what the budget had left: the budget is spent, whatever the clock says to the millisecond. */
+    let cutByBudget = false;
     for (const record of read.records.slice(0, MAX_LISTED_VIDEOS)) {
       let state: FileState;
-      try {
-        state = await within(checkMs, () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
-      } catch (error) {
-        // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
-        this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
+      // The listing's own budget, from its entry: a record looked at after it is spent is `unchecked` without a call to the disk, and one in flight is cut at what is left.
+      const remainingMs = listBudgetMs - (performance.now() - enteredAt);
+      if (!rootJudged || remainingMs <= 0) {
+        if (!spentLogged) this.#deps.log(`videos.list: the listing's budget of ${listBudgetMs} ms is spent; the remaining files of avatar ${avatarId} are left unchecked`);
+        spentLogged = true;
         state = "unchecked";
+      } else {
+        try {
+          state = await within(Math.min(checkMs, remainingMs), () => this.#deps.checker.check(record, root, { verify: "cheap", budget }), () => Object.assign(new Error("the file check did not answer"), { code: "ETIMEDOUT" }));
+        } catch (error) {
+          // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
+          this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
+          if (remainingMs <= checkMs) cutByBudget = true;
+          state = "unchecked";
+        }
       }
-      summaries.push(videoSummaryOf(await this.#withLiveDraft(library, record, drafts), state));
+      // The draft lookups are disk calls too: once the budget is spent the record keeps the draft id as written (the same answer as a lookup that failed).
+      const spent = cutByBudget || performance.now() - enteredAt >= listBudgetMs;
+      summaries.push(videoSummaryOf(spent ? record : await this.#withLiveDraft(library, record, drafts), state));
     }
     return summaries;
   }
@@ -868,7 +905,8 @@ export class VideoService {
     if (!check.ok) return null;
     let caseInsensitive = true; // the cautious answer: it can only make comparisons stricter
     try {
-      caseInsensitive = await this.#deps.caseProbe.isCaseInsensitive(check.root);
+      // The probe writes a file in the export folder: on a volume that has gone quiet it never returns, so it is bounded, and the cautious answer stands.
+      caseInsensitive = await within(this.#deps.caseProbeTimeoutMs ?? CASE_PROBE_TIMEOUT_MS, () => this.#deps.caseProbe.isCaseInsensitive(check.root), () => Object.assign(new Error("the case probe did not answer"), { code: "ETIMEDOUT" }));
     } catch (error) {
       this.#deps.log(`the export folder's case rule could not be probed (${kindOf(error)}); the cautious one is used`);
     }
@@ -940,6 +978,19 @@ export class VideoService {
 
   async #recover(library: Library, signal: AbortSignal, options: { exportCheck?: ExportRootCheck; only?: { videoIds: readonly string[] } }): Promise<void> {
     const deps = this.#deps;
+    // What each avatar's photos looked like (which are held, how many are free) before recovery held or freed any: what is announced is what moved.
+    const before = this.#heldKeys(library);
+    // The library's pending intents are read and their photos held FIRST, before the export root is asked anything: a slow or hung root must not leave the
+    // photos free at the start. A step of its own, so a test's stand-in for the whole recovery is not called twice.
+    if (options.only === undefined) {
+      try {
+        await recoverVideos({ library, exportRoot: null, live: deps.tracker, signal, holdOnly: true }, { log: deps.log, ...deps.recover?.deps });
+      } catch (error) {
+        deps.log(`recovery: the pending intents' photos could not be held first (${kindOf(error)})`);
+      }
+      if (signal.aborted) return;
+      this.#announceHeldChanges(library, before);
+    }
     // A FRESH look at the root, and the SAME tracker the renders register in: a live commit is never taken for a crash's leftover.
     const exportRoot = await this.#freshRoot(options.exportCheck);
     if (signal.aborted) return;
@@ -956,10 +1007,31 @@ export class VideoService {
         const avatarId = await this.#announceAdopted(library, videoId);
         if (avatarId !== null) avatars.add(avatarId);
       }
-      // Their photos are used now: the avatars' counts moved.
+      // Their photos are used now: the avatars' counts moved. So did those of an avatar whose photos recovery held or freed.
       for (const avatarId of avatars) this.#announce(library, avatarId);
+      this.#announceHeldChanges(library, before, avatars);
     }
     if (options.only === undefined) for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);
+  }
+
+  /** Per avatar, the photos that are held (reserved) and how many are free: a change in either is something the windows have not been told. */
+  #heldKeys(library: Library): Map<string, string> {
+    return new Map(
+      library.listAvatars().map((manifest) => {
+        const held = [...library.photoStates(manifest.id)].filter(([, state]) => state.reserved).map(([photoId]) => photoId).sort();
+        return [manifest.id, `${held.join(",")}|${library.eligibleUnusedCount(manifest.id)}`];
+      }),
+    );
+  }
+
+  /** Announces the avatars whose held photos or free count differ from `before` (and were not announced already), then `before` is brought up to date. */
+  #announceHeldChanges(library: Library, before: Map<string, string>, already: ReadonlySet<string> = new Set()): void {
+    if (this.#deps.openLibrary() !== library) return;
+    const now = this.#heldKeys(library);
+    for (const [avatarId, key] of now) {
+      if (before.get(avatarId) !== key && !already.has(avatarId)) this.#announce(library, avatarId);
+      before.set(avatarId, key);
+    }
   }
 
   /** The avatar the adopted record belongs to (announced), or null when it could not be read back. */
@@ -988,10 +1060,14 @@ export class VideoService {
    * The job is told apart from the others so that its own intent is not "live"; the commit is over, so the lock is free.
    */
   async #settleLeftover(library: Library, input: SettleInput, signal: AbortSignal): Promise<VideoRecord | null> {
+    // Held FIRST: this settle may fail, hang (it is cut by its bound) or never get to its recovery, and the intent is on the disk until something says otherwise.
+    // Only an intent the disk says is gone (ENOENT) ends the hold; any other answer leaves the photos held.
+    library.holdPendingPhotos(input.avatarId, input.videoId, input.photoIds);
     try {
-      await lstat(videoPaths(library.root, input.avatarId).intent(input.videoId));
+      await (this.#deps.intentLstat ?? lstat)(videoPaths(library.root, input.avatarId).intent(input.videoId));
     } catch (error) {
-      if (!hasErrorCode(error, "ENOENT")) this.#deps.log(`the commit intent of ${input.videoId} could not be looked at (${kindOf(error)})`);
+      if (hasErrorCode(error, "ENOENT")) library.releasePendingPhotos(input.videoId);
+      else this.#deps.log(`the commit intent of ${input.videoId} could not be looked at (${kindOf(error)}); its photos stay held`);
       return null;
     }
     const tracker = this.#deps.tracker;
