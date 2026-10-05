@@ -189,8 +189,28 @@ describe("closing", () => {
     // Past the last control the browser lands on the dialog's end edge: the focus comes round to the first control.
     focusEdge("end");
     expect(focusedLabel()).toBe(describeElement(first));
-    // Before the first, on its start edge: round to the last.
+    // Shift+Tab before the first lands on its start edge: round to the last.
+    press("Tab", { shiftKey: true });
     focusEdge("start");
+    expect(focusedLabel()).toBe(describeElement(last));
+  });
+
+  test("from the dialog itself (a press on the photo or the facts focuses it) Tab goes to the first control, Shift+Tab to the last", async () => {
+    await openMia();
+    fireEvent.click(openButton(2));
+    const controls = Array.from(viewer().querySelectorAll<HTMLElement>("button:not([disabled])"));
+    const [first, last] = [controls[0], controls.at(-1)];
+    if (first === undefined || last === undefined || first === last) throw new Error("expected several controls in the viewer");
+
+    // Tab from the dialog's own element: the browser's next stop is its start edge, which leads on to the first control.
+    viewer().focus();
+    press("Tab");
+    focusEdge("start");
+    expect(focusedLabel()).toBe(describeElement(first));
+    // Shift+Tab from it: with the page inert, the browser comes round to the end edge, which leads back to the last control.
+    viewer().focus();
+    press("Tab", { shiftKey: true });
+    focusEdge("end");
     expect(focusedLabel()).toBe(describeElement(last));
   });
 

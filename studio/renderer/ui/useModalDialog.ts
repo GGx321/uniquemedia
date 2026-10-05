@@ -56,11 +56,11 @@ export function useModalDialog({ dialog, initialFocus, onClose, returnFocus }: M
       const target = event.target;
       if (root === null || !(target instanceof HTMLElement)) return;
       const inside = root.contains(target);
-      const edge = inside ? target.dataset.focusEdge : undefined;
-      if (inside && edge === undefined) return;
+      if (inside && target.dataset.focusEdge === undefined) return;
       const controls = Array.from(root.querySelectorAll<HTMLElement>(TABBABLE)).filter((el) => el.dataset.focusEdge === undefined);
-      const toLast = edge === "start" || (edge === undefined && backward);
-      ((toLast ? controls.at(-1) : controls[0]) ?? root).focus({ preventScroll: true });
+      // By the direction of the last Tab alone, never by which edge was reached: from the dialog's own element (a press on
+      // its photo focuses it) Tab reaches the start edge first, and in Electron Shift+Tab comes round to the end edge.
+      ((backward ? controls.at(-1) : controls[0]) ?? root).focus({ preventScroll: true });
     };
     window.addEventListener("keydown", onKey);
     document.addEventListener("focusin", onFocusIn);
