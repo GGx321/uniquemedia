@@ -488,7 +488,11 @@ function DraftEditor({
   const judged = judgedNow ? verdict.issues : [];
   // The track: judged (by the length the engine's decode proved) or not yet; the block trusts only a verdict on the spec on screen.
   const musicVerdict: TrackVerdict = musicVerdictOf(judgedNow, judged);
-  const flaggedLayers = layerProblems(verdict.spec, judged);
+  // The draft's one queue of text previews is made here, above its provider, so that «Рендер» and the layer blocks read the same verdict the
+  // caption panel shows: a refusal of the caption as it stands now (a cluster the real emoji font lacks). With no verdict yet nothing is blocked.
+  const previewQueue = useTextPreviewQueue(client, avatarId);
+  const previewRefused = useRefusedCaptions(previewQueue, state.spec.layers);
+  const flaggedLayers = layerProblems(verdict.spec, judged, previewRefused);
   // 3f.3b: the own videos the clips play (their records, by id), and what the render refuses each video clip for: the engine's verdict on the spec on
   // screen, else the window's guess from the records.
   const ownVideos = useOwnVideos(client, ownVideoClips(state.spec).map((clip) => clip.mediaId));
@@ -716,9 +720,6 @@ function DraftEditor({
   // (the draft's name may have changed since), any other is called by its file name in «Готовые видео».
   const usedVideo: UsedVideo | null = holder === undefined ? null : holder.montageId === montageId ? "this-draft" : { file: fileLabel(holder) };
 
-  // The draft's one queue of text previews is made here, above its provider, so «Рендер» can wait for the same verdict the caption panel shows.
-  const previewQueue = useTextPreviewQueue(client, avatarId);
-  const previewRefused = useRefusedCaptions(previewQueue, state.spec.layers);
   const block = renderBlock({
     previewRefused,
     spec: state.spec,

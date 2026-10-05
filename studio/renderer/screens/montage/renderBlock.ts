@@ -123,8 +123,11 @@ const LAYER_PROBLEMS: Partial<Record<MontageIssueCode, string>> = {
  * N9 for it, so no layer is «скоро» any more). A layer's first issue is the one told. Structural issues (`layer-outside-timeline`, `layer-too-short`) are drawn by
  * the timeline from the current spec itself.
  */
-export function layerProblems(judged: MontageDraft, issues: readonly MontageIssue[]): ReadonlyMap<string, string> {
+export function layerProblems(judged: MontageDraft, issues: readonly MontageIssue[], previewRefused: ReadonlySet<string> = new Set()): ReadonlyMap<string, string> {
   const found = new Map<string, string>();
+  // The captions only the engine's preview refused (`emoji-missing`) are marked as a caption issue is; `previewRefused` is read for the layers
+  // of the spec on screen, which is why it is by id.
+  for (const layerId of previewRefused) found.set(layerId, "надпись не проходит проверку");
   for (const issue of issues) {
     const [root, i] = issue.path;
     const text = LAYER_PROBLEMS[issue.code];

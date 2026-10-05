@@ -459,6 +459,52 @@ describe("a caption that breaks the caption rules", () => {
     expect(screen.getAllByText("Текст 1: надпись не проходит проверку").length).toBeGreaterThan(0);
   });
 
+  describe("that only the engine's preview can refuse (a cluster the real emoji font lacks)", () => {
+    const blocked = (): boolean => renderButton().hasAttribute("disabled") || renderButton().getAttribute("aria-disabled") === "true";
+    const caption = (): HTMLTextAreaElement => {
+      const field = within(props()).getByRole("textbox", { name: "Текст" });
+      if (!(field instanceof HTMLTextAreaElement)) throw new Error("the caption is not a textarea");
+      return field;
+    };
+
+    test("blocks «Рендер» and says which text it is", async () => {
+      const { client, engine } = await studio();
+      engine.failNext("montages.textPreview", { code: "TEXT_INVALID", captionIssue: "emoji-missing" });
+      await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000)] });
+      await waitFor(() => expect(blocked()).toBe(true));
+      expect(screen.getAllByText("Текст 1: надпись не проходит проверку").length).toBeGreaterThan(0);
+    });
+
+    test("marks the layer's block on the timeline", async () => {
+      const { client, engine } = await studio();
+      engine.failNext("montages.textPreview", { code: "TEXT_INVALID", captionIssue: "emoji-missing" });
+      await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000)] });
+      await waitFor(() => expect(texts().querySelectorAll(".ed-blk-flagged").length).toBe(1));
+    });
+
+    test("does not block when the preview only failed to draw (RENDER_FAILED)", async () => {
+      const { client, engine } = await studio();
+      engine.failNext("montages.textPreview", { code: "RENDER_FAILED", detail: "timeout" });
+      await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000)] });
+      await waitFor(() => expect(callsOf(engine, "montages.textPreview").length).toBeGreaterThan(0));
+      await flush();
+      expect(screen.queryAllByText("Текст 1: надпись не проходит проверку")).toHaveLength(0);
+      expect(blocked()).toBe(false);
+    });
+
+    test("stops blocking once the caption is edited and its new look is drawn", async () => {
+      const { client, engine } = await studio();
+      engine.failNext("montages.textPreview", { code: "TEXT_INVALID", captionIssue: "emoji-missing" });
+      await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000)] });
+      await waitFor(() => expect(blocked()).toBe(true));
+      fireEvent.click(block(/^Текст 1:/));
+      fireEvent.change(caption(), { target: { value: "monday reset" } });
+      await waitFor(() => expect(blocked()).toBe(false));
+      expect(screen.queryAllByText("Текст 1: надпись не проходит проверку")).toHaveLength(0);
+      expect(texts().querySelectorAll(".ed-blk-flagged").length).toBe(0);
+    });
+  });
+
   test("a valid caption is not marked", async () => {
     const { client, engine } = await studio();
     await openDraft(engine, client, { layers: [textLayer(0, 0, 1_000)] });

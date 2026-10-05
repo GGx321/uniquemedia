@@ -268,6 +268,12 @@ describe("layerProblems: the layers the engine refuses", () => {
     ]);
   });
 
+  test("a caption only the engine's preview refused is marked like a caption issue, once, whatever else the layer has", () => {
+    const issues: MontageIssue[] = [{ code: "caption-invalid", path: ["layers", 0, "value"] }];
+    expect([...layerProblems(spec, [], new Set(["layer-001"]))]).toEqual([["layer-001", "надпись не проходит проверку"]]);
+    expect([...layerProblems(spec, issues, new Set(["layer-001"]))]).toEqual([["layer-001", "надпись не проходит проверку"]]);
+  });
+
   test("only the engine's referential issues of a layer: a clip's, the track's and the structural ones are drawn elsewhere", () => {
     const issues: MontageIssue[] = [
       { code: "photo-unavailable", path: ["clips", 0, "cell"] },
