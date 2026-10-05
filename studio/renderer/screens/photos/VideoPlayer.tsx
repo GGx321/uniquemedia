@@ -4,7 +4,8 @@ import type { VideoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { videoUrl } from "../../lib/media";
 import { Icon } from "../../ui/Icon";
-import { FocusEdge, useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
+import { FocusEdge } from "../../ui/FocusEdge";
+import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { draftName } from "../montage/labels";
 
 // 3e.2: «Смотреть» on a video card (the plan's "play"; no artboard draws a player). The file plays through main's

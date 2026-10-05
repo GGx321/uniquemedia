@@ -12,19 +12,8 @@ const TABBABLE = [
   '[tabindex]:not([tabindex="-1"])',
 ].join(", ");
 
-type Edge = "start" | "end";
-
-/**
- * The first and the last child of a modal dialog: where the browser's own Tab lands when it leaves the dialog's last control
- * (`end`) or goes back past its first (`start`). useModalDialog turns the focus round from there, so Tab itself is never held
- * back and a control with parts of its own (a `<video controls>`, whose buttons live in its shadow tree) is walked as usual.
- */
-export function FocusEdge({ edge }: { edge: Edge }) {
-  return <span className="focus-edge" tabIndex={0} data-focus-edge={edge} />;
-}
-
 export interface ModalDialogOptions {
-  /** The dialog's own element, a FocusEdge its first and its last child. */
+  /** The dialog's own element, a FocusEdge (ui/FocusEdge.tsx) its first and its last child. */
   readonly dialog: RefObject<HTMLElement | null>;
   /** What takes the focus when the dialog opens (its «Закрыть»). */
   readonly initialFocus: RefObject<HTMLElement | null>;
