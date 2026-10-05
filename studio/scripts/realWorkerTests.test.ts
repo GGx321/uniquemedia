@@ -686,9 +686,9 @@ describe("the Electron-Node steps' bounds", () => {
     // No reference to the secrets context at all (`secrets.X`, `secrets['X']`, `toJSON(secrets)`, `secrets: inherit`): the workflow and its
     // local actions use none today, so any new one is a decision to review, not a drive-by. Parsed values and keys, so a comment may say it.
     const parsed: unknown = Bun.YAML.parse(workflow);
-    expect(yamlStrings(parsed).filter((text) => /\bsecrets\b/.test(text))).toEqual([]);
+    expect(yamlStrings(parsed).filter((text) => /\bsecrets\b/i.test(text))).toEqual([]);
     for (const { file, text } of await localActionFiles()) {
-      expect([file, yamlStrings(Bun.YAML.parse(text)).filter((value) => /\bsecrets\b/.test(value))]).toEqual([file, []]);
+      expect([file, yamlStrings(Bun.YAML.parse(text)).filter((value) => /\bsecrets\b/i.test(value))]).toEqual([file, []]);
     }
     if (typeof parsed !== "object" || parsed === null || !("permissions" in parsed)) throw new Error("no top-level permissions in the workflow");
     expect(parsed.permissions).toEqual({ contents: "read" });
@@ -733,7 +733,7 @@ describe("the Electron-Node steps' bounds", () => {
     for (const [name, job] of Object.entries(jobs)) {
       const steps = (job.steps ?? []) as { run?: string; uses?: string }[];
       // Anywhere in a run script, not only at its start: `set -e` then `bun install` is still a bare install.
-      expect([name, steps.some((step) => /(^|[\s;&|{(])bun (install|i)\b/m.test(step.run ?? ""))]).toEqual([name, false]);
+      expect([name, steps.some((step) => /(^|[\s;&|{(])bun\s+(install|i)\b/m.test(step.run ?? ""))]).toEqual([name, false]);
       if (steps.some((step) => step.run?.startsWith("bun "))) {
         expect([name, steps.some((step) => step.uses === "./.github/actions/studio-install")]).toEqual([name, true]);
       }
