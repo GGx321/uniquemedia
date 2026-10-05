@@ -666,10 +666,68 @@ describe("the play control on the preview", () => {
     return node;
   };
 
+  // Review round 1 (MEDIUM 1, LOW 6): a ▶ always there on pause sat on the face, took presses meant for the cell under the middle of the frame
+  // and refused a bin photo dropped there. Paused, it now shows only while the pointer is over the frame (or it has the keyboard's focus); it
+  // hides during any drag, a bin photo's too; and an empty cell under the middle of the frame keeps its «перетащите фото» uncovered.
+  test("paused: only while the pointer is over the frame, never resting on the picture", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    expect([control().getAttribute("aria-label"), shown()]).toEqual(["Воспроизвести", "false"]);
+    fireEvent.pointerEnter(stage());
+    expect(shown()).toBe("true");
+    fireEvent.pointerLeave(stage());
+    expect(shown()).toBe("false");
+    // A pointer already over the frame when it appeared shows it on its first move.
+    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 30, clientY: 30 });
+    expect(shown()).toBe("true");
+  });
+
+  test("hidden, it takes no press: one in the middle of a cell selects the cell and plays nothing", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    expect(shown()).toBe("false");
+    fireEvent.pointerDown(inPreview("Кадр 1"), { pointerId: 3, button: 0, clientX: 153, clientY: 272 });
+    expect(inPreview("Кадр 1").getAttribute("aria-pressed")).toBe("true");
+    expect(within(timeline()).getByRole("button", { name: "Воспроизвести" })).toBeDefined();
+  });
+
+  test("hidden and click-through while a bin photo is dragged, even with the pointer over the frame", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.pointerEnter(stage());
+    expect(shown()).toBe("true");
+    const bin = screen.getByRole("list", { name: "Фото аватара" });
+    const pick = within(bin).getAllByRole("button").find((b) => !b.hasAttribute("disabled"));
+    if (pick === undefined) throw new Error("no photo to drag in the bin");
+    fireEvent.dragStart(pick);
+    expect(shown()).toBe("false");
+    fireEvent.dragEnd(pick);
+    expect(shown()).toBe("true");
+  });
+
+  test("an empty cell under the middle of the frame keeps its drop hint: no control over it, and a photo dropped there lands", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { clips: [{ ...photoClip(0, P1, 4_000), cell: { photo: null, focus: null } }] });
+    fireEvent.pointerEnter(stage());
+    expect(preview().querySelector(".pv-play") === null).toBe(true);
+    const bin = screen.getByRole("list", { name: "Фото аватара" });
+    const pick = within(bin).getAllByRole("button").find((b) => !b.hasAttribute("disabled"));
+    if (pick === undefined) throw new Error("no photo to drag in the bin");
+    fireEvent.dragStart(pick);
+    const empty = inPreview("Кадр 1: пустая");
+    fireEvent.dragOver(empty);
+    fireEvent.drop(empty);
+    await flush();
+    expect(inPreview("Кадр 1").getAttribute("aria-label")).toBe("Кадр 1");
+    // Filled, the cell no longer needs its hint: the control is back.
+    expect(preview().querySelector(".pv-play") === null).toBe(false);
+  });
+
   test("paused, a ▶ in the frame plays the montage the timeline plays; then it is ❚❚, and stops it", async () => {
     frames = manualFrames();
     const { client, engine } = await studio();
     await openDraft(engine, client);
+    fireEvent.pointerEnter(stage());
     expect([control().getAttribute("aria-label"), shown()]).toEqual(["Воспроизвести", "true"]);
     fireEvent.click(control());
     expect(within(timeline()).getByRole("button", { name: "Пауза" })).toBeDefined();
@@ -718,6 +776,21 @@ describe("the play control on the preview", () => {
     expect(shown()).toBe("true");
     fireEvent.pointerLeave(control());
     frames.advance(34);
+    expect(shown()).toBe("false");
+  });
+
+  test("a new playback does not carry the last one's pointer move, even started from the same spot", async () => {
+    frames = manualFrames();
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
+    fireEvent.pointerMove(stage(), { pointerId: 1, buttons: 0, clientX: 40, clientY: 40 });
+    fireEvent.pointerLeave(stage());
+    frames.advance(34);
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Пауза" }));
+    expect(clockText()).toBe("00:00.0 / 00:08.0");
+    fireEvent.click(within(timeline()).getByRole("button", { name: "Воспроизвести" }));
+    for (let i = 0; i < 36; i++) frames.advance(34);
     expect(shown()).toBe("false");
   });
 

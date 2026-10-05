@@ -1098,8 +1098,9 @@
   cursor: pointer;
 }
 
+/* Inside the cell and in its own place in the stack (review round 1): a focused cell is no longer lifted over the play control, the layers,
+   the zones and the stripes. */
 .pv-cell:focus-visible {
-  z-index: 1;
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -1409,9 +1410,9 @@
   color: var(--faint);
 }
 
-/* The preview's play control (the owner's feedback, 2026-10-05): a round glass button in the middle of the frame, under the layers. Paused it
-   stays; playing it shows only while `data-shown` (a moment after the start, a pointer moving over the frame, hovered) or keyboard-focused,
-   and hidden it takes no click. Hovered it turns the accent of the timeline's own ▶. */
+/* The preview's play control (the owner's feedback, 2026-10-05): a round glass button in the middle of the frame, under the layers. It shows
+   while `data-shown` (paused: the pointer over the frame; playing: a moment after the start or a pointer moving over the frame; hovered) or
+   keyboard-focused, and hidden it takes no press and no drop. Hovered it turns the accent of the timeline's own ▶. */
 .pv-play-wrap {
   position: absolute;
   inset: 0;
@@ -1425,8 +1426,9 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  width: calc(60px * var(--pv-ui));
-  height: calc(60px * var(--pv-ui));
+  /* At most 64 px, however large the frame (review round 1): it is a control, not part of the picture. */
+  width: min(64px, calc(56px * var(--pv-ui)));
+  height: min(64px, calc(56px * var(--pv-ui)));
   padding: 0;
   border: 0;
   border-radius: 50%;

@@ -546,8 +546,9 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           onDrop={(e) => dropOn(e, cell)}
         />
       ))}
-      {/* After the cells and before the layers: drawn above the picture, under every caption and sticker (they keep their presses). */}
-      <PreviewPlay timeline={timeline} gesture={drag !== null} />
+      {/* After the cells and before the layers: drawn above the picture, under every caption and sticker (they keep their presses). Not over
+          an empty cell's drop hint in the middle of the frame. */}
+      {!emptyUnderCentre(view?.cells ?? []) && <PreviewPlay timeline={timeline} gesture={drag !== null || dragPhoto !== null} />}
       {layers.map(({ index, layer }) => {
         const handlers = {
           label: layerLabel(live, index),
@@ -586,11 +587,19 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
 const PLAY_PEEK_MS = 1_000;
 const PLAY_IDLE_MS = 1_600;
 
+/** Whether an empty cell lies under the middle of the frame, where the play control sits: its «перетащите фото» must stay uncovered. */
+function emptyUnderCentre(cells: readonly CellView[]): boolean {
+  const x = FRAME_W / 2;
+  const y = FRAME_H / 2;
+  return cells.some((cell) => cell.content.kind === "empty" && x >= cell.rect.x && x < cell.rect.x + cell.rect.w && y >= cell.rect.y && y < cell.rect.y + cell.rect.h);
+}
+
 /**
- * The preview's own play control (the owner's feedback, 2026-10-05): ▶ in the middle of the frame while paused; while playing, ❚❚ for a moment
- * after the start, while the pointer moves over the frame (and a little after), while it is hovered or keyboard-focused (the stylesheet), and
- * otherwise gone, taking no click. It is `timeline.togglePlay`, the one playback the timeline's button drives. A gesture on the frame (a layer
- * or a crop being dragged) hides it.
+ * The preview's own play control (the owner's feedback, 2026-10-05; review round 1): ▶ in the middle of the frame while paused, shown only while
+ * the pointer is over the frame (so it never rests on the face, and a press in the middle of the frame reaches the cell otherwise); while
+ * playing, ❚❚ for a moment after the start and while the pointer moves over the frame (and a little after). Hovered or keyboard-focused (the
+ * stylesheet) it stays; otherwise it is gone and takes no press. It is `timeline.togglePlay`, the one playback the timeline's button drives. Any
+ * drag on the frame or from the bin (`gesture`) hides it, so a drop in the middle of the frame lands on the cell there.
  */
 function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: boolean }) {
   const playing = usePlaying(timeline.playhead);
@@ -598,26 +607,42 @@ function PreviewPlay({ timeline, gesture }: { timeline: TimelineState; gesture: 
   const rest = usePlayheadRest(timeline.playhead);
   const wrap = useRef<HTMLSpanElement>(null);
   const [hovered, setHovered] = useState(false);
-  /** The playhead's step when the pointer last moved over the frame, in the playback that started at `run`. */
-  const [moved, setMoved] = useState<{ at: number; run: number } | null>(null);
+  /** The pointer is over the frame. */
+  const [over, setOver] = useState(false);
+  /** The playhead's step when the pointer last moved over the frame in THIS playback. */
+  const [movedAt, setMovedAt] = useState<number | null>(null);
+  // Every playback starts with no pointer move of its own: they are told apart by their starts, not by where they started (review round 1).
+  const [wasPlaying, setWasPlaying] = useState(playing);
+  if (playing !== wasPlaying) {
+    setWasPlaying(playing);
+    if (playing) setMovedAt(null);
+  }
 
-  // A pointer moving over the frame (and not dragging there) brings the ❚❚ up; listened to on the stage, so only this control re-renders.
+  // The pointer over the frame, and moving there (not dragging): listened to on the stage, so only this control re-renders.
   useEffect(() => {
     const stage = wrap.current?.parentElement;
     if (stage === null || stage === undefined) return;
+    const onEnter = (): void => setOver(true);
+    const onLeave = (): void => setOver(false);
     const onMove = (event: PointerEvent): void => {
+      setOver(true);
       if (event.buttons !== 0) return;
       const now = timeline.playhead.get();
       if (!now.playing) return;
-      const at = clockMs(now.ms);
-      setMoved((last) => (last !== null && last.at === at && last.run === now.restMs ? last : { at, run: now.restMs }));
+      setMovedAt(clockMs(now.ms));
     };
+    stage.addEventListener("pointerenter", onEnter);
+    stage.addEventListener("pointerleave", onLeave);
     stage.addEventListener("pointermove", onMove);
-    return () => stage.removeEventListener("pointermove", onMove);
+    return () => {
+      stage.removeEventListener("pointerenter", onEnter);
+      stage.removeEventListener("pointerleave", onLeave);
+      stage.removeEventListener("pointermove", onMove);
+    };
   }, [timeline.playhead]);
 
-  const sinceMove = moved !== null && moved.run === rest && step >= moved.at ? step - moved.at : Number.POSITIVE_INFINITY;
-  const shown = !gesture && (!playing || hovered || step - rest < PLAY_PEEK_MS || sinceMove < PLAY_IDLE_MS);
+  const sinceMove = movedAt !== null && step >= movedAt ? step - movedAt : Number.POSITIVE_INFINITY;
+  const shown = !gesture && (hovered || (playing ? step - rest < PLAY_PEEK_MS || sinceMove < PLAY_IDLE_MS : over));
   const label = playing ? "Пауза" : "Воспроизвести";
   return (
     <span ref={wrap} className="pv-play-wrap">
