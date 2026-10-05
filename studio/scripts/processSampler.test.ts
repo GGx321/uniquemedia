@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isFfmpegCommand, ownedRows, parsePosixPs, parseWindowsSamples, PeakTracker, type ProcSample } from "./processSampler";
+import { isFfmpegCommand, ownedRows, parsePosixPs, parseWindowsSamples, PeakTracker, requireSamples, SamplerHarnessError, SampleLatch, type ProcSample } from "./processSampler";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -130,5 +130,56 @@ describe("PeakTracker", () => {
     tracker.record(100, []);
 
     expect(tracker.between(0, 1000)).toEqual({ peakSingleBytes: 0, peakConcurrentBytes: 0, samples: 1 });
+  });
+});
+
+// The Windows sampler is a PowerShell loop whose first sample costs the process's cold start plus a first CIM query over every process. A
+// render that began before it had produced one was measured by nothing (CI run: `samples: 0`, 7.6 s), and the check read that as a memory
+// failure. So the packaged E2E waits for the first sample before its first measured render, and an empty window is a harness error.
+
+describe("SampleLatch", () => {
+  test("a wait made before the first sample is answered when the sample comes", async () => {
+    const latch = new SampleLatch();
+    const waiting = latch.wait(5_000);
+    latch.mark();
+    await expect(waiting).resolves.toBeUndefined();
+  });
+
+  test("a wait made after the first sample is answered at once", async () => {
+    const latch = new SampleLatch();
+    latch.mark();
+    await expect(latch.wait(5_000)).resolves.toBeUndefined();
+  });
+
+  test("a sampler that never samples is a harness error naming the wait, not a pass", async () => {
+    await expect(new SampleLatch().wait(20)).rejects.toThrow(SamplerHarnessError);
+    await expect(new SampleLatch().wait(20)).rejects.toThrow(/no sample within 20 ms/);
+  });
+
+  test("a sampler that dies before its first sample fails the wait with the reason, without waiting out the time", async () => {
+    const latch = new SampleLatch();
+    const waiting = latch.wait(60_000);
+    latch.fail("powershell exited with code 1");
+    await expect(waiting).rejects.toThrow(/powershell exited with code 1/);
+  });
+
+  test("a sampler that died after it had sampled does not undo the wait", async () => {
+    const latch = new SampleLatch();
+    latch.mark();
+    latch.fail("powershell exited with code 1");
+    await expect(latch.wait(5_000)).resolves.toBeUndefined();
+  });
+});
+
+describe("requireSamples", () => {
+  test("hands back a peak that has samples", () => {
+    const peak = { peakSingleBytes: 5, peakConcurrentBytes: 5, samples: 1 };
+    expect(requireSamples(peak, "a render")).toBe(peak);
+  });
+
+  test("a window with no sample is a harness error, never a memory figure of zero", () => {
+    const peak = new PeakTracker().between(0, 1000);
+    expect(() => requireSamples(peak, "photo-kenburns")).toThrow(SamplerHarnessError);
+    expect(() => requireSamples(peak, "photo-kenburns")).toThrow(/harness error: the process sampler took no sample during photo-kenburns/);
   });
 });

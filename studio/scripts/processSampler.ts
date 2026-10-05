@@ -109,8 +109,68 @@ export class PeakTracker {
   }
 }
 
+/** The sampler could not do its job: the run says so as a harness fault, never as a finding about the app (a memory figure of zero is not a pass either). */
+export class SamplerHarnessError extends Error {
+  constructor(message: string) {
+    super(`harness error: ${message}`);
+    this.name = "SamplerHarnessError";
+  }
+}
+
+/** A peak that has at least one sample behind it; an empty window means nothing measured it, which is the harness's fault, not the render's. */
+export function requireSamples(peak: Peak, what: string): Peak {
+  if (peak.samples === 0) throw new SamplerHarnessError(`the process sampler took no sample during ${what}, so its memory was not measured`);
+  return peak;
+}
+
+/** Opens at the sampler's first sample (or fails when the sampler dies before one), so a caller can wait for the sampler to be running before it measures anything. */
+export class SampleLatch {
+  #marked = false;
+  #failure: string | null = null;
+  readonly #waiting = new Set<{ resolve: () => void; reject: (error: SamplerHarnessError) => void }>();
+
+  mark(): void {
+    if (this.#marked) return;
+    this.#marked = true;
+    for (const waiter of this.#waiting) waiter.resolve();
+    this.#waiting.clear();
+  }
+
+  /** The sampler is gone. Ignored once a sample has come: what it measured stays measured. */
+  fail(reason: string): void {
+    if (this.#marked || this.#failure !== null) return;
+    this.#failure = reason;
+    for (const waiter of this.#waiting) waiter.reject(new SamplerHarnessError(`the process sampler stopped before its first sample (${reason})`));
+    this.#waiting.clear();
+  }
+
+  wait(timeoutMs: number): Promise<void> {
+    if (this.#marked) return Promise.resolve();
+    if (this.#failure !== null) return Promise.reject(new SamplerHarnessError(`the process sampler stopped before its first sample (${this.#failure})`));
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.#waiting.delete(waiter);
+        reject(new SamplerHarnessError(`the process sampler took no sample within ${timeoutMs} ms of starting`));
+      }, timeoutMs);
+      const waiter = {
+        resolve: () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        reject: (error: SamplerHarnessError) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      };
+      this.#waiting.add(waiter);
+    });
+  }
+}
+
 export interface FfmpegSampler {
   readonly tracker: PeakTracker;
+  /** Resolves once the sampler has taken its first sample; rejects with a `SamplerHarnessError` if it dies first or takes none in `timeoutMs`. Measure nothing before it. */
+  ready(timeoutMs: number): Promise<void>;
   /** Counts only the ffmpegs that descend from this process (the app under test); the app is relaunched, so it can change. */
   follow(pid: number): void;
   /** The pids of the app's ffmpegs in the newest sample. */
@@ -143,6 +203,7 @@ const WINDOWS_SCRIPT = [
 /** Starts sampling the machine's ffmpegs; only those of the followed app count toward a peak (a developer's machine may run others of its own). */
 export function startFfmpegSampler(platform: NodeJS.Platform = process.platform): FfmpegSampler {
   const tracker = new PeakTracker();
+  const firstSample = new SampleLatch();
   let owner = -1;
   let latest: ProcRow[] = [];
   let latestAll: readonly ProcRow[] = [];
@@ -150,6 +211,7 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
     latestAll = sample.rows;
     latest = ownedRows(sample, owner);
     tracker.record(at, latest);
+    firstSample.mark();
   };
   const follow = (pid: number): void => {
     owner = pid;
@@ -157,6 +219,8 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
 
   if (platform === "win32") {
     const child: ChildProcess = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_SCRIPT], { stdio: ["ignore", "pipe", "ignore"] });
+    child.on("error", (error: Error) => firstSample.fail(`could not start powershell: ${error.message}`));
+    child.on("exit", (code, signal) => firstSample.fail(`powershell exited with ${code === null ? `signal ${String(signal)}` : `code ${code}`}`));
     let pending = "";
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => {
@@ -171,6 +235,7 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
     });
     return {
       tracker,
+      ready: (timeoutMs) => firstSample.wait(timeoutMs),
       follow,
       latestPids: () => latest.map((row) => row.pid),
       runningAmong: (pids) => latestAll.filter((row) => pids.includes(row.pid)).map((row) => row.pid),
@@ -187,6 +252,7 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
   }, POSIX_INTERVAL_MS);
   return {
     tracker,
+    ready: (timeoutMs) => firstSample.wait(timeoutMs),
     follow,
     latestPids: () => latest.map((row) => row.pid),
     runningAmong: (pids) => latestAll.filter((row) => pids.includes(row.pid)).map((row) => row.pid),

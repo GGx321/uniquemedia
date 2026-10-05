@@ -124,7 +124,7 @@ import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
 import { looksLikeAStackTrace } from "./stackTrace";
 import { boxTree, formatBoxTree, mp4Facts } from "./mp4Facts";
-import { startFfmpegSampler } from "./processSampler";
+import { requireSamples, startFfmpegSampler } from "./processSampler";
 import { renderedFileProblems } from "./renderSmokeChecks";
 import { LAYERED_SPEC, MIXED_SPEC, PAIRWISE_SPECS, SMOKE_PHOTOS_NEEDED, smokeSpec, type SmokeSpecPlan } from "./renderSmokeSpecs";
 
@@ -2512,6 +2512,8 @@ const SCENE_CATEGORIES = ["home", "travel", "shoot", "glam", "fit"] as const;
 const MIB = 1024 * 1024;
 /** The longest a clean render may take on any runner: generous, it only ends a hang. */
 const RENDER_WAIT_MS = 180_000;
+/** How long the memory sampler may take to produce its first sample before the run gives up on it as broken (a cold PowerShell on a loaded Windows runner is seconds). */
+const SAMPLER_READY_MS = 60_000;
 
 /** A line for the plan's notes, read from the CI log: what this OS measured. */
 function fact(what: string, value: unknown): void {
@@ -2655,6 +2657,10 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
     listen(cdp);
     await cdp.send("Network.enable");
 
+    // The sampler's first sample (a cold PowerShell and a first CIM query over every process on Windows) can take longer than a whole render;
+    // a render measured before it has one is measured by nothing. Not a finding about the app: a sampler that never samples throws a harness error.
+    await sampler.ready(SAMPLER_READY_MS);
+
     const snapshot = await req(cdp, "engine.snapshot");
     check("render scenario: the engine starts over the scene library and the test export root", field(snapshot, "ok") === true && field(snapshot, "result", "settings", "exportPath") === exportRoot, snapshot);
     fact("platform", `${process.platform} ${process.arch}, Bun ${Bun.version}`);
@@ -2700,8 +2706,9 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
       const render = await finished(plan, started);
       renders.push(render);
       const peak = sampler.tracker.between(started.startedAt, started.startedAt + render.ms);
+      requireSamples(peak, `the render of ${plan.name}`);
       fact(`render of ${plan.name} (${render.videoKind})`, { seconds: Math.round(render.ms / 100) / 10, answerMs: started.answerMs, peakSingleFfmpegMiB: Math.round(peak.peakSingleBytes / MIB), peakAllFfmpegMiB: Math.round(peak.peakConcurrentBytes / MIB), samples: peak.samples, bytes: render.bytes });
-      check(`render scenario: ${plan.name} stays under the pool's peakRSS (${PEAK_RSS_BYTES / MIB} MiB)`, peak.samples > 0 && Math.max(peak.peakSingleBytes, peak.peakConcurrentBytes) <= PEAK_RSS_BYTES, peak);
+      check(`render scenario: ${plan.name} stays under the pool's peakRSS (${PEAK_RSS_BYTES / MIB} MiB)`, Math.max(peak.peakSingleBytes, peak.peakConcurrentBytes) <= PEAK_RSS_BYTES, peak);
       await examine(render);
     };
 
