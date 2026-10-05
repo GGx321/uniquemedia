@@ -194,8 +194,8 @@ function assertCount(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative integer, got ${value}`);
 }
 
-/** `1k`, `low_2k`, `high_resolution`, … — the variant names whose resolution can be read. */
-const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+k|high_resolution)$/;
+/** `1k`, `1.5k`, `low_2k`, `768`, `high_resolution`, … — the variant names whose resolution can be read. */
+const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+(?:\.\d+)?k|\d{3}|high_resolution)$/;
 
 /**
  * Output price of a 1K image at a quality, never an underestimate: Studio
@@ -211,7 +211,7 @@ const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+k|high_resolution)$/;
  *   2K);
  * - otherwise the dearest price.
  */
-function outputMicros(price: ImagePrice, quality: ImageQuality | null): number {
+export function imageOutputMicros(price: ImagePrice, quality: ImageQuality | null): number {
   const outputs = price.outputs.map((o) => ({ variant: o.variant === null ? null : o.variant.toLowerCase(), micros: o.micros }));
   const dearest = (list: ImagePrice["outputs"]): number => list.reduce((max, o) => Math.max(max, o.micros), 0);
   if (outputs.some((o) => o.variant !== null && !RECOGNISED_VARIANT.test(o.variant))) return dearest(outputs);
@@ -231,7 +231,7 @@ function outputMicros(price: ImagePrice, quality: ImageQuality | null): number {
 
 export function imageWorstCase(price: ImagePrice, req: Omit<ImageWorstCaseRequest, "model">): number {
   assertCount("refs", req.refs);
-  return outputMicros(price, req.quality) + req.refs * price.inputImageMicros;
+  return imageOutputMicros(price, req.quality) +req.refs * price.inputImageMicros;
 }
 
 /** Cost of one chat call with these token and image counts, rounded up to a whole micro-dollar. */
@@ -266,7 +266,7 @@ export function chatWorstCase(price: ChatPrice, req: Omit<ChatWorstCaseRequest, 
 // ---------- the dated fallback table ----------
 
 /** Read from /images/models/<id>/endpoints and /models on 2026-09-24 (spike results). Used only when a fetch fails. */
-const FALLBACK_IMAGE: ReadonlyMap<string, ImagePrice> = new Map([
+export const FALLBACK_IMAGE: ReadonlyMap<string, ImagePrice> = new Map([
   [
     "x-ai/grok-imagine-image-2.0",
     {

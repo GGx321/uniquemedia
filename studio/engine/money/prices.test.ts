@@ -461,3 +461,9 @@ test("the fallback table matches the live responses saved on its date", () => {
     expect(book.chatWorstCase({ model: GROK_CHAT, maxTokens: 8_000, inputTokens, images: 1 })).toBe(chatWorstCase(liveChat, { maxTokens: 8_000, inputTokens, images: 1 }));
   }
 });
+
+test("flux-3: sub-1K and fractional-K tiers are recognised, so the 1k price is the worst case, not the 4k one", () => {
+  const price = parseImageEndpoints(fixture("endpoints-flux-3-image.json"), "black-forest-labs/flux-3-image");
+
+  expect(imageWorstCase(price, { quality: null, refs: 1 })).toBe(48_000);
+});
