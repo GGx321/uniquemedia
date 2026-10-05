@@ -168,8 +168,40 @@ export function emptyAnswerRefusal(): WriterRefusal {
   return { problems: ["empty"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
 }
 
+/** A refusal tells the model at most this many of the words it used, and each at most this many UTF-8 bytes. */
+export const REFUSAL_WORDS_MAX = 6;
+export const REFUSAL_WORD_BYTES_MAX = 16;
+
+/** `word` cut to at most `maxBytes` UTF-8 bytes, never in the middle of a character. */
+function clipBytes(word: string, maxBytes: number): string {
+  let bytes = 0;
+  let clipped = "";
+  for (const char of word) {
+    bytes += Buffer.byteLength(char, "utf8");
+    if (bytes > maxBytes) break;
+    clipped += char;
+  }
+  return clipped;
+}
+
+/**
+ * The words a refusal tells the model about. They are the model's own text (a youth rule quotes what the answer said), so
+ * they are bounded: each word clipped, the same word in another case told once (in the spelling it first came in), a word
+ * clipped to nothing dropped, and at most REFUSAL_WORDS_MAX of them. The re-ask's prompt is priced on bytes before it is
+ * sent, so what the model wrote must never decide how large it can grow.
+ */
+function toldWords(words: readonly string[]): string[] {
+  const told = new Map<string, string>();
+  for (const word of words) {
+    const clipped = clipBytes(word, REFUSAL_WORD_BYTES_MAX);
+    const key = clipped.toLowerCase();
+    if (clipped.length > 0 && !told.has(key)) told.set(key, clipped);
+  }
+  return [...told.values()].slice(0, REFUSAL_WORDS_MAX);
+}
+
 function quotedList(words: readonly string[]): string {
-  return words.map((w) => `"${w}"`).join(", ");
+  return toldWords(words).map((w) => `"${w}"`).join(", ");
 }
 
 function slotList(indices: readonly number[]): string {
