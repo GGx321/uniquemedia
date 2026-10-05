@@ -698,7 +698,7 @@ snapshot refusals, the sidecar and listing, the montage bin facets, and the engi
 generated from unmodified code at `main` 3a9cd498 before any change.
 
 Verification at the end of CS.1: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards,
-5625 + 6255 + 6169 = 18049 tests passing, 0 failing (the face parity test skips without the local model cache, as before);
+6368 + 5550 + 6168 = 18086 tests passing, 0 failing (after fix round 1) (the face parity test skips without the local model cache, as before);
 the Windows and macOS CI dispatch is recorded in the task's report.
 
 ### CS.2 — Custom categories engine (test-engineer)
