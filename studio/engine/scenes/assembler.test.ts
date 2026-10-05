@@ -7,7 +7,7 @@ import { plan } from "./planner";
 import { PlanSlotSchema, PoseSchema, type PlanSlot } from "./schema";
 import { SHOTS } from "./types";
 import { revealingWordsIn } from "./words";
-import { AssemblerRefusalError, assembleRun, assembleSlot, BINDING_ANCHOR, POSE_PHRASE, SHOT_PHRASE } from "./assembler";
+import { AssemblerRefusalError, assembleRun, assembleSlot, BINDING_ANCHOR, CAMERA_REALISM_CLAUSE, POSE_PHRASE, SHOT_PHRASE } from "./assembler";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -252,6 +252,55 @@ describe("phrase constants never suggest a minor or use a revealing word (round 
   test.each(allPhrases())("%s has no youth word and no revealing word", (_name, text) => {
     expect(youthWords(text, "descriptor")).toEqual([]);
     expect(revealingWordsIn(text)).toEqual([]);
+  });
+});
+
+// «Реализм камеры»: one fixed clause, off unless asked for, appended after everything else.
+describe("camera realism", () => {
+  test("is not in the prompt by default", () => {
+    expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER).prompt).not.toContain(CAMERA_REALISM_CLAUSE);
+  });
+
+  test("is not in the prompt when switched off explicitly, and the prompt is then exactly the default one", () => {
+    const plain = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER);
+    expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: false })).toEqual(plain);
+  });
+
+  test("ends the prompt when switched on, after the constraints, and leaves everything before it untouched", () => {
+    const plain = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER).prompt;
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: true });
+    expect(prompt).toBe(`${plain} ${CAMERA_REALISM_CLAUSE}`);
+  });
+
+  test("assembleRun passes the switch to every slot", () => {
+    const scenePlan = plan({ seed: 1, count: 3, categories: ["home"] });
+    const sentences = new Map(scenePlan.slots.map((s) => [s.slotIndex, SENTENCE]));
+    const prompts = assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER, { cameraRealism: true }).map((a) => a.prompt);
+    expect(prompts.every((p) => p.endsWith(CAMERA_REALISM_CLAUSE))).toBe(true);
+  });
+
+  test("the clause is a short English sentence about the camera, with no youth word and no revealing word", () => {
+    expect(CAMERA_REALISM_CLAUSE.length).toBeLessThanOrEqual(220);
+    expect(youthWords(CAMERA_REALISM_CLAUSE, "descriptor")).toEqual([]);
+    expect(revealingWordsIn(CAMERA_REALISM_CLAUSE)).toEqual([]);
+    expect(CAMERA_REALISM_CLAUSE).toMatch(/skin texture/i);
+    expect(CAMERA_REALISM_CLAUSE).toMatch(/no airbrushing/i);
+  });
+
+  test("the stop-word filter leaves the clause whole (it contains none of them)", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: true });
+    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE)).toBe(true);
+  });
+
+  test("every valid shot and pose with the clause stays well under 2000 characters", () => {
+    for (const shot of SHOTS) {
+      for (const pose of PoseSchema.options) {
+        const candidate = { ...slot(), shot, pose };
+        if (!PlanSlotSchema.safeParse(candidate).success) continue;
+        const { prompt } = assembleSlot(DESCRIPTOR, candidate, SENTENCE, MASTER, { cameraRealism: true });
+        expect(prompt.length).toBeLessThan(2000);
+      }
+    }
   });
 });
 

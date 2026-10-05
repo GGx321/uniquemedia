@@ -36,4 +36,4 @@ export {
   type WriterRefusal,
   type WriterScene,
 } from "./writer";
-export { assembleRun, assembleSlot, AssemblerRefusalError, type AssembledScene } from "./assembler";
+export { assembleRun, assembleSlot, AssemblerRefusalError, CAMERA_REALISM_CLAUSE, type AssembledScene, type AssembleOptions } from "./assembler";

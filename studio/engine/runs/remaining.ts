@@ -5,7 +5,7 @@ import type { Ledger, Scope } from "../money/ledger";
 import type { PricedBook } from "../money/priceCache";
 import type { PriceBook } from "../money/prices";
 import { attemptPaid, paidAttempts, type LedgerView, type RunState } from "./journal";
-import { RUN_ATTEMPTS_PER_SLOT, runRoute, type RunPlan } from "./plan";
+import { planRoute, RUN_ATTEMPTS_PER_SLOT, type RunPlan } from "./plan";
 
 // T6 review M3: what a resume of a run could still spend, for the owner to
 // accept before it, as before a start. Worst: every open slot's remaining
@@ -63,7 +63,7 @@ export function capFundsResume(plan: RunPlan, committedMicros: number, minToProg
 
 export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState, committedMicros: number, ledger: LedgerView): RemainingPlan {
   const { book } = priced;
-  const [primary, fallback] = runRoute(plan.models.image);
+  const [primary, fallback] = planRoute(plan);
   const ageOn = plan.imageAgeCheck === "on";
   const ageWorst = ageOn ? book.chatWorstCase({ model: AGE_CHECK_CALL.model, maxTokens: AGE_CHECK_CALL.maxTokens, inputTokens: AGE_CHECK_CALL.inputTokens, images: AGE_CHECK_CALL.images }) : 0;
   const ageTypical = ageOn ? book.chatCost({ model: AGE_CHECK_CALL.model, images: AGE_CHECK_CALL.images, ...AGE_CHECK_CALL.typical }) : 0;

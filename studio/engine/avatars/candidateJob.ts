@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { FfmpegError } from "../../node/runFfmpeg";
 import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
-import type { AvatarDescriptor, EngineError, FailedCandidateSlot, ImageAgeCheck } from "../../shared/engine";
+import type { AvatarDescriptor, EngineError, FailedCandidateSlot, ImageAgeCheck, ImageQuality } from "../../shared/engine";
 import type { CandidatesJobEnd } from "../jobs";
 import type { NewPhotoMeta } from "../library";
 import { imageSize, isAnimatedImage } from "../library/media";
@@ -52,6 +52,8 @@ export interface CandidateJob {
   scope: Scope;
   /** The settings' image model. */
   imageModel: string;
+  /** The settings' image quality captured with the model; `null` sends none, absent is `low`. */
+  imageQuality?: ImageQuality | null;
   /** The draft's descriptor: the prompt is built from it alone (prompts.ts). */
   descriptor: AvatarDescriptor;
   /** Slots in flight at once: the settings' network concurrency. */
@@ -203,7 +205,7 @@ export async function runCandidateJob(deps: CandidateJobDeps, job: CandidateJob)
  * request is still reserved on disk, and checked again, when it is sent.
  */
 async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, isFatal: () => boolean): Promise<SlotOutcome> {
-  const choice = candidateImage(job.imageModel);
+  const choice = candidateImage(job.imageModel, job.imageQuality);
   const attemptId = candidateAttemptId(job.jobId, slot);
   const ageId = ageAttemptId(job.jobId, slot);
   const imageAgeCheck = job.imageAgeCheck;
@@ -232,7 +234,7 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
 }
 
 async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, ageShape: ChatPriceShape | null): Promise<SlotOutcome> {
-  const choice = candidateImage(job.imageModel);
+  const choice = candidateImage(job.imageModel, job.imageQuality);
   const attemptId = candidateAttemptId(job.jobId, slot);
   const image = await deps.generateImage({
     attemptId,

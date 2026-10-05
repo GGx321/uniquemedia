@@ -11,6 +11,7 @@ import {
   RunPlanSchema,
   runEstimate,
   runPriceModels,
+  planRoute,
   runRoute,
   sceneCategory,
   slotAttemptIds,
@@ -44,6 +45,36 @@ describe("runRoute", () => {
   });
 });
 
+describe("runRoute with a chosen quality", () => {
+  test("sends the chosen quality to the settings' image model and keeps the refusal fallback's none", () => {
+    expect(runRoute(MODELS.imageModel, "medium")).toEqual([
+      { model: "x-ai/grok-imagine-image-2.0", quality: "medium", refs: 1 },
+      { model: FALLBACK_IMAGE_MODEL, quality: null, refs: 1 },
+    ]);
+  });
+
+  test("sends no quality at all for a model with no quality knob (null)", () => {
+    expect(runRoute("black-forest-labs/flux-3-image", null)[0]).toEqual({ model: "black-forest-labs/flux-3-image", quality: null, refs: 1 });
+  });
+
+  test("Seedream as the image model never carries a quality, whatever was chosen", () => {
+    expect(runRoute(FALLBACK_IMAGE_MODEL, "medium")).toEqual([{ model: FALLBACK_IMAGE_MODEL, quality: null, refs: 1 }]);
+  });
+});
+
+describe("planRoute", () => {
+  test("reads the quality the plan was made with", () => {
+    const run = buildRunPlan({ ...newRun(2), models: { ...MODELS, imageQuality: "medium" } });
+    expect(planRoute(run)[0]).toMatchObject({ model: MODELS.imageModel, quality: "medium" });
+  });
+
+  test("a plan written before the choice existed (no imageQuality) keeps the low every such run was priced at", () => {
+    const { imageQuality: _drop, ...models } = buildRunPlan(newRun(2)).models;
+    const legacy = RunPlanSchema.parse({ ...buildRunPlan(newRun(2)), models });
+    expect(planRoute(legacy)[0]).toMatchObject({ quality: "low" });
+  });
+});
+
 describe("runPriceModels", () => {
   test("prices both image models of the route and the settings' text model for the writer", () => {
     expect(runPriceModels(MODELS, "off")).toEqual({ imageModels: [MODELS.imageModel, FALLBACK_IMAGE_MODEL], chatModels: ["x-ai/grok-4.3"] });
@@ -73,6 +104,15 @@ describe("runEstimate (the plan's money model, at the dated fallback prices)", (
   test("100 photos (four writer chunks): ≈ $15.30 off, ≈ $16.875 on", () => {
     expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100 }, "off").worstMicros).toBe(15_300_000);
     expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100 }, "on").worstMicros).toBe(16_875_000);
+  });
+
+  test("the chosen quality prices every attempt: medium at $0.06 + $0.01 reference makes 20 photos a $4.275 cap", () => {
+    expect(runEstimate(FALLBACK_PRICES, { ...MODELS, imageQuality: "medium" }, { count: 20 }, "off").worstMicros).toBe(4_275_000);
+    expect(runEstimate(FALLBACK_PRICES, { ...MODELS, imageQuality: "low" }, { count: 20 }, "off").worstMicros).toBe(3_075_000);
+  });
+
+  test("a model with no quality knob is priced without one: Seedream alone, 20 photos, is a $2.955 cap", () => {
+    expect(runEstimate(FALLBACK_PRICES, { imageModel: FALLBACK_IMAGE_MODEL, textModel: "x-ai/grok-4.3", imageQuality: null }, { count: 20 }, "off").worstMicros).toBe(2_955_000);
   });
 
   test("attempts per slot are the invariant's maximum", () => {
@@ -125,6 +165,31 @@ function newRun(count: number, request: Partial<RunRequest> = {}): NewRunPlan {
     scenes: plan({ seed: 7, count, categories: categories.map(sceneCategory) }),
   };
 }
+
+describe("buildRunPlan: the image choice", () => {
+  test("persists the quality the run was priced with, and the camera realism it was started with", () => {
+    const run = buildRunPlan({ ...newRun(2), models: { ...MODELS, imageQuality: "medium" }, cameraRealism: true });
+    expect(run.models.imageQuality).toBe("medium");
+    expect(run.cameraRealism).toBe(true);
+  });
+
+  test("persists null for a model with no quality knob, and camera realism off by default", () => {
+    const run = buildRunPlan({ ...newRun(2), models: { ...MODELS, imageQuality: null } });
+    expect(run.models.imageQuality).toBeNull();
+    expect(run.cameraRealism).toBe(false);
+  });
+
+  test("a plan.json written before the choice (neither field) still parses", () => {
+    const { imageQuality: _q, ...models } = buildRunPlan(newRun(2)).models;
+    const { cameraRealism: _c, ...rest } = buildRunPlan(newRun(2));
+    expect(RunPlanSchema.safeParse({ ...rest, models }).success).toBe(true);
+  });
+
+  test("refuses a quality outside low, medium or null", () => {
+    const run = buildRunPlan(newRun(2));
+    expect(RunPlanSchema.safeParse({ ...run, models: { ...run.models, imageQuality: "high" } }).success).toBe(false);
+  });
+});
 
 describe("buildRunPlan", () => {
   test("pre-allocates every slot's attempt ids from its own attemptIdBase, in plan order", () => {

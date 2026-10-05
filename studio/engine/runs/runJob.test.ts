@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AvatarDescriptor, EngineError } from "../../shared/engine";
+import type { AvatarDescriptor, EngineError, ImageQuality } from "../../shared/engine";
 import { NoFaceInReferenceError } from "../face";
 import { openLibrary, type Library } from "../library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../library/testing/helpers";
@@ -12,7 +12,7 @@ import { reconcile } from "../money/reconcile";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type FetchCall, type Reply } from "../openrouter/testing/fakes";
 import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
-import { plan as planScenes, type PlanSlot } from "../scenes";
+import { CAMERA_REALISM_CLAUSE, plan as planScenes, type PlanSlot } from "../scenes";
 import { RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
@@ -90,11 +90,11 @@ async function openMoney(clock: () => number): Promise<{ ledger: Ledger; budget:
 
 // ---------- the run ----------
 
-async function newRun(count: number, opts: { cap?: number; imageModel?: string; avatar?: string } = {}): Promise<RunPlan> {
+async function newRun(count: number, opts: { cap?: number; imageModel?: string; avatar?: string; imageQuality?: ImageQuality | null; cameraRealism?: boolean } = {}): Promise<RunPlan> {
   const imageModel = opts.imageModel ?? PRIMARY;
   const runAvatar = opts.avatar ?? avatarId;
   const request = { avatarId: runAvatar, count, categories: ["home" as const], poses: { profile: false, back: false } };
-  const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, textModel: TEXT }, request, "off").worstMicros;
+  const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel, imageQuality: opts.imageQuality, textModel: TEXT }, request, "off").worstMicros;
   const cap = opts.cap ?? estimated;
   const run = buildRunPlan({
     runId: RUN_ID,
@@ -102,7 +102,8 @@ async function newRun(count: number, opts: { cap?: number; imageModel?: string; 
     createdAt: new Date(NOW).toISOString(),
     request,
     imageAgeCheck: "off",
-    models: { imageModel, textModel: TEXT },
+    models: { imageModel, imageQuality: opts.imageQuality, textModel: TEXT },
+    cameraRealism: opts.cameraRealism,
     capMicros: cap,
     plannedWorstMicros: Math.max(cap, estimated),
     scenes: planScenes({ seed: 5, count, categories: ["home"] }),
@@ -397,6 +398,38 @@ describe("a run from the start", () => {
     expect(body.prompt).toContain(`${SENTENCE} (slot 1)`);
     expect(body).toMatchObject({ model: PRIMARY, quality: "low", resolution: "1K", aspect_ratio: "9:16" });
     expect(Array.isArray(body.input_references) ? body.input_references.length : 0).toBe(1);
+  });
+
+  test("the image request carries the quality the plan was made with", async () => {
+    const run = await newRun(1, { imageQuality: "medium" });
+    const { net, end } = start(run);
+    await end;
+
+    expect(net.imageCalls()[0]?.json()).toMatchObject({ model: PRIMARY, quality: "medium" });
+  });
+
+  test("a plan for a model with no quality knob sends no quality at all", async () => {
+    const run = await newRun(1, { imageQuality: null });
+    const { net, end } = start(run);
+    await end;
+
+    expect(net.imageCalls()[0]?.json().quality).toBeUndefined();
+  });
+
+  test("camera realism on: every image prompt ends with the fixed clause", async () => {
+    const run = await newRun(1, { cameraRealism: true });
+    const { net, end } = start(run);
+    await end;
+
+    expect(String(net.imageCalls()[0]?.json().prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+  });
+
+  test("camera realism off (the default): the clause is not in the prompt", async () => {
+    const run = await newRun(1);
+    const { net, end } = start(run);
+    await end;
+
+    expect(String(net.imageCalls()[0]?.json().prompt)).not.toContain(CAMERA_REALISM_CLAUSE);
   });
 
   test("reports progress once per slot that ends", async () => {
