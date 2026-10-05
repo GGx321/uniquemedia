@@ -182,11 +182,27 @@ export interface MusicCardProps {
 /** The media panel's tabs that hold tracks: the trending list and the owner's own files. */
 export type TrackTab = Extract<MediaTab, "music" | "mine">;
 
-/** «Другой трек — во вкладке «Музыка» или «Мои»»: where another track is picked, said for a track that cannot be used, after `lead`. */
-function TrackSwap({ lead = "Другой трек", onOpenTab }: { lead?: string; onOpenTab: (tab: TrackTab) => void }) {
+/**
+ * A trending track out of the list, before the engine has judged it: its facts are unknown, and it is picked again in «Музыка» (review round 2:
+ * not sent to «Мои», which holds no trending track).
+ */
+function UnlistedSwap({ onOpenTab }: { onOpenTab: (tab: TrackTab) => void }) {
   return (
     <p className="faint ed-music-swap">
-      {lead} — во вкладке{" "}
+      Длина и лучшие части этого трека неизвестны: выберите его снова во вкладке{" "}
+      <button type="button" className="ed-link" aria-label="Открыть вкладку «Музыка»" onClick={() => onOpenTab("music")}>
+        «Музыка»
+      </button>{" "}
+      или другой трек.
+    </p>
+  );
+}
+
+/** «Другой трек — во вкладке «Музыка» или «Мои»»: where another track is picked, said for a track that cannot be used. */
+function TrackSwap({ onOpenTab }: { onOpenTab: (tab: TrackTab) => void }) {
+  return (
+    <p className="faint ed-music-swap">
+      Другой трек — во вкладке{" "}
       <button type="button" className="ed-link" aria-label="Открыть вкладку «Музыка»" onClick={() => onOpenTab("music")}>
         «Музыка»
       </button>{" "}
@@ -314,7 +330,7 @@ export function MusicProperties({ session, spec, timeline, lookup, listVersion, 
       ) : null}
       {/* Without a reason on screen (the verdict not in yet), a track out of the list or out of the library still says, once, where to pick it
           again or another one (review round 1: one line, not the old hint and this one). */}
-      {problem === null && swap && <TrackSwap lead={lookup.state === "unlisted" ? "Длина и лучшие части этого трека неизвестны: выберите его снова или другой" : undefined} onOpenTab={onOpenTab} />}
+      {problem === null && swap && (lookup.state === "unlisted" ? <UnlistedSwap onOpenTab={onOpenTab} /> : <TrackSwap onOpenTab={onOpenTab} />)}
 
       <p className="ed-music-copy">
         <Icon name="check" size={13} strokeWidth={2.6} />

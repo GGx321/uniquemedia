@@ -496,6 +496,24 @@ describe("the music card: the whole track, the window, the highlight picks", () 
     expect(document.activeElement === tab("Музыка")).toBe(true);
   });
 
+  // Review round 2 nit: before the engine has judged the spec on screen there is no reason to show, only that the track is out of the list. A
+  // trending track is picked again in «Музыка», so the line no longer sends the owner to «Мои» for it.
+  test("a track gone from the list, not judged yet: one line, to pick it again in «Музыка» or another track", async () => {
+    const { client, engine } = await studio({ music: MUSIC });
+    await openDraft(engine, client, { music: { source: "trending", trackId: "track-gone-000001", startMs: 0 } });
+    // The engine's next reads are held: the edit below stays unjudged.
+    for (let i = 0; i < 4; i++) engine.delayNext("montages.get", 60_000);
+    fireEvent.click(tab("Текст"));
+    fireEvent.click(within(media()).getByRole("button", { name: /^Добавить текст в / }));
+    selectBlock(/^Музыка:/);
+    await within(props()).findByText("Трек из прежнего списка");
+    const lines = [...props().querySelectorAll(".ed-music-swap, .ed-props-note, .ed-music-problem")].map((p) => plain(p.textContent));
+    expect(lines).toEqual(["Длина и лучшие части этого трека неизвестны: выберите его снова во вкладке «Музыка» или другой трек."]);
+    expect(within(props()).queryByRole("button", { name: "Открыть вкладку «Мои»" }) === null).toBe(true);
+    fireEvent.click(within(props()).getByRole("button", { name: "Открыть вкладку «Музыка»" }));
+    expect(tab("Музыка").getAttribute("aria-selected")).toBe("true");
+  });
+
   test("a track gone from the list (its length unknown) points to the tabs too", async () => {
     const { client, engine } = await studio({ music: MUSIC });
     await openDraft(engine, client, { music: { source: "trending", trackId: "track-gone-000001", startMs: 0 } });
