@@ -157,7 +157,7 @@ describe("music fixtures: tracks", () => {
     expect(Object.keys(stream?.tags ?? {}).filter((k) => ["title", "artist", "album", "comment"].includes(k))).toEqual([]);
   });
 
-  test.each(Object.entries(musicTracks))("%s keeps its measured true peak and comes from a track in a list", async (_name, f) => {
+  test.each(Object.entries(musicTracks))("%s keeps its measured true peak and stands in for a track in a list", async (_name, f) => {
     const { truePeak, lufs } = await measure(f.file);
     expect(Math.abs(truePeak - f.truePeakDbtp)).toBeLessThan(0.051);
     expect(lufs).toBeLessThan(-12);

@@ -1,9 +1,10 @@
 import { fileURLToPath } from "node:url";
 
-// The music fixtures (Stage 3c.1), copied from the SP0/SP5 spike cache. Later
+// The music fixtures (Stage 3c.1). The lists are captured API responses; the tracks are SYNTHETIC (generate.ts: tones, noise and bursts, encoded to HE-AAC), because the
+// repository is public and no commercial recording may be committed. Later
 // tests (3c.3 client, 3c.4 store, 3c.5 audio chain) import their paths from
 // here rather than hard-coding them. Size and sha256 are pinned by
-// fixtures.test.ts; README.md says where the files came from and why they are
+// fixtures.test.ts; README.md says how the files are made and why they are
 // short. Test-only: never imported by production code.
 
 const here = (relative: string): string => fileURLToPath(new URL(relative, import.meta.url));
@@ -30,13 +31,12 @@ export interface MusicTrackFixture {
   readonly file: string;
   readonly bytes: number;
   readonly sha256: string;
+  /** The id of the list track this file stands in for: the fake CDN serves these bytes under that track's download URL. */
   readonly trackId: string;
-  /** Where the excerpt starts inside the full track. */
-  readonly sourceStartMs: number;
-  /** Excerpt length, to the nearest 10 ms (AAC frames make it inexact). */
+  /** Length, to the nearest 10 ms (AAC frames make it inexact). */
   readonly durationMs: number;
   readonly sampleRate: 44100 | 48000;
-  /** Measured on the excerpt with ffmpeg `ebur128=peak=true`, to 0.1 dB. */
+  /** Measured on the file with ffmpeg `ebur128=peak=true`, to 0.1 dB; generate.ts searches for the signal level that lands on it. */
   readonly truePeakDbtp: number;
   readonly purpose: string;
 }
@@ -68,47 +68,43 @@ export const musicLists = {
 
 export const musicTracks = {
   hot: {
-    file: here("./tracks/hot-4199287736976977.mp4"),
-    bytes: 93509,
-    sha256: "b335706d698c1f21ee9dd6731657733a15441cf0cfe3809ed8e2083261f33e39",
+    file: here("./tracks/hot.mp4"),
+    bytes: 48360,
+    sha256: "9fc6cf100f3d65118af6266d9be54f5000648f98b3d5cf416eac2190cde9bd08",
     trackId: "4199287736976977",
-    sourceStartMs: 82000,
     durationMs: 8030,
     sampleRate: 44100,
     truePeakDbtp: 3.0,
-    purpose: "Invariant 21 hot: the hottest cached track, +3.0 dBTP, needs -4.5 dB.",
+    purpose: "Invariant 21 hot: +3.0 dBTP, needs -4.5 dB.",
   },
   threshold: {
-    file: here("./tracks/threshold-774126508789756.mp4"),
-    bytes: 75947,
-    sha256: "cd97f6591c04c759dda5ad45e48816386434b2d2ceb6457d3812ff1aff31cc98",
+    file: here("./tracks/threshold.mp4"),
+    bytes: 42060,
+    sha256: "db3e548f3bb2e2b9240d0bde346337b68353245218d424ea517e6572d7248c9a",
     trackId: "774126508789756",
-    sourceStartMs: 72000,
     durationMs: 8040,
     sampleRate: 44100,
     truePeakDbtp: -1.6,
     purpose: "Invariant 21 threshold: right at the -1.5 dB target, gain 0.",
   },
   quiet: {
-    file: here("./tracks/quiet-4207179866261956.mp4"),
-    bytes: 70803,
-    sha256: "929fba9f9aa9a6f176fc994337c986267d154ea299d1557cf0559228f544fab2",
+    file: here("./tracks/quiet.mp4"),
+    bytes: 38350,
+    sha256: "34e360acd9f6897178d4594603443b3cd5d84aa2c712bb5646fe67b1ffc9de00",
     trackId: "4207179866261956",
-    sourceStartMs: 8000,
-    durationMs: 8050,
+    durationMs: 8030,
     sampleRate: 44100,
     truePeakDbtp: -5.7,
     purpose: "Invariant 21 quiet: at most -5.2 dBTP, gain 0.",
   },
   he48k: {
-    file: here("./tracks/he-aac-48k-1644648520025224.mp4"),
-    bytes: 51156,
-    sha256: "ee3e37285895d186195efce98482c103039f50c4f25d35809742fc2841ba4bc3",
+    file: here("./tracks/he-aac-48k.mp4"),
+    bytes: 34848,
+    sha256: "f4a15f5c49148a39bcc085d3d3e1548809e5df4bbbad868d1e6b8e217386342e",
     trackId: "1644648520025224",
-    sourceStartMs: 24000,
     durationMs: 6020,
     sampleRate: 48000,
     truePeakDbtp: -5.5,
-    purpose: "The 48 kHz HE-AAC input variant (32 of 34 cached tracks are 44.1 kHz).",
+    purpose: "The 48 kHz HE-AAC input variant (the API serves a few; the rest are 44.1 kHz).",
   },
 } as const satisfies Record<string, MusicTrackFixture>;
