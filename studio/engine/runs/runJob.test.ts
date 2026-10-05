@@ -12,7 +12,8 @@ import { reconcile } from "../money/reconcile";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type FetchCall, type Reply } from "../openrouter/testing/fakes";
 import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
-import { plan as planScenes, type PlanSlot } from "../scenes";
+import { plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
+import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
@@ -419,6 +420,80 @@ describe("a run from the start", () => {
 });
 
 // ---------- the provider route ----------
+
+// CS.1: a run may name a custom category. Its plan carries the snapshot, the
+// writer is told the snapshot's label, the assembler finishes the prompt by the
+// snapshot's style, and each photo's sidecar keeps the owner's name for it.
+describe("a run with a custom category", () => {
+  async function newCustomRun(count: number, style: "phone" | "editorial", categories: readonly ("home" | typeof CUSTOM_REF)[] = [CUSTOM_REF]): Promise<RunPlan> {
+    const request = { avatarId, count, categories: [...categories], poses: { profile: false, back: false } };
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
+    const run = buildRunPlan({
+      runId: RUN_ID,
+      avatarId,
+      createdAt: new Date(NOW).toISOString(),
+      request,
+      categories: [customSnapshot(style)],
+      imageAgeCheck: "off",
+      models: { imageModel: PRIMARY, textModel: TEXT },
+      capMicros: estimated,
+      plannedWorstMicros: estimated,
+      scenes: planWithPools({ seed: 5, count, categories: [...categories] }, { ...POOLS, [CUSTOM_REF]: CUSTOM_POOL }),
+    });
+    await library.createRun(RUN_ID, run, RunPlanSchema);
+    caps.set(scopeKey(SCOPE), estimated);
+    return run;
+  }
+
+  test("each photo's sidecar keeps the custom ref and the owner's name for it, and a built-in slot keeps neither", async () => {
+    const run = await newCustomRun(4, "phone", ["home", CUSTOM_REF]);
+    const result = await start(run).end;
+
+    expect(result.status).toBe("done");
+    if (result.status !== "done") return;
+    const sources = result.photoIds.map((id) => library.getPhoto(id)?.source);
+    const byCategory = (category: string) => sources.filter((s) => s?.kind === "generated" && s.category === category);
+    expect(byCategory(CUSTOM_REF)).toHaveLength(2);
+    expect(byCategory("home")).toHaveLength(2);
+    for (const s of byCategory(CUSTOM_REF)) expect(s).toMatchObject({ categoryLabel: "Кофейни Парижа" });
+    for (const s of byCategory("home")) expect(s !== undefined && "categoryLabel" in s).toBe(false);
+  });
+
+  test("the writer is told the snapshot's English label, never the id or the owner's name", async () => {
+    const run = await newCustomRun(3, "phone");
+    const net = network();
+    await start(run, { net }).end;
+
+    const writerBody = JSON.stringify(net.writerCalls()[0]?.json());
+    expect(writerBody).toContain("Paris cafes");
+    expect(writerBody).not.toContain(CUSTOM_REF);
+    expect(writerBody).not.toContain("Кофейни");
+  });
+
+  test.each([
+    ["editorial", "Editorial photo", "Smartphone photo"],
+    ["phone", "Smartphone photo", "Editorial photo"],
+  ] as const)("the image prompt is finished by the snapshot's %s style", async (style, wanted, unwanted) => {
+    const run = await newCustomRun(2, style);
+    const net = network();
+    await start(run, { net }).end;
+
+    const prompts = net.imageCalls().map((c) => JSON.stringify(c.json()));
+    expect(prompts).toHaveLength(2);
+    for (const prompt of prompts) {
+      expect(prompt).toContain(wanted);
+      expect(prompt).not.toContain(unwanted);
+      expect(prompt).not.toContain(CUSTOM_REF);
+    }
+  });
+
+  test("a custom slot is written to the avatar's scene history like any other", async () => {
+    const run = await newCustomRun(2, "phone");
+    await start(run).end;
+    const recent = await library.recentPairs(avatarId, 10);
+    expect(recent.map((r) => r.location).sort()).toEqual(run.scenes.slots.map((s) => s.location).sort());
+  });
+});
 
 describe("the provider route", () => {
   test("a moderation refusal on the primary sends the slot's next attempt to Seedream, once", async () => {

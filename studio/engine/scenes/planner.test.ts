@@ -9,8 +9,9 @@ useNativeGlobals();
 const ALL_CATEGORIES = [...CATEGORIES];
 const REVEALING = /\b(bikini|swimsuit|swimwear|lingerie|sports bra|thong|stockings?|slip dress|robe over lingerie)\b/i;
 
-function placeOf(category: (typeof ALL_CATEGORIES)[number], location: string) {
-  const place = POOLS[category].locations.find((l) => l.name === location);
+function placeOf(category: string, location: string) {
+  const pool = Object.entries(POOLS).find(([name]) => name === category)?.[1];
+  const place = pool?.locations.find((l) => l.name === location);
   if (!place) throw new Error(`no location "${location}" in ${category}`);
   return place;
 }

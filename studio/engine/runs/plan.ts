@@ -1,9 +1,10 @@
 import { z } from "zod";
-import { AttemptId, Id, ImageAgeCheck, Micros, ModelId, RunRequest, type Estimate } from "../../shared/engine";
+import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, isCustomCategory, Micros, ModelId, RunRequest, type CategoryRef, type Estimate } from "../../shared/engine";
 import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
-import { ScenePlanSchema, type Category, type ScenePlan } from "../scenes";
+import { categoryLabelOf, categoryRefOf, plannerCategoryOf, ScenePlanSchema, writerMessages, type PlannerCategory, type ScenePlan } from "../scenes";
 import { chunkSlots } from "../scenes/writer";
+import type { WriterPhase } from "./writerPhase";
 
 // T6: what a photo run is before anything is sent. One place for the
 // provider route, the estimate (the run's own cap: invariant 3), the attempt
@@ -50,30 +51,14 @@ export interface RunModels {
   textModel: string;
 }
 
-/** The contract's short names for the planner's categories (the Photos mockup's own labels). */
-const SCENE_CATEGORY = {
-  home: "home",
-  travel: "travel",
-  shoot: "photoshoot",
-  glam: "glamour",
-  fit: "fitness",
-} as const satisfies Record<RunCategory, Category>;
-
-/** The inverse of SCENE_CATEGORY; plan.test.ts pins that the two round-trip. */
-const CONTRACT_CATEGORY = {
-  home: "home",
-  travel: "travel",
-  photoshoot: "shoot",
-  glamour: "glam",
-  fitness: "fit",
-} as const satisfies Record<Category, RunCategory>;
-
-export function sceneCategory(category: RunCategory): Category {
-  return SCENE_CATEGORY[category];
+/** The planner's name for a contract category (a custom id stays what it is); scenes/categories.ts owns the table. */
+export function sceneCategory(category: RunCategory): PlannerCategory {
+  return plannerCategoryOf(category);
 }
 
-export function contractCategory(category: Category): RunCategory {
-  return CONTRACT_CATEGORY[category];
+/** The contract's name for a planner category (a custom id stays what it is); plan.test.ts pins that the two round-trip. */
+export function contractCategory(category: PlannerCategory): CategoryRef {
+  return categoryRefOf(category);
 }
 
 /**
@@ -86,6 +71,21 @@ export function runRoute(imageModel: string): [ImageChoice, ...ImageChoice[]] {
   const fallback: ImageChoice = { model: FALLBACK_IMAGE_MODEL, quality: null, refs: 1 };
   if (imageModel === FALLBACK_IMAGE_MODEL) return [fallback];
   return [{ model: imageModel, quality: "low", refs: 1 }, fallback];
+}
+
+/**
+ * What a run hands its writer phase: the call shape (exactly money/estimate.ts's
+ * WRITER_CALL ceilings and attempts, the one source of truth the estimate prices)
+ * and the messages builder, naming each slot's category by the plan's own
+ * snapshot (never the category library). Everything else of the phase is the
+ * run's; a scene set (phase 2) passes its own.
+ */
+export function runWriterConfig(snapshots: readonly CategorySnapshot[] | undefined): Pick<WriterPhase, "call" | "messages"> {
+  const labelOf = categoryLabelOf(snapshots ?? []);
+  return {
+    call: { maxTokens: WRITER_CALL.maxTokens, inputTokens: WRITER_CALL.inputTokens, maxAttempts: WRITER_CALL.maxAttempts },
+    messages: (slots, feedback) => writerMessages(slots, feedback, labelOf),
+  };
 }
 
 /** The writer's call on the settings' text model, with the one source of truth's limits (money/estimate.ts). */
@@ -173,6 +173,8 @@ export const RunPlanSchema = z
     avatarId: Id,
     createdAt: z.iso.datetime(),
     request: z.preprocess(dropLegacyResolution, RunRequest),
+    /** A snapshot of every custom category the run uses, so a resume never reads the category library. Absent for a built-in-only run. */
+    categories: z.array(CategorySnapshot).optional(),
     imageAgeCheck: ImageAgeCheck,
     models: z.strictObject({ image: ModelId, fallback: ModelId.nullable(), text: ModelId }),
     capMicros: Micros,
@@ -195,6 +197,12 @@ export const RunPlanSchema = z
         ctx.addIssue({ code: "custom", message: `slot ${slot.slotIndex}'s attempt ids must start with ${prefix}`, path: ["slotAttempts", i] });
       }
     }
+    const snapshotRefs = (run.categories ?? []).map((c) => c.ref);
+    if (new Set(snapshotRefs).size !== snapshotRefs.length) ctx.addIssue({ code: "custom", message: "a custom category must have one snapshot entry at most", path: ["categories"] });
+    const used = new Set([...run.request.categories, ...slots.map((s) => s.category)].filter(isCustomCategory));
+    for (const ref of used) {
+      if (!snapshotRefs.includes(ref)) ctx.addIssue({ code: "custom", message: `the plan names custom category ${ref} without a snapshot of it`, path: ["categories"] });
+    }
     const covered = run.writerChunks.flatMap((c) => c.slotIndexes);
     if (covered.length !== slots.length || slots.some((s, i) => covered[i] !== s.slotIndex)) {
       ctx.addIssue({ code: "custom", message: "the writer's chunks must cover every slot once, in plan order", path: ["writerChunks"] });
@@ -209,6 +217,8 @@ export interface NewRunPlan {
   avatarId: string;
   createdAt: string;
   request: RunRequest;
+  /** A snapshot of every custom category the run uses (none for a built-in-only run). */
+  categories?: readonly CategorySnapshot[] | undefined;
   imageAgeCheck: ImageAgeCheck;
   models: RunModels;
   capMicros: number;
@@ -226,6 +236,8 @@ export function buildRunPlan(input: NewRunPlan): RunPlan {
     avatarId: input.avatarId,
     createdAt: input.createdAt,
     request: input.request,
+    // Omitted, not empty, for a built-in-only run: its plan.json is the document main wrote.
+    ...(input.categories === undefined || input.categories.length === 0 ? {} : { categories: input.categories }),
     imageAgeCheck: input.imageAgeCheck,
     models: { image: route[0].model, fallback: route[1]?.model ?? null, text: input.models.textModel },
     capMicros: input.capMicros,

@@ -1,11 +1,10 @@
 import type { EngineError } from "../../shared/engine";
 import type { Budget } from "../money/budget";
-import { WRITER_CALL } from "../money/estimate";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
-import type { ChatResult, OpenRouterClient } from "../openrouter/types";
-import { emptyAnswerRefusal, readWriterAnswer, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type WriterRefusal } from "../scenes";
+import type { ChatMessage, ChatResult, OpenRouterClient } from "../openrouter/types";
+import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type WriterRefusal } from "../scenes";
 import { classifyFailure } from "./failures";
 import { attemptPaid, type LedgerView } from "./journal";
 import type { Release } from "./pools";
@@ -39,7 +38,23 @@ export interface WriterPhaseDeps {
   onChunk: (chunk: number, sentences: ReadonlyMap<number, string>) => Promise<void>;
 }
 
+/**
+ * The shape of every call of a writer phase: the ceilings its reserve is priced
+ * at and how many answered attempts a chunk may use. A run passes exactly
+ * money/estimate.ts's WRITER_CALL (runs/plan.ts's `runWriterConfig`), which is
+ * what its estimate prices; a scene set passes its own.
+ */
+export interface WriterCallShape {
+  maxTokens: number;
+  inputTokens: number;
+  maxAttempts: number;
+}
+
 export interface WriterPhase {
+  /** The call's ceilings and the answered attempts a chunk may use. */
+  call: WriterCallShape;
+  /** The messages of one attempt; `feedback` is why the chunk's previous answer was rejected. */
+  messages: (slots: readonly PlanSlot[], feedback: WriterRefusal | undefined) => ChatMessage[];
   /** The ledger's jobId for these calls. */
   jobId: string;
   /** The run's cap scope. */
@@ -94,10 +109,10 @@ async function ask(deps: WriterPhaseDeps, phase: WriterPhase, attemptId: string,
       budget: deps.budget,
       priceBook: deps.priceBook,
       signal: phase.signal,
-      messages: writerMessages(slots, feedback),
+      messages: phase.messages(slots, feedback),
       jsonSchema: WRITER_JSON_SCHEMA,
-      maxTokens: WRITER_CALL.maxTokens,
-      inputTokens: WRITER_CALL.inputTokens,
+      maxTokens: phase.call.maxTokens,
+      inputTokens: phase.call.inputTokens,
       reasoningEffort: "low",
     });
   } finally {
@@ -121,7 +136,7 @@ async function writeChunk(
   let feedback: WriterRefusal | undefined;
   let answered = chunk.attemptIds.filter((id) => attemptPaid(phase.ledger, id)).length;
   for (const attemptId of chunk.attemptIds) {
-    if (answered >= WRITER_CALL.maxAttempts) break;
+    if (answered >= phase.call.maxAttempts) break;
     if (phase.ledger.reserveOf(attemptId) !== undefined) continue;
     if (phase.signal.aborted) return cancelled();
     const result = await ask(deps, phase, attemptId, slots, feedback);
@@ -147,8 +162,8 @@ async function writeChunk(
     return { ok: false, stop: refused ? "exhausted" : "stopped", error: { ...error, ...(detail === undefined ? {} : { detail: truncate(detail) }) } };
   }
   const why =
-    answered >= WRITER_CALL.maxAttempts
-      ? `the scene writer's answer for chunk ${chunk.chunk} was rejected on every one of its ${WRITER_CALL.maxAttempts} attempts; the last one for: ${feedback === undefined ? "an earlier job's answer" : writerRefusalText(feedback)}`
+    answered >= phase.call.maxAttempts
+      ? `the scene writer's answer for chunk ${chunk.chunk} was rejected on every one of its ${phase.call.maxAttempts} attempts; the last one for: ${feedback === undefined ? "an earlier job's answer" : writerRefusalText(feedback)}`
       : `every attempt id of the scene writer's chunk ${chunk.chunk} is already used`;
   return { ok: false, stop: "exhausted", error: { code: "INTERNAL", detail: truncate(why) } };
 }

@@ -1,6 +1,7 @@
-import { youthWords, type AvatarDescriptor } from "../../shared/engine";
+import { youthWords, type AvatarDescriptor, type CategorySnapshot } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
+import { categoryStyleOf } from "./categories";
 import { revealingWordsIn } from "./words";
 import type { Pose, ScenePlan } from "./schema";
 import type { PlanSlot } from "./schema";
@@ -17,6 +18,27 @@ import type { Shot } from "./types";
 
 /** A writer sentence that still fails today's rules, caught as a last-resort gate before any image request is built (invariant 8). */
 export class AssemblerRefusalError extends TypeError {}
+
+/** One rule a sentence breaks, with the words that broke it (ours to name: the rules' own vocabulary, never the model's other text). */
+export interface SentenceProblem {
+  reason: "youth-word" | "revealing-word";
+  words: string[];
+}
+
+/**
+ * Every rule a sentence breaks before it may go into an image prompt: a youth
+ * word, a revealing word (the youth words first). The one check the assembler's
+ * last gate runs and the owner's edit-time check can show at once. Not a new
+ * rule: the same two the writer's answer reader applies.
+ */
+export function sentenceProblems(sentence: string): SentenceProblem[] {
+  const problems: SentenceProblem[] = [];
+  const youth = youthWords(sentence, "descriptor");
+  if (youth.length > 0) problems.push({ reason: "youth-word", words: youth });
+  const revealing = revealingWordsIn(sentence);
+  if (revealing.length > 0) problems.push({ reason: "revealing-word", words: revealing });
+  return problems;
+}
 
 // T5c: selfie and mirror are always front/three-quarter (schema.ts's own
 // refine pins this), so their own "face fully visible" wording stays exactly
@@ -137,14 +159,16 @@ export interface AssembledScene {
  * (runs/writerPhase.ts / readWriterAnswer): a defense-in-depth last resort, since
  * this is the last engine code to see the text before an image is paid for.
  */
-export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sentence: string, master: LibraryReference): AssembledScene {
-  const youth = youthWords(sentence, "descriptor");
-  if (youth.length > 0) throw new AssemblerRefusalError(`the sentence for slot ${slot.slotIndex} still carries a youth word: ${youth.join(", ")}`);
-  const revealing = revealingWordsIn(sentence);
-  if (revealing.length > 0) throw new AssemblerRefusalError(`the sentence for slot ${slot.slotIndex} still carries a revealing word: ${revealing.join(", ")}`);
+export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sentence: string, master: LibraryReference, snapshots: readonly CategorySnapshot[] = []): AssembledScene {
+  const [problem] = sentenceProblems(sentence);
+  if (problem !== undefined) {
+    const kind = problem.reason === "youth-word" ? "a youth word" : "a revealing word";
+    throw new AssemblerRefusalError(`the sentence for slot ${slot.slotIndex} still carries ${kind}: ${problem.words.join(", ")}`);
+  }
 
   const anchor = promptSubject(descriptor);
-  const realism = slot.category === "photoshoot" ? REALISM_EDITORIAL : REALISM_PHONE;
+  // A built-in's finish is fixed (the photoshoot is editorial); a custom category's is its snapshot's, never the category library's.
+  const realism = categoryStyleOf(slot.category, snapshots) === "editorial" ? REALISM_EDITORIAL : REALISM_PHONE;
   const raw =
     `${BINDING} ${BINDING_ANCHOR[slot.pose]}; ${anchor}. ` +
     `${SHOT_PHRASE[slot.shot]}. ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
@@ -152,11 +176,11 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sente
   return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };
 }
 
-/** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. */
-export function assembleRun(descriptor: AvatarDescriptor, scenePlan: ScenePlan, sentences: ReadonlyMap<number, string>, master: LibraryReference): AssembledScene[] {
+/** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. `snapshots` are the plan's own. */
+export function assembleRun(descriptor: AvatarDescriptor, scenePlan: ScenePlan, sentences: ReadonlyMap<number, string>, master: LibraryReference, snapshots: readonly CategorySnapshot[] = []): AssembledScene[] {
   return scenePlan.slots.map((slot) => {
     const sentence = sentences.get(slot.slotIndex);
     if (sentence === undefined) throw new RangeError(`no writer sentence for slot ${slot.slotIndex}`);
-    return assembleSlot(descriptor, slot, sentence, master);
+    return assembleSlot(descriptor, slot, sentence, master, snapshots);
   });
 }

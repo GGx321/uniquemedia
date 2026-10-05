@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CustomCategoryId } from "../../shared/engine";
 import { FacePoseSchema } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
 
@@ -15,6 +16,8 @@ import { CATEGORIES, SHOTS } from "./types";
 const NonEmpty = z.string().min(1);
 
 export const CategorySchema = z.enum(CATEGORIES);
+/** A slot's category: one of the five built-ins, or a custom category's id (`cat-…`). */
+export const PlannerCategorySchema = z.union([CategorySchema, CustomCategoryId]);
 export const ShotSchema = z.enum(SHOTS);
 
 /**
@@ -58,7 +61,7 @@ export const AttemptIdBaseSchema = z.string().regex(/^slot-[1-9][0-9]*$/, "must 
 export const PlanSlotSchema = z
   .strictObject({
     slotIndex: z.int().positive(),
-    category: CategorySchema,
+    category: PlannerCategorySchema,
     location: NonEmpty,
     timeOfDay: NonEmpty,
     activity: NonEmpty,
