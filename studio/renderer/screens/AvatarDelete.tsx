@@ -1,0 +1,171 @@
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
+import type { AvatarDeletePreview, AvatarDeleteResult, EngineError } from "../../shared/engine";
+import { useEngine } from "../engine/react";
+import { countOf, NBSP } from "../lib/format";
+import { errorText } from "../lib/errors";
+import { useMounted } from "./photos/shared";
+import { Icon, Spin } from "../ui/Icon";
+import { cancelOnEscape, useConfirmFocus } from "../ui/useConfirmFocus";
+
+// «Удалить аватар» (owner request 2026-10-05) on an avatar's card: the avatar, its photos, candidates, master, drafts and finished videos go to the system
+// Trash (macOS Trash, Windows Recycle Bin), where the owner can restore them. A confirmation on the card itself, as a draft's delete has: the focus goes to
+// «Отмена», Escape cancels, and a cancel gives the focus back to the trash button. Pressing the trash asks the engine what would go (`avatars.deletePreview`,
+// free), and «Удалить» is main's `avatars.delete`; the card leaves with the engine's `avatar.removed`.
+
+/** The one sentence the owner reads before deleting. */
+export const TRASH_SENTENCE = "Аватар, его фото, черновики и готовые видео уйдут в Корзину — оттуда их можно вернуть.";
+
+const PHOTOS = ["фото", "фото", "фото"] as const;
+const CANDIDATES = ["вариант портрета", "варианта портрета", "вариантов портрета"] as const;
+const DRAFTS = ["черновик монтажа", "черновика монтажа", "черновиков монтажа"] as const;
+const VIDEOS = ["видео", "видео", "видео"] as const;
+
+/** «Уйдут в Корзину: 22 фото, 2 черновика монтажа, 3 видео.» — only what there is to go. */
+export function goesText(preview: AvatarDeletePreview): string {
+  const parts = [
+    preview.photos > 0 ? countOf(preview.photos, PHOTOS) : null,
+    preview.candidates > 0 ? countOf(preview.candidates, CANDIDATES) : null,
+    preview.drafts > 0 ? countOf(preview.drafts, DRAFTS) : null,
+    preview.videos > 0 ? countOf(preview.videos, VIDEOS) : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0 ? "Кроме самого аватара, у него пока ничего нет." : `Уйдут в Корзину: ${parts.join(", ")}.`;
+}
+
+/** The video files: how many of the records' files are in «Готовые видео» now and go with the avatar; the rest stay where they are. */
+export function filesText(preview: AvatarDeletePreview): string | null {
+  if (preview.videos === 0) return null;
+  const stay = preview.videoFilesFound < preview.videos ? " Остальных там нет — они останутся как есть." : "";
+  return `Файлов видео в папке «Готовые видео»: ${preview.videoFilesFound}${NBSP}из${NBSP}${preview.videos}.${stay}`;
+}
+
+/** What the owner is told when a video file stayed behind after the avatar went. */
+export function keptText(kept: number): string {
+  return `${countOf(kept, VIDEOS)} не удалось переместить в Корзину — они остались в папке «Готовые видео».`;
+}
+
+type Phase =
+  | { readonly kind: "closed" }
+  | { readonly kind: "loading" }
+  | { readonly kind: "ready"; readonly preview: AvatarDeletePreview; readonly failure: EngineError | null }
+  | { readonly kind: "deleting"; readonly preview: AvatarDeletePreview }
+  /** The preview was refused or could not be made: nothing to confirm. */
+  | { readonly kind: "refused"; readonly error: EngineError };
+
+/** The refusal of a preview or a delete, in words: a busy avatar says what to wait for; every other code has its fixed Russian text. */
+function failureText(error: EngineError): string {
+  return error.code === "IN_FLIGHT" ? "Аватар сейчас занят: идёт генерация, рендер или сохранение. Дождитесь, когда это закончится, и повторите." : errorText(error);
+}
+
+export interface AvatarDelete {
+  /** The trash button, for the card's header. */
+  readonly trash: ReactNode;
+  /** The open confirmation, for the card's body; null while nothing is asked. */
+  readonly confirmation: ReactNode;
+}
+
+/**
+ * `label` names the avatar in the button's name («Удалить аватар Mia»); `draft` words it for a draft. `onDeleted` is told once `avatars.delete` answered ok
+ * (the card goes with `avatar.removed`): the screen moves the focus off the card and says what stayed behind.
+ */
+export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarId: string; label: string; draft: boolean; onDeleted: (result: AvatarDeleteResult) => void }): AvatarDelete {
+  const { client } = useEngine();
+  const mounted = useMounted();
+  const [phase, setPhase] = useState<Phase>({ kind: "closed" });
+  const focus = useConfirmFocus();
+  const trashRef = useRef<HTMLButtonElement>(null);
+  /** Which question is current: an answer to an older one (the owner cancelled and asked again) is dropped. */
+  const asked = useRef(0);
+
+  const ask = useCallback((): void => {
+    if (phase.kind !== "closed") return;
+    const mine = ++asked.current;
+    setPhase({ kind: "loading" });
+    focus.opened();
+    void client.request("avatars.deletePreview", { avatarId }).then((reply) => {
+      if (!mounted.current || asked.current !== mine) return;
+      setPhase(reply.ok ? { kind: "ready", preview: reply.result, failure: null } : { kind: "refused", error: reply.error });
+    });
+  }, [phase.kind, client, avatarId, mounted, focus]);
+
+  const cancel = useCallback((): void => {
+    asked.current += 1;
+    setPhase({ kind: "closed" });
+    focus.moveTo(() => trashRef.current);
+  }, [focus]);
+
+  // The card leaves while the question is open (`avatar.removed`): nothing is left to answer to.
+  useEffect(
+    () => () => {
+      asked.current += 1;
+    },
+    [],
+  );
+
+  async function remove(preview: AvatarDeletePreview): Promise<void> {
+    setPhase({ kind: "deleting", preview });
+    const reply = await client.request("avatars.delete", { avatarId });
+    if (!mounted.current) {
+      // The card is already gone (the event came first): the screen still hears the answer.
+      if (reply.ok) onDeleted(reply.result);
+      return;
+    }
+    if (reply.ok) {
+      setPhase({ kind: "closed" });
+      onDeleted(reply.result);
+      return;
+    }
+    // Refused: the question stays open with what went wrong, and its buttons, off while it was asked, take the focus back.
+    setPhase({ kind: "ready", preview, failure: reply.error });
+    focus.opened();
+  }
+
+  const open = phase.kind !== "closed";
+  const deleting = phase.kind === "deleting";
+  const trash = (
+    <button
+      ref={trashRef}
+      type="button"
+      className="ibtn avatar-delete"
+      aria-label={draft ? "Удалить черновик аватара" : `Удалить аватар ${label}`}
+      title={draft ? "Удалить черновик аватара" : "Удалить аватар"}
+      aria-disabled={open}
+      onClick={ask}
+    >
+      <Icon name="trash" size={13} />
+    </button>
+  );
+
+  const preview = phase.kind === "ready" || phase.kind === "deleting" ? phase.preview : null;
+  const failure = phase.kind === "ready" ? phase.failure : phase.kind === "refused" ? phase.error : null;
+  const files = preview === null ? null : filesText(preview);
+  const confirmation = !open ? null : (
+    <div className="avatar-confirm" role="alert" onKeyDown={(e) => cancelOnEscape(e, cancel, deleting)}>
+      {phase.kind === "loading" && (
+        <span className="avatar-confirm-wait">
+          <Spin /> Смотрим, что уйдёт…
+        </span>
+      )}
+      {preview !== null && (
+        <>
+          <span>{goesText(preview)}</span>
+          {files !== null && <span>{files}</span>}
+          <span>{TRASH_SENTENCE}</span>
+          <span className="faint">Файлы из «Мои» (свои фото, видео, музыка и стикеры) останутся на месте.</span>
+        </>
+      )}
+      {failure !== null && <span className="avatar-confirm-error">{failureText(failure)}</span>}
+      <div className="draft-actions">
+        {preview !== null && (
+          <button type="button" className="btn btn-s btn-d" aria-busy={deleting} disabled={deleting} onClick={() => void remove(preview)}>
+            {deleting && <Spin />}
+            Удалить
+          </button>
+        )}
+        <button ref={focus.cancelRef} type="button" className="btn btn-s" disabled={deleting} onClick={cancel}>
+          Отмена
+        </button>
+      </div>
+    </div>
+  );
+  return { trash, confirmation };
+}

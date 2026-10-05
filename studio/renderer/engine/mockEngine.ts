@@ -661,6 +661,8 @@ export class MockEngine implements EngineBridge {
   private focusAvailable = true;
   private skippedDrafts = 0;
   private notListedDrafts = 0;
+  /** `keepVideoFilesOnDelete`: how many files the next `avatars.delete` says stayed behind. */
+  private videoFilesKeptNext = 0;
   /** The photos an unfinished video's pending intent holds (`holdPendingVideoPhotos`). */
   private readonly pendingVideoPhotos = new Set<string>();
   /** The montage drafts, in the order they were made; they outlive a restart, as the real engine's files do. */
@@ -1929,6 +1931,11 @@ export class MockEngine implements EngineBridge {
   // The engine's `#deletePreview` and `#deletePrepare`/`#deleteFinish` with main's move to the system Trash behind them: the Trash is the command's own
   // answer here (a test that wants it to refuse forces TRASH_UNAVAILABLE with `failNext`). The avatar and everything of it leave the mock together.
 
+  /** A test control: the NEXT `avatars.delete` reports `count` more video files that main found and could not move to the Trash (they stay as plain files). Used once. */
+  keepVideoFilesOnDelete(count: number): void {
+    this.videoFilesKeptNext = count;
+  }
+
   /** Whether anything of the avatar runs or is reserved: a candidates job, a photo run, a render (queued or running), a video intent a crash left pending. */
   private deleteBusy(avatarId: string): boolean {
     const heldByIntent = this.photos.some((p) => p.avatarId === avatarId && this.pendingVideoPhotos.has(p.photoId));
@@ -1978,7 +1985,9 @@ export class MockEngine implements EngineBridge {
     this.runJobs = this.runJobs.filter((j) => j.avatarId !== avatarId);
     for (const photoId of mine) this.pendingVideoPhotos.delete(photoId);
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.removed", payload: { avatarId } });
-    return this.ok(c, { avatarId, videoFilesTrashed: present.length, videoFilesKept: 0 });
+    const kept = this.videoFilesKeptNext;
+    this.videoFilesKeptNext = 0;
+    return this.ok(c, { avatarId, videoFilesTrashed: present.length, videoFilesKept: kept });
   }
 
   // ---------- montage drafts (3d.1b) ----------

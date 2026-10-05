@@ -104,6 +104,15 @@ describe("avatars.delete", () => {
     expect(await unwrap(deleteOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, videoFilesTrashed: 1, videoFilesKept: 0 });
   });
 
+  test("a test can have the next delete report video files that stayed behind: they are kept, not trashed", async () => {
+    const mock = await withVideo();
+    mock.engine.keepVideoFilesOnDelete(2);
+
+    expect(await unwrap(deleteOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, videoFilesTrashed: 1, videoFilesKept: 2 });
+    // used once
+    expect(await unwrap(deleteOf(mock, SOFIA.avatarId))).toMatchObject({ videoFilesKept: 0 });
+  });
+
   test("removes the avatar from every list: avatars, photos, videos, drafts and the snapshot", async () => {
     const mock = await withVideo();
 

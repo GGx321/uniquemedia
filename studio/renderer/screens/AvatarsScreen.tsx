@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { IMPORT_FALLBACK_PRICE, type AvatarSummary, type Draft, type EngineError, type Estimate, type UnreadableAvatar } from "../../shared/engine";
+import { IMPORT_FALLBACK_PRICE, type AvatarDeleteResult, type AvatarSummary, type Draft, type EngineError, type Estimate, type UnreadableAvatar } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { countOf, groupNumber, NBSP, yearsOld } from "../lib/format";
@@ -14,6 +14,7 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { Portrait, PortraitPlaceholder, Silhouette } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { keptText, useAvatarDelete } from "./AvatarDelete";
 
 type Filter = "all" | "active" | "archived";
 
@@ -71,9 +72,10 @@ function photosLabel(count: number): string {
  * the contract has neither, so the name, the photo count and (3e.2) the video
  * count are drawn, the last opening the avatar's «Видео» tab.
  */
-function AvatarCard({ avatar }: { avatar: AvatarSummary }) {
+function AvatarCard({ avatar, onDeleted }: { avatar: AvatarSummary; onDeleted: (name: string, result: AvatarDeleteResult) => void }) {
   const navigate = useNavigate();
   const titleId = `avatar-${avatar.avatarId}`;
+  const remove = useAvatarDelete({ avatarId: avatar.avatarId, label: avatar.name, draft: false, onDeleted: (result) => onDeleted(avatar.name, result) });
   return (
     <article className="card avatar-card" aria-labelledby={titleId}>
       <div className="ph">
@@ -92,6 +94,7 @@ function AvatarCard({ avatar }: { avatar: AvatarSummary }) {
               {avatar.name}
             </button>
           </h2>
+          {remove.trash}
         </div>
         <span className="mono muted avatar-counts">
           {photosLabel(avatar.photoCount)} ·{" "}
@@ -100,6 +103,7 @@ function AvatarCard({ avatar }: { avatar: AvatarSummary }) {
             {NBSP}видео
           </button>
         </span>
+        {remove.confirmation}
       </div>
     </article>
   );
@@ -112,9 +116,10 @@ function draftState(draft: Draft, job: JobView | null): { text: string; tone: ke
   return { text: "Черновик", tone: "muted", drawing: false };
 }
 
-function DraftCard({ draft, job }: { draft: Draft; job: JobView | null }) {
+function DraftCard({ draft, job, onDeleted }: { draft: Draft; job: JobView | null; onDeleted: (name: string, result: AvatarDeleteResult) => void }) {
   const navigate = useNavigate();
   const titleId = `draft-${draft.avatarId}`;
+  const remove = useAvatarDelete({ avatarId: draft.avatarId, label: "Черновик", draft: true, onDeleted: (result) => onDeleted("Черновик", result) });
   const state = draftState(draft, job);
   const last = draft.candidates[draft.candidates.length - 1];
   const ethnicity = ETHNICITIES.find((e) => e.value === draft.traits.ethnicity)?.label ?? "";
@@ -137,8 +142,10 @@ function DraftCard({ draft, job }: { draft: Draft; job: JobView | null }) {
             Черновик
           </h2>
           <span className="mono muted">{yearsOld(draft.traits.age)}</span>
+          {remove.trash}
         </div>
         <p className="avatar-note">{ethnicity} типаж</p>
+        {remove.confirmation}
         <button
           type="button"
           className="btn btn-s"
@@ -450,6 +457,13 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
   const view = useEngineView();
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
+  // An avatar was just deleted («Удалить аватар»): said once it is gone, with the video files that stayed behind, if any.
+  const [removed, setRemoved] = useState<{ name: string; kept: number } | null>(null);
+  // Its card goes with the engine's `avatar.removed`: the focus moves off it to the screen's title, never to the body.
+  const onDeleted = (name: string, result: AvatarDeleteResult): void => {
+    document.querySelector<HTMLElement>(".content .screen-title")?.focus({ preventScroll: true });
+    setRemoved({ name, kept: result.videoFilesKept });
+  };
   // The «Новый аватар» tile's price, remembered with the age-check mode it was asked under.
   const [newAvatarPrice, setNewAvatarPrice] = useState<{ estimate: Estimate; imageAgeCheck: string | undefined } | null>(null);
   const ready = view.phase === "ready";
@@ -543,6 +557,12 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
       </header>
 
       {saved && <Notice tone="ok">Аватар «{saved}» сохранён. Мастер-портрет готов для фото.</Notice>}
+      {removed !== null && (
+        <Notice tone={removed.kept > 0 ? "warn" : "ok"}>
+          {removed.name === "Черновик" ? "Черновик аватара" : `Аватар «${removed.name}»`} в Корзине — оттуда его можно вернуть.
+          {removed.kept > 0 && <> {keptText(removed.kept)}</>}
+        </Notice>
+      )}
       {ready && <AccountBanner view={view} />}
 
       {view.phase === "connecting" && <SkeletonGrid />}
@@ -562,10 +582,10 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
             ))}
             {unreadableMore > 0 && <UnreadableMoreTile count={unreadableMore} />}
             {drafts.map((d) => (
-              <DraftCard key={d.avatarId} draft={d} job={latestJobFor(view.jobs, d.avatarId)} />
+              <DraftCard key={d.avatarId} draft={d} job={latestJobFor(view.jobs, d.avatarId)} onDeleted={onDeleted} />
             ))}
             {shownAvatars.map((a) => (
-              <AvatarCard key={a.avatarId} avatar={a} />
+              <AvatarCard key={a.avatarId} avatar={a} onDeleted={onDeleted} />
             ))}
             {showTiles && (
               <>

@@ -77,7 +77,9 @@ type Load =
   | { kind: "loading" }
   | { kind: "error"; error: EngineError }
   /** `lost`: why the last edit of the editor that closed before was not saved, told once. */
-  | { kind: "ready"; montage: Montage; issues: readonly MontageIssue[]; lost: EngineError | null };
+  | { kind: "ready"; montage: Montage; issues: readonly MontageIssue[]; lost: EngineError | null }
+  /** «Удалить аватар»: the draft's avatar was deleted while it was open, and its drafts went to the Trash with it. */
+  | { kind: "avatar-removed" };
 
 /** How many times an INTERNAL «the draft was changed just now» is retried before it is shown. */
 const CHANGING_RETRIES = 2;
@@ -1266,18 +1268,51 @@ function EditorProblem({ error, onRetry }: { error: EngineError; onRetry: () => 
   );
 }
 
+/** The draft's avatar was deleted: its drafts are in the Trash with it, so there is no editor to go on with. */
+function EditorAvatarRemoved() {
+  const navigate = useNavigate();
+  return (
+    <div className="page ed-problem">
+      <ScreenTitle>Монтаж</ScreenTitle>
+      <Notice
+        tone="warn"
+        title="Аватар удалён"
+        actions={
+          <button type="button" className="btn btn-s" onClick={() => navigate({ name: "avatars" })}>
+            К аватарам
+          </button>
+        }
+      >
+        Аватар и его черновики в Корзине — оттуда их можно вернуть. Изменения здесь больше не сохраняются.
+      </Notice>
+    </div>
+  );
+}
+
 export function EditorScreen({ montageId, created = false }: { montageId: string; created?: boolean }) {
   const view = useEngineView();
-  const { client } = useEngine();
+  const { client, store } = useEngine();
   const flushes = useDraftFlushes();
   const sessions = useDraftSessions();
   const ready = view.phase === "ready";
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
   const loaded = load.kind === "ready";
+  const avatarRemoved = load.kind === "avatar-removed";
+  const openAvatarId = load.kind === "ready" ? load.montage.spec.avatarId : null;
+
+  // The avatar of the open draft is deleted (`avatar.removed`, from this window or another): the draft is gone with it, so the editor closes with a notice.
+  useEffect(() => {
+    if (openAvatarId === null) return;
+    return store.subscribeAvatarRemoved((avatarId) => {
+      if (avatarId !== openAvatarId) return;
+      sessions.forget(montageId);
+      setLoad({ kind: "avatar-removed" });
+    });
+  }, [store, sessions, montageId, openAvatarId]);
 
   useEffect(() => {
-    if (!ready || loaded) return;
+    if (!ready || loaded || avatarRemoved) return;
     let alive = true;
     let retries = 0;
     let cancelPause: (() => void) | null = null;
@@ -1304,7 +1339,7 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
       alive = false;
       cancelPause?.();
     };
-  }, [ready, loaded, client, flushes, sessions, montageId, attempt]);
+  }, [ready, loaded, avatarRemoved, client, flushes, sessions, montageId, attempt]);
 
   if (load.kind === "ready") {
     const avatar = view.avatars.find((a) => a.avatarId === load.montage.spec.avatarId) ?? null;
@@ -1312,6 +1347,7 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
       <DraftEditor key={load.montage.montageId} initial={load.montage} initialIssues={load.issues} lostEdit={load.lost} created={created} avatar={avatar} view={view} />
     );
   }
+  if (load.kind === "avatar-removed") return <EditorAvatarRemoved />;
   if (view.phase === "offline") {
     return (
       <div className="page ed-problem">
