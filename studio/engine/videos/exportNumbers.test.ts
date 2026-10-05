@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { AvatarManifest, UsageReason } from "../library";
+import type { AvatarManifest } from "../library";
+import type { UsageReason } from "../library/library";
 import { highestNamedNumber, type ExportNumberLibrary, type NumberFs } from "./exportNumbers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
