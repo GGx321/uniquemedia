@@ -728,6 +728,18 @@
   line-height: 1.35;
 }
 
+/* A mark the engine refused, said where the owner is: the error notice's colour and edge, in the column's size. */
+.viewer-error {
+  margin: 2px 0 0;
+  padding: 8px 10px;
+  border: 1px solid var(--danger-35);
+  border-radius: 9px;
+  background: var(--danger-08);
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 .viewer-keys {
   display: flex;
   flex-wrap: wrap;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import type { AvatarSummary, PhotoSummary, RunRequest } from "../../shared/engine";
+import { ERROR_MESSAGES_RU, type AvatarSummary, type PhotoSummary, type RunRequest } from "../../shared/engine";
 import { App } from "../App";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { MIA, scenePhoto } from "../engine/mockEngine.testkit";
@@ -336,6 +336,27 @@ describe("the tile's actions, in the viewer", () => {
     expect(within(viewer()).queryByText("отклонено") === null).toBe(true);
     expect(inViewer("Отклонить")).toBeDefined();
     expect(screen.getByRole("button", { name: "Фото 2: отклонить — в видео не брать" })).toBeDefined();
+  });
+
+  test("a mark the engine refuses is said inside the viewer, on the photo it was for, until a mark goes through", async () => {
+    const h = await openMia();
+    fireEvent.click(openButton(2));
+    h.engine.failNext("photos.setRejected", { code: "INTERNAL" });
+    fireEvent.click(inViewer("Отклонить"));
+    await flush();
+
+    expect(within(viewer()).getByRole("alert").textContent).toBe(ERROR_MESSAGES_RU.INTERNAL);
+    expect(inViewer("Отклонить")).toBeDefined();
+    // Another photo is not the one refused.
+    press("ArrowRight");
+    expect(within(viewer()).queryByRole("alert") === null).toBe(true);
+    press("ArrowLeft");
+    expect(within(viewer()).getByRole("alert")).toBeDefined();
+    // Tried again and set: the refusal goes.
+    fireEvent.click(inViewer("Отклонить"));
+    await flush();
+    expect(within(viewer()).queryByRole("alert") === null).toBe(true);
+    expect(within(viewer()).getByText("отклонено")).toBeDefined();
   });
 
   test("while the marks cannot be read, the viewer's «Отклонить» is off with the tile's reason on screen", async () => {

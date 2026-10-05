@@ -1,4 +1,4 @@
-import type { PhotoSummary } from "../../../shared/engine";
+import type { EngineError, PhotoSummary } from "../../../shared/engine";
 import { FACE_GATE_THRESHOLD } from "./shared";
 
 // What a gallery photo shows of its state, wherever it is shown (its tile, the photo viewer): the face score, how a video or
@@ -16,12 +16,20 @@ export function montagePickRefusal(photo: PhotoSummary): string | null {
   return null;
 }
 
+/** A mark the engine refused: on which photo, and why. */
+export interface MarkFailure {
+  readonly photoId: string;
+  readonly error: EngineError;
+}
+
 /** The owner's own «do not use» mark (3e.2): what the tile's button does, and why it cannot when it cannot. */
 export interface MarkControl {
   /** Photos whose mark is being set now. */
   readonly marking: ReadonlySet<string>;
   /** Why no mark can be set right now (the marks themselves cannot be read), or null. */
   readonly blocked: string | null;
+  /** The last mark the engine refused, until the next one is asked or the notice is closed; null when there is none. */
+  readonly failure: MarkFailure | null;
   readonly onMark: (photo: PhotoSummary, rejected: boolean) => void;
 }
 

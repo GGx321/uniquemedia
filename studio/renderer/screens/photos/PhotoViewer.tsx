@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { PhotoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
+import { errorText } from "../../lib/errors";
 import { photoUrl } from "../../lib/media";
 import { Icon, Spin } from "../../ui/Icon";
 import { PortraitPlaceholder } from "../../ui/Portrait";
@@ -14,10 +15,10 @@ import { viewerStep, type ViewerPlace } from "./viewerModel";
 // cards and the Photos sheet's tile). A click on a tile's photo opens it full size: the file through main's
 // `studio-media://photo/<avatarId>/<photoId>` route, as the tile shows it (the window names ids, never a path), fitted to the
 // window and never enlarged past its own pixels. Beside it the tile's facts and actions: «Фото N из M», the category, the
-// tile's badges, the pick for a montage and the reject mark, with the same handlers and the same refusals as the tile.
-// ← and → step through the gallery as its filter shows it, with no wrap. A dialog portalled to `body` (useModalDialog): the
-// rest of the window is inert, the focus stays inside, Escape, «Закрыть» and a press on the dark around it close it, and the
-// focus goes back to the grid.
+// tile's badges, the pick for a montage and the reject mark, with the same handlers and the same refusals as the tile, and a
+// mark the engine refused said on its photo. ← and → step through the gallery as its filter shows it, with no wrap. A dialog
+// portalled to `body` (useModalDialog): the rest of the window is inert, the focus stays inside, Escape, «Закрыть» and a
+// press on the dark around it close it, and the focus goes back to the grid.
 
 interface PhotoViewerProps {
   readonly place: ViewerPlace;
@@ -77,6 +78,7 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
   // A photo picked before it became unusable can still be unpicked, as on its tile.
   const why = montagePickRefusal(photo);
   const marking = mark.marking.has(photo.photoId);
+  const failure = mark.failure !== null && mark.failure.photoId === photo.photoId ? mark.failure.error : null;
   const frame = ["viewer-frame", picked ? "viewer-frame-on" : "", refused ? "viewer-frame-refused" : ""].filter(Boolean).join(" ");
 
   return createPortal(
@@ -145,6 +147,12 @@ export function PhotoViewer({ place, picked, refused, onToggle, mark, onShow, on
               {mark.blocked !== null && (
                 <p id={markWhyId} className="viewer-why">
                   {mark.blocked}
+                </p>
+              )}
+              {/* The gallery column says it too, but under the scrim and out of reach: here it is where the owner is. */}
+              {failure !== null && (
+                <p className="viewer-error" role="alert">
+                  {errorText(failure)}
                 </p>
               )}
             </div>
