@@ -6,6 +6,8 @@ const NOTICE_TITLE: Record<NoticeCode, string> = {
   "engine-restarted": "Движок перезапускался",
   "settings-reset": "Настройки сброшены",
   "engine-internal-error": "Внутренняя ошибка движка",
+  "pending-video-unreadable": "Незавершённое видео не прочитано",
+  "pending-video-set-aside": "Повреждённые данные отложены",
 };
 
 // engine-restarted says only what happened: whether open reserves need a
@@ -13,10 +15,17 @@ const NOTICE_TITLE: Record<NoticeCode, string> = {
 // "reconcile" case), driven by MoneyStatus, not by this notice. Saying it
 // twice — once here, generically, and once there, with the actual button —
 // would explain the same situation from two places.
+/** For these codes `count` is how many records the engine found, not how often the notice happened: it is said as that. */
+const COUNTS_RECORDS: ReadonlySet<NoticeCode> = new Set<NoticeCode>(["pending-video-unreadable", "pending-video-set-aside"]);
+
 const NOTICE_TEXT: Record<NoticeCode, string> = {
   "engine-restarted": "Движок перезапускался: работа, которая шла в момент сбоя, могла быть потеряна.",
   "settings-reset": "Файл настроек не удалось прочитать, поэтому используются значения по умолчанию. Проверьте ключ и папку библиотеки в Настройках.",
   "engine-internal-error": "Движок перехватил непредвиденную ошибку и продолжил работу. Если что-то работает не так, перезапустите Studio.",
+  "pending-video-unreadable":
+    "При запуске не удалось прочитать данные недоделанного видео, поэтому его фото могут быть «заняты». Перезапустите Studio; если не помогло — обновите Studio.",
+  "pending-video-set-aside":
+    "Повреждённые данные недоделанных видео отложены в сторону (к имени файла добавлено «.damaged»). Фото они не блокируют, ничего делать не нужно.",
 };
 
 /** A notice as the owner closed it: the notice and how many times it had happened then (a repeat is news again). */
@@ -50,7 +59,7 @@ export function EngineNotices({ notices, dismissed, onDismiss }: { notices: read
           }
         >
           {NOTICE_TEXT[n.code]}
-          {n.count > 1 && ` Повторилось ${countOf(n.count, ["раз", "раза", "раз"])} за эту сессию.`}
+          {COUNTS_RECORDS.has(n.code) ? ` Записей: ${n.count}.` : n.count > 1 && ` Повторилось ${countOf(n.count, ["раз", "раза", "раз"])} за эту сессию.`}
         </Notice>
       ))}
     </>

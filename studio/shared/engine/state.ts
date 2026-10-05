@@ -271,13 +271,18 @@ export const ReconcileResult = z.discriminatedUnion("status", [
  * Something the windows must be told that is not an error of any command:
  * - `engine-restarted`: the engine crashed and was restarted (work in flight was lost);
  * - `settings-reset`: settings.json could not be read and the defaults are in use;
- * - `engine-internal-error`: a promise rejection nobody handled was swallowed and the engine went on (no text, only the count).
+ * - `engine-internal-error`: a promise rejection nobody handled was swallowed and the engine went on (no text, only the count);
+ * - `pending-video-unreadable`: at start the engine could not read the data of unfinished videos (the disk would not give it, or it is from a newer Studio, or
+ *   a `.pending/` folder could not be listed); their photos stay «занято» until a read works (restart, or update Studio). `count` is HOW MANY it found at that start;
+ * - `pending-video-set-aside`: at start the engine found data of unfinished videos that no version can read and set it aside (the name gets `.damaged` added);
+ *   those block no photos. `count` is how many were set aside.
+ * For these two codes `count` is a number of records found, not how often the notice happened.
  * Pending notices are part of the snapshot, so a window opened later still
  * shows them. A notice that happens again replaces the earlier one of its
  * kind: `count` says how often it happened this session, and the id, the
  * time and `detail` (diagnostics, never user text) are the latest one's.
  */
-export const NoticeCode = z.enum(["engine-restarted", "settings-reset", "engine-internal-error"]);
+export const NoticeCode = z.enum(["engine-restarted", "settings-reset", "engine-internal-error", "pending-video-unreadable", "pending-video-set-aside"]);
 
 export const EngineNotice = z.strictObject({
   noticeId: Id,

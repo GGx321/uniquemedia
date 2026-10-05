@@ -269,6 +269,36 @@ describe("videos.list, what can go wrong around it", () => {
     expect(performance.now() - started).toBeLessThan(2_000);
   });
 
+  test("an export check that fails fast (not a timeout) leaves the records `unchecked` with the whole budget still in hand: a root that could not be judged says nothing about a file", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: () => Promise.reject(new Error("boom")), listBudgetMs: 60_000 } });
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.fileState)).toEqual(["unchecked"]);
+  });
+
+  test("a record check that fails fast (EIO) does not spend the budget: the drafts of the records are still looked at (follow-up L4)", async () => {
+    const w = world();
+    let looked = 0;
+    const checker = new FileStateChecker();
+    const failing: FileStateChecker = Object.assign(Object.create(checker) as FileStateChecker, { check: (): Promise<FileState> => Promise.reject(Object.assign(new Error("EIO"), { code: "EIO" })) });
+    const drafts = { find: async () => null, exists: async () => (looked++, true), wasRemoved: () => false, exclusive: async <T>(_id: string, work: () => Promise<T>) => work() };
+    const r = serviceRig(w, { deps: { checker: failing, drafts, listBudgetMs: 60_000, recordCheckTimeoutMs: 60_000 } });
+    for (const n of [1, 2]) {
+      const record = sampleRecord(w, { videoId: `video-0000000${n}`, jobId: `job-0000000${n}`, relPath: `Mia/2026-09-29_photo_00${n}.mp4` });
+      await writeIntent(NODE_COMMIT_FS, w.libraryRoot, { ...record, montageId: `montage-0000000${n}` });
+      await commitIntent(NODE_COMMIT_FS, w.libraryRoot, w.avatar.id, record.id);
+    }
+    await w.library.reloadVideoRecords(w.avatar.id);
+
+    const videos = await r.service.list(w.avatar.id);
+
+    expect(videos.map((v) => v.fileState)).toEqual(["unchecked", "unchecked"]);
+    expect(looked).toBe(2);
+  });
+
   test("a listing inside its budget is unchanged: every record is checked", async () => {
     const w = world();
     const r = serviceRig(w, { deps: { listBudgetMs: 60_000 } });
@@ -384,6 +414,42 @@ describe("videos.get: one video by id (3e.2: «Открыть в папке» fo
     const { record } = await committed(w);
 
     expect((await r.service.get(record.id)).fileState).toBe("elsewhere");
+  });
+});
+
+describe("the export root that is refused and the one that did not answer are told apart (follow-up M2)", () => {
+  const refusedRoot = { ok: false, reason: "missing" } as const;
+  const unansweredRoot = { ok: false, reason: "not-writable", unanswered: true } as const;
+
+  test("videos.list: a root that was looked at and refused reads «elsewhere»; one that did not answer reads `unchecked`", async () => {
+    const w = world();
+    await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+
+    const refused = serviceRig(w, { deps: { checkExport: async () => refusedRoot } });
+    expect((await refused.service.list(w.avatar.id)).map((v) => v.fileState)).toEqual(["elsewhere"]);
+    const unanswered = serviceRig(w, { deps: { checkExport: async () => unansweredRoot } });
+    expect((await unanswered.service.list(w.avatar.id)).map((v) => v.fileState)).toEqual(["unchecked"]);
+  });
+
+  test("videos.get says the same two things", async () => {
+    const w = world();
+    const { record } = await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+
+    const refused = serviceRig(w, { deps: { checkExport: async () => refusedRoot } });
+    expect((await refused.service.get(record.id)).fileState).toBe("elsewhere");
+    const unanswered = serviceRig(w, { deps: { checkExport: async () => unansweredRoot } });
+    expect((await unanswered.service.get(record.id)).fileState).toBe("unchecked");
+  });
+
+  test("an unanswered root is still `null` for a «Удалить запись»: the record goes, the file is never touched", async () => {
+    const w = world();
+    const { record, path } = await committed(w, { videoId: "video-0000000a", jobId: "job-0000000a", relPath: "Mia/2026-09-29_photo_001.mp4" });
+    const r = serviceRig(w, { deps: { checkExport: async () => unansweredRoot } });
+
+    const answer = await r.service.delete(record.id, "record");
+
+    expect(answer).toMatchObject({ fileDeleted: false, fileState: "unchecked" });
+    expect(existsSync(path)).toBe(true);
   });
 });
 

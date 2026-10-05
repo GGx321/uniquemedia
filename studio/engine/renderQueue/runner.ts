@@ -131,7 +131,7 @@ export interface RenderRunDeps {
    */
   readonly removeFileTimeoutMs?: number;
   /** Where a cleanup that failed is reported (`what` names it); the render's own outcome is unchanged. */
-  readonly warn?: (what: "job folder" | "unfinished output", error: unknown) => void;
+  readonly warn?: (what: "job folder" | "job folder survived" | "unfinished output", error: unknown) => void;
   /** The user's home folder, masked as `~` in errors; `os.homedir()` unless a test fakes it. */
   readonly home?: string;
 }
@@ -172,7 +172,13 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
   const now = deps.now ?? (() => performance.now());
   const removeTree = deps.removeTree ?? defaultRemoveTree;
   const removeFile = deps.removeFile ?? defaultRemoveFile;
-  const warn = deps.warn ?? ((what, error) => console.warn(`studio render: the ${what} could not be removed (${error instanceof Error ? error.message : String(error)})`));
+  const warn =
+    deps.warn ??
+    ((what, error) =>
+      // The second removal of a folder that survived the first is not a failure: it is said as what it is.
+      what === "job folder survived"
+        ? console.info("studio render: the job folder was still there after its removal; it was removed again")
+        : console.warn(`studio render: the ${what} could not be removed (${error instanceof Error ? error.message : String(error)})`));
 
   const clipDir = join(input.tmpRoot, input.jobId);
   // Every path the job hands to ffmpeg as an input, for the scrubber: what the builder resolves is what ffmpeg may print back.
@@ -412,7 +418,7 @@ export async function runRenderJob(input: RenderRunInput, deps: RenderRunDeps = 
     });
     // A removal that said it worked may still have left the folder (a recursive rm that loses an entry to another remover's unlink): look, and once more if so.
     if (removed && (await stillThere(clipDir))) {
-      warn("job folder", new Error("the job folder survived its removal; it is removed again"));
+      warn("job folder survived", new Error("the job folder survived its removal; it is removed again"));
       await activeStaging?.settled();
       await removeTree(clipDir).catch((error: unknown) => warn("job folder", error));
     }

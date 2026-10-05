@@ -56,9 +56,10 @@ export const RelativePath = z
  * - `present`: the root matches and the size matches;
  * - `missing`: the root matches but there is no file («файл удалён»);
  * - `changed`: the size or sha256 differs («файл изменён вне Studio»); still playable, still used;
- * - `elsewhere`: the record's root is not the current export root, or no export root can be looked in («файл в другой папке»);
- * - `unchecked` (3e.2, K15): the look at this file failed or did not answer on this read («не удалось проверить файл»). It
- *   claims nothing about the file: it is neither gone nor in another folder, and the next read may know.
+ * - `elsewhere`: the record's root is not the current export root, or the export folder was looked at and refused («файл в другой папке»);
+ * - `unchecked` (3e.2, K15): the look at this file failed or did not answer on this read, or the export folder itself did not answer, so
+ *   no file could be judged against it («не удалось проверить файл»). It claims nothing about the file: it is neither gone nor in another
+ *   folder, and the next read may know.
  * Every state keeps the video's photos used: only the record decides that.
  */
 export const FileState = z.enum(["present", "missing", "changed", "elsewhere", "unchecked"]);

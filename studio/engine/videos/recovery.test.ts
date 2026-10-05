@@ -275,14 +275,16 @@ describe("intents recovery must not settle", () => {
     expect(report.deferred).toEqual([{ videoId: "video-00000001", reason: "export-unavailable" }]);
   });
 
-  test("an intent that is not valid JSON is left in place and reported, never guessed at", async () => {
+  test("an intent that is not valid JSON is never guessed at: it is reported, and set aside byte for byte as .damaged (no longer an intent, nothing deleted)", async () => {
     const w = world();
     const paths = videoPaths(w.libraryRoot, w.avatar.id);
     await mkdir(paths.pendingDir, { recursive: true });
     await writeFile(paths.intent("video-00000001"), "{ not json");
     const { report } = await recover(w);
-    expect(await readFile(paths.intent("video-00000001"), "utf8")).toBe("{ not json");
+    expect(existsSync(paths.intent("video-00000001"))).toBe(false);
+    expect(await readFile(`${paths.intent("video-00000001")}.damaged`, "utf8")).toBe("{ not json");
     expect(report.left).toEqual([{ file: `avatars/${w.avatar.id}/videos/.pending/video-00000001.json`, reason: "unreadable" }]);
+    expect(report.adopted).toEqual([]);
   });
 
   test("an intent from a NEWER Studio is left in place: this build cannot judge it", async () => {
@@ -295,15 +297,17 @@ describe("intents recovery must not settle", () => {
     expect(report.left).toMatchObject([{ reason: "too-new" }]);
   });
 
-  test("an intent filed under another video id than its name says is left in place", async () => {
+  test("an intent filed under another video id than its name says is not adopted: it is set aside as .damaged", async () => {
     const w = world();
     const record = sampleRecord(w, { videoId: "video-00000002" });
     const paths = videoPaths(w.libraryRoot, w.avatar.id);
     await mkdir(paths.pendingDir, { recursive: true });
     await writeFile(paths.intent("video-00000001"), JSON.stringify(record));
     const { report } = await recover(w);
-    expect(existsSync(paths.intent("video-00000001"))).toBe(true);
+    expect(existsSync(paths.intent("video-00000001"))).toBe(false);
+    expect(existsSync(`${paths.intent("video-00000001")}.damaged`)).toBe(true);
     expect(report.left).toMatchObject([{ reason: "unreadable" }]);
+    expect(report.adopted).toEqual([]);
   });
 
   test("an intent next to a record with the same id (a rename that was not flushed) is dropped, and the record stands", async () => {

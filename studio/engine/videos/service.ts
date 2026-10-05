@@ -134,6 +134,11 @@ export interface VideoServiceDeps {
   readonly listBudgetMs?: number;
   /** How long the probe of the export volume's case rule may take in `#freshRoot`; `CASE_PROBE_TIMEOUT_MS` when absent. */
   readonly caseProbeTimeoutMs?: number;
+  /**
+   * Told what a start's recovery found standing between the owner and his photos (`RecoveryReport.blocked`: `held` unreadable intents or `.pending/` folders, `damaged`
+   * intents set aside); the engine raises a notice for each. Only for the library that is live, and only when something was found; absent: nobody is told.
+   */
+  readonly noteUnreadablePending?: (blocked: { held: number; damaged: number }) => void;
   /** How the commit intent's file is looked at before a settle; `lstat` when absent (a test plays a disk that fails or does not answer). */
   readonly intentLstat?: (path: string) => Promise<unknown>;
   /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
@@ -658,16 +663,20 @@ export class VideoService {
     }
     if (read.skipped > 0) this.#deps.log(`videos.list: ${read.skipped} record file(s) of avatar ${avatarId} could not be used and are left out`);
     if (read.truncated) this.#deps.log(`videos.list: avatar ${avatarId} has more record files than one listing reads; the newest are listed`);
-    // One fresh look at the export root, one hash budget for the whole listing.
-    // The look at the export root is inside the listing's budget too: a root that does not answer is "cannot judge" (null), and every record reads `unchecked`.
+    // One fresh look at the export root, one hash budget for the whole listing. The look is inside the listing's budget too.
+    // A root that did not answer (the check's own bound, the listing's, or an error) says nothing about any file (K15): every record reads `unchecked`.
+    // «elsewhere» is only for a folder that WAS looked at and refused, or is another one.
     let root: ExportRootRef | null = null;
-    // A root that could not be judged in time says nothing about any file (K15): every record reads `unchecked`, never «elsewhere» (which is what a refused root says).
     let rootJudged = true;
     try {
-      root = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#freshRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
+      const look = await within(listBudgetMs - (performance.now() - enteredAt), () => this.#lookRoot(), () => Object.assign(new Error("the export root check did not answer"), { code: "ETIMEDOUT" }));
+      if (look.kind === "unanswered") {
+        rootJudged = false;
+        this.#deps.log(`videos.list: the export folder did not answer; the files of avatar ${avatarId} are left unchecked`);
+      } else root = look.kind === "root" ? look.ref : null;
     } catch (error) {
       rootJudged = false;
-      this.#deps.log(`videos.list: the export folder could not be looked at in time (${kindOf(error)}); the files are left unchecked`);
+      this.#deps.log(`videos.list: the export folder could not be looked at (${kindOf(error)}); the files of avatar ${avatarId} are left unchecked`);
     }
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
@@ -680,7 +689,9 @@ export class VideoService {
       let state: FileState;
       // The listing's own budget, from its entry: a record looked at after it is spent is `unchecked` without a call to the disk, and one in flight is cut at what is left.
       const remainingMs = listBudgetMs - (performance.now() - enteredAt);
-      if (!rootJudged || remainingMs <= 0) {
+      if (!rootJudged) {
+        state = "unchecked";
+      } else if (remainingMs <= 0) {
         if (!spentLogged) this.#deps.log(`videos.list: the listing's budget of ${listBudgetMs} ms is spent; the remaining files of avatar ${avatarId} are left unchecked`);
         spentLogged = true;
         state = "unchecked";
@@ -690,7 +701,8 @@ export class VideoService {
         } catch (error) {
           // A look that failed is `unchecked` (K15): not a claim that the file is gone or in another folder, and not a failed list.
           this.#deps.log(`videos.list: the file of ${record.id} could not be checked (${kindOf(error)})`);
-          if (remainingMs <= checkMs) cutByBudget = true;
+          // Only a look that TIMED OUT at what the budget had left spends the budget; a fast failure (EIO) does not.
+          if (hasErrorCode(error, "ETIMEDOUT") && remainingMs <= checkMs) cutByBudget = true;
           state = "unchecked";
         }
       }
@@ -722,9 +734,12 @@ export class VideoService {
       this.#deps.log(`videos.get: ${videoId} could not be read (${kindOf(error)})`);
       throw new EngineFailure({ code: "INTERNAL", detail: `the video's record could not be read (${codeOf(error)})` });
     }
-    const root = await this.#freshRoot();
+    const look = await this.#lookRoot();
     let state: FileState;
     try {
+      // A root that did not answer judges nothing: the file is `unchecked`, not «elsewhere».
+      if (look.kind === "unanswered") throw Object.assign(new Error("the export folder did not answer"), { code: "ETIMEDOUT" });
+      const root = look.kind === "root" ? look.ref : null;
       state = await within(
         this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS,
         () => this.#deps.checker.check(record, root, { verify: "cheap", budget: newHashBudget() }),
@@ -772,12 +787,15 @@ export class VideoService {
   async delete(videoId: string, mode: "video" | "record"): Promise<{ videoId: string; fileDeleted: boolean; fileState: FileState }> {
     return this.#deps.withLibrary(async (library) => {
       let root: ExportRootRef | null;
+      let rootUnanswered = false;
       if (mode === "video") {
         const check = await this.#deps.checkExport();
         if (!check.ok) throw new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: check.reason });
         root = await this.#freshRoot(check);
       } else {
-        root = await this.#freshRoot();
+        const look = await this.#lookRoot();
+        rootUnanswered = look.kind === "unanswered";
+        root = look.kind === "root" ? look.ref : null;
       }
       let outcome;
       try {
@@ -786,7 +804,7 @@ export class VideoService {
         // the next one finishes, and the answer says the outcome is not known.
         outcome = await within(
           this.#deps.deleteTimeoutMs ?? DELETE_TIMEOUT_MS,
-          () => deleteVideo(videoId, { mode, library, exportRoot: root, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log }),
+          () => deleteVideo(videoId, { mode, library, exportRoot: root, rootUnanswered, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log }),
           () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time; look at the video list before trying again" }),
         );
       } catch (error) {
@@ -899,10 +917,19 @@ export class VideoService {
 
   // ---------- the export root ----------
 
-  /** The export root as it is right now (its marker read now), or null when it is unusable: what the file states, delete and recovery judge files against. */
+  /** The export root as it is right now (its marker read now), or null when it is unusable or did not answer: what delete and recovery judge files against. */
   async #freshRoot(known?: ExportRootCheck): Promise<ExportRootRef | null> {
+    const look = await this.#lookRoot(known);
+    return look.kind === "root" ? look.ref : null;
+  }
+
+  /**
+   * The look at the export root in THREE states: a root (usable), `refused` (it was looked at and is unusable: a file is in another folder for it), and
+   * `unanswered` (nothing is known: a file is unchecked). `videos.list` and `videos.get` tell the last two apart; delete and recovery only need the first.
+   */
+  async #lookRoot(known?: ExportRootCheck): Promise<{ kind: "root"; ref: ExportRootRef } | { kind: "refused" } | { kind: "unanswered" }> {
     const check = known ?? (await this.#deps.checkExport());
-    if (!check.ok) return null;
+    if (!check.ok) return check.unanswered === true ? { kind: "unanswered" } : { kind: "refused" };
     let caseInsensitive = true; // the cautious answer: it can only make comparisons stricter
     try {
       // The probe writes a file in the export folder: on a volume that has gone quiet it never returns, so it is bounded, and the cautious answer stands.
@@ -910,7 +937,7 @@ export class VideoService {
     } catch (error) {
       this.#deps.log(`the export folder's case rule could not be probed (${kindOf(error)}); the cautious one is used`);
     }
-    return { root: check.root, rootId: check.rootId, caseInsensitive };
+    return { kind: "root", ref: { root: check.root, rootId: check.rootId, caseInsensitive } };
   }
 
   // ---------- startup, recovery, stale index ----------
@@ -976,26 +1003,32 @@ export class VideoService {
     for (const { code } of swept.skipped) this.#deps.log(`a leftover in render-tmp could not be removed (${code}); the next start tries again`);
   }
 
-  async #recover(library: Library, signal: AbortSignal, options: { exportCheck?: ExportRootCheck; only?: { videoIds: readonly string[] } }): Promise<void> {
+  async #recover(library: Library, signal: AbortSignal, options: { exportCheck?: ExportRootCheck }): Promise<void> {
     const deps = this.#deps;
     // What each avatar's photos looked like (which are held, how many are free) before recovery held or freed any: what is announced is what moved.
     const before = this.#heldKeys(library);
     // The library's pending intents are read and their photos held FIRST, before the export root is asked anything: a slow or hung root must not leave the
     // photos free at the start. A step of its own, so a test's stand-in for the whole recovery is not called twice.
-    if (options.only === undefined) {
-      try {
-        await recoverVideos({ library, exportRoot: null, live: deps.tracker, signal, holdOnly: true }, { log: deps.log, ...deps.recover?.deps });
-      } catch (error) {
-        deps.log(`recovery: the pending intents' photos could not be held first (${kindOf(error)})`);
+    try {
+      const held = await recoverVideos({ library, exportRoot: null, live: deps.tracker, signal, holdOnly: true }, { log: deps.log, ...deps.recover?.deps });
+      // What stands between the owner and his photos he is told, by count and never by path, for the library he is looking at (a switch or a stop ends the story).
+      if (!signal.aborted && deps.openLibrary() === library && (held.blocked.held > 0 || held.blocked.damaged > 0)) {
+        try {
+          deps.noteUnreadablePending?.(held.blocked);
+        } catch (error) {
+          deps.log(`recovery: the notice of what blocks the photos could not be raised (${kindOf(error)})`);
+        }
       }
-      if (signal.aborted) return;
-      this.#announceHeldChanges(library, before);
+    } catch (error) {
+      deps.log(`recovery: the pending intents' photos could not be held first (${kindOf(error)})`);
     }
+    if (signal.aborted) return;
+    this.#announceHeldChanges(library, before);
     // A FRESH look at the root, and the SAME tracker the renders register in: a live commit is never taken for a crash's leftover.
     const exportRoot = await this.#freshRoot(options.exportCheck);
     if (signal.aborted) return;
     const run = deps.recover?.run ?? recoverVideos;
-    const report = await run({ library, exportRoot, live: deps.tracker, signal, ...(options.only === undefined ? {} : { only: options.only }) }, { log: deps.log, ...deps.recover?.deps });
+    const report = await run({ library, exportRoot, live: deps.tracker, signal }, { log: deps.log, ...deps.recover?.deps });
     // Counts only, and only when there was something to settle: a clean open is silent.
     if (report.adopted.length + report.dropped.length + report.deferred.length + report.left.length + report.skipped.length > 0) {
       deps.log(`recovery: ${report.adopted.length} adopted, ${report.dropped.length} dropped, ${report.deferred.length} deferred, ${report.left.length} left, ${report.skipped.length} skipped`);
@@ -1011,7 +1044,7 @@ export class VideoService {
       for (const avatarId of avatars) this.#announce(library, avatarId);
       this.#announceHeldChanges(library, before, avatars);
     }
-    if (options.only === undefined) for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);
+    for (const manifest of library.listAvatars()) this.#scheduleStaleRetry(library, manifest.id);
   }
 
   /** Per avatar, the photos that are held (reserved) and how many are free: a change in either is something the windows have not been told. */

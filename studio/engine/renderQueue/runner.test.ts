@@ -316,7 +316,7 @@ describe("runRenderJob: the job folder and the output", () => {
 
     expect(removals).toBe(2);
     expect(existsSync(r.jobDir)).toBe(false);
-    expect(warnings).toEqual(["job folder"]);
+    expect(warnings).toEqual(["job folder survived"]);
   });
 
   test("a folder that is gone after the first removal is removed once, with no report", async () => {

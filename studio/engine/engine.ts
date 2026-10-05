@@ -691,6 +691,10 @@ export class Engine {
       checker: new FileStateChecker(),
       withLibrary: (work) => this.#withLiveLibrary(work),
       openLibrary: () => this.library,
+      noteUnreadablePending: (blocked) => {
+        if (blocked.held > 0) this.#noteCounted("pending-video-unreadable", blocked.held);
+        if (blocked.damaged > 0) this.#noteCounted("pending-video-set-aside", blocked.damaged);
+      },
       checkExport: (requiredBytes) => this.#refreshExportStatus(requiredBytes),
       exportSwitch: { pending: () => this.#exportSwitchPending(), currentPath: () => this.#settings.exportPath },
       caseProbe: this.#caseProbe,
@@ -2105,7 +2109,7 @@ export class Engine {
       );
     } catch (error) {
       console.error(`studio engine: the export folder could not be checked (${errorKind(error)})`);
-      check = { ok: false, reason: "not-writable" };
+      check = { ok: false, reason: "not-writable", unanswered: true };
     } finally {
       timeout.clear();
     }
@@ -3265,6 +3269,15 @@ export class Engine {
     }
     this.#internalNoticeEmittedAt = now;
     this.#internalNoticeEmittedId = notice.noticeId;
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice } });
+  }
+
+  /** A notice of `code` with `count` (what the engine found, not how often it happened), replacing an earlier one of its code, and announced at once. */
+  #noteCounted(code: EngineNotice["code"], count: number): void {
+    const notice: EngineNotice = { noticeId: this.#deps.newId(), code, at: new Date(this.#deps.clock()).toISOString(), count: Math.max(1, count) };
+    const earlier = this.#notices.findIndex((n) => n.code === code);
+    if (earlier === -1) this.#notices.push(notice);
+    else this.#notices[earlier] = notice;
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "engine.notice", payload: { notice } });
   }
 

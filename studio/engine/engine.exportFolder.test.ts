@@ -184,6 +184,46 @@ describe("export.choose: a folder the owner moved or renamed is the same folder"
     expect(statesOf(await listVideos(started, avatarId))).toEqual(["present", "present"]);
   });
 
+  test("a volume that stops answering reads `unchecked` in videos.list, not «elsewhere»: the folder was not judged, so nothing is claimed about any file", async () => {
+    const rootId = await markedFolder(exportDir());
+    const { avatarId } = await seedVideos(exportDir(), rootId, 2);
+    let hung = false;
+    const exportRootFs: ExportRootFs = { ...NODE_EXPORT_ROOT_FS, stat: (path) => (hung ? new Promise<never>(() => undefined) : NODE_EXPORT_ROOT_FS.stat(path)) };
+    const started = await start({ deps: { exportRootFs, exportCheckTimeoutMs: 50 } });
+    await started.engine.settled();
+    expect(statesOf(await listVideos(started, avatarId))).toEqual(["present", "present"]);
+
+    hung = true;
+
+    expect(statesOf(await listVideos(started, avatarId))).toEqual(["unchecked", "unchecked"]);
+  });
+
+  test("a damaged intent found at start is set aside and raised as the engine's notice `pending-video-set-aside` (the engine's wiring of the recovery's count)", async () => {
+    const rootId = await markedFolder(exportDir());
+    const { avatarId } = await seedVideos(exportDir(), rootId, 0);
+    const pending = join(libraryDir(), "avatars", avatarId, "videos", ".pending");
+    await mkdir(pending, { recursive: true });
+    await writeFile(join(pending, "video-0000000a.json"), "{ not json");
+    const started = await start();
+    await started.engine.settled();
+
+    const snapshot = ok(await started.engine.handle(command("engine.snapshot")));
+
+    expect(snapshot.type === "engine.snapshot" ? snapshot.result.notices.map((n) => [n.code, n.count]) : null).toEqual([["pending-video-set-aside", 1]]);
+    expect(await readdir(pending)).toEqual(["video-0000000a.json.damaged"]);
+  });
+
+  test("a start with nothing wrong raises no such notice", async () => {
+    const rootId = await markedFolder(exportDir());
+    await seedVideos(exportDir(), rootId, 1);
+    const started = await start();
+    await started.engine.settled();
+
+    const snapshot = ok(await started.engine.handle(command("engine.snapshot")));
+
+    expect(snapshot.type === "engine.snapshot" ? snapshot.result.notices : null).toEqual([]);
+  });
+
   test.skipIf(process.platform === "linux")("a folder renamed only in letter case, on a disk that folds case, is the same folder", async () => {
     const rootId = await markedFolder(exportDir());
     await seedVideos(exportDir(), rootId, 1);

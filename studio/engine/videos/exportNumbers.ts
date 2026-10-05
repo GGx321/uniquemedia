@@ -1,6 +1,7 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Library } from "../library";
+import type { UsageReason } from "../library/library";
 import { hasErrorCode } from "../library/durableFs";
 import { videoPaths, VideoRecordSchema } from "./record";
 
@@ -38,6 +39,12 @@ export interface ExportNumberScope {
   readonly caseInsensitive: boolean;
 }
 
+/**
+ * The reasons an avatar's used index may be missing records: a stale index, a record that could not be read. The others (`rejects-unreadable`, `library-too-new`) say
+ * nothing about the records the index does hold, so they do not send the scan to the disk.
+ */
+const READ_FROM_DISK_REASONS: ReadonlySet<UsageReason> = new Set<UsageReason>(["index-stale", "record-unreadable", "record-inaccessible"]);
+
 /** What the scan needs of the library. */
 export type ExportNumberLibrary = Pick<Library, "listAvatars" | "namedVideoFiles" | "usageReasons">;
 
@@ -60,6 +67,8 @@ export const NODE_NUMBER_FS: NumberFs = {
 /** `work` raced against `signal`: a disk call that never returns (a dead library drive) cannot hold the commit past its cancel or its deadline. */
 function abortable<T>(signal: AbortSignal | undefined, work: Promise<T>): Promise<T> {
   if (signal === undefined) return work;
+  // First: the call has already been made (it is the argument), so its failure must have a handler even when the signal fired during it.
+  work.catch(() => undefined);
   signal.throwIfAborted();
   let onAbort: (() => void) | undefined;
   const out = new Promise<never>((_resolve, reject) => {
@@ -67,7 +76,6 @@ function abortable<T>(signal: AbortSignal | undefined, work: Promise<T>): Promis
     signal.addEventListener("abort", onAbort, { once: true });
   });
   out.catch(() => undefined);
-  work.catch(() => undefined);
   return Promise.race([work, out]).finally(() => {
     if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
   });
@@ -115,7 +123,7 @@ export async function highestNamedNumber(
     try {
       names = (await abortable(signal, fs.readdir(dir))).filter((entry) => entry.isFile && FILE_NAME.test(entry.name)).map((entry) => entry.name);
     } catch (error) {
-      if (signal?.aborted === true) throw error;
+      if (signal?.aborted === true) throw signal.reason;
       if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return true;
       unlistable++;
       return true;
@@ -134,7 +142,7 @@ export async function highestNamedNumber(
         if (!info.isFile || info.size > MAX_FILE_BYTES) continue;
         value = JSON.parse(await abortable(signal, fs.readFile(path)));
       } catch (error) {
-        if (signal?.aborted === true) throw error;
+        if (signal?.aborted === true) throw signal.reason;
         // Gone since the listing (a commit finished) or not JSON: nothing there to name a number. Any other error is a file that cannot be read now.
         if (hasErrorCode(error, "ENOENT") || error instanceof SyntaxError) continue;
         unreadable++;
@@ -151,7 +159,7 @@ export async function highestNamedNumber(
     const { pendingDir, videosDir } = videoPaths(libraryRoot, avatar.id);
     if (!(await scan(pendingDir))) break scanning;
     // An avatar whose index is stale or has a record it could not read does not have all its records in the index: its folder is read from disk.
-    if (library.usageReasons(avatar.id).length > 0 && !(await scan(videosDir))) break scanning;
+    if (library.usageReasons(avatar.id).some((reason) => READ_FROM_DISK_REASONS.has(reason)) && !(await scan(videosDir))) break scanning;
   }
   if (unreadable > 0) log(`commit: ${unreadable} file(s) could not be read and are not counted for the file numbers`);
   if (unlistable > 0) log(`commit: ${unlistable} folder(s) could not be listed and are not counted for the file numbers`);

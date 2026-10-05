@@ -222,6 +222,7 @@ function libraryWithPhotoRead(w: World, read: VideoRenderDeps["library"]["readPh
     listAvatars: () => w.library.listAvatars(),
     namedVideoFiles: () => w.library.namedVideoFiles(),
     usageReasons: (id) => w.library.usageReasons(id),
+    releasePendingPhotos: (id) => w.library.releasePendingPhotos(id),
     readPhotoVerified: read,
     addVideoRecordToIndex: (...args) => w.library.addVideoRecordToIndex(...args),
     reloadVideoRecords: (...args) => w.library.reloadVideoRecords(...args),

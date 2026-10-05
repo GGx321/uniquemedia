@@ -232,6 +232,14 @@ function failureFrom(phase: Phase, error: unknown): RenderFailure {
 const sameFile = (a: FileFacts, b: FileFacts): boolean => a.size === b.size && a.mtimeMs === b.mtimeMs && a.ino === b.ino && a.dev === b.dev;
 const isIdentity = (facts: FileFacts, identity: FileIdentity): boolean => facts.dev === identity.dev && facts.ino === identity.ino;
 
+/** The errors of commits whose intent was written (or its write began): only those can have left an intent on the disk for a settle to find. */
+const intentWrittenBefore = new WeakSet<object>();
+
+/** Whether a commit that failed with `error` had begun writing its intent: a failure before that left no intent, so nothing needs settling (or holding). */
+export function mayHaveLeftIntent(error: unknown): boolean {
+  return typeof error === "object" && error !== null && intentWrittenBefore.has(error);
+}
+
 export async function commitVideo(target: CommitTarget, input: CommitInput, deps: CommitDeps): Promise<CommittedVideo> {
   const { fs, signal } = deps;
   const { folder } = target;
@@ -248,6 +256,8 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
   let tempFacts: FileFacts | null = null;
   let placed = false;
   let intentMayExist = false;
+  /** Set once the intent's write begins and never cleared: the error that leaves the commit is then marked (`mayHaveLeftIntent`). */
+  let intentWriteBegan = false;
   let committed = false;
   let leaveEverything = false;
   let rolledBack = false;
@@ -428,6 +438,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
             spec,
           });
           intentMayExist = true;
+          intentWriteBegan = true;
           await inPhase("library", () => writeIntent(fs, deps.libraryRoot, record, { beforeRename: () => reached("intent-temp-written") }));
           await reached("intent-written");
 
@@ -493,6 +504,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
     if (signal?.aborted === true && cause === signal.reason) throw cause;
     const failure = error instanceof PhaseError ? failureFrom(error.phase, error.original) : failureFrom("internal", error);
     log(`commit ${input.jobId}: failed: ${failure.engineError.code}`);
+    if (intentWriteBegan) intentWrittenBefore.add(failure);
     throw failure;
   }
 }

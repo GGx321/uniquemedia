@@ -122,6 +122,19 @@ describe("a render job through the queue: runner, then commit", () => {
     expect(seen).toEqual([{ reserved: true, used: ["video-00000001"] }]);
   });
 
+  test("a hold made for this job's intent (recovery could not read it while the job was live) is released once the record counts: the photos are used, not stuck «reserved» (review round 1 of the follow-ups, M3b)", async () => {
+    const r = rig();
+    // What recovery's fail-closed step did for the live job's unreadable intent: every photo of the avatar held under the video's id.
+    r.w.library.holdPendingPhotos(r.w.avatar.id, "video-00000001", r.w.photos.map((p) => p.id));
+
+    r.submit();
+    await r.queue.idle();
+
+    expect(r.states()[0]).toMatchObject({ status: "done" });
+    expect(r.w.library.photoStates(r.w.avatar.id).get(r.w.photos[1]?.id ?? "")).toMatchObject({ reserved: false, usedIn: [] });
+    expect(r.w.library.photoStates(r.w.avatar.id).get(r.w.photos[0]?.id ?? "")).toMatchObject({ reserved: false, usedIn: ["video-00000001"] });
+  });
+
   test("writes the runner's temp beside the final file under .studio-part-<jobId>.mp4, and registers it as live while the job runs", async () => {
     const w = world();
     const during: boolean[] = [];
@@ -301,6 +314,7 @@ describe("failures reach the queue as the contract's errors", () => {
       listAvatars: () => w.library.listAvatars(),
       namedVideoFiles: () => w.library.namedVideoFiles(),
       usageReasons: (id) => w.library.usageReasons(id),
+      releasePendingPhotos: (id) => w.library.releasePendingPhotos(id),
       readPhotoVerified: () => Promise.reject(new Error(`cannot open ${w.dir}/secret`)),
       addVideoRecordToIndex: (a, b) => w.library.addVideoRecordToIndex(a, b),
       reloadVideoRecords: (a) => w.library.reloadVideoRecords(a),
@@ -335,6 +349,7 @@ describe("the source photos' own text is handed to the verifier", () => {
       listAvatars: () => w.library.listAvatars(),
       namedVideoFiles: () => w.library.namedVideoFiles(),
       usageReasons: (id) => w.library.usageReasons(id),
+      releasePendingPhotos: (id) => w.library.releasePendingPhotos(id),
       readPhotoVerified: async () => photo,
       addVideoRecordToIndex: (a, b) => w.library.addVideoRecordToIndex(a, b),
       reloadVideoRecords: (a) => w.library.reloadVideoRecords(a),
@@ -364,6 +379,7 @@ describe("the used index throwing after the record is committed", () => {
       listAvatars: () => w.library.listAvatars(),
       namedVideoFiles: () => w.library.namedVideoFiles(),
       usageReasons: (id) => w.library.usageReasons(id),
+      releasePendingPhotos: (id) => w.library.releasePendingPhotos(id),
       readPhotoVerified: (id) => w.library.readPhotoVerified(id),
       addVideoRecordToIndex: () => {
         throw new Error("index exploded");

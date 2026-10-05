@@ -162,7 +162,18 @@ export async function publishFileExclusive(path: string, text: string, ops: Publ
 
 export type ExportRootCheck =
   | { ok: true; rootId: string; /** The folder as the settings name it. */ root: string }
-  | { ok: false; reason: ExportUnavailableReason };
+  | {
+      ok: false;
+      reason: ExportUnavailableReason;
+      /**
+       * The check did NOT ANSWER (the engine's bound around it passed, or it threw something it did not classify itself): nothing is known about the folder.
+       * NOT set for an I/O error the check classifies on its own (a stat, the probe's write or the marker's read failing fast with EIO and the like): that one
+       * is reported as a refusal («not-writable»), which `videos.list` reads as «elsewhere»; only a hang or an unclassified throw reads as `unchecked`. `reason` is then only what the
+       * window's status says («not-writable»). Whoever judges FILES against the root reads this as «cannot tell» (`unchecked`), never as «another folder» (`elsewhere`),
+       * which is what a folder that WAS looked at and refused says.
+       */
+      unanswered?: true;
+    };
 
 /** The snapshot's view of a check. */
 export function exportStatusOf(check: ExportRootCheck): ExportStatus {
