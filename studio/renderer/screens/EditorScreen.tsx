@@ -206,18 +206,28 @@ function EditorHeader({
           {state.save.kind === "failed" && (
             <>
               {" · "}
-              <button type="button" className="ed-retry" onClick={() => session.retry()}>
-                Повторить
+              {/* Slice review 5-L5: never «Повторить» next to the redo; the notice's own button says «Сохранить ещё раз». */}
+              <button type="button" className="ed-retry" aria-label="Сохранить черновик ещё раз" title="Сохранить черновик ещё раз" onClick={() => session.retry()}>
+                сохранить ещё раз
               </button>
             </>
           )}
         </span>
       </div>
       <div className="ed-history">
-        <button type="button" className="ibtn" aria-label="Отменить" aria-keyshortcuts="Meta+Z Control+Z" disabled={!state.canUndo || gone} onClick={() => session.undo()}>
+        <button type="button" className="ibtn" aria-label="Отменить" title="Отменить последнее изменение" aria-keyshortcuts="Meta+Z Control+Z" disabled={!state.canUndo || gone} onClick={() => session.undo()}>
           <Icon name="undo" size={15} />
         </button>
-        <button type="button" className="ibtn" aria-label="Повторить" aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y" disabled={!state.canRedo || gone} onClick={() => session.redo()}>
+        {/* Slice review 5-L5: «Повторить» everywhere else in the app asks the engine again; this brings an undone edit back. */}
+        <button
+          type="button"
+          className="ibtn"
+          aria-label="Вернуть отменённое"
+          title="Вернуть отменённое изменение"
+          aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
+          disabled={!state.canRedo || gone}
+          onClick={() => session.redo()}
+        >
           <Icon name="redo" size={15} />
         </button>
       </div>

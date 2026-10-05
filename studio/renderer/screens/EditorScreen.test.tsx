@@ -101,6 +101,24 @@ describe("the header", () => {
     }
   });
 
+  test("slice review 5-L5: redo is «Вернуть отменённое» and the save line's retry «Сохранить черновик ещё раз»: no «Повторить» in the header", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    expect(within(header()).getByRole("button", { name: "Вернуть отменённое" }).getAttribute("title")).toBe("Вернуть отменённое изменение");
+    expect(within(header()).getByRole("button", { name: "Отменить" }).getAttribute("title")).toBe("Отменить последнее изменение");
+
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "вечер" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(within(header()).queryByRole("button", { name: "Повторить" }) === null).toBe(true);
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await waitFor(() => expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE) === null).toBe(true));
+    expect(callsOf(engine, "montages.save").at(-1)?.payload).toMatchObject({ name: "вечер" });
+  });
+
   test("a name the draft cannot take is refused with the reason, and the field stays open", async () => {
     const { client, engine } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);
