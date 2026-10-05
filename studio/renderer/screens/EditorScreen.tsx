@@ -13,6 +13,7 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { useNoticeDock } from "../ui/NoticeDock";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { useAnnouncer } from "../ui/useAnnouncer";
 import { type BinFilter, isFreePhoto } from "./montage/bin";
 import { ClipProperties } from "./montage/ClipProperties";
 import { sameJson } from "./montage/json";
@@ -144,6 +145,15 @@ function EditorHeader({
     setBackToPencil(false);
   }, [backToPencil, renaming]);
 
+  // Slice review 5-L6: the save line changes twice per edit («сохраняется…», «сохранён 12:30»), so it is no live region. Only what the owner must
+  // hear is said, politely, in a region of its own: a save that failed, and the draft deleted.
+  const [said, say] = useAnnouncer();
+  const saveKind = state.save.kind;
+  useEffect(() => {
+    if (saveKind === "failed") say("Черновик не сохранён");
+    else if (saveKind === "gone") say("Черновик удалён: изменения здесь больше не сохраняются");
+  }, [saveKind, say]);
+
   /** Saves the typed name; true when the field closed. A blur (the owner clicked elsewhere) leaves the focus where the click put it. */
   function commitName(): boolean {
     const value = input.current?.value ?? "";
@@ -201,7 +211,10 @@ function EditorHeader({
             <Icon name="pencil" size={12} strokeWidth={2.2} />
           </button>
         </span>
-        <span className="mono faint ed-saved" role="status">
+        <span className="sr-only ed-saved-said" role="status">
+          {said}
+        </span>
+        <span className="mono faint ed-saved">
           {saveLabel(state.save, state.saved, { fresh })}
           {state.save.kind === "failed" && (
             <>
