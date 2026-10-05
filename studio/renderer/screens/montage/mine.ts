@@ -43,8 +43,16 @@ export function applyLibraryChange(library: MineLibrary, change: MediaStoreChang
  */
 export type VisualAction = "select" | "fill" | "append" | "full" | "too-short";
 
-/** An empty cell of the selected clip that a click fills (the bin's own). */
-export type FillTarget = { readonly clip: number; readonly cell: number } | null;
+/**
+ * The selected clip's cell a click on a photo goes into (the bin's own): an empty one is filled; with `replace`, the owner selected it with a
+ * photo in it, and the click replaces that photo (slice review 5-M5).
+ */
+export type FillTarget = { readonly clip: number; readonly cell: number; readonly replace?: boolean } | null;
+
+/** «в ячейку 2 кадра 1», «заменить фото в ячейке 1 кадра 2»: where a click puts a photo. */
+export function fillWords(target: NonNullable<FillTarget>): string {
+  return target.replace === true ? `заменить фото в ячейке ${target.cell + 1} кадра ${target.clip + 1}` : `в ячейку ${target.cell + 1} кадра ${target.clip + 1}`;
+}
 
 export type VisualTile =
   | { readonly kind: "record"; readonly media: MediaSummary; readonly slot: number | null; readonly action: VisualAction }
@@ -143,7 +151,7 @@ function actionWords(tile: Extract<VisualTile, { kind: "record" }>, fillTarget: 
     case "select":
       return `выбрать кадр ${tile.slot ?? ""}`;
     case "fill":
-      return fillTarget === null ? "в ячейку" : `в ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}`;
+      return fillTarget === null ? "в ячейку" : fillWords(fillTarget);
     case "append":
       return "добавить кадр в конец ролика";
     case "full":
@@ -161,7 +169,8 @@ export function visualAria(tile: Extract<VisualTile, { kind: "record" }>, fillTa
 /** The line under the photos and videos: what a click does now (the «Фото» tab's `binHint`, for own files). */
 export function mineHint(fillTarget: FillTarget, addBlock: AddRefusal | null): string {
   const drag = "Перетащите на «Кадры», чтобы вставить между кадрами.";
-  if (fillTarget !== null) return `Клик — фото в ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}, видео — в конец. ${drag}`;
+  if (fillTarget?.replace === true) return `Клик — ${fillWords(fillTarget)} (видео — в конец). ${drag}`;
+  if (fillTarget !== null) return `Клик — фото ${fillWords(fillTarget)}, видео — в конец. ${drag}`;
   if (addBlock !== null) return addBlockedLabel(addBlock);
   return `Клик — кадр в конец ролика. ${drag}`;
 }

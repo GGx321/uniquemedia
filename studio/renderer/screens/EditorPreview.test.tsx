@@ -600,6 +600,30 @@ describe("a cell's crop by its face point", () => {
     const clip = saved.clips[0];
     expect(clip?.kind === "collage" ? clip.cells[1]?.photo?.source : null).toBe("scene");
   });
+
+  test("slice review 5-M5: a bin photo dropped on a FILLED cell replaces its photo, one undo step", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { clips: [collageClip(0, [P1, P2], 4_000, false)] });
+    const bin = screen.getByRole("list", { name: "Фото аватара" });
+    const tile = within(bin).getAllByRole("listitem").find((item) => (item.getAttribute("aria-label") ?? "").endsWith("не использовано"));
+    const pick = tile === undefined ? null : within(tile).getAllByRole("button")[0];
+    if (pick === undefined || pick === null) throw new Error("no free photo in the bin");
+    fireEvent.dragStart(pick);
+    const filled = inPreview("Кадр 1, ячейка 2");
+    fireEvent.dragOver(filled);
+    expect(filled.className).toContain("pv-cell-drop");
+    fireEvent.drop(filled);
+    await flush();
+    const saved = await nextSave(engine);
+    const clip = saved.clips[0];
+    const second = clip?.kind === "collage" ? clip.cells[1]?.photo : null;
+    expect(second?.source === "scene" ? second.photoId : null).not.toBe(P2);
+    expect(clip?.kind === "collage" ? clip.cells[0]?.photo : null).toEqual({ source: "scene", photoId: P1 });
+    undo();
+    await flush();
+    const back = (await nextSave(engine, 1)).clips[0];
+    expect(back?.kind === "collage" ? back.cells[1]?.photo : null).toEqual({ source: "scene", photoId: P2 });
+  });
 });
 
 describe("playback", () => {

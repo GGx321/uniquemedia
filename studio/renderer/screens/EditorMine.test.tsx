@@ -174,6 +174,23 @@ describe("placing own files (M7, M11, M12): each is one undo step", () => {
     expect(within(props()).queryByText("ищем лицо…") === null).toBe(true);
   });
 
+  test("slice review 5-M5: with a filled cell the owner selected, a photo replaces that cell's photo; a video still goes to the end", async () => {
+    const { client, engine } = await studio();
+    seed(engine);
+    await openMine(engine, client);
+    fireEvent.click(within(timeline()).getByRole("button", { name: /^Кадр 2: / }));
+    await flush();
+    expect(plain(within(section("Фото и видео")).getByRole("button", { name: /^Видео latte-pour/ }).getAttribute("aria-label"))).toBe("Видео latte-pour.mov, 0:06: добавить кадр в конец ролика");
+    fireEvent.click(within(section("Фото и видео")).getByRole("button", { name: "Фото croissant.jpg: заменить фото в ячейке 1 кадра 2" }));
+    await flush();
+    const saved = await nextSave(engine);
+    expect(saved.clips).toHaveLength(4);
+    expect(saved.clips[1]).toMatchObject({ kind: "photo", cell: { photo: { source: "own", mediaId: PHOTO }, focus: null } });
+    undo();
+    await flush();
+    expect(clipLabels()).toHaveLength(4);
+  });
+
   test("dragged onto «Кадры», a video becomes a clip at the boundary under the pointer", async () => {
     const { client, engine } = await studio();
     seed(engine);

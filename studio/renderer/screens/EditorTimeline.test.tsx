@@ -124,6 +124,45 @@ describe("placing photos from the bin", () => {
     expect(callsOf(engine, "montages.focus")).toHaveLength(0);
   });
 
+  test("slice review 5-M5: a cell the owner selects is a click's target: a free photo replaces its photo, one undo step; the bin says so first", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await pick(P2);
+    await nextSave(engine, 0);
+    // The owner selects clip 2 (the one a click just added would not be a target: see the next test).
+    fireEvent.click(clipButtons()[1] ?? document.body);
+    await flush();
+    expect(pickButton(P3).getAttribute("aria-label")).toBe("Фото 4: заменить фото в ячейке 1 кадра 2");
+    expect(screen.getByText(/^Клик — заменить фото в ячейке 1 кадра 2\./)).toBeDefined();
+    const before = callsOf(engine, "montages.save").length;
+    await pick(P3);
+    expect(clipButtons()).toHaveLength(2);
+    const saved = await nextSave(engine, before);
+    expect(saved.clips.map(photoOf)).toEqual([P1, P3]);
+    // The new photo's face is asked for, as for any photo placed.
+    expect(callsOf(engine, "montages.focus").at(-1)?.payload.photo).toEqual({ source: "scene", photoId: P3 });
+    fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
+    const back = await nextSave(engine, callsOf(engine, "montages.save").length);
+    expect(back.clips.map(photoOf)).toEqual([P1, P2]);
+  });
+
+  test("slice review 5-M5: right after a click placed a photo, the next click adds another clip (the photo just placed is not replaced)", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await pick(P2);
+    // The clip just added is selected, but a click still adds: the bin says so.
+    expect(pickButton(P3).getAttribute("aria-label")).toBe("Фото 4: добавить кадр в конец ролика");
+    await pick(P3);
+    expect(clipLabels()).toEqual(["Кадр 1: 1 фото, 8.0 с", "Кадр 2: 1 фото, 2.0 с", "Кадр 3: 1 фото, 2.0 с"]);
+    // Selected again by the owner, it is the target.
+    fireEvent.click(clipButtons()[2] ?? document.body);
+    await flush();
+    expect(pickButton(P3).getAttribute("aria-label")).toBe("Фото 4: выбрать кадр 3");
+    expect(within(tileOf(PHOTO_IDS[3] ?? "")).getByRole("button").getAttribute("aria-label")).toBe("Фото 3: заменить фото в ячейке 1 кадра 3");
+  });
+
   test("dropped on the track, a photo becomes a clip at the boundary under the pointer", async () => {
     const { client, engine } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);

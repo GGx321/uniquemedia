@@ -56,7 +56,7 @@ import { RenderControls } from "./montage/RenderControls";
 import { layerProblems, photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
 import { isTextEntry, spacePlays } from "./montage/keys";
-import { resolveSelection, selectClip } from "./montage/selection";
+import { resolveSelection, selectClip, type Selection } from "./montage/selection";
 import { DraftSession } from "./montage/session";
 import { useDraftSessions } from "./montage/sessions";
 import { Timeline } from "./montage/Timeline";
@@ -545,7 +545,18 @@ function DraftEditor({
   const dragCell = drag !== null && (drag.source === "scene" || drag.kind === "photo") ? dragAny : null;
   const selected = resolveSelection(state.spec, timeline.selection);
   const selectedCell = selected?.kind === "clip" ? cellsOf(selected.clip)[selected.cell] : undefined;
-  const fillTarget = selected?.kind === "clip" && selectedCell !== undefined && selectedCell.photo === null ? { clip: selected.index, cell: selected.cell } : null;
+  /**
+   * The selection a placement made (the clip a click just added, the cell a click just filled), as the very object `timeline.select` got: a cell
+   * selected that way is not a click's target for a REPLACE, so clicking photo after photo keeps adding clips. Any selection the owner makes is a
+   * new object (slice review 5-M5).
+   */
+  const [placedSelection, setPlacedSelection] = useState<Selection | null>(null);
+  // Where a click on a photo goes: the selected cell when it is empty (it is filled), or when the owner selected it (its photo is replaced, one
+  // undo step); otherwise a new clip at the end.
+  const fillTarget =
+    selected?.kind === "clip" && selectedCell !== undefined && (selectedCell.photo === null || timeline.selection !== placedSelection)
+      ? { clip: selected.index, cell: selected.cell, replace: selectedCell.photo !== null }
+      : null;
 
   // ---------- the media panel (3d.5) ----------
   const commands = useSelectionCommands(session, timeline);
@@ -616,12 +627,14 @@ function DraftEditor({
   const currentSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "builtin" ? selectedLayer.sticker.stickerId : null;
   const currentOwnSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "own" ? selectedLayer.sticker.mediaId : null;
 
-  /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. */
-  function selectClipAt(index: number, cell = 0): void {
+  /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. `placed`: a placement selects what it put in. */
+  function selectClipAt(index: number, cell = 0, placed = false): void {
     const spec = session.state.spec;
     const clip = spec.clips[index];
     if (clip === undefined) return;
-    timeline.select(selectClip(spec, index, cell));
+    const next = selectClip(spec, index, cell);
+    timeline.select(next);
+    setPlacedSelection(placed ? next : null);
     const start = clipStartMs(spec, index);
     const now = playheadStep(timeline);
     const into = seekInto(now, start, start + clip.durationMs);
@@ -637,19 +650,21 @@ function DraftEditor({
     if (!result.ok || result.id === undefined || !session.edit(result.spec)) return;
     focus.resolve(photoId);
     const index = result.spec.clips.findIndex((c) => c.clipId === result.id);
-    if (index >= 0) selectClipAt(index);
+    if (index >= 0) selectClipAt(index, 0, true);
   }
 
-  /** After a cell was filled: the selection moves on to the clip's next empty cell, if any. */
+  /** After a cell was filled (or its photo replaced): the selection moves on to the clip's next empty cell, if any; it is a placement's. */
   function selectAfterFill(spec: Montage["spec"], clipIndex: number, cell: number): void {
     const clip = spec.clips[clipIndex];
     const cells = clip === undefined ? [] : cellsOf(clip);
     const next = cells.findIndex((c, i) => i > cell && c.photo === null);
     const anyEmpty = cells.findIndex((c) => c.photo === null);
-    timeline.select(selectClip(spec, clipIndex, next >= 0 ? next : anyEmpty >= 0 ? anyEmpty : cell));
+    const selection = selectClip(spec, clipIndex, next >= 0 ? next : anyEmpty >= 0 ? anyEmpty : cell);
+    timeline.select(selection);
+    setPlacedSelection(selection);
   }
 
-  /** A free scene photo into a cell; the selection moves on to the clip's next empty cell, if any. */
+  /** A free scene photo into a cell, filling it or replacing its photo; the selection moves on to the clip's next empty cell, if any. */
   function fillCell(clipIndex: number, cell: number, photoId: string): void {
     const photo = photoIndex?.get(photoId);
     if (photo === undefined || !isFreePhoto(photo)) return;
@@ -665,7 +680,7 @@ function DraftEditor({
   function placeOwn(result: Edit): string | null {
     if (!result.ok || result.id === undefined || !session.edit(result.spec)) return null;
     const index = result.spec.clips.findIndex((c) => c.clipId === result.id);
-    if (index >= 0) selectClipAt(index);
+    if (index >= 0) selectClipAt(index, 0, true);
     return result.id;
   }
 
@@ -698,7 +713,7 @@ function DraftEditor({
     else placeOwnVideo(dropped, boundary);
   }
 
-  /** A drag dropped on an empty cell: a photo fills it (a video has no cell; it is never offered one). */
+  /** A drag dropped on a cell: a photo fills it or replaces its photo (a video has no cell; it is never offered one). */
   function fillDropped(clipIndex: number, cell: number, key: string): void {
     const dropped = parseDragKey(key);
     if (dropped === null) return;
@@ -706,7 +721,7 @@ function DraftEditor({
     else if (dropped.kind === "photo") fillOwnCell(clipIndex, cell, dropped.mediaId);
   }
 
-  /** A click on a photo or video tile of «Мои»: a placed one selects its clip; a photo fills the waiting cell; else a new clip at the end. */
+  /** A click on a photo or video tile of «Мои»: a placed one selects its clip; a photo goes into the target cell (`fillTarget`); else a new clip at the end. */
   function pickOwnVisual(media: MediaSummary): void {
     const spec = session.state.spec;
     for (const [i, clip] of spec.clips.entries()) {
@@ -735,7 +750,7 @@ function DraftEditor({
     timeline.select({ kind: "music" });
   }
 
-  /** A click on a bin photo: a placed one selects its clip; a free one fills the selected empty cell or is appended. */
+  /** A click on a bin photo: a placed one selects its clip; a free one goes into the target cell (`fillTarget`) or is appended. */
   function pickPhoto(photoId: string): void {
     const spec = session.state.spec;
     for (const [i, clip] of spec.clips.entries()) {

@@ -174,7 +174,7 @@ export interface PreviewProps {
   readonly timeline: TimelineState;
   /** Photos `montages.focus` is still judging, by `focusKey`: «ищем лицо…» on the selected cell. */
   readonly focusPending: ReadonlySet<string>;
-  /** A free bin photo being dragged: an empty cell on screen takes it. */
+  /** A photo being dragged from the media panel: a photo cell on screen takes it (an empty one is filled, a filled one's photo replaced). */
   readonly dragPhoto: string | null;
   readonly onFillCell: (clip: number, cell: number, photoId: string) => void;
   /** Selects cell `cell` of clip `clip` (the playhead is in it already). */
@@ -499,8 +499,11 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
     session.endMerge();
   }
 
+  /** A photo cell takes a dragged photo: an empty one is filled, a filled one's photo replaced (slice review 5-M5); an own video's frame takes none. */
+  const takesPhoto = (cell: CellView): boolean => dragPhoto !== null && cell.content.kind !== "video";
+
   function dropOn(event: DragEvent<HTMLElement>, cell: CellView): void {
-    if (dragPhoto === null || cell.content.kind !== "empty" || view === null) return;
+    if (dragPhoto === null || !takesPhoto(cell) || view === null) return;
     event.preventDefault();
     onFillCell(view.index, cell.index, dragPhoto);
   }
@@ -530,7 +533,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           cell={cell}
           pictureUrl={cell.content.kind === "scene" ? (mock ? null : photoUrl(spec.avatarId, cell.content.photoId)) : cell.content.kind === "ownPhoto" ? ownPhotoUrl(client, cell.content.mediaId) : null}
           selected={selectedCell === cell.index}
-          dropping={dragPhoto !== null && cell.content.kind === "empty"}
+          dropping={takesPhoto(cell)}
           onSize={(photoId, size) => setSizes((now) => (now.get(photoId)?.w === size.w && now.get(photoId)?.h === size.h ? now : new Map(now).set(photoId, size)))}
           onPointerDown={(e) => pressCell(e, cell)}
           onSelect={() => onSelectCell(view.index, cell.index)}
@@ -538,7 +541,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           onKeyUp={keyUp}
           onBlur={onBlur}
           onDragOver={(e) => {
-            if (dragPhoto === null || cell.content.kind !== "empty") return;
+            if (!takesPhoto(cell)) return;
             e.preventDefault();
             if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
           }}
@@ -718,7 +721,7 @@ interface CellProps {
   /** The photo's picture: a scene photo's or an own photo's through main's media route; null in the dev mock (its stand-in is drawn). */
   readonly pictureUrl: string | null;
   readonly selected: boolean;
-  /** A bin photo is being dragged and this empty cell can take it. */
+  /** A photo is being dragged and this cell can take it (filled, or its photo replaced). */
   readonly dropping: boolean;
   readonly onSize: (photoId: string, size: Size) => void;
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
