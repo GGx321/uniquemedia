@@ -41,7 +41,7 @@ test("a 503 and then a success: the picture is shown, after one more load of the
   // Not at once: the pause is what lets a busy gate drain.
   expect(loads).toEqual(["0:studio-media://photo/a/b"]);
   await act(() => pause(DELAY * 3));
-  expect(screen.queryByText("placeholder")).toBeNull();
+  expect(screen.queryByText("placeholder") === null).toBe(true);
   expect(loads).toEqual(["0:studio-media://photo/a/b", "1:studio-media://photo/a/b"]);
   expect(shot()).toBeDefined();
 });
@@ -61,7 +61,7 @@ test("two failures in a row: the placeholder, and no third try", async () => {
 test("the first failure alone does not show the placeholder", () => {
   render(<Probe src="studio-media://photo/a/b" loads={[]} />);
   fireEvent.error(shot());
-  expect(screen.queryByText("placeholder")).toBeNull();
+  expect(screen.queryByText("placeholder") === null).toBe(true);
 });
 
 test("another address gets its own two chances: a failure of the old one is not carried over", async () => {
@@ -74,7 +74,7 @@ test("another address gets its own two chances: a failure of the old one is not 
   rerender(<Probe src="studio-media://photo/a/two" loads={loads} />);
   expect(shot().getAttribute("src")).toBe("studio-media://photo/a/two");
   fireEvent.error(shot());
-  expect(screen.queryByText("placeholder")).toBeNull();
+  expect(screen.queryByText("placeholder") === null).toBe(true);
 });
 
 test("the pending retry is dropped when the element goes away: nothing fires after unmount", async () => {
@@ -94,5 +94,5 @@ test("a failure that comes while the retry is waiting does not start a second re
   fireEvent.error(img);
   await act(() => pause(DELAY * 3));
   expect(loads).toEqual(["0:studio-media://photo/a/b", "1:studio-media://photo/a/b"]);
-  expect(screen.queryByText("placeholder")).toBeNull();
+  expect(screen.queryByText("placeholder") === null).toBe(true);
 });
