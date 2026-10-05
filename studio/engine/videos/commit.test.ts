@@ -9,7 +9,7 @@ import type { VerifiedFile } from "../verify";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { NODE_NUMBER_FS } from "./exportNumbers";
 import { commitIntent, writeIntent } from "./intents";
-import { commitVideo, VerifyRefusedError, type CommitInput, type CommitStep } from "./commit";
+import { commitVideo, mayHaveLeftIntent, VerifyRefusedError, type CommitInput, type CommitStep } from "./commit";
 import { videoPaths, VideoRecordSchema } from "./record";
 import {
   acceptingVerify,
@@ -285,6 +285,23 @@ describe("a number that a record or an intent of the day still names is never re
     const out = await r.run();
 
     expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
+  });
+
+  test("a failure after the intent's rename (the .pending flush fails) still counts as one that may have left an intent: it is marked for the settle (follow-up LOW-5)", async () => {
+    const r = await rig(world);
+    r.fs.failOnce("fsyncDir", errnoError("EIO"), (args) => args.some((a) => a.includes(".pending")));
+
+    const error = await failureOf(r.run());
+
+    expect(mayHaveLeftIntent(error)).toBe(true);
+  });
+
+  test("a failure before any intent was written is not marked", async () => {
+    const r = await rig(world);
+
+    const error = await failureOf(r.run({ verify: async () => ({ result: { ok: false, reasons: [{ code: "UUID_BOX", message: "m" }] }, sha256: null, bytes: 1 }) }));
+
+    expect(mayHaveLeftIntent(error)).toBe(false);
   });
 
   test("the scan stops for the commit's own signal: a cancelled commit claims nothing", async () => {

@@ -67,6 +67,21 @@ describe("the signal's reason", () => {
     await expect(highestNamedNumber(libraryWith([]), "/lib", SCOPE, stop.signal, () => undefined, fs)).rejects.toBe(reason);
   });
 
+  test("a disk error that arrives just BEFORE the signal fires (the abort lands in the next microtask) still comes out as the reason once the signal is seen", async () => {
+    const stop = new AbortController();
+    const reason = new Error("the deadline");
+    const fs: NumberFs = {
+      readdir: async () => {
+        queueMicrotask(() => stop.abort(reason));
+        throw Object.assign(new Error("EIO"), { code: "EIO" });
+      },
+      lstat: async () => ({ size: 0, isFile: true }),
+      readFile: async () => "",
+    };
+
+    await expect(highestNamedNumber(libraryWith([]), "/lib", SCOPE, stop.signal, () => undefined, fs)).rejects.toBe(reason);
+  });
+
   test("so does a read error of a file", async () => {
     const stop = new AbortController();
     const reason = new Error("the deadline");
