@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { lstat, readdir, readFile, realpath } from "node:fs/promises";
+import { link, lstat, readdir, readFile, realpath } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { Id, MAX_LISTED_MEDIA, MediaFileName, MediaKind, MediaSummary } from "../../shared/engine";
@@ -204,6 +204,8 @@ export interface MediaRecordsOptions {
     /** How a record's file is looked at when a library opens; `lstat` by default. */
     readonly lstat?: (path: string) => Promise<{ isFile(): boolean; size: number }>;
     readonly rename?: (from: string, to: string) => Promise<void>;
+    /** A hard link, which fails when the name is taken (how a piece is brought back from the quarantine without ever overwriting); `link` by default. */
+    readonly link?: (from: string, to: string) => Promise<void>;
     readonly platform?: string;
     readonly sleep?: (ms: number) => Promise<void>;
     readonly delaysMs?: readonly number[];
@@ -299,40 +301,69 @@ export class MediaRecords {
     }
   }
 
-  /** The files the library's quarantine holds from `media/`, by name, each with its path: what an open may bring back. Empty when there is none or it cannot be read. */
-  async #quarantinedMedia(): Promise<Map<string, string>> {
-    const found = new Map<string, string>();
+  /** Whether `path` is a real folder (not a link or a junction) whose real path is inside the library root. */
+  async #plainFolderInRoot(path: string): Promise<boolean> {
+    try {
+      const info = await lstat(path);
+      if (info.isSymbolicLink() || !info.isDirectory()) return false;
+      const [root, real] = await Promise.all([realpath(this.#options.root), realpath(path)]);
+      const inside = relative(root, real);
+      return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * The files the library's quarantine holds from `media/`, by name: every copy, NEWEST stamp first, as paths. What an open may bring back. Only plain folders inside the library
+   * are read (`quarantine/` and each `<stamp>/media`: a link or a junction is refused, as `media/` is), and only plain files in them. Empty when there is none or it cannot be read.
+   */
+  async #quarantinedMedia(): Promise<Map<string, string[]>> {
+    const found = new Map<string, string[]>();
     const parent = join(this.#options.root, QUARANTINE_DIR);
+    if (!(await this.#plainFolderInRoot(parent))) return found;
     let stamps;
     try {
-      stamps = (await readdir(parent, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort();
+      stamps = (await readdir(parent, { withFileTypes: true })).filter((entry) => entry.isDirectory()).map((entry) => entry.name).sort().reverse();
     } catch {
       return found;
     }
     for (const stamp of stamps) {
       const folder = join(parent, stamp, MEDIA_DIR);
+      if (!(await this.#plainFolderInRoot(folder))) continue;
       let files;
       try {
         files = await readdir(folder, { withFileTypes: true });
       } catch {
         continue;
       }
-      for (const file of files) if (file.isFile() && !found.has(file.name)) found.set(file.name, join(folder, file.name));
+      for (const file of files) if (file.isFile()) found.set(file.name, [...(found.get(file.name) ?? []), join(folder, file.name)]);
     }
     return found;
   }
 
-  /** Moves a piece from the quarantine to `media/` under its own name, never over a file that is there. */
+  /**
+   * Brings a piece from the quarantine to `media/` under its own name, NEVER over a file that is there: a hard link fails when the name is taken (no look-then-move gap),
+   * and the quarantine's own name is removed after. A volume that cannot make a hard link falls back to a look and a rename. False when the name is taken or the move failed.
+   */
   async #restore(from: string, name: string): Promise<boolean> {
     const target = join(this.#dir, name);
-    const taken = await (this.#options.fs?.lstat ?? lstat)(target).then(
-      () => true,
-      () => false,
-    );
-    if (taken) return false;
     try {
-      await this.#rename(from, target);
+      try {
+        await (this.#options.fs?.link ?? link)(from, target);
+        await this.#unlink(from).catch(() => undefined);
+      } catch (error) {
+        if (hasErrorCode(error, "EEXIST")) return false;
+        // No hard links here (exFAT, some network shares): a look, then a rename.
+        const taken = await (this.#options.fs?.lstat ?? lstat)(target).then(
+          () => true,
+          () => false,
+        );
+        if (taken) return false;
+        await this.#rename(from, target);
+      }
       await fsyncDir(this.#dir).catch(() => undefined);
+      await fsyncDir(dirname(from)).catch(() => undefined);
       return true;
     } catch {
       return false;
@@ -424,15 +455,18 @@ export class MediaRecords {
     let notSetAside = 0;
     let restored = 0;
     const quarantine = new Quarantine(this.#options.root, this.#options.now, this.#options.quarantineDurability);
-    let held: Map<string, string> | undefined;
-    const inQuarantine = async (name: string): Promise<string | undefined> => (held ??= await this.#quarantinedMedia()).get(name);
-    // Brings a piece back from the quarantine, then judges the record again (a record only: a file has none to judge) and lists it when it is sound.
-    const bringBack = async (name: string): Promise<boolean> => {
-      const from = await inQuarantine(name);
-      if (from === undefined || !(await this.#restore(from, name))) return false;
-      held?.delete(name);
-      restored++;
-      return true;
+    let held: Map<string, string[]> | undefined;
+    // Brings a piece back from the quarantine: the newest copy that is the size asked for (a file is the size its record names; a record has no size to match). A partial
+    // copy a sync left in an older stamp is never the one that comes back.
+    const bringBack = async (name: string, bytes?: number): Promise<boolean> => {
+      for (const from of (held ??= await this.#quarantinedMedia()).get(name) ?? []) {
+        if (bytes !== undefined && (await lstat(from).then((info) => info.size, () => -1)) !== bytes) continue;
+        if (!(await this.#restore(from, name))) return false;
+        held.set(name, (held.get(name) ?? []).filter((path) => path !== from));
+        restored++;
+        return true;
+      }
+      return false;
     };
     const enterJudged = async (recordName: string): Promise<void> => {
       const again = await this.#judge(recordName);
@@ -451,7 +485,7 @@ export class MediaRecords {
       if (judged.kind === "problem") problems.push({ file: entry.name, reason: judged.reason });
       else if (judged.kind === "dangling") {
         // Told, not moved: its file may be on its way. A file the quarantine holds under its name (an older open set it aside) is brought back to it.
-        if (await bringBack(judged.file)) await enterJudged(entry.name);
+        if (await bringBack(judged.file, judged.bytes)) await enterJudged(entry.name);
         else problems.push({ file: entry.name, reason: "missing-file" });
       } else if (!this.#inFlight.has(judged.record.id)) this.#enter(judged.record);
     }
@@ -470,13 +504,18 @@ export class MediaRecords {
       else if (outcome === "failed") notSetAside++;
     }
     // One line each, with counts and never a path.
+    if (problems.length > 0) {
+      const byReason = new Map<MediaProblemReason, number>();
+      for (const problem of problems) byReason.set(problem.reason, (byReason.get(problem.reason) ?? 0) + 1);
+      this.#warn(`${problems.length} own-media record(s) not listed: ${[...byReason].map(([reason, count]) => `${count} ${reason}`).join(", ")}`);
+    }
     if (quarantinedOrphans > 0) this.#warn(`${quarantinedOrphans} stored file(s) without a record were set aside in the library's quarantine folder`);
     if (notSetAside > 0) this.#warn(`${notSetAside} stored file(s) without a record could not be set aside; they stay where they are`);
     if (restored > 0) this.#warn(`${restored} piece(s) of own media were brought back from the library's quarantine folder`);
     return { listed: this.#index.size, quarantinedOrphans, restored, problems, unusable: false };
   }
 
-  async #judge(name: string): Promise<{ kind: "record"; record: RecordShape } | { kind: "dangling"; file: string } | { kind: "problem"; reason: MediaProblemReason }> {
+  async #judge(name: string): Promise<{ kind: "record"; record: RecordShape } | { kind: "dangling"; file: string; bytes: number } | { kind: "problem"; reason: MediaProblemReason }> {
     let text: string;
     try {
       text = await readFile(join(this.#dir, name), "utf8");
@@ -498,7 +537,7 @@ export class MediaRecords {
       info = await (this.#options.fs?.lstat ?? lstat)(join(this.#dir, record.file));
     } catch (error) {
       // Only a file that is NOT THERE makes a record dangling; any other error says nothing about the file (a cloud placeholder, a drive).
-      if (hasErrorCode(error, "ENOENT")) return { kind: "dangling", file: record.file };
+      if (hasErrorCode(error, "ENOENT")) return { kind: "dangling", file: record.file, bytes: record.bytes };
       return { kind: "problem", reason: "damaged" };
     }
     if (!info.isFile() || info.size !== record.bytes) return { kind: "problem", reason: "damaged" };

@@ -901,3 +901,150 @@ describe("a record that is being removed", () => {
     expect(both.sort()).toEqual([false, true]);
   });
 });
+
+describe("bringing a piece back from the quarantine is judged, confined and never an overwrite (review round 3)", () => {
+  /** A record in media/ whose file is not: the file is wherever a test puts copies of it. Returns the summary and the file's name. */
+  async function recordWithoutFile(): Promise<{ id: string; file: string; bytes: number }> {
+    const summary = await records().commit(await photoInput());
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "away.jpg"));
+    return { id: summary.mediaId, file: `${summary.mediaId}.jpg`, bytes: "photo bytes".length };
+  }
+  async function stamp(name: string, files: Record<string, string>): Promise<string> {
+    const folder = join(root(), "quarantine", name, "media");
+    await mkdir(folder, { recursive: true });
+    for (const [file, text] of Object.entries(files)) await writeFile(join(folder, file), text);
+    return folder;
+  }
+
+  test("a partial copy in an older stamp and the full one in a newer stamp: the one that is the size the record names is brought back", async () => {
+    const piece = await recordWithoutFile();
+    const older = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "part" });
+    await stamp("2026-10-04T11-00-00-000Z", { [piece.file]: "photo bytes" });
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(reopened.list().total).toBe(1);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("photo bytes");
+    expect(await readFile(join(older, piece.file), "utf8")).toBe("part");
+  });
+
+  test("two copies of the right size: the newest stamp's is the one brought back", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "PHOTO BYTES" });
+    await stamp("2026-10-04T11-00-00-000Z", { [piece.file]: "photo bytes" });
+    await records().recover();
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("photo bytes");
+  });
+
+  test("no copy in the quarantine is the size the record names: nothing is brought back, and the record stays a missing-file problem", async () => {
+    const piece = await recordWithoutFile();
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "part" });
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(0);
+    expect(report.problems).toEqual([{ file: `${piece.id}.json`, reason: "missing-file" }]);
+    expect(reopened.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${piece.id}.json`]);
+    expect(await readFile(join(folder, piece.file), "utf8")).toBe("part");
+  });
+
+  test("a stamp's media folder that is a link is not read: a matching file behind it is never brought in", async () => {
+    const piece = await recordWithoutFile();
+    const outside = join(tmp(), "outside");
+    await mkdir(outside);
+    await writeFile(join(outside, piece.file), "photo bytes");
+    await mkdir(join(root(), "quarantine", "2026-10-04T10-00-00-000Z"), { recursive: true });
+    await symlink(outside, join(root(), "quarantine", "2026-10-04T10-00-00-000Z", "media"));
+    const report = await records().recover();
+    expect(report.restored).toBe(0);
+    expect(await readdir(outside)).toEqual([piece.file]);
+    expect(await names(mediaDir())).toEqual([`${piece.id}.json`]);
+  });
+
+  test("a quarantine folder that is itself a link is not read either", async () => {
+    const piece = await recordWithoutFile();
+    const outside = join(tmp(), "outside-quarantine");
+    await mkdir(join(outside, "2026-10-04T10-00-00-000Z", "media"), { recursive: true });
+    await writeFile(join(outside, "2026-10-04T10-00-00-000Z", "media", piece.file), "photo bytes");
+    await symlink(outside, join(root(), "quarantine"));
+    const report = await records().recover();
+    expect(report.restored).toBe(0);
+    expect(await readdir(join(outside, "2026-10-04T10-00-00-000Z", "media"))).toEqual([piece.file]);
+  });
+
+  test("a file that appears at the name between the judging and the bringing back is not overwritten", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    // The look at the file during the judging says «not there» (as it was); the file is there by the time the piece is brought back.
+    await writeFile(join(mediaDir(), piece.file), "the owner's newer bytes");
+    const reopened = records({
+      fs: {
+        lstat: async (path) => {
+          if (path.endsWith(piece.file)) throw Object.assign(new Error("not there"), { code: "ENOENT" });
+          const { lstat } = await import("node:fs/promises");
+          return lstat(path);
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(0);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("the owner's newer bytes");
+  });
+
+  test("a volume that cannot make a hard link still gets the piece back", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    const reopened = records({
+      fs: {
+        link: async () => {
+          throw Object.assign(new Error("not supported"), { code: "EPERM" });
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(reopened.list().total).toBe(1);
+  });
+
+  test("on a volume without hard links the look before the rename still keeps a file that is there: the look at the judging said ENOENT, the look at the bringing back says what is", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    await writeFile(join(mediaDir(), piece.file), "the owner's newer bytes");
+    let looks = 0;
+    const reopened = records({
+      fs: {
+        link: async () => {
+          throw Object.assign(new Error("not supported"), { code: "EPERM" });
+        },
+        lstat: async (path) => {
+          if (path.endsWith(piece.file) && looks++ === 0) throw Object.assign(new Error("not there"), { code: "ENOENT" });
+          const { lstat } = await import("node:fs/promises");
+          return lstat(path);
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(0);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("the owner's newer bytes");
+  });
+
+  test("what is brought back is gone from the quarantine folder it left", async () => {
+    const piece = await recordWithoutFile();
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    await records().recover();
+    expect(await readdir(folder)).toEqual([]);
+  });
+
+  test("records that cannot be listed are told in one log line with counts per reason and no path", async () => {
+    await recordWithoutFile();
+    await writeFile(join(mediaDir(), "media-00000070.json"), "{ not json");
+    const lines: string[] = [];
+    await records({ warn: (text) => lines.push(text) }).recover();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/2 .*not listed/);
+    expect(lines[0]).toContain("1 missing-file");
+    expect(lines[0]).toContain("1 unreadable");
+    expect(lines[0]).not.toContain(root());
+    expect(lines[0]).not.toContain("media-0000");
+  });
+});
