@@ -810,6 +810,7 @@
   cursor: default;
 }
 
+/* The bin scrolls, so it clips at its padding box: 4 px of padding (taken back by the margin) keep the edge tiles' outer focus rings whole. */
 .ed-bin {
   display: grid;
   flex: 1 1 auto;
@@ -817,8 +818,8 @@
   align-content: start;
   gap: 8px;
   min-height: 0;
-  margin: 0;
-  padding: 0;
+  margin: -4px;
+  padding: 4px;
   overflow-y: auto;
   list-style: none;
 }
@@ -860,6 +861,18 @@
 
 .ed-bin-tile:hover .ed-bin-pick:not(:disabled) {
   box-shadow: inset 0 0 0 1.5px var(--accent-ring);
+}
+
+/* The tile (a .ph) clips what sticks out of it, its pick's own outline included: the keyboard ring is the tile's, drawn outside its border. */
+.ed-bin-tile:has(> .ed-bin-pick:focus-visible),
+.mine-tile:has(> .mine-pick:focus-visible) {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+
+.ed-bin-pick:focus-visible,
+.mine-pick:focus-visible {
+  outline: none;
 }
 
 .ed-bin-dim {
@@ -1532,7 +1545,6 @@
 
 .ed-play:focus-visible,
 .ed-clip:focus-visible,
-.ed-bin-pick:focus-visible,
 .ed-add-end:focus-visible,
 .ed-cell:focus-visible,
 .tb:focus-visible .tbox {
@@ -2622,7 +2634,12 @@
 /* ══ 3d.5: the media panel's tabs and the text, sticker and music properties (EditorText, EditorGif, EditorMusic; the
    «Монтаж · этап 3» sheet's .trow, .cov, .e, .stk, .pre) ══ */
 
+/* The panel clips what overflows it, but not the edges of its own lists: the clip box reaches 4 px up and down and 8 px into .ed-media's
+   padding on each side (the content box stays where it was), so a selected row's border (the track list bleeds 6 px past the content
+   on purpose), a tile's outer focus ring and the «Мои» list's scrollbar gutter are drawn whole (the owner's feedback, 2026-10-05). */
 .ed-media-panel {
+  margin: -4px -8px;
+  padding: 4px 8px;
   overflow: hidden;
 }
 
@@ -2855,13 +2872,14 @@
   flex: 1 1 auto;
 }
 
+/* A scrolling list clips at its padding box: 4 px of padding (taken back by the margin) keep a row's outer focus ring inside it. */
 .ed-text-list {
   display: flex;
   flex-direction: column;
   gap: 6px;
   min-height: 0;
-  margin: 0;
-  padding: 0;
+  margin: -4px;
+  padding: 4px;
   overflow-y: auto;
   list-style: none;
 }
@@ -3842,8 +3860,9 @@
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  margin-right: -8px;
-  padding-right: 8px;
+  /* 8 px on the right for the scrollbar gutter, 4 px elsewhere for the outer focus rings of the edge tiles and the drop zone. */
+  margin: -4px -8px -4px -4px;
+  padding: 4px 8px 4px 4px;
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -4064,7 +4083,6 @@ button.drop > * {
 
 .mine-x:focus-visible,
 .mine-del:focus-visible,
-.mine-pick:focus-visible,
 .mine-listen:focus-visible,
 .mine-track-pick:focus-visible {
   outline: 2px solid var(--accent);
