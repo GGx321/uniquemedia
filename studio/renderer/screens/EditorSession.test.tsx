@@ -75,6 +75,8 @@ describe("from the editor to Settings and back", () => {
 
     expect(clipCount()).toBe(3);
     expect(undoButton().hasAttribute("disabled")).toBe(false);
+    // Nothing changed elsewhere: nothing to say.
+    expect(screen.queryByText("Черновик изменён в другом окне") === null).toBe(true);
     expect(within(media()).getByRole("tab", { name: "Музыка" }).getAttribute("aria-selected")).toBe("true");
     expect(within(timeline()).getByRole("button", { name: /^Кадр 3/ }).getAttribute("aria-pressed")).toBe("true");
     // The undo still works: it brings the deleted clip back, saved.
@@ -143,6 +145,12 @@ describe("from the editor to Settings and back", () => {
     await screen.findByRole("region", { name: "Таймлайн" });
     await flush();
     expect(clipCount()).toBe(2);
+    // Review r1 LOW-1: said, so the first ⌘Z (which takes the other window's save back) is no surprise.
+    const notice = (await screen.findByText("Черновик изменён в другом окне")).closest(".notice") as HTMLElement;
+    expect(notice.textContent).toContain("«Отменить» сначала вернёт вашу версию");
+    fireEvent.click(within(notice).getByRole("button", { name: "Понятно" }));
+    await flush();
+    expect(screen.queryByText("Черновик изменён в другом окне") === null).toBe(true);
     // ⌘Z here undoes the change from elsewhere first, then this window's own delete.
     fireEvent.click(undoButton());
     await flush();

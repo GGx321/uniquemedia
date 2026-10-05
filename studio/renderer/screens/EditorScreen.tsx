@@ -301,12 +301,11 @@ function DraftEditor({
   // place: they go on, with the undo history. The draft as the engine holds it now goes through the session's own rules (an echo of its last
   // save changes nothing; a save made elsewhere meanwhile is taken, on top of the history).
   const sessions = useDraftSessions();
-  const [kept] = useState(() => sessions.resume(montageId));
+  const [kept] = useState(() => sessions.resume(montageId, initial));
+  /** Review r1 LOW-1: the draft was saved in another window while this one was away; the first ⌘Z takes that save back, so it is said. */
+  const [changedElsewhere, setChangedElsewhere] = useState(kept?.changedElsewhere === true);
   const [session] = useState(() => {
-    if (kept !== null) {
-      kept.session.receive({ change: "upserted", montage: initial });
-      return kept.session;
-    }
+    if (kept !== null) return kept.session;
     return new DraftSession({
       montage: initial,
       scheduler: realScheduler,
@@ -921,6 +920,20 @@ function DraftEditor({
     <div className="ed-dock">
       <InDock>
         {view.phase === "offline" && <EngineOffline view={view} />}
+        {changedElsewhere && (
+          <Notice
+            tone="info"
+            title="Черновик изменён в другом окне"
+            noticeKey="changed-elsewhere"
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setChangedElsewhere(false)}>
+                Понятно
+              </button>
+            }
+          >
+            Пока вас не было, его сохранили в другом окне: он открыт с этими изменениями. «Отменить» сначала вернёт вашу версию.
+          </Notice>
+        )}
         {lost !== null && (
           <Notice
             tone="warn"

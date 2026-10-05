@@ -1,4 +1,5 @@
 import { createContext, useContext } from "react";
+import type { Montage } from "../../../shared/engine";
 import type { MediaTab } from "./MediaPanel";
 import type { Selection } from "./selection";
 import type { DraftSession } from "./session";
@@ -30,33 +31,50 @@ export interface KeptDraft {
   readonly place: EditorPlace;
 }
 
+/** A kept editor taken up again: and whether a save made elsewhere while it was away was taken on top of its history (review r1 LOW-1). */
+export interface ResumedDraft extends KeptDraft {
+  readonly changedElsewhere: boolean;
+}
+
 /** Whether a kept session can go on: everything in it was saved (nothing on its way, nothing refused, the draft not deleted). */
 const resumable = (kept: KeptDraft): boolean => kept.session.state.save.kind === "saved";
 
 export class DraftSessions {
   /** In the order they were left, oldest first. */
   readonly #kept = new Map<string, KeptDraft>();
+  /** What the engine's copy did to a kept session when it was taken up (the copy's `updatedAt`), so asking twice changes nothing twice. */
+  readonly #taken = new Map<string, { readonly updatedAt: string; readonly adopted: boolean }>();
 
   /** The editor of `montageId` closed: its session and place are kept, as the newest; the oldest goes beyond `KEPT_DRAFTS`. */
   keep(montageId: string, kept: KeptDraft): void {
     this.#kept.delete(montageId);
+    this.#taken.delete(montageId);
     this.#kept.set(montageId, kept);
     for (const oldest of this.#kept.keys()) {
       if (this.#kept.size <= KEPT_DRAFTS) break;
-      this.#kept.delete(oldest);
+      this.forget(oldest);
     }
   }
 
   /**
-   * The kept editor of `montageId` when its session can go on; null otherwise (and one that cannot is let go). Not used up: an editor that
-   * mounts twice (React's StrictMode) finds the same one.
+   * The kept editor of `montageId` when its session can go on; null otherwise (and one that cannot is let go). `now` is the draft as the engine
+   * holds it: it goes through the session's own rules (an echo of its last save changes nothing; a save made elsewhere meanwhile is taken, on top
+   * of the history, and `changedElsewhere` says so). Not used up: an editor that mounts twice (React's StrictMode) finds the same one, and the
+   * same copy is taken only once.
    */
-  resume(montageId: string): KeptDraft | null {
+  resume(montageId: string, now: Montage): ResumedDraft | null {
     const kept = this.#kept.get(montageId);
     if (kept === undefined) return null;
-    if (resumable(kept)) return kept;
-    this.#kept.delete(montageId);
-    return null;
+    if (!resumable(kept)) {
+      this.forget(montageId);
+      return null;
+    }
+    let taken = this.#taken.get(montageId);
+    if (taken?.updatedAt !== now.updatedAt) {
+      taken = { updatedAt: now.updatedAt, adopted: kept.session.receive({ change: "upserted", montage: now }) === "adopted" };
+      this.#taken.set(montageId, taken);
+    }
+    return { ...kept, changedElsewhere: taken.adopted };
   }
 
   /** What `resume` would answer, without letting anything go: Settings reads the draft's title from it. */
@@ -68,6 +86,7 @@ export class DraftSessions {
   /** Drops the kept editor of `montageId`: the draft opens as Studio holds it (its last edit was lost), or it is gone. */
   forget(montageId: string): void {
     this.#kept.delete(montageId);
+    this.#taken.delete(montageId);
   }
 }
 
