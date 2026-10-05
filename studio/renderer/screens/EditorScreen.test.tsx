@@ -691,14 +691,14 @@ describe("notices in the editor float over the preview (slice review 5-L1)", () 
 
     inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
     const engineNotice = (await screen.findByText("Движок перезапускался")).closest(".notice");
-    expect(engineNotice?.parentElement?.closest(".ed-dock")).toBe(dock());
-    expect(document.querySelector(".content > .notice")).toBeNull();
+    expect(engineNotice?.parentElement?.closest(".ed-dock") === dock()).toBe(true);
+    expect(document.querySelector(".content > .notice") === null).toBe(true);
 
     // The editor's own: a render the engine refused.
     engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
     fireEvent.click(renderButton());
     const own = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice");
-    expect(own?.closest(".ed-dock")).toBe(dock());
+    expect(own?.closest(".ed-dock") === dock()).toBe(true);
 
     fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
     await screen.findByRole("heading", { level: 1, name: "Монтаж" });
