@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isFfmpegCommand, ownedRows, parsePosixPs, parseWindowsSamples, PeakTracker, requireSamples, SamplerHarnessError, SampleLatch, type ProcSample } from "./processSampler";
+import { isFfmpegCommand, ownedRows, parsePosixPs, parseWindowsSamples, PeakTracker, psFailure, requireSamples, SamplerHarnessError, SampleLatch, type ProcSample } from "./processSampler";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -171,6 +171,24 @@ describe("SampleLatch", () => {
   });
 });
 
+describe("psFailure", () => {
+  test("is null for a ps that ran and exited 0", () => {
+    expect(psFailure({ status: 0 })).toBeNull();
+  });
+
+  test("names a ps that could not be started, with the reason", () => {
+    expect(psFailure({ status: null, error: new Error("spawn ps ENOENT") })).toBe("could not run ps: spawn ps ENOENT");
+  });
+
+  test("names a ps that exited non-zero, with its code and the first line it said", () => {
+    expect(psFailure({ status: 1, stderr: "ps: illegal option\nusage: ps" })).toBe("ps exited with code 1: ps: illegal option");
+  });
+
+  test("names a ps that was killed by a signal", () => {
+    expect(psFailure({ status: null, signal: "SIGKILL" })).toBe("ps was ended by SIGKILL");
+  });
+});
+
 describe("requireSamples", () => {
   test("hands back a peak that has samples", () => {
     const peak = { peakSingleBytes: 5, peakConcurrentBytes: 5, samples: 1 };
@@ -181,5 +199,22 @@ describe("requireSamples", () => {
     const peak = new PeakTracker().between(0, 1000);
     expect(() => requireSamples(peak, "photo-kenburns")).toThrow(SamplerHarnessError);
     expect(() => requireSamples(peak, "photo-kenburns")).toThrow(/harness error: the process sampler took no sample during photo-kenburns/);
+  });
+
+  test("samples that never saw an ffmpeg are a harness error too: a peak of zero would pass any memory bound vacuously", () => {
+    const tracker = new PeakTracker();
+    tracker.record(100, []);
+    tracker.record(200, []);
+    const peak = tracker.between(0, 1000);
+    expect(peak.samples).toBe(2);
+    expect(() => requireSamples(peak, "photo-kenburns")).toThrow(SamplerHarnessError);
+    expect(() => requireSamples(peak, "photo-kenburns")).toThrow(/saw no ffmpeg during photo-kenburns/);
+  });
+
+  test("one sample that saw an ffmpeg among empty ones is enough", () => {
+    const tracker = new PeakTracker();
+    tracker.record(100, []);
+    tracker.record(200, [{ pid: 1, ppid: 0, rssBytes: 300 * MIB, peakBytes: null }]);
+    expect(requireSamples(tracker.between(0, 1000), "a render").peakSingleBytes).toBe(300 * MIB);
   });
 });
