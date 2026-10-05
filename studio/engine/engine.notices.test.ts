@@ -164,6 +164,34 @@ describe("noteUnhandledRejection", () => {
     expect(posted.join("\n")).not.toContain("secret");
   });
 
+  test("the rate limit is per event type AND error kind: a different kind of failure of the same type is told at once", async () => {
+    let mono = 0;
+    let code = "EPIPE";
+    const { engine } = await startEngine(dir(), {
+      deps: {
+        monotonic: () => mono,
+        post: () => {
+          throw Object.assign(new Error("closed"), { code });
+        },
+      },
+    });
+    const realWarn = console.warn;
+    const warned: string[] = [];
+    console.warn = (...args: unknown[]) => void warned.push(args.join(" "));
+    try {
+      engine.noteUnhandledRejection();
+      mono = 5_000;
+      code = "ECONNRESET";
+      engine.noteUnhandledRejection();
+    } finally {
+      console.warn = realWarn;
+    }
+    const posted = warned.filter((line) => line.includes("could not be posted"));
+    expect(posted).toHaveLength(2);
+    expect(posted[0]).toContain("EPIPE");
+    expect(posted[1]).toContain("ECONNRESET");
+  });
+
   test("a shutdown drops the trailing announcement: nothing is posted after the engine said it is stopping", async () => {
     const { engine, events } = await startEngine(dir(), { deps: { monotonic: () => performance.now(), internalNoticeWindowMs: 60 } });
     for (let n = 0; n < 3; n++) engine.noteUnhandledRejection();
