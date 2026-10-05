@@ -19,6 +19,12 @@ export const DELETE_DEADLINE_SLACK_MS = 10_000;
  */
 export const LIST_BUDGET_MS = 20_000;
 /**
+ * What main waits for the engine's side of «Удалить аватар» (`avatars.deletePreview` and the control message `avatar.deletePrepare`): the library's identity
+ * re-check, the export check, the case probe, the engine's bounded look at the avatar's record files (`LIST_BUDGET_MS`), then slack. The engine's own answer is
+ * always inside it.
+ */
+export const AVATAR_DELETE_PREPARE_DEADLINE_MS = LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + EXPORT_CHECK_TIMEOUT_MS + CASE_PROBE_TIMEOUT_MS + LIST_BUDGET_MS + DELETE_DEADLINE_SLACK_MS;
+/**
  * What main waits for `videos.delete`: the library's identity re-check, the export check, the case probe, the bounded delete, then slack; the engine's own
  * timeout answer is always inside it.
  */

@@ -5,7 +5,7 @@ import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
-import { VIDEOS_DELETE_DEADLINE_MS } from "./videos/timeouts";
+import { AVATAR_DELETE_PREPARE_DEADLINE_MS, VIDEOS_DELETE_DEADLINE_MS } from "./videos/timeouts";
 
 // Messages between main and the engine that are not part of the
 // renderer-facing contract (studio/shared/engine). They never reach the
@@ -136,6 +136,24 @@ export const MEDIA_IMPORT_DEADLINE_MS = 10 * 60_000;
 /** The engine gives up on an open a little BEFORE main does, so its own answer (a TIMEOUT) is the one main reads, and the open and its hold on the library end with it. */
 export const MEDIA_IMPORT_ENGINE_DEADLINE_MS = MEDIA_IMPORT_DEADLINE_MS - 15_000;
 
+/** The most video files one avatar delete hands main to move: the record files one read takes (`MAX_RECORD_FILES_READ`). The rest stay as plain files (`unlisted`). */
+export const MAX_DELETE_VIDEO_FILES = 2000;
+
+/**
+ * What the engine resolved for «Удалить аватар» and hands to MAIN only (never to the renderer): the avatar's folder inside the library and each of its
+ * video files that is in the export folder now. Main checks every path again against its own roots before it trashes anything. `unlisted` counts the video
+ * files the engine did not list (more records than one delete moves): they stay where they are.
+ */
+export const AvatarDeletePlan = z.strictObject({
+  avatarId: Id,
+  libraryRoot: AbsolutePath,
+  folder: AbsolutePath,
+  exportRoot: AbsolutePath.nullable(),
+  files: z.array(AbsolutePath).max(MAX_DELETE_VIDEO_FILES),
+  unlisted: Count,
+});
+export type AvatarDeletePlan = z.infer<typeof AvatarDeletePlan>;
+
 /** A question main asks the engine; the engine answers with an `EngineReply` carrying the same `callId`. */
 export const HostCall = z.discriminatedUnion("type", [
   /**
@@ -215,6 +233,20 @@ export const HostCall = z.discriminatedUnion("type", [
     name: MediaFileName,
     expected: PickedFileIdentity,
   }),
+  /**
+   * «Удалить аватар», step 1: main asks what goes with `avatarId`. The engine refuses (IN_FLIGHT) while anything of the avatar runs or is reserved (a photo run,
+   * a candidate job, a render, a focus request, a pending video, a draft being saved) or a library switch is under way, and NOT_FOUND for an unknown avatar.
+   * Otherwise it claims the avatar (nothing else may start for it), takes it out of its indexes (memory only: the disk is untouched), and replies with the
+   * `deletePlan`: the paths main may move to the system Trash. The avatar stays claimed until `avatar.deleteFinish`.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("avatar.deletePrepare"), callId: Id, avatarId: Id }),
+  /**
+   * «Удалить аватар», step 2: what became of the avatar's FOLDER. `trashed`: it is in the Trash, so the engine forgets the avatar for good, announces
+   * `avatar.removed` and lets go of the claim. `kept`: it is still there (the Trash refused, a path failed main's check), so the engine puts the avatar
+   * back in its indexes as it was and lets go of the claim. Always sent, whatever happened, so a claim never outlives the delete. A `deleteFinish` the engine
+   * has no matching `deletePrepare` for (it restarted meanwhile) is answered NOT_FOUND and changes nothing.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("avatar.deleteFinish"), callId: Id, avatarId: Id, outcome: z.enum(["trashed", "kept"]) }),
 ]);
 export type HostCall = z.infer<typeof HostCall>;
 
@@ -237,6 +269,8 @@ export const EngineReply = z.strictObject({
   mediaJobId: Id.optional(),
   /** Set with `error` when `media.import` turned the file away: why. */
   mediaReason: MediaUnsupportedReason.optional(),
+  /** Set only by a successful `avatar.deletePrepare`: what main may move to the Trash. */
+  deletePlan: AvatarDeletePlan.optional(),
 });
 export type EngineReply = z.infer<typeof EngineReply>;
 
@@ -282,4 +316,6 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // The export check and then the bounded delete (a full hash on a slow drive): main must outwait both, or the engine's own timeout text
   // («look at the video list before trying again») never reaches the window.
   "videos.delete": VIDEOS_DELETE_DEADLINE_MS,
+  // The confirmation's counts: the same bounded look at the export folder and the avatar's record files as the delete's first step.
+  "avatars.deletePreview": AVATAR_DELETE_PREPARE_DEADLINE_MS,
 };

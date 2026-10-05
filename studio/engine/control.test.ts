@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_DELETE_VIDEO_FILES, MAX_IMPORT_PHOTO_BYTES } from "./control";
+import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET_MS } from "./videos/timeouts";
 import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
@@ -179,5 +180,59 @@ describe("HostCall media.import and its reply", () => {
 describe("COMMAND_DEADLINE_MS['avatars.importAvatar'] covers the describe attempts and no age check", () => {
   test("a price load, then exactly the describe attempts at their slowest, plus the fixed slack", () => {
     expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
+  });
+});
+
+// «Удалить аватар»: main-only control messages. Main asks the engine what goes (`avatar.deletePrepare`), moves the avatar's folder to the system
+// Trash, and tells the engine whether it went (`avatar.deleteFinish`). The renderer is never in this: it only names an avatar.
+describe("HostCall: avatar.deletePrepare and avatar.deleteFinish", () => {
+  const prepare = { kind: "control" as const, type: "avatar.deletePrepare" as const, callId: "call-00000001", avatarId: "avatar-0001" };
+  const finish = { kind: "control" as const, type: "avatar.deleteFinish" as const, callId: "call-00000002", avatarId: "avatar-0001", outcome: "trashed" as const };
+
+  test("a prepare names an avatar and nothing else", () => {
+    expect(HostCall.safeParse(prepare).success).toBe(true);
+    expect(HostCall.safeParse({ ...prepare, path: "/x" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...prepare, avatarId: "../x" }).success).toBe(false);
+  });
+
+  test("a finish says whether the avatar's folder went to the Trash or stayed", () => {
+    expect(HostCall.safeParse(finish).success).toBe(true);
+    expect(HostCall.safeParse({ ...finish, outcome: "kept" }).success).toBe(true);
+    expect(HostCall.safeParse({ ...finish, outcome: "deleted" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...finish, outcome: undefined }).success).toBe(false);
+  });
+});
+
+describe("EngineReply.deletePlan", () => {
+  const reply = { kind: "control" as const, type: "reply" as const, callId: "call-00000001" };
+  const plan = { avatarId: "avatar-0001", libraryRoot: "/data/library", folder: "/data/library/avatars/avatar-0001", exportRoot: "/home/a/Studio/export", files: ["/home/a/Studio/export/mia/2026-10-05_photo_001.mp4"], unlisted: 0 };
+
+  test("carries the avatar's folder and its video files, as absolute paths", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: plan }).success).toBe(true);
+  });
+
+  test("the export root may be absent: no video file can be resolved then", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, exportRoot: null, files: [] } }).success).toBe(true);
+  });
+
+  test("refuses a relative path and a path with a .. segment", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, folder: "avatars/avatar-0001" } }).success).toBe(false);
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, files: ["/home/a/Studio/export/../secret.mp4"] } }).success).toBe(false);
+  });
+
+  test("refuses more files than one delete moves", () => {
+    const files = Array.from({ length: MAX_DELETE_VIDEO_FILES + 1 }, (_, i) => `/home/a/Studio/export/mia/v${i}.mp4`);
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, files } }).success).toBe(false);
+  });
+
+  test("refuses a key it does not know", () => {
+    expect(EngineReply.safeParse({ ...reply, deletePlan: { ...plan, extra: 1 } }).success).toBe(false);
+  });
+});
+
+describe("COMMAND_DEADLINE_MS['avatars.deletePreview']", () => {
+  test("outwaits the engine's own bounded look at the export folder and the record files", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.deletePreview"]).toBe(AVATAR_DELETE_PREPARE_DEADLINE_MS);
+    expect(AVATAR_DELETE_PREPARE_DEADLINE_MS).toBeGreaterThan(LIST_BUDGET_MS + EXPORT_CHECK_TIMEOUT_MS);
   });
 });
