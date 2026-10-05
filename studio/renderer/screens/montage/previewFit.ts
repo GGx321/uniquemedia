@@ -52,6 +52,28 @@ export function fitPreview({ stage, render, dpr, gutter }: PreviewFitInput): Siz
   return { w: units * aw, h: units * ah };
 }
 
+/** The room a `stageHeight` px stage leaves above a centred frame `frameHeight` px tall (review r1 MEDIUM-2: where the notices' dock can stay). */
+export function roomAboveFrame(stageHeight: number, frameHeight: number): number {
+  return Math.max(0, (stageHeight - frameHeight) / 2);
+}
+
+/** The least room above the frame worth a dock: a chip's height and its gaps. */
+export const DOCK_ROOM_MIN_PX = 40;
+
+/**
+ * How far below the stage's top the dock is drawn (and how far it keeps off its bottom). The preview writes it for the stylesheet
+ * (`--pv-dock-inset`, `.ed-dock`), so what is drawn is what `dockPlacement` counts (review r3 LOW-1).
+ */
+export const DOCK_INSET_PX = 10;
+
+/**
+ * Where the notices' dock goes (review r2 LOW-3): in the room above the frame when the dock as drawn (its cards, «Ещё N», their gaps:
+ * `dockHeight`) fits there under its inset, so it never covers the picture; else over the frame's top, folded as it is.
+ */
+export function dockPlacement(roomAbove: number, dockHeight: number): "above" | "over" {
+  return roomAbove >= DOCK_ROOM_MIN_PX && dockHeight + DOCK_INSET_PX <= roomAbove ? "above" : "over";
+}
+
 /** How much the overlays' artboard pixel sizes (pills, the face ring, the handles) scale on a preview `width` px wide. */
 export function previewScale(width: number): number {
   return width / PREVIEW_ARTBOARD_W;

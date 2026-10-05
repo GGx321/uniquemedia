@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ERROR_MESSAGES_RU, type Montage } from "../../shared/engine";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ENGINE_GONE_DETAIL, ERROR_MESSAGES_RU, type Montage } from "../../shared/engine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll, tick } from "../testing";
+import { callsOf, describeElement, flush, focusedLabel, inAct, runAll, tick } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
 
@@ -70,6 +70,73 @@ describe("the header", () => {
     await waitFor(() => expect(callsOf(engine, "montages.save")).toHaveLength(1));
     expect(callsOf(engine, "montages.save")[0]?.payload).toMatchObject({ montageId: made.montageId, name: "кафе и город" });
     await waitFor(() => expect(within(header()).getByText(/^черновик · сохранён \d\d:\d\d$/)).toBeDefined());
+  });
+
+  test("slice review 5-L2: a click on a clip while renaming keeps the focus there (Delete then acts on the clip); Enter or Escape give it back to the pencil", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    const clipList = (): HTMLElement => screen.getByRole("list", { name: "Кадры" });
+    const firstClip = (): HTMLElement => within(clipList()).getAllByRole("button", { name: /^Кадр 1/ })[0] ?? document.body;
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    screen.getByRole("textbox", { name: "Название черновика" }).focus();
+    // The owner clicks the clip: the field gives up the focus to it (the test DOM moves the focus only by `focus()`), and the name is kept.
+    act(() => firstClip().focus());
+    fireEvent.click(firstClip());
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(firstClip()));
+    fireEvent.keyDown(firstClip(), { key: "Delete" });
+    await flush();
+    // The only clip went: the draft is empty.
+    expect(screen.getByText("Ролик пока пуст")).toBeDefined();
+
+    const pencil = (): HTMLElement => screen.getByRole("button", { name: "Переименовать черновик" });
+    for (const key of ["Enter", "Escape"]) {
+      fireEvent.click(pencil());
+      const field = screen.getByRole("textbox", { name: "Название черновика" });
+      field.focus();
+      fireEvent.keyDown(field, { key });
+      await flush();
+      expect(focusedLabel()).toBe(describeElement(pencil()));
+    }
+  });
+
+  test("slice review 5-L5: redo is «Вернуть отменённое» and the save line's retry «Сохранить черновик ещё раз»: no «Повторить» in the header", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    expect(within(header()).getByRole("button", { name: "Вернуть отменённое" }).getAttribute("title")).toBe("Вернуть отменённое изменение");
+    expect(within(header()).getByRole("button", { name: "Отменить" }).getAttribute("title")).toBe("Отменить последнее изменение");
+
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "вечер" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(within(header()).queryByRole("button", { name: "Повторить" }) === null).toBe(true);
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await waitFor(() => expect(screen.queryByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE) === null).toBe(true));
+    expect(callsOf(engine, "montages.save").at(-1)?.payload).toMatchObject({ name: "вечер" });
+  });
+
+  test("slice review 5-L6, review r1 LOW-8: the header says nothing aloud; a failed save and a deleted draft are said once, by their notices", async () => {
+    const { client, engine } = await studio();
+    const made = await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    const liveInHeader = (): boolean => header().querySelector("[role='status'], [role='alert'], [aria-live]") !== null;
+    expect(liveInHeader()).toBe(false);
+
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "вечер" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    const failed = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice");
+    expect(failed?.getAttribute("role")).toBe("alert");
+    expect(liveInHeader()).toBe(false);
+
+    await asAnotherWindow(() => client.request("montages.delete", { montageId: made.montageId }));
+    expect((await screen.findByText("Черновик удалён")).closest(".notice")?.getAttribute("role")).toBe("alert");
+    expect(liveInHeader()).toBe(false);
   });
 
   test("a name the draft cannot take is refused with the reason, and the field stays open", async () => {
@@ -569,6 +636,218 @@ describe("«Рендер»", () => {
     expect(renderButton().hasAttribute("disabled")).toBe(true);
     fireEvent.click(within(header()).getByRole("button", { name: "Настройки" }));
     await screen.findByRole("heading", { level: 1, name: "Настройки" });
+  });
+});
+
+describe("the engine away after the draft opened (slice review 5-M1)", () => {
+  test("«Движок не отвечает» with «Повторить», as every other screen says it; the retry brings the editor back without it, the draft untouched", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    expect(screen.queryByText("Движок не отвечает") === null).toBe(true);
+
+    // The engine restarts while main cannot answer: the store goes offline and drops the events until the owner retries.
+    engine.failNext("engine.snapshot", { code: "INTERNAL" });
+    inAct(() => engine.restart());
+    await flush();
+    const notice = await screen.findByText("Движок не отвечает");
+    // The draft stays on screen under it.
+    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
+    const retry = within(notice.closest(".notice") as HTMLElement).getByRole("button", { name: "Повторить" });
+    const snapshots = callsOf(engine, "engine.snapshot").length;
+    fireEvent.click(retry);
+    await flush();
+    expect(callsOf(engine, "engine.snapshot").length).toBe(snapshots + 1);
+    await waitFor(() => expect(screen.queryByText("Движок не отвечает") === null).toBe(true));
+    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
+  });
+
+  test("an engine gone for good says so, with no retry", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.failNext("engine.snapshot", { code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
+    inAct(() => engine.restart());
+    await flush();
+    const notice = (await screen.findByText(/остановился и не будет перезапущен/)).closest(".notice") as HTMLElement;
+    expect(within(notice).getByText("Движок не отвечает")).toBeDefined();
+    expect(within(notice).queryByRole("button", { name: "Повторить" }) === null).toBe(true);
+  });
+});
+
+describe("notices in the editor float over the preview (slice review 5-L1)", () => {
+  test("the window's notices and the editor's own sit in one dock over the top of the preview, never in a row above the editor; elsewhere they are back on top", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    const dock = (): Element | null => document.querySelector(".ed-preview > .ed-dock");
+    expect(dock()).not.toBeNull();
+
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    const engineNotice = (await screen.findByText("Движок перезапускался")).closest(".notice");
+    expect(engineNotice?.parentElement?.closest(".ed-dock") === dock()).toBe(true);
+    expect(document.querySelector(".content > .notice") === null).toBe(true);
+
+    // The editor's own: a render the engine refused.
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    const own = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice");
+    expect(own?.closest(".ed-dock") === dock()).toBe(true);
+
+    fireEvent.click(screen.getByRole("button", { name: "Черновики" }));
+    await screen.findByRole("heading", { level: 1, name: "Монтаж" });
+    expect((await screen.findByText("Движок перезапускался")).closest(".notice")?.parentElement?.classList.contains("content")).toBe(true);
+  });
+
+  const dockCards = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".ed-dock .notice")];
+  const shownCards = (): string[] => dockCards().filter((card) => !card.hidden).map((card) => card.querySelector(".notice-title")?.textContent ?? card.querySelector(".notice-text")?.textContent ?? "");
+
+  test("review r1 MEDIUM-2: two notices stack as one, the newest, and «Ещё 1 уведомление» unfolds the rest", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE);
+    expect(dockCards()).toHaveLength(2);
+    expect(shownCards()).toEqual([ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE]);
+    const more = screen.getByRole("button", { name: "Ещё 1 уведомление" });
+    expect(more.getAttribute("aria-expanded")).toBe("false");
+    fireEvent.click(more);
+    await flush();
+    expect(shownCards()).toHaveLength(2);
+    const fold = screen.getByRole("button", { name: "Свернуть список уведомлений" });
+    expect(fold.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(fold);
+    await flush();
+    expect(shownCards()).toHaveLength(1);
+  });
+
+  test("review r1 MEDIUM-2: a notice that cannot be closed («не сохранён») folds to a chip until its code changes; nothing of it stays over the frame", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "вечер" } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    const card = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice") as HTMLElement;
+    const minimise = within(card).getByRole("button", { name: "Свернуть уведомление" });
+    minimise.focus();
+    fireEvent.click(minimise);
+    await flush();
+    // Only a chip is left in the dock: no card over the frame, and the focus is on the chip.
+    expect(dockCards()).toHaveLength(0);
+    const chip = screen.getByRole("button", { name: /^Развернуть уведомление: / });
+    expect(chip.closest(".ed-dock") !== null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(chip));
+
+    // While the failure lasts it stays folded; a failure of another code is another condition: its card shows.
+    engine.failNext("montages.save", { code: "INTERNAL" });
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await screen.findByText(ERROR_MESSAGES_RU.INTERNAL);
+    expect(dockCards()).toHaveLength(1);
+
+    // A chip unfolds its card on demand.
+    fireEvent.click(within(dockCards()[0] ?? document.body).getByRole("button", { name: "Свернуть уведомление" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^Развернуть уведомление: / }));
+    await flush();
+    expect(dockCards()).toHaveLength(1);
+  });
+
+  /** A rename that the engine refuses with `code` (a save failure card). */
+  async function failRename(engine: Awaited<ReturnType<typeof studio>>["engine"], code: "LIBRARY_UNAVAILABLE" | "INTERNAL", name: string): Promise<void> {
+    engine.failNext("montages.save", { code });
+    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
+    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: name } });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
+    await screen.findByText(ERROR_MESSAGES_RU[code]);
+  }
+  const chips = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>(".ed-dock .notice-chip")];
+
+  test("review r2 MEDIUM: a folded card whose condition ended is a card again when the same condition comes back", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "вечер");
+    fireEvent.click(within(dockCards()[0] ?? document.body).getByRole("button", { name: "Свернуть уведомление" }));
+    await flush();
+    expect([dockCards().length, chips().length]).toEqual([0, 1]);
+    // The save goes through: the condition ends, and its chip with it.
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await waitFor(() => expect(chips()).toHaveLength(0));
+    // The same failure again is news: a card, not a chip.
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "ночь");
+    expect([dockCards().length, chips().length]).toEqual([1, 0]);
+  });
+
+  test("review r2 LOW-2: with one card left, «Свернуть список» goes with the focus handed to that card, and the next pair opens folded", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "вечер");
+    fireEvent.click(screen.getByRole("button", { name: "Ещё 1 уведомление" }));
+    await flush();
+    const fold = screen.getByRole("button", { name: "Свернуть список уведомлений" });
+    fold.focus();
+    // The save goes through (the test DOM leaves the focus on the toggle): one card is left.
+    fireEvent.click(within(header()).getByRole("button", { name: "Сохранить черновик ещё раз" }));
+    await waitFor(() => expect(dockCards()).toHaveLength(1));
+    expect(screen.queryByRole("button", { name: /Свернуть список|^Ещё / }) === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Понятно" })));
+    await failRename(engine, "LIBRARY_UNAVAILABLE", "ночь");
+    expect(screen.getByRole("button", { name: "Ещё 1 уведомление" }).getAttribute("aria-expanded")).toBe("false");
+    expect(shownCards()).toHaveLength(1);
+  });
+
+  test("review r2 LOW-4: a focused card folded behind a newer one hands the focus to that newer card", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    const refused = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice") as HTMLElement;
+    within(refused).getByRole("button", { name: "Закрыть" }).focus();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    await flush();
+    expect(refused.hidden).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Понятно" })));
+  });
+
+  test("review r1 LOW-3: closing a card hands the focus to the next card, then to the screen's title", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    await screen.findByText("Движок перезапускался");
+    engine.failNext("videos.render", { code: "LIBRARY_UNAVAILABLE" });
+    fireEvent.click(renderButton());
+    const refused = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice") as HTMLElement;
+    const close = within(refused).getByRole("button", { name: "Закрыть" });
+    close.focus();
+    fireEvent.click(close);
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Понятно" })));
+    fireEvent.click(screen.getByRole("button", { name: "Понятно" }));
+    await flush();
+    expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 1 })));
+  });
+
+  test("review r1 LOW-2: a window notice moved into the dock is not an alert again; one that first shows there is", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    inAct(() => engine.emitNotice({ noticeId: "notice-0001", code: "engine-restarted", at: "2026-09-24T10:00:00.000Z", count: 1 }));
+    expect((await screen.findByText("Движок перезапускался")).closest(".notice")?.getAttribute("role")).toBe("alert");
+    await openEditor();
+    expect(screen.getByText("Движок перезапускался").closest(".notice")?.getAttribute("role")).toBe("status");
+    inAct(() => engine.emitNotice({ noticeId: "notice-0002", code: "settings-reset", at: "2026-09-24T10:01:00.000Z", count: 1 }));
+    expect((await screen.findByText("Настройки сброшены")).closest(".notice")?.getAttribute("role")).toBe("alert");
   });
 });
 

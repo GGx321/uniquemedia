@@ -6,6 +6,7 @@ import { CATEGORY_LABEL } from "../photos/runForm";
 import { binFacets, type BinFilter, binTiles, type BinTile, tileAction } from "./bin";
 import type { AddRefusal } from "./clipOps";
 import { addBlockedLabel } from "./labels";
+import { type FillTarget, fillWords } from "./mine";
 
 // The «Фото» tab (Editor.dc.html, EditorNew.dc.html; P6–P15). 3d.3a placed photos from it; 3d.5 adds the chips: the draft's avatar
 // (read-only, CF15), «Неиспользованные N» (free photos only) and the category. The bin holds the avatar's eligible photos only, each
@@ -20,8 +21,11 @@ export interface PhotoBinProps {
   readonly onFilter: (filter: BinFilter) => void;
   /** A click on a photo: select its clip when it is placed, else fill `fillTarget` or add a clip at the end. */
   readonly onPick: (photoId: string) => void;
-  /** An empty cell of the selected clip, which a click fills instead of adding a clip. */
-  readonly fillTarget: { readonly clip: number; readonly cell: number } | null;
+  /**
+   * The selected clip's cell a click goes into instead of adding a clip: an empty one is filled; one the owner selected with a photo in it
+   * (`replace`) has its photo replaced (slice review 5-M5).
+   */
+  readonly fillTarget: FillTarget;
   /** Why a click cannot add a clip (20 clips, or no 0.5 s left of 15 s). */
   readonly addBlock: AddRefusal | null;
   /** A free photo dragged out of the bin (onto the track or a cell), or null when the drag ends. */
@@ -32,7 +36,7 @@ const inVideos = (n: number): string => `в ${n} видео`;
 
 /** The bin's line under the photos: what a click does now. */
 function binHint(fillTarget: PhotoBinProps["fillTarget"], addBlock: AddRefusal | null): string {
-  if (fillTarget !== null) return `Клик — фото в ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}. Перетащите фото на дорожку «Кадры», чтобы вставить новый кадр.`;
+  if (fillTarget !== null) return `Клик — ${fillTarget.replace === true ? "" : "фото "}${fillWords(fillTarget)}. Перетащите фото на дорожку «Кадры», чтобы вставить новый кадр.`;
   if (addBlock !== null) return addBlockedLabel(addBlock);
   return "Клик — кадр в конец ролика. Перетащите фото на дорожку «Кадры», чтобы вставить его между кадрами.";
 }
@@ -59,7 +63,7 @@ function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], add
     case "taken":
       return "уже занято";
     case "fill":
-      return fillTarget === null ? "в ячейку" : `в ячейку ${fillTarget.cell + 1} кадра ${fillTarget.clip + 1}`;
+      return fillTarget === null ? "в ячейку" : fillWords(fillTarget);
     case "full":
       return "кадров больше не добавить";
     case "append":

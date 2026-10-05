@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { MAX_CLIPS, type AvatarSummary, type EngineError, type PhotoSummary, type RunSummary } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
@@ -12,6 +12,7 @@ import { ScreenTitle } from "../ui/ScreenTitle";
 import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
+import { usablePicks, useMontagePicks } from "./photos/picks";
 import { DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
 import { useMounted } from "./photos/shared";
@@ -88,8 +89,14 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
    * progress, say).
    */
   const [knownAtOpen] = useState<ReadonlySet<string>>(() => new Set(view.jobs.map((j) => j.jobId)));
-  /** Photos picked for a montage, in the order they were picked: «Монтаж из выбранных» places them in that order. */
-  const [picked, setPicked] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * Photos picked for a montage, in the order they were picked: «Монтаж из выбранных» places them in that order. Kept by the window for this avatar
+   * while it runs (slice review 5-L3): leaving the screen and coming back finds them as they were.
+   */
+  const picks = useMontagePicks();
+  const [picked, setPicked] = useState<ReadonlySet<string>>(() => picks.get(avatarId));
+  useEffect(() => picks.set(avatarId, picked), [picks, avatarId, picked]);
+  const picksChecked = useRef(false);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<EngineError | null>(null);
   /** The picked photos `montages.create` refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11). */
@@ -130,6 +137,11 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
       if (reply.ok) {
         setGallery({ photos: reply.result.photos, skippedTotal: reply.result.skippedTotal });
         setGalleryError(null);
+        // The picks the window kept from an earlier visit are checked once, against the first answer (review r1 LOW-6).
+        if (!picksChecked.current) {
+          picksChecked.current = true;
+          setPicked((current) => usablePicks(current, reply.result.photos));
+        }
       } else setGalleryError(reply.error);
     });
     return () => {
@@ -192,6 +204,8 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
     if (!mounted.current) return;
     setCreating(false);
     if (reply.ok) {
+      // A draft is made of them: the picks are done with (the screen goes before its own state could say so).
+      picks.set(avatarId, new Set());
       navigate({ name: "editor", montageId: reply.result.montage.montageId, created: true });
       return;
     }

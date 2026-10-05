@@ -35,7 +35,7 @@ const preview = (): HTMLElement => screen.getByRole("region", { name: "Прев�
 const props = (): HTMLElement => screen.getByRole("complementary", { name: "Свойства" });
 const slider = (name: string): HTMLElement => within(props()).getByRole("slider", { name });
 const undo = (): void => void fireEvent.click(screen.getByRole("button", { name: "Отменить" }));
-const redo = (): void => void fireEvent.click(screen.getByRole("button", { name: "Повторить" }));
+const redo = (): void => void fireEvent.click(screen.getByRole("button", { name: "Вернуть отменённое" }));
 const s = (text: string): string => text.replace(/(\d) с/g, `$1${NBSP}с`);
 
 /** The library holds a 14 s landscape video (1080 x 608, 29.97 fps); its media id. */

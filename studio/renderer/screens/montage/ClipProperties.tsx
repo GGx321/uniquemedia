@@ -2,7 +2,7 @@ import { type DragEvent, type KeyboardEvent, useId } from "react";
 import type { Clip, MontageDraft, Motion } from "../../../shared/engine";
 import { MAX_TOTAL_MS } from "../../../shared/montage";
 import { Icon } from "../../ui/Icon";
-import { Portrait } from "../../ui/Portrait";
+import { OwnPortrait, Portrait } from "../../ui/Portrait";
 import { type ClipLayout, cellsOf, type Edit, clipStartMs, layoutOf, maxDurationMs, roomMs, setDuration, setLayout, setMotion, setStagger, totalMs } from "./clipOps";
 import { ownsKeys } from "./keys";
 import { actionWhyLabel, clipKindLabel, rangeLabel, secondsLabel, staggerStepLabel } from "./labels";
@@ -11,7 +11,7 @@ import { selectClip, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
 import type { TrimPeekStore } from "./trimPeek";
 import { usePlayheadRest } from "./usePlayhead";
-import { type TimelineState, useSelectionCommands } from "./useTimeline";
+import { focusKey, type TimelineState, useSelectionCommands } from "./useTimeline";
 import { VideoClipBody } from "./VideoProperties";
 
 // 3d.3a: the selected clip's properties (Editor.dc.html, `sel = c2`; the reconciliation's R3–R14). «Раскладка»
@@ -41,7 +41,7 @@ function faceState(clip: Clip, cell: number, pending: ReadonlySet<string>): Face
   const target = cellsOf(clip)[cell];
   if (target === undefined || target.photo === null) return "empty";
   if (target.focus !== null) return "found";
-  return target.photo.source === "scene" && pending.has(target.photo.photoId) ? "pending" : "none";
+  return pending.has(focusKey(target.photo)) ? "pending" : "none";
 }
 
 const FACE_TAGS: Record<Exclude<FaceState, "empty">, { text: string; tone: string }> = {
@@ -64,7 +64,7 @@ export interface ClipPropertiesProps {
   readonly cell: number;
   readonly avatarId: string;
   readonly timeline: TimelineState;
-  /** Photos whose face focus is still being judged. */
+  /** Photos whose face focus is still being judged, by `focusKey`. */
   readonly focusPending: ReadonlySet<string>;
   readonly dragPhoto: string | null;
   readonly onFillCell: (clip: number, cell: number, photoId: string) => void;
@@ -203,7 +203,7 @@ export function ClipProperties({ session, spec, index, cell, avatarId, timeline,
                     onDrop={(e) => dropOnCell(e, i)}
                   >
                     {photo?.source === "scene" && <Portrait avatarId={avatarId} photoId={photo.photoId} label={`Ячейка ${i + 1}`} />}
-                    {photo?.source === "own" && <span className="clip-poster-own" />}
+                    {photo?.source === "own" && <OwnPortrait mediaId={photo.mediaId} label={`Ячейка ${i + 1}`} />}
                     <span className="mono ed-cell-n">{i + 1}</span>
                   </button>
                 );

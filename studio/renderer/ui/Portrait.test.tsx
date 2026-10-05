@@ -4,7 +4,7 @@ import type { EngineClient } from "../engine/client";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { EngineProvider } from "../engine/react";
 import { ManualScheduler } from "../engine/scheduler";
-import { Portrait } from "./Portrait";
+import { OwnPortrait, Portrait } from "./Portrait";
 import { MEDIA_RETRY_DELAY_MS } from "./useMediaRetry";
 
 // The large-screen audit (H2): a library picture is never drawn noticeably past its own pixels (lib/imageFit.ts). Once a portrait has
@@ -433,4 +433,26 @@ test("a photo that would not load does not hold back the next one in the same pl
   view.show("photo-mia-second");
   const next = picture();
   expect(next.getAttribute("src")).toContain("photo-mia-second");
+});
+
+test("an own photo from «Мои» gets the same second try before it is a placeholder", async () => {
+  const engine = new MockEngine({ scheduler: new ManualScheduler(), latencyMs: 0 });
+  render(
+    <EngineProvider client={asWindow(mockEngineClient(engine))}>
+      <OwnPortrait mediaId="media-demo-0001" label="Своё фото" />
+    </EngineProvider>,
+  );
+  const own = (): HTMLElement => screen.getByRole("img", { name: "Своё фото" });
+  expect(own().getAttribute("src")).toBe("studio-media://media/media-demo-0001");
+
+  fireEvent.error(own());
+  expect(own().tagName).toBe("SPAN");
+  await retryPause();
+  expect(own().tagName).toBe("IMG");
+  expect(own().getAttribute("src")).toBe("studio-media://media/media-demo-0001");
+
+  fireEvent.error(own());
+  expect(own().classList.contains("portrait-placeholder")).toBe(true);
+  await retryPause();
+  expect(document.querySelector("img") === null).toBe(true);
 });

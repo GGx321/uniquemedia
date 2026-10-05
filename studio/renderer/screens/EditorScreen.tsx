@@ -11,6 +11,7 @@ import { type Route, useLeaveGuard, useNavigate } from "../navigation";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
+import { DockMore, InDock, useNoticeDock } from "../ui/NoticeDock";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { type BinFilter, isFreePhoto } from "./montage/bin";
 import { ClipProperties } from "./montage/ClipProperties";
@@ -56,8 +57,9 @@ import { RenderControls } from "./montage/RenderControls";
 import { layerProblems, photoProblems, renderBlock, type EngineVerdict, type PhotoProblem, type UsedVideo } from "./montage/renderBlock";
 import { useDraftFlushes } from "./montage/flushes";
 import { isTextEntry, spacePlays } from "./montage/keys";
-import { resolveSelection, selectClip } from "./montage/selection";
+import { resolveSelection, selectClip, type Selection } from "./montage/selection";
 import { DraftSession } from "./montage/session";
+import { useDraftSessions } from "./montage/sessions";
 import { Timeline } from "./montage/Timeline";
 import { seekInto } from "./montage/timelineScale";
 import { usePlayheadRest } from "./montage/usePlayhead";
@@ -127,27 +129,41 @@ function EditorHeader({
   /** Why the typed name was refused; the field stays open with it. */
   const [nameError, setNameError] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
+  const pencil = useRef<HTMLButtonElement>(null);
+  /** A rename ended by its key (Enter, Escape): the focus goes back to the pencil, not to the top of the window (slice review 5-L2). */
+  const [backToPencil, setBackToPencil] = useState(false);
   const nameErrorId = useId();
   const gone = state.save.kind === "gone";
 
   useEffect(() => {
     if (renaming) input.current?.select();
   }, [renaming]);
+  useEffect(() => {
+    if (!backToPencil || renaming) return;
+    pencil.current?.focus();
+    setBackToPencil(false);
+  }, [backToPencil, renaming]);
 
-  function commitName(): void {
+  // Slice review 5-L6: the save line changes twice per edit («сохраняется…», «сохранён 12:30»), so it is no live region. What the owner must hear
+  // (a save that failed, the draft deleted) is said once, by its notice (review r1 LOW-8).
+
+  /** Saves the typed name; true when the field closed. A blur (the owner clicked elsewhere) leaves the focus where the click put it. */
+  function commitName(): boolean {
     const value = input.current?.value ?? "";
     // The only name the contract refuses that the field lets through: one with a control character (a pasted tab).
     if (!session.rename(value)) {
       setNameError("В названии не может быть служебных символов (табуляции и других) — уберите их.");
-      return;
+      return false;
     }
     setNameError(null);
     setRenaming(false);
+    return true;
   }
 
   function cancelRename(): void {
     setNameError(null);
     setRenaming(false);
+    setBackToPencil(true);
   }
 
   return (
@@ -156,7 +172,7 @@ function EditorHeader({
         {leaving ? <Spin /> : <Icon name="back" size={16} strokeWidth={2.2} />}
       </button>
       <div className="ed-title">
-        {renaming ? (
+        {renaming && (
           <span className="ed-title-edit">
             <input
               ref={input}
@@ -167,10 +183,10 @@ function EditorHeader({
               defaultValue={state.name ?? ""}
               placeholder="без названия"
               maxLength={80}
-              onBlur={commitName}
+              onBlur={() => void commitName()}
               onKeyDown={(e) => {
                 // Enter that ends an input method's composition belongs to the composition, not to the rename.
-                if (e.key === "Enter" && !e.nativeEvent.isComposing) commitName();
+                if (e.key === "Enter" && !e.nativeEvent.isComposing && commitName()) setBackToPencil(true);
                 if (e.key === "Escape") cancelRename();
               }}
             />
@@ -180,31 +196,41 @@ function EditorHeader({
               </span>
             )}
           </span>
-        ) : (
-          <span className="ed-title-row">
-            <ScreenTitle>{draftTitle(title.avatar, state.name)}</ScreenTitle>
-            <button type="button" className="ed-rename" aria-label="Переименовать черновик" disabled={gone} onClick={() => setRenaming(true)}>
-              <Icon name="pencil" size={12} strokeWidth={2.2} />
-            </button>
-          </span>
         )}
-        <span className="mono faint ed-saved" role="status">
+        {/* Hidden while renaming, never unmounted: the screen's title takes the focus only when the screen opens (slice review 5-L2). */}
+        <span className="ed-title-row" hidden={renaming}>
+          <ScreenTitle>{draftTitle(title.avatar, state.name)}</ScreenTitle>
+          <button ref={pencil} type="button" className="ed-rename" aria-label="Переименовать черновик" disabled={gone} onClick={() => setRenaming(true)}>
+            <Icon name="pencil" size={12} strokeWidth={2.2} />
+          </button>
+        </span>
+        <span className="mono faint ed-saved">
           {saveLabel(state.save, state.saved, { fresh })}
           {state.save.kind === "failed" && (
             <>
               {" · "}
-              <button type="button" className="ed-retry" onClick={() => session.retry()}>
-                Повторить
+              {/* Slice review 5-L5: never «Повторить» next to the redo; the notice's own button says «Сохранить ещё раз». */}
+              <button type="button" className="ed-retry" aria-label="Сохранить черновик ещё раз" title="Сохранить черновик ещё раз" onClick={() => session.retry()}>
+                сохранить ещё раз
               </button>
             </>
           )}
         </span>
       </div>
       <div className="ed-history">
-        <button type="button" className="ibtn" aria-label="Отменить" aria-keyshortcuts="Meta+Z Control+Z" disabled={!state.canUndo || gone} onClick={() => session.undo()}>
+        <button type="button" className="ibtn" aria-label="Отменить" title="Отменить последнее изменение" aria-keyshortcuts="Meta+Z Control+Z" disabled={!state.canUndo || gone} onClick={() => session.undo()}>
           <Icon name="undo" size={15} />
         </button>
-        <button type="button" className="ibtn" aria-label="Повторить" aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y" disabled={!state.canRedo || gone} onClick={() => session.redo()}>
+        {/* Slice review 5-L5: «Повторить» everywhere else in the app asks the engine again; this brings an undone edit back. */}
+        <button
+          type="button"
+          className="ibtn"
+          aria-label="Вернуть отменённое"
+          title="Вернуть отменённое изменение"
+          aria-keyshortcuts="Meta+Shift+Z Control+Shift+Z Control+Y"
+          disabled={!state.canRedo || gone}
+          onClick={() => session.redo()}
+        >
           <Icon name="redo" size={15} />
         </button>
       </div>
@@ -271,14 +297,23 @@ function DraftEditor({
   const mounted = useMounted();
   const { montageId } = initial;
   const avatarId = initial.spec.avatarId;
-  const [session] = useState(
-    () =>
-      new DraftSession({
-        montage: initial,
-        scheduler: realScheduler,
-        send: (id, content) => client.request("montages.save", { montageId: id, spec: content.spec, name: content.name }),
-      }),
-  );
+  // Slice review 5-M2: an editor of this draft that closed in this window (the owner went to Settings and came back) left its session and its
+  // place: they go on, with the undo history. The draft as the engine holds it now goes through the session's own rules (an echo of its last
+  // save changes nothing; a save made elsewhere meanwhile is taken, on top of the history).
+  const sessions = useDraftSessions();
+  const [kept] = useState(() => sessions.resume(montageId, initial));
+  /** The library this editor opened in: a switch while it is open (from another window too) means its session is not kept (review r2 LOW-5). */
+  const [openedIn] = useState(() => sessions.library);
+  /** Review r1 LOW-1: the draft was saved in another window while this one was away; the first ⌘Z takes that save back, so it is said. */
+  const [changedElsewhere, setChangedElsewhere] = useState(kept?.changedElsewhere === true);
+  const [session] = useState(() => {
+    if (kept !== null) return kept.session;
+    return new DraftSession({
+      montage: initial,
+      scheduler: realScheduler,
+      send: (id, content) => client.request("montages.save", { montageId: id, spec: content.spec, name: content.name }),
+    });
+  });
   const state = useSyncExternalStore(
     useCallback((listener: () => void) => session.subscribe(listener), [session]),
     () => session.state,
@@ -482,7 +517,7 @@ function DraftEditor({
   for (const cell of flagged) if (!clipProblems.has(cell.clip)) clipProblems.set(cell.clip, cell.problem);
 
   // ---------- the timeline (3d.3a; 3d.3b: layers and music) ----------
-  const timeline = useTimeline(state.spec);
+  const timeline = useTimeline(state.spec, undefined, kept?.place ?? null);
   const { playhead } = timeline;
 
   // The owner's feedback (2026-10-05): Space plays and pauses the montage wherever the focus is, but where Space is the control's own
@@ -536,11 +571,34 @@ function DraftEditor({
   const dragCell = drag !== null && (drag.source === "scene" || drag.kind === "photo") ? dragAny : null;
   const selected = resolveSelection(state.spec, timeline.selection);
   const selectedCell = selected?.kind === "clip" ? cellsOf(selected.clip)[selected.cell] : undefined;
-  const fillTarget = selected?.kind === "clip" && selectedCell !== undefined && selectedCell.photo === null ? { clip: selected.index, cell: selected.cell } : null;
+  /**
+   * The selection a placement made (the clip a click just added, the cell a click just filled), as the very object `timeline.select` got: a cell
+   * selected that way is not a click's target for a REPLACE, so clicking photo after photo keeps adding clips. Any selection the owner makes is a
+   * new object (slice review 5-M5). A resumed editor starts from the selection it left, a placement's still if it was one (review r1 MEDIUM-1):
+   * the timeline starts from that very object, so the two compare equal again.
+   */
+  const [placedSelection, setPlacedSelection] = useState<Selection | null>(() => (kept?.place.placed === true ? kept.place.selection : null));
+  // Where a click on a photo goes: the selected cell when it is empty (it is filled), or when the owner selected it (its photo is replaced, one
+  // undo step); otherwise a new clip at the end.
+  const fillTarget =
+    selected?.kind === "clip" && selectedCell !== undefined && (selectedCell.photo === null || timeline.selection !== placedSelection)
+      ? { clip: selected.index, cell: selected.cell, replace: selectedCell.photo !== null }
+      : null;
 
   // ---------- the media panel (3d.5) ----------
   const commands = useSelectionCommands(session, timeline);
-  const [tab, setTab] = useState<MediaTab>("photos");
+  const [tab, setTab] = useState<MediaTab>(kept?.place.tab ?? "photos");
+  // Closing, the editor leaves its session and its place with the window, for the next editor of this draft here (slice review 5-M2).
+  const place = useRef({ tab, timeline, placedSelection });
+  place.current = { tab, timeline, placedSelection };
+  useEffect(
+    () => () => {
+      const { tab: lastTab, timeline: last, placedSelection: placedBy } = place.current;
+      const placed = last.selection !== null && last.selection === placedBy;
+      sessions.keep(montageId, { session, place: { tab: lastTab, selection: last.selection, placed, playheadMs: playheadStep(last), zoom: last.zoom } }, openedIn);
+    },
+    [sessions, montageId, session, openedIn],
+  );
   /** Bumped when the timeline's «+» or a «Заменить…» asks for a tab: the focus goes to it. */
   const [tabFocus, setTabFocus] = useState(0);
   const [binFilter, setBinFilter] = useState<BinFilter>({ unusedOnly: false, category: null });
@@ -597,12 +655,14 @@ function DraftEditor({
   const currentSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "builtin" ? selectedLayer.sticker.stickerId : null;
   const currentOwnSticker = selectedLayer?.kind === "sticker" && selectedLayer.sticker.source === "own" ? selectedLayer.sticker.mediaId : null;
 
-  /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. */
-  function selectClipAt(index: number, cell = 0): void {
+  /** Selects clip `index` of the current draft (and its cell), bringing the playhead into it. `placed`: a placement selects what it put in. */
+  function selectClipAt(index: number, cell = 0, placed = false): void {
     const spec = session.state.spec;
     const clip = spec.clips[index];
     if (clip === undefined) return;
-    timeline.select(selectClip(spec, index, cell));
+    const next = selectClip(spec, index, cell);
+    timeline.select(next);
+    setPlacedSelection(placed ? next : null);
     const start = clipStartMs(spec, index);
     const now = playheadStep(timeline);
     const into = seekInto(now, start, start + clip.durationMs);
@@ -618,19 +678,21 @@ function DraftEditor({
     if (!result.ok || result.id === undefined || !session.edit(result.spec)) return;
     focus.resolve(photoId);
     const index = result.spec.clips.findIndex((c) => c.clipId === result.id);
-    if (index >= 0) selectClipAt(index);
+    if (index >= 0) selectClipAt(index, 0, true);
   }
 
-  /** After a cell was filled: the selection moves on to the clip's next empty cell, if any. */
+  /** After a cell was filled (or its photo replaced): the selection moves on to the clip's next empty cell, if any; it is a placement's. */
   function selectAfterFill(spec: Montage["spec"], clipIndex: number, cell: number): void {
     const clip = spec.clips[clipIndex];
     const cells = clip === undefined ? [] : cellsOf(clip);
     const next = cells.findIndex((c, i) => i > cell && c.photo === null);
     const anyEmpty = cells.findIndex((c) => c.photo === null);
-    timeline.select(selectClip(spec, clipIndex, next >= 0 ? next : anyEmpty >= 0 ? anyEmpty : cell));
+    const selection = selectClip(spec, clipIndex, next >= 0 ? next : anyEmpty >= 0 ? anyEmpty : cell);
+    timeline.select(selection);
+    setPlacedSelection(selection);
   }
 
-  /** A free scene photo into a cell; the selection moves on to the clip's next empty cell, if any. */
+  /** A free scene photo into a cell, filling it or replacing its photo; the selection moves on to the clip's next empty cell, if any. */
   function fillCell(clipIndex: number, cell: number, photoId: string): void {
     const photo = photoIndex?.get(photoId);
     if (photo === undefined || !isFreePhoto(photo)) return;
@@ -646,7 +708,7 @@ function DraftEditor({
   function placeOwn(result: Edit): string | null {
     if (!result.ok || result.id === undefined || !session.edit(result.spec)) return null;
     const index = result.spec.clips.findIndex((c) => c.clipId === result.id);
-    if (index >= 0) selectClipAt(index);
+    if (index >= 0) selectClipAt(index, 0, true);
     return result.id;
   }
 
@@ -679,7 +741,7 @@ function DraftEditor({
     else placeOwnVideo(dropped, boundary);
   }
 
-  /** A drag dropped on an empty cell: a photo fills it (a video has no cell; it is never offered one). */
+  /** A drag dropped on a cell: a photo fills it or replaces its photo (a video has no cell; it is never offered one). */
   function fillDropped(clipIndex: number, cell: number, key: string): void {
     const dropped = parseDragKey(key);
     if (dropped === null) return;
@@ -687,7 +749,7 @@ function DraftEditor({
     else if (dropped.kind === "photo") fillOwnCell(clipIndex, cell, dropped.mediaId);
   }
 
-  /** A click on a photo or video tile of «Мои»: a placed one selects its clip; a photo fills the waiting cell; else a new clip at the end. */
+  /** A click on a photo or video tile of «Мои»: a placed one selects its clip; a photo goes into the target cell (`fillTarget`); else a new clip at the end. */
   function pickOwnVisual(media: MediaSummary): void {
     const spec = session.state.spec;
     for (const [i, clip] of spec.clips.entries()) {
@@ -716,7 +778,7 @@ function DraftEditor({
     timeline.select({ kind: "music" });
   }
 
-  /** A click on a bin photo: a placed one selects its clip; a free one fills the selected empty cell or is appended. */
+  /** A click on a bin photo: a placed one selects its clip; a free one goes into the target cell (`fillTarget`) or is appended. */
   function pickPhoto(photoId: string): void {
     const spec = session.state.spec;
     for (const [i, clip] of spec.clips.entries()) {
@@ -743,8 +805,8 @@ function DraftEditor({
   }, [client, avatarId, usedVideoId, avatar]);
 
   const holder = usedVideoId === null ? undefined : videos?.find((v) => v.videoId === usedVideoId);
-  // K12 (the video's own title) comes with 3e.2: until then a video made from this draft is «из этого черновика»
-  // (the draft's name may have changed since), any other is called by its file name in «Готовые видео».
+  // A video made from this draft is «из этого черновика» (the draft's name may have changed since); any other is called by its file name in
+  // «Готовые видео». The «Видео» tab's cards call it by its title (`VideoSummary.title`, K12, 3e.2) instead: the slice review's 5-L4, left open.
   const usedVideo: UsedVideo | null = holder === undefined ? null : holder.montageId === montageId ? "this-draft" : { file: fileLabel(holder) };
 
   const block = renderBlock({
@@ -849,6 +911,185 @@ function DraftEditor({
     if (!reply.ok) setRevealError(reply.error);
   }
 
+  const dock = useNoticeDock();
+  /** Which save failure the card is about: its code and what the owner was doing (a quit, a close, a way out), so each is a card of its own. */
+  const saveFailure = state.save.kind === "failed" ? `${state.save.error.code}:${quitRefused ? "quit" : closeRefused ? "close" : blockedLeave === null ? "save" : "leave"}` : "";
+  // Every notice the editor raises, and the dock the window notices join (slice review 5-L1): cards floating over the top of the preview, never a
+  // row that squeezes it; the newest shows, the others fold behind «Ещё N», and any folds to a chip (review r1 MEDIUM-2). Each card's key is its
+  // condition and code. Slice review 5-M1: the store went offline after the draft opened (the engine restarted while main could not answer); it
+  // drops the events until the owner retries, so a render's progress and its end would freeze unseen: said as on every other screen.
+  const notices = (
+    <div className="ed-dock">
+      <InDock>
+        {view.phase === "offline" && <EngineOffline view={view} />}
+        {changedElsewhere && (
+          <Notice
+            tone="info"
+            title="Черновик изменён в другом окне"
+            noticeKey="changed-elsewhere"
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setChangedElsewhere(false)}>
+                Понятно
+              </button>
+            }
+          >
+            Пока вас не было, его сохранили в другом окне: он открыт с этими изменениями. «Отменить» сначала вернёт вашу версию.
+          </Notice>
+        )}
+        {lost !== null && (
+          <Notice
+            tone="warn"
+            title="Последнее изменение не сохранилось"
+            noticeKey={`lost:${lost.code}`}
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setLost(null)}>
+                Понятно
+              </button>
+            }
+          >
+            {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
+          </Notice>
+        )}
+        {verdictFailed && verdictError !== null && (
+          <ErrorNotice
+            error={verdictError}
+            noticeKey={`verdict:${verdictError.code}`}
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
+                Повторить
+              </button>
+            }
+          />
+        )}
+        {gone ? (
+          <Notice
+            tone="warn"
+            title="Черновик удалён"
+            noticeKey="gone"
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => navigate({ name: "montages" })}>
+                К черновикам
+              </button>
+            }
+          >
+            Его удалили на экране черновиков или в другом окне. Изменения здесь больше не сохраняются.
+          </Notice>
+        ) : state.save.kind === "failed" ? (
+          <ErrorNotice
+            error={state.save.error}
+            noticeKey={`save:${saveFailure}`}
+            actions={
+              quitRefused ? (
+                <>
+                  <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                    Сохранить ещё раз
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-s btn-d"
+                    onClick={() => {
+                      allowClose.current = true;
+                      quitWithoutSaving();
+                    }}
+                  >
+                    Выйти без сохранения
+                  </button>
+                </>
+              ) : closeRefused ? (
+                <>
+                  <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                    Сохранить ещё раз
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-s btn-d"
+                    onClick={() => {
+                      allowClose.current = true;
+                      window.close();
+                    }}
+                  >
+                    Закрыть без сохранения
+                  </button>
+                </>
+              ) : blockedLeave === null ? (
+                <button type="button" className="btn btn-s" onClick={() => session.retry()}>
+                  Сохранить ещё раз
+                </button>
+              ) : (
+                <>
+                  {/* The guard saves again on the way out: saved, the window goes where the owner was going. */}
+                  <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
+                    Сохранить и перейти
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-s btn-d"
+                    onClick={() => {
+                      leftBehind.current = true;
+                      navigate(blockedLeave, { force: true });
+                    }}
+                  >
+                    Уйти без сохранения
+                  </button>
+                </>
+              )
+            }
+          />
+        ) : (
+          renderError !== null && (
+            <ErrorNotice
+              error={renderError}
+              noticeKey={`render-refused:${renderError.code}`}
+              actions={
+                <button type="button" className="btn btn-s" onClick={() => setRenderError(null)}>
+                  Закрыть
+                </button>
+              }
+            />
+          )
+        )}
+        {control.kind === "failed" && renderJob !== null && (
+          <ErrorNotice
+            error={control.error}
+            noticeKey={`render-failed:${renderJob.jobId}`}
+            actions={
+              <button type="button" className="btn btn-s" onClick={() => setDismissed(renderJob.jobId)}>
+                Закрыть
+              </button>
+            }
+          />
+        )}
+        {revealError !== null &&
+          (revealError.code === "NOT_FOUND" ? (
+            <Notice
+              tone="warn"
+              noticeKey="reveal:NOT_FOUND"
+              summary="Файла нет в папке «Готовые видео»"
+              actions={
+                <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                  Закрыть
+                </button>
+              }
+            >
+              Файла нет в папке «Готовые видео»: его удалили или переместили.
+            </Notice>
+          ) : (
+            <ErrorNotice
+              error={revealError}
+              noticeKey={`reveal:${revealError.code}`}
+              actions={
+                <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
+                  Закрыть
+                </button>
+              }
+            />
+          ))}
+      </InDock>
+      <div ref={dock} className="ed-dock-window" />
+      <DockMore />
+    </div>
+  );
+
   return (
     <TextPreviewsProvider queue={previewQueue}>
       <div className="editor">
@@ -865,157 +1106,6 @@ function DraftEditor({
           onCancel={() => void cancelRender()}
           onReveal={(videoId) => void revealVideo(videoId)}
         />
-        {lost !== null && (
-          <div className="ed-notices">
-            <Notice
-              tone="warn"
-              title="Последнее изменение не сохранилось"
-              actions={
-                <button type="button" className="btn btn-s" onClick={() => setLost(null)}>
-                  Понятно
-                </button>
-              }
-            >
-              {errorText(lost)} Черновик открыт таким, каким его хранит Studio.
-            </Notice>
-          </div>
-        )}
-        {verdictFailed && verdictError !== null && (
-          <div className="ed-notices">
-            <ErrorNotice
-              error={verdictError}
-              actions={
-                <button type="button" className="btn btn-s" onClick={() => setFocusTick((n) => n + 1)}>
-                  Повторить
-                </button>
-              }
-            />
-          </div>
-        )}
-        {(gone || state.save.kind === "failed" || renderError !== null) && (
-          <div className="ed-notices">
-            {gone ? (
-              <Notice
-                tone="warn"
-                title="Черновик удалён"
-                actions={
-                  <button type="button" className="btn btn-s" onClick={() => navigate({ name: "montages" })}>
-                    К черновикам
-                  </button>
-                }
-              >
-                Его удалили на экране черновиков или в другом окне. Изменения здесь больше не сохраняются.
-              </Notice>
-            ) : state.save.kind === "failed" ? (
-              <ErrorNotice
-                error={state.save.error}
-                actions={
-                  quitRefused ? (
-                    <>
-                      <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                        Сохранить ещё раз
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-s btn-d"
-                        onClick={() => {
-                          allowClose.current = true;
-                          quitWithoutSaving();
-                        }}
-                      >
-                        Выйти без сохранения
-                      </button>
-                    </>
-                  ) : closeRefused ? (
-                    <>
-                      <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                        Сохранить ещё раз
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-s btn-d"
-                        onClick={() => {
-                          allowClose.current = true;
-                          window.close();
-                        }}
-                      >
-                        Закрыть без сохранения
-                      </button>
-                    </>
-                  ) : blockedLeave === null ? (
-                    <button type="button" className="btn btn-s" onClick={() => session.retry()}>
-                      Сохранить ещё раз
-                    </button>
-                  ) : (
-                    <>
-                      {/* The guard saves again on the way out: saved, the window goes where the owner was going. */}
-                      <button type="button" className="btn btn-s" onClick={() => navigate(blockedLeave)}>
-                        Сохранить и перейти
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-s btn-d"
-                        onClick={() => {
-                          leftBehind.current = true;
-                          navigate(blockedLeave, { force: true });
-                        }}
-                      >
-                        Уйти без сохранения
-                      </button>
-                    </>
-                  )
-                }
-              />
-            ) : (
-              renderError !== null && (
-                <ErrorNotice
-                  error={renderError}
-                  actions={
-                    <button type="button" className="btn btn-s" onClick={() => setRenderError(null)}>
-                      Закрыть
-                    </button>
-                  }
-                />
-              )
-            )}
-          </div>
-        )}
-        {(control.kind === "failed" || revealError !== null) && (
-          <div className="ed-notices">
-            {control.kind === "failed" && renderJob !== null && (
-              <ErrorNotice
-                error={control.error}
-                actions={
-                  <button type="button" className="btn btn-s" onClick={() => setDismissed(renderJob.jobId)}>
-                    Закрыть
-                  </button>
-                }
-              />
-            )}
-            {revealError !== null &&
-              (revealError.code === "NOT_FOUND" ? (
-                <Notice
-                  tone="warn"
-                  actions={
-                    <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
-                      Закрыть
-                    </button>
-                  }
-                >
-                  Файла нет в папке «Готовые видео»: его удалили или переместили.
-                </Notice>
-              ) : (
-                <ErrorNotice
-                  error={revealError}
-                  actions={
-                    <button type="button" className="btn btn-s" onClick={() => setRevealError(null)}>
-                      Закрыть
-                    </button>
-                  }
-                />
-              ))}
-          </div>
-        )}
         <div className="ed-body">
           <MediaPanel tab={tab} onTab={setTab} focusTick={tabFocus}>
             {tab === "photos" ? (
@@ -1066,6 +1156,7 @@ function DraftEditor({
             )}
           </MediaPanel>
           <Preview
+            dock={notices}
             session={session}
             spec={state.spec}
             timeline={timeline}
@@ -1178,6 +1269,7 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
   const view = useEngineView();
   const { client } = useEngine();
   const flushes = useDraftFlushes();
+  const sessions = useDraftSessions();
   const ready = view.phase === "ready";
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [attempt, setAttempt] = useState(0);
@@ -1196,7 +1288,11 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
           // Being saved right now: a moment later it reads whole.
           retries += 1;
           cancelPause = realScheduler.schedule(CHANGING_PAUSE_MS, () => get(lost));
-        } else setLoad({ kind: "error", error: reply.error });
+        } else {
+          // A deleted draft has no editor to go on with.
+          if (reply.error.code === "NOT_FOUND") sessions.forget(montageId);
+          setLoad({ kind: "error", error: reply.error });
+        }
       });
     };
     // An editor of this draft that just closed may still be saving its last edit: read the draft after that.
@@ -1207,7 +1303,7 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
       alive = false;
       cancelPause?.();
     };
-  }, [ready, loaded, client, flushes, montageId, attempt]);
+  }, [ready, loaded, client, flushes, sessions, montageId, attempt]);
 
   if (load.kind === "ready") {
     const avatar = view.avatars.find((a) => a.avatarId === load.montage.spec.avatarId) ?? null;

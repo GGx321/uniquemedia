@@ -1,13 +1,11 @@
 import type { MediaSummary } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
-import { applyHeldChange, type MediaChange, useMediaRecords } from "./ownMedia";
+import { useMediaRecords } from "./ownMedia";
 
 // The editor's picture of the owner's own stickers (Stage 3, 3f.5): what the preview needs of each to draw it: its canvas (the box is sized from it),
 // its loop and its per-frame delays (the frame on screen is picked by the 30 fps tick through them, as the render's loop does). Kept from `media.list` (asked BY ID for the stickers the draft names, so an old one is found
 // whatever the library holds) and kept current by `media.changed` (ownMedia.ts, shared with the own videos of 3f.3b). The bytes are a separate door
 // (`media.stickerBytes`, stickerFrames.ts): this only knows the record.
-
-export type { MediaChange } from "./ownMedia";
 
 /** An own sticker as the preview uses it. */
 export interface OwnSticker {
@@ -24,11 +22,6 @@ export interface OwnSticker {
 export function ownStickerOf(summary: MediaSummary): OwnSticker | null {
   if (summary.kind !== "sticker" || summary.width === null || summary.height === null || summary.loopFrames === null || summary.delayFrames === null) return null;
   return { mediaId: summary.mediaId, width: summary.width, height: summary.height, loopFrames: summary.loopFrames, delayFrames: summary.delayFrames };
-}
-
-/** The map after one change; the same map when the change is not about an own sticker or one it never held. Never edits the map it is given. */
-export function applyMediaChange(held: ReadonlyMap<string, OwnSticker>, change: MediaChange): ReadonlyMap<string, OwnSticker> {
-  return applyHeldChange(held, change, ownStickerOf);
 }
 
 /**

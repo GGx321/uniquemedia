@@ -166,12 +166,14 @@
   cursor: pointer;
 }
 
-.ibtn:hover:not(:disabled) {
+.ibtn:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--panel-3);
   color: var(--text);
 }
 
-.ibtn:disabled {
+/* `aria-disabled`: a button that keeps its place in the tab order while it answers nothing (a trash whose delete is being confirmed). */
+.ibtn:disabled,
+.ibtn[aria-disabled="true"] {
   opacity: 0.45;
   cursor: not-allowed;
 }
@@ -587,7 +589,8 @@ input[type="range"]::-webkit-slider-thumb {
 
 .screen-title:focus,
 .screen-title:focus-visible,
-.card-title:focus:not(:focus-visible) {
+.card-title:focus:not(:focus-visible),
+.videos-title:focus:not(:focus-visible) {
   outline: none;
 }
 
@@ -738,6 +741,11 @@ input[type="range"]::-webkit-slider-thumb {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--panel);
+}
+
+/* A dock's card folded behind «Ещё N» (review r1 MEDIUM-2). */
+.notice[hidden] {
+  display: none;
 }
 
 /* A page-level notice (engine, render, «сохранён», the account banner) stops at the page width instead of running as one

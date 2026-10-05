@@ -19,21 +19,36 @@ const NOTICE_TEXT: Record<NoticeCode, string> = {
   "engine-internal-error": "Движок перехватил непредвиденную ошибку и продолжил работу. Если что-то работает не так, перезапустите Studio.",
 };
 
+/** A notice as the owner closed it: the notice and how many times it had happened then (a repeat is news again). */
+export const dismissalKey = (notice: Pick<EngineNotice, "noticeId" | "count">): string => `${notice.noticeId}:${notice.count}`;
+
 /**
  * The engine's own pending notices (a crash and restart, a corrupt
  * settings.json): from the snapshot, then live `engine.notice` events, always
- * deduped by code in the store (store.ts, mergeNotice). There is no dismiss
- * command in the contract, so these stay until a fresher one of the same code
- * replaces them — shown wherever the app is, not tied to one screen. Each
- * notice states only what happened; any action it implies (a reconcile, a
- * key check) is a different component's job — AccountBanner's for money.
+ * deduped by code in the store (store.ts, mergeNotice) — shown wherever the
+ * app is, not tied to one screen. There is no dismiss command in the contract:
+ * «Понятно» closes one in this window only (slice review 5, L1; `dismissed`,
+ * kept by the window), until it happens again. Each notice states only what
+ * happened; any action it implies (a reconcile, a key check) is a different
+ * component's job — AccountBanner's for money.
  */
-export function EngineNotices({ notices }: { notices: readonly EngineNotice[] }) {
-  if (notices.length === 0) return null;
+export function EngineNotices({ notices, dismissed, onDismiss }: { notices: readonly EngineNotice[]; dismissed: ReadonlySet<string>; onDismiss: (notice: EngineNotice) => void }) {
+  const shown = notices.filter((n) => !dismissed.has(dismissalKey(n)));
+  if (shown.length === 0) return null;
   return (
     <>
-      {notices.map((n) => (
-        <Notice key={n.noticeId} tone="warn" title={NOTICE_TITLE[n.code]}>
+      {shown.map((n) => (
+        <Notice
+          key={n.noticeId}
+          noticeKey={`engine:${dismissalKey(n)}`}
+          tone="warn"
+          title={NOTICE_TITLE[n.code]}
+          actions={
+            <button type="button" className="btn btn-s" onClick={() => onDismiss(n)}>
+              Понятно
+            </button>
+          }
+        >
           {NOTICE_TEXT[n.code]}
           {n.count > 1 && ` Повторилось ${countOf(n.count, ["раз", "раза", "раз"])} за эту сессию.`}
         </Notice>

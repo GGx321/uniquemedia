@@ -1,20 +1,23 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { sidebarCounts } from "./engine/renderJobs";
 import { readStudioVersion } from "./engine/windowStudio";
-import { createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
+import { arriving, createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
 import { DraftsScreen } from "./screens/DraftsScreen";
 import { EditorScreen } from "./screens/EditorScreen";
 import { DraftFlushes, DraftFlushesProvider } from "./screens/montage/flushes";
+import { DraftSessions, DraftSessionsProvider } from "./screens/montage/sessions";
+import { MontagePicks, MontagePicksProvider } from "./screens/photos/picks";
 import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
 import { formatUsd } from "./lib/money";
-import { EngineNotices } from "./ui/EngineNotices";
+import { dismissalKey, EngineNotices } from "./ui/EngineNotices";
+import { Docked, NoticeDockProvider } from "./ui/NoticeDock";
 import { RenderNotices } from "./ui/RenderNotices";
 import { Icon } from "./ui/Icon";
 import { ScreenTitle } from "./ui/ScreenTitle";
@@ -103,7 +106,7 @@ function Screen({ route, lastPhotos }: { route: Route; lastPhotos: string | null
     case "avatarImport":
       return <AvatarImport />;
     case "settings":
-      return <SettingsScreen focus={route.focus} />;
+      return <SettingsScreen focus={route.focus} back={route.back} />;
     case "photos":
       return <PhotosScreen avatarId={route.avatarId} tab={route.tab ?? "photos"} />;
     case "montages":
@@ -137,10 +140,34 @@ function screenKey(route: Route): string {
   }
 }
 
-/** Engine-wide notices belong above every screen, not one of them: useEngineView needs the provider, which App sits outside of. */
+/**
+ * Engine-wide notices belong above every screen, not one of them: useEngineView needs the provider, which App sits outside of. The ones the
+ * owner closed are kept here, by the window, for as long as it runs (slice review 5, L1).
+ */
 function EngineNoticesBar() {
   const view = useEngineView();
-  return <EngineNotices notices={view.notices} />;
+  const [dismissed, setDismissed] = useState<ReadonlySet<string>>(() => new Set());
+  return (
+    <Docked>
+      <EngineNotices notices={view.notices} dismissed={dismissed} onDismiss={(notice) => setDismissed((now) => new Set(now).add(dismissalKey(notice)))} />
+    </Docked>
+  );
+}
+
+/**
+ * A library switch (review r1 LOW-7): what the window keeps of the old library's drafts and photos (the closed editors' sessions, the picks for a
+ * montage) belongs to it, not to the new one, whose ids may be the same: `onSwitch` forgets it. The first folder heard is no switch.
+ */
+function ForgetOnLibrarySwitch({ onSwitch }: { onSwitch: () => void }) {
+  // Compared without trailing separators (review r2 NIT): the same folder written with one is no switch.
+  const libraryPath = useEngineView().settings?.libraryPath.replace(/(?<=.)[\\/]+$/, "") ?? null;
+  const last = useRef<string | null>(null);
+  useEffect(() => {
+    if (libraryPath === null) return;
+    if (last.current !== null && last.current !== libraryPath) onSwitch();
+    last.current = libraryPath;
+  }, [libraryPath, onSwitch]);
+  return null;
 }
 
 const TASK_FORMS = ["задача", "задачи", "задач"] as const;
@@ -208,10 +235,18 @@ function SidebarStatus() {
 export function App({ client }: { client: EngineClient }) {
   const [route, setRoute] = useState<Route>({ name: "avatars" });
   // Every way to another screen, the sidebar included, goes through the leave guard of the screen on show (3d.2
-  // review: the montage editor's unsaved edit).
-  const [navigation] = useState(() => createNavigation(setRoute));
+  // review: the montage editor's unsaved edit). Settings entered from a draft remembers it (`arriving`, slice review 5-M2).
+  const [navigation] = useState(() => createNavigation((next) => setRoute((current) => arriving(current, next))));
   // The saves of montage editors that closed, so the same draft opened again waits for them.
   const [draftFlushes] = useState(() => new DraftFlushes());
+  // Their sessions and places, so the same draft opened again in this window goes on where it was (slice review 5-M2).
+  const [draftSessions] = useState(() => new DraftSessions());
+  // The photos picked for a montage on each avatar's Photos screen, kept while the window runs (slice review 5-L3).
+  const [montagePicks] = useState(() => new MontagePicks());
+  const forgetLibrary = useCallback(() => {
+    draftSessions.clear();
+    montagePicks.clear();
+  }, [draftSessions, montagePicks]);
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -233,68 +268,75 @@ export function App({ client }: { client: EngineClient }) {
 
   return (
     <EngineProvider client={client}>
+      <ForgetOnLibrarySwitch onSwitch={forgetLibrary} />
       <NavigationProvider value={navigation}>
-        <div className="shell">
-          <aside className="sidebar">
-            <div className="logo">
-              <span className="logo-mark" aria-hidden="true">
-                <Icon name="sun" size={18} strokeWidth={2.2} />
-              </span>
-              <span className="logo-text">
-                <span className="logo-name">studio</span>
-                <span className="logo-by">by uniquemedia</span>
-              </span>
-            </div>
-
-            <nav className="nav" aria-label="Разделы">
-              {SECTIONS.map((s) => {
-                const isActive = s.id === active;
-                return (
-                  <button
-                    key={s.id}
-                    type="button"
-                    className={isActive ? "nav-item active" : "nav-item"}
-                    aria-current={isActive ? "page" : undefined}
-                    onClick={() => navigation.navigate(routeFor(s.id, lastPhotos.current))}
-                  >
-                    <svg
-                      className="nav-icon"
-                      viewBox="0 0 24 24"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden="true"
+        <NoticeDockProvider>
+          <div className="shell">
+            <aside className="sidebar">
+              <div className="logo">
+                <span className="logo-mark" aria-hidden="true">
+                  <Icon name="sun" size={18} strokeWidth={2.2} />
+                </span>
+                <span className="logo-text">
+                  <span className="logo-name">studio</span>
+                  <span className="logo-by">by uniquemedia</span>
+                </span>
+              </div>
+  
+              <nav className="nav" aria-label="Разделы">
+                {SECTIONS.map((s) => {
+                  const isActive = s.id === active;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={isActive ? "nav-item active" : "nav-item"}
+                      aria-current={isActive ? "page" : undefined}
+                      onClick={() => navigation.navigate(routeFor(s.id, lastPhotos.current))}
                     >
-                      {s.icon}
-                    </svg>
-                    <span>{s.label}</span>
-                  </button>
-                );
-              })}
-            </nav>
-
-            <div className="sidebar-foot">
-              <SidebarStatus />
-              {client.kind === "mock" && (
-                <p className="demo-badge" title="Движок не подключён: данные демонстрационные, деньги не тратятся, картинок нет">
-                  <span className="demo-dot" aria-hidden="true" />
-                  Демо-движок
-                </p>
-              )}
-              <div className="version">{versionLabel}</div>
-            </div>
-          </aside>
-
-          <main className="content">
-            <EngineNoticesBar />
-            <RenderNotices viewing={route.name === "editor" ? route.montageId : null} />
-            <DraftFlushesProvider value={draftFlushes}>
-              <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
-            </DraftFlushesProvider>
-          </main>
-        </div>
+                      <svg
+                        className="nav-icon"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        {s.icon}
+                      </svg>
+                      <span>{s.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+  
+              <div className="sidebar-foot">
+                <SidebarStatus />
+                {client.kind === "mock" && (
+                  <p className="demo-badge" title="Движок не подключён: данные демонстрационные, деньги не тратятся, картинок нет">
+                    <span className="demo-dot" aria-hidden="true" />
+                    Демо-движок
+                  </p>
+                )}
+                <div className="version">{versionLabel}</div>
+              </div>
+            </aside>
+  
+            <main className="content">
+              <EngineNoticesBar />
+              <RenderNotices viewing={route.name === "editor" ? route.montageId : null} />
+              <DraftFlushesProvider value={draftFlushes}>
+                <DraftSessionsProvider value={draftSessions}>
+                  <MontagePicksProvider value={montagePicks}>
+                    <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                  </MontagePicksProvider>
+                </DraftSessionsProvider>
+              </DraftFlushesProvider>
+            </main>
+          </div>
+        </NoticeDockProvider>
       </NavigationProvider>
     </EngineProvider>
   );

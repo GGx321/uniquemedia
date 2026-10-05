@@ -11,12 +11,10 @@ import {
   layerVisibleAt,
   motionWindow,
   type MotionPlan,
-  msToFrameFloor,
   type Rect,
   type Size,
   stickerBox,
   textBox,
-  totalFrames,
   videoClipCrop,
 } from "../../../shared/montage";
 import { stickerById } from "../../../shared/stickers/manifest";
@@ -30,13 +28,14 @@ import { stickerById } from "../../../shared/stickers/manifest";
 // cache, 3b.6). Nothing here is the window's own maths.
 
 /**
- * What a cell holds: a scene photo (with its stored focus), an own video clip's video (3f.3b: the whole frame, cropped by the clip's focus), an own photo
- * (a neutral surface), or nothing yet.
+ * What a cell holds: a scene photo (with its stored focus), an own photo from «Мои» (3f.6; with the cell's focus, cropped and moved exactly as a scene
+ * photo is: the render cuts its cell from it with the same `cellChain`, 3-H1), an own video clip's video (3f.3b: the whole frame, cropped by the clip's
+ * focus), or nothing yet.
  */
 export type CellContent =
   | { readonly kind: "scene"; readonly photoId: string; readonly focus: Focus | null }
+  | { readonly kind: "ownPhoto"; readonly mediaId: string; readonly focus: Focus | null }
   | { readonly kind: "video"; readonly mediaId: string; readonly focus: Focus | null }
-  | { readonly kind: "own" }
   | { readonly kind: "empty" };
 
 export interface CellView {
@@ -44,7 +43,7 @@ export interface CellView {
   /** Where the cell sits on the 1080x1920 frame. */
   readonly rect: Rect;
   readonly content: CellContent;
-  /** The photo's stored size once its picture has loaded, an own video's from its record; null before that and for anything else. */
+  /** A scene photo's stored size once its picture has loaded, an own photo's or an own video's from its record; null before that and for an empty cell. */
   readonly source: Size | null;
   /** The part of the photo or video the cell shows on this frame, in its own pixels (fractional for a moving photo); null without a size. */
   readonly window: Rect | null;
@@ -60,13 +59,6 @@ export interface ClipView {
   readonly frames: number;
   readonly localFrame: number;
   readonly cells: readonly CellView[];
-}
-
-/** The frame on screen at playhead `ms`: the montage's last frame at or past its end; null for a draft with no clip. */
-export function previewFrameAt(spec: MontageDraft, ms: number): number | null {
-  const total = totalFrames(spec.clips);
-  if (total === 0) return null;
-  return Math.min(total - 1, msToFrameFloor(Math.max(0, ms)));
 }
 
 /**
@@ -90,18 +82,44 @@ function cellsOfClip(clip: Clip): readonly { photo: CellContent }[] {
   if (clip.kind === "video") return [{ photo: { kind: "video", mediaId: clip.mediaId, focus: clip.focus } }];
   const cells = clip.kind === "photo" ? [clip.cell] : clip.cells;
   return cells.map((cell) => ({
-    photo: cell.photo === null ? { kind: "empty" } : cell.photo.source === "scene" ? { kind: "scene", photoId: cell.photo.photoId, focus: cell.focus } : { kind: "own" },
+    photo:
+      cell.photo === null
+        ? { kind: "empty" }
+        : cell.photo.source === "scene"
+          ? { kind: "scene", photoId: cell.photo.photoId, focus: cell.focus }
+          : { kind: "ownPhoto", mediaId: cell.photo.mediaId, focus: cell.focus },
   }));
 }
 
-const noVideoSize = (): Size | null => null;
+const noSize = (): Size | null => null;
+
+/** The stored size of what a cell holds, from whichever source knows it; null for an empty cell and for a size not known yet. */
+function sizeOfContent(content: CellContent, sizeOf: (photoId: string) => Size | null, videoSizeOf: (mediaId: string) => Size | null, ownPhotoSizeOf: (mediaId: string) => Size | null): Size | null {
+  switch (content.kind) {
+    case "scene":
+      return sizeOf(content.photoId);
+    case "ownPhoto":
+      return ownPhotoSizeOf(content.mediaId);
+    case "video":
+      return videoSizeOf(content.mediaId);
+    case "empty":
+      return null;
+  }
+}
 
 /**
  * The clip on screen at timeline `frame`, its cells and what each shows; null when no clip holds the frame. `sizeOf` gives a scene
  * photo's stored size once its picture has loaded (null until then); `videoSizeOf` an own video's stored size from its record (3f.3b),
- * whose part the clip shows is the render's `videoClipCrop` (static: a video clip has no motion).
+ * whose part the clip shows is the render's `videoClipCrop` (static: a video clip has no motion); `ownPhotoSizeOf` an own photo's stored
+ * size from its record (3-H1: the size the render crops from, `ownPhotoSourceOf`), whose part a cell shows is a scene photo's `cellSourceWindow`.
  */
-export function clipViewAt(spec: MontageDraft, frame: number, sizeOf: (photoId: string) => Size | null, videoSizeOf: (mediaId: string) => Size | null = noVideoSize): ClipView | null {
+export function clipViewAt(
+  spec: MontageDraft,
+  frame: number,
+  sizeOf: (photoId: string) => Size | null,
+  videoSizeOf: (mediaId: string) => Size | null = noSize,
+  ownPhotoSizeOf: (mediaId: string) => Size | null = noSize,
+): ClipView | null {
   const at = clipAtFrame(clipRanges(spec.clips), frame);
   if (at === null) return null;
   const clip = spec.clips[at.index];
@@ -112,9 +130,13 @@ export function clipViewAt(spec: MontageDraft, frame: number, sizeOf: (photoId: 
   const contents = cellsOfClip(clip);
   const cells = rects.map((rect, index): CellView => {
     const content = contents[index]?.photo ?? { kind: "empty" };
-    const source = content.kind === "scene" ? sizeOf(content.photoId) : content.kind === "video" ? videoSizeOf(content.mediaId) : null;
+    const source = sizeOfContent(content, sizeOf, videoSizeOf, ownPhotoSizeOf);
     const window =
-      source === null ? null : content.kind === "scene" ? cellSourceWindow({ w: rect.w, h: rect.h }, source, content.focus, plan, at.localFrame, frames) : content.kind === "video" ? videoClipCrop(source, content.focus) : null;
+      source === null || content.kind === "empty"
+        ? null
+        : content.kind === "video"
+          ? videoClipCrop(source, content.focus)
+          : cellSourceWindow({ w: rect.w, h: rect.h }, source, content.focus, plan, at.localFrame, frames);
     const alphaPermille = clip.kind === "collage" && clip.stagger ? cellAlphaPermille(cellReveal(index, rects.length, clip.durationMs, true), at.localFrame) : 1000;
     return { index, rect, content, source, window, alphaPermille };
   });

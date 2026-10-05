@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { EXPORT_UNAVAILABLE_REASONS_RU, type AvatarSummary, type EngineError, type Montage, type TrackSummary, type VideoSummary } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { classifyAnswer } from "../../engine/renderJobs";
@@ -35,6 +35,7 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
   const { avatarId } = avatar;
   const ready = view.phase === "ready";
 
+  const heading = useRef<HTMLHeadingElement>(null);
   const [listed, setListed] = useState<Listed | null>(null);
   const [listError, setListError] = useState<EngineError | null>(null);
   const [reread, setReread] = useState(0);
@@ -140,7 +141,9 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
       setReread((n) => n + 1);
       return;
     }
-    // The card goes with the `video.changed` that follows; what happened to the file is said here, as the answer says it.
+    // The card goes with the `video.changed` that follows, and the focus with it: the tab's heading takes it (slice review 5-M4). What happened
+    // to the file is said here, as the answer says it.
+    heading.current?.focus();
     const text = deleteOutcomeText(mode, reply.result, view.exportStatus);
     if (text !== null) setNotice({ tone: reply.result.fileDeleted || mode === "record" ? "ok" : "info", text });
   }
@@ -207,7 +210,7 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
   return (
     <section className="videos-tab" aria-labelledby={titleId} aria-busy={listed === null && listError === null}>
       <div className="videos-head">
-        <h2 id={titleId} className="videos-title">
+        <h2 ref={heading} id={titleId} className="videos-title" tabIndex={-1}>
           Видео
         </h2>
         {listed !== null && (

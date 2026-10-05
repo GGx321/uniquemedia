@@ -9,7 +9,7 @@ export function EngineOffline({ view }: { view: EngineView }) {
   const { client, store } = useEngine();
   if (client.kind === "unavailable") {
     return (
-      <Notice tone="danger" title="Движок недоступен">
+      <Notice tone="danger" title="Движок недоступен" noticeKey="engine-unavailable">
         Эта сборка Studio не нашла свой движок, поэтому ничего не загружается и ничего не тратится. Перезапустите
         приложение; если не поможет — переустановите его.
       </Notice>
@@ -20,7 +20,7 @@ export function EngineOffline({ view }: { view: EngineView }) {
   // would just fail the exact same way again, so it is not offered at all.
   if (view.failure?.detail === ENGINE_GONE_DETAIL) {
     return (
-      <Notice tone="danger" title="Движок не отвечает">
+      <Notice tone="danger" title="Движок не отвечает" noticeKey="engine-gone">
         Движок Studio остановился и не будет перезапущен. Перезапустите приложение.
       </Notice>
     );
@@ -29,6 +29,7 @@ export function EngineOffline({ view }: { view: EngineView }) {
     <Notice
       tone="danger"
       title="Движок не отвечает"
+      noticeKey={`engine-offline:${view.failure?.code ?? "none"}`}
       actions={
         <button type="button" className="btn btn-s" onClick={() => store.reload()}>
           Повторить

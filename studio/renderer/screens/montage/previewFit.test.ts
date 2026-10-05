@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { FRAME_H, FRAME_W } from "../../../shared/montage";
-import { fitPreview, PREVIEW_ARTBOARD_W, PREVIEW_MIN_W, previewScale } from "./previewFit";
+import { dockPlacement, fitPreview, PREVIEW_ARTBOARD_W, PREVIEW_MIN_W, previewScale, roomAboveFrame } from "./previewFit";
 
 // The owner's feedback (2026-10-05): the preview fits the stage (a maximised window no longer leaves it a small fixed island), keeps the
 // montage's aspect exactly (so a layer stored in montage coordinates lands on the same spot at any size), never overflows the stage, leaves the
@@ -103,5 +103,26 @@ describe("how much the overlays scale", () => {
     expect(previewScale(306)).toBe(1);
     expect(previewScale(612)).toBe(2);
     expect(previewScale(153)).toBe(0.5);
+  });
+});
+
+describe("the room above the frame (review r1 MEDIUM-2: where the notices dock stays)", () => {
+  test("half of what the stage leaves over a centred frame; none when the frame takes the whole height", () => {
+    expect(roomAboveFrame(900, 720)).toBe(90);
+    expect(roomAboveFrame(544, 544)).toBe(0);
+    expect(roomAboveFrame(500, 544)).toBe(0);
+  });
+});
+
+describe("where the notices dock goes (review r2 LOW-3, r3 LOW-1)", () => {
+  test("above the frame only when the dock as drawn (its cards, «Ещё N», their gaps) fits the room under its 10 px inset; else over the frame", () => {
+    expect(dockPlacement(220, 150)).toBe("above");
+    expect(dockPlacement(160, 150)).toBe("above");
+    // Drawn 10 px below the stage's top, a dock of the room's own height would cover the frame's top 10 px.
+    expect(dockPlacement(159, 150)).toBe("over");
+    expect(dockPlacement(150, 150)).toBe("over");
+    expect(dockPlacement(90, 0)).toBe("above");
+    expect(dockPlacement(0, 0)).toBe("over");
+    expect(dockPlacement(39, 0)).toBe("over");
   });
 });

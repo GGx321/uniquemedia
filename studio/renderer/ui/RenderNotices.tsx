@@ -6,6 +6,7 @@ import { isActiveJob, type JobView } from "../engine/store";
 import { errorSettingsFocus, errorText, settingsLinkLabel } from "../lib/errors";
 import { useNavigate } from "../navigation";
 import { Notice } from "./Notice";
+import { Docked } from "./NoticeDock";
 
 /** While a render is saving, the window looks again this often to see whether the phase has outlasted its limit. */
 export const STALL_POLL_MS = 5_000;
@@ -63,7 +64,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
   }
 
   return (
-    <>
+    <Docked>
       {state.notices.map((notice) => {
         const job = view.jobs.find((j) => j.jobId === notice.jobId);
         if (job === undefined) return null;
@@ -76,7 +77,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
         );
         if (notice.kind === "saving-stalled") {
           return (
-            <Notice key={notice.id} tone="warn" title="Сохранение идёт дольше обычного" actions={closeButton}>
+            <Notice key={notice.id} noticeKey={`render:${notice.id}`} tone="warn" title="Сохранение идёт дольше обычного" actions={closeButton}>
               {whose}видео записывается в «Готовые видео», но папка отвечает слишком долго. Не закрывайте Studio: видео сохранится, когда папка ответит. Если она отключена, подключите её.
             </Notice>
           );
@@ -87,6 +88,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
           return (
             <Notice
               key={notice.id}
+              noticeKey={`render:${notice.id}`}
               tone="danger"
               title="Рендер не удался"
               actions={
@@ -110,6 +112,7 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
         return (
           <Notice
             key={notice.id}
+            noticeKey={`render:${notice.id}`}
             tone="ok"
             title="Видео готово"
             actions={
@@ -129,6 +132,6 @@ export function RenderNotices({ viewing }: { viewing: string | null }) {
           </Notice>
         );
       })}
-    </>
+    </Docked>
   );
 }

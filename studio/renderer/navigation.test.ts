@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createNavigation, sectionOf, type Route } from "./navigation";
+import { arriving, createNavigation, sectionOf, type Route } from "./navigation";
 
 // 3d.2 review, HIGH 1: a screen with unsaved work (the editor) guards every way out, the sidebar included.
 
@@ -101,6 +101,29 @@ describe("the leave guard", () => {
 test("the drafts screen and an open draft light up «Монтаж» in the sidebar", () => {
   const routes: Route[] = [{ name: "montages" }, { name: "editor", montageId: "montage-0000001" }, { name: "editor", montageId: "montage-0000001", created: true }];
   for (const route of routes) expect(sectionOf(route)).toBe("montage");
+});
+
+// Slice review 5-M2: the editor sends the owner to Settings (the trending list's refresh, the export folder, an error's link); Settings then offers
+// the way back to that draft.
+
+describe("Settings reached from a draft remembers it", () => {
+  const editor: Route = { name: "editor", montageId: "montage-0000001" };
+
+  test("from the editor, any way into Settings (a link with a card to land on, the sidebar) carries the draft", () => {
+    expect(arriving(editor, { name: "settings", focus: "music" })).toEqual({ name: "settings", focus: "music", back: { montageId: "montage-0000001" } });
+    expect(arriving(editor, { name: "settings" })).toEqual({ name: "settings", back: { montageId: "montage-0000001" } });
+  });
+
+  test("a link inside Settings to another of its cards keeps the way back; from anywhere else there is none", () => {
+    const there = arriving(editor, { name: "settings" });
+    expect(arriving(there, { name: "settings", focus: "export" })).toEqual({ name: "settings", focus: "export", back: { montageId: "montage-0000001" } });
+    expect(arriving({ name: "montages" }, { name: "settings" })).toEqual({ name: "settings" });
+    expect(arriving({ name: "settings" }, { name: "settings", focus: "key" })).toEqual({ name: "settings", focus: "key" });
+  });
+
+  test("every other way out of the editor goes where it says", () => {
+    for (const to of [{ name: "montages" }, { name: "photos", avatarId: "avatar-mia-0001" }, { name: "editor", montageId: "montage-0000002" }] as const) expect(arriving(editor, to)).toEqual(to);
+  });
 });
 
 test("the other sections keep their own", () => {

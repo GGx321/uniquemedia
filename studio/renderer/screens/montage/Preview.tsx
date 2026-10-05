@@ -1,21 +1,24 @@
 import { type CSSProperties, type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { Focus, Layer, MontageDraft, TextLayer } from "../../../shared/engine";
-import { clipRanges, FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, videoClipWindow, zonesHit } from "../../../shared/montage";
+import { clipRanges, FRAME_H, FRAME_W, ownPhotoCells, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, type Size, stickerBox, totalFrames, videoClipWindow, zonesHit } from "../../../shared/montage";
 import { ownStickerCells } from "../../../shared/montage/ownStickers";
 import { stickerById } from "../../../shared/stickers/manifest";
 import { useEngine } from "../../engine/react";
 import { previewLook, refusedNow } from "../../engine/textPreviewQueue";
-import { ownStickerUrl, photoUrl, placeholderGradient, stickerUrl } from "../../lib/media";
+import { ownPhotoUrl, ownStickerUrl, photoUrl, placeholderGradient, stickerUrl } from "../../lib/media";
 import { Icon, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { Silhouette } from "../../ui/Portrait";
+import { useDevicePixelRatio } from "../../ui/useDevicePixelRatio";
+import { useMediaRetry } from "../../ui/useMediaRetry";
 import { DRAG_THRESHOLD_PX, trackPointer } from "./gesture";
 import { captionLine, layerName, stickerName } from "./labels";
 import { type CellView, clipViewAt, stickerFrameOf, stickerLayerBox, textLayerBox, visibleLayers } from "./previewFrame";
 import { dragFocus, dragLayerCentre, placeLayer, type Point, resizeFactor, setCellFocus, setVideoFocus } from "./previewDrag";
 import { PreviewAudio } from "./PreviewAudio";
 import { PreviewVideo } from "./PreviewVideo";
+import { ownPhotoSize, useOwnPhotos } from "./ownPhotos";
 import { type OwnVideos, videoLookup } from "./ownVideos";
-import { fitPreview, PREVIEW_ARTBOARD_W, previewScale } from "./previewFit";
+import { DOCK_INSET_PX, dockPlacement, fitPreview, PREVIEW_ARTBOARD_W, previewScale, roomAboveFrame } from "./previewFit";
 import { storedFrames } from "./videoSync";
 import type { TrimPeekStore } from "./trimPeek";
 import { resolveSelection } from "./selection";
@@ -28,7 +31,7 @@ import { setStickerSize } from "./stickerOps";
 import { setTextScale } from "./textOps";
 import { useLayerPreview, usePrefetchTextPreviews, useTextPreviews } from "./textPreviews";
 import { usePlayheadFrame, usePlayheadRest, usePlayheadStep, usePlaying } from "./usePlayhead";
-import { type TimelineState, useSelectionCommands } from "./useTimeline";
+import { focusKey, type TimelineState, useSelectionCommands } from "./useTimeline";
 
 // 3d.4: the editor's live preview (Editor.dc.html's centre: the 9:16 frame at 306 × 544), drawn at the playhead's frame from the
 // SHARED geometry the engine renders with (previewFrame.ts):
@@ -53,7 +56,9 @@ const HINTS_GAP_PX = 12;
  * The frame's size fitted to the preview area as laid out (`fitPreview`), on every resize of the area or of the hints (which drop their words in
  * a narrow area) and on a new pixel ratio: the area's content box, and the hints' reach into it from the left (the frame keeps that much clear on
  * both sides, so it stays centred). Only a new FITTED size is news: a resize that fits the same frame (a splitter drag past a frame as tall as
- * the stage) re-renders nothing (review round 1, LOW 4). Null until the area is laid out.
+ * the stage) re-renders nothing (review round 1, LOW 4). Null until the area is laid out. Where the notices' dock goes is written on the area
+ * itself (`data-dock`, `--pv-room`), so it re-renders nothing either: in the room above the frame when the dock as drawn fits there (review r1
+ * MEDIUM-2, r2 LOW-3), measured again as its cards come, go or fold, and as the stage resizes.
  */
 function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HTMLElement | null>, withHints: boolean, ratio: number): Size | null {
   const [size, setSize] = useState<Size | null>(null);
@@ -61,6 +66,13 @@ function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HT
     const node = area.current;
     if (node === null || typeof ResizeObserver === "undefined") return;
     let content: { width: number; height: number } | null = null;
+    let room = 0;
+    const dock = node.querySelector<HTMLElement>(":scope > .ed-dock");
+    /** The dock's place for the room there is and the dock as it is drawn now (its content's height, whatever its box is held to). */
+    const place = (): void => {
+      node.dataset.dock = dockPlacement(room, dock?.scrollHeight ?? 0);
+      node.style.setProperty("--pv-room", `${Math.floor(room)}px`);
+    };
     const observer = new ResizeObserver((entries) => {
       const own = entries.find((entry) => entry.target === node);
       if (own !== undefined) content = { width: own.contentRect.width, height: own.contentRect.height };
@@ -69,31 +81,29 @@ function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HT
       const left = node.getBoundingClientRect().left + (Number.parseFloat(getComputedStyle(node).paddingLeft) || 0);
       const gutter = reach === undefined || reach.width <= 0 ? 0 : Math.max(0, reach.right + HINTS_GAP_PX - left);
       const next = fitPreview({ stage: { w: content.width, h: content.height }, render: { w: FRAME_W, h: FRAME_H }, dpr: ratio, gutter });
+      room = next === null ? 0 : roomAboveFrame(content.height, next.h);
+      place();
       setSize((now) => (now !== null && next !== null && now.w === next.w && now.h === next.h ? now : next));
     });
     observer.observe(node);
     if (withHints && hints.current !== null) observer.observe(hints.current);
-    return () => observer.disconnect();
+    if (dock !== null) observer.observe(dock);
+    // A card that comes, goes, folds or unfolds changes the dock's height without its box changing (it may be held to the room), and so does
+    // a line that changes in place (a notice's text, «Ещё N»'s count: React sets the text node's data, review r3 LOW-2).
+    const cards = dock === null || typeof MutationObserver === "undefined" ? null : new MutationObserver(place);
+    if (dock !== null) cards?.observe(dock, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ["hidden"] });
+    return () => {
+      observer.disconnect();
+      cards?.disconnect();
+    };
   }, [area, hints, withHints, ratio]);
   return size;
 }
 
-/** `window.devicePixelRatio`, followed when the window moves to a screen of another ratio (or the page is zoomed). */
-function useDevicePixelRatio(): number {
-  const [ratio, setRatio] = useState(() => window.devicePixelRatio || 1);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    // A query for the ratio as it is now: it stops matching (a change) when the ratio moves.
-    const query = window.matchMedia(`(resolution: ${ratio}dppx)`);
-    const onChange = (): void => setRatio(window.devicePixelRatio || 1);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, [ratio]);
-  return ratio;
-}
-
 /** The frame's inline size and the overlays' scale; nothing while the stage is not laid out (the stylesheet's own size stands). */
 type FrameStyle = CSSProperties & { readonly "--pv-k": number };
+/** The dock's inset for the stylesheet, from the number its placement counts (review r3 LOW-1). */
+const AREA_STYLE: CSSProperties & { readonly "--pv-dock-inset": string } = { "--pv-dock-inset": `${DOCK_INSET_PX}px` };
 /** The dev mock has no pictures: its stand-ins are drawn at a scene photo's 9:16 size. */
 const MOCK_PHOTO: Size = { w: 768, h: 1344 };
 /** An arrow key moves a layer or a crop this many frame pixels (Shift: `BIG_STEP_PX`). */
@@ -103,13 +113,13 @@ const BIG_STEP_PX = 60;
 const pct = (value: number, of: number): string => `${(value / of) * 100}%`;
 const boxStyle = (box: Rect): CSSProperties => ({ left: pct(box.x, FRAME_W), top: pct(box.y, FRAME_H), width: pct(box.w, FRAME_W), height: pct(box.h, FRAME_H) });
 
-/** What a crop drag moves: a scene photo in a cell (its face focus), or an own video clip's video (its focus, 3f.3b). */
-type Framed = Extract<CellView["content"], { kind: "scene" | "video" }>;
+/** What a crop drag moves: a scene or an own photo in a cell (the cell's face focus, 3-H1 for an own one), or an own video clip's video (its focus, 3f.3b). */
+type Framed = Extract<CellView["content"], { kind: "scene" | "ownPhoto" | "video" }>;
 
-/** What a crop drag of the cell moves; null when nothing can move (an empty cell, own media, an own video already 9:16 that fills the frame whole). */
+/** What a crop drag of the cell moves; null when nothing can move (an empty cell, an own video already 9:16 that fills the frame whole). */
 function framedOf(cell: CellView): Framed | null {
   if (cell.content.kind === "video" && cell.window !== null && cell.source !== null && !cropMoves(cell.window, cell.source)) return null;
-  return cell.content.kind === "scene" || cell.content.kind === "video" ? cell.content : null;
+  return cell.content.kind === "empty" ? null : cell.content;
 }
 
 /** A drag under way: what the preview draws instead of the draft until it ends. */
@@ -168,12 +178,14 @@ const pictureStyle = (window: Rect, source: Size): CSSProperties => ({
 });
 
 export interface PreviewProps {
+  /** The editor's notices (slice review 5-L1): drawn over the top of the stage, so they never take the frame's room. */
+  readonly dock?: ReactNode;
   readonly session: DraftSession;
   readonly spec: MontageDraft;
   readonly timeline: TimelineState;
-  /** Photos `montages.focus` is still judging: «ищем лицо…» on the selected cell. */
+  /** Photos `montages.focus` is still judging, by `focusKey`: «ищем лицо…» on the selected cell. */
   readonly focusPending: ReadonlySet<string>;
-  /** A free bin photo being dragged: an empty cell on screen takes it. */
+  /** A photo being dragged from the media panel: a photo cell on screen takes it (an empty one is filled, a filled one's photo replaced). */
   readonly dragPhoto: string | null;
   readonly onFillCell: (clip: number, cell: number, photoId: string) => void;
   /** Selects cell `cell` of clip `clip` (the playhead is in it already). */
@@ -184,7 +196,7 @@ export interface PreviewProps {
   readonly trimPeek: TrimPeekStore;
 }
 
-export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: PreviewProps) {
+export function Preview({ dock, session, spec, timeline, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: PreviewProps) {
   const frameRef = useRef<HTMLDivElement>(null);
   const areaRef = useRef<HTMLElement>(null);
   const hintsRef = useRef<HTMLDivElement>(null);
@@ -201,7 +213,8 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
   const frameStyle: FrameStyle | undefined = size === null ? undefined : { width: size.w, height: size.h, "--pv-k": previewScale(size.w) };
 
   return (
-    <section ref={areaRef} className="ed-preview" aria-label="Превью">
+    <section ref={areaRef} className="ed-preview" aria-label="Превью" style={AREA_STYLE}>
+      {dock}
       <div className="ed-frame" ref={frameRef} style={frameStyle}>
         {empty ? (
           <div className="ed-frame-empty">
@@ -273,6 +286,8 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
   const textPreviews = useTextPreviews();
   // The owner's own stickers by media id (3f.5): the record each own-sticker layer is drawn from.
   const ownStickers = useOwnStickers(client, ownStickerCells(spec).map((cell) => cell.mediaId));
+  // The own photos in the draft's cells by media id (3-H1): the stored size each is cropped from.
+  const ownPhotos = useOwnPhotos(client, ownPhotoCells(spec).map((cell) => cell.mediaId));
   const commands = useSelectionCommands(session, timeline);
   const playheadFrame = usePlayheadFrame(timeline.playhead);
   const [drag, setDrag] = useState<Drag | null>(null);
@@ -296,7 +311,8 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
     const known = videoLookup(videos, mediaId);
     return known.state === "known" ? { w: known.video.width, h: known.video.height } : null;
   };
-  const view = clipViewAt(live, frame, (photoId) => (mock ? MOCK_PHOTO : (sizes.get(photoId) ?? null)), videoSize);
+  // 3-H1: an own photo's stored size is its record's, the size the render crops it from; the mock's records have one too.
+  const view = clipViewAt(live, frame, (photoId) => (mock ? MOCK_PHOTO : (sizes.get(photoId) ?? null)), videoSize, (mediaId) => ownPhotoSize(ownPhotos, mediaId));
   const videoCell = view?.kind === "video" ? view.cells[0] : undefined;
   const layers = visibleLayers(live, frame);
   const selected = resolveSelection(spec, timeline.selection);
@@ -445,7 +461,8 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
 
   /**
    * One undo step of a new focus for the cell, if it still holds what was framed (an undo or another window may have changed it): the scene photo
-   * `framed.photoId` in a cell, or the own video `framed.mediaId` as clip `clipId` (3f.3b).
+   * `framed.photoId` or the own photo `framed.mediaId` in a cell (3-H1: the cell's focus, which the render crops it around), or the own video
+   * `framed.mediaId` as clip `clipId` (3f.3b).
    */
   function editCell(clipIndex: number, clipId: string, cellIndex: number, framed: Framed, focus: (stored: Focus | null) => Focus, mergeKey?: string): void {
     const current = session.state.spec;
@@ -458,7 +475,8 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
       return;
     }
     const cell = clip === undefined || clip.kind === "video" ? undefined : clip.kind === "photo" ? clip.cell : clip.cells[cellIndex];
-    if (cell?.photo?.source !== "scene" || cell.photo.photoId !== framed.photoId) return;
+    const holds = framed.kind === "scene" ? cell?.photo?.source === "scene" && cell.photo.photoId === framed.photoId : cell?.photo?.source === "own" && cell.photo.mediaId === framed.mediaId;
+    if (cell === undefined || !holds) return;
     const next = setCellFocus(current, clipIndex, cellIndex, focus(cell.focus));
     if (next !== current) session.edit(next, options);
   }
@@ -493,8 +511,11 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
     session.endMerge();
   }
 
+  /** A photo cell takes a dragged photo: an empty one is filled, a filled one's photo replaced (slice review 5-M5); an own video's frame takes none. */
+  const takesPhoto = (cell: CellView): boolean => dragPhoto !== null && cell.content.kind !== "video";
+
   function dropOn(event: DragEvent<HTMLElement>, cell: CellView): void {
-    if (dragPhoto === null || cell.content.kind !== "empty" || view === null) return;
+    if (dragPhoto === null || !takesPhoto(cell) || view === null) return;
     event.preventDefault();
     onFillCell(view.index, cell.index, dragPhoto);
   }
@@ -522,10 +543,9 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           clipNumber={view.index + 1}
           cellCount={view.cells.length}
           cell={cell}
-          avatarId={spec.avatarId}
-          mock={mock}
+          pictureUrl={cell.content.kind === "scene" ? (mock ? null : photoUrl(spec.avatarId, cell.content.photoId)) : cell.content.kind === "ownPhoto" ? ownPhotoUrl(client, cell.content.mediaId) : null}
           selected={selectedCell === cell.index}
-          dropping={dragPhoto !== null && cell.content.kind === "empty"}
+          dropping={takesPhoto(cell)}
           onSize={(photoId, size) => setSizes((now) => (now.get(photoId)?.w === size.w && now.get(photoId)?.h === size.h ? now : new Map(now).set(photoId, size)))}
           onPointerDown={(e) => pressCell(e, cell)}
           onSelect={() => onSelectCell(view.index, cell.index)}
@@ -533,7 +553,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
           onKeyUp={keyUp}
           onBlur={onBlur}
           onDragOver={(e) => {
-            if (dragPhoto === null || cell.content.kind !== "empty") return;
+            if (!takesPhoto(cell)) return;
             e.preventDefault();
             if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
           }}
@@ -572,7 +592,7 @@ function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, f
       })}
       {zones && <ReelsZones />}
       {bars && <SlideBars spec={live} frame={frame} />}
-      {hinted !== undefined && <CellHint cell={hinted} pending={hinted.content.kind === "scene" && focusPending.has(hinted.content.photoId)} />}
+      {hinted !== undefined && <CellHint cell={hinted} pending={isPending(hinted.content, focusPending)} />}
     </div>
   );
 }
@@ -699,14 +719,21 @@ function layerLabel(spec: MontageDraft, index: number): string {
   return `${layerName(spec, index)}: ${layer.kind === "text" ? `«${captionLine(layer.value)}»` : stickerName(layer)}`;
 }
 
+/** Whether the face of the photo a cell holds is still being judged («ищем лицо…»): a scene photo's or an own one's (3-H1). */
+function isPending(content: CellView["content"], pending: ReadonlySet<string>): boolean {
+  if (content.kind === "scene") return pending.has(focusKey({ source: "scene", photoId: content.photoId }));
+  if (content.kind === "ownPhoto") return pending.has(focusKey({ source: "own", mediaId: content.mediaId }));
+  return false;
+}
+
 interface CellProps {
   readonly clipNumber: number;
   readonly cellCount: number;
   readonly cell: CellView;
-  readonly avatarId: string;
-  readonly mock: boolean;
+  /** The photo's picture: a scene photo's or an own photo's through main's media route; null in the dev mock (its stand-in is drawn). */
+  readonly pictureUrl: string | null;
   readonly selected: boolean;
-  /** A bin photo is being dragged and this empty cell can take it. */
+  /** A photo is being dragged and this cell can take it (filled, or its photo replaced). */
   readonly dropping: boolean;
   readonly onSize: (photoId: string, size: Size) => void;
   readonly onPointerDown: (event: ReactPointerEvent<HTMLElement>) => void;
@@ -721,7 +748,7 @@ interface CellProps {
 
 function cellLabel(clipNumber: number, cellCount: number, cell: CellView): string {
   const where = cellCount > 1 ? `Кадр ${clipNumber}, ячейка ${cell.index + 1}` : `Кадр ${clipNumber}`;
-  const what: Record<CellView["content"]["kind"], string | null> = { empty: "пустая", video: "своё видео", own: "своё фото", scene: null };
+  const what: Record<CellView["content"]["kind"], string | null> = { empty: "пустая", video: "своё видео", ownPhoto: "своё фото", scene: null };
   const said = what[cell.content.kind];
   return said === null ? where : `${where}: ${said}`;
 }
@@ -729,11 +756,35 @@ function cellLabel(clipNumber: number, cellCount: number, cell: CellView): strin
 /** Whether a crop can move at all: the window is smaller than the picture on some axis (an own video already 9:16 fills the frame whole). */
 const cropMoves = (window: Rect, source: Size): boolean => window.w < source.w || window.h < source.h;
 
-function PreviewCell({ clipNumber, cellCount, cell, avatarId, mock, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
+/**
+ * A cell's own photo (3-H1) at its window. With no window (its record not read yet, or no longer in the library) or a picture that would not
+ * load, a stand-in (review r1 LOW-5). A failed load is asked for once more after a pause, as every `studio-media://` picture is (a busy or
+ * slow disk answers 503/504, useMediaRetry.ts); the stand-in covers the pause, so the errored picture is never drawn. The dev mock stores no
+ * picture: a placeholder at the window.
+ */
+function OwnPhotoPicture({ url, mediaId, window, source }: { url: string | null; mediaId: string; window: Rect | null; source: Size | null }) {
+  const retry = useMediaRetry(url);
+  if (window === null || source === null || retry.failed || retry.waiting) {
+    return (
+      <span className="pv-photo-standin" aria-hidden="true">
+        <Silhouette />
+      </span>
+    );
+  }
+  if (url === null) {
+    return (
+      <span className="pv-photo pv-photo-mock" style={{ ...pictureStyle(window, source), background: placeholderGradient(mediaId) }}>
+        <Silhouette />
+      </span>
+    );
+  }
+  return <img key={retry.key} className="pv-photo" src={url} alt="" draggable={false} style={pictureStyle(window, source)} onError={retry.onError} />;
+}
+
+function PreviewCell({ clipNumber, cellCount, cell, pictureUrl: url, selected, dropping, onSize, onPointerDown, onSelect, onKeyDown, onKeyUp, onBlur, onDragOver, onDrop }: CellProps) {
   const { content, window, source } = cell;
   const classes = ["pv-cell", content.kind === "video" ? "pv-cell-video" : "", selected ? "pv-cell-on" : "", dropping ? "pv-cell-drop" : ""].filter(Boolean).join(" ");
   const style: CSSProperties = { ...boxStyle(cell.rect), opacity: cell.alphaPermille / 1000 };
-  const url = content.kind === "scene" && !mock ? photoUrl(avatarId, content.photoId) : null;
   return (
     <button
       type="button"
@@ -772,7 +823,8 @@ function PreviewCell({ clipNumber, cellCount, cell, avatarId, mock, selected, dr
             </span>
           )
         ))}
-      {content.kind === "own" && <span className="pv-own" />}
+      {/* 3-H1: an own photo's window comes from its RECORD's size (the render's), so it is placed before its picture arrives. */}
+      {content.kind === "ownPhoto" && <OwnPhotoPicture url={url} mediaId={content.mediaId} window={window} source={source} />}
       {content.kind === "empty" && (
         <span className="pv-empty">
           <Icon name="plus" size={16} />
@@ -790,10 +842,10 @@ function PreviewCell({ clipNumber, cellCount, cell, avatarId, mock, selected, dr
  */
 function CellHint({ cell, pending }: { cell: CellView; pending: boolean }) {
   const { content, window, source } = cell;
-  if (content.kind !== "scene" && content.kind !== "video") return null;
+  if (content.kind === "empty") return null;
   if (window === null || source === null) return null;
-  // Where the point sits in the cell on this frame (the crop follows it until it meets the picture's edge).
-  const moves = content.kind === "scene" || cropMoves(window, source);
+  // Where the point sits in the cell on this frame (the crop follows it until it meets the picture's edge). A photo's always can.
+  const moves = content.kind !== "video" || cropMoves(window, source);
   const ring = moves ? ringAt(content.focus, window, source) : null;
   const pill = content.kind === "video" ? (moves ? "тяните, чтобы сдвинуть" : "видео 9:16 · весь кадр") : pending ? "ищем лицо…" : content.focus === null ? "лицо не найдено · тяните" : "по лицу · тяните";
   return (

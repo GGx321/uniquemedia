@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { Focus, MontageDraft } from "../../../shared/engine";
+import type { Focus, MontageDraft, PhotoRef } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
 import { evenOut, totalMs } from "./clipOps";
 import { type FrameClock, windowFrameClock } from "./playback";
@@ -27,15 +27,29 @@ export interface TimelineState {
   togglePlay(): void;
 }
 
-export function useTimeline(spec: MontageDraft, clock: FrameClock = windowFrameClock): TimelineState {
+/** Where a timeline starts: an editor of the same draft that closed in this window left it there (slice review 5-M2). */
+export interface TimelineStart {
+  readonly selection: Selection | null;
+  readonly playheadMs: number;
+  readonly zoom: number;
+}
+
+export function useTimeline(spec: MontageDraft, clock: FrameClock = windowFrameClock, start: TimelineStart | null = null): TimelineState {
   const total = totalMs(spec);
-  const [selection, select] = useState<Selection | null>(null);
-  const [zoom, setZoomState] = useState(MIN_ZOOM);
+  const [selection, select] = useState<Selection | null>(start?.selection ?? null);
+  const [zoom, setZoomState] = useState(() => clampZoom(start?.zoom ?? MIN_ZOOM));
   const [playhead] = useState(() => new PlayheadStore(clock));
+  /** The playhead's start, put once the store knows the montage's length (it is snapped into it). */
+  const startAt = useRef(start?.playheadMs ?? null);
 
   // The store knows the montage's length before the screen is painted: a change stops a playback and pulls the playhead back
   // inside a shorter montage (playhead.ts).
-  useLayoutEffect(() => playhead.setTotal(total), [playhead, total]);
+  useLayoutEffect(() => {
+    playhead.setTotal(total);
+    if (startAt.current === null) return;
+    playhead.seek(startAt.current);
+    startAt.current = null;
+  }, [playhead, total]);
   useEffect(() => () => playhead.dispose(), [playhead]);
 
   const seek = useCallback((ms: number) => playhead.seek(ms), [playhead]);
@@ -125,11 +139,16 @@ export function useSelectionCommands(session: DraftSession, timeline: TimelineSt
   };
 }
 
+/** A photo's key among the ones still being judged: a scene photo's and an own photo's ids are told apart by their source. */
+export function focusKey(photo: PhotoRef): string {
+  return photo.source === "scene" ? `scene:${photo.photoId}` : `own:${photo.mediaId}`;
+}
+
 /**
  * K6: the face focus of a photo the owner just placed. The photo goes into the draft at once with `focus: null`;
  * `montages.focus` answers later, and a found focus is written into the history (`DraftSession.fillFocus`), never
  * as an undo step. An unresolved answer (null, a refusal) leaves null, which the preview draws at
- * `FOCUS_FALLBACK`. `pending` names the photos still being judged («ищем лицо…»).
+ * `FOCUS_FALLBACK`. `pending` names the photos still being judged («ищем лицо…»), by `focusKey`.
  */
 export function useFocusResolver(client: EngineClient, session: DraftSession, avatarId: string): { pending: ReadonlySet<string>; resolve(photoId: string): void; resolveOwn(mediaId: string): void } {
   /** Questions still out, per photo: the same photo may be asked again (placed, undone, placed) before an answer. */
@@ -143,39 +162,36 @@ export function useFocusResolver(client: EngineClient, session: DraftSession, av
     };
   }, []);
 
-  const resolve = useCallback(
-    (photoId: string) => {
-      setOpen((now) => new Map(now).set(photoId, (now.get(photoId) ?? 0) + 1));
-      void client.request("montages.focus", { avatarId, photo: { source: "scene", photoId } }).then((reply) => {
+  /** Asks the engine for `photo`'s face and hands a found focus to `fill`; «ищем лицо…» stays while a question about the photo is out. */
+  const ask = useCallback(
+    (photo: PhotoRef, fill: (focus: Focus) => void) => {
+      const key = focusKey(photo);
+      setOpen((now) => new Map(now).set(key, (now.get(key) ?? 0) + 1));
+      void client.request("montages.focus", { avatarId, photo }).then((reply) => {
         if (!alive.current) return;
         const focus: Focus | null = reply.ok ? reply.result.focus : null;
-        if (focus !== null) session.fillFocus(photoId, focus);
+        if (focus !== null) fill(focus);
         // This answer closes one question; «ищем лицо…» stays while a later one for the photo is still out.
         setOpen((now) => {
           const next = new Map(now);
-          const left = (now.get(photoId) ?? 1) - 1;
-          if (left > 0) next.set(photoId, left);
-          else next.delete(photoId);
+          const left = (now.get(key) ?? 1) - 1;
+          if (left > 0) next.set(key, left);
+          else next.delete(key);
           return next;
         });
       });
     },
-    [client, session, avatarId],
+    [client, avatarId],
   );
+
+  const resolve = useCallback((photoId: string) => ask({ source: "scene", photoId }, (focus) => void session.fillFocus(photoId, focus)), [ask, session]);
 
   /**
    * 3f.6: the same for an own photo placed from «Мои» (`montages.focus` with the own source): the engine judges the stored photo; a found
-   * focus is written into the history (`DraftSession.fillOwnFocus`), never as an undo step. Nothing is shown while it is judged (the preview
-   * draws an own photo as a stand-in), and an unresolved answer leaves null, which the render judges again.
+   * focus is written into the history (`DraftSession.fillOwnFocus`), never as an undo step. 3-H1: while it is judged the preview and the
+   * properties say «ищем лицо…», as for a scene photo; an unresolved answer leaves null, which the render judges again.
    */
-  const resolveOwn = useCallback(
-    (mediaId: string) => {
-      void client.request("montages.focus", { avatarId, photo: { source: "own", mediaId } }).then((reply) => {
-        if (alive.current && reply.ok && reply.result.focus !== null) session.fillOwnFocus(mediaId, reply.result.focus);
-      });
-    },
-    [client, session, avatarId],
-  );
+  const resolveOwn = useCallback((mediaId: string) => ask({ source: "own", mediaId }, (focus) => void session.fillOwnFocus(mediaId, focus)), [ask, session]);
 
   return { pending, resolve, resolveOwn };
 }

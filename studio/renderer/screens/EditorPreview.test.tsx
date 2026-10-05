@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CAPTION_ISSUES_RU, type MontageDraft, type TextLayer } from "../../shared/engine";
-import { clipCellRects, FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, stickerBox } from "../../shared/montage";
+import { clipCellRects, clipMotionPlan, FRAME_H, FRAME_W, progressSegments, type Rect, reelsSafeZones, segmentFillWidth, stickerBox } from "../../shared/montage";
 import type { MockEngine } from "../engine/mockEngine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
 import { callsOf, flush } from "../testing";
@@ -9,6 +9,7 @@ import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { type ManualFrames, manualFrames } from "./montage/frames.testkit";
 import { installImageDecoder } from "./montage/imageDecoder.testkit";
 import { dragLayerCentre, resizeFactor } from "./montage/previewDrag";
+import { cellSourceWindow } from "./montage/previewFrame";
 import * as renderBlockModule from "./montage/renderBlock";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, paidMusicCalls, studio as openStudio } from "./montage/screenKit";
 import { collageClip, photoClip, stickerLayer, textLayer } from "./montage/testkit";
@@ -599,6 +600,30 @@ describe("a cell's crop by its face point", () => {
     const clip = saved.clips[0];
     expect(clip?.kind === "collage" ? clip.cells[1]?.photo?.source : null).toBe("scene");
   });
+
+  test("slice review 5-M5: a bin photo dropped on a FILLED cell replaces its photo, one undo step", async () => {
+    const { client, engine } = await studio();
+    await openDraft(engine, client, { clips: [collageClip(0, [P1, P2], 4_000, false)] });
+    const bin = screen.getByRole("list", { name: "Фото аватара" });
+    const tile = within(bin).getAllByRole("listitem").find((item) => (item.getAttribute("aria-label") ?? "").endsWith("не использовано"));
+    const pick = tile === undefined ? null : within(tile).getAllByRole("button")[0];
+    if (pick === undefined || pick === null) throw new Error("no free photo in the bin");
+    fireEvent.dragStart(pick);
+    const filled = inPreview("Кадр 1, ячейка 2");
+    fireEvent.dragOver(filled);
+    expect(filled.className).toContain("pv-cell-drop");
+    fireEvent.drop(filled);
+    await flush();
+    const saved = await nextSave(engine);
+    const clip = saved.clips[0];
+    const second = clip?.kind === "collage" ? clip.cells[1]?.photo : null;
+    expect(second?.source === "scene" ? second.photoId : null).not.toBe(P2);
+    expect(clip?.kind === "collage" ? clip.cells[0]?.photo : null).toEqual({ source: "scene", photoId: P1 });
+    undo();
+    await flush();
+    const back = (await nextSave(engine, 1)).clips[0];
+    expect(back?.kind === "collage" ? back.cells[1]?.photo : null).toEqual({ source: "scene", photoId: P2 });
+  });
 });
 
 describe("playback", () => {
@@ -878,6 +903,66 @@ describe("the play control on the preview", () => {
 // 3f.5: an OWN sticker in the preview. The layer's record (canvas, loop, delays) comes from `media.list`; its frames are decoded from the bytes main
 // hands over by `media.stickerBytes` (never a read of the media scheme, never the built-in command), and the frame on screen is picked by the 30 fps
 // tick through the record's own per-frame delays, as the render's loop does.
+describe("3-H1: an own photo in a cell is the render's crop of the real photo", () => {
+  /** The library's own photo, as the mock seeds one: 1080 x 1440 (landscape-ish against a 9:16 cell: the crop moves left and right). */
+  const OWN = "media-demo-0001";
+  const OWN_SIZE = { w: 1080, h: 1440 };
+  const ownPhotoClip = (focus: { x: number; y: number } | null = null) => ({ ...photoClip(0, P1, 2_000), cell: { photo: { source: "own" as const, mediaId: OWN }, focus } });
+  const seedOwnPhoto = (engine: MockEngine): void => engine.seedOwnMedia([{ kind: "photo", name: "croissant.jpg", bytes: 900_000, createdAt: "2026-10-01T10:00:00.000Z" }]);
+  /** The picture's box as drawn (left, top, width, height in percent of the cell), and the same for a window of the photo. */
+  const pictureBox = (node: Element | null): number[] => {
+    const style = node instanceof HTMLElement ? node.style : null;
+    return [style?.left, style?.top, style?.width, style?.height].map((v) => Number.parseFloat(v ?? "NaN"));
+  };
+  const windowBox = (window: Rect, source: { w: number; h: number }): number[] => [(-window.x / window.w) * 100, (-window.y / window.h) * 100, (source.w / window.w) * 100, (source.h / window.h) * 100];
+
+  test("drawn at the window the render cuts on this frame, from the size its record gives (not a stand-in)", async () => {
+    const { client, engine } = await studio();
+    seedOwnPhoto(engine);
+    const focus = { x: 0.7, y: 0.4 };
+    await openDraft(engine, client, { clips: [ownPhotoClip(focus), photoClip(1, P2, 2_000)] });
+    const cell = inPreview("Кадр 1: своё фото");
+    await waitFor(() => expect(cell.querySelector(".pv-photo") !== null).toBe(true));
+    const listed = await asAnotherWindow(() => client.request("montages.list", {}));
+    const spec = listed.ok ? listed.result.items[0]?.montage.spec : undefined;
+    const clip = spec?.clips[0];
+    if (spec === undefined || clip === undefined || clip.kind === "video") throw new Error("setup");
+    const window = cellSourceWindow({ w: FRAME_W, h: FRAME_H }, OWN_SIZE, focus, clipMotionPlan(spec.seed, clip), 0, 60);
+    const drawn = pictureBox(cell.querySelector(".pv-photo"));
+    const expected = windowBox(window, OWN_SIZE);
+    for (const [i, value] of drawn.entries()) expect(value).toBeCloseTo(expected[i] ?? Number.NaN, 6);
+    expect(cell.querySelector(".pv-own") === null).toBe(true);
+  });
+
+  test("the selected own photo's crop follows the arrows and a drag: the cell's focus (what the render reads) is saved, one undo step each", async () => {
+    const { client, engine } = await studio();
+    seedOwnPhoto(engine);
+    await openDraft(engine, client, { clips: [ownPhotoClip(), photoClip(1, P2, 2_000)] });
+    const cell = (): HTMLElement => inPreview("Кадр 1: своё фото");
+    await waitFor(() => expect(cell().querySelector(".pv-photo") !== null).toBe(true));
+    fireEvent.pointerDown(cell(), { pointerId: 31, button: 0, clientX: 0, clientY: 0 });
+    expect(cell().getAttribute("aria-pressed")).toBe("true");
+    expect(cell().getAttribute("aria-keyshortcuts")).toContain("ArrowLeft");
+    expect(within(preview()).getByText(/тяните/)).toBeDefined();
+    fireEvent.keyDown(cell(), { key: "ArrowRight" });
+    fireEvent.keyUp(cell(), { key: "ArrowRight" });
+    const saved = (await nextSave(engine)).clips[0];
+    // The photo followed the arrow to the right, so the point it centres on moved left; the untouched axis kept the fallback's.
+    const moved = saved?.kind === "photo" ? saved.cell : null;
+    expect(moved?.photo).toEqual({ source: "own", mediaId: OWN });
+    expect(moved?.focus?.x ?? 1).toBeLessThan(0.5);
+    expect(moved?.focus?.y).toBe(0.38);
+
+    drag(cell(), -30, 0, 32);
+    const dragged = (await nextSave(engine, 1)).clips[0];
+    expect(dragged?.kind === "photo" ? (dragged.cell.focus?.x ?? 0) : 0).toBeGreaterThan(moved?.focus?.x ?? 1);
+    undo();
+    undo();
+    await flush();
+    expect(screen.getByRole("button", { name: "Отменить" }).hasAttribute("disabled")).toBe(true);
+  });
+});
+
 describe("own stickers", () => {
   const ownLayer = (index: number, mediaId: string, over: Partial<ReturnType<typeof stickerLayer>> = {}) => ({ ...stickerLayer(index, 0, 4_000), sticker: { source: "own" as const, mediaId }, ...over });
 

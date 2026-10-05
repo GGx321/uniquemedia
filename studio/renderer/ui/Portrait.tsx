@@ -1,7 +1,7 @@
 import { type CSSProperties, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { useEngine } from "../engine/react";
 import { coversFrame, drawCap, type PixelSize } from "../lib/imageFit";
-import { photoUrl, placeholderGradient } from "../lib/media";
+import { ownPhotoUrl, photoUrl, placeholderGradient } from "../lib/media";
 import { type ContentSize, observeSize } from "./observeSize";
 import { useDevicePixelRatio } from "./useDevicePixelRatio";
 import { useMediaRetry } from "./useMediaRetry";
@@ -79,9 +79,22 @@ function useFrameFit(frame: RefObject<HTMLElement | null>, src: string | null, c
  */
 export function Portrait({ avatarId, photoId, label }: { avatarId: string; photoId: string; label: string }) {
   const { client } = useEngine();
+  return <PortraitPicture src={client.kind === "mock" ? null : photoUrl(avatarId, photoId)} seed={photoId} label={label} />;
+}
+
+/**
+ * An own photo from «Мои» (3-H1), drawn as a library photo is (`Portrait`): the stored file through main's media route by its id (`ownPhotoUrl`), or
+ * the same placeholder in the dev mock (which stores no picture) or when it cannot load.
+ */
+export function OwnPortrait({ mediaId, label }: { mediaId: string; label: string }) {
+  const { client } = useEngine();
+  return <PortraitPicture src={ownPhotoUrl(client, mediaId)} seed={mediaId} label={label} />;
+}
+
+/** A picture at `src` covering its frame within its draw cap, or the placeholder of `seed` when there is none or it cannot load. */
+function PortraitPicture({ src, seed, label }: { src: string | null; seed: string; label: string }) {
   const [loaded, setLoaded] = useState<{ src: string; natural: PixelSize } | null>(null);
   const frame = useRef<HTMLSpanElement>(null);
-  const src = photoUrl(avatarId, photoId);
   // A failure and a natural size belong to the picture they came from: another photo id gets its own chance and its own load. A failed load is tried once
   // more after a pause (a busy or slow disk answers 503/504, which an `<img>` cannot tell from a missing file) before it is a placeholder.
   const retry = useMediaRetry(src);
@@ -91,7 +104,7 @@ export function Portrait({ avatarId, photoId, label }: { avatarId: string; photo
   const dpr = useDevicePixelRatio(natural !== null);
   const cap = natural === null ? null : drawCap(natural, dpr);
   const { banded, backdrop } = useFrameFit(frame, src, cap);
-  if (client.kind === "mock" || failed || retry.waiting || src === null) return <PortraitPlaceholder seed={photoId} label={label} />;
+  if (failed || retry.waiting || src === null) return <PortraitPlaceholder seed={seed} label={label} />;
   // Held only when banded. Each side is held on its own: a frame wider than the cap but not taller (or the other way) gets a box of
   // the frame's height and the cap's width, and `cover` crops inside it; either way no side is stretched past the cap.
   const capStyle: CSSProperties | undefined = banded && cap !== null ? { maxWidth: `${cap.width}px`, maxHeight: `${cap.height}px` } : undefined;

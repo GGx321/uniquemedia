@@ -19,7 +19,16 @@ import { type TrackRow, trackRows } from "./musicOps";
 
 export type TrackList = { readonly state: "loading" } | { readonly state: "ready"; readonly tracks: readonly TrackSummary[] } | { readonly state: "failed"; readonly error: EngineError };
 
-/** The stored tracks (`music.list`), read again whenever the list was fetched anew; the last answer stays while a new one is out. */
+/**
+ * What the stored list is at now, as the status tells it (slice review 4-M5): its time, how many tracks are stored, and the refresh's state. The
+ * engine stores a new list's time BEFORE its tracks finish downloading (and resumes the downloads after a restart under the old time), while
+ * `music.list` answers only the tracks stored; each one that lands moves the count, and the refresh's end moves its state. Null until the status is known.
+ */
+export function musicListVersion(status: MusicStatus | null): string | null {
+  return status === null ? null : `${status.listFetchedAt ?? "never"}|${status.trackCount}|${status.refresh.state}`;
+}
+
+/** The stored tracks (`music.list`), read again whenever the list changed (`musicListVersion`); the last answer stays while a new one is out. */
 export function useTrackList(client: EngineClient, listVersion: string | null): { list: TrackList; retry: () => void } {
   const [attempt, setAttempt] = useState(0);
   const [list, setList] = useState<TrackList>({ state: "loading" });
@@ -88,7 +97,7 @@ export function MusicTab({ spec, status, onPick }: MusicTabProps) {
   useEffect(() => {
     void store.refreshMusic();
   }, [store]);
-  const { list, retry } = useTrackList(client, status?.listFetchedAt ?? null);
+  const { list, retry } = useTrackList(client, musicListVersion(status));
   const total = totalMs(spec);
   const tracks = list.state === "ready" ? list.tracks : [];
   const rows = trackRows(tracks, spec.music, total, { hideExplicit });

@@ -7,6 +7,7 @@ import type { EngineStore, MediaStoreChange } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { ownPhotoUrl, ownStickerUrl, ownTrackUrl, ownVideoUrl, placeholderGradient } from "../../lib/media";
 import { Icon, PauseIcon, PlayIcon, Spin } from "../../ui/Icon";
+import { cancelOnEscape, useConfirmFocus } from "../../ui/useConfirmFocus";
 import { useMounted } from "../photos/shared";
 import { type AddRefusal, totalMs } from "./clipOps";
 import {
@@ -188,9 +189,12 @@ function CancelImport({ view, onCancel }: { view: ImportView; onCancel: (view: I
   );
 }
 
-function DeleteButton({ media, onDelete }: { media: MediaSummary; onDelete: (media: MediaSummary) => void }) {
+/** A tile's or a row's trash asks for its file's delete; `from` is the trash, where the focus goes back when the owner cancels (slice review 5-M4). */
+type AskDelete = (media: MediaSummary, from: HTMLElement) => void;
+
+function DeleteButton({ media, onDelete }: { media: MediaSummary; onDelete: AskDelete }) {
   return (
-    <button type="button" className="mine-del" aria-label={`Удалить ${media.name}`} title="Удалить" onClick={() => onDelete(media)}>
+    <button type="button" className="mine-del" aria-label={`Удалить ${media.name}`} title="Удалить" onClick={(e) => onDelete(media, e.currentTarget)}>
       <Icon name="trash" size={12} strokeWidth={2.2} />
     </button>
   );
@@ -211,7 +215,7 @@ function VisualTileView({
   fillTarget: FillTarget;
   onPick: (media: MediaSummary) => void;
   onDrag: (drag: BinDrag | null) => void;
-  onDelete: (media: MediaSummary) => void;
+  onDelete: AskDelete;
   onCancel: (view: ImportView) => void;
   hintId: string;
 }) {
@@ -263,7 +267,7 @@ function VisualTileView({
   );
 }
 
-function TrackRowView({ row, montageMs, listening, onListen, onPick, onDelete, onCancel }: { row: TrackTile; montageMs: number; listening: string | null; onListen: (mediaId: string) => void; onPick: (media: MediaSummary) => void; onDelete: (media: MediaSummary) => void; onCancel: (view: ImportView) => void }) {
+function TrackRowView({ row, montageMs, listening, onListen, onPick, onDelete, onCancel }: { row: TrackTile; montageMs: number; listening: string | null; onListen: (mediaId: string) => void; onPick: (media: MediaSummary) => void; onDelete: AskDelete; onCancel: (view: ImportView) => void }) {
   const { client } = useEngine();
   if (row.kind === "import") {
     const { view } = row;
@@ -315,7 +319,7 @@ function TrackRowView({ row, montageMs, listening, onListen, onPick, onDelete, o
   );
 }
 
-function StickerTileView({ tile, blocked, why, onPick, onDelete, onCancel }: { tile: StickerTile; blocked: boolean; why: string | null; onPick: (mediaId: string) => void; onDelete: (media: MediaSummary) => void; onCancel: (view: ImportView) => void }) {
+function StickerTileView({ tile, blocked, why, onPick, onDelete, onCancel }: { tile: StickerTile; blocked: boolean; why: string | null; onPick: (mediaId: string) => void; onDelete: AskDelete; onCancel: (view: ImportView) => void }) {
   const { client } = useEngine();
   if (tile.kind === "import") {
     const { view } = tile;
@@ -506,12 +510,26 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
   }, []);
 
   // ---------- delete ----------
-  const [confirm, setConfirm] = useState<{ media: MediaSummary; refusal: string | null } | null>(null);
+  /** The file whose delete is asked about, the trash that asked (`from`), and the engine's refusal once it came. */
+  const [confirm, setConfirm] = useState<{ media: MediaSummary; from: HTMLElement | null; refusal: string | null } | null>(null);
   const [deleting, setDeleting] = useState(false);
   const confirmRef = useRef<HTMLDivElement>(null);
+  const dropRef = useRef<HTMLButtonElement>(null);
+  // Slice review 5-M4: the confirmation sits above the sections, far from the tile that asked: the focus goes to its «Отмена» (Settings' pattern),
+  // back to that tile's trash when it is cancelled, and to «Добавить файлы» once the file (and its trash) is gone.
+  const confirmFocus = useConfirmFocus();
   useEffect(() => {
     if (confirm !== null) confirmRef.current?.scrollIntoView?.({ block: "nearest" });
   }, [confirm]);
+  function askDelete(media: MediaSummary, from: HTMLElement): void {
+    setConfirm({ media, from, refusal: null });
+    confirmFocus.opened();
+  }
+  function closeConfirm(): void {
+    const from = confirm?.from ?? null;
+    setConfirm(null);
+    confirmFocus.moveTo(() => (from?.isConnected === true ? from : dropRef.current));
+  }
   async function remove(media: MediaSummary): Promise<void> {
     setDeleting(true);
     const reply = await client.request("media.delete", { mediaId: media.mediaId });
@@ -519,8 +537,12 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
     setDeleting(false);
     if (reply.ok) {
       setConfirm(null);
+      confirmFocus.moveTo(() => dropRef.current);
       if (listening === media.mediaId) setListening(null);
-    } else setConfirm({ media, refusal: deleteRefusalText(reply.error, media.name) });
+    } else {
+      setConfirm((now) => ({ media, from: now?.from ?? null, refusal: deleteRefusalText(reply.error, media.name) }));
+      confirmFocus.opened();
+    }
   }
 
   const library = list.state === "ready" ? list.library : { media: [], total: 0 };
@@ -536,6 +558,7 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
   return (
     <div ref={scroller} className="mine">
       <button
+        ref={dropRef}
         type="button"
         className={over !== null ? "drop drop-over" : "drop"}
         aria-busy={picking}
@@ -577,7 +600,7 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
       ))}
 
       {confirm !== null && confirmText !== null && (
-        <div ref={confirmRef} className="mine-confirm" role="alert">
+        <div ref={confirmRef} className="mine-confirm" role="alert" onKeyDown={(e) => cancelOnEscape(e, closeConfirm, deleting)}>
           {confirm.refusal === null ? (
             <>
               <span className="mine-confirm-title">{confirmText.title}</span>
@@ -587,7 +610,7 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
                   {deleting && <Spin />}
                   Удалить
                 </button>
-                <button type="button" className="btn btn-s" disabled={deleting} onClick={() => setConfirm(null)}>
+                <button ref={confirmFocus.cancelRef} type="button" className="btn btn-s" disabled={deleting} onClick={closeConfirm}>
                   Отмена
                 </button>
               </div>
@@ -596,7 +619,7 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
             <>
               <span className="mine-confirm-body">{confirm.refusal}</span>
               <div className="mine-confirm-actions">
-                <button type="button" className="btn btn-s" onClick={() => setConfirm(null)}>
+                <button ref={confirmFocus.cancelRef} type="button" className="btn btn-s" onClick={closeConfirm}>
                   Понятно
                 </button>
               </div>
@@ -649,7 +672,7 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
                     fillTarget={fillTarget}
                     onPick={onPickVisual}
                     onDrag={onDragVisual}
-                    onDelete={(media) => setConfirm({ media, refusal: null })}
+                    onDelete={askDelete}
                     onCancel={(v) => void cancel(v)}
                     hintId={hintId}
                   />
@@ -679,7 +702,7 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
                     listening={listening}
                     onListen={(mediaId) => setListening((now) => nextListening(now, mediaId))}
                     onPick={onPickTrack}
-                    onDelete={(media) => setConfirm({ media, refusal: null })}
+                    onDelete={askDelete}
                     onCancel={(v) => void cancel(v)}
                   />
                 ))}
@@ -708,7 +731,7 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
                     blocked={stickerWhy !== null}
                     why={stickerWhy}
                     onPick={onPickSticker}
-                    onDelete={(media) => setConfirm({ media, refusal: null })}
+                    onDelete={askDelete}
                     onCancel={(v) => void cancel(v)}
                   />
                 ))}

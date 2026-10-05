@@ -200,6 +200,8 @@ describe("the words on the tiles and rows", () => {
   test("the hint under the photos and videos says what a click does now", () => {
     expect(mineHint(null, null)).toBe("Клик — кадр в конец ролика. Перетащите на «Кадры», чтобы вставить между кадрами.");
     expect(mineHint({ clip: 0, cell: 1 }, null)).toBe("Клик — фото в ячейку 2 кадра 1, видео — в конец. Перетащите на «Кадры», чтобы вставить между кадрами.");
+    // Slice review 5-M5: a filled cell the owner selected has its photo replaced.
+    expect(mineHint({ clip: 1, cell: 0, replace: true }, null)).toBe("Клик — заменить фото в ячейке 1 кадра 2 (видео — в конец). Перетащите на «Кадры», чтобы вставить между кадрами.");
     expect(mineHint(null, "clip-cap")).toBe("Не больше 20 кадров в одном видео. Клик по фото в панели ничего не добавит.");
   });
 

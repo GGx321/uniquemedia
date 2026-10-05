@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { MediaSummary } from "../../../shared/engine";
-import { applyMediaChange, ownStickerOf, type OwnSticker } from "./ownStickers";
+import { applyHeldChange, type MediaChange } from "./ownMedia";
+import { ownStickerOf, type OwnSticker } from "./ownStickers";
+
+/** The own stickers held after one change, as `useOwnStickers` keeps them (`useMediaRecords` with `ownStickerOf`). */
+const applyMediaChange = (held: ReadonlyMap<string, OwnSticker>, change: MediaChange): ReadonlyMap<string, OwnSticker> => applyHeldChange(held, change, ownStickerOf);
 
 // 3f.5: the editor's picture of the owner's own stickers: what the preview needs of each (its canvas, its loop and its per-frame delays), kept from
 // `media.list` and `media.changed`. Pure: the hook that feeds it is exercised by the editor's own test (EditorPreview.test.tsx).

@@ -1,8 +1,9 @@
 import { type DragEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
-import type { Clip, MontageDraft } from "../../../shared/engine";
+import type { Clip, MontageDraft, PhotoRef } from "../../../shared/engine";
 import { MAX_CLIPS, MIN_CLIP_MS } from "../../../shared/montage";
+import type { EngineClient } from "../../engine/client";
 import { useEngine } from "../../engine/react";
-import { photoUrl, placeholderGradient } from "../../lib/media";
+import { ownPhotoUrl, photoUrl, placeholderGradient } from "../../lib/media";
 import { NBSP } from "../../lib/format";
 import { Icon, type IconName, PauseIcon, PlayIcon } from "../../ui/Icon";
 import { addRefusal, cellsOf, clipStartMs, isEven, maxDurationMs, moveClip, setDuration, totalMs } from "./clipOps";
@@ -47,23 +48,25 @@ function ToolButton({ label, icon, size, state, onClick }: { label: string; icon
 }
 
 /** One 24 px frame of a clip's strip: the photo, a stand-in in the mock, a dark cell when empty, an own video's film (3f.3b: the strip never reads its pixels). */
-function frameStyle(mock: boolean, avatarId: string, photoId: string | null, video: boolean): { background: string } | undefined {
+/** A strip frame's picture: a scene photo's or an own photo's (3-H1: by its id through main's media route), the stand-in of its id in the dev mock. */
+function frameStyle(client: Pick<EngineClient, "kind">, avatarId: string, photo: PhotoRef | null, video: boolean): { background: string } | undefined {
   if (video) return { background: "var(--trim-frame)" };
-  if (photoId === null) return undefined;
-  const url = mock ? null : photoUrl(avatarId, photoId);
-  return { background: url === null ? placeholderGradient(photoId) : `url("${url}") center / cover no-repeat` };
+  if (photo === null) return undefined;
+  const seed = photo.source === "scene" ? photo.photoId : photo.mediaId;
+  const url = photo.source === "own" ? ownPhotoUrl(client, photo.mediaId) : client.kind === "mock" ? null : photoUrl(avatarId, photo.photoId);
+  return { background: url === null ? placeholderGradient(seed) : `url("${url}") center / cover no-repeat` };
 }
 
 /** A clip's film strip: its photos in turn, frame after frame, as the artboard draws the main track. */
 function Strip({ clip, avatarId, widthPx }: { clip: Clip; avatarId: string; widthPx: number }) {
   const { client } = useEngine();
-  const sources = clip.kind === "video" ? [null] : cellsOf(clip).map((cell) => (cell.photo?.source === "scene" ? cell.photo.photoId : null));
+  const sources = clip.kind === "video" ? [null] : cellsOf(clip).map((cell) => cell.photo);
   const count = tileCount(widthPx);
   return (
     <span className="ed-strip" aria-hidden="true">
       {Array.from({ length: count }, (_, j) => {
-        const photoId = sources[j % sources.length] ?? null;
-        const style = frameStyle(client.kind === "mock", avatarId, photoId, clip.kind === "video");
+        const photo = sources[j % sources.length] ?? null;
+        const style = frameStyle(client, avatarId, photo, clip.kind === "video");
         return <span key={j} className={style === undefined ? "ed-strip-frame ed-strip-frame-empty" : "ed-strip-frame"} style={style} />;
       })}
     </span>
@@ -154,8 +157,8 @@ export interface TimelineProps {
   readonly onInsertPhoto: (photoId: string, boundary: number) => void;
   /** «Добавить кадр»: take the owner to the photos. */
   readonly onAddClip: () => void;
-  /** «Добавить музыку»: the media panel's «Музыка» tab (3d.5); absent, the button is «Скоро». */
-  readonly onAddMusic?: () => void;
+  /** «Добавить музыку»: the media panel's «Музыка» tab (3d.5). */
+  readonly onAddMusic: () => void;
   /** The «Стикеры» «+»: the media panel's «GIF» tab (3d.5, L10), where a pick puts the sticker at the playhead. */
   readonly onAddSticker: () => void;
   /** Selects clip `index` and brings the playhead into it. */
@@ -701,7 +704,7 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                 listVersion={musicListVersion}
                 verdict={musicVerdict}
                 onSelect={() => timeline.select({ kind: "music" })}
-                {...(onAddMusic === undefined ? {} : { onAddMusic })}
+                onAddMusic={onAddMusic}
               />
             </div>
             {!empty && <div className="ed-tl-after" style={{ left: pct(total) }} aria-hidden="true" />}
