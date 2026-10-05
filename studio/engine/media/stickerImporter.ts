@@ -287,7 +287,7 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     const room = await freeBytes(rawFolder);
     signal.throwIfAborted();
     if (room !== null && room < rawBytes + RAW_FREE_MARGIN_BYTES) throw new Refused("no-space");
-    await ffmpeg([...inputOf(source.container, inputPath), "-fps_mode", "passthrough", "-pix_fmt", "rgba", "-n", "-f", "rawvideo"], raw.path, signal, undefined, async () => {
+    await ffmpeg([...inputOf(source.container, inputPath), "-fps_mode", "passthrough", "-pix_fmt", "rgba", "-n", "-fs", String(rawBytes + 1), "-f", "rawvideo"], raw.path, signal, undefined, async () => {
       // The count decode took this file under `-xerror`, so a failure here is not the file's: the disk, when it has no room for one more frame, else the machine's.
       const left = await freeBytes(rawFolder);
       return left !== null && left < frameBytes ? "no-space" : "failed";

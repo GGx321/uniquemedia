@@ -56,6 +56,18 @@ function pixelOf(file: { bytes: Uint8Array; width: number; height: number }, fra
 
 const argOf = (argv: readonly string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
 
+describe("the raw frames' own size limit (L2 of the security review)", () => {
+  test("the decode to the raw work file stops writing one byte past the frames the reader counted", async () => {
+    const calls: string[][] = [];
+    await stored(await run(flatGif([0, 1, 2], [10, 10, 10]), "gif", { spawner: recordingSpawner(calls) }));
+    const decode = calls.find((argv) => argv.includes("rawvideo"));
+    if (decode === undefined) throw new Error("no decode to a raw file was made");
+    // flatGif is 8 x 6 by default; three source frames of RGBA.
+    expect(Number(argOf(decode, "-fs"))).toBe(3 * 8 * 6 * 4 + 1);
+    expect(decode.indexOf("-fs")).toBeGreaterThan(decode.indexOf("-i"));
+  });
+});
+
 describe("the decoder's pixel cap (M1)", () => {
   test("leaves room for the decoder's stride alignment: a 720 px row aligned up to 64 bytes, times 720 rows, fits under it", async () => {
     const calls: string[][] = [];

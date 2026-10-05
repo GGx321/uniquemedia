@@ -46,6 +46,12 @@ export const MAX_PHOTO_PIXELS = 50_000_000;
 
 /** The most a PNG of a WebP may take on disk: 4 bytes a pixel at the cap, with headroom for a filter byte a row and the chunks (a PNG of noise is about that large). */
 export const MAX_DECODED_PNG_BYTES = MAX_PHOTO_PIXELS * 4 + 16 * 1024 * 1024;
+/**
+ * ffmpeg's `-max_pixels` is checked against the frame's STRIDE-ALIGNED width times its height (the alignment is the build's, up to 64 bytes): a picture of exactly
+ * `MAX_PHOTO_PIXELS` can count a little over. The cap leaves room for the widest alignment on the longest side a WebP may have (16383); the real size is bounded by
+ * `judgeSize` from the header, so this is only the decoder's own second wall against a header that lies.
+ */
+const WEBP_MAX_PIXELS = MAX_PHOTO_PIXELS + 64 * 16_383;
 const DEFAULT_FFMPEG_TIMEOUT_MS = 90_000;
 
 export interface PhotoImporterDeps {
@@ -152,7 +158,7 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
       signal.throwIfAborted();
       await ffmpeg(
         request,
-        [...HARDENED_HEAD, "-f", "webp_pipe", "-c:v", "webp", "-noautorotate", "-i", staged.path, "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-map_metadata", "-1", "-c:v", "png", "-f", "image2pipe"],
+        [...HARDENED_HEAD, "-f", "webp_pipe", "-max_pixels", String(WEBP_MAX_PIXELS), "-c:v", "webp", "-noautorotate", "-i", staged.path, "-map", "0:v:0", "-frames:v", "1", "-an", "-sn", "-dn", "-map_metadata", "-1", "-c:v", "png", "-fs", String((deps.maxDecodedPngBytes ?? MAX_DECODED_PNG_BYTES) + 1), "-f", "image2pipe"],
         png.path,
       );
       // What ffmpeg made is looked at before it is read whole: a header that lied about its size cannot make the engine read a bomb.

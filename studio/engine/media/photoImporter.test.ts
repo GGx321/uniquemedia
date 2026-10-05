@@ -601,3 +601,32 @@ describe("the photo importer: room for what it writes (M1 of the Stage 3 review)
     expect(outcome).toEqual({ ok: false, reason: "failed" });
   });
 });
+
+describe("the photo importer: the WebP decode is bounded like the other importers' (L2 of the security review)", () => {
+  const recording = (calls: string[][]): FfmpegSpawner => (command, args, options) => {
+    calls.push([...args]);
+    const { env, ...rest } = options;
+    return spawn(command, [...args], { ...rest, ...(env === undefined ? {} : { env }), stdio: [...options.stdio] });
+  };
+  const argOf = (argv: readonly string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
+
+  test("the WebP to PNG call carries a pixel cap that leaves room for the decoder's stride alignment, as an input option", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "webp");
+    const calls: string[][] = [];
+    await accepted(await runWith(picture, "webp", { spawner: recording(calls) }));
+    const argv = calls[0] ?? [];
+    const cap = Number(argOf(argv, "-max_pixels"));
+    expect(cap).toBeGreaterThanOrEqual(MAX_PHOTO_PIXELS);
+    expect(cap).toBeLessThanOrEqual(MAX_PHOTO_PIXELS + 64 * 16_383);
+    expect(argv.indexOf("-max_pixels")).toBeLessThan(argv.indexOf("-i"));
+  });
+
+  test("the WebP to PNG call stops writing one byte past the largest PNG the importer accepts, as an output option", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "webp");
+    const calls: string[][] = [];
+    await accepted(await runWith(picture, "webp", { spawner: recording(calls), maxDecodedPngBytes: 10_000_000 }));
+    const argv = calls[0] ?? [];
+    expect(Number(argOf(argv, "-fs"))).toBe(10_000_001);
+    expect(argv.indexOf("-fs")).toBeGreaterThan(argv.indexOf("-i"));
+  });
+});
