@@ -119,30 +119,24 @@ describe("the header", () => {
     expect(callsOf(engine, "montages.save").at(-1)?.payload).toMatchObject({ name: "вечер" });
   });
 
-  test("slice review 5-L6: the save line is no live region; only a save that failed and a draft deleted are said, politely", async () => {
+  test("slice review 5-L6, review r1 LOW-8: the header says nothing aloud; a failed save and a deleted draft are said once, by their notices", async () => {
     const { client, engine } = await studio();
     const made = await makeDraft(client, MIA.avatarId, [P1]);
     await openEditor();
-    const line = (): HTMLElement | null => header().querySelector(".ed-saved");
-    const said = (): string => header().querySelector(".ed-saved-said")?.textContent ?? "";
-    expect(line()?.getAttribute("role")).toBeNull();
-    expect(header().querySelector(".ed-saved-said")?.getAttribute("role")).toBe("status");
-
-    // An edit saved: nothing is said (the line shows it).
-    fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "утро" } });
-    fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
-    await waitFor(() => expect(within(header()).getByText(/^черновик · сохранён/)).toBeDefined());
-    expect(said()).toBe("");
+    const liveInHeader = (): boolean => header().querySelector("[role='status'], [role='alert'], [aria-live]") !== null;
+    expect(liveInHeader()).toBe(false);
 
     engine.failNext("montages.save", { code: "LIBRARY_UNAVAILABLE" });
     fireEvent.click(screen.getByRole("button", { name: "Переименовать черновик" }));
     fireEvent.change(screen.getByRole("textbox", { name: "Название черновика" }), { target: { value: "вечер" } });
     fireEvent.keyDown(screen.getByRole("textbox", { name: "Название черновика" }), { key: "Enter" });
-    await waitFor(() => expect(said()).toBe("Черновик не сохранён"));
+    const failed = (await screen.findByText(ERROR_MESSAGES_RU.LIBRARY_UNAVAILABLE)).closest(".notice");
+    expect(failed?.getAttribute("role")).toBe("alert");
+    expect(liveInHeader()).toBe(false);
 
     await asAnotherWindow(() => client.request("montages.delete", { montageId: made.montageId }));
-    await waitFor(() => expect(said()).toBe("Черновик удалён: изменения здесь больше не сохраняются"));
+    expect((await screen.findByText("Черновик удалён")).closest(".notice")?.getAttribute("role")).toBe("alert");
+    expect(liveInHeader()).toBe(false);
   });
 
   test("a name the draft cannot take is refused with the reason, and the field stays open", async () => {
