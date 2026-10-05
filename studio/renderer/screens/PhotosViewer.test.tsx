@@ -315,7 +315,7 @@ describe("a gallery that changes under the viewer", () => {
   test("a photo gone from the gallery while on screen closes the viewer; the focus goes to the photo now in its place", async () => {
     const h = await openMia({ photos: photos(3) });
     fireEvent.click(openButton(2));
-    act(() => h.engine.corruptPhotoSidecar(scenePhoto(2).photoId));
+    act(() => h.engine.setPhotoSidecarReadable(scenePhoto(2).photoId, false));
     // Another window rejects another photo: avatar.changed, and the gallery is listed again, without the lost one.
     await act(async () => {
       await h.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: scenePhoto(3).photoId, rejected: true });

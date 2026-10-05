@@ -641,6 +641,8 @@ export class MockEngine implements EngineBridge {
   /** Every stored run photo, oldest first (photos.list answers newest first). */
   private photos: PhotoSummary[];
   private readonly skippedPhotos: Record<string, number>;
+  /** Stored run photos whose sidecar cannot be read now (`setPhotoSidecarReadable`): `photos.list` alone skips them. */
+  private readonly unreadableSidecars = new Set<string>();
   private runImagePrice = MOCK_RUN_IMAGE;
   /** The next run job's trailing `count` open slots end without a photo. */
   private failedRunSlotsNext = 0;
@@ -1126,15 +1128,15 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
-   * A stored run photo's sidecar can no longer be read: `photos.list` leaves the photo out and counts it in `skippedTotal`, as
-   * the engine does (`engine.photos.test.ts`, "a corrupt sidecar … is skipped"). Nothing is announced: a window sees it at its
-   * next `photos.list`. Test support for a photo that disappears while a window shows it.
+   * A stored run photo's sidecar can no longer be read (`readable` false), or can again: while it cannot, `photos.list` leaves
+   * the photo out and counts it in `skippedTotal`, as the engine's `#photoSummaries` does with a sidecar that does not fit the
+   * contract. Only the list skips it: the library still holds the photo (its counts, its mark, a montage of it), as the
+   * engine's does. Nothing is announced: a window sees it at its next `photos.list`. Test support for a photo that leaves the
+   * gallery while a window shows it, and comes back.
    */
-  corruptPhotoSidecar(photoId: string): void {
-    const photo = this.photos.find((p) => p.photoId === photoId);
-    if (photo === undefined) return;
-    this.photos = this.photos.filter((p) => p !== photo);
-    this.skippedPhotos[photo.avatarId] = (this.skippedPhotos[photo.avatarId] ?? 0) + 1;
+  setPhotoSidecarReadable(photoId: string, readable: boolean): void {
+    if (readable) this.unreadableSidecars.delete(photoId);
+    else this.unreadableSidecars.add(photoId);
   }
 
   /**
@@ -1658,8 +1660,10 @@ export class MockEngine implements EngineBridge {
         // NOT_FOUND only for an id the library does not have at all: a draft, an active and an archived avatar all get their list.
         const known = this.libraryOpen && (this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId));
         if (!known) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-        const photos = this.photos.filter((p) => p.avatarId === avatarId).reverse().slice(0, MAX_LISTED_PHOTOS).map((p) => this.photoView(p));
-        return this.ok(c, { photos, skippedTotal: this.skippedPhotos[avatarId] ?? 0 });
+        const own = this.photos.filter((p) => p.avatarId === avatarId);
+        const readable = own.filter((p) => !this.unreadableSidecars.has(p.photoId));
+        const photos = readable.reverse().slice(0, MAX_LISTED_PHOTOS).map((p) => this.photoView(p));
+        return this.ok(c, { photos, skippedTotal: (this.skippedPhotos[avatarId] ?? 0) + own.length - readable.length });
       }
       case "runs.list":
         // L7: an unavailable ledger answers no runs at all, like the real

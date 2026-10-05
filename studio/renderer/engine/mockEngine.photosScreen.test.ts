@@ -196,12 +196,32 @@ describe("videos.revealFolder (main's, as the mock plays it)", () => {
   });
 });
 
-describe("corruptPhotoSidecar (test support: a photo gone from the gallery while a window shows it)", () => {
-  test("photos.list leaves the photo out and counts it in skippedTotal, as the engine does with a sidecar it cannot read", async () => {
+describe("setPhotoSidecarReadable (test support: a photo that leaves the gallery while a window shows it, and comes back)", () => {
+  const listed = async (mock: Mock) => unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }));
+
+  test("an unreadable sidecar: photos.list leaves the photo out and counts it in skippedTotal, as the engine does", async () => {
     const mock = makeMock();
-    mock.engine.corruptPhotoSidecar(P1);
-    const list = await unwrap(mock.client.request("photos.list", { avatarId: MIA.avatarId }));
+    mock.engine.setPhotoSidecarReadable(P1, false);
+    const list = await listed(mock);
     expect(list.photos.map((p) => p.photoId)).toEqual([...PHOTO_IDS].reverse().filter((id) => id !== P1));
     expect(list.skippedTotal).toBe(1);
+  });
+
+  test("only photos.list skips it: the library still holds the photo, so a mark on it is set as the engine sets it", async () => {
+    const mock = makeMock();
+    mock.engine.setPhotoSidecarReadable(P1, false);
+    const reply = await unwrap(mock.client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: P1, rejected: true }));
+    expect(reply.photo).toMatchObject({ photoId: P1, rejected: true });
+    expect((await listed(mock)).skippedTotal).toBe(1);
+    expect((await avatarOf(mock))?.photoCount).toBe(6);
+  });
+
+  test("readable again: listed again, in its place, and no longer counted as skipped", async () => {
+    const mock = makeMock();
+    mock.engine.setPhotoSidecarReadable(P1, false);
+    mock.engine.setPhotoSidecarReadable(P1, true);
+    const list = await listed(mock);
+    expect(list.photos.map((p) => p.photoId)).toEqual([...PHOTO_IDS].reverse());
+    expect(list.skippedTotal).toBe(0);
   });
 });
