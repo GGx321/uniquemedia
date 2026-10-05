@@ -252,8 +252,8 @@ One chat call, ≤ 2 attempts, bounded by a deadline in `control.ts` built the s
 4. Validation = `PoolSchema` **as built** + technical bounds: every text that feeds a prompt is a
    `PoolText` (shared contract: printable ASCII, **no `"` and no `\`**, no edge space, **≤ 35 chars** =
    `POOL_TEXT_MAX`; a quote or a backslash costs two bytes once the slots go out as JSON, and the
-   reserve is priced on bytes) so a full 25-slot writer chunk of a custom pool stays at least 300
-   tokens under `WRITER_CALL`'s 14K input ceiling with the worst refusal (pinned by a test, 368
+   reserve is priced on bytes) so a full 25-slot writer chunk of a custom pool stays at least 200
+   tokens under `WRITER_CALL`'s 14K input ceiling with the worst refusal (pinned by a test, 241
    tokens of margin as built); `times` are `TimeOfDay` (same rule, ≤ 15 chars); the counts above.
    `label` is a `CategoryLabel` (same rule, ≤ 24 chars). The pool call's JSON schema and
    `readPoolAnswer` must apply these exact schemas (reuse `PoolText`, `TimeOfDay`, `CategoryLabel`;
@@ -530,7 +530,7 @@ job's own cap refuses it. Pins, parametrised the way `scenes/writer.test.ts` pin
 - `POOL_CALL`: a 500-char **Cyrillic** description (2 bytes per char) + the worst pool feedback;
 - `WRITER_CALL`, phase 1: a full 25-slot chunk of a custom pool with every text at its 35-char
   bound (plain printable ASCII), the time of day at 15, the label at 24 + the worst refusal (words
-  clipped to 6 x 16 bytes) ≤ 14K minus a 300-token margin;
+  clipped to 6 x 16 bytes) ≤ 14K minus a 200-token margin;
 - `WRITER_CALL`, phase 2: the worst review-time write — 5 own scenes each carrying a 500-char
   Cyrillic idea, or 5 redrawn custom slots — + the worst refusal ≤ 14K.
 
@@ -604,7 +604,7 @@ Tests first:
 - writer phase: every request body of a built-in run (messages, schema, ceilings, ids) is
   byte-identical to today's; a custom slot's message names the snapshot's label;
 - `WRITER_CALL` floor pin: a full 25-slot chunk of a custom pool at the 35/24-char bounds + the worst
-  refusal ≤ 14K input tokens minus a 300-token margin;
+  refusal ≤ 14K input tokens minus a 200-token margin;
 - schema: `main`'s `plan.json` fixture parses, folds and prices a resume unchanged; a plan naming a
   custom ref without a snapshot entry is refused;
 - assembler: built-in prompts byte-identical (existing pins); custom style used;
@@ -665,11 +665,15 @@ golden is untouched (CS.1 adds no command).
 Deviations from the plan, measured: **`POOL_TEXT_MAX` is 35, not 48.** The pin is built by hand for the worst chunk a custom
 category can send under the rules a pool and a plan are held to: 25 slots, every place, activity and outfit at the bound (plain
 printable ASCII, no `"` and no `\`, so one byte each and never escaped by the JSON the slots go out as), a 15-char time of day, an
-all-photographer deck, the widest pose label, a 24-char label, and the worst refusal (every reason, 160 distinct hostile words
-in four widest spellings, which the feedback clips). With the refusal words bounded to 6 words of 16 bytes each (case-insensitive
-dedupe, clipped on character boundaries) the floor is 13632 tokens at 35 chars: a margin of 368 tokens under
-`WRITER_CALL.inputTokens` = 14000. At 36 chars the margin is 293, below the 300 the pin requires, so 35 is the largest bound that
-keeps it (the pin asserts both). A first cut measured 40 as fitting with 106 tokens of headroom, but that pin was not the worst:
+all-photographer deck, the widest pose label, a 24-char label, the widest slot indices (a 100-photo run's last chunk, slots
+76..100), and the worst refusal (every reason, 160 distinct hostile words of exactly 16 bytes in four widest kinds; the pin
+asserts that the feedback then carries exactly 6 words of exactly 16 bytes per reason). With the refusal words bounded to 6
+words of 16 bytes each (case-insensitive dedupe, clipped on character boundaries) the floor is 13759 tokens at 35 chars: a
+margin of 241 tokens under `WRITER_CALL.inputTokens` = 14000. The pin requires a margin of 200; at 36 chars the margin is 166,
+so 35 is the largest bound that keeps it (the pin asserts both). The pin is a superset of the worst that can actually be sent:
+a refusal cannot be both not-json and empty, a two-handed problem only comes from a selfie or mirror slot and a pose
+contradiction only from a back or profile slot, and the reachable worst measures 13449 tokens, so no run over-spends today.
+Raising `REFUSAL_WORDS_MAX` far enough turns the pin red (checked). A first cut measured 40 as fitting with 106 tokens of headroom, but that pin was not the worst:
 a quote costs two bytes (a label of 24 quotes, or pool texts of quotes, went over the ceiling) and the refusal's words, the
 model's own text, were unbounded. `WRITER_CALL`, `estimate.ts` and `remaining.ts` are untouched.
 
