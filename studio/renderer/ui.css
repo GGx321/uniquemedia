@@ -1976,20 +1976,6 @@ input[type="range"]::-webkit-slider-thumb {
   font-size: 13px;
 }
 
-.photos-review {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  margin-top: 2px;
-  color: var(--text-2);
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.photos-review .tag {
-  margin-left: auto;
-}
-
 .photos-go {
   width: 100%;
   margin-top: auto;
