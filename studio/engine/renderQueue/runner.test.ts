@@ -79,6 +79,16 @@ function depsWith(script: (call: SpawnCall, index: number) => void, extra: Parti
   return { deps: { run, ...extra }, calls };
 }
 
+/** `job` raced against the test's own timer: a run that never ends fails the test in 2 s ("did not end"), instead of hanging it until the runner's timeout. */
+function endsSoon<T>(job: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error("the run did not end within 2000 ms")), 2_000);
+  });
+  job.catch(() => undefined);
+  return Promise.race([job, late]).finally(() => clearTimeout(timer));
+}
+
 describe("runRenderJob: the passes", () => {
   test("runs pass 1 for each clip into the job folder, then pass 2 into the given output, in that order", async () => {
     const r = rig();
@@ -272,7 +282,7 @@ describe("runRenderJob: the job folder and the output", () => {
     });
 
     const started = performance.now();
-    await expect(runRenderJob(r.input, deps)).rejects.toBeInstanceOf(FfmpegError);
+    await expect(endsSoon(runRenderJob(r.input, deps))).rejects.toBeInstanceOf(FfmpegError);
 
     expect(performance.now() - started).toBeLessThan(5_000);
     expect(warnings.map(([what]) => what)).toEqual(["unfinished output"]);
@@ -287,7 +297,7 @@ describe("runRenderJob: the job folder and the output", () => {
       warn: () => undefined,
     });
 
-    await expect(runRenderJob(r.input, deps)).rejects.toThrow("cancelled");
+    await expect(endsSoon(runRenderJob(r.input, deps))).rejects.toThrow("cancelled");
   });
 
   test("a folder that cannot be removed after a good render is reported, and the render still succeeds", async () => {

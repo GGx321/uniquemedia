@@ -6,7 +6,7 @@ import { EngineFailure } from "../engineFailure";
 import type { MontageDraft } from "../../shared/engine/montage";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
-import type { RecoveryReport } from "./recovery";
+import { recoverVideos, type RecoveryReport } from "./recovery";
 import type { VideoRecord } from "./record";
 import { errnoError, faultyFs, FINAL, sampleRecord, specOf, useWorld, type World } from "./testing/kit";
 import { DEFAULT_STALE_RETRY_DELAYS_MS } from "./service";
@@ -375,6 +375,35 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
       (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
     );
     expect(again).toBe("PHOTO_UNAVAILABLE");
+  });
+
+  test("scenario B: the commit failed after the rename on a refusing disk and the settle DEFERRED the intent: the job fails, a re-render with the same photos is refused, and the later adoption makes one video (review round 1)", async () => {
+    const w = world();
+    const fs = faultyFs();
+    fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    const r = serviceRig(w, {
+      size: 2,
+      deps: {
+        renderOverrides: { fs, hooks: { reached: (step) => void (step === "renamed" && (() => { throw boom(); })()) } },
+        // The settle cannot judge the export folder: recovery defers the intent.
+        recover: { run: (input, recoverDeps) => recoverVideos({ ...input, exportRoot: null }, recoverDeps) },
+      },
+    });
+
+    const { jobId, videoId } = await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+    expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
+
+    const again = await r.service.render({ spec: specFor(w) }).then(
+      () => "accepted",
+      (error: unknown) => (error instanceof EngineFailure ? error.error.code : "other"),
+    );
+    expect(again).toBe("PHOTO_UNAVAILABLE");
+    // The next open, with the export folder in view, adopts the file: its video is the only one that has the photo.
+    const reopened = serviceRig(w, { library: w.library });
+    reopened.service.libraryOpened(w.library);
+    await reopened.service.settled();
+    expect(w.library.photoStates(w.avatar.id).get(photoId(w, 0))).toMatchObject({ reserved: false, usedIn: [videoId] });
   });
 
   test("the usual failure, whose rollback removed everything, starts no recovery at all", async () => {
