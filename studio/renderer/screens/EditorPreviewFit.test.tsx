@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { MontageDraft } from "../../shared/engine";
 import { FRAME_H, FRAME_W, type Rect, stickerBox } from "../../shared/montage";
@@ -7,6 +7,7 @@ import { PHOTO_IDS } from "../engine/mockEngine.testkit";
 import { callsOf, flush } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { dragLayerCentre } from "./montage/previewDrag";
+import * as previewFrameModule from "./montage/previewFrame";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
 import { photoClip, stickerLayer } from "./montage/testkit";
 
@@ -160,6 +161,28 @@ describe("the preview fits the stage", () => {
       for (const listener of watching.flatMap((l) => [...l.listeners])) listener();
     });
     expect(drawn()).toEqual(["540px", "960px"]);
+  });
+
+  // Review round 1 (LOW 4): every pixel of a splitter drag re-rendered the frame and every layer on it, even when the fitted size stayed.
+  test("a resize that leaves the fitted size as it is re-renders nothing of the frame", async () => {
+    pixelRatio(1);
+    const laid = layOut({ w: 1_500, h: 880 });
+    const { client, engine } = await studio();
+    await openDraft(engine, client);
+    const renders = spyOn(previewFrameModule, "visibleLayers");
+    restores.push(() => renders.mockRestore());
+    // Still as tall as the stage: the same 495 × 880.
+    laid.stage = { w: 1_400, h: 880 };
+    laid.relayout();
+    laid.stage = { w: 1_100, h: 887 };
+    laid.relayout();
+    expect(drawn()).toEqual(["495px", "880px"]);
+    expect(renders).toHaveBeenCalledTimes(0);
+    // A size that changes the fit does re-render it.
+    laid.stage = { w: 1_100, h: 600 };
+    laid.relayout();
+    expect(drawn()).toEqual(["333px", "592px"]);
+    expect(renders.mock.calls.length).toBeGreaterThan(0);
   });
 
   test("not laid out (no ResizeObserver report): the stylesheet's own size stands", async () => {

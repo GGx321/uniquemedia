@@ -49,19 +49,14 @@ const PREVIEW_W = PREVIEW_ARTBOARD_W;
 /** The space kept between the «Подсказки» block and the frame. */
 const HINTS_GAP_PX = 12;
 
-/** The preview area's content box, and what the frame keeps clear on each side of it for the hints. */
-interface StageBox {
-  readonly w: number;
-  readonly h: number;
-  readonly gutter: number;
-}
-
 /**
- * The preview area as laid out, on every resize of it or of the hints (which drop their words in a narrow area): its content box, and the
- * hints' reach into it from the left (the frame keeps that much clear on both sides, so it stays centred). Null until it is laid out.
+ * The frame's size fitted to the preview area as laid out (`fitPreview`), on every resize of the area or of the hints (which drop their words in
+ * a narrow area) and on a new pixel ratio: the area's content box, and the hints' reach into it from the left (the frame keeps that much clear on
+ * both sides, so it stays centred). Only a new FITTED size is news: a resize that fits the same frame (a splitter drag past a frame as tall as
+ * the stage) re-renders nothing (review round 1, LOW 4). Null until the area is laid out.
  */
-function useStageBox(area: RefObject<HTMLElement | null>, hints: RefObject<HTMLElement | null>, withHints: boolean): StageBox | null {
-  const [box, setBox] = useState<StageBox | null>(null);
+function useFittedFrame(area: RefObject<HTMLElement | null>, hints: RefObject<HTMLElement | null>, withHints: boolean, ratio: number): Size | null {
+  const [size, setSize] = useState<Size | null>(null);
   useLayoutEffect(() => {
     const node = area.current;
     if (node === null || typeof ResizeObserver === "undefined") return;
@@ -73,14 +68,14 @@ function useStageBox(area: RefObject<HTMLElement | null>, hints: RefObject<HTMLE
       const reach = hints.current?.getBoundingClientRect();
       const left = node.getBoundingClientRect().left + (Number.parseFloat(getComputedStyle(node).paddingLeft) || 0);
       const gutter = reach === undefined || reach.width <= 0 ? 0 : Math.max(0, reach.right + HINTS_GAP_PX - left);
-      const next = { w: content.width, h: content.height, gutter };
-      setBox((now) => (now !== null && now.w === next.w && now.h === next.h && now.gutter === next.gutter ? now : next));
+      const next = fitPreview({ stage: { w: content.width, h: content.height }, render: { w: FRAME_W, h: FRAME_H }, dpr: ratio, gutter });
+      setSize((now) => (now !== null && next !== null && now.w === next.w && now.h === next.h ? now : next));
     });
     observer.observe(node);
     if (withHints && hints.current !== null) observer.observe(hints.current);
     return () => observer.disconnect();
-  }, [area, hints, withHints]);
-  return box;
+  }, [area, hints, withHints, ratio]);
+  return size;
 }
 
 /** `window.devicePixelRatio`, followed when the window moves to a screen of another ratio (or the page is zoomed). */
@@ -201,9 +196,8 @@ export function Preview({ session, spec, timeline, focusPending, dragPhoto, onFi
   // Every caption's picture is asked for up front, so it is there before the playhead reaches it.
   usePrefetchTextPreviews(spec.layers.filter((l): l is TextLayer => l.kind === "text"));
   const empty = spec.clips.length === 0;
-  const stage = useStageBox(areaRef, hintsRef, !empty);
   const ratio = useDevicePixelRatio();
-  const size = stage === null ? null : fitPreview({ stage, render: { w: FRAME_W, h: FRAME_H }, dpr: ratio, gutter: stage.gutter });
+  const size = useFittedFrame(areaRef, hintsRef, !empty, ratio);
   const frameStyle: FrameStyle | undefined = size === null ? undefined : { width: size.w, height: size.h, "--pv-k": previewScale(size.w) };
 
   return (
