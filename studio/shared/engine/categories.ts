@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { NO_HIDDEN_CHARS } from "./avatar";
+import { Count, Id, Micros, ModelId } from "./primitives";
 
 // Scene categories on the contract: the five built-ins the Photos mockup
 // draws, and the owner's own categories (per library, shared by every
@@ -124,3 +125,144 @@ export function splitCount(count: number, refs: readonly CategoryRef[]): { ref: 
   const remainder = count % ordered.length;
   return ordered.map((ref, i) => ({ ref, count: base + (i < remainder ? 1 : 0) }));
 }
+
+// ---------- CS.2: the category library ----------
+
+/** A library holds at most this many custom categories. */
+export const MAX_CUSTOM_CATEGORIES = 50;
+/** The owner's description of a category, which the pool call is written from: at most this many chars, any script. */
+export const CATEGORY_DESCRIPTION_MAX = 500;
+
+/** A text area's text: no control or invisible char but the line break. */
+const NO_HIDDEN_CHARS_BUT_NEWLINE = /^(?:[^\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}]|\n)*$/u;
+
+/**
+ * The owner's own words for what a category is (any script, up to 500 chars, line breaks allowed). It goes to the pool call
+ * only; the provider decides what it accepts, and the engine adds no content rule to it.
+ */
+export const CategoryDescription = z
+  .string()
+  .max(CATEGORY_DESCRIPTION_MAX)
+  .regex(NO_HIDDEN_CHARS_BUT_NEWLINE, "must not contain control or invisible characters")
+  .refine((s) => s.trim().length > 0, "must not be blank");
+export type CategoryDescription = z.infer<typeof CategoryDescription>;
+
+/** The shots a pool's deck is drawn from: who or what took the photo (the engine's own `SHOTS`). */
+export const POOL_SHOTS = ["friend", "selfie", "mirror", "candid", "photographer"] as const;
+export const PoolShot = z.enum(POOL_SHOTS);
+export type PoolShot = z.infer<typeof PoolShot>;
+
+/** The counts a custom pool is held to: what the model is asked for, and what a removal may not go below. */
+export const POOL_PLACES_MIN = 5;
+export const POOL_PLACES_MAX = 7;
+export const POOL_OUTFITS_MIN = 3;
+export const POOL_OUTFITS_MAX = 6;
+export const POOL_DECK_SIZE = 5;
+export const PLACE_TIMES_MAX = 3;
+export const PLACE_ACTIVITIES_MIN = 2;
+export const PLACE_ACTIVITIES_MAX = 4;
+
+const PoolActivity = z.strictObject({ text: PoolText, twoHanded: z.boolean() });
+
+/** A place with the times of day it fits and what she can do there; `mirror` marks a place a mirror shot may land on. */
+export const CategoryPlace = z
+  .strictObject({
+    name: PoolText,
+    times: z.array(TimeOfDay).min(1).max(PLACE_TIMES_MAX),
+    activities: z.array(PoolActivity).min(PLACE_ACTIVITIES_MIN).max(PLACE_ACTIVITIES_MAX),
+    mirror: z.boolean(),
+  })
+  .refine((place) => place.activities.some((a) => !a.twoHanded), {
+    message: "every place needs one activity with a free hand: a selfie or a mirror shot holds the phone in the other",
+    path: ["activities"],
+  });
+export type CategoryPlace = z.infer<typeof CategoryPlace>;
+
+/**
+ * A custom category's pool as the contract carries it: the technical bounds only (the engine's own pool rules, the youth and the
+ * revealing words, are checked where the pool is written and read).
+ */
+export const CategoryPool = z
+  .strictObject({
+    locations: z.array(CategoryPlace).min(POOL_PLACES_MIN).max(POOL_PLACES_MAX),
+    outfits: z.array(PoolText).min(POOL_OUTFITS_MIN).max(POOL_OUTFITS_MAX),
+    shotDeck: z.array(PoolShot).length(POOL_DECK_SIZE),
+  })
+  .refine((pool) => !pool.shotDeck.includes("mirror") || pool.locations.some((l) => l.mirror), {
+    message: "a deck that can draw a mirror shot needs a place with a mirror",
+    path: ["locations"],
+  });
+export type CategoryPool = z.infer<typeof CategoryPool>;
+
+const IsoDateTime = z.iso.datetime();
+
+/**
+ * A custom category as the sheet draws it. `spentMicros` is everything the category has cost: its creation and every
+ * regeneration, answered or not, at what the ledger booked (a settled attempt at its cost, an open reserve at its worst case).
+ */
+export const CategorySummary = z.strictObject({
+  categoryId: CustomCategoryId,
+  name: CategoryName,
+  description: CategoryDescription,
+  label: CategoryLabel,
+  style: CategoryStyle,
+  pool: CategoryPool,
+  model: ModelId,
+  spentMicros: Micros,
+  createdAt: IsoDateTime,
+  updatedAt: IsoDateTime,
+});
+export type CategorySummary = z.infer<typeof CategorySummary>;
+
+/**
+ * What two category names are compared by: a library holds one category per key, because two with one name cannot be told apart in the montage bin's
+ * filter. Trimmed, Unicode-normalised (a composed and a decomposed letter are one), case-folded. The engine's store, the mock and the window's own
+ * pre-check (the dialog's «такое имя уже есть») all read this one rule.
+ */
+export function categoryNameKey(name: string): string {
+  return name.trim().normalize("NFC").toLowerCase();
+}
+
+/** What a paid category call is: a new category, or a new pool for an existing one. */
+export const CategoryCallKind = z.enum(["create", "regenerate"]);
+export type CategoryCallKind = z.infer<typeof CategoryCallKind>;
+
+/**
+ * A create or a regenerate that a closed Studio left unanswered: its request may have been billed, and the reserve stays at its
+ * worst case until the owner reconciles. The call is not resumable (a new request has its own cap): the sheet offers «Создать
+ * снова» and forgets the record with `categories.dismissInterrupted`. `spentMicros` is what the call is counted at now.
+ */
+export const CategoryInterrupted = z
+  .strictObject({
+    jobId: Id,
+    kind: CategoryCallKind,
+    name: CategoryName,
+    description: CategoryDescription,
+    /** The category a regenerate was for; null for a create. */
+    categoryId: CustomCategoryId.nullable(),
+    startedAt: IsoDateTime,
+    spentMicros: Micros,
+  })
+  .refine((i) => (i.kind === "regenerate") === (i.categoryId !== null), {
+    message: "a regenerate names its category and a create has none",
+    path: ["categoryId"],
+  });
+export type CategoryInterrupted = z.infer<typeof CategoryInterrupted>;
+
+/** The paid category call this engine is making right now (one at a time), so a second dialog can say what it waits for. */
+export const CategoryBusy = z
+  .strictObject({ kind: CategoryCallKind, name: CategoryName, categoryId: CustomCategoryId.nullable() })
+  .refine((b) => (b.kind === "regenerate") === (b.categoryId !== null), {
+    message: "a regenerate names its category and a create has none",
+    path: ["categoryId"],
+  });
+export type CategoryBusy = z.infer<typeof CategoryBusy>;
+
+/** `categories.list`'s answer: the readable categories in creation order, how many files could not be read (they are kept), the calls a closed Studio left, and the call in flight. */
+export const CategoriesListResult = z.strictObject({
+  categories: z.array(CategorySummary).max(MAX_CUSTOM_CATEGORIES),
+  unreadable: Count,
+  interrupted: z.array(CategoryInterrupted).max(MAX_CUSTOM_CATEGORIES),
+  busy: CategoryBusy.nullable(),
+});
+export type CategoriesListResult = z.infer<typeof CategoriesListResult>;

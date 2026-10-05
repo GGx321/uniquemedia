@@ -89,6 +89,11 @@ import { Count, SafeText } from "./primitives";
  *   `avatars.delete` also answers IN_FLIGHT while anything of the avatar runs or is reserved (a photo run, a candidate job, a render, a pending
  *   video, a draft being saved) or a library switch is under way, and NOT_FOUND for an avatar the library does not have.
  *
+ * Custom categories (CS.2):
+ * - POOL_REJECTED: the text model answered a category's pool twice and neither answer could be used (not the JSON asked for, empty, or
+ *   too little left once every item that breaks the pool rules was dropped); both attempts are paid and booked, nothing is stored, and
+ *   the owner rewords the description. `spentMicros` says what the call cost.
+ *
  * Stage 3 music (the flashapi list; a request costs one of 30 per 31 days):
  * - MUSIC_KEY_MISSING: no RapidAPI key is stored, so nothing is sent and no quota is spent.
  * - MUSIC_KEY_REJECTED: flashapi answered 401 to this key (now or on an earlier refresh, remembered across restarts), or
@@ -142,6 +147,7 @@ export const ERROR_CODES = [
   "MUSIC_UNAVAILABLE",
   "MEDIA_UNSUPPORTED",
   "TRASH_UNAVAILABLE",
+  "POOL_REJECTED",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
@@ -283,6 +289,14 @@ export const EngineError = z
     musicReason: MusicUnavailableReason.optional(),
     mediaReason: MediaUnsupportedReason.optional(),
     photoReason: PhotoUnavailableReason.optional(),
+    /**
+     * Additive (CS.2): what a failed paid category call cost, in micro-dollars as the ledger booked it (a settled attempt at its cost, an
+     * open reserve at its worst case). Present on every failure of `categories.create` / `categories.regenerate` from the moment its call
+     * was started — a provider's refusal (0), two rejected pools, a dropped connection, a pool paid for and not storable — and absent on
+     * the refusals that come before it (PRICE_CHANGED, IN_FLIGHT, VALIDATION, no key, no library), where nothing was booked. The sheet's
+     * «потрачено $X» reads it.
+     */
+    spentMicros: Count.optional(),
   })
   .refine((e) => (e.code === "MONTAGE_INVALID" || e.code === "PHOTO_UNAVAILABLE") === (e.issues !== undefined), {
     message: "issues must be present exactly on MONTAGE_INVALID and PHOTO_UNAVAILABLE",

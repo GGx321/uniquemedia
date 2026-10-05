@@ -28,6 +28,9 @@ import {
   type LedgerUnavailable,
   MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
+  type CategoryInterrupted,
+  type CategorySummary,
+  type CustomCategoryId,
   type MediaUnsupportedReason,
   type MoneyHalt,
   type MoneyStatus,
@@ -71,6 +74,7 @@ import { mockOwnStickerBytes, mockStickerBytes, mockStickerUrl } from "./mockSti
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
+import { MockCategories } from "./mockCategories";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -108,6 +112,8 @@ export const MOCK_ESTIMATE: Readonly<Estimate> = {
   prices: "live",
   pricesAsOf: "2026-09-24",
 };
+/** CS.2: one pool call attempt typical, two at their ceilings — the engine's own figures at the fallback prices (scenes/poolCall.ts, categoryPlan.ts). */
+const MOCK_CATEGORY_PRICE = { expectedMicros: 6_000, worstMicros: 45_000 };
 /**
  * T6c (import an existing avatar), L8: up to two vision describe attempts and
  * no age check (owner decision 2026-10-05) — the shared IMPORT_FALLBACK_PRICE's
@@ -267,6 +273,12 @@ export interface MockEngineOptions {
   photos?: PhotoSummary[];
   /** Per avatarId: run photos whose sidecar could not be read, counted in `photos.list`'s `skippedTotal`. */
   skippedPhotos?: Record<string, number>;
+  /** CS.2: the custom categories the library holds at the start (creation order); none by default. */
+  categories?: CategorySummary[];
+  /** CS.2: category files the library could not read (counted in `categories.list`, never deleted). */
+  unreadableCategories?: number;
+  /** CS.2: creates and regenerates a closed Studio left unanswered (`categories.list`'s `interrupted`). */
+  interruptedCategories?: CategoryInterrupted[];
 }
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
@@ -373,6 +385,8 @@ interface MockRun {
   ageCheck: boolean;
   slots: MockRunSlot[];
   photoIds: string[];
+  /** The names the run's custom categories had at its start (the plan's snapshot): a photo carries its category's name from here, whatever the category is later called. */
+  categoryNames: Readonly<Record<string, string>>;
   /**
    * Whether the scene writer already answered for this run. A run stopped
    * before that has the writer's own ceiling in what a resume could still
@@ -688,6 +702,11 @@ export class MockEngine implements EngineBridge {
   private unscriptedPicks = 0;
   /** What main's own-media dialog answers next: the files picked, or `null` (and the default) for a cancel. */
   private mediaPick: readonly MockMediaPick[] | null = null;
+  /** The custom category library and the one paid call in flight (CS.2). */
+  private readonly categories: MockCategories;
+  private categoryPriceValue: Pick<Estimate, "expectedMicros" | "worstMicros"> = { ...MOCK_CATEGORY_PRICE };
+  /** The next paid category call fails after its checks, having cost this much (`failNextCategoryCall`). */
+  private nextCategoryFailure: { error: EngineError; spentMicros: number } | null = null;
   /** Own media's records and import jobs (3f.1b). */
   private readonly ownMedia: MockOwnMedia;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" | "late" } | null = null;
@@ -700,6 +719,10 @@ export class MockEngine implements EngineBridge {
     this.latencyMs = options.latencyMs ?? 0;
     this.stepMs = options.stepMs ?? 700;
     this.ownMedia = new MockOwnMedia({ scheduler: this.scheduler, stepMs: this.stepMs, nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso(), emit: (event) => this.emit(event) });
+    this.categories = new MockCategories(
+      { ...(options.categories === undefined ? {} : { categories: options.categories }), ...(options.unreadableCategories === undefined ? {} : { unreadable: options.unreadableCategories }), ...(options.interruptedCategories === undefined ? {} : { interrupted: options.interruptedCategories }) },
+      { nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso() },
+    );
     this.capacity = options.eventCapacity ?? 256;
     this.log = new EventLog(this.capacity, this.bootId());
     const apiKey = options.apiKey ?? { stored: true, last4: "3f2a", encryptionAvailable: true, rejected: false };
@@ -904,12 +927,31 @@ export class MockEngine implements EngineBridge {
 
   async request(command: CommandMessage): Promise<ResponseMessage> {
     this.calls.push(command);
-    const delay = this.delayed.get(command.type)?.shift() ?? (this.latencyMs > 0 ? this.latencyMs : null);
-    if (delay !== null) await new Promise<void>((resolve) => this.scheduler.schedule(delay, resolve));
-    else await Promise.resolve();
-    // A text preview is answered when the worker's lane has drawn it (or dropped it), not at once: the one command that waits.
-    if (command.type === "montages.textPreview") return this.forcedFailure(command) ?? this.textPreview(command, command.payload.layer);
-    return this.handle(command);
+    // The engine claims its one paid category call before the command's first await, so a second one is refused at once, with nothing reserved.
+    const claimed = this.claimCategoryCall(command);
+    if (claimed === "refused") return this.fail(command, { code: "IN_FLIGHT", detail: "a category is already being composed; wait for it to finish" });
+    try {
+      const delay = this.delayed.get(command.type)?.shift() ?? (this.latencyMs > 0 ? this.latencyMs : null);
+      if (delay !== null) await new Promise<void>((resolve) => this.scheduler.schedule(delay, resolve));
+      else await Promise.resolve();
+      // A text preview is answered when the worker's lane has drawn it (or dropped it), not at once: the one command that waits.
+      if (command.type === "montages.textPreview") return this.forcedFailure(command) ?? this.textPreview(command, command.payload.layer);
+      return this.handle(command);
+    } finally {
+      if (claimed === "claimed") this.categories.release();
+    }
+  }
+
+  /** `claimed` for a create or a regenerate that took the one paid category call, `refused` for one that found it taken, `none` for any other command. */
+  private claimCategoryCall(command: CommandMessage): "claimed" | "refused" | "none" {
+    if (command.type === "categories.create") {
+      return this.categories.claim({ kind: "create", categoryId: null, name: command.payload.name.trim() }) ? "claimed" : "refused";
+    }
+    if (command.type === "categories.regenerate") {
+      const { categoryId } = command.payload;
+      return this.categories.claim({ kind: "regenerate", categoryId, name: this.categories.nameOf(categoryId) }) ? "claimed" : "refused";
+    }
+    return "none";
   }
 
   subscribe(listener: (event: unknown) => void): () => void {
@@ -937,6 +979,25 @@ export class MockEngine implements EngineBridge {
   /** Changes the current price; a paid command accepted at a lower worst case gets PRICE_CHANGED. */
   setPrice(price: Pick<Estimate, "expectedMicros" | "worstMicros">): void {
     this.price = { ...this.price, ...price };
+  }
+
+  /** CS.2: changes the pool call's price, so a category call accepted at a lower worst case gets PRICE_CHANGED. */
+  setCategoryPrice(price: Pick<Estimate, "expectedMicros" | "worstMicros">): void {
+    this.categoryPriceValue = { ...price };
+  }
+
+  /**
+   * CS.2: the next create or regenerate passes its checks, and then fails with `error` after the call cost `spentMicros` (booked, and carried in
+   * the error as the engine's failed calls carry it): a rejected pool (POOL_REJECTED), a provider's refusal, a dropped connection. A failed
+   * regenerate keeps its category's pool and adds the cost to the category's total.
+   */
+  failNextCategoryCall(error: EngineError, spentMicros: number): void {
+    this.nextCategoryFailure = { error, spentMicros };
+  }
+
+  /** CS.2: leaves the record of a create or regenerate a closed Studio did not finish, as `categories.list` lists it. */
+  seedInterruptedCategory(call: CategoryInterrupted): void {
+    this.categories.leaveInterrupted(call);
   }
 
   /** T6c: changes avatars.importAvatar's own price, apart from setPrice's avatar-creation baseline. */
@@ -1304,6 +1365,7 @@ export class MockEngine implements EngineBridge {
       ageCheck: this.settings.imageAgeCheck === "on",
       slots,
       photoIds: [],
+      categoryNames: this.categoryNamesOf(request.categories),
       writerDone: opts.writerDone ?? done > 0,
     };
     const { expected } = this.slotPrice(run);
@@ -1314,7 +1376,7 @@ export class MockEngine implements EngineBridge {
       run.settledMicros += expected;
       const qa = mockFaceQa(i);
       const at = new Date(Date.parse(createdAt) + (i + 1) * 60_000).toISOString();
-      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, createdAt: at, used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
+      this.photos.push({ photoId, avatarId: request.avatarId, runId, category: slot.category, ...this.categoryNameOf(run, slot.category), createdAt: at, used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
     });
     this.photos.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     this.runs = [...this.runs, run];
@@ -1439,7 +1501,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, this.settings);
       case "settings.setLibraryPath":
         // A library switch is refused while any job, a render included, is queued or running.
-        if (this.running().length > 0 || this.renderJobs.some(isActive) || this.ownMedia.active() > 0) return this.fail(c, { code: "IN_FLIGHT" });
+        if (this.running().length > 0 || this.renderJobs.some(isActive) || this.ownMedia.active() > 0 || this.categories.inFlight()) return this.fail(c, { code: "IN_FLIGHT" });
         if (c.payload.path !== this.settings.libraryPath) this.librarySwitchGeneration += 1;
         this.settings = { ...this.settings, libraryPath: c.payload.path };
         this.emitSettingsChanged();
@@ -1634,6 +1696,29 @@ export class MockEngine implements EngineBridge {
         this.spend(DESCRIPTOR.expected);
         return this.ok(c, { avatarId });
       }
+      case "categories.list":
+        return this.libraryGate() === null ? this.ok(c, this.categories.list()) : this.fail(c, this.libraryGate() ?? { code: "INTERNAL" });
+      case "categories.estimate":
+        return this.ok(c, this.categoryPrice());
+      case "categories.create":
+        return this.createCategory(c, c.payload);
+      case "categories.regenerate":
+        return this.regenerateCategory(c, c.payload);
+      case "categories.update":
+        return this.updateCategory(c, c.payload);
+      case "categories.delete": {
+        const gone = this.libraryGate() ?? this.regeneratingRefusal(c.payload.categoryId);
+        if (gone) return this.fail(c, gone);
+        if (!this.categories.remove(c.payload.categoryId)) return this.fail(c, { code: "NOT_FOUND", detail: `no readable category ${c.payload.categoryId}` });
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "category.changed", payload: { change: "removed", categoryId: c.payload.categoryId } });
+        return this.ok(c, { categoryId: c.payload.categoryId });
+      }
+      case "categories.dismissInterrupted": {
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        if (!this.categories.dismiss(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no interrupted category call ${c.payload.jobId}` });
+        return this.ok(c, { jobId: c.payload.jobId });
+      }
       case "avatars.pickImportPhoto": {
         if (this.nextImportPick !== null) {
           const queued = this.nextImportPick;
@@ -1733,6 +1818,7 @@ export class MockEngine implements EngineBridge {
           ageCheck: this.settings.imageAgeCheck === "on",
           slots: mockRunSlots(request.count, request.categories),
           photoIds: [],
+          categoryNames: this.categoryNamesOf(request.categories),
           writerDone: false,
         };
         this.runs = [...this.runs, run];
@@ -2699,12 +2785,94 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
-   * A run may only name categories that exist. The mock, like the engine until CS.2 adds the category library, has no custom
-   * category, so every custom ref is unknown: NOT_FOUND, free, checked right after the avatar and before anything else.
+   * A run may only name categories the library holds. A custom ref the library does not hold (never made, or deleted) is NOT_FOUND, free, checked
+   * right after the avatar and before anything else, as the engine's `#customCategories` does.
    */
   private categoryRefusal(categories: readonly RunCategory[]): EngineError | null {
-    const unknown = categories.find(isCustomCategory);
+    const unknown = this.categories.firstUnknown(categories.filter(isCustomCategory));
     return unknown === undefined ? null : { code: "NOT_FOUND", detail: `no custom category ${unknown}` };
+  }
+
+  // ---------- CS.2: the custom category library ----------
+
+  /** The names the custom categories in `categories` have now: the snapshot a run keeps of them. */
+  private categoryNamesOf(categories: readonly RunCategory[]): Record<string, string> {
+    return Object.fromEntries(categories.filter(isCustomCategory).map((ref) => [ref, this.categories.get(ref)?.name ?? ref]));
+  }
+
+  /** The `categoryName` a custom photo carries (the name at the run's start), nothing for a built-in one. */
+  private categoryNameOf(run: MockRun, category: RunCategory): { categoryName: string } | Record<string, never> {
+    return isCustomCategory(category) ? { categoryName: run.categoryNames[category] ?? category } : {};
+  }
+
+  /** The pool call's price: the mock's usual prices source, the category call's own figures. */
+  private categoryPrice(): Estimate {
+    return { ...this.price, ...this.categoryPriceValue };
+  }
+
+  private categoryEvent(category: CategorySummary): void {
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "category.changed", payload: { change: "upserted", category } });
+  }
+
+  /** IN_FLIGHT for the category a regeneration is under way for: its record is about to be replaced. */
+  private regeneratingRefusal(categoryId: string): EngineError | null {
+    return this.categories.regenerating(categoryId) ? { code: "IN_FLIGHT", detail: `category ${categoryId} is being regenerated; change it when that ends` } : null;
+  }
+
+  /** A forced failure of the paid call (`failNextCategoryCall`): the call cost what it cost, and says so. Null when none was asked for. */
+  private categoryCallFailure(c: CommandMessage): { response: ResponseMessage; spentMicros: number } | null {
+    const failure = this.nextCategoryFailure;
+    if (failure === null) return null;
+    this.nextCategoryFailure = null;
+    if (failure.spentMicros > 0) this.spend(failure.spentMicros);
+    return { response: this.fail(c, { ...failure.error, spentMicros: failure.spentMicros }), spentMicros: failure.spentMicros };
+  }
+
+  private createCategory(c: CommandMessage, payload: { name: string; description: string; acceptedWorstMicros: number }): ResponseMessage {
+    const name = payload.name.trim();
+    // The engine's order: the key and the ledger, the library, the price and the month, then the name and the limit (free).
+    const refusal = this.keyAndLedgerGate() ?? this.libraryGate() ?? this.priceGate(payload.acceptedWorstMicros, this.categoryPrice().worstMicros) ?? this.categories.roomRefusal(name, null);
+    if (refusal) return this.fail(c, refusal);
+    const failed = this.categoryCallFailure(c);
+    if (failed) return failed.response;
+    const { expectedMicros } = this.categoryPrice();
+    this.spend(expectedMicros);
+    const category = this.categories.create(name, payload.description, expectedMicros);
+    this.categoryEvent(category);
+    return this.ok(c, { category, spentMicros: expectedMicros });
+  }
+
+  private regenerateCategory(c: CommandMessage, payload: { categoryId: CustomCategoryId; description: string; acceptedWorstMicros: number }): ResponseMessage {
+    const { categoryId } = payload;
+    const refusal =
+      this.keyAndLedgerGate() ??
+      this.libraryGate() ??
+      (this.categories.get(categoryId) === undefined ? { code: "NOT_FOUND" as const, detail: `no readable category ${categoryId}` } : null) ??
+      this.priceGate(payload.acceptedWorstMicros, this.categoryPrice().worstMicros);
+    if (refusal) return this.fail(c, refusal);
+    const failed = this.categoryCallFailure(c);
+    if (failed) {
+      // The old pool stays, but the call cost what it cost: the category's total says so.
+      const booked = failed.spentMicros > 0 ? this.categories.addSpend(categoryId, failed.spentMicros) : undefined;
+      if (booked !== undefined) this.categoryEvent(booked);
+      return failed.response;
+    }
+    const { expectedMicros } = this.categoryPrice();
+    this.spend(expectedMicros);
+    const category = this.categories.replacePool(categoryId, payload.description, expectedMicros);
+    if (category === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no readable category ${categoryId}` });
+    this.categoryEvent(category);
+    return this.ok(c, { category, spentMicros: expectedMicros });
+  }
+
+  private updateCategory(c: CommandMessage, payload: { categoryId: CustomCategoryId; name?: string; removeLocations?: string[]; removeOutfits?: string[] }): ResponseMessage {
+    const early = this.libraryGate() ?? this.regeneratingRefusal(payload.categoryId);
+    if (early) return this.fail(c, early);
+    const { categoryId, ...change } = payload;
+    const result = this.categories.update(categoryId, change);
+    if ("code" in result) return this.fail(c, result);
+    this.categoryEvent(result);
+    return this.ok(c, { category: result });
   }
 
   /** runs.estimate/start/resume's avatar check: NOT_FOUND unless it is saved and active, DESCRIPTOR_INVALID for a descriptor to rewrite first. */
@@ -2930,7 +3098,7 @@ export class MockEngine implements EngineBridge {
             planned.end = "done";
             const photoId = this.nextId("photo");
             const qa = mockFaceQa(slotIndex);
-            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
+            this.photos.push({ photoId, avatarId: run.avatarId, runId: run.runId, category: planned.category, ...this.categoryNameOf(run, planned.category), createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...(qa ? { qa } : {}) });
             run.photoIds.push(photoId);
             run.settledMicros += slot.expected;
             this.spend(slot.expected);

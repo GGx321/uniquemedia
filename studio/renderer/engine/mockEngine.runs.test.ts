@@ -360,9 +360,9 @@ test("the writer's worst case is the real engine's 75,000 micro-dollars per chun
   expect(hundred.worstMicros).toBe(100 * 3 * 50_000 + 4 * 75_000);
 });
 
-// CS.1: the contract names custom categories, but there is no category library yet (CS.2), so like the engine the mock
-// treats every custom ref as unknown: NOT_FOUND, free, after the avatar check and before the price.
-describe("a custom category in a run request, before the category library exists", () => {
+// CS.1/CS.2: a custom ref the mock's category library does not hold is unknown, like the engine's: NOT_FOUND, free, after the avatar check and
+// before the price (a ref the library holds is covered in mockEngine.categories.test.ts).
+describe("a custom category in a run request that the library does not hold", () => {
   const WITH_CUSTOM = { ...REQUEST, categories: ["home" as const, "cat-paris-cafes" as const] };
 
   test("runs.estimate is NOT_FOUND for it, naming it", async () => {
