@@ -671,8 +671,9 @@ export class VideoService {
       else root = look.kind === "root" ? look.ref : null;
     } catch (error) {
       rootJudged = false;
+      this.#deps.log(`videos.list: the export folder could not be looked at (${kindOf(error)}); the files are left unchecked`);
     }
-    if (!rootJudged) this.#deps.log(`videos.list: the export folder could not be looked at; the files are left unchecked`);
+    if (!rootJudged) this.#deps.log(`videos.list: the export folder did not answer; the files of avatar ${avatarId} are left unchecked`);
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
@@ -684,7 +685,9 @@ export class VideoService {
       let state: FileState;
       // The listing's own budget, from its entry: a record looked at after it is spent is `unchecked` without a call to the disk, and one in flight is cut at what is left.
       const remainingMs = listBudgetMs - (performance.now() - enteredAt);
-      if (!rootJudged || remainingMs <= 0) {
+      if (!rootJudged) {
+        state = "unchecked";
+      } else if (remainingMs <= 0) {
         if (!spentLogged) this.#deps.log(`videos.list: the listing's budget of ${listBudgetMs} ms is spent; the remaining files of avatar ${avatarId} are left unchecked`);
         spentLogged = true;
         state = "unchecked";

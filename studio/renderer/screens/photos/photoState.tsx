@@ -33,10 +33,10 @@ export interface MarkControl {
   readonly onMark: (photo: PhotoSummary, rejected: boolean) => void;
 }
 
-/** How a video or a render holds the photo (one photo, one video, Q1): «в 2 видео», «в видео», «в рендере», or null. */
+/** How a video or a render holds the photo (one photo, one video, Q1): «в 2 видео», «в видео», «занято» (a render holds it, or an unfinished video does), or null. */
 export function heldLabel(photo: PhotoSummary): string | null {
   const inVideos = photo.usedIn.length;
-  return inVideos > 0 ? `в ${inVideos} видео` : photo.used ? "в видео" : photo.reserved ? "в рендере" : null;
+  return inVideos > 0 ? `в ${inVideos} видео` : photo.used ? "в видео" : photo.reserved ? "занято" : null;
 }
 
 /** "лицо 0.86": the similarity to the master portrait, rounded to what the badge shows. */

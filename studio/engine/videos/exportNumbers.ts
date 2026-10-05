@@ -1,6 +1,7 @@
 import { lstat, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Library } from "../library";
+import type { UsageReason } from "../library/library";
 import { hasErrorCode } from "../library/durableFs";
 import { videoPaths, VideoRecordSchema } from "./record";
 
@@ -42,7 +43,7 @@ export interface ExportNumberScope {
  * The reasons an avatar's used index may be missing records: a stale index, a record that could not be read. The others (`rejects-unreadable`, `library-too-new`) say
  * nothing about the records the index does hold, so they do not send the scan to the disk.
  */
-const READ_FROM_DISK_REASONS: ReadonlySet<string> = new Set(["index-stale", "record-unreadable", "record-inaccessible"]);
+const READ_FROM_DISK_REASONS: ReadonlySet<UsageReason> = new Set<UsageReason>(["index-stale", "record-unreadable", "record-inaccessible"]);
 
 /** What the scan needs of the library. */
 export type ExportNumberLibrary = Pick<Library, "listAvatars" | "namedVideoFiles" | "usageReasons">;
