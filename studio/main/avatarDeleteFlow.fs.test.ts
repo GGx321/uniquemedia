@@ -50,6 +50,7 @@ function deps(plan: AvatarDeletePlan, calls: string[] = []): AvatarDeleteFlowDep
         calls.push(`finish:${outcome}`);
         return { error: null };
       },
+      pruneMissingAvatars: async () => ({ error: null }),
     },
     libraryPath: () => library,
     exportPath: () => exported,

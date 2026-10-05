@@ -869,6 +869,19 @@ describe("calls to the engine (avatar.deletePrepare and avatar.deleteFinish)", (
     expect(await pending).toMatchObject({ error: null });
   });
 
+  test("pruneMissingAvatars posts avatars.pruneMissing and resolves with the engine's answer", async () => {
+    const { host, ports } = setup();
+    await host.start();
+    const pending = host.pruneMissingAvatars();
+    await Bun.sleep(0);
+    const call = ports[0]?.posted[0];
+    expect(call).toMatchObject({ kind: "control", type: "avatars.pruneMissing" });
+    const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
+    ports[0]?.fromEngine({ kind: "control", type: "reply", callId });
+
+    expect(await pending).toMatchObject({ error: null });
+  });
+
   test("an engine that is gone answers INTERNAL to both", async () => {
     const { host, children, endBackoff } = setup();
     await host.start();

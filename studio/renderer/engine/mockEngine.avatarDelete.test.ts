@@ -28,7 +28,7 @@ describe("avatars.deletePreview", () => {
   test("counts the photos, the drafts, the videos and the video files that would go", async () => {
     const mock = await withVideo();
 
-    expect(await unwrap(previewOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, photos: 6, candidates: 0, drafts: 2, videos: 1, videoFilesFound: 1 });
+    expect(await unwrap(previewOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, photos: 6, candidates: 0, drafts: 2, videos: 1, videoFilesFound: 1, videoFilesUnchecked: 0 });
   });
 
   test("a video whose file is not in the export folder now is a video but not a file found", async () => {
@@ -49,13 +49,13 @@ describe("avatars.deletePreview", () => {
   test("an archived avatar is counted too", async () => {
     const mock = await withVideo();
 
-    expect(await unwrap(previewOf(mock, NORA.avatarId))).toEqual({ avatarId: NORA.avatarId, photos: 0, candidates: 0, drafts: 0, videos: 0, videoFilesFound: 0 });
+    expect(await unwrap(previewOf(mock, NORA.avatarId))).toEqual({ avatarId: NORA.avatarId, photos: 0, candidates: 0, drafts: 0, videos: 0, videoFilesFound: 0, videoFilesUnchecked: 0 });
   });
 
   test("a draft counts its candidates", async () => {
     const mock = makeMock({ drafts: [{ ...A_DRAFT, candidates: [{ avatarId: A_DRAFT.avatarId, photoId: "photo-cand-0001" }, { avatarId: A_DRAFT.avatarId, photoId: "photo-cand-0002" }], hiddenBelowThreshold: 1 }] });
 
-    expect(await unwrap(previewOf(mock, A_DRAFT.avatarId))).toEqual({ avatarId: A_DRAFT.avatarId, photos: 0, candidates: 3, drafts: 0, videos: 0, videoFilesFound: 0 });
+    expect(await unwrap(previewOf(mock, A_DRAFT.avatarId))).toEqual({ avatarId: A_DRAFT.avatarId, photos: 0, candidates: 3, drafts: 0, videos: 0, videoFilesFound: 0, videoFilesUnchecked: 0 });
   });
 
   test("an avatar the library does not have is NOT_FOUND", async () => {
@@ -101,14 +101,14 @@ describe("avatars.delete", () => {
   test("answers how many video files went to the Trash and none stayed", async () => {
     const mock = await withVideo();
 
-    expect(await unwrap(deleteOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, videoFilesTrashed: 1, videoFilesKept: 0 });
+    expect(await unwrap(deleteOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, videoFilesTrashed: 1, videoFilesKept: 0, videoFilesUnchecked: 0, videoFolder: "Mia" });
   });
 
   test("a test can have the next delete report video files that stayed behind: they are kept, not trashed", async () => {
     const mock = await withVideo();
     mock.engine.keepVideoFilesOnDelete(2);
 
-    expect(await unwrap(deleteOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, videoFilesTrashed: 1, videoFilesKept: 2 });
+    expect(await unwrap(deleteOf(mock, MIA.avatarId))).toEqual({ avatarId: MIA.avatarId, videoFilesTrashed: 1, videoFilesKept: 2, videoFilesUnchecked: 0, videoFolder: "Mia" });
     // used once
     expect(await unwrap(deleteOf(mock, SOFIA.avatarId))).toMatchObject({ videoFilesKept: 0 });
   });

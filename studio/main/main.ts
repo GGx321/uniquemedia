@@ -444,7 +444,11 @@ async function startStudio(): Promise<void> {
       // (`shell.trashItem`), the avatar's folder first. Never a permanent delete: a place with no Trash is refused.
       avatarDelete: (command) =>
         handleAvatarDeleteCommand(command, {
-          engine: { prepareAvatarDelete: (avatarId) => engine.prepareAvatarDelete(avatarId), finishAvatarDelete: (avatarId, outcome) => engine.finishAvatarDelete(avatarId, outcome) },
+          engine: {
+            prepareAvatarDelete: (avatarId) => engine.prepareAvatarDelete(avatarId),
+            finishAvatarDelete: (avatarId, outcome) => engine.finishAvatarDelete(avatarId, outcome),
+            pruneMissingAvatars: () => engine.pruneMissingAvatars(),
+          },
           libraryPath: () => settings.current.libraryPath,
           exportPath: () => settings.current.exportPath,
           fs: NODE_FLOW_FS,

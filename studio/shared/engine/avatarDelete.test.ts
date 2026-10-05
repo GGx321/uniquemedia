@@ -5,7 +5,7 @@ import { ERROR_CODES, ERROR_MESSAGES_RU, EVENT_TYPES, PROTOCOL_VERSION } from ".
 
 // «Удалить аватар»: the contract's additive part. The renderer names an avatar and nothing else; the Trash is main's.
 
-const preview = { avatarId: "avatar-0001", photos: 12, candidates: 0, drafts: 2, videos: 3, videoFilesFound: 2 };
+const preview = { avatarId: "avatar-0001", photos: 12, candidates: 0, drafts: 2, videos: 3, videoFilesFound: 2, videoFilesUnchecked: 0 };
 const envelope = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "command" };
 
 describe("AvatarDeletePreview", () => {
@@ -14,7 +14,7 @@ describe("AvatarDeletePreview", () => {
   });
 
   test("accepts an avatar with nothing but itself", () => {
-    expect(AvatarDeletePreview.safeParse({ avatarId: "avatar-0001", photos: 0, candidates: 0, drafts: 0, videos: 0, videoFilesFound: 0 }).success).toBe(true);
+    expect(AvatarDeletePreview.safeParse({ avatarId: "avatar-0001", photos: 0, candidates: 0, drafts: 0, videos: 0, videoFilesFound: 0, videoFilesUnchecked: 0 }).success).toBe(true);
   });
 
   test("refuses a negative or fractional count", () => {
@@ -26,6 +26,11 @@ describe("AvatarDeletePreview", () => {
     expect(AvatarDeletePreview.safeParse({ ...preview, videos: 1, videoFilesFound: 2 }).success).toBe(false);
   });
 
+  test("refuses more files found and unchecked together than there are records", () => {
+    expect(AvatarDeletePreview.safeParse({ ...preview, videos: 3, videoFilesFound: 2, videoFilesUnchecked: 2 }).success).toBe(false);
+    expect(AvatarDeletePreview.safeParse({ ...preview, videos: 3, videoFilesFound: 2, videoFilesUnchecked: 1 }).success).toBe(true);
+  });
+
   test("refuses a key it does not know, so a path cannot ride along", () => {
     expect(AvatarDeletePreview.safeParse({ ...preview, path: "/Users/a/library" }).success).toBe(false);
   });
@@ -33,11 +38,19 @@ describe("AvatarDeletePreview", () => {
 
 describe("AvatarDeleteResult", () => {
   test("says how many video files went to the Trash and how many stayed", () => {
-    expect(AvatarDeleteResult.safeParse({ avatarId: "avatar-0001", videoFilesTrashed: 2, videoFilesKept: 1 }).success).toBe(true);
+    expect(AvatarDeleteResult.safeParse({ avatarId: "avatar-0001", videoFilesTrashed: 2, videoFilesKept: 1, videoFilesUnchecked: 0, videoFolder: "Mia" }).success).toBe(true);
+  });
+
+  test("the folder is a name, never a path", () => {
+    const base = { avatarId: "avatar-0001", videoFilesTrashed: 1, videoFilesKept: 0, videoFilesUnchecked: 0 };
+    expect(AvatarDeleteResult.safeParse({ ...base, videoFolder: "Mia" }).success).toBe(true);
+    expect(AvatarDeleteResult.safeParse({ ...base, videoFolder: "/home/a/export/Mia" }).success).toBe(false);
+    expect(AvatarDeleteResult.safeParse({ ...base, videoFolder: "a\\b" }).success).toBe(false);
+    expect(AvatarDeleteResult.safeParse({ ...base, videoFolder: ".." }).success).toBe(false);
   });
 
   test("refuses a key it does not know", () => {
-    expect(AvatarDeleteResult.safeParse({ avatarId: "avatar-0001", videoFilesTrashed: 2, videoFilesKept: 1, paths: [] }).success).toBe(false);
+    expect(AvatarDeleteResult.safeParse({ avatarId: "avatar-0001", videoFilesTrashed: 2, videoFilesKept: 1, videoFilesUnchecked: 0, videoFolder: null, paths: [] }).success).toBe(false);
   });
 });
 
@@ -61,7 +74,7 @@ describe("the commands", () => {
   });
 
   test("avatars.delete answers its result", () => {
-    const response = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "avatars.delete", ok: true, result: { avatarId: "avatar-0001", videoFilesTrashed: 0, videoFilesKept: 0 } };
+    const response = { v: PROTOCOL_VERSION, id: "msg-00000001", kind: "response", type: "avatars.delete", ok: true, result: { avatarId: "avatar-0001", videoFilesTrashed: 0, videoFilesKept: 0, videoFilesUnchecked: 0, videoFolder: null } };
     expect(parseMessage(response).ok).toBe(true);
   });
 });

@@ -120,7 +120,7 @@ describe("avatars.deletePreview", () => {
 
     const answer = ok(await preview(started, seeded.avatarId));
 
-    expect(answer.type === "avatars.deletePreview" ? answer.result : null).toEqual({ avatarId: seeded.avatarId, photos: 2, candidates: 0, drafts: 2, videos: 2, videoFilesFound: 2 });
+    expect(answer.type === "avatars.deletePreview" ? answer.result : null).toEqual({ avatarId: seeded.avatarId, photos: 2, candidates: 0, drafts: 2, videos: 2, videoFilesFound: 2, videoFilesUnchecked: 0 });
   });
 
   test("a video whose file the owner already removed is a record but not a file found", async () => {
@@ -149,7 +149,7 @@ describe("avatars.deletePreview", () => {
 
     const answer = ok(await preview(started, seeded.draftId));
 
-    expect(answer.type === "avatars.deletePreview" ? answer.result : null).toEqual({ avatarId: seeded.draftId, photos: 0, candidates: 2, drafts: 0, videos: 0, videoFilesFound: 0 });
+    expect(answer.type === "avatars.deletePreview" ? answer.result : null).toEqual({ avatarId: seeded.draftId, photos: 0, candidates: 2, drafts: 0, videos: 0, videoFilesFound: 0, videoFilesUnchecked: 0 });
   });
 
   test("an avatar the library does not have is NOT_FOUND", async () => {

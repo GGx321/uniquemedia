@@ -293,6 +293,12 @@ export class EngineHost<Transfer> {
     return this.#call(callId, { kind: "control", type: "avatar.deleteFinish", callId, avatarId, outcome });
   }
 
+  /** After a delete whose finish the engine did not know: it forgets the avatars whose manifest is no longer on the disk (and announces each). */
+  pruneMissingAvatars(): Promise<CallResult> {
+    const callId = (this.#deps.newId ?? randomUUID)();
+    return this.#call(callId, { kind: "control", type: "avatars.pruneMissing", callId });
+  }
+
   #call(callId: string, call: HostCall, boundMs?: number, onDeadline?: () => void): Promise<CallResult> {
     // Held to the contract BEFORE it is posted: the engine ignores what it cannot parse, and main would wait out the whole deadline for nothing.
     if (!HostCall.safeParse(call).success) return Promise.resolve({ error: { code: "VALIDATION", detail: "the call to the engine does not match the contract" } });

@@ -69,7 +69,7 @@ function routesSpy() {
     },
     avatarDelete: async (command) => {
       avatarDelete.push(command);
-      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId: command.payload.avatarId, videoFilesTrashed: 0, videoFilesKept: 0 } };
+      return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: true, result: { avatarId: command.payload.avatarId, videoFilesTrashed: 0, videoFilesKept: 0, videoFilesUnchecked: 0, videoFolder: null } };
     },
     mediaImport: async (command) => {
       mediaImport.push(command);

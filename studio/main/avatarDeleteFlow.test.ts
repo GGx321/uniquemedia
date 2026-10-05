@@ -58,6 +58,10 @@ function rig(over: { plan?: AvatarDeletePlan; prepareError?: EngineError; finish
         log.push(`finish:${outcome}`);
         return { error: over.finishError ?? null };
       },
+      pruneMissingAvatars: async () => {
+        log.push("prune");
+        return { error: null };
+      },
     },
     libraryPath: () => over.libraryPath ?? LIBRARY,
     exportPath: () => over.exportPath ?? EXPORT,
@@ -131,13 +135,30 @@ describe("the engine refuses", () => {
     expect(response).toMatchObject({ ok: false, error: { code: "IN_FLIGHT" } });
   });
 
-  test("an answer without a plan is INTERNAL, and nothing is moved", async () => {
+  test("a prepare that got no answer (INTERNAL: it timed out, or the reply was lost) is ended with a best-effort `kept`, so a claim the engine took cannot outlive it", async () => {
+    const r = rig({ prepareError: { code: "INTERNAL", detail: "the engine did not answer within 45 s" } });
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", "finish:kept"]);
+    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+  });
+
+  test("a refusal the engine gave (IN_FLIGHT, NOT_FOUND) holds no claim, so nothing is finished", async () => {
+    for (const code of ["IN_FLIGHT", "NOT_FOUND", "LIBRARY_UNAVAILABLE"] as const) {
+      const r = rig({ prepareError: { code } });
+      await handleAvatarDeleteCommand(command, r.deps);
+      expect(r.log).toEqual(["prepare"]);
+    }
+  });
+
+  test("an answer without a plan is INTERNAL, and nothing is moved and the claim it may hold is let go", async () => {
     const r = rig();
     r.deps.engine.prepareAvatarDelete = async () => ({ error: null });
 
     const response = await handleAvatarDeleteCommand(command, r.deps);
 
-    expect(r.log).toEqual([]);
+    expect(r.log).toEqual(["finish:kept"]);
     expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
   });
 });
@@ -216,12 +237,27 @@ describe("a video file the Trash refuses", () => {
     }
   });
 
-  test("the files the engine did not list are counted as kept", async () => {
+  test("the files the engine could not prove in time are counted apart from the ones the Trash refused", async () => {
     const r = rig({ plan: planOf({ unlisted: 3 }) });
+    r.failTrash.add(FILE_A);
 
     const response = await handleAvatarDeleteCommand(command, r.deps);
 
-    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 2, videoFilesKept: 3 } });
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 1, videoFilesKept: 1, videoFilesUnchecked: 3 } });
+  });
+
+  test("names the avatar's folder inside the export folder (a name, never a path)", async () => {
+    const r = rig();
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(response).toMatchObject({ ok: true, result: { videoFolder: "Mia" } });
+  });
+
+  test("names none when no video file was planned", async () => {
+    const r = rig({ plan: planOf({ files: [], exportRoot: null }) });
+
+    expect(await handleAvatarDeleteCommand(command, r.deps)).toMatchObject({ ok: true, result: { videoFolder: null } });
   });
 });
 
@@ -388,6 +424,152 @@ describe("a path that fails main's own check is never moved", () => {
 
     expect(r.log).toEqual(["prepare", `trash:${FOLDER}`, "finish:trashed"]);
     expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
+  });
+});
+
+describe("the two roots may not overlap", () => {
+  test("an export folder inside the library: no video file is moved, the avatar still is", async () => {
+    const exportInside = `${LIBRARY}/export`;
+    const file = `${exportInside}/Mia/a.mp4`;
+    const r = rig({ plan: planOf({ exportRoot: exportInside, files: [file] }), exportPath: exportInside });
+    r.disk.set(exportInside, "directory");
+    r.disk.set(`${exportInside}/Mia`, "directory");
+    r.disk.set(file, "file");
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", `trash:${FOLDER}`, "finish:trashed"]);
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 1 } });
+  });
+
+  test("a library inside the export folder: no video file is moved, the avatar still is", async () => {
+    const libraryInside = `${EXPORT}/lib`;
+    const folder = `${libraryInside}/avatars/${AVATAR}`;
+    const r = rig({ plan: planOf({ libraryRoot: libraryInside, folder }), libraryPath: libraryInside });
+    r.disk.set(libraryInside, "directory");
+    r.disk.set(`${libraryInside}/avatars`, "directory");
+    r.disk.set(folder, "directory");
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", `trash:${folder}`, "finish:trashed"]);
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
+  });
+
+  test("the same folder for both is refused for the files", async () => {
+    const r = rig({ plan: planOf({ exportRoot: LIBRARY, files: [`${LIBRARY}/Mia/a.mp4`] }), exportPath: LIBRARY });
+    r.disk.set(`${LIBRARY}/Mia`, "directory");
+    r.disk.set(`${LIBRARY}/Mia/a.mp4`, "file");
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 1 } });
+  });
+});
+
+describe("the folder is looked at again right before it moves", () => {
+  test("a folder replaced by a link after the first look is refused and nothing is moved", async () => {
+    const r = rig();
+    r.deps.trashable = async () => {
+      r.disk.set(FOLDER, "symlink"); // between the first look and the move
+      return true;
+    };
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", "finish:kept"]);
+    expect(response).toMatchObject({ ok: false });
+  });
+
+  test("a move the Trash called done that left the folder where it was is `kept`, not `trashed`", async () => {
+    const r = rig();
+    r.deps.trash = async (path) => {
+      r.log.push(`trash:${path}`); // answers ok and moves nothing
+    };
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", `trash:${FOLDER}`, "finish:kept"]);
+    expect(response).toMatchObject({ ok: false, error: { code: "TRASH_UNAVAILABLE" } });
+  });
+});
+
+describe("the Trash is asked about the REAL place, not the plan's spelling", () => {
+  test("a library reached through a link is judged where it really is", async () => {
+    const asked: string[] = [];
+    const r = rig();
+    r.real.set(LIBRARY, "/mnt/real/library");
+    r.real.set(`${LIBRARY}/avatars`, "/mnt/real/library/avatars");
+    r.real.set(FOLDER, `/mnt/real/library/avatars/${AVATAR}`);
+    r.deps.trashable = async (path) => {
+      asked.push(path);
+      return true;
+    };
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(asked[0]).toBe(`/mnt/real/library/avatars/${AVATAR}`);
+  });
+
+  test("a video file's own volume is judged by its real place too", async () => {
+    const asked: string[] = [];
+    const r = rig();
+    r.real.set(EXPORT, "/Volumes/Share/export");
+    r.real.set(`${EXPORT}/Mia`, "/Volumes/Share/export/Mia");
+    r.real.set(FILE_A, "/Volumes/Share/export/Mia/2026-10-05_photo_001.mp4");
+    r.deps.trashable = async (path) => {
+      asked.push(path);
+      return !path.startsWith("/Volumes/Share");
+    };
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(asked).toContain("/Volumes/Share/export/Mia/2026-10-05_photo_001.mp4");
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
+  });
+});
+
+describe("macOS folds the case of a folder name", () => {
+  test("a folder the Finder renamed from Mia to mia is still the same folder for a true video", async () => {
+    const r = rig({ platform: "darwin" });
+    r.real.set(`${EXPORT}/Mia`, `${EXPORT}/mia`);
+    r.real.set(FILE_A, `${EXPORT}/mia/2026-10-05_photo_001.mp4`);
+    r.real.set(FILE_B, `${EXPORT}/mia/2026-10-05_photo_002.mp4`);
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 2, videoFilesKept: 0 } });
+  });
+
+  test("Linux, where the case matters, does not", async () => {
+    const r = rig({ platform: "linux" });
+    r.real.set(`${EXPORT}/Mia`, `${EXPORT}/mia`);
+    r.real.set(FILE_A, `${EXPORT}/mia/2026-10-05_photo_001.mp4`);
+    r.real.set(FILE_B, `${EXPORT}/mia/2026-10-05_photo_002.mp4`);
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
+  });
+});
+
+describe("the engine losing the delete", () => {
+  test("a finish the engine does not know after the folder is gone asks it to forget what the disk no longer has", async () => {
+    const r = rig({ finishError: { code: "NOT_FOUND", detail: "no delete of avatar avatar-0001 is pending" } });
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toContain("prune");
+    expect(r.log.indexOf("prune")).toBeGreaterThan(r.log.indexOf("finish:trashed"));
+    expect(response).toMatchObject({ ok: true });
+  });
+
+  test("a finish the engine took asks for no pruning", async () => {
+    const r = rig();
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).not.toContain("prune");
   });
 });
 

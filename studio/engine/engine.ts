@@ -2800,7 +2800,7 @@ export class Engine {
   }
 
   /** `avatars.deletePreview`: the counts the confirmation shows. Refuses like the delete does while the avatar is busy, so the dialog never offers what cannot work. */
-  async #deletePreview(avatarId: string): Promise<{ avatarId: string; photos: number; candidates: number; drafts: number; videos: number; videoFilesFound: number }> {
+  async #deletePreview(avatarId: string): Promise<{ avatarId: string; photos: number; candidates: number; drafts: number; videos: number; videoFilesFound: number; videoFilesUnchecked: number }> {
     const library = this.library;
     if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
     if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
@@ -2812,7 +2812,7 @@ export class Engine {
     // The avatar may have been deleted, or have started something, while the counts were read.
     if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
     // A record names one file: a stale used index must never make the files outnumber the videos.
-    return { avatarId, ...counts, videos: Math.max(counts.videos, found.files.length), videoFilesFound: found.files.length };
+    return { avatarId, ...counts, videos: Math.max(counts.videos, found.files.length + found.unlisted), videoFilesFound: found.files.length, videoFilesUnchecked: found.unlisted };
   }
 
   /** `avatar.deletePrepare`: see the section's comment. Throws what the reply's `error` carries; on success the avatar stays claimed until `#deleteFinish`. */

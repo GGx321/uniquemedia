@@ -1962,7 +1962,7 @@ export class MockEngine implements EngineBridge {
     this.checkExport();
     const found = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present").length;
     const counts = this.deleteCounts(avatarId);
-    return this.ok(c, { avatarId, ...counts, videoFilesFound: found });
+    return this.ok(c, { avatarId, ...counts, videoFilesFound: found, videoFilesUnchecked: 0 });
   }
 
   private deleteAvatar(c: CommandMessage, avatarId: string): ResponseMessage {
@@ -1987,7 +1987,8 @@ export class MockEngine implements EngineBridge {
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.removed", payload: { avatarId } });
     const kept = this.videoFilesKeptNext;
     this.videoFilesKeptNext = 0;
-    return this.ok(c, { avatarId, videoFilesTrashed: present.length, videoFilesKept: kept });
+    const folder = present[0]?.summary.relPath.split("/")[0] ?? null;
+    return this.ok(c, { avatarId, videoFilesTrashed: present.length, videoFilesKept: kept, videoFilesUnchecked: 0, videoFolder: folder });
   }
 
   // ---------- montage drafts (3d.1b) ----------
