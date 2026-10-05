@@ -33,6 +33,22 @@ describe("a render blocked while the avatar's usage is unknown", () => {
     expect(block?.text).toContain("более новой версией");
   });
 
+  test("a record from a newer Studio blocks the render whatever the draft names: the engine always refuses it (even with no photo flagged)", () => {
+    const block = renderBlock(input({ avatarUsage: { state: "unknown", reasons: ["library-too-new"] }, verdict: { spec: READY, issues: [] } }));
+
+    expect(block?.text).toBe("Записи видео этого аватара созданы более новой версией Studio — обновите приложение");
+  });
+
+  test("another reason does not block a draft with no flagged photo: only the cells it names can be refused", () => {
+    expect(renderBlock(input({ avatarUsage: { state: "unknown", reasons: ["record-unreadable"] }, verdict: { spec: READY, issues: [] } }))).toBeNull();
+  });
+
+  test("a structural reason still comes first", () => {
+    const block = renderBlock(input({ spec: draftSpec(0), verdict: null, avatarUsage: { state: "unknown", reasons: ["library-too-new"] } }));
+
+    expect(block?.text).toBe("Добавьте хотя бы один кадр");
+  });
+
   test("it marks every flagged clip, not only the first", () => {
     expect(renderBlock(input({ avatarUsage: { state: "unknown", reasons: ["record-unreadable"] } }))?.clips).toEqual([0, 1]);
   });

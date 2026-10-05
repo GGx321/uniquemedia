@@ -227,6 +227,10 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
     return reason(`${clipName(clip)}: пустая ячейка`, [clip]);
   }
 
+  // A record from a newer Studio: the engine refuses every render of the avatar's drafts, whatever they name, so the block does not wait for a photo to be flagged.
+  const usage = input.avatarUsage;
+  if (usage?.state === "unknown" && usage.reasons[0] === "library-too-new") return reason(usageText("library-too-new"));
+
   const flagged = photoProblems(spec, verdict, input.photos ?? new Map());
   const first = flagged[0];
   if (first !== undefined) {
