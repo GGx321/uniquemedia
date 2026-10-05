@@ -1,4 +1,4 @@
-// First, before every other module: it sizes libuv's thread pool, which is made when it is first used (threadPool.ts).
+// First import: it sizes libuv's thread pool, which is made when it is first used (threadPool.ts).
 import "./threadPool";
 import {
   app,

@@ -1,4 +1,5 @@
-// Side-effect module: the FIRST import of main.ts, so it runs before any other module's top level and before main's first file, DNS or crypto call.
+// Side-effect module: the FIRST import of main.ts, so it runs before main's own top level and its first file, DNS or crypto call. In the built bundle the
+// shared chunks and `electron` load before it; that is safe only while their top level stays inert (no file, DNS or crypto call at load).
 //
 // libuv runs every file, `getaddrinfo` (the OpenRouter and flashapi hosts) and crypto call of the process on a pool of four threads, made when it is first used
 // and sized by `UV_THREADPOOL_SIZE` at that moment. The media protocol's disk work is bounded to a few of them (mediaProtocol.ts), but a library and an export
