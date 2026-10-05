@@ -208,6 +208,16 @@ test("H2: a photo under 768 px on its short side is advised against, with its si
   expect(imported?.payload.stagingId).toBe("staging-small-0001");
 });
 
+test("H2: the advice is said politely, as a status, not as an alert (nothing went wrong)", async () => {
+  const { engine } = setup();
+  engine.queueImportPick({ picked: true, stagingId: "staging-small-0001", width: 246, height: 281 });
+  await openImport();
+  await pickPhoto();
+
+  const role = screen.queryByText(/Маленькое фото/)?.closest(".notice")?.getAttribute("role") ?? null;
+  expect(role).toBe("status");
+});
+
 test("H2: a short side of 768 px or more gets no advice", async () => {
   const { engine } = setup();
   engine.queueImportPick({ picked: true, stagingId: "staging-edge-0001", width: 1024, height: 768 });

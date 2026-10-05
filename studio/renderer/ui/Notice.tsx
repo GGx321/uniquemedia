@@ -8,19 +8,24 @@ export type NoticeTone = "info" | "ok" | "warn" | "danger";
 
 const ICON = { info: "info", ok: "check", warn: "alert", danger: "alert" } as const;
 
-/** An inline message. `danger` and `warn` are announced as alerts. */
+/**
+ * An inline message. `danger` and `warn` are announced as alerts; `role="status"` says a warning politely instead, for advice
+ * where nothing went wrong (a small photo picked for import).
+ */
 export function Notice({
   tone,
   title,
   children,
   actions,
+  role: asked,
 }: {
   tone: NoticeTone;
   title?: string;
   children?: ReactNode;
   actions?: ReactNode;
+  role?: "alert" | "status";
 }) {
-  const role = tone === "danger" || tone === "warn" ? "alert" : "status";
+  const role = asked ?? (tone === "danger" || tone === "warn" ? "alert" : "status");
   return (
     <div className={`notice notice-${tone}`} role={role}>
       <span className="notice-icon">

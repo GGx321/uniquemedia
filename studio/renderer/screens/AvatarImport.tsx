@@ -188,7 +188,7 @@ export function AvatarImport() {
           </p>
           {/* The large-screen audit (H2): advice next to the picked size, never a refusal — the import goes ahead either way. */}
           {preview && isSmallImportPhoto(preview) && (
-            <Notice tone="warn">
+            <Notice tone="warn" role="status">
               Маленькое фото ({preview.width}×{preview.height}
               {NBSP}px) — портрет и сгенерированные фото будут нечёткими. Лучше от {IMPORT_GOOD_SHORT_SIDE}
               {NBSP}px по короткой стороне.
