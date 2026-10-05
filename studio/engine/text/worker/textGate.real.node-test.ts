@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { deadlineHeadroomProblem, HEADROOM_SAMPLES, headroomStats } from "../deadlineHeadroom";
 import { loadTextRasteriser } from "../load";
 import { RASTER_WASM, RasterError, TEXT_RENDER_DEADLINE_MS } from "../rasterTypes";
+import { createTextRasteriser } from "../rasteriser";
 import { SELF_TEST_FINGERPRINT, SELF_TEST_HASHES, selfTestSvg } from "../selfTest";
 import { assertBudget, tierOf } from "../../../testing/tiers";
 import { FIRST_CALL_RENDER_TIMEOUT_MS } from "../../../testing/gateTimeouts";
@@ -176,8 +177,15 @@ describe("the real worker under Electron's Node", () => {
 
   test("the worst legitimate shadow caption renders, at the full canvas the caps allow", async () => {
     // The correctness half of the headroom measurement below: the request it times is a valid render.
-    const { gate: g } = gate({ renderTimeoutMs: 60_000 });
-    const image = await g.render({ svg: worstShadowCaption(), font: "manrope" });
+    //
+    // Not through a gate: a gate's `renderTimeoutMs` bounds only the gate's own wait, while the rasteriser inside the worker has its own tripwire
+    // (`DEFAULT_RASTER_LIMITS.timeoutMs`, the same 3000 ms) that the gate cannot lift. On a loaded Windows runner this first call to a
+    // fresh rasteriser took 3364 ms (warm it costs about 500 ms there, so this was the runner's stall, not a cold start: cold adds
+    // 40-60 ms here) and failed with «the call took 3364 ms, over 3000 ms», which says nothing about whether the caption renders.
+    // How long a legitimate caption may take is judged by the perf run's headroom test below, against the product's 3000 ms, which is
+    // left as it is; this test asks only that the caption renders at the full canvas, so the tripwire is lifted for it alone.
+    const rasteriser = createTextRasteriser({ ...INIT, limits: { timeoutMs: 60_000 } });
+    const image = await rasteriser.render({ svg: worstShadowCaption(), font: "manrope" });
     assert.equal(image.width, 1080);
     assert.equal(image.height, 600);
   });
