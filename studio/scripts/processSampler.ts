@@ -117,9 +117,13 @@ export class SamplerHarnessError extends Error {
   }
 }
 
-/** A peak that has at least one sample behind it; an empty window means nothing measured it, which is the harness's fault, not the render's. */
+/**
+ * A peak that has at least one sample behind it, and an ffmpeg in at least one of them. An empty window means nothing measured it, and samples that
+ * never saw an ffmpeg measured nothing of it either (a peak of 0 passes any memory bound); both are the harness's fault, not the render's.
+ */
 export function requireSamples(peak: Peak, what: string): Peak {
   if (peak.samples === 0) throw new SamplerHarnessError(`the process sampler took no sample during ${what}, so its memory was not measured`);
+  if (peak.peakConcurrentBytes === 0) throw new SamplerHarnessError(`the process sampler saw no ffmpeg during ${what} in ${peak.samples} samples, so its memory was not measured`);
   return peak;
 }
 
@@ -184,6 +188,17 @@ export interface FfmpegSampler {
 }
 
 const POSIX_INTERVAL_MS = 100;
+/** A `ps` that fails this many times in a row, before it has ever worked, is not coming: one failure alone could be a busy machine. */
+const POSIX_FAILURES_BEFORE_GIVING_UP = 3;
+
+/** Why a `spawnSync` of `ps` gave no table, or null when it did. */
+export function psFailure(result: { status: number | null; error?: Error | undefined; signal?: NodeJS.Signals | null | undefined; stderr?: string | null | undefined }): string | null {
+  if (result.error !== undefined) return `could not run ps: ${result.error.message}`;
+  if (result.status === 0) return null;
+  if (result.status === null) return `ps was ended by ${String(result.signal ?? "a signal")}`;
+  const said = (result.stderr ?? "").split("\n")[0]?.trim() ?? "";
+  return `ps exited with code ${result.status}${said === "" ? "" : `: ${said}`}`;
+}
 /**
  * One sample per loop: every process's parent (`P`), and each ffmpeg's own line with its peak working set (`Get-Process` knows the
  * peak, CIM knows the parent). CIM over all processes costs a few hundred ms on a runner, so the rate is the loop's own.
@@ -246,9 +261,17 @@ export function startFfmpegSampler(platform: NodeJS.Platform = process.platform)
     };
   }
 
+  let failedInARow = 0;
   const timer = setInterval(() => {
     const ps = spawnSync("ps", ["-Ao", "pid=,ppid=,rss=,command="], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-    if (ps.status === 0) take(parsePosixPs(ps.stdout), Date.now());
+    const failure = psFailure(ps);
+    if (failure === null) {
+      failedInARow = 0;
+      take(parsePosixPs(ps.stdout), Date.now());
+    } else if (++failedInARow >= POSIX_FAILURES_BEFORE_GIVING_UP) {
+      // A ps that never works must not leave `ready()` waiting out its whole bound; once a sample has come, this changes nothing.
+      firstSample.fail(failure);
+    }
   }, POSIX_INTERVAL_MS);
   return {
     tracker,
