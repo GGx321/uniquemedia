@@ -1,10 +1,13 @@
 import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef } from "react";
 import { Icon, type IconName } from "../../ui/Icon";
+import { PanelSplitter, useMediaWidth } from "./PanelSplitter";
 
 // 3d.5: the editor's left panel (Editor.dc.html and its tab artboards; the reconciliation's P1–P5): the five tabs and the panel of
 // the one chosen. «Фото» (the bin), «Мои» (the owner's own files, 3f.6), «Музыка» (the trending list), «GIF» (the built-in stickers)
 // and «Текст» (the presets and the text layers). The tab is renderer state: choosing an item on the timeline never switches it (as on
 // the artboard), but the timeline's «+» and the properties' «Заменить…» open the tab they need.
+// The owner's feedback (2026-10-05): the panel's width is the viewer's, set by the splitter on its border with the stage (PanelSplitter.tsx).
+// The width lives here, below the editor, so a drag re-renders the panel and the splitter, never the whole editor.
 
 export type MediaTab = "photos" | "mine" | "music" | "gif" | "text";
 
@@ -31,6 +34,8 @@ export function MediaPanel({ tab, onTab, focusTick, children }: MediaPanelProps)
   const buttons = useRef(new Map<MediaTab, HTMLButtonElement>());
   const tabId = (id: MediaTab): string => `${base}-tab-${id}`;
   const panelId = `${base}-panel`;
+  const asideId = `${base}-media`;
+  const size = useMediaWidth();
 
   // Only a new request moves the focus; a tab chosen by its own click keeps it where it is.
   const current = useRef(tab);
@@ -53,36 +58,39 @@ export function MediaPanel({ tab, onTab, focusTick, children }: MediaPanelProps)
   }
 
   return (
-    <aside className="ed-media" aria-label="Медиа" data-slot="media 3d.5">
-      <div className="ed-tabs" role="tablist" aria-label="Тип медиа" onKeyDown={onKeyDown}>
-        {TABS.map((item) => {
-          const id = item.id;
-          const selected = id === tab;
-          return (
-            <button
-              key={id}
-              ref={(node) => {
-                if (node === null) buttons.current.delete(id);
-                else buttons.current.set(id, node);
-              }}
-              id={tabId(id)}
-              type="button"
-              role="tab"
-              className={selected ? "mt mt-on" : "mt"}
-              aria-selected={selected}
-              aria-controls={selected ? panelId : undefined}
-              tabIndex={selected ? 0 : -1}
-              onClick={() => onTab(id)}
-            >
-              <Icon name={item.icon} size={17} strokeWidth={1.9} />
-              {item.label}
-            </button>
-          );
-        })}
-      </div>
-      <div id={panelId} className={`ed-media-panel ed-media-${tab}`} role="tabpanel" aria-labelledby={tabId(tab)}>
-        {children}
-      </div>
-    </aside>
+    <>
+      <aside id={asideId} className="ed-media" aria-label="Медиа" data-slot="media 3d.5" style={{ width: size.width }}>
+        <div className="ed-tabs" role="tablist" aria-label="Тип медиа" onKeyDown={onKeyDown}>
+          {TABS.map((item) => {
+            const id = item.id;
+            const selected = id === tab;
+            return (
+              <button
+                key={id}
+                ref={(node) => {
+                  if (node === null) buttons.current.delete(id);
+                  else buttons.current.set(id, node);
+                }}
+                id={tabId(id)}
+                type="button"
+                role="tab"
+                className={selected ? "mt mt-on" : "mt"}
+                aria-selected={selected}
+                aria-controls={selected ? panelId : undefined}
+                tabIndex={selected ? 0 : -1}
+                onClick={() => onTab(id)}
+              >
+                <Icon name={item.icon} size={17} strokeWidth={1.9} />
+                {item.label}
+              </button>
+            );
+          })}
+        </div>
+        <div id={panelId} className={`ed-media-panel ed-media-${tab}`} role="tabpanel" aria-labelledby={tabId(tab)}>
+          {children}
+        </div>
+      </aside>
+      <PanelSplitter size={size} controls={asideId} />
+    </>
   );
 }

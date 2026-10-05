@@ -753,6 +753,93 @@
   border-right: 1px solid var(--sidebar-border);
 }
 
+/* The splitter (the owner's feedback, 2026-10-05): it sits on the panel's border. Zero wide in the row, it takes the pointer over 10 px
+   around the border; hovered (after a beat, so a pointer passing by does not flash it), focused or dragged, the border turns into a 2 px
+   accent line with a grip in its middle. The width itself is the panel's inline style (PanelSplitter.tsx). */
+.ed-split {
+  position: relative;
+  z-index: 3;
+  flex: 0 0 0;
+  width: 0;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.ed-split::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -5px;
+  width: 10px;
+}
+
+.ed-split::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -1px;
+  width: 2px;
+  background: transparent;
+  transition: background-color 0.12s ease;
+}
+
+.ed-split-grip {
+  position: absolute;
+  top: 50%;
+  left: -3px;
+  z-index: 1;
+  width: 6px;
+  height: 36px;
+  margin-top: -18px;
+  border-radius: 3px;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--sidebar);
+  opacity: 0;
+  transform: scaleY(0.6);
+  transition:
+    opacity 0.12s ease,
+    transform 0.16s ease;
+}
+
+.ed-split:hover::after,
+.ed-split:hover .ed-split-grip {
+  transition-delay: 0.08s;
+}
+
+.ed-split:hover::after,
+.ed-split:focus-visible::after,
+.ed-split-on::after {
+  background: var(--accent);
+}
+
+.ed-split:hover .ed-split-grip,
+.ed-split:focus-visible .ed-split-grip,
+.ed-split-on .ed-split-grip {
+  opacity: 1;
+  transform: none;
+}
+
+/* A zero-wide box has no room for the usual ring: the accent line and the grip are its focus. */
+.ed-split:focus-visible {
+  outline: none;
+}
+
+/* While the splitter is dragged the pointer may be anywhere: it keeps the col-resize cursor, and nothing gets selected. */
+.ed-col-resizing,
+.ed-col-resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ed-split::after,
+  .ed-split-grip {
+    transition: none;
+  }
+}
+
 .ed-tabs {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -810,11 +897,12 @@
   cursor: default;
 }
 
-/* The bin scrolls, so it clips at its padding box: 4 px of padding (taken back by the margin) keep the edge tiles' outer focus rings whole. */
+/* The bin scrolls, so it clips at its padding box: 4 px of padding (taken back by the margin) keep the edge tiles' outer focus rings whole.
+   Three to a row at the artboard's 280 px panel (and at its narrowest, a scrollbar included); a wider panel fits more, never wider tiles. */
 .ed-bin {
   display: grid;
   flex: 1 1 auto;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(68px, 1fr));
   align-content: start;
   gap: 8px;
   min-height: 0;
@@ -2771,9 +2859,10 @@
   min-height: 0;
 }
 
+/* Two to a row at the artboard's width; a wider panel fits more. */
 .ed-presets {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
   gap: 10px 8px;
 }
 
@@ -2951,9 +3040,10 @@
   gap: 8px;
 }
 
+/* Four to a row at the artboard's width (and at the narrowest panel, a scrollbar included); a wider panel fits more. */
 .ed-gif-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
   gap: 6px;
   margin: 0;
   padding: 0;
@@ -3255,9 +3345,15 @@
   font-size: 12px;
 }
 
+/* Full width at the panel's narrowest (280 px): a little less side padding keeps the label and its icon on one line. */
 .ed-music-settings {
   width: 100%;
   margin-top: 2px;
+  padding: 0 10px;
+}
+
+.ed-music-settings svg {
+  flex-shrink: 0;
 }
 
 .ed-music-note {
@@ -4169,11 +4265,11 @@ button.drop > * {
   color: var(--warn);
 }
 
-/* photo and video tiles (M3–M7): 4 to a row, 84 tall, the sheet's marks */
+/* photo and video tiles (M3–M7): 4 to a row at the artboard's width (more in a wider panel), 84 tall, the sheet's marks */
 
 .mine-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(50px, 1fr));
   gap: 6px;
   margin: 0;
   padding: 0;

@@ -25,6 +25,7 @@ import { musicVerdictOf, pickOwnTrack, pickTrack, type TrackVerdict } from "./mo
 import { MusicTab } from "./montage/MusicTab";
 import { useTrackSummary } from "./montage/MusicTrack";
 import { changeTouches, draftMediaIds } from "./montage/ownMedia";
+import { storedMediaWidth } from "./montage/panelWidth";
 import { useOwnVideos, videoProblems } from "./montage/ownVideos";
 import { TrimPeekStore } from "./montage/trimPeek";
 import { PhotoBin } from "./montage/PhotoBin";
@@ -1213,7 +1214,8 @@ export function EditorScreen({ montageId, created = false }: { montageId: string
         <ScreenTitle>Монтаж</ScreenTitle>
       </header>
       <div className="ed-body">
-        <div className="ed-media" />
+        {/* At the viewer's width already, so the panel does not jump when the draft comes. */}
+        <div className="ed-media" style={{ width: storedMediaWidth() }} />
         <div className="ed-preview">
           <div className="ed-frame">
             <div className="shim" />
