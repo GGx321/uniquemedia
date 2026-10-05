@@ -49,6 +49,24 @@ async function photoInput(extra: Partial<MediaCommitInput> = {}): Promise<MediaC
 
 const names = async (dir: string): Promise<string[]> => (await readdir(dir).catch(() => [])).filter((n) => n !== ".staging").sort();
 
+/** The bytes of a file the quarantine holds from `media/`, from whichever open's folder it is in. */
+async function quarantinedBytes(name: string): Promise<Buffer | null> {
+  for (const stamp of await readdir(join(root(), "quarantine")).catch(() => [])) {
+    const bytes = await readFile(join(root(), "quarantine", stamp, "media", name)).catch(() => null);
+    if (bytes !== null) return bytes;
+  }
+  return null;
+}
+
+/** Every file the library's quarantine holds from `media/`, by name: set aside, never deleted. */
+async function quarantinedMedia(): Promise<string[]> {
+  const out: string[] = [];
+  for (const stamp of await readdir(join(root(), "quarantine")).catch(() => [])) {
+    out.push(...(await readdir(join(root(), "quarantine", stamp, "media")).catch(() => [])));
+  }
+  return out.sort();
+}
+
 describe("a stored file gets its record", () => {
   test("the staged copy moves into media/ under the id and the record is written beside it", async () => {
     const store = records();
@@ -202,7 +220,7 @@ describe("what is refused before anything is moved", () => {
 });
 
 describe("a crash at each point of a commit leaves a library that opens cleanly", () => {
-  test("a crash after the file is stored and before the record: the next open removes the file, nothing is listed", async () => {
+  test("a crash after the file is stored and before the record: the next open sets the file aside, nothing is listed", async () => {
     const crashing = records({
       hooks: {
         treatAsCrash: treatSimulatedCrash,
@@ -221,7 +239,22 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     const report = await reopened.recover();
     expect(await names(mediaDir())).toEqual([]);
     expect(reopened.list()).toEqual({ media: [], total: 0 });
-    expect(report.removedOrphans).toBeGreaterThanOrEqual(1);
+    expect(report.quarantinedOrphans).toBeGreaterThanOrEqual(1);
+    expect((await quarantinedMedia()).some((n) => n.endsWith(".jpg"))).toBe(true);
+  });
+
+  test("a disk that is full while the record is written is a no-space failure, and nothing is left behind", async () => {
+    const failing = records({
+      hooks: {
+        beforeRecordRename: () => {
+          throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+        },
+      },
+    });
+    const error = await failing.commit(await photoInput()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(MediaCommitError);
+    expect(error instanceof MediaCommitError ? error.code : null).toBe("no-space");
+    expect(await names(mediaDir())).toEqual([]);
   });
 
   test("a failed commit cleans up after itself when it can: nothing is left behind", async () => {
@@ -250,18 +283,128 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
     const reopened = records();
     const report = await reopened.recover();
     expect(reopened.list().media).toEqual([summary]);
-    expect(report).toMatchObject({ removedOrphans: 0, removedDangling: 0, problems: [] });
+    expect(report).toMatchObject({ quarantinedOrphans: 0, restored: 0, problems: [] });
   });
 
-  test("a record whose file is gone is removed at the next open: it names nothing", async () => {
+  test("a record whose file is gone is not listed, and stays in media/: it is told as a missing file, and nothing is moved", async () => {
     const first = records();
     const summary = await first.commit(await photoInput());
     await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "taken-away.jpg"));
     const reopened = records();
     const report = await reopened.recover();
     expect(reopened.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.json`]);
+    expect(report.problems).toEqual([{ file: `${summary.mediaId}.json`, reason: "missing-file" }]);
+    expect(await quarantinedMedia()).toEqual([]);
+  });
+
+  test("a record that arrives before its file (a partial sync) pairs with it at the next open, and nothing was set aside meanwhile", async () => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "late.jpg"));
+    await records().recover();
+    await rename(join(tmp(), "late.jpg"), join(mediaDir(), `${summary.mediaId}.jpg`));
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(reopened.list().media).toEqual([summary]);
+    expect(report.problems).toEqual([]);
+    expect(await quarantinedMedia()).toEqual([]);
+  });
+
+  test("a file that arrives before its record is set aside, and when the record arrives the file is brought back and the pair is listed", async () => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    const record = await readFile(join(mediaDir(), `${summary.mediaId}.json`));
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(tmp(), "late.json"));
+    const firstOpen = await records().recover();
+    expect(firstOpen.quarantinedOrphans).toBe(1);
     expect(await names(mediaDir())).toEqual([]);
-    expect(report.removedDangling).toBe(1);
+    await writeFile(join(mediaDir(), `${summary.mediaId}.json`), record);
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(reopened.list().media).toEqual([summary]);
+    expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
+    expect(await quarantinedMedia()).toEqual([]);
+  });
+
+  test("an orphan file whose record sits in the quarantine (set aside by an older open) is paired with it again, not moved", async () => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    const stamp = join(root(), "quarantine", "2026-10-04T10-00-00-000Z", "media");
+    await mkdir(stamp, { recursive: true });
+    await rename(join(mediaDir(), `${summary.mediaId}.json`), join(stamp, `${summary.mediaId}.json`));
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(report.quarantinedOrphans).toBe(0);
+    expect(reopened.list().media).toEqual([summary]);
+    expect(await quarantinedMedia()).toEqual([]);
+  });
+
+  test("restoring never overwrites a file that is in media/ already", async () => {
+    const first = records();
+    const summary = await first.commit(await photoInput());
+    const stamp = join(root(), "quarantine", "2026-10-04T10-00-00-000Z", "media");
+    await mkdir(stamp, { recursive: true });
+    await writeFile(join(stamp, `${summary.mediaId}.jpg`), "an older copy");
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "away.jpg"));
+    await writeFile(join(mediaDir(), `${summary.mediaId}.jpg`), "photo bytes");
+    const reopened = records();
+    await reopened.recover();
+    expect(await readFile(join(mediaDir(), `${summary.mediaId}.jpg`), "utf8")).toBe("photo bytes");
+    expect(await readFile(join(stamp, `${summary.mediaId}.jpg`), "utf8")).toBe("an older copy");
+  });
+
+  test("a file the owner dropped into media/ with a name of our shape is set aside, not deleted", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    const report = await records().recover();
+    expect(report.quarantinedOrphans).toBe(1);
+    expect(await names(mediaDir())).toEqual([]);
+    expect(await quarantinedMedia()).toEqual(["holiday-photo.jpg"]);
+  });
+
+  test("setting aside is told in the log, with counts and no path", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    const lines: string[] = [];
+    await records({ warn: (text) => lines.push(text) }).recover();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/1 .*set aside/);
+    expect(lines[0]).not.toContain(root());
+  });
+
+  test("a file that was moved but whose folder flush then failed is counted as set aside, not as one that stays where it is", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    const lines: string[] = [];
+    const report = await records({
+      warn: (text) => lines.push(text),
+      quarantineDurability: {
+        fsyncDir: async (dir) => {
+          if (dir === mediaDir()) throw Object.assign(new Error("flush failed"), { code: "EIO" });
+        },
+      },
+    }).recover();
+    expect(report.quarantinedOrphans).toBe(1);
+    expect(lines.join("\n")).not.toContain("stay where they are");
+    expect(await quarantinedMedia()).toEqual(["holiday-photo.jpg"]);
+  });
+
+  test("several files that cannot be set aside are told in one log line, not one each", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    await writeFile(join(mediaDir(), "holiday-two.jpg"), "the owner's other photo");
+    await writeFile(join(root(), "quarantine"), "a file where the quarantine folder should be");
+    const lines: string[] = [];
+    await records({ warn: (text) => lines.push(text) }).recover();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/2 .*could not be set aside/);
+  });
+
+  test("a file that cannot be set aside stays where it is, and the open still finishes", async () => {
+    await writeFile(join(mediaDir(), "holiday-photo.jpg"), "the owner's own photo");
+    await writeFile(join(root(), "quarantine"), "a file where the quarantine folder should be");
+    const report = await records().recover();
+    expect(report.quarantinedOrphans).toBe(0);
+    expect(await names(mediaDir())).toEqual(["holiday-photo.jpg"]);
   });
 
   // L-3 (review M10): only a file that is NOT THERE makes a record dangling; any other disk error says nothing about the file.
@@ -278,7 +421,7 @@ describe("a crash at each point of a commit leaves a library that opens cleanly"
       },
     });
     const report = await reopened.recover();
-    expect(report.removedDangling).toBe(0);
+    expect(report.quarantinedOrphans).toBe(0);
     expect(await names(mediaDir())).toEqual([`${summary.mediaId}.jpg`, `${summary.mediaId}.json`]);
     expect(report.problems).toHaveLength(1);
   });
@@ -445,7 +588,7 @@ describe("what open will not judge for itself", () => {
     expect(store.list().total).toBe(0);
   });
 
-  test("only files of the shape of ours are ever removed as orphans, and folders are left", async () => {
+  test("only files of the shape of ours are ever set aside as orphans, and folders are left", async () => {
     await planted("media-00000060.jpg", "an orphan of ours");
     await planted("notes.txt", "the owner's");
     await planted("MEDIA-00000061.jpg", "capitals are not ours");
@@ -453,6 +596,7 @@ describe("what open will not judge for itself", () => {
     await mkdir(join(mediaDir(), "media-00000063.jpg"));
     await records().recover();
     expect(await names(mediaDir())).toEqual(["MEDIA-00000061.jpg", "media-00000062.exe", "media-00000063.jpg", "notes.txt"]);
+    expect(await quarantinedMedia()).toEqual(["media-00000060.jpg"]);
   });
 
   // L-4 (review M14): a temp file that is not a record's own is the owner's or another program's.
@@ -488,7 +632,7 @@ describe("what open will not judge for itself", () => {
     const store = records();
     const report = await store.recover();
     expect(store.list().total).toBe(0);
-    expect(report).toMatchObject({ removedOrphans: 0, removedDangling: 0, problems: [] });
+    expect(report).toMatchObject({ quarantinedOrphans: 0, restored: 0, problems: [] });
     expect(await readdir(root())).toEqual([]);
   });
 });
@@ -755,5 +899,152 @@ describe("a record that is being removed", () => {
     const summary = await store.commit(await photoInput());
     const both = await Promise.all([store.remove(summary.mediaId), store.remove(summary.mediaId)]);
     expect(both.sort()).toEqual([false, true]);
+  });
+});
+
+describe("bringing a piece back from the quarantine is judged, confined and never an overwrite (review round 3)", () => {
+  /** A record in media/ whose file is not: the file is wherever a test puts copies of it. Returns the summary and the file's name. */
+  async function recordWithoutFile(): Promise<{ id: string; file: string; bytes: number }> {
+    const summary = await records().commit(await photoInput());
+    await rename(join(mediaDir(), `${summary.mediaId}.jpg`), join(tmp(), "away.jpg"));
+    return { id: summary.mediaId, file: `${summary.mediaId}.jpg`, bytes: "photo bytes".length };
+  }
+  async function stamp(name: string, files: Record<string, string>): Promise<string> {
+    const folder = join(root(), "quarantine", name, "media");
+    await mkdir(folder, { recursive: true });
+    for (const [file, text] of Object.entries(files)) await writeFile(join(folder, file), text);
+    return folder;
+  }
+
+  test("a partial copy in an older stamp and the full one in a newer stamp: the one that is the size the record names is brought back", async () => {
+    const piece = await recordWithoutFile();
+    const older = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "part" });
+    await stamp("2026-10-04T11-00-00-000Z", { [piece.file]: "photo bytes" });
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(reopened.list().total).toBe(1);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("photo bytes");
+    expect(await readFile(join(older, piece.file), "utf8")).toBe("part");
+  });
+
+  test("two copies of the right size: the newest stamp's is the one brought back", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "PHOTO BYTES" });
+    await stamp("2026-10-04T11-00-00-000Z", { [piece.file]: "photo bytes" });
+    await records().recover();
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("photo bytes");
+  });
+
+  test("no copy in the quarantine is the size the record names: nothing is brought back, and the record stays a missing-file problem", async () => {
+    const piece = await recordWithoutFile();
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "part" });
+    const reopened = records();
+    const report = await reopened.recover();
+    expect(report.restored).toBe(0);
+    expect(report.problems).toEqual([{ file: `${piece.id}.json`, reason: "missing-file" }]);
+    expect(reopened.list().total).toBe(0);
+    expect(await names(mediaDir())).toEqual([`${piece.id}.json`]);
+    expect(await readFile(join(folder, piece.file), "utf8")).toBe("part");
+  });
+
+  test("a stamp's media folder that is a link is not read: a matching file behind it is never brought in", async () => {
+    const piece = await recordWithoutFile();
+    const outside = join(tmp(), "outside");
+    await mkdir(outside);
+    await writeFile(join(outside, piece.file), "photo bytes");
+    await mkdir(join(root(), "quarantine", "2026-10-04T10-00-00-000Z"), { recursive: true });
+    await symlink(outside, join(root(), "quarantine", "2026-10-04T10-00-00-000Z", "media"));
+    const report = await records().recover();
+    expect(report.restored).toBe(0);
+    expect(await readdir(outside)).toEqual([piece.file]);
+    expect(await names(mediaDir())).toEqual([`${piece.id}.json`]);
+  });
+
+  test("a quarantine folder that is itself a link is not read either", async () => {
+    const piece = await recordWithoutFile();
+    const outside = join(tmp(), "outside-quarantine");
+    await mkdir(join(outside, "2026-10-04T10-00-00-000Z", "media"), { recursive: true });
+    await writeFile(join(outside, "2026-10-04T10-00-00-000Z", "media", piece.file), "photo bytes");
+    await symlink(outside, join(root(), "quarantine"));
+    const report = await records().recover();
+    expect(report.restored).toBe(0);
+    expect(await readdir(join(outside, "2026-10-04T10-00-00-000Z", "media"))).toEqual([piece.file]);
+  });
+
+  test("a file that appears at the name between the judging and the bringing back is not overwritten", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    // The look at the file during the judging says «not there» (as it was); the file is there by the time the piece is brought back.
+    await writeFile(join(mediaDir(), piece.file), "the owner's newer bytes");
+    const reopened = records({
+      fs: {
+        lstat: async (path) => {
+          if (path.endsWith(piece.file)) throw Object.assign(new Error("not there"), { code: "ENOENT" });
+          const { lstat } = await import("node:fs/promises");
+          return lstat(path);
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(0);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("the owner's newer bytes");
+  });
+
+  test("a volume that cannot make a hard link still gets the piece back", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    const reopened = records({
+      fs: {
+        link: async () => {
+          throw Object.assign(new Error("not supported"), { code: "EPERM" });
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(1);
+    expect(reopened.list().total).toBe(1);
+  });
+
+  test("on a volume without hard links the look before the rename still keeps a file that is there: the look at the judging said ENOENT, the look at the bringing back says what is", async () => {
+    const piece = await recordWithoutFile();
+    await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    await writeFile(join(mediaDir(), piece.file), "the owner's newer bytes");
+    let looks = 0;
+    const reopened = records({
+      fs: {
+        link: async () => {
+          throw Object.assign(new Error("not supported"), { code: "EPERM" });
+        },
+        lstat: async (path) => {
+          if (path.endsWith(piece.file) && looks++ === 0) throw Object.assign(new Error("not there"), { code: "ENOENT" });
+          const { lstat } = await import("node:fs/promises");
+          return lstat(path);
+        },
+      },
+    });
+    const report = await reopened.recover();
+    expect(report.restored).toBe(0);
+    expect(await readFile(join(mediaDir(), piece.file), "utf8")).toBe("the owner's newer bytes");
+  });
+
+  test("what is brought back is gone from the quarantine folder it left", async () => {
+    const piece = await recordWithoutFile();
+    const folder = await stamp("2026-10-04T10-00-00-000Z", { [piece.file]: "photo bytes" });
+    await records().recover();
+    expect(await readdir(folder)).toEqual([]);
+  });
+
+  test("records that cannot be listed are told in one log line with counts per reason and no path", async () => {
+    await recordWithoutFile();
+    await writeFile(join(mediaDir(), "media-00000070.json"), "{ not json");
+    const lines: string[] = [];
+    await records({ warn: (text) => lines.push(text) }).recover();
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/2 .*not listed/);
+    expect(lines[0]).toContain("1 missing-file");
+    expect(lines[0]).toContain("1 unreadable");
+    expect(lines[0]).not.toContain(root());
+    expect(lines[0]).not.toContain("media-0000");
   });
 });

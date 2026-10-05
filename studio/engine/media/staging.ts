@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, open, readdir, realpath, statfs, type FileHandle } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, type FileHandle } from "node:fs/promises";
 import { isAbsolute, join, relative } from "node:path";
 import { Id, isUnsafePickedPath, MEDIA_BYTE_CAPS, type MediaKind, type MediaPickKind, type MediaUnsupportedReason, type PickedFileIdentity } from "../../shared/engine";
+import { FREE_MARGIN_BYTES, freeBytesOf, isNoSpaceError, isShortOfRoom } from "../freeBytes";
 import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOps } from "../library/openRegular";
 import { renameWithRetry } from "../library/renameRetry";
 import { unlinkWithRetry } from "../library/unlinkRetry";
@@ -141,7 +142,7 @@ export interface MediaStagingOptions {
 }
 
 const DEFAULT_CHUNK_BYTES = 1024 * 1024;
-const DEFAULT_FREE_MARGIN_BYTES = 64 * 1024 * 1024;
+const DEFAULT_FREE_MARGIN_BYTES = FREE_MARGIN_BYTES;
 /** The shape of a name this module makes: `.<id>.part` while it is copied, `<id>.media` when it is whole. Nothing else is ever removed. */
 const STAGED_NAME = /^\.?[a-z0-9-]{8,64}\.(part|media)$/;
 
@@ -174,12 +175,8 @@ function refusalOfOpen(error: unknown): Refused {
 /** What a thrown disk or folder error is, as a refusal (never with a path). */
 function refusalOfError(error: unknown): Refused {
   if (error instanceof UnsafeStagingError) return refuse("unreadable", "the library's staging folder cannot be used");
+  if (isNoSpaceError(error)) return refuse("no-space", "the library's disk filled up while the file was being copied");
   return refuse("unreadable", `the picked file could not be read${errorCode(error) === undefined ? "" : ` (${errorCode(error)})`}`);
-}
-
-async function defaultFreeBytes(dir: string): Promise<number | null> {
-  const stats = await statfs(dir);
-  return Number(stats.bavail) * Number(stats.bsize);
 }
 
 export class MediaStaging {
@@ -422,8 +419,7 @@ export class MediaStaging {
     await this.#safeDir(true);
 
     // Room first: a 2 GiB copy onto a nearly full disk would fill it and fail late.
-    const free = await (this.#options.freeBytes ?? defaultFreeBytes)(this.#dir).catch(() => null);
-    if (free !== null && free < size + (this.#options.freeMarginBytes ?? DEFAULT_FREE_MARGIN_BYTES)) {
+    if (await isShortOfRoom(this.#options.freeBytes ?? freeBytesOf, this.#dir, size + (this.#options.freeMarginBytes ?? DEFAULT_FREE_MARGIN_BYTES))) {
       return refuse("no-space", "the library's disk has too little free room for the copy");
     }
 
@@ -442,6 +438,11 @@ export class MediaStaging {
       this.#owned.delete(targetName);
       throw error;
     }
+    // A write that came up short without an error is a full disk when the disk now says it has not even its margin left, and a broken one otherwise.
+    const shortWrite = async (detail: string): Promise<Refused> =>
+      (await isShortOfRoom(this.#options.freeBytes ?? freeBytesOf, this.#dir, this.#options.freeMarginBytes ?? DEFAULT_FREE_MARGIN_BYTES))
+        ? refuse("no-space", "the library's disk filled up while the file was being copied")
+        : refuse("unreadable", detail);
     const abandon = async (result: StageResult): Promise<StageResult> => {
       await out.close().catch(() => undefined);
       await this.#removeQuietly(part);
@@ -463,12 +464,12 @@ export class MediaStaging {
         total += bytesRead;
         if (total > limit) return await abandon(refuse("changed", "the file grew while it was being copied"));
         const { bytesWritten } = await out.write(chunk, 0, bytesRead);
-        if (bytesWritten !== bytesRead) return await abandon(refuse("unreadable", "the copy could not be written whole"));
+        if (bytesWritten !== bytesRead) return await abandon(await shortWrite("the copy could not be written whole"));
         hash.update(chunk.subarray(0, bytesRead));
         onProgress?.(total, size);
       }
       if (total !== size) return await abandon(refuse("changed", "the file changed while it was being copied"));
-      if ((await out.stat()).size !== total) return await abandon(refuse("unreadable", "the copy on disk is not the size of what was read"));
+      if ((await out.stat()).size !== total) return await abandon(await shortWrite("the copy on disk is not the size of what was read"));
       // Durable before it is renamed into its name: a record is only ever written for a copy that is on disk.
       await out.sync();
       await out.close();

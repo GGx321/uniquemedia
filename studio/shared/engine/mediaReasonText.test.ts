@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { mediaReasonRu, MEDIA_REASONS_RU } from "./errorMessagesRu";
-import { MediaKind, MediaUnsupportedReason } from "./media";
+import { MAX_PICKED_FILES, MediaKind, MediaUnsupportedReason } from "./media";
 
 // 3f.3a review M2: the reason CODES are shared by every kind (`too-long`, `too-small`, `dimensions`, `codec`, ...), the TEXT depends on the
 // kind of the file that was refused. A text with no kind, or a kind with no text of its own, is the neutral one.
@@ -56,5 +56,17 @@ describe("mediaReasonRu", () => {
   test("the structure refusal is honest about what it is: not a wrong file type", () => {
     expect(MEDIA_REASONS_RU.structure).not.toMatch(/MP4/);
     expect(MEDIA_REASONS_RU.structure).toMatch(/устроен|структур/);
+  });
+});
+
+// L3 of the Stage 3 whole-slice review: `too-many` is told for two limits, the pick's (`MAX_PICKED_FILES` files at once, main's) and the engine's own queue of waiting
+// imports (a larger number). A text that states only the pick's number is false for the second.
+describe("the text of too-many", () => {
+  test("states the limit of one pick from its constant, not a number typed beside it", () => {
+    expect(mediaReasonRu("too-many")).toContain(`не больше ${MAX_PICKED_FILES} файлов`);
+  });
+
+  test("also says that files waiting to be added count, since the engine refuses a file when too many are waiting", () => {
+    expect(mediaReasonRu("too-many")).toMatch(/ждут|очеред/);
   });
 });

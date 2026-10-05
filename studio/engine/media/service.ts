@@ -38,8 +38,10 @@ import { MediaStaging, type MediaStagingOptions, type OpenedMedia, type StagedMe
 //
 // RESTART. An import that a crash interrupted is CLEANED UP, never resumed: the picked path is kept nowhere (invariant 34), so there is
 // nothing to resume from. At a library opening the staging folder is swept (what a crash left, never a copy a running import owns) and
-// the records are recovered (an orphan stored file, a record's temp file and a dangling record go; a record that cannot be read or comes
-// from a newer Studio is left as it is). The owner picks the file again.
+// the records are recovered (a record's temp file goes; an orphan stored file is set aside in the library's quarantine; a dangling record stays in
+// `media/` as a `missing-file` problem, so that its file can still arrive; a record that cannot be read or comes from a newer Studio is left as it is).
+// While a dangling record stays, every open scans the quarantine's stamps for its file (nothing cleans the quarantine yet: see the plan's backlog). The owner picks the file
+// again.
 
 export interface MediaServiceDeps {
   readonly jobs: JobRegistry;
@@ -289,9 +291,9 @@ export class MediaService {
    * a stored file, which checks it again before it reads.
    *
    * `onFound` is the render's ADMISSION (3f.2, fix round 3 M1): it runs SYNCHRONOUSLY, in the same step that reads the record and before
-   * the answer travels back, so a render reserves the media with no await between the lookup and the reservation. `media.delete` takes a
-   * media out of the index in its first tick and only then asks the reserved provider, so a media is either found here and then refused
-   * to the delete (`in-use`), or already gone from this lookup. It is not called for a media that is not found; a throw from it is the
+   * the answer travels back, so a render reserves the media with no await between the lookup and the reservation. `media.delete` asks the
+   * reserved provider and takes the media out of the index in ONE synchronous step (no await between the check and the removal; a test pins it), so a media is
+   * either found here and then refused to the delete (`in-use`), or already gone from this lookup. It is not called for a media that is not found; a throw from it is the
    * lookup's own.
    */
   async lookup(
@@ -345,6 +347,8 @@ export class MediaService {
       const area = this.#areaOf(library.root);
       await area.ready;
       if (!area.records.has(mediaId)) return "not-found";
+      // NO AWAIT from the provider's answer to the removal: `remove` takes the record out of the index in its synchronous prefix, so no lookup's admission
+      // (`onFound`) can run between «not reserved» and «gone». An await here would let a render reserve a media whose delete has already decided.
       if (this.#deps.reservedMedia?.(mediaId) === true) return "in-use";
       const removed = await area.records.remove(mediaId);
       if (!removed) return "not-found";
@@ -374,14 +378,14 @@ export class MediaService {
 
   async #execute(jobId: string, area: Area, opened: OpenedMedia, name: string, signal: AbortSignal): Promise<End> {
     if (!(await this.#turn(signal))) return { status: "cancelled" };
-    // Its turn came: a job that waited is announced again, now running.
-    if (this.#deps.jobs.startImportRunning(jobId)) this.#announce(jobId);
     const works: WorkFile[] = [];
     // Sealed when the job ends: an importer that was dropped (it ignored the cancel) and asks for a file later gets none, so nothing is
     // created that no cleanup would ever take (a held name is skipped by the staging's sweep).
     let sealed = false;
     let staged: StagedMedia | null = null;
     try {
+      // Its turn came: a job that waited is announced again, now running. Inside the `try`, so that nothing between taking the turn and the cleanup can keep the turn.
+      if (this.#deps.jobs.startImportRunning(jobId)) this.#announce(jobId);
       let lastPercent = 0;
       const copy = await opened.copy({
         signal,
@@ -394,6 +398,9 @@ export class MediaService {
           }
         },
       });
+      // The owner's file is let go as soon as the copy is verified: the importer reads the staged copy only, and a source held open through minutes of encoding keeps
+      // an SD card or a USB drive from being ejected. Idempotent: `#run` closes it again whatever happens.
+      await opened.close();
       if (!copy.ok) return copy.reason === "cancelled" ? { status: "cancelled" } : { status: "failed", reason: copy.reason, detail: copy.detail };
       staged = copy.staged;
 
@@ -533,22 +540,33 @@ export class MediaService {
 
   #finish(jobId: string, mediaKind: MediaKind, name: string, end: End): void {
     const ref = { kind: "import" as const, jobId, mediaKind, name, mediaId: null };
+    let told: boolean;
     switch (end.status) {
       case "done": {
         const state = this.#deps.jobs.finishImport(jobId, { status: "done", result: { kind: "import", mediaId: end.media.mediaId, media: end.media } });
         if (state === null || state.kind !== "import" || state.result === undefined) return;
-        this.#event("job.done", { jobId, result: state.result });
-        return;
+        told = this.#event("job.done", { jobId, result: state.result });
+        break;
       }
       case "failed": {
         const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: end.reason, detail: end.detail };
-        if (this.#deps.jobs.finishImport(jobId, { status: "failed", error }) !== null) this.#event("job.failed", { ...ref, error });
-        return;
+        if (this.#deps.jobs.finishImport(jobId, { status: "failed", error }) === null) return;
+        told = this.#event("job.failed", { ...ref, error });
+        break;
       }
       case "cancelled":
-        if (this.#deps.jobs.finishImport(jobId, { status: "cancelled" }) !== null) this.#event("job.cancelled", ref);
-        return;
+        if (this.#deps.jobs.finishImport(jobId, { status: "cancelled" }) === null) return;
+        told = this.#event("job.cancelled", ref);
+        break;
     }
+    // A terminal event that the log refused leaves no gap in the sequence (a refused event uses no seq), so a window would stay on «running» for ever. The engine's emit throws
+    // only for that refusal (a port that is down is not one), so a send that failed here sent nothing and another event can take its place.
+    if (told) return;
+    // A job that succeeded is told as a success first, built from the media itself (the registry's copy of the result may be what the log refused); only when that fails too
+    // is it the smallest `job.failed`.
+    if (end.status === "done" && this.#event("job.done", { jobId, result: { kind: "import", mediaId: end.media.mediaId, media: end.media } })) return;
+    const error: EngineError = { code: "MEDIA_UNSUPPORTED", mediaReason: "failed", detail: "the import ended but its result could not be reported" };
+    this.#event("job.failed", { ...ref, error });
   }
 
   // ---------- the turn: one import at a time ----------
@@ -591,8 +609,18 @@ export class MediaService {
     if (payload !== null) this.#event("job.progress", payload);
   }
 
-  #event<T extends UnsequencedEvent["type"]>(type: T, payload: Extract<UnsequencedEvent, { type: T }>["payload"]): void {
-    this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type, payload } as UnsequencedEvent);
+  /**
+   * Sends an event. A watcher is an observer: an event that cannot be sent (the log refused it, the schema did) is logged and never thrown, so that it cannot stop the
+   * import that told it (L1 of the Stage 3 review: a throw between «took the turn» and the cleanup kept the turn for ever and blocked every later import and a library switch).
+   */
+  #event<T extends UnsequencedEvent["type"]>(type: T, payload: Extract<UnsequencedEvent, { type: T }>["payload"]): boolean {
+    try {
+      this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type, payload } as UnsequencedEvent);
+      return true;
+    } catch (error) {
+      this.#deps.log(`an event could not be sent (${type}, ${errorCodeOf(error)})`);
+      return false;
+    }
   }
 }
 
@@ -600,6 +628,7 @@ export class MediaService {
 function endOfCommitFailure(error: unknown): End {
   if (error instanceof MediaCommitError) {
     if (error.code === "cancelled") return { status: "cancelled" };
+    if (error.code === "no-space") return { status: "failed", reason: "no-space", detail: error.message };
     if (error.code === "disk") return { status: "failed", reason: "unreadable", detail: error.message };
     return { status: "failed", reason: "failed", detail: error.message };
   }

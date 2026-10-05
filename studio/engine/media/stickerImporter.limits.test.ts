@@ -56,6 +56,18 @@ function pixelOf(file: { bytes: Uint8Array; width: number; height: number }, fra
 
 const argOf = (argv: readonly string[], flag: string): string | undefined => argv[argv.indexOf(flag) + 1];
 
+describe("the raw frames' own size limit (L2 of the security review)", () => {
+  test("the decode to the raw work file stops writing one byte past the frames the reader counted", async () => {
+    const calls: string[][] = [];
+    await stored(await run(flatGif([0, 1, 2], [10, 10, 10]), "gif", { spawner: recordingSpawner(calls) }));
+    const decode = calls.find((argv) => argv.includes("rawvideo"));
+    if (decode === undefined) throw new Error("no decode to a raw file was made");
+    // flatGif is 8 x 6 by default; three source frames of RGBA.
+    expect(Number(argOf(decode, "-fs"))).toBe(3 * 8 * 6 * 4 + 1);
+    expect(decode.indexOf("-fs")).toBeGreaterThan(decode.indexOf("-i"));
+  });
+});
+
 describe("the decoder's pixel cap (M1)", () => {
   test("leaves room for the decoder's stride alignment: a 720 px row aligned up to 64 bytes, times 720 rows, fits under it", async () => {
     const calls: string[][] = [];
@@ -274,5 +286,25 @@ describe("the stored file's size is checked after it is written (I24)", () => {
     };
     expect(reasonOf(await run(flatGif([0, 1], [10, 10]), "gif", { fileSize }))).toBe("failed");
     expect(asked).toBe(2);
+  });
+});
+
+describe("a disk that fills under a write the room check let through (full-disk error)", () => {
+  const diskFull = (code: string) => async (): Promise<number> => {
+    throw Object.assign(new Error(`${code}: no space left on device`), { code });
+  };
+
+  test.each(["ENOSPC", "EDQUOT"])("%s while the importer's own files are written or measured is no-space, not failed", async (code) => {
+    expect(reasonOf(await run(flatGif([0, 1], [10, 10]), "gif", { fileSize: diskFull(code) }))).toBe("no-space");
+  });
+
+  test("ffmpeg's own «No space left on device» in the raw decode is no-space even when the disk still says it has room", async () => {
+    let call = 0;
+    const spawner: FfmpegSpawner = (command, args, options) => (call++ === 0 ? recordingSpawner([])(command, args, options) : exitingChild(1, { stderrText: "av_interleaved_write_frame(): No space left on device" }));
+    expect(reasonOf(await run(flatGif([0, 1, 2], [10, 10, 10]), "gif", { spawner, freeBytes: async () => 1e12 }))).toBe("no-space");
+  });
+
+  test("any other disk error there stays failed", async () => {
+    expect(reasonOf(await run(flatGif([0, 1], [10, 10]), "gif", { fileSize: diskFull("EIO") }))).toBe("failed");
   });
 });

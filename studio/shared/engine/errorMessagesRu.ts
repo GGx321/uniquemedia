@@ -1,5 +1,5 @@
 import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason } from "./errors";
-import type { MediaKind, MediaUnsupportedReason } from "./media";
+import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import type { MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
 
@@ -72,8 +72,8 @@ export const MEDIA_REASONS_RU = {
   heic: "Формат HEIC не читается — сохраните как JPEG и добавьте снова.",
   changed: "Файл изменился, пока его копировали. Выберите его ещё раз.",
   unreadable: "Не удалось прочитать файл или записать его копию. Проверьте доступ к файлу и место на диске.",
-  "no-space": "На диске библиотеки не хватает места для копии файла. Освободите место и повторите.",
-  "too-many": "За один раз можно добавить не больше 20 файлов. Остальные выберите отдельно.",
+  "no-space": "На диске библиотеки не хватает места для копии и обработки файла. Освободите место и повторите.",
+  "too-many": `За один раз можно добавить не больше ${MAX_PICKED_FILES} файлов, а когда в очереди на добавление уже много файлов, новые не принимаются. Остальные выберите ещё раз, когда часть файлов добавится.`,
   failed: "Не удалось добавить файл. Попробуйте ещё раз.",
   cancelled: "Добавление отменено, в «Мои» ничего не попало.",
   "not-yet-supported": "Файлы такого типа пока нельзя добавить.",

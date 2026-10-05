@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
-import { lstat, open, stat, statfs, writeFile } from "node:fs/promises";
+import { lstat, open, stat, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { MEDIA_BYTE_CAPS, type MediaUnsupportedReason } from "../../shared/engine";
 import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
 import { inspectApng, inspectApngRaw, STICKER_FPS, STICKER_LIMITS, type ApngRejectCode } from "../../shared/stickers/apng";
 import { inspectGif, type GifInfo, type GifRejectCode } from "../../shared/stickers/gif";
 import { quantiseByAccumulatedTime, type FrameDuration } from "../../shared/stickers/quantise";
+import { FREE_MARGIN_BYTES, freeBytesOf, isNoSpaceError, type FreeBytes } from "../freeBytes";
 import { MAX_ANIMATION_LOOP_PIXELS } from "../render/layerPass";
 import { EncodeTooLargeError } from "../stickers/encodeErrors";
 import type { StickerEncodeJob } from "../stickers/encodeGate";
@@ -48,7 +49,7 @@ const DEFAULT_FFMPEG_TIMEOUT_MS = 90_000;
 const MAX_PIXELS = Math.ceil(STICKER_LIMITS.maxSide / 64) * 64 * STICKER_LIMITS.maxSide;
 const MIN_SIDE = 2;
 /** The room left on the disk beyond the raw frames, so a full disk is told before the decode starts and not by its failure. */
-export const RAW_FREE_MARGIN_BYTES = 64 * 1024 * 1024;
+export const RAW_FREE_MARGIN_BYTES = FREE_MARGIN_BYTES;
 
 export interface StickerImporterDeps {
   /** Encodes the frames of a raw file as an APNG, off the engine's event loop (`createStickerEncodeGate(...).encode`); a test passes its own. */
@@ -58,7 +59,7 @@ export interface StickerImporterDeps {
   /** How long one ffmpeg call may run before it is killed; 90 s by default. */
   readonly ffmpegTimeoutMs?: number | undefined;
   /** The free bytes of the disk `dir` is on, or null when that cannot be told; the file system's own when absent. */
-  readonly freeBytes?: ((dir: string) => Promise<number | null>) | undefined;
+  readonly freeBytes?: FreeBytes | undefined;
   /** The size of a file; `stat`'s when absent. */
   readonly fileSize?: ((path: string) => Promise<number>) | undefined;
 }
@@ -75,16 +76,6 @@ class Refused extends Error {
 }
 
 const HARDENED_HEAD: readonly string[] = ["-hide_banner", "-nostdin", "-v", "error", "-threads", "1", "-max_alloc", String(MAX_ALLOC_BYTES), "-protocol_whitelist", "file"];
-
-/** The free bytes of the disk `dir` is on; null when it cannot be told. */
-async function freeBytesOf(dir: string): Promise<number | null> {
-  try {
-    const info = await statfs(dir);
-    return Number(info.bavail) * Number(info.bsize);
-  } catch {
-    return null;
-  }
-}
 
 /** What the reader kept of a source: its canvas and each frame's duration, whatever the container. */
 interface Source {
@@ -214,7 +205,7 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
       if (signal.aborted) throw error;
       // The time limit and a child that could not be run are the machine's; a decode that failed under `-xerror` is the file's.
       if (error instanceof FfmpegTimeoutError) throw new Refused("failed");
-      if (error instanceof FfmpegError) throw new Refused(await faultOf());
+      if (error instanceof FfmpegError) throw new Refused(isNoSpaceError(error) ? "no-space" : await faultOf());
       throw new Refused("failed");
     }
   }
@@ -296,7 +287,7 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
     const room = await freeBytes(rawFolder);
     signal.throwIfAborted();
     if (room !== null && room < rawBytes + RAW_FREE_MARGIN_BYTES) throw new Refused("no-space");
-    await ffmpeg([...inputOf(source.container, inputPath), "-fps_mode", "passthrough", "-pix_fmt", "rgba", "-n", "-f", "rawvideo"], raw.path, signal, undefined, async () => {
+    await ffmpeg([...inputOf(source.container, inputPath), "-fps_mode", "passthrough", "-pix_fmt", "rgba", "-n", "-fs", String(rawBytes + 1), "-f", "rawvideo"], raw.path, signal, undefined, async () => {
       // The count decode took this file under `-xerror`, so a failure here is not the file's: the disk, when it has no room for one more frame, else the machine's.
       const left = await freeBytes(rawFolder);
       return left !== null && left < frameBytes ? "no-space" : "failed";
@@ -344,7 +335,9 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
       // A cancel wins over whatever the stop produced (a killed child, a read that was aborted, an ended worker).
       if (request.signal.aborted) return { ok: false, reason: "cancelled" };
       // Only the reason travels: an ffmpeg's stderr and an fs error's message may name a path.
-      return { ok: false, reason: error instanceof Refused ? error.reason : "failed" };
+      if (error instanceof Refused) return { ok: false, reason: error.reason };
+      // A disk that fills under a write the room check let through is still a full disk.
+      return { ok: false, reason: isNoSpaceError(error) ? "no-space" : "failed" };
     }
   };
 }

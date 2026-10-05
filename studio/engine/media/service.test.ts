@@ -424,6 +424,23 @@ describe("a refusal or a failure of the job leaves nothing", () => {
     expect(JSON.stringify(r.events).includes(tmp())).toBe(false);
   });
 
+  test("a disk that fills up while the record is saved: failed as no-space, nothing stored, nothing left staged", async () => {
+    const r = rig({
+      records: {
+        hooks: {
+          beforeRecordRename: () => {
+            throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+          },
+        },
+      },
+    });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(failedWith(r, jobId)).toMatchObject({ code: "MEDIA_UNSUPPORTED", mediaReason: "no-space" });
+    expect(await stored()).toEqual([]);
+    expect(await staged()).toEqual([]);
+  });
+
   test("a disk with no room for the copy: failed with no-space before a byte is written", async () => {
     const r = rig({ staging: { freeBytes: async () => 10, freeMarginBytes: 5 } });
     const jobId = await started(r, await callFor("a.jpg", jpeg(500)));
@@ -842,6 +859,30 @@ describe("a delete between the commit and the job's end (L-1, probe P2)", () => 
   });
 });
 
+describe("delete asks the reserved provider and takes the media out of the index in one synchronous step (L9 of the Stage 3 review)", () => {
+  test("a lookup that is already in flight when the provider is asked does not find the media afterwards: no await sits between the check and the removal", async () => {
+    let admitted = false;
+    let pending: Promise<unknown> = Promise.resolve();
+    const r: Rig = rig({
+      reservedMedia: (id) => {
+        // A render's lookup begins at this very moment, and its admission (`onFound`) runs the first time it can: a step after the provider answers.
+        pending = r.service.lookup(id, undefined, () => {
+          admitted = true;
+        });
+        return false;
+      },
+    });
+    const jobId = await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    const result = r.jobs.stateOf(jobId)?.result;
+    const mediaId = result?.kind === "import" ? result.mediaId : undefined;
+    if (mediaId === undefined || mediaId === null) throw new Error("the import did not store a media");
+    expect(await r.service.delete(mediaId)).toBe("deleted");
+    await pending;
+    expect(admitted).toBe(false);
+  });
+});
+
 describe("a media that a queued or running render uses (M-3)", () => {
   test("is not deleted while the provider says it is reserved: the answer is in-use, nothing is removed or told", async () => {
     const reserved = new Set<string>();
@@ -1095,6 +1136,197 @@ describe("what an unexpected failure logs (L-12)", () => {
     await r.service.settled();
     expect(lines.some((line) => line.includes("EIO"))).toBe(true);
     expect(lines.join("\n").includes(tmp())).toBe(false);
+  });
+});
+
+describe("the owner's file is let go after the copy (L2 of the Stage 3 review)", () => {
+  /** The real open, with a `close` that is counted: how many handles the service opened, and how many it has let go. */
+  function countingOps(): { ops: OpenRegularOps; open: () => number } {
+    let held = 0;
+    return {
+      open: () => held,
+      ops: {
+        lstat: (path) => lstat(path, { bigint: true }),
+        open: async (path, flags) => {
+          const handle = await open(path, flags);
+          held++;
+          let closed = false;
+          return new Proxy(handle, {
+            get(target, prop) {
+              if (prop === "close") {
+                return async () => {
+                  if (closed) return;
+                  closed = true;
+                  held--;
+                  await target.close();
+                };
+              }
+              const value: unknown = Reflect.get(target, prop);
+              return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+            },
+          }) as FileHandle;
+        },
+      },
+    };
+  }
+
+  test("by the time the importer runs, the picked file is no longer held open", async () => {
+    const counting = countingOps();
+    const heldDuringImport: number[] = [];
+    const r = rig({
+      staging: { ops: counting.ops },
+      importers: {
+        photo: async () => {
+          heldDuringImport.push(counting.open());
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await r.service.settled();
+    expect(heldDuringImport).toEqual([0]);
+  });
+
+  test("a file that is turned away after it was opened is let go too", async () => {
+    const counting = countingOps();
+    const r = rig({ staging: { ops: counting.ops, freeBytes: async () => 10, freeMarginBytes: 5 } });
+    await started(r, await callFor("a.jpg", jpeg(500)));
+    await r.service.settled();
+    expect(counting.open()).toBe(0);
+  });
+
+  test("a job that is still waiting for its turn holds its file, and lets it go once it has been copied", async () => {
+    const counting = countingOps();
+    const gate = deferred();
+    let calls = 0;
+    const r = rig({
+      staging: { ops: counting.ops },
+      importers: {
+        photo: async () => {
+          if (++calls === 1) await gate.promise;
+          return { ok: true, facts: PHOTO_FACTS };
+        },
+      },
+    });
+    await started(r, await callFor("a.jpg", jpeg(300)));
+    await started(r, await callFor("b.jpg", jpeg(310)));
+    // A has copied and is inside its importer; B waits for the turn with its file open.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(counting.open()).toBe(1);
+    gate.resolve();
+    await r.service.settled();
+    expect(counting.open()).toBe(0);
+  });
+});
+
+describe("an event that cannot be sent never jams the queue (L1 of the Stage 3 review)", () => {
+  const broken = (): Error => Object.assign(new Error("the event log is full"), { code: "EIO" });
+  const within = async <T,>(work: Promise<T>, ms = 2000): Promise<T | "timed out"> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<"timed out">((resolve) => {
+      timer = setTimeout(() => resolve("timed out"), ms);
+    });
+    try {
+      return await Promise.race([work, late]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  test("the announcement of a started import fails: the import still starts, runs and ends, and the library is free again", async () => {
+    const r = rig({
+      emit: (event) => {
+        if (event.type === "job.progress") throw broken();
+      },
+    });
+    const ids: string[] = [];
+    for (const name of ["a.jpg", "b.jpg", "c.jpg"]) {
+      ids.push(await started(r, await callFor(name, jpeg(300 + ids.length))));
+      expect(await within(r.service.settled())).not.toBe("timed out");
+    }
+    for (const id of ids) expect(r.jobs.stateOf(id)).toMatchObject({ status: "done" });
+    expect(r.jobs.activeImports()).toBe(0);
+  });
+
+  test("the announcement of a waiting import turning to running fails: it still runs, and the next import gets its turn", async () => {
+    const gate = deferred();
+    const importer: MediaImporter = async () => {
+      await gate.promise;
+      return { ok: true, facts: PHOTO_FACTS };
+    };
+    let waiting: string | undefined;
+    const r = rig({
+      importers: { photo: importer },
+      emit: (event) => {
+        if (event.type === "job.progress" && event.payload.kind === "import" && event.payload.jobId === waiting && event.payload.queued !== true) throw broken();
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    const b = await started(r, await callFor("b.jpg", jpeg(310)));
+    waiting = b;
+    const c = await started(r, await callFor("c.jpg", jpeg(320)));
+    gate.resolve();
+    expect(await within(r.service.settled())).not.toBe("timed out");
+    for (const id of [a, b, c]) expect(r.jobs.stateOf(id)).toMatchObject({ status: "done" });
+    expect(r.jobs.activeImports()).toBe(0);
+  });
+
+  /** Polls until `done` holds, so that a promise nobody awaits (a job's own run) is judged by what it did, not by what `settled` swallowed. */
+  async function until(done: () => boolean, ms = 2000): Promise<boolean> {
+    for (const start = Date.now(); Date.now() - start < ms; ) {
+      if (done()) return true;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    return done();
+  }
+
+  test("the event that ends a job fails: it is logged, the job is over all the same, and the next one runs", async () => {
+    const lines: string[] = [];
+    const r = rig({
+      log: (line) => lines.push(line),
+      emit: (event) => {
+        if (event.type === "job.done") throw broken();
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    expect(await until(() => r.jobs.stateOf(a)?.status === "done" && r.jobs.activeImports() === 0)).toBe(true);
+    // The throw was caught where it was thrown: it is in the log, and it did not end the job's own run in a rejection.
+    expect(lines.some((line) => line.includes("an event could not be sent (job.done"))).toBe(true);
+    const b = await started(r, await callFor("b.jpg", jpeg(310)));
+    expect(await until(() => r.jobs.stateOf(b)?.status === "done" && r.jobs.activeImports() === 0)).toBe(true);
+  });
+
+  test("a job.done that cannot be sent once is sent again built from the stored media itself, and no job.failed follows it", async () => {
+    let refused = false;
+    const r: Rig = rig({
+      emit: (event) => {
+        if (event.type === "job.done" && !refused) {
+          refused = true;
+          throw broken();
+        }
+        r.events.push(event);
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    expect(await until(() => r.jobs.stateOf(a)?.status === "done")).toBe(true);
+    const done = r.events.filter((event) => event.type === "job.done" && event.payload.jobId === a);
+    expect(done).toHaveLength(1);
+    expect(done[0]).toMatchObject({ payload: { result: { kind: "import", media: { kind: "photo" } } } });
+    expect(r.events.filter((event) => event.type === "job.failed")).toHaveLength(0);
+  });
+
+  test("a terminal event that cannot be sent is replaced by a minimal job.failed, so the window does not stay on «running»", async () => {
+    const r = rig({
+      emit: (event) => {
+        if (event.type === "job.done" && event.payload.jobId !== undefined) throw broken();
+        r.events.push(event);
+      },
+    });
+    const a = await started(r, await callFor("a.jpg", jpeg(300)));
+    expect(await until(() => r.jobs.stateOf(a)?.status === "done")).toBe(true);
+    const told = r.events.filter((event) => event.type === "job.failed" && event.payload.jobId === a);
+    expect(told).toHaveLength(1);
+    expect(told[0]).toMatchObject({ payload: { error: { code: "MEDIA_UNSUPPORTED", mediaReason: "failed" } } });
   });
 });
 

@@ -3301,10 +3301,19 @@ export class Engine {
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "money.changed", payload: { status: this.#moneyStatus() } });
   }
 
-  /** Stamps an event with the next seq and this engine's bootId and sends it to main. */
+  /**
+   * Stamps an event with the next seq and this engine's bootId and sends it to main. Throws only when the LOG refuses the event (it breaks the contract, and no seq is used up),
+   * so that a caller can send another in its place. A port that cannot take an event does not throw: the event is in the log, and a window that missed it asks `events.since`
+   * (a caller that retried after such a throw would send the same terminal event twice).
+   */
   #emit(event: UnsequencedEvent): void {
     const seq = this.#events.append(event);
     const stamped = this.#events.since(seq - 1, this.#events.bootId);
-    if (!stamped.gap) for (const e of stamped.events) this.#deps.post(e);
+    if (stamped.gap) return;
+    try {
+      for (const e of stamped.events) this.#deps.post(e);
+    } catch {
+      console.warn("studio engine: an event could not be posted to main; it is in the log");
+    }
   }
 }

@@ -695,3 +695,19 @@ describe("what the second review of the probe found (3f.4, round 2)", () => {
     expect(reasonOf((await runFixture("mp3", { spawner })).outcome)).toBe("accepted");
   });
 });
+
+describe("a disk that fills under a write the room check let through (full-disk error)", () => {
+  const diskFull = (code: string) => async (): Promise<number> => {
+    throw Object.assign(new Error(`${code}: no space left on device`), { code });
+  };
+
+  test.each(["ENOSPC", "EDQUOT"])("%s while the made file is measured is no-space, not failed", async (code) => {
+    const { outcome } = await runFixture("mp3", { fileSize: diskFull(code) });
+    expect(outcome).toEqual({ ok: false, reason: "no-space" });
+  });
+
+  test("any other disk error there stays failed", async () => {
+    const { outcome } = await runFixture("mp3", { fileSize: diskFull("EIO") });
+    expect(outcome).toEqual({ ok: false, reason: "failed" });
+  });
+});
