@@ -617,6 +617,8 @@ export class Engine {
   #importing = false;
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs: JobRegistry;
+  /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
+  readonly #reportedBadJobs = new Set<string>();
   /**
    * The render queue (3a.6): a pool over `#jobs`, sized from the settings.
    * `videos.render` submits to it through `#videos`.
@@ -2035,7 +2037,7 @@ export class Engine {
       unreadableAvatars: view.unreadable,
       unreadableTotal: view.unreadableTotal,
       // Avatar and photo run jobs of this engine's life; a state that breaks the contract is repaired (an over-long detail) or left out, since one would send every window offline.
-      jobs: validJobStates(this.#jobs.states(), (line) => console.error(`studio engine: ${line}`)),
+      jobs: validJobStates(this.#jobs.states(), (line) => console.error(`studio engine: ${line}`), this.#reportedBadJobs),
       librarySwitchGeneration: this.#librarySwitchGeneration,
       // As of the last check: start, a settings update, or a render attempt (`#refreshExportStatus`).
       exportStatus: this.#exportStatus,
