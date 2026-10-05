@@ -46,7 +46,7 @@ function deps(plan: AvatarDeletePlan, calls: string[] = []): AvatarDeleteFlowDep
   return {
     engine: {
       prepareAvatarDelete: async () => ({ error: null, deletePlan: plan }),
-      finishAvatarDelete: async (_id, outcome) => {
+      finishAvatarDelete: async (_id, _token, outcome) => {
         calls.push(`finish:${outcome}`);
         return { error: null };
       },
@@ -55,6 +55,7 @@ function deps(plan: AvatarDeletePlan, calls: string[] = []): AvatarDeleteFlowDep
     libraryPath: () => library,
     exportPath: () => exported,
     fs: NODE_FLOW_FS,
+    newToken: () => "token-00000001",
     trash: async (path) => {
       calls.push(`trash:${basename(path)}`);
       renameSync(path, join(trashDir, `${calls.length}-${basename(path)}`));

@@ -32,11 +32,17 @@ interface Rig {
   readonly real: Map<string, string>;
   readonly failTrash: Set<string>;
   readonly lines: string[];
+  /** The token each call to the engine carried, `prepare:<token>` and `finish:<token>`. */
+  readonly tokens: string[];
+  /** The identity (device and inode) of a path, as the disk would say; a path not here is its own identity, spelled exactly. A cased-apart pair is one place only when both say the same. */
+  readonly ids: Map<string, string>;
 }
 
 function rig(over: { plan?: AvatarDeletePlan; prepareError?: EngineError; finishError?: EngineError; platform?: NodeJS.Platform; trashable?: (path: string) => boolean; libraryPath?: string; exportPath?: string } = {}): Rig {
   const log: string[] = [];
   const lines: string[] = [];
+  const tokens: string[] = [];
+  const ids = new Map<string, string>();
   const disk = new Map<string, EntryKind>([
     [FOLDER, "directory"],
     [`${LIBRARY}/avatars`, "directory"],
@@ -50,11 +56,13 @@ function rig(over: { plan?: AvatarDeletePlan; prepareError?: EngineError; finish
   const failTrash = new Set<string>();
   const deps: AvatarDeleteFlowDeps = {
     engine: {
-      prepareAvatarDelete: async () => {
+      prepareAvatarDelete: async (_id, token) => {
+        tokens.push(`prepare:${token}`);
         log.push("prepare");
         return over.prepareError === undefined ? { error: null, deletePlan: over.plan ?? planOf() } : { error: over.prepareError };
       },
-      finishAvatarDelete: async (_id, outcome) => {
+      finishAvatarDelete: async (_id, token, outcome) => {
+        tokens.push(`finish:${token}`);
         log.push(`finish:${outcome}`);
         return { error: over.finishError ?? null };
       },
@@ -71,7 +79,9 @@ function rig(over: { plan?: AvatarDeletePlan; prepareError?: EngineError; finish
         return real.get(path) ?? path;
       },
       lstat: async (path) => disk.get(path) ?? null,
+      identity: async (path) => ids.get(path) ?? (disk.has(path) ? `id:${path}` : null),
     },
+    newToken: () => "token-00000001",
     trash: async (path) => {
       log.push(`trash:${path}`);
       if (failTrash.has(path)) throw new Error(`could not trash ${path}`);
@@ -81,7 +91,7 @@ function rig(over: { plan?: AvatarDeletePlan; prepareError?: EngineError; finish
     platform: over.platform ?? "darwin",
     log: (line) => lines.push(line),
   };
-  return { deps, log, disk, real, failTrash, lines };
+  return { deps, log, disk, real, failTrash, lines, tokens, ids };
 }
 
 const answered = (response: ResponseMessage) => {
@@ -509,6 +519,21 @@ describe("the Trash is asked about the REAL place, not the plan's spelling", () 
     await handleAvatarDeleteCommand(command, r.deps);
 
     expect(asked[0]).toBe(`/mnt/real/library/avatars/${AVATAR}`);
+    // and it is that real path that moves, not the plan's spelling
+    expect(r.log).toContain(`trash:/mnt/real/library/avatars/${AVATAR}`);
+    expect(r.log).not.toContain(`trash:${FOLDER}`);
+  });
+
+  test("a video file moves by its real path too", async () => {
+    const r = rig();
+    r.real.set(EXPORT, "/mnt/real/export");
+    r.real.set(`${EXPORT}/Mia`, "/mnt/real/export/Mia");
+    r.real.set(FILE_A, "/mnt/real/export/Mia/2026-10-05_photo_001.mp4");
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toContain("trash:/mnt/real/export/Mia/2026-10-05_photo_001.mp4");
+    expect(r.log).not.toContain(`trash:${FILE_A}`);
   });
 
   test("a video file's own volume is judged by its real place too", async () => {
@@ -529,27 +554,121 @@ describe("the Trash is asked about the REAL place, not the plan's spelling", () 
   });
 });
 
-describe("macOS folds the case of a folder name", () => {
-  test("a folder the Finder renamed from Mia to mia is still the same folder for a true video", async () => {
-    const r = rig({ platform: "darwin" });
+describe("two spellings are one place only when the disk says they are one thing (dev and inode), never by folding the case", () => {
+  /** The export subfolder the engine named is `Mia`; the real path of its files says `mia`. */
+  function renamed(r: Rig): void {
     r.real.set(`${EXPORT}/Mia`, `${EXPORT}/mia`);
     r.real.set(FILE_A, `${EXPORT}/mia/2026-10-05_photo_001.mp4`);
     r.real.set(FILE_B, `${EXPORT}/mia/2026-10-05_photo_002.mp4`);
+    r.disk.set(`${EXPORT}/mia`, "directory");
+  }
+
+  test("a case-insensitive volume: `Mia` and `mia` are one folder (the same inode), so a true video is moved, on every platform", async () => {
+    for (const platform of ["darwin", "win32", "linux"] as const) {
+      const r = rig({ platform: platform === "win32" ? "darwin" : platform });
+      renamed(r);
+      r.ids.set(`${EXPORT}/Mia`, "dev1:ino77");
+      r.ids.set(`${EXPORT}/mia`, "dev1:ino77");
+
+      const response = await handleAvatarDeleteCommand(command, r.deps);
+
+      expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 2, videoFilesKept: 0 } });
+    }
+  });
+
+  test("a case-sensitive volume (APFS case-sensitive): `Mia` and `mia` are two folders (two inodes), and the files of the other one are left alone", async () => {
+    const r = rig({ platform: "darwin" });
+    renamed(r);
+    r.ids.set(`${EXPORT}/Mia`, "dev1:ino77");
+    r.ids.set(`${EXPORT}/mia`, "dev1:ino88");
 
     const response = await handleAvatarDeleteCommand(command, r.deps);
 
-    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 2, videoFilesKept: 0 } });
+    expect(r.log.filter((line) => line.startsWith("trash:") && line !== `trash:${FOLDER}`)).toEqual([]);
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
   });
 
-  test("Linux, where the case matters, does not", async () => {
-    const r = rig({ platform: "linux" });
-    r.real.set(`${EXPORT}/Mia`, `${EXPORT}/mia`);
-    r.real.set(FILE_A, `${EXPORT}/mia/2026-10-05_photo_001.mp4`);
-    r.real.set(FILE_B, `${EXPORT}/mia/2026-10-05_photo_002.mp4`);
+  test("`Mia` that is a link to `mia` (another avatar's videos) is refused: the link's own identity is not the folder's", async () => {
+    const r = rig({ platform: "darwin" });
+    renamed(r);
+    r.ids.set(`${EXPORT}/Mia`, "dev1:link5"); // lstat of the link itself
+    r.ids.set(`${EXPORT}/mia`, "dev1:ino88");
 
     const response = await handleAvatarDeleteCommand(command, r.deps);
 
     expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
+  });
+
+  test("a place whose identity cannot be read is not accepted when it is spelled differently", async () => {
+    const r = rig({ platform: "darwin" });
+    renamed(r);
+    r.ids.set(`${EXPORT}/Mia`, "dev1:ino77");
+    r.deps.fs.identity = async () => null;
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 2 } });
+  });
+
+  test("the avatars folder spelled `AVATARS` by the real path is another folder on a case-sensitive volume: refused, nothing moved", async () => {
+    const r = rig({ platform: "darwin" });
+    r.real.set(`${LIBRARY}/avatars`, `${LIBRARY}/AVATARS`);
+    r.real.set(FOLDER, `${LIBRARY}/AVATARS/${AVATAR}`);
+    r.disk.set(`${LIBRARY}/AVATARS`, "directory");
+    r.disk.set(`${LIBRARY}/AVATARS/${AVATAR}`, "directory");
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", "finish:kept"]);
+    expect(response).toMatchObject({ ok: false });
+  });
+
+  test("the same real folder spelled `AVATARS` on a case-insensitive volume (one inode) is accepted, and the REAL path is what moves", async () => {
+    const r = rig({ platform: "darwin" });
+    r.real.set(`${LIBRARY}/avatars`, `${LIBRARY}/AVATARS`);
+    r.real.set(FOLDER, `${LIBRARY}/AVATARS/${AVATAR}`);
+    r.disk.set(`${LIBRARY}/AVATARS`, "directory");
+    r.disk.set(`${LIBRARY}/AVATARS/${AVATAR}`, "directory");
+    r.ids.set(`${LIBRARY}/AVATARS/${AVATAR}`, "dev1:ino1");
+    r.ids.set(`${LIBRARY}/avatars/${AVATAR}`, "dev1:ino1");
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log[1]).toBe(`trash:${LIBRARY}/AVATARS/${AVATAR}`);
+  });
+
+  test("an `avatars` that is a link is refused even when the folder seen through it has the very identity of the real one (the identity of the path is read THROUGH the link)", async () => {
+    const r = rig({ platform: "darwin" });
+    r.real.set(`${LIBRARY}/avatars`, "/elsewhere/avatars");
+    r.real.set(FOLDER, `/elsewhere/avatars/${AVATAR}`);
+    r.disk.set(`${LIBRARY}/avatars`, "symlink");
+    r.disk.set(`/elsewhere/avatars/${AVATAR}`, "directory");
+    r.ids.set(FOLDER, "dev1:ino9");
+    r.ids.set(`/elsewhere/avatars/${AVATAR}`, "dev1:ino9");
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", "finish:kept"]);
+    expect(response).toMatchObject({ ok: false });
+  });
+
+  test("a plan whose folder is spelled with another case than the library's own naming is refused, whatever the platform", async () => {
+    const wrong = `${LIBRARY}/AVATARS/${AVATAR}`;
+    const r = rig({ platform: "darwin", plan: planOf({ folder: wrong }) });
+    r.disk.set(wrong, "directory");
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", "finish:kept"]);
+  });
+
+  test("the two roots may not overlap even when only the case tells them apart", async () => {
+    const r = rig({ platform: "darwin", plan: planOf({ exportRoot: `${LIBRARY.toUpperCase()}/export`, files: [`${LIBRARY.toUpperCase()}/export/Mia/a.mp4`] }), exportPath: `${LIBRARY.toUpperCase()}/export` });
+    for (const path of [`${LIBRARY.toUpperCase()}/export`, `${LIBRARY.toUpperCase()}/export/Mia`, `${LIBRARY.toUpperCase()}/export/Mia/a.mp4`]) r.disk.set(path, path.endsWith(".mp4") ? "file" : "directory");
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(response).toMatchObject({ ok: true, result: { videoFilesTrashed: 0, videoFilesKept: 1 } });
   });
 });
 
@@ -570,6 +689,26 @@ describe("the engine losing the delete", () => {
     await handleAvatarDeleteCommand(command, r.deps);
 
     expect(r.log).not.toContain("prune");
+  });
+
+  test("a finish that got no answer (INTERNAL: a timeout, a dead engine) asks for no pruning: only an engine that answered NOT_FOUND is known to have lost the delete", async () => {
+    const r = rig({ finishError: { code: "INTERNAL", detail: "the engine did not answer within 30 s" } });
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).not.toContain("prune");
+  });
+});
+
+describe("the token that ties a finish to its prepare", () => {
+  test("one fresh token goes with the prepare and with the finish, and with the best-effort finish after a prepare that was not answered", async () => {
+    const r = rig();
+    await handleAvatarDeleteCommand(command, r.deps);
+    expect(r.tokens).toEqual(["prepare:token-00000001", "finish:token-00000001"]);
+
+    const lost = rig({ prepareError: { code: "INTERNAL" } });
+    await handleAvatarDeleteCommand(command, lost.deps);
+    expect(lost.tokens).toEqual(["prepare:token-00000001", "finish:token-00000001"]);
   });
 });
 
@@ -631,10 +770,16 @@ describe("Windows", () => {
     r.real.set(WIN_LIBRARY, "c:\\data\\library");
     r.real.set(`${WIN_LIBRARY}\\avatars`, "c:\\data\\library\\avatars");
     r.real.set(WIN_FOLDER, `c:\\data\\library\\avatars\\${AVATAR}`);
+    // the same folders, as the volume says: one inode each
+    r.ids.set(WIN_LIBRARY, "v:1");
+    r.ids.set("c:\\data\\library", "v:1");
+    r.ids.set(`${WIN_LIBRARY}\\avatars\\${AVATAR}`, "v:3");
+    r.ids.set(`c:\\data\\library\\avatars\\${AVATAR}`, "v:3");
 
     await handleAvatarDeleteCommand(command, r.deps);
 
-    expect(r.log[1]).toBe(`trash:${WIN_FOLDER}`);
+    // the REAL path is what moves
+    expect(r.log[1]).toBe(`trash:c:\\data\\library\\avatars\\${AVATAR}`);
   });
 
   test("a folder on a network share is refused when the Recycle Bin cannot take it", async () => {

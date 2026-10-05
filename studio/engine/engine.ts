@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile } from "node:fs/promises";
 import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -498,11 +498,26 @@ interface OpenedLibrary {
   unreadable: UnreadableAvatar[];
 }
 
+/** Whether the library's own folder and its `library.json` are on the disk now (false for an unmounted disk, a moved folder, a read that cannot be done). */
+async function libraryIsThere(root: string): Promise<boolean> {
+  try {
+    return (await lstat(root)).isDirectory() && (await lstat(join(root, LIBRARY_FILE))).isFile();
+  } catch {
+    return false;
+  }
+}
+
 /** The one avatar delete between prepare and finish: `library` and `detached` are set once the avatar is out of the indexes (until then it is only preparing). */
 interface PendingDelete {
   readonly avatarId: string;
+  /** Main's id of this delete: a finish carrying another one is not for it. */
+  readonly token: string;
   library: Library | null;
   detached: DetachedAvatar | null;
+  /** The plan has been made and is on its way to main: from here a finish is the ordinary end of the delete. */
+  planned: boolean;
+  /** Main ended the delete (`kept`) while the prepare was still waiting: the prepare puts everything back itself when it comes to its next look. */
+  abandoned: boolean;
 }
 
 /**
@@ -1073,7 +1088,7 @@ export class Engine {
         return { kind: "control", type: "reply", callId: call.callId, ...(await this.#chooseExportFolder(call.path)) };
       case "avatar.deletePrepare":
         try {
-          return { kind: "control", type: "reply", callId: call.callId, deletePlan: await this.#deletePrepare(call.avatarId) };
+          return { kind: "control", type: "reply", callId: call.callId, deletePlan: await this.#deletePrepare(call.avatarId, call.token) };
         } catch (error) {
           return { kind: "control", type: "reply", callId: call.callId, error: engineErrorFrom(error) };
         }
@@ -1086,7 +1101,7 @@ export class Engine {
         }
       case "avatar.deleteFinish":
         try {
-          this.#deleteFinish(call.avatarId, call.outcome);
+          this.#deleteFinish(call.avatarId, call.token, call.outcome);
           return { kind: "control", type: "reply", callId: call.callId };
         } catch (error) {
           return { kind: "control", type: "reply", callId: call.callId, error: engineErrorFrom(error) };
@@ -2816,20 +2831,25 @@ export class Engine {
   }
 
   /** `avatar.deletePrepare`: see the section's comment. Throws what the reply's `error` carries; on success the avatar stays claimed until `#deleteFinish`. */
-  async #deletePrepare(avatarId: string): Promise<AvatarDeletePlan> {
+  async #deletePrepare(avatarId: string, token: string): Promise<AvatarDeletePlan> {
     if (this.#pendingDelete !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: "an avatar is already being deleted; wait for it to finish" });
     // The single slot is taken HERE, before the first await: a second prepare that arrives while this one awaits the library finds it taken.
-    const slot: PendingDelete = { avatarId, library: null, detached: null };
+    const slot: PendingDelete = { avatarId, token, library: null, detached: null, planned: false, abandoned: false };
     this.#pendingDelete = slot;
     try {
       // Claimed before the first await too: nothing else (a library switch included) may change the avatar from here to the finish.
       this.#claimAvatar(avatarId, "a job or command is changing this avatar; delete it when that ends");
     } catch (error) {
-      this.#pendingDelete = null;
+      if (this.#pendingDelete === slot) this.#pendingDelete = null;
       throw error;
     }
+    // Main ended this delete (`kept`) while it waited: nothing is left to hand a plan to.
+    const assertNotAbandoned = (): void => {
+      if (slot.abandoned) throw new EngineFailure({ code: "NOT_FOUND", detail: "the delete was ended before its plan was made" });
+    };
     try {
       const library = await this.#liveLibrary();
+      assertNotAbandoned();
       if (library.getAvatar(avatarId) === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
       const busy = this.#deleteBusy(library, avatarId);
       if (busy !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: `${busy}; delete the avatar when it ends` });
@@ -2837,38 +2857,53 @@ export class Engine {
       slot.library = library;
       slot.detached = library.detachAvatar(avatarId);
       const found = await this.#videos.avatarFiles(library.root, avatarId);
+      assertNotAbandoned();
+      slot.planned = true;
       return { avatarId, libraryRoot: library.root, folder: library.avatarDirPath(avatarId), exportRoot: found.exportRoot, files: found.files, unlisted: found.unlisted };
     } catch (error) {
       // Nothing was moved: put the avatar back and let go of the slot and the claim.
-      if (slot.library !== null && slot.detached !== null) slot.library.reattachAvatar(slot.detached);
-      this.#pendingDelete = null;
+      if (slot.library !== null && slot.detached !== null) {
+        slot.library.reattachAvatar(slot.detached);
+        // Main may have been told `kept` already, before the avatar came back: the windows are shown it again.
+        if (slot.abandoned) this.#announceRestored(slot.library, avatarId);
+      }
+      if (this.#pendingDelete === slot) this.#pendingDelete = null;
       this.#busyAvatars.delete(avatarId);
       throw error;
     }
   }
 
+  /** An avatar a delete took out of the indexes is back (`kept`): the windows are shown it again, and a stale used index is read again on its own. */
+  #announceRestored(library: Library, avatarId: string): void {
+    if (library.getAvatar(avatarId)?.status === "draft") {
+      const draft = this.#draft(avatarId);
+      if (draft !== null) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
+    } else {
+      this.#announceAvatarOrLog(library, avatarId);
+    }
+    this.#videos.avatarRestored(library, avatarId);
+  }
+
   /**
    * `avatar.deleteFinish`: `trashed` forgets the avatar and announces it, `kept` puts it back and announces it again (a window reloaded between prepare and
-   * finish never saw it come back otherwise). NOT_FOUND when no such delete is pending (the engine restarted, or a repeat), or still preparing.
+   * finish never saw it come back otherwise). The finish must carry the TOKEN of the prepare it ends: another one (a stray, a late one of an earlier delete)
+   * is NOT_FOUND and releases nothing. A `kept` that finds its prepare still waiting marks it abandoned and answers ok: the prepare releases everything itself.
+   * NOT_FOUND also when no such delete is pending (the engine restarted, or a repeat).
    */
-  #deleteFinish(avatarId: string, outcome: "trashed" | "kept"): void {
+  #deleteFinish(avatarId: string, token: string, outcome: "trashed" | "kept"): void {
     const pending = this.#pendingDelete;
-    if (pending === null || pending.avatarId !== avatarId || pending.library === null || pending.detached === null) {
-      throw new EngineFailure({ code: "NOT_FOUND", detail: `no delete of avatar ${avatarId} is pending` });
+    if (pending === null || pending.avatarId !== avatarId || pending.token !== token) throw new EngineFailure({ code: "NOT_FOUND", detail: `no delete of avatar ${avatarId} is pending` });
+    if (!pending.planned || pending.library === null || pending.detached === null) {
+      // Still preparing, with no plan handed over yet: only `kept` can end it (main moves nothing before it has a plan).
+      if (outcome !== "kept") throw new EngineFailure({ code: "NOT_FOUND", detail: `no delete of avatar ${avatarId} is pending` });
+      pending.abandoned = true;
+      return;
     }
     this.#pendingDelete = null;
     try {
       if (outcome === "kept") {
-        const { library } = pending;
-        library.reattachAvatar(pending.detached);
-        if (library.getAvatar(avatarId)?.status === "draft") {
-          const draft = this.#draft(avatarId);
-          if (draft !== null) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "draft.changed", payload: { draft } });
-        } else {
-          this.#announceAvatarOrLog(library, avatarId);
-        }
-        // A used index that was stale when it was taken out is read again, as it would have been had the avatar stayed.
-        this.#videos.avatarRestored(library, avatarId);
+        pending.library.reattachAvatar(pending.detached);
+        this.#announceRestored(pending.library, avatarId);
         return;
       }
       this.#jobs.forgetFinishedFor(avatarId);
@@ -2885,12 +2920,15 @@ export class Engine {
   async #pruneMissing(): Promise<void> {
     const library = this.library;
     if (library === null) return;
+    // A library whose own folder or `library.json` is not there (an unmounted external disk, a moved folder) says nothing about its avatars: prune nothing.
+    if (!(await libraryIsThere(library.root))) return;
+    const held = (id: string): boolean => this.#busyAvatars.has(id) || this.#jobs.hasLiveJobFor(id) || this.#renders.reservedPhotos(id).size > 0 || library.pendingVideoCount(id) > 0;
     for (const manifest of library.listAvatars()) {
       const { id } = manifest;
-      if (this.#busyAvatars.has(id) || this.#jobs.hasLiveJobFor(id)) continue;
+      if (held(id)) continue;
       if (await library.manifestOnDisk(id)) continue;
       // The look took a moment: the avatar may have become busy, or be gone, meanwhile.
-      if (this.#busyAvatars.has(id) || library.getAvatar(id) === undefined) continue;
+      if (held(id) || library.getAvatar(id) === undefined) continue;
       library.detachAvatar(id);
       this.#jobs.forgetFinishedFor(id);
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId: id } });

@@ -824,7 +824,7 @@ describe("calls to the engine (avatar.deletePrepare and avatar.deleteFinish)", (
   test("a prepare posts the avatar id with a call id and resolves with the plan", async () => {
     const { host, ports } = setup();
     await host.start();
-    const pending = host.prepareAvatarDelete("avatar-0001");
+    const pending = host.prepareAvatarDelete("avatar-0001", "token-00000001");
     await Bun.sleep(0);
     const call = ports[0]?.posted[0];
     expect(call).toMatchObject({ kind: "control", type: "avatar.deletePrepare", avatarId: "avatar-0001" });
@@ -837,7 +837,7 @@ describe("calls to the engine (avatar.deletePrepare and avatar.deleteFinish)", (
   test("a refusal is passed on, with no plan", async () => {
     const { host, ports } = setup();
     await host.start();
-    const pending = host.prepareAvatarDelete("avatar-0001");
+    const pending = host.prepareAvatarDelete("avatar-0001", "token-00000001");
     await Bun.sleep(0);
     const call = ports[0]?.posted[0];
     const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
@@ -849,7 +849,7 @@ describe("calls to the engine (avatar.deletePrepare and avatar.deleteFinish)", (
   test("a prepare waits as long as the engine's own bounded look takes, not the default 30 s", async () => {
     const { host, timers } = setup();
     await host.start();
-    const pending = host.prepareAvatarDelete("avatar-0001");
+    const pending = host.prepareAvatarDelete("avatar-0001", "token-00000001");
     await timers.advance(30_000);
     await timers.advance(AVATAR_DELETE_PREPARE_DEADLINE_MS - 30_000);
 
@@ -859,10 +859,10 @@ describe("calls to the engine (avatar.deletePrepare and avatar.deleteFinish)", (
   test("a finish posts the avatar id and the outcome", async () => {
     const { host, ports } = setup();
     await host.start();
-    const pending = host.finishAvatarDelete("avatar-0001", "trashed");
+    const pending = host.finishAvatarDelete("avatar-0001", "token-00000001", "trashed");
     await Bun.sleep(0);
     const call = ports[0]?.posted[0];
-    expect(call).toMatchObject({ kind: "control", type: "avatar.deleteFinish", avatarId: "avatar-0001", outcome: "trashed" });
+    expect(call).toMatchObject({ kind: "control", type: "avatar.deleteFinish", avatarId: "avatar-0001", token: "token-00000001", outcome: "trashed" });
     const callId = typeof call === "object" && call !== null && "callId" in call ? call.callId : null;
     ports[0]?.fromEngine({ kind: "control", type: "reply", callId });
 
@@ -889,8 +889,8 @@ describe("calls to the engine (avatar.deletePrepare and avatar.deleteFinish)", (
     await endBackoff();
     children[1]?.crash(1);
 
-    expect(await host.prepareAvatarDelete("avatar-0001")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
-    expect(await host.finishAvatarDelete("avatar-0001", "kept")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
+    expect(await host.prepareAvatarDelete("avatar-0001", "token-00000001")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
+    expect(await host.finishAvatarDelete("avatar-0001", "token-00000001", "kept")).toMatchObject({ error: { code: "INTERNAL", detail: ENGINE_GONE_DETAIL } });
   });
 });
 

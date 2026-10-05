@@ -35,9 +35,9 @@ export type EntryKind = "file" | "directory" | "symlink" | "other";
 export interface AvatarDeleteFlowDeps {
   engine: {
     /** `avatar.deletePrepare`: `error` is null with a `deletePlan` on success. */
-    prepareAvatarDelete(avatarId: string): Promise<{ error: EngineError | null; deletePlan?: AvatarDeletePlan | undefined }>;
+    prepareAvatarDelete(avatarId: string, token: string): Promise<{ error: EngineError | null; deletePlan?: AvatarDeletePlan | undefined }>;
     /** `avatar.deleteFinish`. */
-    finishAvatarDelete(avatarId: string, outcome: "trashed" | "kept"): Promise<{ error: EngineError | null }>;
+    finishAvatarDelete(avatarId: string, token: string, outcome: "trashed" | "kept"): Promise<{ error: EngineError | null }>;
     /** `avatars.pruneMissing`: the engine forgets the avatars whose manifest is no longer on the disk. */
     pruneMissingAvatars(): Promise<{ error: EngineError | null }>;
   };
@@ -50,7 +50,14 @@ export interface AvatarDeleteFlowDeps {
     realpath(path: string): Promise<string>;
     /** What the entry is, without following a link; null when it does not exist. */
     lstat(path: string): Promise<EntryKind | null>;
+    /**
+     * The entry's identity (device and inode), read WITHOUT following a link, so a link has an identity of its own; null when it does not exist or the disk
+     * cannot say. Two spellings of a path are one place only when this says so: case is never folded by guess.
+     */
+    identity(path: string): Promise<string | null>;
   };
+  /** A fresh id for one delete: the engine ties the finish to its prepare by it, so a stray or late finish never releases another delete. */
+  newToken(): string;
   /** `shell.trashItem`: moves to the system Trash and rejects when it cannot. */
   trash(path: string): Promise<void>;
   /** Whether the system Trash takes this REAL path. False for a place it cannot (a Windows network share): that is refused up front. */
@@ -72,6 +79,16 @@ export const NODE_FLOW_FS: AvatarDeleteFlowDeps["fs"] = {
       throw error;
     }
   },
+  identity: async (path) => {
+    try {
+      const info = await lstat(path, { bigint: true });
+      // An inode of 0 is a disk that cannot say (some network and FAT volumes): that is no identity.
+      return info.ino === 0n ? null : `${info.dev}:${info.ino}`;
+    } catch (error) {
+      if (typeof error === "object" && error !== null && "code" in error && (error.code === "ENOENT" || error.code === "ENOTDIR")) return null;
+      throw error;
+    }
+  },
 };
 
 const apiOf = (platform: NodeJS.Platform) => (platform === "win32" ? win32 : posix);
@@ -85,15 +102,16 @@ const NOT_VERIFIED: EngineError = { code: "INTERNAL", detail: "the avatar's fold
 export async function handleAvatarDeleteCommand(command: AvatarDeleteCommand, deps: AvatarDeleteFlowDeps): Promise<ResponseMessage> {
   const { avatarId } = command.payload;
   const log = deps.log ?? (() => undefined);
-  const prepared = await deps.engine.prepareAvatarDelete(avatarId);
+  const token = deps.newToken();
+  const prepared = await deps.engine.prepareAvatarDelete(avatarId, token);
   if (prepared.error !== null) {
     // Only an answer that never came (INTERNAL: a timeout, a lost reply, a dead engine) may have left the avatar claimed; the engine's own refusals hold nothing.
-    if (prepared.error.code === "INTERNAL") await deps.engine.finishAvatarDelete(avatarId, "kept").catch(() => undefined);
+    if (prepared.error.code === "INTERNAL") await deps.engine.finishAvatarDelete(avatarId, token, "kept").catch(() => undefined);
     return errorResponseFor(command, prepared.error);
   }
   const plan = prepared.deletePlan;
   if (plan === undefined) {
-    await deps.engine.finishAvatarDelete(avatarId, "kept").catch(() => undefined);
+    await deps.engine.finishAvatarDelete(avatarId, token, "kept").catch(() => undefined);
     return errorResponseFor(command, { code: "INTERNAL", detail: "the engine answered the delete without a plan" });
   }
 
@@ -101,7 +119,7 @@ export async function handleAvatarDeleteCommand(command: AvatarDeleteCommand, de
   let finished = false;
   const finish = async (outcome: "trashed" | "kept"): Promise<EngineError | null> => {
     finished = true;
-    const answer = await deps.engine.finishAvatarDelete(avatarId, outcome).catch((): { error: EngineError | null } => ({ error: { code: "INTERNAL" } }));
+    const answer = await deps.engine.finishAvatarDelete(avatarId, token, outcome).catch((): { error: EngineError | null } => ({ error: { code: "INTERNAL" } }));
     if (answer.error !== null) log(`the engine did not take the end of an avatar delete (${answer.error.code})`);
     return answer.error;
   };
@@ -131,19 +149,19 @@ export async function handleAvatarDeleteCommand(command: AvatarDeleteCommand, de
 
     let moveError: unknown = null;
     try {
-      await deps.trash(plan.folder);
+      await deps.trash(again.real);
     } catch (error) {
       moveError = error;
     }
     // The shell can report an error after the move was done, and can report success without one: only the folder being GONE counts.
-    if ((await deps.fs.lstat(plan.folder).catch((): EntryKind | null => "directory")) !== null) {
+    if ((await deps.fs.lstat(again.real).catch((): EntryKind | null => "directory")) !== null) {
       log(`the system Trash did not take an avatar's folder (${moveError === null ? "reported done" : codeOf(moveError)})`);
       await finish("kept");
       return errorResponseFor(command, TRASH_REFUSED);
     }
     const lost = await finish("trashed");
     // The engine did not know this delete (it restarted): it still lists an avatar whose folder is gone, so it is asked to look at the disk.
-    if (lost !== null) {
+    if (lost !== null && lost.code === "NOT_FOUND") {
       const pruned = await deps.engine.pruneMissingAvatars().catch((): { error: EngineError | null } => ({ error: { code: "INTERNAL" } }));
       if (pruned.error !== null) log(`the engine could not forget the avatars the disk no longer has (${pruned.error.code})`);
     }
@@ -163,7 +181,7 @@ export async function handleAvatarDeleteCommand(command: AvatarDeleteCommand, de
         continue;
       }
       try {
-        await deps.trash(file);
+        await deps.trash(real);
         trashed++;
       } catch (error) {
         kept++;
@@ -194,37 +212,67 @@ function codeOf(error: unknown): string {
   return error instanceof Error ? error.name : "error";
 }
 
-/**
- * A path as it is compared: normalised, and with the case folded where the volume folds it (Windows; and macOS, whose volumes do by default: a folder
- * the Finder renamed from `Mia` to `mia` is the same folder, and a true video in it must not be left behind as a stranger).
- */
-function norm(platform: NodeJS.Platform, path: string): string {
-  const normal = apiOf(platform).normalize(path);
-  return platform === "win32" || platform === "darwin" ? normal.toLowerCase() : normal;
+/** A path normalised, spelled exactly: the shape the plan must have. */
+function exactly(platform: NodeJS.Platform, path: string): string {
+  return apiOf(platform).normalize(path);
 }
 
-/** `path` is strictly below `root` (both real). */
+/**
+ * A path normalised and with the case folded, for REFUSALS only (the two roots overlapping, a folder being the library itself): folding there can only add a
+ * refusal, never let a path through that an exact look would not.
+ */
+function folded(platform: NodeJS.Platform, path: string): string {
+  return exactly(platform, path).toLowerCase();
+}
+
+/** `path` is strictly below `root` (both real); folded, so it only ever adds refusals. */
 function isBelow(platform: NodeJS.Platform, root: string, path: string): boolean {
   const api = apiOf(platform);
-  const rel = api.relative(norm(platform, root), norm(platform, path));
+  const rel = api.relative(folded(platform, root), folded(platform, path));
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${api.sep}`) && !api.isAbsolute(rel);
 }
 
-type FolderCheck = { readonly ok: true; readonly real: string } | { readonly ok: false; readonly reason: string };
+/**
+ * Whether two REAL paths name one place. Spelled exactly alike: yes. Spelled differently (a volume that folds case, a Finder rename): only when the disk says
+ * they are ONE THING, the same device and inode, each read without following a link (so `Mia` that is a link to `mia` is not `mia`). Case is never folded by
+ * guess: on a case-sensitive volume `Mia` and `mia` are two folders, and a path the disk cannot vouch for is not accepted.
+ */
+async function samePlace(deps: AvatarDeleteFlowDeps, a: string, b: string): Promise<boolean> {
+  if (exactly(deps.platform, a) === exactly(deps.platform, b)) return true;
+  const [first, second] = await Promise.all([deps.fs.identity(a), deps.fs.identity(b)]);
+  return first !== null && first === second;
+}
+
+/**
+ * `real` (a REAL path) is the place `base/…names` names: spelled exactly alike, or, when only the spelling differs, every name below `base` is a real folder (not a
+ * link: a link at `avatars` or at `Mia` would lead to somewhere else that happens to share an inode when looked at through it) and the disk says both are one thing.
+ */
+async function samePlaceBelow(deps: AvatarDeleteFlowDeps, real: string, base: string, names: readonly string[]): Promise<boolean> {
+  const api = apiOf(deps.platform);
+  const named = api.join(base, ...names);
+  if (exactly(deps.platform, real) === exactly(deps.platform, named)) return true;
+  let walk = base;
+  for (const name of names) {
+    walk = api.join(walk, name);
+    if ((await deps.fs.lstat(walk)) !== "directory") return false;
+  }
+  return samePlace(deps, real, named);
+}
+
+type FolderCheck ={ readonly ok: true; readonly real: string } | { readonly ok: false; readonly reason: string };
 
 /** The folder of the plan when it is exactly `<library>/avatars/<avatarId>`, a real folder, in the library main's settings name (its REAL path); else why not. */
 async function verifyFolder(plan: AvatarDeletePlan, avatarId: string, deps: AvatarDeleteFlowDeps): Promise<FolderCheck> {
   const api = apiOf(deps.platform);
-  const same = (a: string, b: string): boolean => norm(deps.platform, a) === norm(deps.platform, b);
   if (plan.avatarId !== avatarId || !Id.safeParse(avatarId).success) return { ok: false, reason: "another avatar" };
-  // The place the library keeps the avatar, by its own naming: nothing the plan says is trusted beyond this shape.
-  if (!same(plan.folder, api.join(plan.libraryRoot, "avatars", avatarId))) return { ok: false, reason: "not the avatar's place" };
+  // The place the library keeps the avatar, by its own naming, spelled exactly: nothing the plan says is trusted beyond this shape.
+  if (exactly(deps.platform, plan.folder) !== exactly(deps.platform, api.join(plan.libraryRoot, "avatars", avatarId))) return { ok: false, reason: "not the avatar's place" };
   const realLibrary = await deps.fs.realpath(plan.libraryRoot);
-  if (!same(realLibrary, await deps.fs.realpath(deps.libraryPath()))) return { ok: false, reason: "not the saved library" };
+  if (!(await samePlace(deps, realLibrary, await deps.fs.realpath(deps.libraryPath())))) return { ok: false, reason: "not the saved library" };
   // A link at the folder itself would move the link and leave what it points at: a real folder only.
   if ((await deps.fs.lstat(plan.folder)) !== "directory") return { ok: false, reason: "not a folder" };
   const real = await deps.fs.realpath(plan.folder);
-  if (!same(real, api.join(realLibrary, "avatars", avatarId))) return { ok: false, reason: "outside the library" };
+  if (!(await samePlaceBelow(deps, real, realLibrary, ["avatars", avatarId]))) return { ok: false, reason: "outside the library" };
   return { ok: true, real };
 }
 
@@ -239,13 +287,13 @@ interface Candidates {
 async function verifyFiles(plan: AvatarDeletePlan, deps: AvatarDeleteFlowDeps): Promise<Candidates> {
   const none: Candidates = { files: [], skipped: plan.files.length, exportRoot: "", libraryRoot: "" };
   if (plan.exportRoot === null || plan.files.length === 0) return none;
-  const same = (a: string, b: string): boolean => norm(deps.platform, a) === norm(deps.platform, b);
   try {
     const exportRoot = await deps.fs.realpath(plan.exportRoot);
     const libraryRoot = await deps.fs.realpath(plan.libraryRoot);
-    // The export folder the settings name, and one that neither holds the library nor lies in it.
-    if (!same(exportRoot, await deps.fs.realpath(deps.exportPath()))) return none;
-    if (same(exportRoot, libraryRoot) || isBelow(deps.platform, libraryRoot, exportRoot) || isBelow(deps.platform, exportRoot, libraryRoot)) return none;
+    // The export folder the settings name, and one that neither holds the library nor lies in it (a refusal in any spelling: folded, or the same inode).
+    if (!(await samePlace(deps, exportRoot, await deps.fs.realpath(deps.exportPath())))) return none;
+    if (folded(deps.platform, exportRoot) === folded(deps.platform, libraryRoot) || isBelow(deps.platform, libraryRoot, exportRoot) || isBelow(deps.platform, exportRoot, libraryRoot)) return none;
+    if (await samePlace(deps, exportRoot, libraryRoot)) return none;
     const files: string[] = [];
     for (const file of plan.files) {
       if ((await fileIsOurs(file, exportRoot, libraryRoot, plan.exportRoot, deps).catch(() => null)) !== null) files.push(file);
@@ -258,7 +306,8 @@ async function verifyFiles(plan: AvatarDeletePlan, deps: AvatarDeleteFlowDeps): 
 
 /**
  * The REAL path of `file` when it is a video file main may move, else null: exactly `<export>/<folder>/<file>` by the plan's own spelling, a regular file
- * (never a link), in a folder that really is `<export>/<folder>` (no link out of the export folder), and nowhere in the library.
+ * (never a link), in a folder that really is `<export>/<folder>` (the same place by identity: no link out of the export folder, and no other folder that only
+ * a case tells apart), and nowhere in the library.
  */
 async function fileIsOurs(file: string, realExport: string, realLibrary: string, planExport: string, deps: AvatarDeleteFlowDeps): Promise<string | null> {
   if (realExport === "") return null;
@@ -270,7 +319,7 @@ async function fileIsOurs(file: string, realExport: string, realLibrary: string,
   if (folderName === undefined) return null;
   if ((await deps.fs.lstat(file)) !== "file") return null;
   const realFolder = await deps.fs.realpath(api.dirname(file));
-  if (norm(deps.platform, realFolder) !== norm(deps.platform, api.join(realExport, folderName))) return null;
-  if (isBelow(deps.platform, realLibrary, realFolder) || norm(deps.platform, realFolder) === norm(deps.platform, realLibrary)) return null;
+  if (!(await samePlaceBelow(deps, realFolder, realExport, [folderName]))) return null;
+  if (isBelow(deps.platform, realLibrary, realFolder) || folded(deps.platform, realFolder) === folded(deps.platform, realLibrary)) return null;
   return api.join(realFolder, api.basename(file));
 }

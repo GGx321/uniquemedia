@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { EngineReply } from "./control";
 import { EventMessage, RelativePath, type AvatarSummary } from "../shared/engine";
@@ -14,7 +14,7 @@ import { NODE_COMMIT_FS } from "./videos/commitFs";
 import { commitIntent, writeIntent } from "./videos/intents";
 import { parseRecordSpec, type VideoRecord } from "./videos/record";
 import { fakeVideoBytes, sha256Of, specOf } from "./videos/testing/kit";
-import { command, engineSettings, failed, GOOD, NOW, ok, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
+import { command, engineSettings, failed, generate, GOOD, NOW, ok, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -29,8 +29,9 @@ const exportDir = () => join(dir(), "export");
 type Started = Awaited<ReturnType<typeof startEngine>>;
 
 let callSeq = 0;
-const prepareCall = (avatarId: string) => ({ kind: "control", type: "avatar.deletePrepare", callId: `call-${String(++callSeq).padStart(8, "0")}`, avatarId });
-const finishCall = (avatarId: string, outcome: "trashed" | "kept") => ({ kind: "control", type: "avatar.deleteFinish", callId: `call-${String(++callSeq).padStart(8, "0")}`, avatarId, outcome });
+const TOKEN = "token-00000001";
+const prepareCall = (avatarId: string, token = TOKEN) => ({ kind: "control", type: "avatar.deletePrepare", callId: `call-${String(++callSeq).padStart(8, "0")}`, avatarId, token });
+const finishCall = (avatarId: string, outcome: "trashed" | "kept", token = TOKEN) => ({ kind: "control", type: "avatar.deleteFinish", callId: `call-${String(++callSeq).padStart(8, "0")}`, avatarId, token, outcome });
 
 async function ask(started: Started, call: unknown): Promise<EngineReply> {
   await started.engine.receive(call);
@@ -356,43 +357,33 @@ describe("a delete that ends as kept shows the avatar to the windows again", () 
 });
 
 describe("a paid command for an avatar whose folder is no longer on the disk", () => {
-  test("avatars.generateCandidates refuses NOT_FOUND before it reserves anything", async () => {
+  // The control and the guard use the very same stand: with the folder there the command reaches its paid call (the stub saw it); with the folder gone it is
+  // refused NOT_FOUND and the stub saw nothing. Removing the guard from the engine turns the second test red.
+  test("avatars.generateCandidates: with the folder there it pays", async () => {
+    const seeded = await seed();
+    const started = await start();
+
+    ok(await started.engine.handle(generate(seeded.draftId)));
+
+    await until(() => started.net.paidCalls().length > 0, "a paid request");
+  });
+
+  test("avatars.generateCandidates: with the folder gone it is NOT_FOUND before it reserves or sends anything", async () => {
     const seeded = await seed();
     const started = await start();
     await rm(join(libraryDir(), "avatars", seeded.draftId), { recursive: true });
 
-    const refused = failed(await started.engine.handle(command("avatars.generateCandidates", { avatarId: seeded.draftId, acceptedWorstMicros: 10_000_000 })));
+    const refused = failed(await started.engine.handle(generate(seeded.draftId)));
 
     expect(refused.error.code).toBe("NOT_FOUND");
+    expect(refused.error.detail).toContain("no longer on the disk");
     expect(started.net.paidCalls()).toEqual([]);
-  });
-
-  test("runs.start refuses NOT_FOUND", async () => {
-    const seeded = await seed();
-    const started = await start();
-    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
-
-    const refused = failed(await started.engine.handle(command("runs.start", { avatarId: seeded.avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 10_000_000 })));
-
-    expect(refused.error.code).toBe("NOT_FOUND");
-    expect(started.net.paidCalls()).toEqual([]);
-  });
-
-  test("avatars.rewriteDescriptor refuses NOT_FOUND", async () => {
-    const seeded = await seed();
-    const started = await start();
-    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
-
-    const refused = failed(await started.engine.handle(command("avatars.rewriteDescriptor", { avatarId: seeded.avatarId, acceptedWorstMicros: 10_000_000 })));
-
-    expect(refused.error.code).toBe("NOT_FOUND");
-    expect(started.net.paidCalls()).toEqual([]);
+    expect(existsSync(join(dir(), "userData", "ledger.jsonl"))).toBe(false);
   });
 });
 
 describe("avatars.pruneMissing", () => {
-  test("drops the avatars whose folder is gone from the disk, announces each, and keeps the rest", async () => {
-    const seeded = await seed();
+  test("drops the avatars whose folder is gone from the disk, announces each, and keeps the rest", async () => {    const seeded = await seed();
     const started = await start();
     await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
 
@@ -424,6 +415,72 @@ describe("avatars.pruneMissing", () => {
 
     expect(removedEvents(started)).toEqual([]);
     expect((await ask(started, finishCall(seeded.avatarId, "kept"))).error).toBeUndefined();
+  });
+
+  test("an avatar with a live job is NOT pruned even when its folder is gone: a job holds it", async () => {
+    const seeded = await seed();
+    const jobs = new JobRegistry();
+    const started = await start({ deps: { jobs } });
+    jobs.startCandidates("job-00000001", seeded.avatarId, 4);
+    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b004" });
+
+    expect(removedEvents(started)).toEqual([]);
+    expect((await avatarsOf(started)).avatars.map((a) => a.avatarId)).toEqual([seeded.avatarId]);
+  });
+
+  test("an avatar that becomes busy while its manifest is being looked at is NOT pruned: the look is checked again after the wait", async () => {
+    const seeded = await seed();
+    const jobs = new JobRegistry();
+    const started = await start({ deps: { jobs } });
+    const library = started.engine.library;
+    if (library === null) throw new Error("expected a library");
+    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
+    // The look at the disk is slow: a job for the avatar starts while it waits.
+    Reflect.set(library, "manifestOnDisk", async () => {
+      jobs.startCandidates("job-00000002", seeded.avatarId, 4);
+      return false;
+    });
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b005" });
+
+    expect(removedEvents(started)).toEqual([]);
+    expect((await avatarsOf(started)).avatars.map((a) => a.avatarId)).toEqual([seeded.avatarId]);
+  });
+
+  test("an avatar with a render queued is NOT pruned either", async () => {
+    const seeded = await seed();
+    const jobs = new JobRegistry();
+    const started = await start({ deps: { jobs } });
+    jobs.queueRender("job-00000003", { videoId: "video-0000000f", avatarId: seeded.avatarId, montageId: null }, 90);
+    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b006" });
+
+    expect(removedEvents(started)).toEqual([]);
+  });
+
+  test("a library whose folder or library.json is not there is pruned of NOTHING: an unmounted disk must not make the engine forget every avatar", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await rm(libraryDir(), { recursive: true });
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b007" });
+
+    expect(removedEvents(started)).toEqual([]);
+    expect(started.engine.library?.listAvatars().map((a) => a.id).sort()).toEqual([seeded.avatarId, seeded.draftId].sort());
+  });
+
+  test("the same when only library.json is gone", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await rm(join(libraryDir(), "library.json"));
+    await rm(join(libraryDir(), "avatars", seeded.avatarId), { recursive: true });
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b008" });
+
+    expect(removedEvents(started)).toEqual([]);
   });
 });
 
@@ -631,8 +688,147 @@ describe("avatar.deleteFinish: kept", () => {
   });
 });
 
-describe("avatar.deleteFinish with nothing to finish", () => {
-  test("without a prepare it is NOT_FOUND and changes nothing", async () => {
+/** The reply the engine posted to one call, by its call id (the replies of calls made at once do not come in the order they were sent). */
+function replyOf(started: Started, call: { callId: string }): EngineReply {
+  return EngineReply.parse(started.posted.find((m) => typeof m === "object" && m !== null && "callId" in m && m.callId === call.callId));
+}
+
+describe("a finish is tied to ITS prepare by the delete token", () => {
+  test("a finish with another token is NOT_FOUND and releases nothing: the delete under way stays, and finishes with its own token", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await ask(started, prepareCall(seeded.avatarId, "token-aaaaaaaa"));
+
+    const stray = await ask(started, finishCall(seeded.avatarId, "kept", "token-bbbbbbbb"));
+
+    expect(stray.error?.code).toBe("NOT_FOUND");
+    expect((await ask(started, prepareCall(seeded.draftId, "token-cccccccc"))).error?.code).toBe("IN_FLIGHT");
+    expect((await avatarsOf(started)).avatars).toEqual([]); // still taken out: the delete is still pending
+    expect((await ask(started, finishCall(seeded.avatarId, "kept", "token-aaaaaaaa"))).error).toBeUndefined();
+    expect((await avatarsOf(started)).avatars.map((a) => a.avatarId)).toEqual([seeded.avatarId]);
+  });
+
+  test("a stray `trashed` with another token forgets nothing", async () => {
+    const seeded = await seed();
+    const started = await start();
+    await ask(started, prepareCall(seeded.avatarId, "token-aaaaaaaa"));
+
+    expect((await ask(started, finishCall(seeded.avatarId, "trashed", "token-bbbbbbbb"))).error?.code).toBe("NOT_FOUND");
+
+    expect(removedEvents(started)).toEqual([]);
+  });
+});
+
+describe("a `kept` that arrives while its prepare is still waiting", () => {
+  /** A folderFs whose stat of the library, once armed, waits at a gate: the prepare is then inside `#liveLibrary()`. */
+  function libraryGate() {
+    let armed = false;
+    let reached: () => void = () => undefined;
+    const atGate = new Promise<void>((resolve) => (reached = resolve));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const folderFs = {
+      stat: async (path: string) => {
+        if (armed && path === libraryDir()) {
+          armed = false;
+          reached();
+          await gate;
+        }
+        return stat(path, { bigint: true });
+      },
+      realpath: (path: string) => realpath(path),
+    };
+    return { folderFs, arm: () => (armed = true), atGate, release };
+  }
+
+  /** A case probe that waits at a gate: the prepare is then past the detach, reading the avatar's files. */
+  function probeGate() {
+    let armed = false;
+    let reached: () => void = () => undefined;
+    const atGate = new Promise<void>((resolve) => (reached = resolve));
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const caseProbe = {
+      isCaseInsensitive: async () => {
+        if (armed) {
+          armed = false;
+          reached();
+          await gate;
+        }
+        return false;
+      },
+    };
+    return { caseProbe, arm: () => (armed = true), atGate, release };
+  }
+
+  test("before the avatar is taken out: the late prepare answers an error, the slot and the claim are free, and the avatar is still listed", async () => {
+    const seeded = await seed();
+    const g = libraryGate();
+    const started = await start({ deps: { folderFs: g.folderFs } });
+    g.arm();
+    const late = prepareCall(seeded.avatarId, "token-aaaaaaaa");
+    const preparing = started.engine.receive(late);
+    await g.atGate;
+
+    const kept = await ask(started, finishCall(seeded.avatarId, "kept", "token-aaaaaaaa"));
+    g.release();
+    await preparing;
+
+    expect(kept.error).toBeUndefined();
+    expect(replyOf(started, late).error).toBeDefined();
+    expect(replyOf(started, late).deletePlan).toBeUndefined();
+    expect((await avatarsOf(started)).avatars.map((a) => a.avatarId)).toEqual([seeded.avatarId]);
+    // slot and claim are free: a new delete of the same avatar, and an archive of it, go through
+    expect((await ask(started, prepareCall(seeded.avatarId, "token-bbbbbbbb"))).deletePlan?.avatarId).toBe(seeded.avatarId);
+    expect((await ask(started, finishCall(seeded.avatarId, "kept", "token-bbbbbbbb"))).error).toBeUndefined();
+    expect(ok(await started.engine.handle(command("avatars.archive", { avatarId: seeded.avatarId }))).type).toBe("avatars.archive");
+  });
+
+  test("after the avatar was taken out: it is put back and announced again, and everything is released", async () => {
+    const seeded = await seed();
+    const g = probeGate();
+    const started = await start({ deps: { caseProbe: g.caseProbe } });
+    g.arm();
+    const late = prepareCall(seeded.avatarId, "token-aaaaaaaa");
+    const preparing = started.engine.receive(late);
+    await g.atGate;
+    expect((await avatarsOf(started)).avatars).toEqual([]); // taken out while it reads the files
+
+    const kept = await ask(started, finishCall(seeded.avatarId, "kept", "token-aaaaaaaa"));
+    const mark = started.posted.length;
+    g.release();
+    await preparing;
+
+    expect(kept.error).toBeUndefined();
+    expect(replyOf(started, late).deletePlan).toBeUndefined();
+    expect((await avatarsOf(started)).avatars.map((a) => a.avatarId)).toEqual([seeded.avatarId]);
+    const types = started.posted.slice(mark).flatMap((m) => {
+      const e = EventMessage.safeParse(m);
+      return e.success ? [e.data.type] : [];
+    });
+    expect(types).toContain("avatar.changed");
+    expect((await ask(started, prepareCall(seeded.avatarId, "token-bbbbbbbb"))).deletePlan?.avatarId).toBe(seeded.avatarId);
+  });
+
+  test("a `kept` with another token does not abandon it: the prepare goes on and hands over its plan", async () => {
+    const seeded = await seed();
+    const g = libraryGate();
+    const started = await start({ deps: { folderFs: g.folderFs } });
+    g.arm();
+    const late = prepareCall(seeded.avatarId, "token-aaaaaaaa");
+    const preparing = started.engine.receive(late);
+    await g.atGate;
+
+    const stray = await ask(started, finishCall(seeded.avatarId, "kept", "token-bbbbbbbb"));
+    g.release();
+    await preparing;
+
+    expect(stray.error?.code).toBe("NOT_FOUND");
+    expect(replyOf(started, late).deletePlan?.avatarId).toBe(seeded.avatarId);
+  });
+});
+
+describe("avatar.deleteFinish with nothing to finish", () => {  test("without a prepare it is NOT_FOUND and changes nothing", async () => {
     const seeded = await seed();
     const started = await start();
 

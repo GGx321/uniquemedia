@@ -282,15 +282,15 @@ export class EngineHost<Transfer> {
    * engine until `finishAvatarDelete`. IN_FLIGHT (anything of the avatar runs, a library switch is under way), NOT_FOUND, or INTERNAL when the engine did not
    * answer in time or is not running. Waits as long as the engine's own bounded look at the export folder and the record files can take.
    */
-  prepareAvatarDelete(avatarId: string): Promise<CallResult> {
+  prepareAvatarDelete(avatarId: string, token: string): Promise<CallResult> {
     const callId = (this.#deps.newId ?? randomUUID)();
-    return this.#call(callId, { kind: "control", type: "avatar.deletePrepare", callId, avatarId }, AVATAR_DELETE_PREPARE_DEADLINE_MS);
+    return this.#call(callId, { kind: "control", type: "avatar.deletePrepare", callId, avatarId, token }, AVATAR_DELETE_PREPARE_DEADLINE_MS);
   }
 
   /** «Удалить аватар», step 2: what became of the avatar's folder. `trashed` makes the engine forget the avatar; `kept` puts it back. Always sent after a successful prepare. */
-  finishAvatarDelete(avatarId: string, outcome: "trashed" | "kept"): Promise<CallResult> {
+  finishAvatarDelete(avatarId: string, token: string, outcome: "trashed" | "kept"): Promise<CallResult> {
     const callId = (this.#deps.newId ?? randomUUID)();
-    return this.#call(callId, { kind: "control", type: "avatar.deleteFinish", callId, avatarId, outcome });
+    return this.#call(callId, { kind: "control", type: "avatar.deleteFinish", callId, avatarId, token, outcome });
   }
 
   /** After a delete whose finish the engine did not know: it forgets the avatars whose manifest is no longer on the disk (and announces each). */

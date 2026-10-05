@@ -445,13 +445,14 @@ async function startStudio(): Promise<void> {
       avatarDelete: (command) =>
         handleAvatarDeleteCommand(command, {
           engine: {
-            prepareAvatarDelete: (avatarId) => engine.prepareAvatarDelete(avatarId),
-            finishAvatarDelete: (avatarId, outcome) => engine.finishAvatarDelete(avatarId, outcome),
+            prepareAvatarDelete: (avatarId, token) => engine.prepareAvatarDelete(avatarId, token),
+            finishAvatarDelete: (avatarId, token, outcome) => engine.finishAvatarDelete(avatarId, token, outcome),
             pruneMissingAvatars: () => engine.pruneMissingAvatars(),
           },
           libraryPath: () => settings.current.libraryPath,
           exportPath: () => settings.current.exportPath,
           fs: NODE_FLOW_FS,
+          newToken: () => randomUUID(),
           trash: (path) => shell.trashItem(path),
           trashable: (path) => trashableOn(process.platform, path, (folder) => stat(folder).then(() => true, () => false)),
           platform: process.platform,

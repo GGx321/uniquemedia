@@ -239,14 +239,14 @@ export const HostCall = z.discriminatedUnion("type", [
    * Otherwise it claims the avatar (nothing else may start for it), takes it out of its indexes (memory only: the disk is untouched), and replies with the
    * `deletePlan`: the paths main may move to the system Trash. The avatar stays claimed until `avatar.deleteFinish`.
    */
-  z.strictObject({ kind: z.literal("control"), type: z.literal("avatar.deletePrepare"), callId: Id, avatarId: Id }),
+  z.strictObject({ kind: z.literal("control"), type: z.literal("avatar.deletePrepare"), callId: Id, avatarId: Id, token: Id }),
   /**
    * «Удалить аватар», step 2: what became of the avatar's FOLDER. `trashed`: it is in the Trash, so the engine forgets the avatar for good, announces
    * `avatar.removed` and lets go of the claim. `kept`: it is still there (the Trash refused, a path failed main's check), so the engine puts the avatar
    * back in its indexes as it was and lets go of the claim. Always sent, whatever happened, so a claim never outlives the delete. A `deleteFinish` the engine
    * has no matching `deletePrepare` for (it restarted meanwhile) is answered NOT_FOUND and changes nothing.
    */
-  z.strictObject({ kind: z.literal("control"), type: z.literal("avatar.deleteFinish"), callId: Id, avatarId: Id, outcome: z.enum(["trashed", "kept"]) }),
+  z.strictObject({ kind: z.literal("control"), type: z.literal("avatar.deleteFinish"), callId: Id, avatarId: Id, token: Id, outcome: z.enum(["trashed", "kept"]) }),
   /**
    * Main finished moving an avatar's folder to the Trash but the engine did not know the delete any more (it restarted between prepare and finish, so it
    * lists an avatar whose folder is gone): the engine looks at the disk, forgets every avatar whose own manifest file is no longer there (announcing each with

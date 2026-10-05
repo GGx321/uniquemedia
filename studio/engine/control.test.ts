@@ -187,8 +187,8 @@ describe("COMMAND_DEADLINE_MS['avatars.importAvatar'] covers the describe attemp
 // «Удалить аватар»: main-only control messages. Main asks the engine what goes (`avatar.deletePrepare`), moves the avatar's folder to the system
 // Trash, and tells the engine whether it went (`avatar.deleteFinish`). The renderer is never in this: it only names an avatar.
 describe("HostCall: avatar.deletePrepare and avatar.deleteFinish", () => {
-  const prepare = { kind: "control" as const, type: "avatar.deletePrepare" as const, callId: "call-00000001", avatarId: "avatar-0001" };
-  const finish = { kind: "control" as const, type: "avatar.deleteFinish" as const, callId: "call-00000002", avatarId: "avatar-0001", outcome: "trashed" as const };
+  const prepare = { kind: "control" as const, type: "avatar.deletePrepare" as const, callId: "call-00000001", avatarId: "avatar-0001", token: "token-00000001" };
+  const finish = { kind: "control" as const, type: "avatar.deleteFinish" as const, callId: "call-00000002", avatarId: "avatar-0001", token: "token-00000001", outcome: "trashed" as const };
 
   test("a prepare names an avatar and nothing else", () => {
     expect(HostCall.safeParse(prepare).success).toBe(true);
@@ -201,6 +201,31 @@ describe("HostCall: avatar.deletePrepare and avatar.deleteFinish", () => {
     expect(HostCall.safeParse({ ...finish, outcome: "kept" }).success).toBe(true);
     expect(HostCall.safeParse({ ...finish, outcome: "deleted" }).success).toBe(false);
     expect(HostCall.safeParse({ ...finish, outcome: undefined }).success).toBe(false);
+  });
+});
+
+describe("HostCall: the delete token and avatars.pruneMissing", () => {
+  const prepare = { kind: "control" as const, type: "avatar.deletePrepare" as const, callId: "call-00000001", avatarId: "avatar-0001", token: "token-00000001" };
+  const finish = { kind: "control" as const, type: "avatar.deleteFinish" as const, callId: "call-00000002", avatarId: "avatar-0001", token: "token-00000001", outcome: "kept" as const };
+
+  test("a prepare and a finish both carry a token, and a call without one is refused", () => {
+    expect(HostCall.safeParse({ ...prepare, token: undefined }).success).toBe(false);
+    expect(HostCall.safeParse({ ...finish, token: undefined }).success).toBe(false);
+  });
+
+  test("a token is an id: no path, no short or odd text", () => {
+    for (const token of ["../x", "short", "UPPER-CASE-TOKEN", "a".repeat(65), ""]) {
+      expect(HostCall.safeParse({ ...prepare, token }).success).toBe(false);
+      expect(HostCall.safeParse({ ...finish, token }).success).toBe(false);
+    }
+  });
+
+  test("avatars.pruneMissing takes a call id and nothing else", () => {
+    const prune = { kind: "control" as const, type: "avatars.pruneMissing" as const, callId: "call-00000003" };
+    expect(HostCall.safeParse(prune).success).toBe(true);
+    expect(HostCall.safeParse({ ...prune, avatarId: "avatar-0001" }).success).toBe(false);
+    expect(HostCall.safeParse({ ...prune, path: "/x" }).success).toBe(false);
+    expect(HostCall.safeParse({ kind: "control", type: "avatars.pruneMissing" }).success).toBe(false);
   });
 });
 
