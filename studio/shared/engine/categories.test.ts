@@ -6,6 +6,10 @@ import {
   CategoryName,
   CategoryRef,
   CategorySnapshot,
+  POOL_TEXT_MAX,
+  PoolText,
+  TIME_OF_DAY_MAX,
+  TimeOfDay,
   CustomCategoryId,
   isCustomCategory,
   MAX_RUN_CATEGORIES,
@@ -82,6 +86,30 @@ describe("CategoryName: the owner's own wording, as AvatarName guards a name", (
   });
 });
 
+describe("PoolText and TimeOfDay: what a custom pool's texts and a custom slot are held to", () => {
+  test("a pool text is 1 to POOL_TEXT_MAX printable ASCII chars", () => {
+    expect(PoolText.safeParse("a corner cafe in Paris").success).toBe(true);
+    expect(PoolText.safeParse("x".repeat(POOL_TEXT_MAX)).success).toBe(true);
+    expect(PoolText.safeParse("x".repeat(POOL_TEXT_MAX + 1)).success).toBe(false);
+    expect(PoolText.safeParse("").success).toBe(false);
+  });
+
+  test("a quote or a backslash is refused: each costs two bytes once the slots are JSON, and the reserve is priced on bytes", () => {
+    for (const bad of ['a "quoted" place', "back\\slash", '"', "\\"]) expect(PoolText.safeParse(bad).success).toBe(false);
+  });
+
+  test("a non-ASCII char, a control char or an edge space is refused", () => {
+    for (const bad of ["кафе", "caf\u00e9", "two\nlines", " leading", "trailing "]) expect(PoolText.safeParse(bad).success).toBe(false);
+  });
+
+  test("a time of day follows the same rules and is at most TIME_OF_DAY_MAX chars (the longest built-in is 'studio lighting')", () => {
+    expect(TimeOfDay.safeParse("studio lighting").success).toBe(true);
+    expect("studio lighting".length).toBeLessThanOrEqual(TIME_OF_DAY_MAX);
+    expect(TimeOfDay.safeParse("x".repeat(TIME_OF_DAY_MAX + 1)).success).toBe(false);
+    expect(TimeOfDay.safeParse('a "b"').success).toBe(false);
+  });
+});
+
 describe("CategoryLabel and CategorySnapshot", () => {
   test("a label is 1 to 24 printable ASCII chars", () => {
     expect(CategoryLabel.safeParse("Paris cafes").success).toBe(true);
@@ -92,6 +120,10 @@ describe("CategoryLabel and CategorySnapshot", () => {
 
   test("a label with a non-ASCII char, a control char or edge spaces is refused", () => {
     for (const bad of ["Кофейни", "café", "two\nlines", " leading", "trailing "]) expect(CategoryLabel.safeParse(bad).success).toBe(false);
+  });
+
+  test("a label with a quote or a backslash is refused: it goes out inside escaped JSON, two bytes each", () => {
+    for (const bad of ['Paris "cafes"', "Paris\\cafes", '"', "\\"]) expect(CategoryLabel.safeParse(bad).success).toBe(false);
   });
 
   test("a snapshot names the ref, the owner's name, the writer's label and the style, and nothing more", () => {

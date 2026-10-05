@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CustomCategoryId } from "../../shared/engine";
+import { CustomCategoryId, isCustomCategory, PoolText, TimeOfDay } from "../../shared/engine";
 import { FacePoseSchema } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
 
@@ -74,6 +74,15 @@ export const PlanSlotSchema = z
   .refine((slot) => !isPhoneInHandShot(slot.shot) || slot.pose === "front" || slot.pose === "three-quarter", {
     message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter",
     path: ["pose"],
+  })
+  // A plan.json is read back on every resume: a custom slot's texts are held to the bounds a custom pool is, so a hand-edited
+  // file cannot grow the writer's prompt past the ceiling its reserve was priced at. Built-in slots are not held to them.
+  .superRefine((slot, ctx) => {
+    if (!isCustomCategory(slot.category)) return;
+    for (const field of ["location", "activity", "outfit"] as const) {
+      if (!PoolText.safeParse(slot[field]).success) ctx.addIssue({ code: "custom", message: `a custom slot's ${field} must be a pool text: plain printable ASCII, at most the pool text bound`, path: [field] });
+    }
+    if (!TimeOfDay.safeParse(slot.timeOfDay).success) ctx.addIssue({ code: "custom", message: "a custom slot's timeOfDay must be plain printable ASCII, at most the time-of-day bound", path: ["timeOfDay"] });
   });
 export type PlanSlot = z.infer<typeof PlanSlotSchema>;
 

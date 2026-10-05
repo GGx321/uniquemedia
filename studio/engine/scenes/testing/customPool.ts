@@ -15,7 +15,7 @@ export const CUSTOM_POOL: Pool = {
     { name: "a flower stall", times: ["midday"], activities: [{ text: "smelling a bouquet", twoHanded: false }] },
     { name: "a tiny bookshop", times: ["midday", "evening"], activities: [{ text: "browsing a shelf", twoHanded: false }] },
   ],
-  outfits: ["a beige trench coat and jeans", "a striped knit top and a midi skirt", "a long cardigan and straight trousers"],
+  outfits: ["a beige trench coat and jeans", "a striped knit top and a midi skirt", "a long cardigan and trousers"],
   shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],
 };
 

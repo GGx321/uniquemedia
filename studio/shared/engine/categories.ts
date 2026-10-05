@@ -47,12 +47,27 @@ export const CATEGORY_NAME_MAX = 40;
 /**
  * A custom pool's place names, activities and outfits are at most this long.
  * Measured, not chosen: the writer's 14K input ceiling must cover a full
- * 25-slot chunk of the worst pool a custom category can have (every text at
- * the bound, an all-photographer deck, the widest pose and time, the 24-char
- * label, the worst refusal). That prompt's floor is 14494 tokens at 48 chars,
- * 14194 at 44 and 13894 at 40; only 40 fits (writer.custom.test.ts pins it).
+ * 25-slot chunk of the worst pool a custom category can have, with a margin
+ * (writer.custom.test.ts builds that chunk by hand and pins the bound).
  */
-export const POOL_TEXT_MAX = 40;
+export const POOL_TEXT_MAX = 35;
+/** A custom slot's time of day is at most this long (the longest built-in time, "studio lighting", is 15). */
+export const TIME_OF_DAY_MAX = 15;
+
+/**
+ * Printable ASCII with no quote and no backslash, and no space at either end.
+ * The writer's slots go out as indented JSON, where a quote or a backslash costs
+ * two bytes, and the reserve is priced on bytes: with them, a chunk of a bounded
+ * pool could outgrow the ceiling its price was set at. Every other char costs one.
+ */
+const PLAIN_TEXT = /^[\x21\x23-\x5b\x5d-\x7e](?:[\x20\x21\x23-\x5b\x5d-\x7e]*[\x21\x23-\x5b\x5d-\x7e])?$/;
+const PLAIN_TEXT_MESSAGE = "must be printable ASCII without a quote, a backslash or an edge space";
+
+/** A custom pool's place name, activity or outfit: what a prompt is built from. */
+export const PoolText = z.string().min(1).max(POOL_TEXT_MAX).regex(PLAIN_TEXT, PLAIN_TEXT_MESSAGE);
+
+/** A custom slot's time of day. */
+export const TimeOfDay = z.string().min(1).max(TIME_OF_DAY_MAX).regex(PLAIN_TEXT, PLAIN_TEXT_MESSAGE);
 
 /** The owner's name for a custom category, as the UI and a photo's label show it. */
 export const CategoryName = z
@@ -61,12 +76,8 @@ export const CategoryName = z
   .regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters")
   .refine((s) => s.trim().length > 0, "must not be blank");
 
-/** The category's English label, as the writer is told it: printable ASCII, no leading or trailing space. */
-export const CategoryLabel = z
-  .string()
-  .min(1)
-  .max(CATEGORY_LABEL_MAX)
-  .regex(/^[\x21-\x7e](?:[\x20-\x7e]*[\x21-\x7e])?$/, "must be printable ASCII without leading or trailing space");
+/** The category's English label, as the writer is told it: 1 to 24 plain printable ASCII chars (no quote, no backslash, no edge space). */
+export const CategoryLabel = z.string().min(1).max(CATEGORY_LABEL_MAX).regex(PLAIN_TEXT, PLAIN_TEXT_MESSAGE);
 
 /**
  * What a plan keeps of each custom category it uses, so a resume or a writer

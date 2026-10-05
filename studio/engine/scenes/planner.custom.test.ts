@@ -26,7 +26,7 @@ const CUSTOM_POOL: Pool = {
     { name: "a flower stall", times: ["midday"], activities: [{ text: "smelling a bouquet", twoHanded: false }] },
     { name: "a tiny bookshop", times: ["midday", "evening"], activities: [{ text: "browsing a shelf", twoHanded: false }] },
   ],
-  outfits: ["a beige trench coat and jeans", "a striped knit top and a midi skirt", "a long cardigan and straight trousers"],
+  outfits: ["a beige trench coat and jeans", "a striped knit top and a midi skirt", "a long cardigan and trousers"],
   shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],
 };
 const OTHER_POOL: Pool = {
@@ -167,8 +167,8 @@ describe("custom categories draw on streams of their own (subSeed by ref)", () =
     expect(p.slots.map(asRow)).toEqual([
       ["a Paris bakery counter", "morning", "choosing a croissant", "a striped knit top and a midi skirt", "mirror", "front"],
       ["a bridge over the Seine", "golden hour", "leaning on the railing", "a beige trench coat and jeans", "friend", "three-quarter"],
-      ["a tiny bookshop", "evening", "browsing a shelf", "a long cardigan and straight trousers", "friend", "front"],
-      ["a flower stall", "midday", "smelling a bouquet", "a long cardigan and straight trousers", "candid", "three-quarter"],
+      ["a tiny bookshop", "evening", "browsing a shelf", "a long cardigan and trousers", "friend", "front"],
+      ["a flower stall", "midday", "smelling a bouquet", "a long cardigan and trousers", "candid", "three-quarter"],
       ["a corner cafe in Paris", "midday", "reading a menu", "a beige trench coat and jeans", "selfie", "three-quarter"],
     ]);
   });
