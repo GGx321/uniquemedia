@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ERROR_MESSAGES_RU, type Montage } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, ENGINE_GONE_DETAIL, ERROR_MESSAGES_RU, type Montage } from "../../shared/engine";
 import { PHOTO_IDS } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll, tick } from "../testing";
+import { callsOf, flush, inAct, runAll, tick } from "../testing";
 import { AUTOSAVE_DEBOUNCE_MS } from "./montage/autosave";
 import { asAnotherWindow, makeDraft, MIA, openDrafts, studio } from "./montage/screenKit";
 
@@ -569,6 +569,42 @@ describe("«Рендер»", () => {
     expect(renderButton().hasAttribute("disabled")).toBe(true);
     fireEvent.click(within(header()).getByRole("button", { name: "Настройки" }));
     await screen.findByRole("heading", { level: 1, name: "Настройки" });
+  });
+});
+
+describe("the engine away after the draft opened (slice review 5-M1)", () => {
+  test("«Движок не отвечает» with «Повторить», as every other screen says it; the retry brings the editor back without it, the draft untouched", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    expect(screen.queryByText("Движок не отвечает") === null).toBe(true);
+
+    // The engine restarts while main cannot answer: the store goes offline and drops the events until the owner retries.
+    engine.failNext("engine.snapshot", { code: "INTERNAL" });
+    inAct(() => engine.restart());
+    await flush();
+    const notice = await screen.findByText("Движок не отвечает");
+    // The draft stays on screen under it.
+    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
+    const retry = within(notice.closest(".notice") as HTMLElement).getByRole("button", { name: "Повторить" });
+    const snapshots = callsOf(engine, "engine.snapshot").length;
+    fireEvent.click(retry);
+    await flush();
+    expect(callsOf(engine, "engine.snapshot").length).toBe(snapshots + 1);
+    await waitFor(() => expect(screen.queryByText("Движок не отвечает") === null).toBe(true));
+    expect(screen.getByRole("region", { name: "Таймлайн" })).toBeDefined();
+  });
+
+  test("an engine gone for good says so, with no retry", async () => {
+    const { client, engine } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1]);
+    await openEditor();
+    engine.failNext("engine.snapshot", { code: "INTERNAL", detail: ENGINE_GONE_DETAIL });
+    inAct(() => engine.restart());
+    await flush();
+    const notice = (await screen.findByText(/остановился и не будет перезапущен/)).closest(".notice") as HTMLElement;
+    expect(within(notice).getByText("Движок не отвечает")).toBeDefined();
+    expect(within(notice).queryByRole("button") === null).toBe(true);
   });
 });
 

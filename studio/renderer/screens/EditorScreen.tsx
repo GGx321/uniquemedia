@@ -865,6 +865,13 @@ function DraftEditor({
           onCancel={() => void cancelRender()}
           onReveal={(videoId) => void revealVideo(videoId)}
         />
+        {/* Slice review 5-M1: the store went offline after the draft opened (the engine restarted while main could not answer). It drops the
+            events until the owner retries, so a render's progress and its end would freeze unseen: said as on every other screen, with «Повторить». */}
+        {view.phase === "offline" && (
+          <div className="ed-notices">
+            <EngineOffline view={view} />
+          </div>
+        )}
         {lost !== null && (
           <div className="ed-notices">
             <Notice
