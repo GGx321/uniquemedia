@@ -3,6 +3,7 @@ import { createReadStream } from "node:fs";
 import { stat } from "node:fs/promises";
 import { MEDIA_BYTE_CAPS, MIN_TOTAL_MS, type MediaUnsupportedReason } from "../../shared/engine";
 import { FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } from "../../node/runFfmpeg";
+import { isNoSpaceError } from "../freeBytes";
 import { decodeAudio, DecodeError } from "../music/decodeCheck";
 import { demuxerOf, judgeDump, judgeStoredDump, ProbeError, probeDump, selectionHasNoExtraStreams, type AudioDemuxer } from "./audioProbe";
 import { observer, type MediaImporter, type MediaImportRequest } from "./imports";
@@ -76,6 +77,8 @@ export interface MusicImporterDeps {
   readonly encodeTimeoutMs?: number | undefined;
   /** The most the stored file may take, in bytes; `MAX_STORED_BYTES` by default. A test knob. */
   readonly maxStoredBytes?: number | undefined;
+  /** The size of a file; `stat`'s when absent. A test plays a disk error there. */
+  readonly fileSize?: ((path: string) => Promise<number>) | undefined;
 }
 
 /** A track the importer turns away, with the reason the owner is told. */
@@ -228,7 +231,7 @@ export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter
     if (chain.seen()) throw new Refused("format");
 
     // 4. What was made is judged again: its size, its own dump, then its DECODED length.
-    const written = await stat(out.path);
+    const written = { size: await (deps.fileSize ?? (async (path: string) => (await stat(path)).size))(out.path) };
     if (written.size === 0) throw new Refused("failed");
     // `-fs` stops the write one byte past the ceiling, so a file over it is a track that would not fit: told as a size, never stored.
     if (written.size > maxStored) throw new Refused("too-large");
@@ -276,7 +279,9 @@ export function createMusicImporter(deps: MusicImporterDeps = {}): MediaImporter
       // A cancel wins over whatever the stop produced (a killed child, a read that was aborted).
       if (request.signal.aborted) return { ok: false, reason: "cancelled" };
       // Only the reason travels: ffmpeg's stderr and an fs error's message may name a path.
-      return { ok: false, reason: error instanceof Refused ? error.reason : "failed" };
+      if (error instanceof Refused) return { ok: false, reason: error.reason };
+      // A disk that fills under a write the room check let through is still a full disk.
+      return { ok: false, reason: isNoSpaceError(error) ? "no-space" : "failed" };
     }
   };
 }

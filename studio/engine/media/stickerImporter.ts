@@ -6,7 +6,7 @@ import { FfmpegError, FfmpegTimeoutError, runFfmpegArgv, type FfmpegSpawner } fr
 import { inspectApng, inspectApngRaw, STICKER_FPS, STICKER_LIMITS, type ApngRejectCode } from "../../shared/stickers/apng";
 import { inspectGif, type GifInfo, type GifRejectCode } from "../../shared/stickers/gif";
 import { quantiseByAccumulatedTime, type FrameDuration } from "../../shared/stickers/quantise";
-import { FREE_MARGIN_BYTES, freeBytesOf, type FreeBytes } from "../freeBytes";
+import { FREE_MARGIN_BYTES, freeBytesOf, isNoSpaceError, type FreeBytes } from "../freeBytes";
 import { MAX_ANIMATION_LOOP_PIXELS } from "../render/layerPass";
 import { EncodeTooLargeError } from "../stickers/encodeErrors";
 import type { StickerEncodeJob } from "../stickers/encodeGate";
@@ -335,7 +335,9 @@ export function createStickerImporter(deps: StickerImporterDeps): MediaImporter 
       // A cancel wins over whatever the stop produced (a killed child, a read that was aborted, an ended worker).
       if (request.signal.aborted) return { ok: false, reason: "cancelled" };
       // Only the reason travels: an ffmpeg's stderr and an fs error's message may name a path.
-      return { ok: false, reason: error instanceof Refused ? error.reason : "failed" };
+      if (error instanceof Refused) return { ok: false, reason: error.reason };
+      // A disk that fills under a write the room check let through is still a full disk.
+      return { ok: false, reason: isNoSpaceError(error) ? "no-space" : "failed" };
     }
   };
 }

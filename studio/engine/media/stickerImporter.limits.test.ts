@@ -288,3 +288,17 @@ describe("the stored file's size is checked after it is written (I24)", () => {
     expect(asked).toBe(2);
   });
 });
+
+describe("a disk that fills under a write the room check let through (full-disk error)", () => {
+  const diskFull = (code: string) => async (): Promise<number> => {
+    throw Object.assign(new Error(`${code}: no space left on device`), { code });
+  };
+
+  test.each(["ENOSPC", "EDQUOT"])("%s while the importer's own files are written or measured is no-space, not failed", async (code) => {
+    expect(reasonOf(await run(flatGif([0, 1], [10, 10]), "gif", { fileSize: diskFull(code) }))).toBe("no-space");
+  });
+
+  test("any other disk error there stays failed", async () => {
+    expect(reasonOf(await run(flatGif([0, 1], [10, 10]), "gif", { fileSize: diskFull("EIO") }))).toBe("failed");
+  });
+});

@@ -630,3 +630,19 @@ describe("the photo importer: the WebP decode is bounded like the other importer
     expect(argv.indexOf("-fs")).toBeGreaterThan(argv.indexOf("-i"));
   });
 });
+
+describe("the photo importer: a disk that fills under the raw work file (full-disk error)", () => {
+  const diskFull = (code: string) => async (): Promise<void> => {
+    throw Object.assign(new Error(`${code}: no space left on device`), { code });
+  };
+
+  test.each(["ENOSPC", "EDQUOT"])("%s while the raw work file is written is no-space, not failed", async (code) => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    expect((await runWith(picture, "jpeg", { writeFile: diskFull(code) })).outcome).toEqual({ ok: false, reason: "no-space" });
+  });
+
+  test("any other disk error there stays failed", async () => {
+    const picture = await quadrantPicture(tmp(), "p", 32, 32, "jpeg");
+    expect((await runWith(picture, "jpeg", { writeFile: diskFull("EIO") })).outcome).toEqual({ ok: false, reason: "failed" });
+  });
+});

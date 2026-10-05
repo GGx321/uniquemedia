@@ -67,6 +67,8 @@ export interface PhotoImporterDeps {
   readonly freeBytes?: FreeBytes | undefined;
   /** What is kept free beyond what a write needs; `FREE_MARGIN_BYTES` (64 MiB) by default. */
   readonly freeMarginBytes?: number | undefined;
+  /** Writes the raw work file; `fs.writeFile` when absent. A test plays a disk error there. */
+  readonly writeFile?: ((path: string, data: Uint8Array, options: { flag: string; signal: AbortSignal }) => Promise<void>) | undefined;
 }
 
 /** A photo the importer turns away, with the reason the owner is told. */
@@ -189,7 +191,7 @@ export function createPhotoImporter(deps: PhotoImporterDeps): MediaImporter {
     const raw = await request.workFile();
     signal.throwIfAborted();
     // `wx`: the name is the job's own and new; a file or a link already at it is refused, never written through.
-    await writeFile(raw.path, upright.rgb, { flag: "wx", signal });
+    await (deps.writeFile ?? writeFile)(raw.path, upright.rgb, { flag: "wx", signal });
     const target = storedSize(upright.width, upright.height);
 
     const out = await request.workFile();
