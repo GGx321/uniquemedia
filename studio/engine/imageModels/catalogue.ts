@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ImageModelCatalogue, ImageQuality, type ImageModelEntry } from "../../shared/engine";
+import { ImageModelCatalogue, ImageModelEntry, ImageQuality, ModelId } from "../../shared/engine";
 import type { Clock } from "../money/ledger";
 import { FALLBACK_IMAGE, getJson, imageWorstCase, parseImageEndpoints, PRICE_FETCH_TIMEOUT_MS, type FetchLike, type ImagePrice } from "../money/prices";
 
@@ -11,6 +11,9 @@ import { FALLBACK_IMAGE, getJson, imageWorstCase, parseImageEndpoints, PRICE_FET
 // the union of the endpoints' parameters) and each candidate's
 // `/images/models/<id>/endpoints` (the definitive per-endpoint parameters and
 // pricing, the same body the price book reads).
+
+/** The contract's cap on the catalogue (`ImageModelCatalogue`): a longer live list is cut to it, never refused whole. */
+export const MAX_CATALOGUE_MODELS = 100;
 
 /** A live catalogue is read again after this long. */
 export const LIVE_CATALOGUE_TTL_MS = 30 * 60_000;
@@ -71,7 +74,8 @@ export function listedCandidates(body: unknown): ListedImageModel[] | null {
       p.resolution?.values.includes(WANTED_RESOLUTION) === true &&
       p.aspect_ratio?.values.includes(WANTED_ASPECT_RATIO) === true &&
       (p.input_references?.max ?? 0) >= PHOTO_REFERENCES;
-    if (takesRequest) candidates.push({ id, name: displayName(name) });
+    // The id goes into a URL (`/images/models/<id>/endpoints`) and into the contract: one that is not a model id is never used.
+    if (takesRequest && ModelId.safeParse(id).success) candidates.push({ id, name: displayName(name) });
   }
   return candidates;
 }
@@ -89,6 +93,7 @@ function tested(id: string): boolean {
 
 /** The photo price of each quality: output at that quality plus one reference image, at 1K; the worst case the run is estimated by. */
 function entryOf(listed: ListedImageModel, qualities: ImageQuality[], price: ImagePrice): ImageModelEntry {
+  // A photo run sends one reference, so the price of one must be listed (an explicit 0 is a stated price): `imageWorstCase` refuses otherwise.
   const priceOf = (quality: ImageQuality | null) => ({ quality, micros: imageWorstCase(price, { quality, refs: PHOTO_REFERENCES }) });
   return {
     id: listed.id,
@@ -124,6 +129,8 @@ export function entryFromEndpoints(listed: ListedImageModel, body: unknown): Ima
   } catch {
     return null;
   }
+  // Review round 1, M1: no input_image row means the price of the reference is unknown, not free; such a model is never offered.
+  if (price.inputImageMicros === null) return null;
   const qualities = ImageQuality.options.filter((q) => endpoints.every((p) => p.quality?.values.includes(q) === true));
   return entryOf(listed, qualities, price);
 }
@@ -148,7 +155,7 @@ const FALLBACK_NAMES: ReadonlyMap<string, string> = new Map([
  * be priced offline anyway.
  */
 export function fallbackImageCatalogue(): ImageModelCatalogue {
-  const models = [...FALLBACK_IMAGE].map(([id, price]) => {
+  const models = [...FALLBACK_IMAGE].filter(([, price]) => price.inputImageMicros !== null).map(([id, price]) => {
     const qualities: ImageQuality[] = price.outputs.some((o) => o.variant?.startsWith("low_") === true) ? ["low", "medium"] : [];
     return entryOf({ id, name: FALLBACK_NAMES.get(id) ?? id }, qualities, price);
   });
@@ -189,9 +196,11 @@ export async function loadImageCatalogue(opts: { fetch: FetchLike; baseUrl: stri
       }
     }),
   );
-  const models = answers.flatMap((a) => (a.entry === null ? [] : [a.entry]));
+  // One entry the contract refuses (a name over 120 characters, say) is dropped alone: the whole answer failing the schema would
+  // reject the catalogue, and a full live one would be cached for 30 minutes. The list is cut to the contract's cap, tested first.
+  const models = ordered(answers.flatMap((a) => (a.entry === null || !ImageModelEntry.safeParse(a.entry).success ? [] : [a.entry]))).slice(0, MAX_CATALOGUE_MODELS);
   if (models.length === 0) return bundled;
-  return { catalogue: { models: ordered(models), source: "live" }, complete: answers.every((a) => a.reached) };
+  return { catalogue: { models, source: "live" }, complete: answers.every((a) => a.reached) };
 }
 
 /** The catalogue for the engine's life: served from memory until its refresh time; requests during a load share it; a failed load is not cached. */

@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { ImageModelCatalogue } from "../../shared/engine";
@@ -56,16 +57,14 @@ const ids = (c: ImageModelCatalogue) => c.models.map((m) => m.id);
 
 const GROK = "x-ai/grok-imagine-image-2.0";
 
-test("lists exactly the models that take a 1K 9:16 request with a reference and are priced per image", async () => {
+test("lists exactly the models that take a 1K 9:16 request with a reference, are priced per image, and list a price for that reference", async () => {
   const catalogue = await load(fakeFetch());
 
   expect(ids(catalogue).sort()).toEqual(
     [
-      "black-forest-labs/flux-3-image",
       "bytedance-seed/seedream-5-0-flash",
       "bytedance-seed/seedream-5-0-pro",
       "qwen/qwen-image-3",
-      "sourceful/riverflow-v2.5-fast",
       GROK,
       "x-ai/grok-imagine-image-quality",
     ].sort(),
@@ -82,6 +81,8 @@ test("leaves out a model without a 1K size, one priced per token, one with no pr
     "krea/krea-2-large", // no pricing lines
     "recraft/recraft-v4", // no resolution parameter
     "sourceful/riverflow-v2-pro", // input_reference and input_font billables
+    "black-forest-labs/flux-3-image", // no input_image row: a reference would be billed at an unknown price (review round 1, M1)
+    "sourceful/riverflow-v2.5-fast", // the same
   ]) {
     expect(listed).not.toContain(left);
   }
@@ -107,8 +108,16 @@ test("a model without a quality knob has no qualities and one null-quality price
 
   expect(models.find((m) => m.id === "x-ai/grok-imagine-image-quality")).toMatchObject({ qualities: [], prices: [{ quality: null, micros: 60_000 }] });
   expect(models.find((m) => m.id === "bytedance-seed/seedream-5-0-pro")).toMatchObject({ qualities: [], prices: [{ quality: null, micros: 48_000 }] });
-  expect(models.find((m) => m.id === "black-forest-labs/flux-3-image")).toMatchObject({ qualities: [], prices: [{ quality: null, micros: 48_000 }] });
   expect(models.find((m) => m.id === "bytedance-seed/seedream-5-0-flash")).toMatchObject({ qualities: [], prices: [{ quality: null, micros: 18_000 }] });
+});
+
+test("a model that states a free reference (an explicit input_image row of 0) is listed: seedream-5-0-flash", async () => {
+  expect(ids(await load(fakeFetch()))).toContain("bytedance-seed/seedream-5-0-flash");
+});
+
+test("the bundled list obeys the same rule: every model of the dated table has a stated reference price", async () => {
+  for (const price of FALLBACK_IMAGE.values()) expect(price.inputImageMicros).not.toBeNull();
+  expect(ids(await load(fakeFetch({ failList: true }))).sort()).toEqual([...FALLBACK_IMAGE.keys()].sort());
 });
 
 test("only the models of the dated price table are marked tested", async () => {
@@ -248,4 +257,54 @@ test("a load that throws is not cached, and the next call tries again", async ()
   await expect(cache.get()).rejects.toThrow("boom");
   expect((await cache.get()).source).toBe("live");
   expect(calls).toBe(2);
+});
+
+// ---------- review round 1, M3: one bad live entry never spoils the answer ----------
+
+const FLASH = "bytedance-seed/seedream-5-0-flash";
+const Listed = z.object({ data: z.array(z.record(z.string(), z.unknown())) });
+
+/** A live list of the fixture's models plus `extra` entries, each a copy of seedream-5-0-flash under its own id and name. */
+function fetchWithExtras(extra: readonly { id: string; name?: string }[]): Fake {
+  const base = Listed.parse(LIST);
+  const flash = base.data.find((m) => m.id === FLASH);
+  if (flash === undefined) throw new Error("the fixture lacks seedream-5-0-flash");
+  const list = { data: [...base.data, ...extra.map((e) => ({ ...flash, id: e.id, name: e.name ?? `Clone ${e.id}` }))] };
+  const urls: string[] = [];
+  const fetch: FetchLike = async (url) => {
+    urls.push(url);
+    if (url === `${BASE}/images/models`) return { ok: true, status: 200, json: async () => list };
+    const id = /\/images\/models\/(.+)\/endpoints$/.exec(url)?.[1];
+    if (id === undefined) throw new Error(`unexpected GET ${url}`);
+    const known = extra.some((e) => e.id === id);
+    const body = fixture(endpointsFile(known ? FLASH : id));
+    return { ok: true, status: 200, json: async () => (known ? { ...z.record(z.string(), z.unknown()).parse(body), id } : body) };
+  };
+  return { fetch, urls };
+}
+
+test("a listed id that is not a model id is dropped before any GET is made with it", async () => {
+  const fake = fetchWithExtras([{ id: "bad id/with space" }, { id: "acme/../escape" }]);
+  const catalogue = await load(fake);
+
+  expect(ids(catalogue).some((id) => id.includes("bad") || id.includes(".."))).toBe(false);
+  expect(fake.urls.some((u) => u.includes("bad") || u.includes("escape"))).toBe(false);
+  expect(ids(catalogue)).toContain(GROK);
+});
+
+test("an entry the contract refuses (a name over 120 characters) is dropped, the rest are served and the answer passes the schema", async () => {
+  const catalogue = await load(fetchWithExtras([{ id: "acme/long-name", name: "x".repeat(121) }]));
+
+  expect(ids(catalogue)).not.toContain("acme/long-name");
+  expect(ids(catalogue)).toContain(GROK);
+  expect(ImageModelCatalogue.safeParse(catalogue).success).toBe(true);
+});
+
+test("more than 100 priced models are cut to 100, the tested ones first, and the answer passes the schema", async () => {
+  const many = Array.from({ length: 105 }, (_, i) => ({ id: `acme/clone-${i}` }));
+  const catalogue = await load(fetchWithExtras(many));
+
+  expect(catalogue.models).toHaveLength(100);
+  expect(ids(catalogue)).toContain(GROK);
+  expect(ImageModelCatalogue.safeParse(catalogue).success).toBe(true);
 });

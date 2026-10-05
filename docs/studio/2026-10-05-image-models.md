@@ -55,9 +55,17 @@ per-endpoint record (every endpoint, not the union):
 3. `input_references.max >= 1`, so the master portrait is accepted;
 4. every pricing line is per **image** (`unit: "image"`) and a billable we
    can bound (`output_image`, `input_image`). That keeps the worst case an
-   exact integer in micro-dollars, which the reserve/settle ledger needs.
+   exact integer in micro-dollars, which the reserve/settle ledger needs;
+5. the endpoints list an explicit `input_image` row (review round 1, M1). A
+   photo run sends one reference, so its price must be stated. A MISSING row
+   is an unknown price, not a free one: if OpenRouter billed the reference
+   anyway, the settle would exceed the reserve (`SETTLE_ABOVE_WORST`) and halt
+   all paid work until a reconcile. An explicit row of `0` is a price the
+   provider states and is accepted (seedream-5-0-flash and 4.5 list one). An
+   `output_image` price of 0 is refused too: it would reserve nothing.
 
-Result on 2026-10-05, 10 models. Prices are USD per image at 1K; "ref" is the
+Result on 2026-10-05, 7 models selectable (10 met rules 1 to 4; 3 of them fail
+rule 5 and are excluded until a paid check confirms how a reference is billed). Prices are USD per image at 1K; "ref" is the
 price of one input (reference) image, charged on top.
 
 | Model | 1K output | ref | Quality knob | Max refs | Notes |
@@ -69,9 +77,9 @@ price of one input (reference) image, charged on top.
 | `bytedance-seed/seedream-4.5` | 0.040 | 0 | none | 14 | not spiked |
 | `qwen/qwen-image-3` | 0.030 | 0.003 | none | 4 | not spiked |
 | `qwen/qwen-image-3-pro` | 0.040 | 0.003 | none | 4 | not spiked |
-| `black-forest-labs/flux-3-image` | 0.048 | 0 | none | 10 | tiers `768`, `1k`, `1.5k`, `2k`, `4k`; not spiked |
-| `sourceful/riverflow-v2.5-fast` | 0.019 | 0 | none | 4 | extra `background`, `output_format` parameters (unused); not spiked |
-| `sourceful/riverflow-v2.5-pro` | 0.130 | 0 | none | 10 | same; not spiked |
+| `black-forest-labs/flux-3-image` | 0.048 | not listed | none | 10 | **excluded**: reference price not listed, excluded until a paid check confirms billing; tiers `768`, `1k`, `1.5k`, `2k`, `4k` |
+| `sourceful/riverflow-v2.5-fast` | 0.019 | not listed | none | 4 | **excluded**: reference price not listed, excluded until a paid check confirms billing |
+| `sourceful/riverflow-v2.5-pro` | 0.130 | not listed | none | 10 | **excluded**: the same |
 
 "In the spike" means the model is in the 2026-09-24 price table (the Stage 1
 spike). Every model accepts a reference by the API's own description, but
@@ -92,7 +100,12 @@ With a catalogue that is wrong for `grok-imagine-image-quality`, `flux`,
 
 One pricing detail: the tiers `768` and `1.5k` (flux) were not recognised by
 `imageOutputMicros`, which then priced the model at its dearest tier ($0.607,
-the 4K one). They are recognised now, so flux is priced at its 1K tier.
+the 4K one). They are recognised now and a model with an explicit `1k` tier
+prices at it (flux: $0.048). Beside such tiers a plain base price is NOT taken
+for 1K (review round 1, M2): with no explicit `1k` tier the dearest tier is
+reserved. The base price stands for 1K only beside tiers that name a larger
+size (seedream's `high_resolution`). flux is excluded from the catalogue for
+its reference price anyway (rule 5), but the pricing rule stands on its own.
 
 ## 4. Excluded, and why
 
@@ -112,7 +125,11 @@ the 4K one). They are recognised now, so flux is priced at its 1K tier.
   cached in memory, and refreshed after 30 minutes (1 minute while it is a
   fallback). A model whose endpoints record cannot be fetched or parsed is not
   listed, which is the answer to "a model whose price cannot be fetched is not
-  selectable".
+  selectable". Entries are checked one by one against the contract
+  (`ImageModelEntry`): one that fails (an id that is not a model id, a name over
+  120 characters) is dropped alone, and the list is cut to 100 (tested models
+  first), so a single bad entry never makes the whole answer invalid. An id is
+  validated before the `/endpoints` GET that puts it into a URL.
 - The bundled fallback list (used when the model list itself cannot be fetched)
   is exactly the models of the dated price table (`FALLBACK_IMAGE` in
   `money/prices.ts`: grok-imagine-image-2.0, grok-imagine-image-quality,

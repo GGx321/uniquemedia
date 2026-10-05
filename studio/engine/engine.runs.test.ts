@@ -294,6 +294,17 @@ describe("runs.estimate", () => {
     expect(ok(await engine.handle(estimate(avatarId, 20)))).toMatchObject({ result: { estimate: { worstMicros: 20 * 3 * 60_000 + 75_000 } } });
   });
 
+  test("a model whose endpoints list no price for the reference is PRICE_UNAVAILABLE: the estimate is refused and nothing is sent (review round 1, M1)", async () => {
+    const avatarId = await seedAvatar();
+    const flux = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "imageModels", "fixtures", "endpoints", "black-forest-labs_flux-3-image.json"), "utf8"));
+    const net = runNetwork({ prices: (call) => (call.url.endsWith("black-forest-labs/flux-3-image/endpoints") ? { status: 200, body: flux } : OFFLINE) });
+    const { engine } = await engineOver(net, { imageModel: "black-forest-labs/flux-3-image", imageQuality: null });
+
+    expect(failed(await engine.handle(estimate(avatarId, 4))).error.code).toBe("PRICE_UNAVAILABLE");
+    expect(failed(await engine.handle(startRun(avatarId, FOUR_WORST))).error.code).toBe("PRICE_UNAVAILABLE");
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
   test("is NOT_FOUND for an unknown avatar and for a draft: only a saved avatar with a master gets photos", async () => {
     const draft = await seedAvatar({ status: "draft" });
     const { engine } = await engineOver(runNetwork());
