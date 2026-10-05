@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { ERROR_MESSAGES_RU } from "../../shared/engine";
+import { ERROR_MESSAGES_RU, PHOTO_UNAVAILABLE_REASONS_RU } from "../../shared/engine";
 import { freePhotos, scenePhoto } from "../engine/mockEngine.testkit";
 import { callsOf, flush, openSection, runAll } from "../testing";
 import { asAnotherWindow, makeDraft, MIA, studio } from "./montage/screenKit";
@@ -153,7 +153,8 @@ describe("from the Photos screen", () => {
     const reads = callsOf(engine, "photos.list").length;
 
     fireEvent.click(screen.getByRole("button", { name: /Монтаж из выбранных/ }));
-    await screen.findByText(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE);
+    // The photo is in another window's video: the notice says so, not the general text.
+    await screen.findByText(PHOTO_UNAVAILABLE_REASONS_RU["in-video"]);
     await waitFor(() => expect(callsOf(engine, "photos.list").length).toBeGreaterThan(reads));
     const refusedTile = (await screen.findByText("в 1 видео")).closest(".photo-tile");
     expect(refusedTile?.classList.contains("photo-tile-refused")).toBe(true);

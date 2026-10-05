@@ -4,6 +4,7 @@ import type { CommandPayload, CommandType } from "../../../shared/engine";
 import type { EngineClient, EngineReply } from "../../engine/client";
 import { MockEngine, mockEngineClient } from "../../engine/mockEngine";
 import { ManualScheduler } from "../../engine/scheduler";
+import type { EngineStore } from "../../engine/store";
 import { useOwnStickers } from "./ownStickers";
 
 // 3f.5, fix round 1: the editor asks for the own stickers its draft names BY ID (`media.list {mediaIds}`), not for the newest 500 of them, so an old
@@ -15,7 +16,7 @@ interface Asked {
 }
 
 /** The mock engine behind a client that notes what was asked. `fail` makes `media.list` reject. */
-function watched(options: { fail?: boolean } = {}): { client: Pick<EngineClient, "request" | "subscribe">; engine: MockEngine; scheduler: ManualScheduler; asked: Asked[] } {
+function watched(options: { fail?: boolean } = {}): { client: Pick<EngineClient, "request" | "subscribe">; store: Pick<EngineStore, "subscribeMedia">; engine: MockEngine; scheduler: ManualScheduler; asked: Asked[] } {
   const scheduler = new ManualScheduler();
   const engine = new MockEngine({ scheduler, latencyMs: 0, preset: "demo", seedOwnSticker: true });
   const real = mockEngineClient(engine);
@@ -28,7 +29,9 @@ function watched(options: { fail?: boolean } = {}): { client: Pick<EngineClient,
     },
     subscribe: (listener) => real.subscribe(listener),
   };
-  return { client, engine, scheduler, asked };
+  // The store's media signals, as the mock's `media.changed` events make them (this test has no gaps to resync from).
+  const store: Pick<EngineStore, "subscribeMedia"> = { subscribeMedia: (listener) => real.subscribe((event) => (event.type === "media.changed" ? listener(event.payload) : undefined)) };
+  return { client, store, engine, scheduler, asked };
 }
 
 const SEEDED = "media-seed-0001";
@@ -36,16 +39,16 @@ const listsOf = (asked: readonly Asked[]): unknown[] => asked.filter((a) => a.ty
 
 describe("useOwnStickers", () => {
   test("asks for the stickers the draft names by id, of the sticker kind, and holds what comes back", async () => {
-    const { client, asked } = watched();
-    const { result } = renderHook(() => useOwnStickers(client, [SEEDED]));
+    const { client, store, asked } = watched();
+    const { result } = renderHook(() => useOwnStickers(client, [SEEDED], store));
     await waitFor(() => expect(result.current.has(SEEDED)).toBe(true));
     expect(listsOf(asked)).toEqual([{ kind: "sticker", mediaIds: [SEEDED] }]);
     expect(result.current.get(SEEDED)).toMatchObject({ mediaId: SEEDED, width: 240, height: 240, loopFrames: 24 });
   });
 
   test("asks once for the same ids in any order, and each id once", async () => {
-    const { client, asked } = watched();
-    const { result, rerender } = renderHook(({ ids }: { ids: readonly string[] }) => useOwnStickers(client, ids), { initialProps: { ids: [SEEDED, "media-00000404", SEEDED] as readonly string[] } });
+    const { client, store, asked } = watched();
+    const { result, rerender } = renderHook(({ ids }: { ids: readonly string[] }) => useOwnStickers(client, ids, store), { initialProps: { ids: [SEEDED, "media-00000404", SEEDED] as readonly string[] } });
     await waitFor(() => expect(result.current.has(SEEDED)).toBe(true));
     rerender({ ids: ["media-00000404", SEEDED] });
     await act(async () => undefined);
@@ -53,15 +56,15 @@ describe("useOwnStickers", () => {
   });
 
   test("asks nothing while the draft names no own sticker", async () => {
-    const { client, asked } = watched();
-    const { result } = renderHook(() => useOwnStickers(client, []));
+    const { client, store, asked } = watched();
+    const { result } = renderHook(() => useOwnStickers(client, [], store));
     await act(async () => undefined);
     expect(listsOf(asked)).toEqual([]);
     expect(result.current.size).toBe(0);
   });
 
   test("asks again when the draft names another sticker, and holds both", async () => {
-    const { client, asked, engine, scheduler } = watched();
+    const { client, store, asked, engine, scheduler } = watched();
     engine.pickMediaNext([{ name: "new.gif", accept: { kind: "sticker", bytes: 100, facts: { width: 10, height: 10, loopFrames: 4, delayFrames: [2, 2] } } }]);
     await client.request("media.pickImport", { kind: "sticker" });
     act(() => scheduler.runAll());
@@ -69,7 +72,7 @@ describe("useOwnStickers", () => {
     const fresh = listed.ok ? listed.result.media.find((m) => m.name === "new.gif")?.mediaId : undefined;
     if (fresh === undefined) throw new Error("the sticker was not stored");
     asked.length = 0;
-    const { result, rerender } = renderHook(({ ids }: { ids: readonly string[] }) => useOwnStickers(client, ids), { initialProps: { ids: [SEEDED] as readonly string[] } });
+    const { result, rerender } = renderHook(({ ids }: { ids: readonly string[] }) => useOwnStickers(client, ids, store), { initialProps: { ids: [SEEDED] as readonly string[] } });
     await waitFor(() => expect(result.current.has(SEEDED)).toBe(true));
     rerender({ ids: [SEEDED, fresh] });
     await waitFor(() => expect(result.current.has(fresh)).toBe(true));
@@ -81,12 +84,12 @@ describe("useOwnStickers", () => {
   });
 
   test("a list that cannot be read leaves the map empty and raises nothing", async () => {
-    const { client, asked } = watched({ fail: true });
+    const { client, store, asked } = watched({ fail: true });
     const unhandled: unknown[] = [];
     const onUnhandled = (reason: unknown): void => void unhandled.push(reason);
     process.on("unhandledRejection", onUnhandled);
     try {
-      const { result } = renderHook(() => useOwnStickers(client, [SEEDED]));
+      const { result } = renderHook(() => useOwnStickers(client, [SEEDED], store));
       await waitFor(() => expect(listsOf(asked)).toHaveLength(1));
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 20));
@@ -99,8 +102,8 @@ describe("useOwnStickers", () => {
   });
 
   test("a sticker deleted afterwards is dropped (media.changed), with no second list", async () => {
-    const { client, asked } = watched();
-    const { result } = renderHook(() => useOwnStickers(client, [SEEDED]));
+    const { client, store, asked } = watched();
+    const { result } = renderHook(() => useOwnStickers(client, [SEEDED], store));
     await waitFor(() => expect(result.current.has(SEEDED)).toBe(true));
     await client.request("media.delete", { mediaId: SEEDED });
     await waitFor(() => expect(result.current.has(SEEDED)).toBe(false));

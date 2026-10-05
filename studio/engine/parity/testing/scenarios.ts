@@ -1,4 +1,4 @@
-import { estimateBytesUpper } from "../../../shared/montage";
+import { defaultSpec, estimateBytesUpper } from "../../../shared/montage";
 import { STICKER_MANIFEST } from "../../../shared/stickers";
 import type { Control, RigOptions, World } from "./rigs";
 import { PARITY_DECODED_APART, parityListTracks } from "./tracks";
@@ -1628,7 +1628,58 @@ const CAPTION_CHECK_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS];
+/**
+ * K16: an avatar whose photo usage cannot be trusted. Its draft is made empty and saved with two photos (a refused `montages.create` makes
+ * none), then every command that judges its photos is asked: both engines refuse them all, with the reason told apart.
+ */
+function usageUnknownScenario(name: string, usage: NonNullable<RigOptions["usage"]>): Scenario {
+  return {
+    name,
+    rig: { usage },
+    async run(t, w) {
+      await t.call("avatars.list", {});
+      await t.call("photos.list", { avatarId: w.avatarId });
+      t.note("a pick of photos is refused; an empty one is not");
+      await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(w, 1), photo(w, 2)] });
+      const montageId = await draft(t, w, []);
+      await t.call("montages.save", { montageId, spec: defaultSpec(w.avatarId, [photo(w, 1), photo(w, 2)], 7), name: null });
+      t.note("the draft's photos all read photo-unavailable, and a render refuses them");
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      await t.call("engine.snapshot", {});
+      t.note("a focus asks for the photo, not its usage: refused only where no photo is eligible (unreadable marks)");
+      await t.call("montages.focus", { avatarId: w.avatarId, photo: { source: "scene", photoId: photo(w, 1) } });
+    },
+  };
+}
+
+/** A draft of only own files, for an avatar whose photo usage cannot be trusted: it names no scene photo, so only a newer record refuses its render. */
+function ownOnlyUsageScenario(name: string, usage: NonNullable<RigOptions["usage"]>): Scenario {
+  return {
+    name,
+    rig: { ownMedia: true, usage },
+    async run(t, w, control) {
+      const mediaId = await importedPhotoId(t, control);
+      const montageId = montageIdOf(await t.call("montages.create", { avatarId: w.avatarId, photoIds: [] }));
+      await t.call("montages.save", { montageId, spec: ownPhotoSpec(w.avatarId, mediaId), name: "Свои фото" });
+      t.note("no scene photo is named, so nothing in the draft reads unavailable");
+      await t.call("montages.get", { montageId });
+      await t.call("videos.render", { montageId });
+      await t.settle();
+      await t.call("videos.list", { avatarId: w.avatarId });
+    },
+  };
+}
+
+const USAGE_UNKNOWN_SCENARIOS: readonly Scenario[] = [
+  ownOnlyUsageScenario("only own files, a record that cannot be read: the draft is judged clean and its render goes through", "record-unreadable"),
+  ownOnlyUsageScenario("only own files, a record from a newer Studio: the render is LIBRARY_TOO_NEW", "library-too-new"),
+  usageUnknownScenario("an avatar with a record that cannot be read: its photos are refused for a pick, a draft and a render (the log needs repair)", "record-unreadable"),
+  usageUnknownScenario("an avatar with a record from a newer Studio: a pick and a render are LIBRARY_TOO_NEW, and a draft's photos are unavailable", "library-too-new"),
+  usageUnknownScenario("an avatar whose reject marks cannot be read: no photo is eligible, and a pick, a draft and a render refuse them", "rejects-unreadable"),
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

@@ -282,12 +282,12 @@ interface StageProps {
 
 /** The frame at the playhead: the one part of the editor that re-renders on every frame of a playback. */
 function PreviewStage({ session, spec, timeline, cache, frameRef, zones, bars, focusPending, dragPhoto, onFillCell, onSelectCell, videos, trimPeek }: StageProps) {
-  const { client } = useEngine();
+  const { client, store } = useEngine();
   const textPreviews = useTextPreviews();
   // The owner's own stickers by media id (3f.5): the record each own-sticker layer is drawn from.
-  const ownStickers = useOwnStickers(client, ownStickerCells(spec).map((cell) => cell.mediaId));
+  const ownStickers = useOwnStickers(client, ownStickerCells(spec).map((cell) => cell.mediaId), store);
   // The own photos in the draft's cells by media id (3-H1): the stored size each is cropped from.
-  const ownPhotos = useOwnPhotos(client, ownPhotoCells(spec).map((cell) => cell.mediaId));
+  const ownPhotos = useOwnPhotos(client, ownPhotoCells(spec).map((cell) => cell.mediaId), store);
   const commands = useSelectionCommands(session, timeline);
   const playheadFrame = usePlayheadFrame(timeline.playhead);
   const [drag, setDrag] = useState<Drag | null>(null);

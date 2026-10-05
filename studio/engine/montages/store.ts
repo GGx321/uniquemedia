@@ -62,9 +62,11 @@ export type DraftRead = { kind: "ok"; montage: Montage } | { kind: "missing" } |
 export interface DraftListing {
   /** Every readable draft, newest `updatedAt` first, ties by id. */
   montages: Montage[];
-  /** Files named like a draft that could not be used, plus the files left unread when there were more than `MAX_DRAFT_FILES_READ` (the oldest by mtime). */
+  /** Files named like a draft that were read and could not be used. */
   skipped: number;
-  /** More draft files than `MAX_DRAFT_FILES_READ`: the oldest were not read (and are counted in `skipped`). */
+  /** Files left unread because there were more than `MAX_DRAFT_FILES_READ` (the oldest by mtime): not known to be bad, so never counted in `skipped`. */
+  notRead: number;
+  /** More draft files than `MAX_DRAFT_FILES_READ`: the oldest were not read (and are counted in `notRead`). */
   truncated: boolean;
 }
 
@@ -210,6 +212,7 @@ export class DraftStore {
     const avatarIds = avatarId === undefined ? library.listAvatars().map((manifest) => manifest.id) : [avatarId];
     const montages: Montage[] = [];
     let skipped = 0;
+    let notRead = 0;
     let truncated = false;
     let budget = MAX_DRAFT_FILES_READ;
     for (const id of avatarIds) {
@@ -225,7 +228,7 @@ export class DraftStore {
       let named = entries.filter((entry) => !isTempName(entry.name) && DRAFT_FILE_NAME.test(entry.name)).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       if (budget === 0) {
         // Nothing left to read: what this avatar has is counted, not looked at.
-        skipped += named.length;
+        notRead += named.length;
         truncated = truncated || named.length > 0;
         continue;
       }
@@ -235,7 +238,7 @@ export class DraftStore {
         named = await this.#newestFirst(dir, named);
       }
       const wanted = named.slice(0, budget);
-      skipped += named.length - wanted.length;
+      notRead += named.length - wanted.length;
       budget -= wanted.length;
       for (let at = 0; at < wanted.length; at += READ_CONCURRENCY) {
         const batch = wanted.slice(at, at + READ_CONCURRENCY);
@@ -249,7 +252,7 @@ export class DraftStore {
     if (skipped > 0) this.#deps.log(`${skipped} draft file(s) could not be used and are left out of the list`);
     if (truncated) this.#deps.log(`the drafts folders hold more draft files than one listing reads (${MAX_DRAFT_FILES_READ}); the rest are left out`);
     montages.sort(newestFirst);
-    return { montages, skipped, truncated };
+    return { montages, skipped, notRead, truncated };
   }
 
   /** `entries` by modification time, newest first, ties by name; a file that cannot be looked at goes last. */

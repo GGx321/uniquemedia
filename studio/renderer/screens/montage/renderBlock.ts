@@ -1,4 +1,4 @@
-import { MONTAGE_ISSUE_MESSAGES_RU, montageIssues, type ExportStatus, type MontageDraft, type MontageIssue, type MontageIssueCode, type PhotoSummary } from "../../../shared/engine";
+import { MONTAGE_ISSUE_MESSAGES_RU, montageIssues, type ExportStatus, type UsageUnknownReason, type MontageDraft, type MontageIssue, type MontageIssueCode, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { notYetSupportedIssues } from "../../../shared/montage";
 import { draftCaptionIssues } from "../../../shared/text/draftCaptionIssues";
 import { sameJson } from "./json";
@@ -33,6 +33,8 @@ export interface RenderBlockInput {
    * видео» (the video's own title, K12, comes with 3e.2); null while unknown.
    */
   readonly usedVideo: UsedVideo | null;
+  /** The avatar's photo usage (`AvatarSummary.usage`): while it is unknown the engine refuses EVERY photo of the avatar, which one replacement cannot fix. Absent: sound. */
+  readonly avatarUsage?: AvatarSummary["usage"];
   /** The text layers whose caption the engine's preview refused as it stands now (`refusedCaptionLayers`); absent: none. */
   readonly previewRefused?: ReadonlySet<string>;
 }
@@ -168,6 +170,13 @@ function photoText(first: FlaggedCell, usedVideo: UsedVideo | null): string {
   }
 }
 
+/** What the avatar's unknown usage means for the render, in a line: the decisive (first) reason. */
+function usageText(reason: UsageUnknownReason): string {
+  if (reason === "library-too-new") return "Записи видео этого аватара созданы более новой версией Studio — обновите приложение";
+  if (reason === "index-stale") return "Studio перечитывает записи видео этого аватара — подождите немного";
+  return "Записи этого аватара повреждены или недоступны — откройте «Фото» этого аватара";
+}
+
 function engineText(spec: MontageDraft, issue: MontageIssue): string {
   switch (issue.code) {
     case "caption-invalid":
@@ -218,11 +227,18 @@ export function renderBlock(input: RenderBlockInput): RenderBlock | null {
     return reason(`${clipName(clip)}: пустая ячейка`, [clip]);
   }
 
+  // A record from a newer Studio: the engine refuses every render of the avatar's drafts, whatever they name, so the block does not wait for a photo to be flagged.
+  const usage = input.avatarUsage;
+  if (usage?.state === "unknown" && usage.reasons[0] === "library-too-new") return reason(usageText("library-too-new"));
+
   const flagged = photoProblems(spec, verdict, input.photos ?? new Map());
   const first = flagged[0];
   if (first !== undefined) {
     // Until the photos are read, why is not known: the button is blocked all the same, without a guess.
     if (input.photos === null) return reason("Проверяем фото…", [first.clip]);
+    // An avatar whose usage is unknown refuses all its photos: say that, and mark every flagged clip.
+    const unknown = input.avatarUsage?.state === "unknown" ? input.avatarUsage.reasons[0] : undefined;
+    if (unknown !== undefined) return reason(usageText(unknown), [...new Set(flagged.map((f) => f.clip))]);
     const clips = first.problem === "used" ? [...new Set(flagged.map((f) => f.clip))] : [first.clip];
     return reason(photoText(first, input.usedVideo), clips);
   }

@@ -447,8 +447,9 @@ describe("the Stage 3 error messages", () => {
     expect(ERROR_MESSAGES_RU.EXPORT_UNAVAILABLE).toMatch(/ничего не потрачено/);
   });
 
-  test("PHOTO_UNAVAILABLE says only generated scene photos go into a video", () => {
-    expect(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE).toMatch(/сгенерированные сцены/);
+  test("PHOTO_UNAVAILABLE names the real reasons (one photo, one video; a rejected photo) and never the age check, which is off by default", () => {
+    expect(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE).toMatch(/уже в другом видео/);
+    expect(ERROR_MESSAGES_RU.PHOTO_UNAVAILABLE).not.toMatch(/возраст/);
   });
 });
 

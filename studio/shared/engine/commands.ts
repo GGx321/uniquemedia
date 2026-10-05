@@ -343,14 +343,22 @@ const ENGINE_SPECS = [
   ),
   // Queues a render of a saved draft, or of a spec straight from a headless caller. Everything is checked in one step
   // BEFORE anything is claimed or written, and a refusal costs nothing (no job, no reservation, no file):
-  //   MONTAGE_INVALID   (with issues) a montage that is not complete, or uses a part that is not supported yet
-  //                     (layers, music, own media: `not-yet-supported`, N9);
+  //   MONTAGE_INVALID   (with issues) a montage that is not complete or breaks a rule: the structural issues, then `sticker-unavailable`,
+  //                     `caption-invalid`, `track-unavailable` / `track-too-short`, and, for an own file the library does not hold as the
+  //                     kind the montage needs, `media-unavailable` / `video-too-short` / `track-too-short` (`not-yet-supported` is no
+  //                     longer produced: every part renders);
   //   EXPORT_UNAVAILABLE (with exportReason) the export folder is unusable (invariant 35);
   //   PHOTO_UNAVAILABLE (with `photo-unavailable` issues by cell path) a scene photo that is not an eligible, unused one
   //                     of this avatar, or one another queued or running render holds; also an avatar whose usage cannot be
-  //                     trusted right now (an unreadable record or a stale index: `detail` says which);
+  //                     trusted right now (an unreadable record or a stale index): then EVERY photo is refused. `photoReason` says
+  //                     which cause when the cells share one (`in-video`, `held-by-render`, `pending-video` (no render holds it, a video
+  //                     that did not finish saving does: its pending intent), `index-stale`, `log-needs-repair`);
   //   RENDER_QUEUE_FULL (`detail` names the limit) too many renders are queued or running;
   //   LIBRARY_TOO_NEW   a video record was written by a newer Studio;
+  //   IN_FLIGHT         the export folder is being changed (`EXPORT_CHANGING_DETAIL`), or the library was switched while the render was
+  //                     being prepared: nothing was queued, and a retry a moment later goes through;
+  //   INTERNAL          `RENDER_NOT_QUEUED_DETAIL`: the command ran out of its budget before the job was queued (nothing was queued);
+  //   LIBRARY_UNAVAILABLE no library is open;
   //   NOT_FOUND         an unknown avatar, or a `montageId` no draft has; a draft file that cannot be read is INTERNAL.
   // A `montageId` renders the draft's spec as stored NOW (the job keeps that copy: a later save or delete does not reach it), and
   // is judged exactly like a `spec`. Deleting the draft while the render is queued or running is allowed: the video's record then
@@ -432,14 +440,18 @@ const ENGINE_SPECS = [
   // Stage 3 track store (3c.4, K23, K26). `music.list` is free and reads what is on disk: the tracks of the current list
   // whose audio is stored, at most 100, each with its highlights ascending (the likely default last). `music.peaks` is
   // the waveform of a window of one track: `bars` integers from 0 to 1000, read from the envelope kept at download time
-  // (no decode, no network). Both refuse nothing that costs: NOT_FOUND for a track that is not stored (and, until 3f, for
-  // an own track), VALIDATION for a payload that breaks the contract.
+  // (no decode, no network). Both refuse nothing that costs: NOT_FOUND for a track that is not stored (an own track is the
+  // media store's: one the library does not hold, or holds as something that is not a track, is NOT_FOUND too), VALIDATION for a
+  // payload that breaks the contract.
   defineCommand("music.list", Empty, MusicListResult),
   defineCommand("music.peaks", MusicPeaksRequest, MusicPeaksResult),
   // A new draft for an avatar from 0 to 20 of its scene photos (0: an empty draft, «Новый монтаж»), with the focus of
   // every placed photo resolved and no name (`name: null`, the window says «без названия»). Refused, and nothing is stored, with
   //   PHOTO_UNAVAILABLE (issues `photo-unavailable` at `["photoIds", i]`) a photo that is not eligible, or is already in a video,
-  //                     or is held by a render that is queued or running: one photo goes into one video;
+  //                     or is held by a render that is queued or running: one photo goes into one video; `photoReason` says which
+  //                     cause when the refused photos share one (while the avatar's usage cannot be trusted EVERY photo is refused);
+  //   LIBRARY_TOO_NEW   a video record of the avatar was written by a newer Studio (its photo usage cannot be judged);
+  //   LIBRARY_UNAVAILABLE no library is open; IN_FLIGHT a library switch is being surveyed;
   //   NOT_FOUND         an avatar that does not exist or is not active.
   // The focus of every photo is asked at the same time under ONE budget that fits main's 30 s deadline; a photo that could not be
   // judged in time gets `focus: null` (the preview draws the stand-in point, and a render tries again).
@@ -450,13 +462,16 @@ const ENGINE_SPECS = [
   // was written by a newer Studio, or was replaced by saves faster than it could be read (detail: try again); LIBRARY_UNAVAILABLE
   // without a library.
   defineCommand("montages.get", z.strictObject({ montageId: Id }), z.strictObject({ montage: Montage, issues: MontageIssues })),
-  // Drafts, newest `updatedAt` first, at most MAX_LISTED_MONTAGES; `total` counts every readable draft, `skippedTotal` the files
-  // that could not be read (they are left out, never a failed list). No `avatarId` = every avatar. `videoCount` = the videos
-  // rendered from the draft. NOT_FOUND for an `avatarId` the library does not have.
+  // Drafts, newest `updatedAt` first, at most MAX_LISTED_MONTAGES; `total` counts every draft that was read and is readable,
+  // `skippedTotal` the files that were read and could not be (they are left out, never a failed list). `notListedTotal` (additive:
+  // absent when 0, never 0) counts the draft files a listing did not even read because there were more than it reads (1000): they
+  // are not known to be bad, so they are never in `skippedTotal`. The reading budget is spent avatar by avatar, in the library's
+  // order: within the avatar that runs it out the newest files by modification time are read, and every LATER avatar loses all its
+  // files, whatever their age. No `avatarId` = every avatar. `videoCount` = the videos rendered from the draft. NOT_FOUND for an `avatarId` the library does not have.
   defineCommand(
     "montages.list",
     z.strictObject({ avatarId: Id.optional() }),
-    z.strictObject({ items: z.array(MontageListItem).max(MAX_LISTED_MONTAGES), total: Count, skippedTotal: Count }),
+    z.strictObject({ items: z.array(MontageListItem).max(MAX_LISTED_MONTAGES), total: Count, skippedTotal: Count, notListedTotal: Count.min(1).optional() }),
   ),
   // Replaces a draft's spec and name. `spec.avatarId` must be the stored draft's (VALIDATION otherwise); nothing is checked
   // against the library (a draft may hold a photo that was rejected since), so a save never fails for a photo. NOT_FOUND for a
@@ -471,8 +486,8 @@ const ENGINE_SPECS = [
   defineCommand("montages.delete", z.strictObject({ montageId: Id }), z.strictObject({ montageId: Id })),
   // The focus of one photo, for a photo the owner just placed (a cell change): `null` when it could not be judged (no face
   // models, no answer in time; the draft then stores null). At most 20 s. NOT_FOUND for an avatar that does not exist or is not
-  // active, or an own upload (no such store yet); PHOTO_UNAVAILABLE (issue at `["photo"]`) for a scene photo that is not an
-  // eligible photo of this avatar.
+  // active, or an own photo the library does not hold as a photo; PHOTO_UNAVAILABLE (issue at `["photo"]`) for a scene photo that
+  // is not an eligible photo of this avatar.
   defineCommand("montages.focus", z.strictObject({ avatarId: Id, photo: PhotoRef }), z.strictObject({ focus: Focus.nullable() })),
   // The engine's own picture of one text layer, for the editor's preview: the caption rules, the layout, the fixed template and
   // the rasteriser (the very ones a render uses), drawn at the 1080 scale. The PNG is written to

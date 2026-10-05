@@ -61,6 +61,7 @@ import { promptSubject, PromptSubjectError } from "./avatars/prompts";
 import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
 import { EngineFailure } from "./engineFailure";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
+import { validJobStates } from "./snapshotJobs";
 import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
@@ -197,6 +198,8 @@ export interface EngineDeps {
    * (queued and running specs); tests inject a stub to try the library's rule alone.
    */
   reservedPhotos?: (avatarId: string) => ReadonlySet<string>;
+  /** The registry of the engine's jobs; absent, the engine makes its own. Tests inject one holding a state the snapshot must not trust. */
+  jobs?: JobRegistry;
   /**
    * Downscales a tiny built-in image through the same ffmpeg path a real
    * slot's image would take (M8's `generateCandidates` preflight). Defaults
@@ -615,7 +618,9 @@ export class Engine {
   /** One avatars.importAvatar at a time, like #creatingDraft. */
   #importing = false;
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
-  readonly #jobs = new JobRegistry();
+  readonly #jobs: JobRegistry;
+  /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
+  readonly #reportedBadJobs = new Set<string>();
   /**
    * The render queue (3a.6): a pool over `#jobs`, sized from the settings.
    * `videos.render` submits to it through `#videos`.
@@ -648,6 +653,7 @@ export class Engine {
 
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
+    this.#jobs = deps.jobs ?? new JobRegistry();
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
     const checkTimeout = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
@@ -2032,8 +2038,8 @@ export class Engine {
       drafts: view.drafts.map((draft) => ({ ...draft, estimate: nextBatch })),
       unreadableAvatars: view.unreadable,
       unreadableTotal: view.unreadableTotal,
-      // Avatar and photo run jobs of this engine's life.
-      jobs: this.#jobs.states(),
+      // Avatar and photo run jobs of this engine's life; a state that breaks the contract is repaired (an over-long detail) or left out, since one would send every window offline.
+      jobs: validJobStates(this.#jobs.states(), (line) => console.error(`studio engine: ${line}`), this.#reportedBadJobs),
       librarySwitchGeneration: this.#librarySwitchGeneration,
       // As of the last check: start, a settings update, or a render attempt (`#refreshExportStatus`).
       exportStatus: this.#exportStatus,

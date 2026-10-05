@@ -7,6 +7,8 @@ import {
   MONTAGE_ISSUE_MESSAGES_RU,
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
+  PHOTO_UNAVAILABLE_REASONS_RU,
+  RENDER_NO_SPACE_DETAIL_PREFIX,
   RENDER_TIMEOUT_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
   renderQueueLimitOf,
@@ -25,13 +27,14 @@ const DRAFT_TOO_NEW_RU = "Этот черновик сохранён более 
 const DRAFT_CHANGING_RU = "Черновик как раз сохранялся, и его не удалось прочитать. Повторите — он откроется.";
 
 /**
- * 3d.6: what a render says when it is refused or fails. The general texts of IN_FLIGHT and of an answer that never came are
- * about paid requests and OpenRouter; a render touches neither, and each of these says what happened to the job.
+ * 3d.6: what a render says when it is refused or fails. The general text of an answer that never came, and of a TIMEOUT, are
+ * about OpenRouter and paid requests; a render touches neither, and each of these says what happened to the job.
  */
 const EXPORT_CHANGING_RU = "Папку «Готовые видео» как раз меняют. Ничего не сделано и не потрачено — повторите через секунду.";
 const RENDER_NOT_QUEUED_RU = "Движок не успел поставить рендер в очередь. Ничего не поставлено и не потрачено — повторите.";
 const NO_ANSWER_RU = "Движок не ответил вовремя. Команда могла выполниться: посмотрите на экран и в очередь слева, и повторите, только если ничего не изменилось.";
 const RENDER_TIMEOUT_RU = "Рендер не уложился во время: диск с библиотекой или ffmpeg не ответили. Ничего не потрачено — повторите; если библиотека на внешнем диске, проверьте его.";
+const RENDER_NO_SPACE_RU = "Для рендера не хватает места на системном диске (там лежат его временные файлы). Освободите место и повторите. Готовый файл не создан, ничего не потрачено.";
 const RENDER_FORMS = ["рендер", "рендера", "рендеров"] as const;
 
 function baseText(error: EngineError): string {
@@ -39,10 +42,14 @@ function baseText(error: EngineError): string {
   if (error.code === "INTERNAL" && error.detail === RENDER_NOT_QUEUED_DETAIL) return RENDER_NOT_QUEUED_RU;
   if (error.code === "INTERNAL" && error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true) return NO_ANSWER_RU;
   if (error.code === "TIMEOUT" && error.detail?.startsWith(RENDER_TIMEOUT_DETAIL_PREFIX) === true) return RENDER_TIMEOUT_RU;
+  // No room for the render's temporary files: a retry fails the same way until space is freed.
+  if (error.code === "RENDER_FAILED" && error.detail?.startsWith(RENDER_NO_SPACE_DETAIL_PREFIX) === true) return RENDER_NO_SPACE_RU;
   if (error.code === "RENDER_QUEUE_FULL") {
     const limit = renderQueueLimitOf(error.detail);
     if (limit !== null) return `В очереди уже ${countOf(limit, RENDER_FORMS)}: это предел. Дождитесь, пока часть из них соберётся, или отмените лишние, и повторите. Ничего не потрачено и не сохранено.`;
   }
+  // A refused photo says why: one photo goes into one video, a render holds its photos, a broken record refuses the whole avatar.
+  if (error.code === "PHOTO_UNAVAILABLE" && error.photoReason !== undefined) return PHOTO_UNAVAILABLE_REASONS_RU[error.photoReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.

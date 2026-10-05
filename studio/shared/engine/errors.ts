@@ -53,9 +53,12 @@ import { Count, SafeText } from "./primitives";
  *
  * Stage 3 (the montage renders; they never spend money):
  * - MONTAGE_INVALID: the montage cannot be rendered (or is not yet supported): `issues` lists why.
- * - PHOTO_UNAVAILABLE: a scene photo in the spec is not an eligible one (a candidate, the master, an
- *   import, an age-failed or rejected photo, another avatar's, or a missing one); refused before ffmpeg starts.
- *   `issues` names the cells (`photo-unavailable` at each path).
+ * - PHOTO_UNAVAILABLE: a scene photo in the spec (or in a `montages.create` pick) cannot go into a video: it is not an eligible one
+ *   (a candidate, the master, an import, an age-failed or rejected photo, another avatar's, or a missing one), it is already in a video
+ *   (one photo, one video), a queued or running render holds it, or the avatar's usage cannot be trusted (a stale used index, or a record
+ *   or reject log that needs repair: then EVERY photo of the avatar is refused); refused before ffmpeg starts.
+ *   `issues` names the cells (`photo-unavailable` at each path); `photoReason` says which cause when the refused cells share a
+ *   cause the owner can act on (`PHOTO_UNAVAILABLE_REASONS`), and `detail` is the engine's own words for the log.
  * - EXPORT_UNAVAILABLE: the «Готовые видео» folder cannot take the video (invariant 35); `exportReason` says why.
  *   Refused before a job is queued, or fails the job when the folder vanishes mid-render.
  * - RENDER_FAILED: ffmpeg or the render pipeline failed; the stderr tail goes to `detail`.
@@ -231,13 +234,36 @@ export const MusicUnavailableReason = z.enum(MUSIC_UNAVAILABLE_REASONS);
 export type MusicUnavailableReason = z.infer<typeof MusicUnavailableReason>;
 
 /**
+ * Why a scene photo was refused (PHOTO_UNAVAILABLE's `photoReason`, additive in v5): the window's text depends on it, so it is a closed
+ * code and not the engine's free `detail`. Absent when the cause is one the owner cannot act on (a rejected, missing or foreign photo),
+ * or when the refused cells have different causes.
+ *
+ * - in-video: the photo is already in a video (one photo, one video).
+ * - held-by-render: a render that is queued or running holds the photo.
+ * - pending-video: no render holds the photo, but a video that did not finish saving (a pending commit intent, not yet adopted or dropped) does.
+ * - index-stale: the avatar's used index is behind its videos and could not be read again: EVERY photo of the avatar is refused.
+ * - log-needs-repair: a record or the reject log of the avatar cannot be read: EVERY photo of the avatar is refused.
+ *
+ * (A record from a newer Studio is not one of these: it is LIBRARY_TOO_NEW.)
+ */
+export const PHOTO_UNAVAILABLE_REASONS = ["in-video", "held-by-render", "pending-video", "index-stale", "log-needs-repair"] as const;
+export const PhotoUnavailableReason = z.enum(PHOTO_UNAVAILABLE_REASONS);
+export type PhotoUnavailableReason = z.infer<typeof PhotoUnavailableReason>;
+
+/** The reason all the refused cells share, or undefined when one has none or they differ. */
+export function commonPhotoReason(reasons: readonly (PhotoUnavailableReason | undefined)[]): PhotoUnavailableReason | undefined {
+  const first = reasons[0];
+  return first !== undefined && reasons.every((reason) => reason === first) ? first : undefined;
+}
+
+/**
  * An error as it travels between processes: a code plus optional diagnostics,
  * never user text. Six codes must say more than their name: MONTAGE_INVALID
  * carries the `issues` (a closed list of codes and paths, never values),
  * PHOTO_UNAVAILABLE the same list with only `photo-unavailable` issues (which
- * cells), EXPORT_UNAVAILABLE its `exportReason`, TEXT_INVALID its
- * `captionIssue`, MUSIC_UNAVAILABLE its `musicReason` and MEDIA_UNSUPPORTED its
- * `mediaReason`; no other code carries any.
+ * cells) and, when there is one, its `photoReason`, EXPORT_UNAVAILABLE its
+ * `exportReason`, TEXT_INVALID its `captionIssue`, MUSIC_UNAVAILABLE its
+ * `musicReason` and MEDIA_UNSUPPORTED its `mediaReason`; no other code carries any.
  */
 export const EngineError = z
   .strictObject({
@@ -249,6 +275,7 @@ export const EngineError = z
     captionIssue: CaptionIssue.optional(),
     musicReason: MusicUnavailableReason.optional(),
     mediaReason: MediaUnsupportedReason.optional(),
+    photoReason: PhotoUnavailableReason.optional(),
   })
   .refine((e) => (e.code === "MONTAGE_INVALID" || e.code === "PHOTO_UNAVAILABLE") === (e.issues !== undefined), {
     message: "issues must be present exactly on MONTAGE_INVALID and PHOTO_UNAVAILABLE",
@@ -257,6 +284,10 @@ export const EngineError = z
   .refine((e) => e.code !== "PHOTO_UNAVAILABLE" || (e.issues ?? []).every((i) => i.code === "photo-unavailable"), {
     message: "PHOTO_UNAVAILABLE lists photo-unavailable issues only",
     path: ["issues"],
+  })
+  .refine((e) => e.photoReason === undefined || e.code === "PHOTO_UNAVAILABLE", {
+    message: "photoReason may only be present on PHOTO_UNAVAILABLE",
+    path: ["photoReason"],
   })
   .refine((e) => (e.code === "EXPORT_UNAVAILABLE") === (e.exportReason !== undefined), {
     message: "exportReason must be present exactly on EXPORT_UNAVAILABLE",
@@ -316,6 +347,20 @@ export const EXPORT_CHANGING_DETAIL = "the export folder is being changed; try t
 export const RENDER_NOT_QUEUED_DETAIL = "the render request ran out of time before it could be queued; nothing was queued";
 
 /**
+ * `EngineError.detail` of LIBRARY_TOO_NEW from `montages.create` and `videos.render` for an avatar with a video record a newer Studio
+ * wrote (its photo usage cannot be judged). One text for the engine and the mock.
+ */
+export const LIBRARY_TOO_NEW_DETAIL = "a video record of this avatar was written by a newer version of Studio";
+
+/**
+ * `EngineError.detail` of a PHOTO_UNAVAILABLE refused because the avatar's photo usage cannot be trusted right now (a stale used
+ * index, or a record or reject log that needs repair): every photo of the avatar is refused. The reason is the library's own code.
+ */
+export function usageUntrustedDetail(reason: Extract<PhotoUnavailableReason, "index-stale" | "log-needs-repair">): string {
+  return `the usage of this avatar's photos cannot be trusted right now (${reason})`;
+}
+
+/**
  * `EngineError.detail` of the NOT_FOUND `montages.focus` answers for an own photo the library does not hold (3f.2). The text is the one the
  * answer had before the media store existed, kept word for word because the parity suite's golden transcript names it (the goldens are
  * append-only); the engine and the mock both use THIS constant. The renderer shows a Russian text by code, never this detail.
@@ -336,6 +381,12 @@ export const OWN_MUSIC_NOT_FOUND_DETAIL = "own music is not available yet";
  * files. The window keys its own text on it, since the general TIMEOUT text is about a paid OpenRouter request.
  */
 export const RENDER_TIMEOUT_DETAIL_PREFIX = "the render ran past its time limit";
+
+/**
+ * What the detail of a RENDER_FAILED starts with when the render could not get room for its temporary files (the layers' peak, or the copy of an own file):
+ * a retry cannot help until disk space is freed, so the window says that instead of «Попробуйте ещё раз». The engine writes `: <what is needed>` after it.
+ */
+export const RENDER_NO_SPACE_DETAIL_PREFIX = "not enough free space for the render's temporary files";
 
 export const NO_ANSWER_DETAIL_PREFIX = "the engine did not answer within ";
 

@@ -1,4 +1,4 @@
-import type { AvatarSummary, EngineError, ExportStatus, FileState, PhotoSummary, VideoSummary } from "../../../shared/engine";
+import { RENDER_NO_SPACE_DETAIL_PREFIX, type AvatarSummary, type EngineError, type ExportStatus, type FileState, type PhotoSummary, type VideoSummary } from "../../../shared/engine";
 import type { JobView } from "../../engine/store";
 import { countOf, groupNumber, NBSP, plural } from "../../lib/format";
 import { secondsLabel } from "../montage/labels";
@@ -253,7 +253,11 @@ function failedReason(error: EngineError): string {
     case "TEXT_INVALID":
       return "надпись не проходит проверку";
     case "RENDER_FAILED":
-      return "сборка не удалась";
+      return error.detail?.startsWith(RENDER_NO_SPACE_DETAIL_PREFIX) === true ? "не хватает места на диске" : "сборка не удалась";
+    case "TIMEOUT":
+      return "рендер не уложился во время";
+    case "LIBRARY_TOO_NEW":
+      return "записи видео созданы более новой версией Studio";
     case "RENDER_VERIFY_FAILED":
       return "видео не прошло проверку";
     default:

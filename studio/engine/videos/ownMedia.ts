@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { open, rm, type FileHandle } from "node:fs/promises";
 import { dirname } from "node:path";
-import { MAX_STORED_VIDEO_BYTES } from "../../shared/engine";
+import { MAX_STORED_VIDEO_BYTES, RENDER_NO_SPACE_DETAIL_PREFIX } from "../../shared/engine";
 import { freeBytesOf } from "../freeBytes";
 import { NODE_OPEN_OPS, openRegularNoFollow, type OpenRegularOps } from "../library/openRegular";
 import { RenderFailure } from "../renderQueue/queue";
@@ -113,7 +113,7 @@ export interface StreamCopyIo {
 
 const defaultOpenDest = (path: string): Promise<DestFile> => open(path, "wx", 0o600);
 const defaultRemove = (path: string): Promise<void> => rm(path, { force: true });
-export const ownMediaNoSpace = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `not enough free space for the render's temporary files: the own ${what} cannot be copied` });
+export const ownMediaNoSpace = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `${RENDER_NO_SPACE_DETAIL_PREFIX}: the own ${what} cannot be copied` });
 const noSpace = ownMediaNoSpace;
 /** Something the disk said that is not «it is gone»: an I/O error, a handle limit, a lock held by an antivirus. The file may well be fine. */
 const readFailed = (what: string): RenderFailure => new RenderFailure({ code: "RENDER_FAILED", detail: `an own ${what} of this montage could not be read` });

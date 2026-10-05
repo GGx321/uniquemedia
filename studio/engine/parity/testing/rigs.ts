@@ -255,12 +255,29 @@ async function writeMixedMedia(folder: string): Promise<string[]> {
   return MIXED_MEDIA.map((file) => join(folder, file.name));
 }
 
+/** Breaks what the avatar's photo usage is read from, in its folder on disk (`RigOptions.usage`): the engine finds it when it opens the library. */
+async function breakUsage(avatarDir: string, avatarId: string, usage: NonNullable<RigOptions["usage"]>): Promise<void> {
+  if (usage === "rejects-unreadable") {
+    await writeFile(join(avatarDir, "rejected.jsonl"), "not json\n");
+    return;
+  }
+  await mkdir(join(avatarDir, "videos"), { recursive: true });
+  const record = usage === "library-too-new" ? JSON.stringify({ schemaVersion: 2, id: "video-00000009", avatarId }) : "{ not json";
+  await writeFile(join(avatarDir, "videos", "video-00000009.json"), record);
+}
+
 /** What a scenario may ask of a rig before it starts. */
 export interface RigOptions {
   /** How many renders run at once; 1 unless a scenario needs a wider pool. */
   readonly renderConcurrency?: number;
   /** 3f.1b: the real rig gets a photo importer (as 3f.2 will give the app one), so a good photo is accepted; the mock accepts the dialog's `good` file. Without it no importer exists and a good photo is `not-yet-supported`. */
   readonly ownMedia?: boolean;
+  /**
+   * K16: the main avatar's photo usage cannot be trusted from the start, for one reason. The real rig writes the broken file into the avatar's folder before the
+   * engine opens the library (a record that is not JSON, one a newer Studio wrote, a reject log with a bad line); the mock is seeded with the same reason.
+   * (`index-stale` is memory only, never a file: the unit tests of both engines hold it.)
+   */
+  readonly usage?: "record-unreadable" | "library-too-new" | "rejects-unreadable";
 }
 
 export interface ParityRig extends Recorded {
@@ -326,7 +343,9 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     ...Array.from({ length: OTHER_PHOTOS }, (_, i) => scenePhoto(i + 1, {}, SOFIA)),
   ];
   const avatars: AvatarSummary[] = [
-    { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS },
+    options.usage === undefined
+      ? { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS }
+      : { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: 0, usage: { state: "unknown", reasons: [options.usage] } },
     { ...SOFIA, photoCount: OTHER_PHOTOS, eligibleUnusedCount: OTHER_PHOTOS },
     { ...NORA, photoCount: 0, eligibleUnusedCount: 0 },
   ];
@@ -570,6 +589,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const otherAvatarId = await seedAvatar(library, "Sofia");
   const otherPhotoIds = await seedPhotos(library, otherAvatarId, OTHER_PHOTOS, 2);
   const archivedAvatarId = await seedAvatar(library, "Nora");
+  if (options.usage !== undefined) await breakUsage(join(dir, "library", "avatars", avatarId), avatarId, options.usage);
 
   const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds) };
   const gate = new Gate();
