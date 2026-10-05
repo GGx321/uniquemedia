@@ -458,6 +458,27 @@ describe("an intent recovery deferred (stage 3 review 3-M3: one photo, one video
   });
 });
 
+describe("a cancel while the commit scans the numbers (review round 2, M1)", () => {
+  test("the job ends cancelled, not failed with a library error", async () => {
+    const w = world();
+    let scanning: () => void = () => undefined;
+    const reachedScan = new Promise<void>((resolve) => (scanning = resolve));
+    const numberFs = {
+      readdir: (): Promise<Array<{ name: string; isFile: boolean }>> => (scanning(), new Promise(() => undefined)),
+      lstat: async () => ({ size: 0, isFile: true }),
+      readFile: async () => "",
+    };
+    const r = serviceRig(w, { deps: { renderOverrides: { numberFs } } });
+
+    const { jobId } = await r.service.render({ spec: specFor(w) });
+    await reachedScan;
+    r.service.cancel(jobId);
+    await r.queue.idle();
+
+    expect(r.jobs.stateOf(jobId)?.status).toBe("cancelled");
+  });
+});
+
 describe("holds that a recovery made are announced (review round 1, L3)", () => {
   test("a deferred intent holds its avatar's photos: the avatar is announced so its eligibleUnusedCount refreshes", async () => {
     const w = world();

@@ -7,6 +7,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { RenderFailure } from "../renderQueue/queue";
 import type { VerifiedFile } from "../verify";
 import { NODE_COMMIT_FS } from "./commitFs";
+import { NODE_NUMBER_FS } from "./exportNumbers";
 import { commitIntent, writeIntent } from "./intents";
 import { commitVideo, VerifyRefusedError, type CommitInput, type CommitStep } from "./commit";
 import { videoPaths, VideoRecordSchema } from "./record";
@@ -234,6 +235,56 @@ describe("a number that a record or an intent of the day still names is never re
     } finally {
       chmodSync(intent, 0o600);
     }
+  });
+
+  test("a cancel during the scan comes out as the cancel's own reason, not wrapped in a library failure (review round 2, M1)", async () => {
+    const r = await rig(world);
+    const stop = new AbortController();
+    const reason = new Error("the owner cancelled");
+
+    // The cancel lands after the lock was taken: inside the claim's steps, where the scan then finds the signal fired.
+    const error = await failureOf(r.run({ signal: stop.signal, beforeClaim: async () => stop.abort(reason) }));
+
+    expect(error).toBe(reason);
+    expect(await exportFiles(r.w)).toEqual([]);
+  });
+
+  test("a hung read of .pending ends for the signal with its reason, and the root lock is free: a second commit goes through", async () => {
+    const r = await rig(world);
+    const stop = new AbortController();
+    const reason = new Error("deadline");
+    const hang = { readdir: () => new Promise<Array<{ name: string; isFile: boolean }>>(() => undefined), lstat: NODE_NUMBER_FS.lstat, readFile: NODE_NUMBER_FS.readFile };
+    setTimeout(() => stop.abort(reason), 50);
+
+    const error = await failureOf(r.run({ signal: stop.signal, numberFs: hang }));
+    expect(error).toBe(reason);
+
+    writeTemp(r.target().folder, r.input.jobId, r.bytes);
+    const out = await r.run();
+    expect(out.record.file.relPath).toBe(FINAL);
+  });
+
+  test("a .pending folder that cannot be listed is logged and skipped: it does not fail every commit (review round 2, L8)", async () => {
+    const r = await rig(world);
+    const broken = { ...NODE_NUMBER_FS, readdir: (): Promise<Array<{ name: string; isFile: boolean }>> => Promise.reject(errnoError("EIO")) };
+
+    const out = await r.run({ numberFs: broken });
+
+    expect(out.record.file.relPath).toBe(FINAL);
+    expect(r.logs.some((line) => line.includes("could not be listed"))).toBe(true);
+  });
+
+  test("an avatar whose used index is stale has its videos/ folder read from disk for the numbers: a record the index missed still counts (review round 2, L1)", async () => {
+    const r = await rig(world);
+    const record = sampleRecord(r.w, { videoId: "video-000000h1", jobId: "job-000000h1" });
+    // The record is on disk but the index never learned of it, and the avatar is flagged.
+    await writeIntent(NODE_COMMIT_FS, r.w.libraryRoot, record);
+    await commitIntent(NODE_COMMIT_FS, r.w.libraryRoot, r.w.avatar.id, record.id);
+    r.w.library.flagVideoIndexStale(r.w.avatar.id, record.id);
+
+    const out = await r.run();
+
+    expect(out.record.file.relPath).toBe("Mia/2026-09-29_photo_002.mp4");
   });
 
   test("the scan stops for the commit's own signal: a cancelled commit claims nothing", async () => {

@@ -10,7 +10,7 @@ import { VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import { RenderFailure } from "../renderQueue/queue";
 import { verifyAndHashMp4, type VerifiedFile, type VerifyExpected, type VerifyReasonCode } from "../verify";
 import type { CommitFs, FileFacts, FileIdentity } from "./commitFs";
-import { highestNamedNumber, type ExportNumberLibrary } from "./exportNumbers";
+import { highestNamedNumber, type ExportNumberLibrary, type NumberFs } from "./exportNumbers";
 import { commitIntent, writeIntent } from "./intents";
 import { parseRecordSpec, partNameOf, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
 import { withRootLock } from "./rootLock";
@@ -146,6 +146,8 @@ export interface CommitDeps {
   readonly libraryRoot: string;
   /** The library: the records of EVERY avatar, from its used index, are what the file numbers go on from (two avatars can share an export folder). */
   readonly library: ExportNumberLibrary;
+  /** The disk calls of the number scan (the library's `.pending/` and, for an avatar whose index cannot be trusted, `videos/`); the real ones unless a test plays a disk that does not answer. */
+  readonly numberFs?: NumberFs;
   /** `verifyAndHashMp4` unless a test plays the verifier. */
   readonly verify?: (path: string, expected: VerifyExpected) => Promise<VerifiedFile>;
   /** A cancel is honoured until the claim (see above). */
@@ -377,6 +379,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
               { rootId: target.rootId, folderName: folder.name, date: input.date, kind: input.videoKind, caseInsensitive: target.caseInsensitive },
               signal,
               log,
+              deps.numberFs,
             ),
           );
           // The point of no return: the last look at a cancel, and the call that says "saving", with nothing awaited between.
@@ -485,8 +488,9 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
     }, signal === undefined ? {} : { signal });
   } catch (error) {
     await rollback();
-    // A cancel (the signal's own reason) passes through; the rest is told without paths.
-    if (signal?.aborted === true && error === signal.reason) throw error;
+    // A cancel (the signal's own reason) passes through, even when a step wrapped it in its phase; the rest is told without paths.
+    const cause = error instanceof PhaseError ? error.original : error;
+    if (signal?.aborted === true && cause === signal.reason) throw cause;
     const failure = error instanceof PhaseError ? failureFrom(error.phase, error.original) : failureFrom("internal", error);
     log(`commit ${input.jobId}: failed: ${failure.engineError.code}`);
     throw failure;

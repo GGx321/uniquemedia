@@ -14,6 +14,7 @@ import { RenderFailure, type RenderContext } from "../renderQueue/queue";
 import { stagingBound, type StagingBound } from "../renderQueue/stagingBound";
 import { runRenderJob, type RenderRunDeps, type RunAudio } from "../renderQueue/runner";
 import type { VerifiedFile, VerifyExpected } from "../verify";
+import type { NumberFs } from "./exportNumbers";
 import { assertFolderContained, commitVideo, ContainmentError, type CommitStep, type CommittedVideo } from "./commit";
 import { NODE_COMMIT_FS, type CommitFs } from "./commitFs";
 import type { OpenRegularOps } from "../library/openRegular";
@@ -124,7 +125,7 @@ export interface RenderPlan {
 }
 
 export interface VideoRenderDeps {
-  readonly library: Pick<Library, "root" | "readPhotoVerified" | "listAvatars" | "namedVideoFiles"> & IndexPort;
+  readonly library: Pick<Library, "root" | "readPhotoVerified" | "listAvatars" | "namedVideoFiles" | "usageReasons"> & IndexPort;
   readonly tracker: CommitTracker;
   /** `userData/render-tmp`. Required: there is no `os.tmpdir` fallback. */
   readonly renderTmpDir: string;
@@ -178,6 +179,8 @@ export interface VideoRenderDeps {
    * the adopted record, or null when it was dropped, deferred or nothing was left. The signal says to stop (the step deadline).
    */
   readonly settleLeftover?: (input: SettleInput, signal: AbortSignal) => Promise<VideoRecord | null>;
+  /** The disk calls of the commit's number scan; the real ones unless a test plays a library disk that does not answer. */
+  readonly numberFs?: NumberFs;
   /** Creates the empty temp exclusively (no link followed); the real one unless a test plays a volume. */
   readonly createTemp?: (path: string) => Promise<void>;
 }
@@ -479,7 +482,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         deadlineTimer = deadlineTimers.set(() => {
           if (pastNoReturn) return;
           deadlineFired = true;
-          const failure = new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "saving the video took too long: the export folder does not answer" });
+          const failure = new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "saving the video took too long: the export folder or the library does not answer" });
           log(`render ${plan.jobId}: the commit passed its deadline of ${deadlineMs} ms before it claimed a name; the job is failed and the commit is asked to stop`);
           stop.abort(failure);
           reject(failure);
@@ -509,6 +512,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           fs,
           libraryRoot: deps.library.root,
           library: deps.library,
+          ...(deps.numberFs === undefined ? {} : { numberFs: deps.numberFs }),
           signal: commitSignal,
           log,
           onClaimed: (path) => {
