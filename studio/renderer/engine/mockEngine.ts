@@ -1116,7 +1116,10 @@ export class MockEngine implements EngineBridge {
     for (const photoId of photoIds) this.pendingVideoPhotos.add(photoId);
   }
 
-  /** A library switch is being surveyed (the engine's `#switching`): the own-media commands wait with IN_FLIGHT until it ends. */
+  /**
+   * A library switch is being surveyed (the engine's `#switching`): `media.list` and `media.delete` wait with IN_FLIGHT until it ends. MEDIA ONLY: the mock does not
+   * model the other writes' refusal during a switch (the engine's `#liveLibrary` gives it to every write), so a renderer test of one of those needs its own control.
+   */
   setLibrarySwitching(switching: boolean): void {
     this.librarySwitching = switching;
   }
@@ -2587,7 +2590,6 @@ export class MockEngine implements EngineBridge {
 
   // ---------- photo runs (T8b) ----------
 
-  /** The engine's `#liveLibrary()`: no library open refuses a paid run command before it looks at what the command names. */
   /**
    * The engine's `withLibrary` for the own-media commands (the library's records, read or written): while a library switch is being surveyed
    * they wait with IN_FLIGHT, and with no library open they are LIBRARY_UNAVAILABLE, the switch checked first.
@@ -2597,6 +2599,7 @@ export class MockEngine implements EngineBridge {
     return this.libraryGate();
   }
 
+  /** The engine's `#liveLibrary()`: no library open refuses a paid run command before it looks at what the command names. */
   private libraryGate(): EngineError | null {
     return this.libraryOpen ? null : { code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" };
   }
