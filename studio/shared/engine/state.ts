@@ -5,6 +5,7 @@ import { EngineError, ExportUnavailableReason } from "./errors";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
 import { AbsolutePath, Count, Id, Micros, ModelId, SafeText } from "./primitives";
+import { ScenesResult } from "./scenes";
 import { RenderResult } from "./video";
 
 const IsoDateTime = z.iso.datetime();
@@ -443,7 +444,7 @@ export const UnreadableAvatar = z.strictObject({
 
 // ---------- jobs ----------
 
-export const JobKind = z.enum(["avatar.candidates", "run", "render", "import"]);
+export const JobKind = z.enum(["avatar.candidates", "run", "render", "import", "scenes"]);
 export const JobStatus = z.enum(["queued", "running", "done", "failed", "cancelled"]);
 
 const doneWithinTotal = {
@@ -460,6 +461,11 @@ const doneWithinTotal = {
  */
 const candidatesJobRef = { kind: z.literal("avatar.candidates"), jobId: Id, avatarId: Id };
 const runJobRef = { kind: z.literal("run"), jobId: Id, runId: Id, avatarId: Id };
+/**
+ * A scene set's writer job (CS.4a): a compose or a «Дописать». `done / total` count SCENES: the scenes this job has written out of the scenes it
+ * will ask the writer for (a chunk it gives up on leaves its scenes unwritten and does not move `done`).
+ */
+const scenesJobRef = { kind: z.literal("scenes"), jobId: Id, sceneSetId: Id, avatarId: Id };
 /**
  * A render's identity (protocol 5): the video it makes, its avatar and the
  * montage draft it came from (null for a headless `videos.render {spec}`).
@@ -515,6 +521,7 @@ export const JobProgress = z
   .discriminatedUnion("kind", [
     z.strictObject({ ...candidatesJobRef, ...progressCounts }),
     z.strictObject({ ...runJobRef, ...progressCounts }),
+    z.strictObject({ ...scenesJobRef, ...progressCounts }),
     z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving, ...renderQueued }),
     z.strictObject({ ...importJobRef, ...progressCounts, ...renderQueued, ...importStage }),
   ])
@@ -541,12 +548,13 @@ export const JobProgress = z
 export const JobFailed = z.discriminatedUnion("kind", [
   z.strictObject({ ...candidatesJobRef, error: EngineError }),
   z.strictObject({ ...runJobRef, error: EngineError }),
+  z.strictObject({ ...scenesJobRef, error: EngineError }),
   z.strictObject({ ...renderJobRef, error: EngineError }),
   z.strictObject({ ...importJobRef, error: EngineError }),
 ]);
 
 /** `job.cancelled`'s payload: the job's identity (see `JobProgress`). */
-export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef)]);
+export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef), z.strictObject(scenesJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef)]);
 
 /** A batch's slot, 1 to 4. */
 const CandidateSlot = z.number().int().min(1).max(4);
@@ -606,7 +614,7 @@ export const ImportResult = z
   .strictObject({ kind: z.literal("import"), mediaId: Id, media: MediaSummary })
   .refine((r) => r.media.mediaId === r.mediaId, { message: "the media must be the one the result names", path: ["media"] });
 
-export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, RunResult, RenderResult, ImportResult]);
+export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, RunResult, ScenesResult, RenderResult, ImportResult]);
 
 const jobCommon = {
   jobId: Id,
@@ -632,6 +640,14 @@ export const JobState = z
       avatarId: Id,
       ...jobCommon,
       result: RunResult.optional(),
+    }),
+    z.strictObject({
+      kind: z.literal("scenes"),
+      sceneSetId: Id,
+      /** The set's avatar: a snapshot restores it exactly as a live `job.progress` carries it. */
+      avatarId: Id,
+      ...jobCommon,
+      result: ScenesResult.optional(),
     }),
     z.strictObject({
       kind: z.literal("render"),
@@ -668,6 +684,7 @@ export const JobState = z
       if (j.result === undefined) return true;
       if (j.kind === "avatar.candidates") return j.result.kind === "avatar.candidates" && j.result.avatarId === j.avatarId;
       if (j.kind === "run") return j.result.kind === "run" && j.result.runId === j.runId && j.result.avatarId === j.avatarId;
+      if (j.kind === "scenes") return j.result.kind === "scenes" && j.result.sceneSetId === j.sceneSetId && j.result.avatarId === j.avatarId;
       if (j.kind === "import") return j.result.kind === "import" && j.result.mediaId === j.mediaId;
       return j.result.kind === "render" && j.result.videoId === j.videoId && j.result.avatarId === j.avatarId;
     },

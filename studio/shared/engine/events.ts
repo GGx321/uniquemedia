@@ -5,6 +5,7 @@ import { EngineError } from "./errors";
 import { Montage } from "./montage";
 import { MediaSummary } from "./media";
 import { Count, Id, Micros } from "./primitives";
+import { SceneSetView } from "./scenes";
 import { VideoSummary } from "./video";
 import { AvatarSummary, Draft, EngineNotice, ExportStatus, JobCancelled, JobFailed, JobProgress, JobResult, MoneyStatus, MusicStatus, ReconcileReasons, Settings } from "./state";
 
@@ -41,6 +42,8 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `export.status`: the export folder's status changed (not on every check): the Render button follows the disk live.
  * - `media.changed`: an own-media record was stored (`upserted`, with its summary) or is gone (`removed`).
  * - `music.changed`: the music status changed (a refresh started, progressed, ended or failed; the quota moved), whole.
+ * - `scenes.changed`: a scene set was created or changed (`upserted`, with the whole set: a chunk written, an edit, a stop) or is gone (`removed`: discarded, or its
+ *   avatar was deleted). Always BEFORE the `job.done`, `job.failed` or `job.cancelled` of the job that changed it. The set is read on demand (`scenes.get`).
  * - `category.changed`: a custom category was stored or changed (`upserted`, with its summary: created, renamed, an item removed, regenerated, or only its
  *   spend moved after a failed regeneration) or is gone (`removed`). Categories are listed on demand (`categories.list`); the event keeps the windows in step.
  */
@@ -79,6 +82,13 @@ const EVENT_SPECS = [
     z.discriminatedUnion("change", [
       z.strictObject({ change: z.literal("upserted"), media: MediaSummary }),
       z.strictObject({ change: z.literal("removed"), mediaId: Id }),
+    ]),
+  ),
+  defineEvent(
+    "scenes.changed",
+    z.discriminatedUnion("change", [
+      z.strictObject({ change: z.literal("upserted"), sceneSet: SceneSetView }),
+      z.strictObject({ change: z.literal("removed"), sceneSetId: Id, avatarId: Id }),
     ]),
   ),
   defineEvent(

@@ -94,6 +94,10 @@ import { Count, SafeText } from "./primitives";
  *   too little left once every item that breaks the pool rules was dropped); both attempts are paid and booked, nothing is stored, and
  *   the owner rewords the description. `spentMicros` says what the call cost.
  *
+ * Scene sets (CS.4a):
+ * - SCENES_CHANGED: the scene set moved since the window read it (another window edited it, or a write landed): the revision the command carried
+ *   is not the set's current one. Free: nothing was changed or sent, and the window reads the set again (`scenes.changed` follows).
+ *
  * Stage 3 music (the flashapi list; a request costs one of 30 per 31 days):
  * - MUSIC_KEY_MISSING: no RapidAPI key is stored, so nothing is sent and no quota is spent.
  * - MUSIC_KEY_REJECTED: flashapi answered 401 to this key (now or on an earlier refresh, remembered across restarts), or
@@ -148,6 +152,7 @@ export const ERROR_CODES = [
   "MEDIA_UNSUPPORTED",
   "TRASH_UNAVAILABLE",
   "POOL_REJECTED",
+  "SCENES_CHANGED",
 ] as const;
 
 export const ErrorCode = z.enum(ERROR_CODES);
