@@ -922,6 +922,17 @@ Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio su
 0 failing; screenshots of every phase-1 board at 1200 and 1440 against the mock (`.omc/stage3/design/custom-categories/impl-shots/`, untracked),
 no console errors.
 
+CS.3 fix round 1 (2026-10-06), each fix with a test run red for its reason first: (1) the slice marks its list stale instead of forgetting the
+library key when no screen shows it, so a library switch heard while unretained resets the list to `loading` on the next retain (a library's
+categories are never shown for another); (2) PRICE_CHANGED takes the refused price off until the fresh answer, and a forced re-price outranks an
+estimate already on its way (a price-request generation); (3) the price-key guard is pinned by a screen test (text model changed while an estimate
+is pending: «до …», disabled); (4) Enter during IME composition in «Название» no longer sends the paid create; (5) `category.changed` re-lists
+while a `busy` is named, an IN_FLIGHT refusal is dropped once the list shows nothing composing, and «Создать», «Пересоздать» and «… снова» wait,
+with the note, while another window's call is named (this replaces the earlier deviation that «Создать» stays available); (6) a failed
+regenerate is «retried» only if it spent; (7) an interrupted call's reserve is told in money: «Запрос учтён по худшей цене — до $0.023 — до
+сверки расходов.» Verification: `tsc` clean for both configs; renderer 2947 tests; full suite in three shards, 6494 + 5876 + 6762 = 19132
+passing, 0 failing.
+
 ### CS.4a — Scene sets, core (test-engineer)
 
 Scope: `library` scene-set store (per avatar, atomic, `revision`, one open set, pre-issued run id,
