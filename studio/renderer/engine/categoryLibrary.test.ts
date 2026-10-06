@@ -244,6 +244,38 @@ describe("a create", () => {
     expect(price(h)).toMatchObject({ worstMicros: 52_000 });
   });
 
+  test("a list taken while this window's call ran stops naming it as busy once the call is over", async () => {
+    const h = await started();
+    await retained(h);
+    h.engine.delayNext("categories.create", 100);
+    const done = h.library.create("Рынки", "рынки", price(h));
+    await settle();
+    h.library.reload();
+    await settle();
+    expect(ready(h.library.getView()).busy).toEqual({ kind: "create", name: "Рынки", categoryId: null });
+    h.scheduler.runAll();
+    await done;
+    await settle();
+    expect(ready(h.library.getView()).busy).toBeNull();
+  });
+
+  test("refused because another window's call runs: nothing is sent twice, and a fresh list names the other call", async () => {
+    const h = await started();
+    await retained(h);
+    h.engine.delayNext("categories.create", 500);
+    const other = h.client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
+    await settle();
+    const lists = callsOf(h.engine, "categories.list").length;
+    await h.library.create("Рынки", "рынки", price(h));
+    await settle();
+    const outcome = h.library.getView().outcomes.create;
+    expect(outcome?.ok === false && outcome.error.code).toBe("IN_FLIGHT");
+    expect(callsOf(h.engine, "categories.list").length).toBe(lists + 1);
+    expect(ready(h.library.getView()).busy).toEqual({ kind: "create", name: "Горы зимой", categoryId: null });
+    h.scheduler.runAll();
+    await other;
+  });
+
   test("a failed pool says what it cost, and nothing is created", async () => {
     const h = await started();
     await retained(h);

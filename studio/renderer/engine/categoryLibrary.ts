@@ -215,10 +215,15 @@ export class CategoryLibrary {
       const was = regenerated.get(call.categoryId);
       regenerated = new Map(regenerated).set(call.categoryId, outcome.ok || was === "regenerated" ? "regenerated" : "retried");
     }
-    this.#update({ call: null, outcomes: { ...this.#view.outcomes, [call.kind]: outcome }, regenerated });
+    // A list taken while this call ran names it as the engine's call in flight: it is over now.
+    const list = this.#view.list;
+    const ownBusy = list.status === "ready" && list.busy !== null && list.busy.kind === call.kind && list.busy.categoryId === call.categoryId && list.busy.name === call.name;
+    this.#update({ call: null, outcomes: { ...this.#view.outcomes, [call.kind]: outcome }, regenerated, ...(ownBusy ? { list: { ...list, busy: null } } : {}) });
     if (outcome.ok && call.kind === "create") for (const listener of [...this.#created]) listener(outcome.category);
     // Refused for its price: nothing was sent, and the price the screen offers next is a fresh one, confirmed by a new click.
     if (!outcome.ok && outcome.error.code === "PRICE_CHANGED") this.#price(true);
+    // Refused because another call runs (another window's): a fresh list names it.
+    if (!outcome.ok && outcome.error.code === "IN_FLIGHT") this.#list();
   }
 
   // ---------- the free commands ----------
