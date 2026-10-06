@@ -1718,10 +1718,16 @@ export class MockEngine implements EngineBridge {
         if (gone) return this.fail(c, gone);
         const call = this.categories.interruptedOf(c.payload.jobId);
         if (call === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no interrupted category call ${c.payload.jobId}` });
-        // An interrupted regenerate is counted into its category's total before it is forgotten (the engine does the same: the call's only trace).
-        if (call.kind === "regenerate" && call.categoryId !== null && call.spentMicros !== null && call.spentMicros > 0) {
-          const booked = this.categories.addSpend(call.categoryId, call.spentMicros);
-          if (booked !== undefined) this.categoryEvent(booked);
+        // An interrupted regenerate is counted into its category's total before it is forgotten (the engine does the same: the call's only trace). With a
+        // ledger that cannot be read its cost is unknown, so it is refused with the ledger's own code and the record stays. A job the category already holds adds nothing.
+        if (call.kind === "regenerate" && call.categoryId !== null) {
+          if (call.spentMicros === null || this.unavailable !== null) {
+            return this.fail(c, this.unavailable === null ? { code: "LEDGER_UNREADABLE", detail: "the ledger cannot be read, so what the call cost is unknown" } : { code: this.unavailable.cause, detail: this.unavailable.detail });
+          }
+          if (call.spentMicros > 0) {
+            const booked = this.categories.addSpend(call.categoryId, call.spentMicros, call.jobId);
+            if (booked !== undefined) this.categoryEvent(booked);
+          }
         }
         this.categories.dismiss(c.payload.jobId);
         return this.ok(c, { jobId: c.payload.jobId });
@@ -2851,7 +2857,7 @@ export class MockEngine implements EngineBridge {
     if (failed) return failed.response;
     const { expectedMicros } = this.categoryPrice();
     this.spend(expectedMicros);
-    const category = this.categories.create(name, payload.description, expectedMicros);
+    const category = this.categories.create(name, payload.description, expectedMicros, this.categories.newJobId());
     this.categoryEvent(category);
     return this.ok(c, { category, spentMicros: expectedMicros });
   }
@@ -2864,16 +2870,17 @@ export class MockEngine implements EngineBridge {
       (this.categories.get(categoryId) === undefined ? { code: "NOT_FOUND" as const, detail: `no readable category ${categoryId}` } : null) ??
       this.priceGate(payload.acceptedWorstMicros, this.categoryPrice().worstMicros);
     if (refusal) return this.fail(c, refusal);
+    const jobId = this.categories.newJobId();
     const failed = this.categoryCallFailure(c);
     if (failed) {
       // The old pool stays, but the call cost what it cost: the category's total says so.
-      const booked = failed.spentMicros > 0 ? this.categories.addSpend(categoryId, failed.spentMicros) : undefined;
+      const booked = failed.spentMicros > 0 ? this.categories.addSpend(categoryId, failed.spentMicros, jobId) : undefined;
       if (booked !== undefined) this.categoryEvent(booked);
       return failed.response;
     }
     const { expectedMicros } = this.categoryPrice();
     this.spend(expectedMicros);
-    const category = this.categories.replacePool(categoryId, payload.description, expectedMicros);
+    const category = this.categories.replacePool(categoryId, payload.description, expectedMicros, jobId);
     if (category === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no readable category ${categoryId}` });
     this.categoryEvent(category);
     return this.ok(c, { category, spentMicros: expectedMicros });

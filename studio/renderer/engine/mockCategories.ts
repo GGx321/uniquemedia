@@ -96,6 +96,9 @@ export class MockCategories {
   #unreadable: number;
   #interrupted: CategoryInterrupted[];
   #call: Call | null = null;
+  /** The jobs whose cost a category already holds, as `<categoryId>/<jobId>`: the engine keeps them in the record (`bookedJobs`), out of the contract. */
+  readonly #booked = new Set<string>();
+  #jobs = 0;
   readonly #deps: { nextId: (prefix: string) => string; nowIso: () => string };
 
   constructor(seed: MockCategoriesSeed, deps: { nextId: (prefix: string) => string; nowIso: () => string }) {
@@ -174,7 +177,21 @@ export class MockCategories {
     return null;
   }
 
-  create(name: string, description: string, spentMicros: number): CategorySummary {
+  /** An id for a paid call, drawn from the mock's own counter so the ids the other commands see do not move. */
+  newJobId(): string {
+    this.#jobs += 1;
+    return `mock-job-${String(this.#jobs).padStart(8, "0")}`;
+  }
+
+  /** Books a job's cost under its id: false (nothing to add) when the category already holds it. */
+  #book(categoryId: string, jobId: string): boolean {
+    const key = `${categoryId}/${jobId}`;
+    if (this.#booked.has(key)) return false;
+    this.#booked.add(key);
+    return true;
+  }
+
+  create(name: string, description: string, spentMicros: number, jobId: string): CategorySummary {
     const now = this.#deps.nowIso();
     const { label, style, pool } = mockCategoryPool(name, description);
     const category: CategorySummary = {
@@ -190,19 +207,23 @@ export class MockCategories {
       updatedAt: now,
     };
     this.#categories = [...this.#categories, category];
+    this.#book(category.categoryId, jobId);
     return category;
   }
 
-  replacePool(categoryId: string, description: string, spentMicros: number): CategorySummary | undefined {
+  replacePool(categoryId: string, description: string, spentMicros: number, jobId: string): CategorySummary | undefined {
     const current = this.get(categoryId);
     if (current === undefined) return undefined;
+    if (!this.#book(categoryId, jobId)) return current;
     const { label, style, pool } = mockCategoryPool(current.name, description);
     return this.#put({ ...current, description, label, style, pool, spentMicros: current.spentMicros + spentMicros, updatedAt: this.#deps.nowIso() });
   }
 
-  addSpend(categoryId: string, micros: number): CategorySummary | undefined {
+  addSpend(categoryId: string, micros: number, jobId: string): CategorySummary | undefined {
     const current = this.get(categoryId);
-    return current === undefined ? undefined : this.#put({ ...current, spentMicros: current.spentMicros + micros, updatedAt: this.#deps.nowIso() });
+    if (current === undefined) return undefined;
+    if (!this.#book(categoryId, jobId)) return current;
+    return this.#put({ ...current, spentMicros: current.spentMicros + micros, updatedAt: this.#deps.nowIso() });
   }
 
   /** A rename and/or items to remove, together or not at all, with the store's refusals. */

@@ -389,6 +389,52 @@ describe("categories.dismissInterrupted", () => {
     m.engine.seedInterruptedCategory(interrupted);
     expect((await unwrap(m.client.request("categories.list", {}))).interrupted).toEqual([interrupted]);
   });
+
+  describe("with a ledger whose cost for the call is unknown (spentMicros null), as the engine does", () => {
+    const unknownCost = (categoryId: CategorySummary["categoryId"]): CategoryInterrupted => ({ jobId: "job-00000043", kind: "regenerate", name: "Кофейни", description: "кофейни", categoryId, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: null, openReserveMicros: null });
+
+    test("an interrupted regenerate is refused with the ledger's own code, stays listed, and adds nothing to its category", async () => {
+      const m = makeMock();
+      const made = await created(m, "Кофейни");
+      m.engine.seedInterruptedCategory(unknownCost(made.categoryId));
+      m.events.length = 0;
+
+      const refused = await m.client.request("categories.dismissInterrupted", { jobId: "job-00000043" });
+
+      const listed = await unwrap(m.client.request("categories.list", {}));
+      expect(refused).toMatchObject({ ok: false, error: { code: "LEDGER_UNREADABLE" } });
+      expect(listed.interrupted.map((i) => i.jobId)).toEqual(["job-00000043"]);
+      expect(listed.categories[0]?.spentMicros).toBe(made.spentMicros);
+      expect(changes(m.events)).toEqual([]);
+    });
+
+    test("a ledger that is known to be corrupt refuses with its cause", async () => {
+      const m = makeMock({ money: { unavailable: { cause: "LEDGER_CORRUPT", detail: "line 3 is not JSON" } } });
+      const made = { categoryId: "cat-seeded-0001" as const };
+      m.engine.seedInterruptedCategory({ ...unknownCost(made.categoryId), spentMicros: null });
+
+      expect(await m.client.request("categories.dismissInterrupted", { jobId: "job-00000043" })).toMatchObject({ ok: false, error: { code: "LEDGER_CORRUPT" } });
+    });
+
+    test("an interrupted create is still dismissed: it has no category to count into", async () => {
+      const m = makeMock();
+      m.engine.seedInterruptedCategory({ jobId: "job-00000044", kind: "create", name: "Горы", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: null, openReserveMicros: null });
+      expect(await unwrap(m.client.request("categories.dismissInterrupted", { jobId: "job-00000044" }))).toEqual({ jobId: "job-00000044" });
+    });
+  });
+
+  test("a record left for a job whose cost the category already holds adds nothing when dismissed, as the engine's booked-jobs key does", async () => {
+    const m = makeMock();
+    const made = await created(m, "Кофейни");
+    const left = (): CategoryInterrupted => ({ jobId: "job-00000042", kind: "regenerate", name: "Кофейни", description: "кофейни", categoryId: made.categoryId, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 });
+    m.engine.seedInterruptedCategory(left());
+    await unwrap(m.client.request("categories.dismissInterrupted", { jobId: "job-00000042" }));
+
+    m.engine.seedInterruptedCategory(left());
+    await unwrap(m.client.request("categories.dismissInterrupted", { jobId: "job-00000042" }));
+
+    expect((await unwrap(m.client.request("categories.list", {}))).categories[0]?.spentMicros).toBe(made.spentMicros + 22_500);
+  });
 });
 
 describe("a custom category in a run request", () => {
