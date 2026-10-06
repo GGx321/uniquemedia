@@ -134,6 +134,9 @@ export function withSceneSetLock<T>(sceneSetId: string, work: () => Promise<T>):
   return runExclusive(`scenes:${sceneSetId}`, work);
 }
 
+/** A check the caller makes on the record under the set's lock, before it changes or removes it; it refuses by throwing. */
+export type SceneSetGuard = (current: StoredSceneSet) => void | Promise<void>;
+
 /** A record as read: the set, or why not. A newer Studio's record, a damaged one and one in another set's file are all `unreadable` and are never touched. */
 type Read = { ok: true; set: StoredSceneSet } | { ok: false; reason: "missing" | "unreadable" };
 
@@ -247,12 +250,14 @@ export class SceneSetStore {
    * (the next) and the update time; the set's id, avatar, run id and creation time cannot change, and the result must fit the schema (`invalid`,
    * nothing written). `not-found` for a set that is not there or cannot be read.
    */
-  async update(avatarId: string, sceneSetId: string, mutate: (current: StoredSceneSet) => StoredSceneSet | null, opts: { expectedRevision?: number } = {}): Promise<StoredSceneSet> {
+  async update(avatarId: string, sceneSetId: string, mutate: (current: StoredSceneSet) => StoredSceneSet | null, opts: { expectedRevision?: number; guard?: SceneSetGuard } = {}): Promise<StoredSceneSet> {
     const path = this.#path(avatarId, sceneSetId);
     return withSceneSetLock(sceneSetId, async () => {
       const read = await this.#read(path, sceneSetId, avatarId);
       if (!read.ok) throw new SceneSetError("not-found", `no readable scene set ${sceneSetId}`);
       const current = read.set;
+      // The caller's own check, under the lock and before the revision is compared (a set that is used is refused whatever revision the window shows).
+      await opts.guard?.(current);
       if (opts.expectedRevision !== undefined && opts.expectedRevision !== current.revision) {
         throw new SceneSetError("stale", `scene set ${sceneSetId} is at revision ${current.revision}, not ${opts.expectedRevision}`);
       }
@@ -270,10 +275,12 @@ export class SceneSetStore {
   }
 
   /** Deletes a set's record and flushes the folder; `not-found` when it is not there or cannot be read (a newer Studio's record is never removed). */
-  async remove(avatarId: string, sceneSetId: string): Promise<void> {
+  async remove(avatarId: string, sceneSetId: string, opts: { guard?: SceneSetGuard } = {}): Promise<void> {
     const path = this.#path(avatarId, sceneSetId);
     await withSceneSetLock(sceneSetId, async () => {
-      if (!(await this.#read(path, sceneSetId, avatarId)).ok) throw new SceneSetError("not-found", `no readable scene set ${sceneSetId}`);
+      const read = await this.#read(path, sceneSetId, avatarId);
+      if (!read.ok) throw new SceneSetError("not-found", `no readable scene set ${sceneSetId}`);
+      await opts.guard?.(read.set);
       await this.deps.beforeUnlink?.(path);
       await unlinkWithRetry(path);
       await fsyncDir(dirname(path)).catch(() => undefined);

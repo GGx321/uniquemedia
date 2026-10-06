@@ -178,6 +178,51 @@ describe("update", () => {
     expect(await codeOf(store().update(AVATAR, "set-aaaa-0009", (c) => c))).toBe("not-found");
   });
 
+  test("a guard runs under the set's lock on the record as it is, before the revision is compared, and its refusal writes nothing", async () => {
+    const s = store();
+    const made = await s.create(sampleSet());
+    const seen: number[] = [];
+    const refusal = new Error("the set is used");
+    const refused = rejectionOf(
+      s.update(AVATAR, made.sceneSetId, (c) => written(c, "never"), {
+        expectedRevision: 99,
+        guard: (current) => {
+          seen.push(current.revision);
+          throw refusal;
+        },
+      }),
+    );
+    expect(await refused).toBe(refusal);
+    expect(seen).toEqual([1]);
+    expect(await readRecord(made.sceneSetId)).toEqual(made);
+  });
+
+  test("a guard that lets the update through is awaited, and the update then goes on", async () => {
+    const s = store();
+    const made = await s.create(sampleSet());
+    const updated = await s.update(AVATAR, made.sceneSetId, (c) => written(c, "ok"), {
+      guard: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      },
+    });
+    expect(updated.revision).toBe(2);
+  });
+
+  test("another update waits for a guard that is still deciding: the lock is held across it", async () => {
+    const s = store();
+    const made = await s.create(sampleSet());
+    const order: string[] = [];
+    const slow = s.update(AVATAR, made.sceneSetId, (c) => (order.push("first writes"), written(c, "first")), {
+      guard: async () => {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        order.push("first guard done");
+      },
+    });
+    const quick = s.update(AVATAR, made.sceneSetId, (c) => (order.push("second writes"), written(c, "second")));
+    await Promise.all([slow, quick]);
+    expect(order).toEqual(["first guard done", "first writes", "second writes"]);
+  });
+
   test("a crash after the temp file is durable and before the rename leaves the old record whole and readable", async () => {
     const s = store();
     const made = await s.create(sampleSet());
@@ -274,6 +319,21 @@ describe("remove", () => {
 
   test("a set that is not there is not-found", async () => {
     expect(await codeOf(store().remove(AVATAR, "set-aaaa-0009"))).toBe("not-found");
+  });
+
+  test("a guard decides under the lock whether the record may go, and its refusal leaves it", async () => {
+    const s = store();
+    const made = await s.create(sampleSet());
+    const refusal = new Error("the set is used");
+    const refused = rejectionOf(
+      s.remove(AVATAR, made.sceneSetId, {
+        guard: () => {
+          throw refusal;
+        },
+      }),
+    );
+    expect(await refused).toBe(refusal);
+    expect(await s.get(AVATAR, made.sceneSetId)).toEqual(made);
   });
 
   test("a disk that refuses the delete leaves the record readable", async () => {
