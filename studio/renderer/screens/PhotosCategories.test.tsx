@@ -79,7 +79,7 @@ describe("the category row", () => {
       await client.request("categories.delete", { categoryId: WINTER.categoryId });
     });
     await flush();
-    expect(within(chipsGroup()).queryByRole("button", { name: /^Горы зимой/ })).toBeNull();
+    expect(within(chipsGroup()).queryByRole("button", { name: /^Горы зимой/ }) === null).toBe(true);
     await waitFor(() => expect(callsOf(engine, "runs.estimate").at(-1)?.payload.categories).toEqual(["home", "travel", "shoot", "glam", "fit"]));
   });
 
@@ -88,7 +88,7 @@ describe("the category row", () => {
     await openPhotos({ categories: seven });
     const more = await within(chipsGroup()).findByRole("button", { name: "ещё 3" });
     expect(more.getAttribute("aria-expanded")).toBe("false");
-    expect(within(chipsGroup()).queryByRole("button", { name: "Яхт-клуб" })).toBeNull();
+    expect(within(chipsGroup()).queryByRole("button", { name: "Яхт-клуб" }) === null).toBe(true);
     fireEvent.click(more);
     await flush();
     fireEvent.click(within(chipsGroup()).getByRole("button", { name: "Яхт-клуб" }));
@@ -144,7 +144,7 @@ describe("the category row", () => {
     expect(why !== null && document.getElementById(why)?.textContent).toBe("50 из 50 — удалите ненужную в «Мои категории».");
     fireEvent.click(addChip());
     await flush();
-    expect(screen.queryByRole("dialog", { name: "Новая категория" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Новая категория" }) === null).toBe(true);
   });
 });
 
@@ -157,10 +157,10 @@ describe("«Новая категория»", () => {
     expect(within(dialog()).getByText(/^grok-4\.3 · не больше 2 попыток · цены OpenRouter · \d+ \S+$/)).toBeDefined();
     // Nothing typed yet: the button waits, no error is shouted.
     expect(isDisabled(createButton())).toBe(true);
-    expect(within(dialog()).queryByText("Введите название.")).toBeNull();
+    expect(within(dialog()).queryByText("Введите название.") === null).toBe(true);
     fireEvent.keyDown(window, { key: "Escape" });
     await flush();
-    expect(screen.queryByRole("dialog", { name: "Новая категория" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Новая категория" }) === null).toBe(true);
     expect(describeElement(document.activeElement)).toBe(describeElement(addChip()));
     expect(callsOf(engine, "categories.create")).toHaveLength(0);
   });
@@ -222,7 +222,7 @@ describe("«Новая категория»", () => {
     expect(within(done).getByText("Кадры")).toBeDefined();
     expect(within(done).getByText("Категория уже включена в запуск. Убрать место или наряд — в «Мои категории».")).toBeDefined();
     // Read-only: nothing to remove here.
-    expect(within(done).queryByRole("button", { name: /^Убрать/ })).toBeNull();
+    expect(within(done).queryByRole("button", { name: /^Убрать/ }) === null).toBe(true);
     const ok = within(done).getByRole("button", { name: "Готово" });
     expect(describeElement(document.activeElement)).toBe(describeElement(ok));
     fireEvent.click(ok);
@@ -244,7 +244,7 @@ describe("«Новая категория»", () => {
     await flush();
     fireEvent.click(within(dialog()).getByRole("button", { name: "Скрыть" }));
     await flush();
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog") === null).toBe(true);
     const waiting = within(chipsGroup()).getByRole("button", { name: "Рынки — создаётся" });
     expect(describeElement(document.activeElement)).toBe(describeElement(waiting));
     fireEvent.click(waiting);
@@ -257,7 +257,7 @@ describe("«Новая категория»", () => {
     const chip = within(chipsGroup()).getByRole("button", { name: /^Рынки: \d+ фото$/ });
     expect(chip.getAttribute("aria-pressed")).toBe("true");
     expect(describeElement(document.activeElement)).toBe(describeElement(chip));
-    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByRole("dialog") === null).toBe(true);
   });
 
   test("hidden, then failed: a notice under the card names it and what it cost; «Изменить описание» opens it again with the same text", async () => {
@@ -273,7 +273,7 @@ describe("«Новая категория»", () => {
     runAll(scheduler);
     await flush();
     expect(screen.getByText("Категория «Рынки» не создана: модель дважды вернула неподходящий набор — переформулируйте описание. Потрачено $0.011.")).toBeDefined();
-    expect(within(chipsGroup()).queryByRole("button", { name: /Рынки/ })).toBeNull();
+    expect(within(chipsGroup()).queryByRole("button", { name: /Рынки/ }) === null).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Изменить описание" }));
     await flush();
     expect(field(/^Название/).value).toBe("Рынки");
@@ -281,7 +281,7 @@ describe("«Новая категория»", () => {
     expect(describeElement(document.activeElement)).toBe(describeElement(field(/^Описание/)));
     expect(within(dialog()).getByText("Модель дважды вернула неподходящий набор — переформулируйте описание.")).toBeDefined();
     // The notice under the card is the same news: it is not said twice.
-    expect(screen.queryByText(/^Категория «Рынки» не создана/)).toBeNull();
+    expect(screen.queryByText(/^Категория «Рынки» не создана/) === null).toBe(true);
   });
 
   test("POOL_REJECTED in the dialog: why, what both attempts cost, and the form ready to send again", async () => {

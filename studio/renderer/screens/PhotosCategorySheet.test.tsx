@@ -54,7 +54,7 @@ describe("the panel", () => {
     expect(within(sheet()).getByRole("heading", { level: 3, name: "Горы зимой" })).toBeDefined();
     fireEvent.keyDown(window, { key: "Escape" });
     await flush();
-    expect(screen.queryByRole("dialog", { name: "Мои категории" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Мои категории" }) === null).toBe(true);
     expect(describeElement(document.activeElement)).toBe(describeElement(myCategories()));
   });
 
@@ -70,12 +70,12 @@ describe("the panel", () => {
     await openSheet();
     expect(within(sheet()).getByText("0 из 50 · общие для всех аватаров")).toBeDefined();
     expect(within(sheet()).getByRole("heading", { level: 3, name: "Своих категорий пока нет" })).toBeDefined();
-    expect(within(sheet()).queryByRole("button", { name: "Новая" })).toBeNull();
+    expect(within(sheet()).queryByRole("button", { name: "Новая" }) === null).toBe(true);
     const invite = within(sheet()).getByRole("button", { name: "Создать категорию" });
     expect(describeElement(document.activeElement)).toBe(describeElement(invite));
     fireEvent.click(invite);
     await flush();
-    expect(screen.queryByRole("dialog", { name: "Мои категории" })).toBeNull();
+    expect(screen.queryByRole("dialog", { name: "Мои категории" }) === null).toBe(true);
     const dialog = screen.getByRole("dialog", { name: "Новая категория" });
     expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByLabelText(/^Название/)));
     fireEvent.keyDown(window, { key: "Escape" });
@@ -119,7 +119,7 @@ describe("rename (free)", () => {
     fireEvent.keyDown(window, { key: "Escape" });
     await flush();
     expect(screen.getByRole("dialog", { name: "Мои категории" })).toBeDefined();
-    expect(within(sheet()).queryByLabelText("Название")).toBeNull();
+    expect(within(sheet()).queryByLabelText("Название") === null).toBe(true);
     expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Переименовать" })));
     expect(callsOf(engine, "categories.update")).toHaveLength(0);
   });
@@ -132,7 +132,7 @@ describe("remove a place or an outfit (free)", () => {
     fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать место: sidewalk cafe terrace" }));
     await flush();
     expect(callsOf(engine, "categories.update").map((c) => c.payload)).toEqual([{ categoryId: PARIS.categoryId, removeLocations: ["sidewalk cafe terrace"] }]);
-    expect(within(sheet()).queryByText("sidewalk cafe terrace")).toBeNull();
+    expect(within(sheet()).queryByText("sidewalk cafe terrace") === null).toBe(true);
     expect(within(sheet()).getByText("Места · 5")).toBeDefined();
     expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Убрать место: bookshop by the river" })));
     fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать наряд: navy knit cardigan and midi skirt" }));
@@ -198,7 +198,7 @@ describe("regenerate (paid)", () => {
     expect(within(sheet()).getByText((_, el) => el?.textContent === "Набор пересоздан · потрачено $0.006")).toBeDefined();
     expect(within(sheet()).getByText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · пересоздана \d+ \S+ · всего потрачено \$0\.011$/)).toBeDefined();
     expect(within(sheet()).getByText("Кофейни и бистро Парижа")).toBeDefined();
-    expect(within(sheet()).queryByLabelText(/^Новое описание/)).toBeNull();
+    expect(within(sheet()).queryByLabelText(/^Новое описание/) === null).toBe(true);
     // The box closed with the focus in it: the focus goes to «Пересоздать…», which opens it again.
     expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Пересоздать…" })));
   });
@@ -261,7 +261,7 @@ describe("delete (free)", () => {
     expect(describeElement(document.activeElement)).toBe(describeElement(within(confirm).getByRole("button", { name: "Отмена" })));
     fireEvent.keyDown(window, { key: "Escape" });
     await flush();
-    expect(within(sheet()).queryByRole("alertdialog")).toBeNull();
+    expect(within(sheet()).queryByRole("alertdialog") === null).toBe(true);
     expect(describeElement(document.activeElement)).toBe(describeElement(within(sheet()).getByRole("button", { name: "Удалить" })));
     fireEvent.click(within(sheet()).getByRole("button", { name: "Удалить" }));
     await flush();
@@ -270,7 +270,7 @@ describe("delete (free)", () => {
     expect(callsOf(engine, "categories.delete").map((c) => c.payload)).toEqual([{ categoryId: PARIS.categoryId }]);
     expect(row("Горы зимой").getAttribute("aria-current")).toBe("true");
     expect(describeElement(document.activeElement)).toBe(describeElement(row("Горы зимой")));
-    expect(within(chipsGroup()).queryByRole("button", { name: /^Кофейни Парижа/ })).toBeNull();
+    expect(within(chipsGroup()).queryByRole("button", { name: /^Кофейни Парижа/ }) === null).toBe(true);
   });
 });
 
@@ -289,7 +289,7 @@ describe("calls a closed Studio left", () => {
     fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать" }));
     await flush();
     expect(callsOf(engine, "categories.dismissInterrupted").map((c) => c.payload)).toEqual([{ jobId: "job-left-0001" }]);
-    expect(screen.queryByText("Создание прервано — Studio закрылась")).toBeNull();
+    expect(screen.queryByText("Создание прервано — Studio закрылась") === null).toBe(true);
   });
 
   test("«Создать снова» is a new request at the price on it, followed in the dialog; «Изменить описание» opens the dialog with the text", async () => {
@@ -319,7 +319,7 @@ describe("calls a closed Studio left", () => {
     fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать" }));
     await flush();
     expect(callsOf(engine, "categories.dismissInterrupted")).toHaveLength(1);
-    await waitFor(() => expect(within(sheet()).queryByText("Пересоздание прервано")).toBeNull());
+    await waitFor(() => expect(within(sheet()).queryByText("Пересоздание прервано") === null).toBe(true));
     expect(within(sheet()).getByText("для модели «Paris cafes» · телефон · создана 1 сент. · потрачено $0.028")).toBeDefined();
   });
 
