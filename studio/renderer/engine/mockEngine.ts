@@ -2819,6 +2819,13 @@ export class MockEngine implements EngineBridge {
     return this.categories.regenerating(categoryId) ? { code: "IN_FLIGHT", detail: `category ${categoryId} is being regenerated; change it when that ends` } : null;
   }
 
+  /** VALIDATION for a rename to the name a create in flight is about to take: the paid create would be lost at its write. */
+  private creatingRefusal(name: string | undefined): EngineError | null {
+    return name !== undefined && this.categories.creating(name)
+      ? { code: "VALIDATION", categoryReason: "name-taken", detail: "a category with this name is being composed right now; wait for it to finish" }
+      : null;
+  }
+
   /** A forced failure of the paid call (`failNextCategoryCall`): the call cost what it cost, and says so. Null when none was asked for. */
   private categoryCallFailure(c: CommandMessage): { response: ResponseMessage; spentMicros: number } | null {
     const failure = this.nextCategoryFailure;
@@ -2866,7 +2873,7 @@ export class MockEngine implements EngineBridge {
   }
 
   private updateCategory(c: CommandMessage, payload: { categoryId: CustomCategoryId; name?: string; removeLocations?: string[]; removeOutfits?: string[] }): ResponseMessage {
-    const early = this.libraryGate() ?? this.regeneratingRefusal(payload.categoryId);
+    const early = this.libraryGate() ?? this.regeneratingRefusal(payload.categoryId) ?? this.creatingRefusal(payload.name);
     if (early) return this.fail(c, early);
     const { categoryId, ...change } = payload;
     const result = this.categories.update(categoryId, change);

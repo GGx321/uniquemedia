@@ -589,7 +589,7 @@ describe("one category call at a time", () => {
     expect((await listOf(engine)).categories).toHaveLength(50);
   });
 
-  test("a rename to a name a running create is about to take is refused at the write: the paid pool is kept, the error tells where", async () => {
+  test("a rename to the name a running create is about to take is refused at once, so the paid create is not lost: it completes", async () => {
     const hold = held(poolReply());
     const net = network({ descriptors: [hold.step] });
     const { engine } = await startEngine(dir(), { net });
@@ -597,13 +597,28 @@ describe("one category call at a time", () => {
 
     const creatingNow = engine.handle(createCommand({ name: "Горы зимой" }));
     await until(hold.arrived, "the request to arrive");
-    ok(await engine.handle(command("categories.update", { categoryId: other, name: "горы зимой" })));
+    const refused = failed(await engine.handle(command("categories.update", { categoryId: other, name: " горы ЗИМОЙ " })));
     hold.release();
-    const refused = failed(await creatingNow);
+    const created = ok(await creatingNow);
 
-    expect(refused.error.code).toBe("VALIDATION");
-    expect(refused.error.spentMicros).toBe(5_000);
-    expect(refused.error.detail).toContain("raw/");
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "name-taken" });
+    expect(refused.error.spentMicros).toBeUndefined();
+    if (created.type !== "categories.create") throw new Error("wrong type");
+    expect(created.result.category.name).toBe("Горы зимой");
+    expect((await listOf(engine)).categories.map((c) => c.name)).toEqual(["Other", "Горы зимой"]);
+  });
+
+  test("a rename to any other name, and a removal, are not held up by a running create", async () => {
+    const hold = held(poolReply());
+    const net = network({ descriptors: [hold.step] });
+    const { engine } = await startEngine(dir(), { net });
+    const other = await seedCategory({ name: "Other" });
+
+    const creatingNow = engine.handle(createCommand({ name: "Горы зимой" }));
+    await until(hold.arrived, "the request to arrive");
+    expect(ok(await engine.handle(command("categories.update", { categoryId: other, name: "Другое имя" }))).ok).toBe(true);
+    hold.release();
+    ok(await creatingNow);
   });
 });
 

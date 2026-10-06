@@ -143,6 +143,11 @@ export class MockCategories {
     return this.#call?.kind === "regenerate" && this.#call.categoryId === categoryId;
   }
 
+  /** Whether the create in flight is about to take this name (the one name rule): a rename to it would lose the paid create at its write. */
+  creating(name: string): boolean {
+    return this.#call?.kind === "create" && this.#call.name !== null && categoryNameKey(this.#call.name) === categoryNameKey(name);
+  }
+
   /** What a regenerate's claim names: the category's name, once known. */
   nameOf(categoryId: string): string | null {
     return this.get(categoryId)?.name ?? null;

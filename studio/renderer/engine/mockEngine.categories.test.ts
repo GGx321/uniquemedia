@@ -193,6 +193,21 @@ describe("one category call at a time", () => {
     expect((await unwrap(m.client.request("categories.list", {}))).busy).toBeNull();
   });
 
+  test("a rename to the name a create in flight is about to take is refused at once, and the create still completes", async () => {
+    const m = makeMock();
+    const other = await created(m, "Other");
+    m.engine.delayNext("categories.create", 1_000);
+    const first = create(m, "Горы зимой");
+    await Promise.resolve();
+
+    expect(await m.client.request("categories.update", { categoryId: other.categoryId, name: " горы ЗИМОЙ " })).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "name-taken" } });
+    expect(await m.client.request("categories.update", { categoryId: other.categoryId, name: "Другое" })).toMatchObject({ ok: true });
+
+    m.scheduler.runAll();
+    expect((await first).ok).toBe(true);
+    expect((await unwrap(m.client.request("categories.list", {}))).categories.map((c) => c.name)).toEqual(["Другое", "Горы зимой"]);
+  });
+
   test("the list names the call in flight", async () => {
     const m = makeMock();
     m.engine.delayNext("categories.create", 1_000);

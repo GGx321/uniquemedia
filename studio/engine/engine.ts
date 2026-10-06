@@ -2736,8 +2736,21 @@ export class Engine {
     }
   }
 
+  /**
+   * VALIDATION (`name-taken`), free, for a rename to the name a running create is about to take: the create is paid for and would be lost at its
+   * write, so the owner is told now, while nothing is spent twice.
+   */
+  #assertNameNotBeingCreated(name: string | undefined): void {
+    const call = this.#categoryCall;
+    if (name === undefined || call?.kind !== "create" || call.name === null) return;
+    if (categoryNameKey(name) === categoryNameKey(call.name)) {
+      throw new EngineFailure({ code: "VALIDATION", categoryReason: "name-taken", detail: "a category with this name is being composed right now; wait for it to finish" });
+    }
+  }
+
   async #updateCategory(library: Library, payload: CommandPayload<"categories.update">): Promise<CommandResult<"categories.update">> {
     this.#assertNotRegenerating(payload.categoryId);
+    this.#assertNameNotBeingCreated(payload.name);
     try {
       const updated = await library.categories.update(payload.categoryId, {
         ...(payload.name === undefined ? {} : { name: payload.name }),
