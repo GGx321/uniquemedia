@@ -681,6 +681,8 @@ export class Engine {
   #categoryCall: CategoryCall | null = null;
   /** Categories whose removal has begun and not ended, marked before the removal's first await: a regenerate or an update of one is refused (IN_FLIGHT), so a paid pool is never written for a record that is going. */
   readonly #removingCategories = new Set<string>();
+  /** Calls that ended in this process whose record could not be removed (the disk refused): not interrupted, so never listed as such, and removed again at the next listing. */
+  readonly #endedCalls = new Set<string>();
   /** Interrupted calls being dismissed: a second dismissal of one must not add its spend to the category again. */
   readonly #dismissingCalls = new Set<string>();
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
@@ -2561,13 +2563,14 @@ export class Engine {
     const library = this.library;
     if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
     const { categories, unreadable } = await library.categories.list();
+    await this.#forgetEndedCalls(library);
     const pending = await library.categories.listPending();
     const running = this.#categoryCall?.jobId ?? null;
     const ledger = this.#money.ok ? this.#money.budget.ledger : null;
     // A leftover record is a call this process is not making: what it is counted at is what the ledger holds for its job, and how much of that is a
     // reserve still open at its worst case. An unreadable ledger leaves both unknown (null), which is not the same as a call killed before its reserve (0 and 0).
     const interrupted = pending
-      .filter((p) => p.jobId !== running)
+      .filter((p) => p.jobId !== running && !this.#endedCalls.has(p.jobId))
       .slice(0, MAX_CUSTOM_CATEGORIES)
       .map((p) => ({
         ...p,
@@ -2579,6 +2582,19 @@ export class Engine {
     const callName = call === null ? null : (call.name ?? (call.categoryId === null ? null : (categories.find((c) => c.categoryId === call.categoryId)?.name ?? null)));
     const busy = call === null || callName === null ? null : { kind: call.kind, name: callName, categoryId: call.categoryId };
     return { categories: categories.map(summaryOf), unreadable, interrupted, busy };
+  }
+
+  /** Tries again to remove the records of calls that ended but could not be forgotten; a record that is gone, or removed now, is no longer remembered. */
+  async #forgetEndedCalls(library: Library): Promise<void> {
+    for (const jobId of [...this.#endedCalls]) {
+      if (this.#categoryCall?.jobId === jobId) continue;
+      try {
+        await library.categories.removePending(jobId);
+        this.#endedCalls.delete(jobId);
+      } catch {
+        // The disk still refuses: the call stays remembered as ended and is tried at the next listing.
+      }
+    }
   }
 
   /** VALIDATION, free, when the library is full or another category holds the name; the store checks the same again at the write, under its own lock. */
@@ -2729,6 +2745,8 @@ export class Engine {
       }
     } finally {
       await library.categories.removePending(jobId).catch((error: unknown) => {
+        // The call ended, whatever the record says: it is remembered so it is not taken for an interrupted one, and the removal is tried again at the next listing.
+        this.#endedCalls.add(jobId);
         console.warn(`studio engine: the record of category call ${jobId} could not be removed (${messageOf(error, "unknown error")})`);
       });
     }
@@ -2812,7 +2830,8 @@ export class Engine {
     try {
       const call = (await library.categories.listPending()).find((p) => p.jobId === jobId);
       if (call === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no interrupted category call ${jobId}` });
-      if (call.kind === "regenerate" && call.categoryId !== null) {
+      // A call that ended in this process already booked its cost where it belongs: only the record is left to forget.
+      if (call.kind === "regenerate" && call.categoryId !== null && !this.#endedCalls.has(jobId)) {
         const money = this.#money;
         if (!money.ok) throw new EngineFailure({ code: money.unavailable.cause, detail: money.unavailable.detail });
         const spentMicros = jobSpentMicros(money.budget.ledger, jobId);
@@ -2824,6 +2843,7 @@ export class Engine {
         }
       }
       if (!(await library.categories.removePending(jobId))) throw new EngineFailure({ code: "NOT_FOUND", detail: `no interrupted category call ${jobId}` });
+      this.#endedCalls.delete(jobId);
       return { jobId };
     } finally {
       this.#dismissingCalls.delete(jobId);

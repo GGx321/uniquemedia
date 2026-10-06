@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MAX_CUSTOM_CATEGORIES, type CategoryPool } from "../../shared/engine";
@@ -376,6 +377,25 @@ describe("remove", () => {
     expect(await s.get("cat-paris-cafes")).toBeNull();
     expect(await codeOf(s.remove("cat-paris-cafes"))).toBe("not-found");
   });
+
+  test("flushes the folder after the record is unlinked, so the deletion survives a crash", async () => {
+    const synced: { dir: string; recordStillThere: boolean }[] = [];
+    const s = store({ fsyncDir: async (dir) => void synced.push({ dir, recordStillThere: existsSync(join(dir, "cat-paris-cafes.json")) }) });
+    await s.create(input({ categoryId: "cat-paris-cafes" }));
+
+    await s.remove("cat-paris-cafes");
+
+    expect(synced).toEqual([{ dir: dirOf(), recordStillThere: false }]);
+  });
+
+  test("a folder flush that fails does not undo or fail the removal: the record is gone", async () => {
+    const s = store({ fsyncDir: async () => Promise.reject(new Error("EIO")) });
+    await s.create(input({ categoryId: "cat-paris-cafes" }));
+
+    await s.remove("cat-paris-cafes");
+
+    expect(await files()).toEqual([]);
+  });
 });
 
 describe("pending records of paid calls", () => {
@@ -390,6 +410,17 @@ describe("pending records of paid calls", () => {
     expect((await s.listPending()).map((p) => p.jobId)).toEqual(["job-00000001", "job-00000002"]);
     expect(await s.removePending("job-00000001")).toBe(true);
     expect((await s.listPending()).map((p) => p.jobId)).toEqual(["job-00000002"]);
+  });
+
+  test("flushes the folder after a pending record is unlinked, and not when there was none to remove", async () => {
+    const synced: { dir: string; recordStillThere: boolean }[] = [];
+    const s = store({ fsyncDir: async (dir) => void synced.push({ dir, recordStillThere: existsSync(join(dir, "pending-job-00000001.json")) }) });
+    await s.writePending(call);
+
+    expect(await s.removePending("job-00000001")).toBe(true);
+    expect(await s.removePending("job-00000001")).toBe(false);
+
+    expect(synced).toEqual([{ dir: dirOf(), recordStillThere: false }]);
   });
 
   test("a pending record is not a category and does not count as an unreadable one", async () => {

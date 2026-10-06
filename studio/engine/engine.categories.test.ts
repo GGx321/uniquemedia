@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CategoryPool, CategorySummary, Estimate } from "../shared/engine";
@@ -674,6 +674,60 @@ describe("one category call at a time", () => {
   });
 });
 
+describe("a call that ended but whose record could not be removed", () => {
+  /** An engine whose unlink of a pending record fails while `lockPending.on` is set (the disk refuses the delete; every other write goes through). */
+  const lockPending = { on: false };
+  async function startWithLockablePending(net: ReturnType<typeof network>) {
+    return startEngine(dir(), {
+      net,
+      deps: {
+        library: {
+          testHooks: {
+            beforeUnlink: (path) => {
+              if (lockPending.on && path.includes("pending-")) throw Object.assign(new Error("EIO: the record cannot be removed"), { code: "EIO" });
+            },
+          },
+        },
+      },
+    });
+  }
+
+  test("is not listed as interrupted: this process knows it ended, and the record goes at the next listing once the disk allows it", async () => {
+    const net = network({ descriptors: [poolReply({ pool: "cafes" }), poolReply({ pool: "cafes" })] });
+    const { engine } = await startWithLockablePending(net);
+    lockPending.on = true;
+
+    const refused = failed(await engine.handle(createCommand()));
+    expect(refused.error.code).toBe("POOL_REJECTED");
+    expect(await folder()).toEqual([expect.stringMatching(/^pending-/)]);
+
+    // Still refused by the disk: the call did not get interrupted, it ended.
+    expect((await listOf(engine)).interrupted).toEqual([]);
+    expect(await folder()).toHaveLength(1);
+
+    lockPending.on = false;
+    expect((await listOf(engine)).interrupted).toEqual([]);
+    expect(await folder()).toEqual([]);
+  });
+
+  test("dismissing it forgets the record and adds nothing: a regenerate that ended already booked its cost into the category", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const net = network({ descriptors: [poolReply({ pool: "cafes" }, 0.0051), poolReply({ pool: "cafes" }, 0.0062)] });
+    const { engine } = await startWithLockablePending(net);
+    lockPending.on = true;
+
+    const refused = failed(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+    lockPending.on = false;
+    const jobId = String(ledgerLines(dir())[0]?.jobId);
+
+    expect(refused.error).toMatchObject({ code: "POOL_REJECTED", spentMicros: 11_300 });
+    // Before any listing (which would remove the record itself): the owner's «Убрать» arrives first.
+    ok(await engine.handle(command("categories.dismissInterrupted", { jobId })));
+    expect((await listOf(engine)).categories[0]?.spentMicros).toBe(5_000 + 11_300);
+    expect(await folder()).toEqual([`${id}.json`]);
+  });
+});
+
 describe("a regenerate whose paid pool cannot be stored", () => {
   test("still adds its cost to the category's total: the old pool stays, the call was paid, and the pool is kept in raw/", async () => {
     const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
@@ -717,6 +771,11 @@ describe("a regenerate whose paid pool cannot be stored", () => {
 // ---------- a ledger that cannot be written ----------
 
 describe("a ledger write that fails during a category call", () => {
+  // The ledger is made read-only by the test; it is made writable again so the temp folder can be removed on every platform.
+  afterEach(async () => {
+    await chmod(join(dir(), "userData", "ledger.jsonl"), 0o644).catch(() => undefined);
+  });
+
   /** A chat answer that makes the ledger unwritable the moment the request has arrived, so the settle of the attempt cannot be recorded. */
   function answerThenBreakLedger(content: Step): Step {
     return async () => {

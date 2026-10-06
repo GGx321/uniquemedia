@@ -18,7 +18,7 @@ import {
 } from "../../shared/engine";
 import { poolOf } from "../scenes/poolGen";
 import { PoolSchema } from "../scenes/pools";
-import { hasErrorCode, readJsonFile, writeJsonAtomic } from "./durableFs";
+import { fsyncDir, hasErrorCode, readJsonFile, writeJsonAtomic } from "./durableFs";
 import { CATEGORIES_DIR, CATEGORY_FILE_SCHEMA_VERSION, isFromNewerVersion } from "./layout";
 import { runExclusive } from "./keyedMutex";
 import { unlinkWithRetry } from "./unlinkRetry";
@@ -81,6 +81,10 @@ export interface CategoryStoreDeps {
   now?: () => Date;
   /** Test seam: called after each temp file is durable and before it is renamed into place. Throwing simulates a crash there. */
   beforeRename?: ((finalPath: string) => void | Promise<void>) | undefined;
+  /** Test seam: called before each record is unlinked. Throwing simulates a disk that refuses the delete. */
+  beforeUnlink?: ((path: string) => void | Promise<void>) | undefined;
+  /** Test seam: the flush of the folder after an unlink; defaults to the library's own. */
+  fsyncDir?: ((dir: string) => Promise<void>) | undefined;
 }
 
 const RECORD_NAME = /^(cat-[a-z0-9-]{8,59})\.json$/;
@@ -103,12 +107,23 @@ export class CategoryStore {
   readonly #lockKey: string;
   readonly #now: () => Date;
   readonly #beforeRename: ((finalPath: string) => void | Promise<void>) | undefined;
+  readonly #beforeUnlink: ((path: string) => void | Promise<void>) | undefined;
+  readonly #fsyncDir: (dir: string) => Promise<void>;
 
   constructor(root: string, deps: CategoryStoreDeps = {}) {
     this.dir = join(root, CATEGORIES_DIR);
     this.#lockKey = `categories:${this.dir}`;
     this.#now = deps.now ?? (() => new Date());
     this.#beforeRename = deps.beforeRename;
+    this.#beforeUnlink = deps.beforeUnlink;
+    this.#fsyncDir = deps.fsyncDir ?? fsyncDir;
+  }
+
+  /** Unlinks a record and flushes the folder, so the deletion is as durable as a write; a flush that fails does not undo it (the record is gone). */
+  async #unlink(path: string): Promise<void> {
+    await this.#beforeUnlink?.(path);
+    await unlinkWithRetry(path);
+    await this.#fsyncDir(this.dir).catch(() => undefined);
   }
 
   #path(id: string): string {
@@ -236,7 +251,7 @@ export class CategoryStore {
   async remove(id: string): Promise<void> {
     await runExclusive(this.#lockKey, async () => {
       if ((await this.get(id)) === null) throw new CategoryError("not-found", `no readable category ${id}`);
-      await unlinkWithRetry(this.#path(id));
+      await this.#unlink(this.#path(id));
     });
   }
 
@@ -274,7 +289,7 @@ export class CategoryStore {
   async removePending(jobId: string): Promise<boolean> {
     return runExclusive(this.#lockKey, async () => {
       try {
-        await unlinkWithRetry(join(this.dir, `pending-${jobId}.json`));
+        await this.#unlink(join(this.dir, `pending-${jobId}.json`));
         return true;
       } catch (error) {
         if (hasErrorCode(error, "ENOENT")) return false;

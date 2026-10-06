@@ -73,6 +73,8 @@ export interface LibraryDeps {
     /** Called before each video record file is read by `reloadVideoRecords` and the quarantine, as part of the read: what it
      *  throws is what the read threw. */
     beforeReadVideoRecord?: (path: string) => void | Promise<void>;
+    /** Called before each category record or pending record is unlinked; what it throws is what the unlink threw. */
+    beforeUnlink?: (path: string) => void | Promise<void>;
   };
   /**
    * Downscales a face reference's raw bytes to the JPEG `ImageParams.references`
@@ -250,7 +252,7 @@ export class Library {
   private constructor(root: string, deps: LibraryDeps, createdAt: string) {
     this.root = root;
     this.createdAt = createdAt;
-    this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename });
+    this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, beforeUnlink: deps.testHooks?.beforeUnlink });
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;
