@@ -33,6 +33,8 @@ describe("the init message's mock CDN field", () => {
       textModel: "x-ai/grok-4.3",
       concurrency: { network: 6 },
       imageAgeCheck: "on",
+      imageQuality: "low",
+      cameraRealism: false,
       exportPath: "/tmp/export",
       renderConcurrency: "auto",
     },

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
 import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory } from "./categories";
 import { EngineError, ExportUnavailableReason } from "./errors";
+import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
 import { AbsolutePath, Count, Id, Micros, ModelId, SafeText } from "./primitives";
 import { RenderResult } from "./video";
@@ -88,7 +89,17 @@ export const Settings = z.strictObject({
   monthlyBudgetMicros: Micros,
   libraryPath: AbsolutePath,
   imageModel: ModelId,
+  /**
+   * The quality knob of `imageModel` for NEW runs: `low` or `medium` for a model that has one, `null` for a model that has none (the
+   * request then sends no quality). No schema-level default, like `imageAgeCheck`: settingsStore.ts backfills `low` for an older file.
+   */
+  imageQuality: ImageQuality.nullable(),
   textModel: ModelId,
+  /**
+   * «Реализм камеры»: when on, a fixed English camera-realism clause is appended to every NEW run's image prompts
+   * (engine/scenes/assembler.ts's CAMERA_REALISM_CLAUSE). Off by default; settingsStore.ts backfills `false` for an older file.
+   */
+  cameraRealism: z.boolean(),
   concurrency: z.strictObject({ network: NetworkConcurrency }),
   imageAgeCheck: ImageAgeCheck,
   /**

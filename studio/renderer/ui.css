@@ -1651,6 +1651,29 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: right;
 }
 
+/* The «Фото» card's native selects: a real list box for the keyboard and the screen reader, in the row's own colours. */
+.row-select {
+  max-width: 280px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.row-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.row-select:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .money-figure {
   font-size: 13px;
   color: var(--text);

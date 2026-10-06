@@ -12,6 +12,8 @@ import {
   RENDER_TIMEOUT_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
   renderQueueLimitOf,
+  UNKNOWN_IMAGE_MODEL_RU,
+  UNSUPPORTED_IMAGE_QUALITY_RU,
   type EngineError,
   type ErrorCode,
 } from "../../shared/engine";
@@ -50,6 +52,8 @@ function baseText(error: EngineError): string {
   }
   // A refused photo says why: one photo goes into one video, a render holds its photos, a broken record refuses the whole avatar.
   if (error.code === "PHOTO_UNAVAILABLE" && error.photoReason !== undefined) return PHOTO_UNAVAILABLE_REASONS_RU[error.photoReason];
+  // The image-model choice says its own refusal in Russian (shared/engine/imageModels.ts): which of the two it is is only in the detail.
+  if (error.code === "VALIDATION" && (error.detail === UNKNOWN_IMAGE_MODEL_RU || error.detail === UNSUPPORTED_IMAGE_QUALITY_RU)) return error.detail;
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.

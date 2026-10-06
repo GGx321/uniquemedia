@@ -38,4 +38,4 @@ export {
   type WriterRefusal,
   type WriterScene,
 } from "./writer";
-export { assembleRun, assembleSlot, AssemblerRefusalError, sentenceProblems, type AssembledScene, type SentenceProblem } from "./assembler";
+export { assembleRun, assembleSlot, AssemblerRefusalError, CAMERA_REALISM_CLAUSE, CAMERA_REALISM_CLAUSE_EDITORIAL, sentenceProblems, type AssembledScene, type AssembleOptions, type SentenceProblem } from "./assembler";

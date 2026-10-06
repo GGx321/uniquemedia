@@ -49,6 +49,8 @@ describe("EngineInit.defaultExportPath", () => {
     textModel: "x-ai/grok-4.3",
     concurrency: { network: 6 },
     imageAgeCheck: "off",
+    imageQuality: "low",
+    cameraRealism: false,
     exportPath: "/home/a/Studio/export",
     renderConcurrency: "auto",
   };

@@ -24,6 +24,7 @@ import {
   type Estimate,
   type EventMessage,
   type ImageAgeCheck,
+  type ImageQuality,
   type LedgerUnavailable,
   type MoneyHalt,
   type MoneyStatus,
@@ -82,6 +83,7 @@ import { loadPriceBook, OPENROUTER_API_BASE } from "./money/prices";
 import type { ReconcileResult as LedgerReconcileResult, ReconcileWarning as LedgerReconcileWarning } from "./money/reconcile";
 import { createOpenRouterClient, fromOpenRouterError, OpenRouterError, type OpenRouterClient, type OpenRouterFetch } from "./openrouter";
 import { priceFetchFrom } from "./openrouter/priceFetch";
+import { ImageCatalogueCache, loadImageCatalogue } from "./imageModels/catalogue";
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
 import { buildRunPlan, RunPlanSchema, runEstimate, runPriceModels, sceneCategory, type RunPlan } from "./runs/plan";
@@ -474,6 +476,8 @@ interface RunningCandidates {
   library: Library;
   priceBook: PriceBook;
   imageModel: string;
+  /** Captured with the model, so a mid-flight settings.setModels does not change a running batch. */
+  imageQuality: ImageQuality | null;
   concurrency: number;
   /** Captured at #generateCandidates: a mid-flight settings.setImageAgeCheck must not affect this running job. */
   imageAgeCheck: ImageAgeCheck;
@@ -623,6 +627,8 @@ export class Engine {
   readonly #caps: Map<string, number>;
   /** Prices for the engine's life, fetched (free, no key) through the injected fetch. */
   readonly #prices: PriceCache;
+  /** The image models Settings offers (imageModels/catalogue.ts): live from OpenRouter, cached, the bundled list when it cannot be read. */
+  readonly #imageCatalogue: ImageCatalogueCache;
   readonly #rawDir: string;
   /** Paid commands running now (createDraft): the library they write to must not change under them. */
   #paidCommands = 0;
@@ -837,6 +843,10 @@ export class Engine {
     this.#prices = new PriceCache({
       load: (models) => loadPriceBook({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl, ...models }),
       clock: deps.clock,
+      monotonic: deps.monotonic,
+    });
+    this.#imageCatalogue = new ImageCatalogueCache({
+      load: () => loadImageCatalogue({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl }),
       monotonic: deps.monotonic,
     });
   }
@@ -1284,6 +1294,8 @@ export class Engine {
       }
       case "settings.get":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: this.#currentSettings() };
+      case "settings.imageModels":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#imageCatalogue.get() };
       case "money.status":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: this.#moneyStatus() };
       case "money.reconcile":
@@ -1857,7 +1869,16 @@ export class Engine {
       const running = this.#jobs.runningJobOf(runId) !== null;
       const book = priced.get(JSON.stringify(models)) ?? null;
       // Ended by its cap only when prices are known: unpriced, the engine cannot tell and leaves the run resumable.
-      const remaining = open === 0 || book === null ? null : remainingPlan(book, plan, state, committed, ledger);
+      // A run whose model's prices cannot reserve its requests now (no listed price for a reference image) is unknown like an unpriced one:
+      // it must not make `runs.list` fail and hide the healthy runs. A resume of it is refused with PRICE_UNAVAILABLE by `#remaining`.
+      let remaining: ReturnType<typeof remainingPlan> | null = null;
+      if (open > 0 && book !== null) {
+        try {
+          remaining = remainingPlan(book, plan, state, committed, ledger);
+        } catch (error) {
+          if (!(error instanceof MoneyError && error.code === "PRICE_UNAVAILABLE")) throw error;
+        }
+      }
       const capExhausted = !running && open > 0 && remaining !== null && !money.budget.scopeNeedsReconcile({ runId }) && !capFundsResume(plan, committed, remaining.minToProgressMicros);
       return {
         runId,
@@ -1923,6 +1944,7 @@ export class Engine {
     if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
     // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
     const imageAgeCheck = this.#settings.imageAgeCheck;
+    const cameraRealism = this.#settings.cameraRealism;
     this.#assertAgeGate(imageAgeCheck);
     this.#assertFaceGate();
     const models = this.#avatarModels();
@@ -1966,6 +1988,7 @@ export class Engine {
       capMicros: estimate.worstMicros,
       plannedWorstMicros: estimate.worstMicros,
       scenes,
+      cameraRealism,
     });
     await library.createRun(runId, plan, RunPlanSchema);
     this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, 0);
@@ -2288,7 +2311,7 @@ export class Engine {
   // ---------- avatars ----------
 
   #avatarModels(): AvatarModels {
-    return { imageModel: this.#settings.imageModel, textModel: this.#settings.textModel };
+    return { imageModel: this.#settings.imageModel, imageQuality: this.#settings.imageQuality, textModel: this.#settings.textModel };
   }
 
   /** A draft of the open library as the contract lists it; null for anything else. */
@@ -2650,6 +2673,7 @@ export class Engine {
       library,
       priceBook: priced.book,
       imageModel: models.imageModel,
+      imageQuality: models.imageQuality ?? null,
       concurrency: this.#settings.concurrency.network,
       imageAgeCheck,
       signal,
@@ -2683,6 +2707,7 @@ export class Engine {
           jobId: job.jobId,
           scope: job.scope,
           imageModel: job.imageModel,
+          imageQuality: job.imageQuality,
           descriptor: job.descriptor,
           concurrency: job.concurrency,
           imageAgeCheck: job.imageAgeCheck,
@@ -3313,7 +3338,9 @@ export class Engine {
       }
       this.#settings = { ...this.#settings, libraryPath: next.libraryPath };
     }
-    if (previous.imageAgeCheck !== this.#settings.imageAgeCheck) this.#rebroadcastDraftEstimates();
+    // A draft's estimate prices its portraits: it follows the age check, and the image model and quality.
+    const imageChanged = previous.imageModel !== this.#settings.imageModel || previous.imageQuality !== this.#settings.imageQuality;
+    if (previous.imageAgeCheck !== this.#settings.imageAgeCheck || imageChanged) this.#rebroadcastDraftEstimates();
     // The export folder or the library it must stay out of may have changed.
     await this.#refreshExportStatus();
     this.#emitSettings();

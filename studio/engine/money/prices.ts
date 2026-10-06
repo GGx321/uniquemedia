@@ -15,8 +15,12 @@ export type PriceSource = "live" | "fallback";
 export interface ImagePrice {
   /** Output-image prices by variant (`low_1k`, `2k`, `high_resolution`, …; null = no variant). */
   outputs: { variant: string | null; micros: number }[];
-  /** Price of one input (reference) image. */
-  inputImageMicros: number;
+  /**
+   * Price of one input (reference) image: the highest of the endpoints' `input_image` rows. `null` when some endpoint lists NO such
+   * row: the price of a reference is then unknown, never free, and a request that carries one cannot be reserved (`imageWorstCase`).
+   * An explicit row of 0 is a price the provider states, and is kept as 0.
+   */
+  inputImageMicros: number | null;
 }
 
 /**
@@ -74,7 +78,9 @@ const EndpointsBody = z.object({
  * Image pricing of one model. When several providers serve it, each variant
  * takes the highest price. A billable other than output_image/input_image, or
  * a unit other than "image", throws: a worst case that ignores part of the
- * bill is not a worst case.
+ * bill is not a worst case. An output_image price of 0 throws too (it would
+ * reserve nothing), and a model any of whose endpoints lists no input_image
+ * row gets `inputImageMicros: null`, not 0 (see `ImagePrice`).
  */
 export function parseImageEndpoints(body: unknown, model: string): ImagePrice {
   const parsed = EndpointsBody.safeParse(body);
@@ -82,22 +88,26 @@ export function parseImageEndpoints(body: unknown, model: string): ImagePrice {
   if (parsed.data.id !== model) throw new Error(`Endpoints body is for ${parsed.data.id}, expected ${model}`);
 
   const outputs = new Map<string | null, number>();
-  let inputImageMicros = 0;
+  let inputImageMicros: number | null = 0;
   for (const endpoint of parsed.data.endpoints) {
+    let listsInput = false;
     for (const entry of endpoint.pricing) {
       if (entry.unit !== undefined && entry.unit !== "image") {
         throw new Error(`${model}: ${entry.billable} is priced per ${entry.unit}, not per image`);
       }
       const micros = costToMicros(entry.cost_usd);
       if (entry.billable === "output_image") {
+        if (micros === 0) throw new Error(`${model}: output_image is priced 0, which would reserve nothing`);
         const variant = entry.variant ?? null;
         outputs.set(variant, Math.max(outputs.get(variant) ?? 0, micros));
       } else if (entry.billable === "input_image") {
-        inputImageMicros = Math.max(inputImageMicros, micros);
+        listsInput = true;
+        inputImageMicros = inputImageMicros === null ? null : Math.max(inputImageMicros, micros);
       } else {
         throw new Error(`${model}: unsupported billable "${entry.billable}"`);
       }
     }
+    if (!listsInput) inputImageMicros = null;
   }
   if (outputs.size === 0) throw new Error(`${model}: no output_image price`);
   return { outputs: [...outputs].map(([variant, micros]) => ({ variant, micros })), inputImageMicros };
@@ -194,8 +204,18 @@ function assertCount(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative integer, got ${value}`);
 }
 
-/** `1k`, `low_2k`, `high_resolution`, … — the variant names whose resolution can be read. */
-const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+k|high_resolution)$/;
+/** `1k`, `1.5k`, `low_2k`, `768`, `high_resolution`, … — the variant names whose resolution can be read. */
+const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+(?:\.\d+)?k|\d{3}|high_resolution)$/;
+/** Tiers named by a pixel size or a fractional K (`768`, `1.5k`): they sit around 1K, so a base price beside them is not known to be the 1K one. */
+const AROUND_1K_TIER = /^(?:(?:[a-z]+_)?\d+\.\d+k|\d{3})$/;
+
+/** `2k`, `medium_4k`, `high_resolution`: tiers above 1K, which Studio never requests. */
+function isLargerThan1k(variant: string | null): boolean {
+  if (variant === null) return false;
+  if (variant === "high_resolution") return true;
+  const k = /^(?:[a-z]+_)?(\d+(?:\.\d+)?)k$/.exec(variant);
+  return k !== null && Number(k[1]) >= 2;
+}
 
 /**
  * Output price of a 1K image at a quality, never an underestimate: Studio
@@ -204,14 +224,18 @@ const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+k|high_resolution)$/;
  * priced. Variant names are compared in lower case. Any unrecognised
  * variant: the dearest price (nothing can be mapped safely). Otherwise, in
  * order:
- * - `<quality>_1k` variants exist: the requested quality; if it is missing
- *   or null, the dearest of them or the base price, whichever is higher;
+ * - `<quality>_1k` variants exist: the exact `<quality>_1k` price; with no
+ *   quality, the dearest price below 2K (a `medium_1.5k` or `768` tier beside
+ *   `low_1k` must not be skipped; fix round 3); with a quality that has no
+ *   `_1k` price, the dearest of ALL variants, 2K included;
  * - a `1k` variant;
+ * - tiers named `768` or `1.5k` with no `1k` tier: nothing says which price a
+ *   1K request pays, so the dearest price (review round 1, M2);
  * - the variant-less base price (Seedream: base = 1K, `high_resolution` =
  *   2K);
  * - otherwise the dearest price.
  */
-function outputMicros(price: ImagePrice, quality: ImageQuality | null): number {
+export function imageOutputMicros(price: ImagePrice, quality: ImageQuality | null): number {
   const outputs = price.outputs.map((o) => ({ variant: o.variant === null ? null : o.variant.toLowerCase(), micros: o.micros }));
   const dearest = (list: ImagePrice["outputs"]): number => list.reduce((max, o) => Math.max(max, o.micros), 0);
   if (outputs.some((o) => o.variant !== null && !RECOGNISED_VARIANT.test(o.variant))) return dearest(outputs);
@@ -221,17 +245,24 @@ function outputMicros(price: ImagePrice, quality: ImageQuality | null): number {
   const withQuality = outputs.filter((o) => o.variant?.endsWith("_1k"));
   if (withQuality.length > 0) {
     const exact = quality === null ? undefined : find(`${quality}_1k`);
-    return exact ?? Math.max(dearest(withQuality), base ?? 0);
+    if (exact !== undefined) return exact;
+    // No quality: Studio never requests 2K+, so those tiers are skipped. A quality with no 1K price: only the dearest
+    // of ALL variants is a safe upper bound.
+    return dearest(quality === null ? outputs.filter((o) => !isLargerThan1k(o.variant)) : outputs);
   }
   const plain = find("1k");
   if (plain !== undefined) return plain;
+  if (outputs.some((o) => o.variant !== null && AROUND_1K_TIER.test(o.variant))) return dearest(outputs);
   if (base !== undefined) return base;
   return dearest(outputs);
 }
 
 export function imageWorstCase(price: ImagePrice, req: Omit<ImageWorstCaseRequest, "model">): number {
   assertCount("refs", req.refs);
-  return outputMicros(price, req.quality) + req.refs * price.inputImageMicros;
+  if (req.refs > 0 && price.inputImageMicros === null) {
+    throw new MoneyError("PRICE_UNAVAILABLE", "the endpoints list no input_image price: the price of a reference image is unknown, so a request with one cannot be reserved");
+  }
+  return imageOutputMicros(price, req.quality) + req.refs * (price.inputImageMicros ?? 0);
 }
 
 /** Cost of one chat call with these token and image counts, rounded up to a whole micro-dollar. */
@@ -266,7 +297,7 @@ export function chatWorstCase(price: ChatPrice, req: Omit<ChatWorstCaseRequest, 
 // ---------- the dated fallback table ----------
 
 /** Read from /images/models/<id>/endpoints and /models on 2026-09-24 (spike results). Used only when a fetch fails. */
-const FALLBACK_IMAGE: ReadonlyMap<string, ImagePrice> = new Map([
+export const FALLBACK_IMAGE: ReadonlyMap<string, ImagePrice> = new Map([
   [
     "x-ai/grok-imagine-image-2.0",
     {
@@ -378,7 +409,7 @@ function unavailable(model: string): MoneyError {
   return new MoneyError("PRICE_UNAVAILABLE", `no price loaded for ${model}`);
 }
 
-async function getJson(fetch: FetchLike, url: string, timeoutMs: number): Promise<unknown> {
+export async function getJson(fetch: FetchLike, url: string, timeoutMs: number): Promise<unknown> {
   // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
   // unref'd, which hung the Windows CI runs once M6 moved these tests onto
   // Bun's native AbortController/AbortSignal (timeoutSignal.ts's own doc

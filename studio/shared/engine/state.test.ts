@@ -34,6 +34,8 @@ const settings = {
   imageModel: "x-ai/grok-imagine-image-2.0",
   textModel: "x-ai/grok-4.3",
   concurrency: { network: 6 },
+  imageQuality: "low",
+  cameraRealism: false,
   imageAgeCheck: "off",
   exportPath: "/Users/alex/Studio/export",
   renderConcurrency: "auto",
@@ -307,6 +309,25 @@ describe("Settings", () => {
 
   test.each(["off", "on"])("accepts imageAgeCheck %p", (imageAgeCheck) => {
     expect(Settings.safeParse({ ...settings, imageAgeCheck }).success).toBe(true);
+  });
+
+  test.each(["low", "medium", null])("accepts imageQuality %p", (imageQuality) => {
+    expect(Settings.safeParse({ ...settings, imageQuality }).success).toBe(true);
+  });
+
+  test("rejects an imageQuality outside low/medium/null", () => {
+    expect(Settings.safeParse({ ...settings, imageQuality: "high" }).success).toBe(false);
+  });
+
+  test("rejects a missing imageQuality or cameraRealism: the defaults live in settingsStore's file loading, not at the contract", () => {
+    const { imageQuality: _q, ...withoutQuality } = settings;
+    const { cameraRealism: _r, ...withoutRealism } = settings;
+    expect(Settings.safeParse(withoutQuality).success).toBe(false);
+    expect(Settings.safeParse(withoutRealism).success).toBe(false);
+  });
+
+  test("rejects a cameraRealism that is not a boolean", () => {
+    expect(Settings.safeParse({ ...settings, cameraRealism: "on" }).success).toBe(false);
   });
 
   test("rejects an imageAgeCheck outside off/on", () => {

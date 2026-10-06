@@ -1112,6 +1112,22 @@ test("the shot caption's quality word matches the model: «low» for the setting
   expect(screen.queryByText(/· low · 9:16/) === null).toBe(true);
 });
 
+test("the shot caption names the chosen quality: «medium» when it is chosen, none for a model with no quality knob", async () => {
+  const { client } = await openPhotos();
+  await screen.findByText(/· low · 9:16 · референс — мастер-портрет$/);
+
+  await act(async () => {
+    await client.request("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", imageQuality: "medium", textModel: "x-ai/grok-4.3" });
+  });
+  await screen.findByText(/· medium · 9:16 · референс — мастер-портрет$/);
+
+  await act(async () => {
+    await client.request("settings.setModels", { imageModel: "x-ai/grok-imagine-image-quality", textModel: "x-ai/grok-4.3" });
+  });
+  await screen.findByText(/· 9:16 · референс — мастер-портрет$/);
+  expect(screen.queryByText(/· (low|medium) · 9:16/) === null).toBe(true);
+});
+
 test("what the contract cannot do yet is drawn disabled and marked «скоро»", async () => {
   await openPhotos();
   await priced();

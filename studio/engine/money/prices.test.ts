@@ -107,10 +107,56 @@ test("takes the highest price per variant when several providers serve the model
   expect(parseImageEndpoints(body, "acme/img")).toEqual({ outputs: [{ variant: "1k", micros: 50_000 }], inputImageMicros: 10_000 });
 });
 
-test("a model without an input_image price charges nothing per reference", () => {
+// Review round 1, M1: a reference price that is NOT LISTED is unknown, never free. An EXPLICIT input_image row of 0 is a price the
+// provider states (seedream-5-0-flash and 4.5 list one), so it is valid; a missing row is not.
+test("a model without an input_image row has no reference price (null), not a free one", () => {
   const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }] }] };
 
+  expect(parseImageEndpoints(body, "acme/img").inputImageMicros).toBeNull();
+});
+
+test("an explicit input_image row of 0 is a stated price: a free reference", () => {
+  const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }, { billable: "input_image", unit: "image", cost_usd: 0 }] }] };
+
   expect(parseImageEndpoints(body, "acme/img").inputImageMicros).toBe(0);
+});
+
+test("when one of several endpoints lists no input_image row, the reference price is unknown (null)", () => {
+  const priced = { pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] };
+  const unpriced = { pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.03 }] };
+
+  expect(parseImageEndpoints({ id: "acme/img", endpoints: [priced, unpriced] }, "acme/img").inputImageMicros).toBeNull();
+});
+
+test("an output_image price of 0 is refused: it would reserve nothing", () => {
+  const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0 }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] }] };
+
+  expect(() => parseImageEndpoints(body, "acme/img")).toThrow("0");
+});
+
+test("a variant priced 0 among others is refused too", () => {
+  const body = {
+    id: "acme/img",
+    endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.05, variant: "1k" }, { billable: "output_image", unit: "image", cost_usd: 0, variant: "2k" }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] }],
+  };
+
+  expect(() => parseImageEndpoints(body, "acme/img")).toThrow("0");
+});
+
+test("the worst case of a request WITH a reference is PRICE_UNAVAILABLE when the reference price is not listed; without one it is the output price", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }], inputImageMicros: null };
+
+  expect(() => imageWorstCase(price, { quality: null, refs: 1 })).toThrow(MoneyError);
+  expect(() => imageWorstCase(price, { quality: null, refs: 1 })).toThrow("reference");
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(30_000);
+});
+
+test("a price book refuses to reserve a reference-carrying request on a model with no listed reference price", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }], inputImageMicros: null };
+  const book = new PriceBook(new Map([["acme/img", { price, source: "live" as const }]]), new Map());
+
+  expect(() => book.imageWorstCase({ model: "acme/img", quality: null, refs: 1 })).toThrow(MoneyError);
+  expect(book.imageWorstCase({ model: "acme/img", quality: null, refs: 0 })).toBe(30_000);
 });
 
 test("rejects an endpoints body for a different model", () => {
@@ -197,7 +243,7 @@ test("an unrecognised variant disables the base price: the dearest output is the
   expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(90_000);
 });
 
-test("a quality the model does not list takes the dearest quality at that resolution", () => {
+test("a quality the model does not list takes the dearest of ALL variants, 2K included: no 1K price exists for it", () => {
   expect(imageWorstCase(GROK_2_PRICE, { quality: "medium", refs: 0 })).toBe(60_000);
   const noLow: ImagePrice = {
     outputs: [
@@ -207,7 +253,7 @@ test("a quality the model does not list takes the dearest quality at that resolu
     ],
     inputImageMicros: 0,
   };
-  expect(imageWorstCase(noLow, { quality: "low", refs: 0 })).toBe(70_000);
+  expect(imageWorstCase(noLow, { quality: "low", refs: 0 })).toBe(90_000);
 });
 
 test("refs must be a non-negative integer", () => {
@@ -460,4 +506,84 @@ test("the fallback table matches the live responses saved on its date", () => {
   for (const inputTokens of [0, 8_000, 200_000]) {
     expect(book.chatWorstCase({ model: GROK_CHAT, maxTokens: 8_000, inputTokens, images: 1 })).toBe(chatWorstCase(liveChat, { maxTokens: 8_000, inputTokens, images: 1 }));
   }
+});
+
+// Review round 1, M2: the base price stands for 1K only beside tiers that name a LARGER size (seedream's high_resolution); a set with
+// sub-1K or fractional-K tiers and no explicit 1k tier gives nothing to map 1K to, so the dearest tier is reserved.
+test("fractional-K and 3-digit tiers with a base price but no explicit 1k tier reserve the dearest tier, not the base", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "768", micros: 20_000 }, { variant: "1.5k", micros: 70_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(70_000);
+});
+
+test("the same tiers WITH an explicit 1k tier price at that tier", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "768", micros: 20_000 }, { variant: "1k", micros: 48_000 }, { variant: "1.5k", micros: 70_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(48_000);
+});
+
+// Fix round 2: a quality prefix (`low_1.5k`, `hd_0.75k`) names an around-1K tier just as the bare one does.
+test.each([null, "low", "medium"] as const)("quality-prefixed fractional tiers with a base price and no 1k tier reserve the dearest tier (quality %p)", (quality) => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "low_1.5k", micros: 70_000 }, { variant: "medium_1.5k", micros: 70_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality, refs: 0 })).toBe(70_000);
+});
+
+// Fix round 3: a `<quality>_1k` variant beside a recognised-but-not-1K tier must not hide that tier. Only the exact
+// `<quality>_1k` price is safe to pick; every other case reserves the dearest of ALL variants.
+const FIX_ROUND_3_CASES: { name: string; outputs: ImagePrice["outputs"]; low: number; medium: number; none: number }[] = [
+  { name: "low_1k + medium_1.5k", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1.5k", micros: 70_000 }], low: 40_000, medium: 70_000, none: 70_000 },
+  { name: "low_1k + 768", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "768", micros: 60_000 }], low: 40_000, medium: 60_000, none: 60_000 },
+  { name: "low_1k + 1.5k", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "1.5k", micros: 70_000 }], low: 40_000, medium: 70_000, none: 70_000 },
+  { name: "low_1k + medium_2k (no medium_1k)", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_2k", micros: 80_000 }], low: 40_000, medium: 80_000, none: 40_000 },
+  { name: "low_1k + medium_2k + dearer base", outputs: [{ variant: null, micros: 90_000 }, { variant: "low_1k", micros: 40_000 }, { variant: "medium_2k", micros: 80_000 }], low: 40_000, medium: 90_000, none: 90_000 },
+];
+
+test.each(FIX_ROUND_3_CASES)("$name: the exact quality_1k price when it exists; otherwise null skips 2K+ tiers and a missing quality takes the dearest of all", ({ outputs, low, medium, none }) => {
+  const price: ImagePrice = { outputs, inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: "low", refs: 0 })).toBe(low);
+  expect(imageWorstCase(price, { quality: "medium", refs: 0 })).toBe(medium);
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(none);
+});
+
+test("no quality: a fractional 1.5K tier beside low_1k is still priced, a 2K tier is not", () => {
+  const price: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1.5k", micros: 70_000 }, { variant: "medium_2k", micros: 95_000 }, { variant: "high_resolution", micros: 99_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(70_000);
+});
+
+test.each([
+  ["low", 40_000],
+  ["medium", 60_000],
+] as const)("a plain two-quality model still reserves exactly its own price (quality %p)", (quality, expected) => {
+  const price: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1k", micros: 60_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality, refs: 0 })).toBe(expected);
+});
+
+test("a plain two-quality model with no quality reserves the dearer quality", () => {
+  const price: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1k", micros: 60_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(60_000);
+});
+
+test("a prefixed sub-1K fractional tier (hd_0.75k) beside a base price reserves the dearest too", () => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "hd_0.75k", micros: 60_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(60_000);
+});
+
+test("only sub-1K tiers and no 1k tier reserve the dearest of them", () => {
+  const price: ImagePrice = { outputs: [{ variant: "512", micros: 10_000 }, { variant: "768", micros: 20_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(20_000);
+});
+
+test("flux-3: sub-1K and fractional-K tiers are recognised, so the 1k price is the worst case, not the 4k one", () => {
+  const price = parseImageEndpoints(fixture("endpoints-flux-3-image.json"), "black-forest-labs/flux-3-image");
+
+  // flux-3 lists no input_image row: its output tier is 48_000, but a request with a reference cannot be reserved (M1).
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(48_000);
+  expect(() => imageWorstCase(price, { quality: null, refs: 1 })).toThrow(MoneyError);
 });

@@ -63,6 +63,8 @@ const settings: Settings = {
   textModel: "x-ai/grok-4.3",
   concurrency: { network: 6 },
   imageAgeCheck: "off",
+  imageQuality: "low",
+  cameraRealism: false,
   exportPath: "/Users/alex/Studio/export",
   renderConcurrency: "auto",
 };
@@ -262,9 +264,17 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "settings.setBudget": { payload: { monthlyBudgetMicros: 10_000_000 }, result: settings },
   "settings.setLibraryPath": { payload: { path: "/Users/alex/Studio/library" }, result: settings },
   "settings.setModels": {
-    payload: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
+    payload: { imageModel: "x-ai/grok-imagine-image-2.0", imageQuality: "medium", textModel: "x-ai/grok-4.3" },
     result: settings,
   },
+  "settings.imageModels": {
+    payload: {},
+    result: {
+      models: [{ id: "x-ai/grok-imagine-image-2.0", name: "Grok Imagine Image 2.0", qualities: ["low", "medium"], prices: [{ quality: "low", micros: 50_000 }, { quality: "medium", micros: 70_000 }], tested: true }],
+      source: "live",
+    },
+  },
+  "settings.setCameraRealism": { payload: { cameraRealism: true }, result: settings },
   "settings.setConcurrency": { payload: { network: 6 }, result: settings },
   "settings.setImageAgeCheck": { payload: { imageAgeCheck: "on" }, result: settings },
   "money.status": { payload: {}, result: money },
@@ -474,6 +484,8 @@ describe("contract surface", () => {
         "settings.setExportPath",
         "settings.exportDisplay",
         "settings.setModels",
+        "settings.imageModels",
+        "settings.setCameraRealism",
         "settings.setConcurrency",
         "settings.setImageAgeCheck",
         "money.status",

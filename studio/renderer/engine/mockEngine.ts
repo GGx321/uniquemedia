@@ -1,5 +1,6 @@
 import {
   AvatarDescriptor,
+  checkImageChoice,
   type ApiKeyStatus,
   type MusicKeyStatus,
   type AvatarStatus,
@@ -19,6 +20,7 @@ import {
   type FailedCandidateSlot,
   type FileState,
   type ImageAgeCheck,
+  type ImageQuality,
   IMPORT_FALLBACK_PRICE,
   type ImportPhotoPicked,
   type JobResult,
@@ -69,6 +71,7 @@ import { windowPeaks } from "../../shared/music/trackShape";
 import { demoTracks, listedTracks, mockTrack, peaksOfTrack, storedTrack, type MockTrack, type MockTrackSeed } from "./mockMusicStore";
 import { mockOwnStickerBytes, mockStickerBytes, mockStickerUrl } from "./mockStickers";
 import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, videoKindOf } from "./mockRender";
+import { MOCK_IMAGE_CATALOGUE } from "./mockImageModels";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
@@ -263,6 +266,10 @@ export interface MockEngineOptions {
   concurrency?: number;
   /** Matches the app's own default, "off" (owner's decision, 2026-09-27). Tests that exercise the age-check path (MOCK_ESTIMATE's numbers, rejectNextByAgeCheck, ...) must set "on" explicitly. */
   imageAgeCheck?: ImageAgeCheck;
+  /** The image model the settings start with (default: the engine's own default); a test of a model that is not in the catalogue sets it. */
+  imageModel?: string;
+  /** The image quality the settings start with (default `low`; `null` for a model with no quality knob). */
+  imageQuality?: ImageQuality | null;
   /** Run photos already in the library (T8b's gallery), any order; `photos.list` answers them newest first. */
   photos?: PhotoSummary[];
   /** Per avatarId: run photos whose sidecar could not be read, counted in `photos.list`'s `skippedTotal`. */
@@ -710,8 +717,10 @@ export class MockEngine implements EngineBridge {
       musicKey: options.musicKey ?? (options.preset === "demo" ? { stored: true, last4: "7c1e", rejected: false } : { stored: false, last4: null, rejected: false }),
       monthlyBudgetMicros: options.money?.monthlyBudgetMicros ?? 10_000_000,
       libraryPath: "/Users/studio/Studio/library",
-      imageModel: "x-ai/grok-imagine-image-2.0",
+      imageModel: options.imageModel ?? "x-ai/grok-imagine-image-2.0",
+      imageQuality: options.imageQuality === undefined ? "low" : options.imageQuality,
       textModel: "x-ai/grok-4.3",
+      cameraRealism: false,
       concurrency: { network: options.concurrency ?? 6 },
       imageAgeCheck: options.imageAgeCheck ?? "off",
       exportPath: "/Users/studio/Studio/export",
@@ -1503,8 +1512,20 @@ export class MockEngine implements EngineBridge {
         this.checkExport();
         return this.ok(c, { exportStatus: this.exportReported });
       }
-      case "settings.setModels":
-        this.settings = { ...this.settings, imageModel: c.payload.imageModel, textModel: c.payload.textModel };
+      case "settings.imageModels":
+        return this.ok(c, MOCK_IMAGE_CATALOGUE);
+      case "settings.setModels": {
+        // As main does it: the model already set needs no catalogue; anything else must come from it.
+        const { imageModel, imageQuality, textModel } = c.payload;
+        const unchanged = imageModel === this.settings.imageModel && (imageQuality === undefined || imageQuality === this.settings.imageQuality);
+        const choice = checkImageChoice(unchanged ? { models: [] } : MOCK_IMAGE_CATALOGUE, this.settings, { imageModel, imageQuality });
+        if (!choice.ok) return this.fail(c, { code: "VALIDATION", detail: choice.detail });
+        this.settings = { ...this.settings, imageModel, imageQuality: choice.imageQuality, textModel };
+        this.emitSettingsChanged();
+        return this.ok(c, this.settings);
+      }
+      case "settings.setCameraRealism":
+        this.settings = { ...this.settings, cameraRealism: c.payload.cameraRealism };
         this.emitSettingsChanged();
         return this.ok(c, this.settings);
       case "settings.setConcurrency":

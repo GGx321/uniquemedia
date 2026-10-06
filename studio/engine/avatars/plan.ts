@@ -1,4 +1,4 @@
-import type { Estimate, ImageAgeCheck } from "../../shared/engine";
+import type { Estimate, ImageAgeCheck, ImageQuality } from "../../shared/engine";
 import { AGE_CHECK_CALL, estimateAvatarJob, type AvatarJobInput, type ChatCall, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { descriptorCall, DESCRIPTOR_MAX_ATTEMPTS } from "./descriptor";
@@ -11,6 +11,8 @@ import { descriptorCall, DESCRIPTOR_MAX_ATTEMPTS } from "./descriptor";
 /** The models in the settings that an avatar job uses. */
 export interface AvatarModels {
   imageModel: string;
+  /** The image model's quality (settings.imageQuality), `null` for a model with no quality knob. Absent: `low`, as every batch was sent before the choice existed. */
+  imageQuality?: ImageQuality | null;
   textModel: string;
 }
 
@@ -25,11 +27,11 @@ export type AvatarJobKind = "new-avatar" | "next-batch" | "rewrite-descriptor";
 /** Candidate portraits per batch. */
 export const CANDIDATES_PER_BATCH = 4;
 
-/** A candidate portrait: 1K, 3:4, quality low, no reference (there is no face yet). */
+/** A candidate portrait: 1K, 3:4, at the settings' quality (low by default), no reference (there is no face yet). */
 export const CANDIDATE_ASPECT_RATIO = "3:4";
 
-export function candidateImage(imageModel: string): ImageChoice {
-  return { model: imageModel, quality: "low", refs: 0 };
+export function candidateImage(imageModel: string, quality: ImageQuality | null = "low"): ImageChoice {
+  return { model: imageModel, quality, refs: 0 };
 }
 
 /**
@@ -53,7 +55,7 @@ export function avatarPriceModels(models: AvatarModels, kind: AvatarJobKind, ima
 function jobInput(models: AvatarModels, kind: AvatarJobKind, imageAgeCheck: ImageAgeCheck): AvatarJobInput {
   return {
     candidates: kind === "rewrite-descriptor" ? 0 : CANDIDATES_PER_BATCH,
-    image: candidateImage(models.imageModel),
+    image: candidateImage(models.imageModel, models.imageQuality),
     descriptor: kind === "next-batch" ? null : { call: descriptorCall(models.textModel), maxAttempts: DESCRIPTOR_MAX_ATTEMPTS },
     // rewrite-descriptor never touches candidates or age checks, whatever the
     // toggle; otherwise the owner's decision (2026-09-27) applies: off by

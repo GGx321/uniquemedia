@@ -30,6 +30,18 @@ test("a candidate is a 1K low-quality portrait without a reference, on the setti
   expect(CANDIDATES_PER_BATCH).toBe(4);
 });
 
+test("a candidate takes the settings' image quality: medium, or none for a model with no quality knob", () => {
+  expect(candidateImage("x-ai/grok-imagine-image-2.0", "medium")).toEqual({ model: "x-ai/grok-imagine-image-2.0", quality: "medium", refs: 0 });
+  expect(candidateImage("black-forest-labs/flux-3-image", null)).toEqual({ model: "black-forest-labs/flux-3-image", quality: null, refs: 0 });
+});
+
+test("the job's estimate prices the portraits at the chosen quality: medium is $0.06 each with no reference, not $0.04 (low)", () => {
+  const low = avatarJobEstimate(FALLBACK, { ...DEFAULTS, imageQuality: "low" }, "next-batch", "off").worstMicros;
+  const medium = avatarJobEstimate(FALLBACK, { ...DEFAULTS, imageQuality: "medium" }, "next-batch", "off").worstMicros;
+  expect(low).toBe(4 * 40_000);
+  expect(medium).toBe(4 * 60_000);
+});
+
 test("a new avatar: the descriptor (asked at most twice), 4 portraits and 4 age checks — $0.169 expected, $0.2085 worst", () => {
   const estimate = avatarJobEstimate(FALLBACK, DEFAULTS, "new-avatar", "on");
 

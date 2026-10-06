@@ -163,6 +163,21 @@ async function until(condition: () => boolean): Promise<void> {
 }
 
 describe("a batch of candidate portraits", () => {
+  test("the image requests carry the job's own quality", async () => {
+    const medium = network();
+    await run(medium, { imageQuality: "medium" }).outcomes;
+    // The test's cap is the batch's worst case at low, so the dearer medium slots may not all fit: what was sent is all medium.
+    expect(medium.imageCalls().length).toBeGreaterThan(0);
+    expect(new Set(medium.imageCalls().map((c) => c.json().quality))).toEqual(new Set(["medium"]));
+  });
+
+  test("the image requests carry no quality for a model with no quality knob", async () => {
+    const none = network();
+    await run(none, { imageQuality: null }).outcomes;
+    expect(none.imageCalls().length).toBeGreaterThan(0);
+    expect(new Set(none.imageCalls().map((c) => c.json().quality))).toEqual(new Set([undefined]));
+  });
+
   test("four image attempts: 1K, 3:4, quality low, no reference, on the image model, with the candidate prompt", async () => {
     const net = network();
 

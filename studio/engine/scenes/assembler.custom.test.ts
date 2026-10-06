@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { youthWords, type AvatarDescriptor, type CategorySnapshot } from "../../shared/engine";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
-import { AssemblerRefusalError, assembleRun, assembleSlot, sentenceProblems } from "./assembler";
+import { AssemblerRefusalError, assembleRun, assembleSlot, CAMERA_REALISM_CLAUSE, CAMERA_REALISM_CLAUSE_EDITORIAL, sentenceProblems } from "./assembler";
 import type { PlanSlot } from "./schema";
 import { revealingWordsIn } from "./words";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -70,24 +70,24 @@ describe("assembleSlot still refuses what sentenceProblems finds, with the same 
 
 describe("a custom slot's realism suffix is its snapshot's style", () => {
   test("phone style gets the smartphone suffix", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, [PHONE]);
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [PHONE] });
     expect(prompt).toContain("Smartphone photo");
     expect(prompt).not.toContain("Editorial photo");
   });
 
   test("editorial style gets the editorial suffix", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, [EDITORIAL]);
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [EDITORIAL] });
     expect(prompt).toContain("Editorial photo");
     expect(prompt).not.toContain("Smartphone photo");
   });
 
   test("a custom slot with no snapshot entry is refused before any prompt is built", () => {
     expect(() => assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER)).toThrow(RangeError);
-    expect(() => assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, [])).toThrow(RangeError);
+    expect(() => assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [] })).toThrow(RangeError);
   });
 
   test("the custom category's name and id never reach the prompt", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, [PHONE]);
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [PHONE] });
     expect(prompt).not.toContain(CUSTOM);
     expect(prompt).not.toContain("Кофейни");
     expect(prompt).not.toContain("Paris cafes");
@@ -97,13 +97,13 @@ describe("a custom slot's realism suffix is its snapshot's style", () => {
 describe("a built-in slot's prompt does not depend on the snapshot", () => {
   test("photoshoot stays editorial and home stays phone, snapshot or not", () => {
     for (const snapshots of [[], [PHONE], [EDITORIAL]]) {
-      expect(assembleSlot(DESCRIPTOR, slot({ category: "photoshoot" }), SENTENCE, MASTER, snapshots).prompt).toContain("Editorial photo");
-      expect(assembleSlot(DESCRIPTOR, slot({ category: "home" }), SENTENCE, MASTER, snapshots).prompt).toContain("Smartphone photo");
+      expect(assembleSlot(DESCRIPTOR, slot({ category: "photoshoot" }), SENTENCE, MASTER, { categories: snapshots }).prompt).toContain("Editorial photo");
+      expect(assembleSlot(DESCRIPTOR, slot({ category: "home" }), SENTENCE, MASTER, { categories: snapshots }).prompt).toContain("Smartphone photo");
     }
   });
 
   test("the prompt is byte-identical with and without a snapshot", () => {
-    expect(assembleSlot(DESCRIPTOR, slot({ category: "travel" }), SENTENCE, MASTER, [EDITORIAL]).prompt).toBe(assembleSlot(DESCRIPTOR, slot({ category: "travel" }), SENTENCE, MASTER).prompt);
+    expect(assembleSlot(DESCRIPTOR, slot({ category: "travel" }), SENTENCE, MASTER, { categories: [EDITORIAL] }).prompt).toBe(assembleSlot(DESCRIPTOR, slot({ category: "travel" }), SENTENCE, MASTER).prompt);
   });
 });
 
@@ -114,8 +114,45 @@ describe("assembleRun with a snapshot", () => {
       [1, SENTENCE],
       [2, SENTENCE],
     ]);
-    const prompts = assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots }, sentences, MASTER, [PHONE]);
+    const prompts = assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots }, sentences, MASTER, { categories: [PHONE] });
     expect(prompts[0]?.prompt).toContain("Editorial photo");
     expect(prompts[1]?.prompt).toContain("Smartphone photo");
+  });
+});
+
+// «Реализм камеры» on a custom category: the clause follows the SNAPSHOT's style, so it never contradicts the finish before it.
+describe("camera realism on a custom category", () => {
+  test("an editorial snapshot gets the camera clause and no smartphone anywhere", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "photographer" }), SENTENCE, MASTER, { categories: [EDITORIAL], cameraRealism: true });
+
+    expect(prompt).toContain("Editorial photo");
+    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
+    expect(prompt.toLowerCase()).not.toContain("smartphone");
+  });
+
+  test("a phone snapshot gets the smartphone clause", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [PHONE], cameraRealism: true });
+
+    expect(prompt).toContain("Smartphone photo");
+    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE)).toBe(true);
+  });
+
+  test("the switch off adds nothing, whatever the snapshot", () => {
+    for (const snapshot of [PHONE, EDITORIAL]) {
+      expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [snapshot], cameraRealism: false }).prompt).toBe(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [snapshot] }).prompt);
+    }
+  });
+
+  test("a refused sentence is still refused with the clause on", () => {
+    expect(() => assembleSlot(DESCRIPTOR, slot(), "The girl waves.", MASTER, { categories: [PHONE], cameraRealism: true })).toThrow(AssemblerRefusalError);
+  });
+
+  test("a custom category's texts at their bounds (35, 35, 35 and 15 characters, a 400-character sentence) stay under 2000 characters with either clause", () => {
+    const bounds = slot({ location: "l".repeat(35), activity: "a".repeat(35), outfit: "o".repeat(35), timeOfDay: "t".repeat(15), shot: "photographer", pose: "three-quarter" });
+    const sentence = `${"She walks along the quay in the soft evening light, ".repeat(8)}`.slice(0, 399) + ".";
+    for (const snapshot of [PHONE, EDITORIAL]) {
+      const { prompt } = assembleSlot(DESCRIPTOR, bounds, sentence, MASTER, { categories: [snapshot], cameraRealism: true });
+      expect(prompt.length).toBeLessThan(2000);
+    }
   });
 });

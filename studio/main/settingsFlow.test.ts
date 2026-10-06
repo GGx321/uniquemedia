@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CommandMessage, ResponseMessage, type ApiKeyStatus, type EngineCommandMessage, type MusicKeyStatus } from "../shared/engine";
+import { CommandMessage, ResponseMessage, UNKNOWN_IMAGE_MODEL_RU, UNSUPPORTED_IMAGE_QUALITY_RU, type ApiKeyStatus, type EngineCommandMessage, type ImageModelCatalogue, type MusicKeyStatus } from "../shared/engine";
 import type { HostControl } from "../engine/control";
 import { handleSettingsCommand, isSettingsCommand, reconcileLibraryPath, type LibraryReconcileDeps, type SettingsCommand, type SettingsFlowDeps } from "./settingsFlow";
 import { loadSettings, SettingsStore } from "./settingsStore";
@@ -12,6 +12,17 @@ useNativeGlobals();
 
 const KEY_STATUS: ApiKeyStatus = { stored: true, last4: "wxyz", encryptionAvailable: true, rejected: false };
 const MUSIC_STATUS: MusicKeyStatus = { stored: true, last4: "0000", rejected: false };
+
+const GROK = "x-ai/grok-imagine-image-2.0";
+const SEEDREAM = "bytedance-seed/seedream-5-0-pro";
+/** What the engine's `settings.imageModels` answers in these tests: a model with a quality knob and one without. */
+const CATALOGUE: ImageModelCatalogue = {
+  source: "live",
+  models: [
+    { id: GROK, name: "Grok Imagine Image 2.0", qualities: ["low", "medium"], prices: [{ quality: "low", micros: 50_000 }, { quality: "medium", micros: 70_000 }], tested: true },
+    { id: SEEDREAM, name: "Seedream 5.0 Pro", qualities: [], prices: [{ quality: null, micros: 48_000 }], tested: true },
+  ],
+};
 
 let userData = "";
 beforeEach(async () => {
@@ -33,7 +44,7 @@ interface Harness {
 
 /** An engine that answers settings.get from the last settings.update it got (as the real one does). */
 async function harness(
-  options: { pick?: string | null; openFails?: boolean; confirmFails?: boolean; engineDown?: boolean } = {},
+  options: { pick?: string | null; openFails?: boolean; confirmFails?: boolean; engineDown?: boolean; catalogueDown?: boolean } = {},
 ): Promise<Harness> {
   const { store } = await SettingsStore.open(userData);
   const sent: HostControl[] = [];
@@ -53,6 +64,10 @@ async function harness(
       request: async (command) => {
         engineRequests.push(command);
         if (options.engineDown) return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "the engine is not running" } };
+        if (command.type === "settings.imageModels") {
+          if (options.catalogueDown) return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: command.type, ok: false, error: { code: "INTERNAL", detail: "the catalogue could not be built" } };
+          return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: "settings.imageModels", ok: true, result: CATALOGUE };
+        }
         return { v: PROTOCOL_VERSION, id: command.id, kind: "response", type: "settings.get", ok: true, result: { apiKey: { ...KEY_STATUS, rejected: true }, musicKey: { ...MUSIC_STATUS, rejected: true }, ...engineSettings } };
       },
       openLibrary: async (path) => {
@@ -122,9 +137,9 @@ describe("settings.setBudget / setModels / setConcurrency", () => {
 
   test("models and concurrency change only their own fields", async () => {
     const h = await harness();
-    await handleSettingsCommand(command("settings.setModels", { imageModel: "bytedance/seedream-5-pro", textModel: "x-ai/grok-5" }), h.deps);
+    await handleSettingsCommand(command("settings.setModels", { imageModel: SEEDREAM, textModel: "x-ai/grok-5" }), h.deps);
     await handleSettingsCommand(command("settings.setConcurrency", { network: 3 }), h.deps);
-    expect(h.store.current).toMatchObject({ imageModel: "bytedance/seedream-5-pro", textModel: "x-ai/grok-5", concurrency: { network: 3 }, monthlyBudgetMicros: 10_000_000 });
+    expect(h.store.current).toMatchObject({ imageModel: SEEDREAM, textModel: "x-ai/grok-5", concurrency: { network: 3 }, monthlyBudgetMicros: 10_000_000 });
   });
 
   test("with the engine down the answer is built from main's own settings and key statuses", async () => {
@@ -142,6 +157,86 @@ describe("settings.setBudget / setModels / setConcurrency", () => {
       handleSettingsCommand(command("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-5" }), h.deps),
     ]);
     expect((await loadSettings(userData)).settings).toMatchObject({ monthlyBudgetMicros: 1_000_000, concurrency: { network: 4 }, textModel: "x-ai/grok-5" });
+  });
+});
+
+describe("settings.setModels: the image model and its quality", () => {
+  test("saves a catalogued model with a quality it lists, and tells the engine", async () => {
+    const h = await harness();
+    const response = await handleSettingsCommand(command("settings.setModels", { imageModel: GROK, imageQuality: "medium", textModel: "x-ai/grok-4.3" }), h.deps);
+
+    expect(response).toMatchObject({ ok: true, type: "settings.setModels" });
+    expect((await loadSettings(userData)).settings).toMatchObject({ imageModel: GROK, imageQuality: "medium" });
+    expect(h.sent).toEqual([{ kind: "control", type: "settings.update", settings: h.store.current }]);
+    expect(h.engineRequests.map((c) => c.type)).toEqual(["settings.imageModels", "settings.get"]);
+  });
+
+  test("a model with no quality knob is stored with a null quality", async () => {
+    const h = await harness();
+    await handleSettingsCommand(command("settings.setModels", { imageModel: SEEDREAM, textModel: "x-ai/grok-4.3" }), h.deps);
+
+    expect(h.store.current).toMatchObject({ imageModel: SEEDREAM, imageQuality: null });
+  });
+
+  test("going back to a model with a knob, with no quality sent, takes low", async () => {
+    const h = await harness();
+    await handleSettingsCommand(command("settings.setModels", { imageModel: SEEDREAM, textModel: "x-ai/grok-4.3" }), h.deps);
+    await handleSettingsCommand(command("settings.setModels", { imageModel: GROK, textModel: "x-ai/grok-4.3" }), h.deps);
+
+    expect(h.store.current).toMatchObject({ imageModel: GROK, imageQuality: "low" });
+  });
+
+  test("an unknown model is refused with a Russian text, and nothing is saved or sent to the engine", async () => {
+    const h = await harness();
+    const before = h.store.current;
+    const response = await handleSettingsCommand(command("settings.setModels", { imageModel: "acme/not-listed", textModel: "x-ai/grok-4.3" }), h.deps);
+
+    expect(ResponseMessage.safeParse(response).success).toBe(true);
+    expect(response).toMatchObject({ ok: false, type: "settings.setModels", error: { code: "VALIDATION", detail: UNKNOWN_IMAGE_MODEL_RU } });
+    expect(h.store.current).toEqual(before);
+    expect((await loadSettings(userData)).settings).toEqual(before);
+    expect(h.sent).toEqual([]);
+  });
+
+  test("a quality the model does not list is refused with a Russian text, nothing saved", async () => {
+    const h = await harness();
+    const before = h.store.current;
+    const response = await handleSettingsCommand(command("settings.setModels", { imageModel: SEEDREAM, imageQuality: "medium", textModel: "x-ai/grok-4.3" }), h.deps);
+
+    expect(response).toMatchObject({ ok: false, error: { code: "VALIDATION", detail: UNSUPPORTED_IMAGE_QUALITY_RU } });
+    expect(h.store.current).toEqual(before);
+    expect(h.sent).toEqual([]);
+  });
+
+  test("the model already set stays saveable when the catalogue cannot be built: a text-model change needs no catalogue", async () => {
+    const h = await harness({ catalogueDown: true });
+    const response = await handleSettingsCommand(command("settings.setModels", { imageModel: GROK, textModel: "x-ai/grok-5" }), h.deps);
+
+    expect(response).toMatchObject({ ok: true });
+    expect(h.store.current).toMatchObject({ imageModel: GROK, imageQuality: "low", textModel: "x-ai/grok-5" });
+    expect(h.engineRequests.map((c) => c.type)).not.toContain("settings.imageModels");
+  });
+
+  test("a different model while the catalogue cannot be built is refused with the engine's own error, nothing saved", async () => {
+    const h = await harness({ catalogueDown: true });
+    const before = h.store.current;
+    const response = await handleSettingsCommand(command("settings.setModels", { imageModel: SEEDREAM, textModel: "x-ai/grok-4.3" }), h.deps);
+
+    expect(response).toMatchObject({ ok: false, error: { code: "INTERNAL", detail: "the catalogue could not be built" } });
+    expect(h.store.current).toEqual(before);
+  });
+});
+
+describe("settings.setCameraRealism", () => {
+  test("persists, updates main's settings, tells the engine, and changes only its own field", async () => {
+    const h = await harness();
+    const before = h.store.current;
+    const response = await handleSettingsCommand(command("settings.setCameraRealism", { cameraRealism: true }), h.deps);
+
+    expect(response).toMatchObject({ ok: true, type: "settings.setCameraRealism", result: { cameraRealism: true } });
+    expect((await loadSettings(userData)).settings.cameraRealism).toBe(true);
+    expect(h.store.current).toEqual({ ...before, cameraRealism: true });
+    expect(h.sent).toEqual([{ kind: "control", type: "settings.update", settings: h.store.current }]);
   });
 });
 

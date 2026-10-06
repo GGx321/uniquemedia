@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, isCustomCategory, Micros, ModelId, RunRequest, type CategoryRef, type Estimate } from "../../shared/engine";
+import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, type CategoryRef, type Estimate } from "../../shared/engine";
 import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { categoryLabelOf, categoryRefOf, plannerCategoryOf, ScenePlanSchema, writerMessages, type PlannerCategory, type ScenePlan } from "../scenes";
@@ -48,6 +48,8 @@ export const RUN_ASPECT_RATIO = "9:16";
 /** The settings' models a run uses: the image model for every slot, the text model for the scene writer. */
 export interface RunModels {
   imageModel: string;
+  /** The image model's quality (settings.imageQuality); `null` for a model with no quality knob. Absent: `low`, what every run sent before the choice existed. */
+  imageQuality?: ImageQuality | null;
   textModel: string;
 }
 
@@ -62,15 +64,21 @@ export function contractCategory(category: PlannerCategory): CategoryRef {
 }
 
 /**
- * Every slot's provider route: the settings' image model (quality low, the
- * master portrait as its one reference), then Seedream for one attempt
- * after a moderation refusal. No fallback when the image model already is
- * Seedream. The estimate prices every attempt at the dearest of the route.
+ * Every slot's provider route: the settings' image model (at the chosen
+ * quality, `low` unless told otherwise; `null` sends none; the master portrait
+ * as its one reference), then Seedream for one attempt after a moderation
+ * refusal. No fallback when the image model already is Seedream (which has no
+ * quality knob). The estimate prices every attempt at the dearest of the route.
  */
-export function runRoute(imageModel: string): [ImageChoice, ...ImageChoice[]] {
+export function runRoute(imageModel: string, quality: ImageQuality | null = "low"): [ImageChoice, ...ImageChoice[]] {
   const fallback: ImageChoice = { model: FALLBACK_IMAGE_MODEL, quality: null, refs: 1 };
   if (imageModel === FALLBACK_IMAGE_MODEL) return [fallback];
-  return [{ model: imageModel, quality: "low", refs: 1 }, fallback];
+  return [{ model: imageModel, quality, refs: 1 }, fallback];
+}
+
+/** The route a persisted plan was made with: its image model at its own quality (a plan without one is a `low` run). */
+export function planRoute(plan: { models: { image: string; imageQuality?: ImageQuality | null | undefined } }): [ImageChoice, ...ImageChoice[]] {
+  return runRoute(plan.models.image, plan.models.imageQuality === undefined ? "low" : plan.models.imageQuality);
 }
 
 /**
@@ -95,7 +103,7 @@ function writerCall(textModel: string): typeof WRITER_CALL {
 
 /** The models a run's estimate needs priced: the route's image models, the writer's text model and, when on, the age check's. */
 export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck): PriceModels {
-  const imageModels = [...new Set(runRoute(models.imageModel).map((c) => c.model))];
+  const imageModels = [...new Set(runRoute(models.imageModel, models.imageQuality).map((c) => c.model))];
   const chatModels = imageAgeCheck === "on" ? [models.textModel, AGE_CHECK_CALL.model] : [models.textModel];
   return { imageModels, chatModels: [...new Set(chatModels)] };
 }
@@ -112,7 +120,7 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Pick
   const estimate = estimateRun(priced.book, {
     photos: request.count,
     attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
-    route: runRoute(models.imageModel),
+    route: runRoute(models.imageModel, models.imageQuality),
     writer: writerCall(models.textModel),
     ageChecks: imageAgeCheck === "on" ? AGE_CHECK_CALL : null,
   });
@@ -176,7 +184,10 @@ export const RunPlanSchema = z
     /** A snapshot of every custom category the run uses, so a resume never reads the category library. Absent for a built-in-only run. */
     categories: z.array(CategorySnapshot).optional(),
     imageAgeCheck: ImageAgeCheck,
-    models: z.strictObject({ image: ModelId, fallback: ModelId.nullable(), text: ModelId }),
+    // Additive: «Реализм камеры» as it was when the run started. A plan.json without it is a run without the clause.
+    cameraRealism: z.boolean().optional(),
+    // `imageQuality` is additive too: a plan.json written before the image-model choice has none, and is a `low` run (planRoute).
+    models: z.strictObject({ image: ModelId, imageQuality: ImageQuality.nullable().optional(), fallback: ModelId.nullable(), text: ModelId }),
     capMicros: Micros,
     plannedWorstMicros: Micros,
     scenes: ScenePlanSchema,
@@ -225,11 +236,13 @@ export interface NewRunPlan {
   /** The estimate's worst case at plan time; the cap may never exceed it. */
   plannedWorstMicros: number;
   scenes: ScenePlan;
+  /** «Реализм камеры» when the run starts; off when absent. */
+  cameraRealism?: boolean;
 }
 
 /** The plan to persist: the planner's slots with every attempt id pre-allocated, and the writer's chunks with theirs. */
 export function buildRunPlan(input: NewRunPlan): RunPlan {
-  const route = runRoute(input.models.imageModel);
+  const route = runRoute(input.models.imageModel, input.models.imageQuality);
   return RunPlanSchema.parse({
     schemaVersion: 1,
     runId: input.runId,
@@ -239,7 +252,10 @@ export function buildRunPlan(input: NewRunPlan): RunPlan {
     // Omitted, not empty, for a built-in-only run: its plan.json is the document main wrote.
     ...(input.categories === undefined || input.categories.length === 0 ? {} : { categories: input.categories }),
     imageAgeCheck: input.imageAgeCheck,
-    models: { image: route[0].model, fallback: route[1]?.model ?? null, text: input.models.textModel },
+    // Written only when it differs from what a plan without the key means (no clause; `low`, or none for Seedream), so a default run's
+    // plan.json is byte-for-byte the one written before the image-model choice existed.
+    ...(input.cameraRealism === true ? { cameraRealism: true } : {}),
+    models: { image: route[0].model, ...(route[0].quality === "low" || route[0].model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: route[0].quality }), fallback: route[1]?.model ?? null, text: input.models.textModel },
     capMicros: input.capMicros,
     plannedWorstMicros: input.plannedWorstMicros,
     scenes: input.scenes,

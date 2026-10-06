@@ -16,13 +16,13 @@ import { ffmpegPath } from "../node/ffmpegBinary";
 import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { RunPlanSchema, type RunPlan } from "./runs/plan";
-import { plan as planScenes } from "./scenes";
+import { CAMERA_REALISM_CLAUSE, plan as planScenes } from "./scenes";
 import { faceModelPaths } from "../scripts/faceModelCache";
 import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
 import type { QaGate, QaInput } from "./runs/qa";
-import type { Estimate, ImageAgeCheck, ResponseMessage } from "../shared/engine";
+import type { Estimate, ImageAgeCheck, ImageQuality, ResponseMessage } from "../shared/engine";
 import type { Engine, EngineDeps } from "./engine";
 import { command, engineSettings, failed, GOOD, jobEnd, MODERATION, NOW, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -233,11 +233,15 @@ function engineOver(
     network?: number;
     monthlyBudgetMicros?: number;
     imageModel?: string;
+    imageQuality?: ImageQuality | null;
+    cameraRealism?: boolean;
     faceGateLoadError?: string;
   } = {},
 ) {
   const settings = engineSettings(dir(), {
     imageAgeCheck: opts.imageAgeCheck ?? "off",
+    ...(opts.imageQuality === undefined ? {} : { imageQuality: opts.imageQuality }),
+    ...(opts.cameraRealism === undefined ? {} : { cameraRealism: opts.cameraRealism }),
     ...(opts.imageModel === undefined ? {} : { imageModel: opts.imageModel }),
     ...(opts.network === undefined ? {} : { concurrency: { network: opts.network } }),
     ...(opts.monthlyBudgetMicros === undefined ? {} : { monthlyBudgetMicros: opts.monthlyBudgetMicros }),
@@ -276,6 +280,29 @@ describe("runs.estimate", () => {
     const avatarId = await seedAvatar();
     const { engine } = await startEngine(dir(), { init: { settings: engineSettings(dir(), { imageAgeCheck: "off" }) } });
     expect(ok(await engine.handle(estimate(avatarId, 20)))).toMatchObject({ result: { estimate: { worstMicros: 3_075_000 } } });
+  });
+
+  test("prices the chosen quality: medium is $0.06 + $0.01 reference an attempt, so 20 photos cap at $4.275", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(runNetwork(), { imageQuality: "medium" });
+    expect(ok(await engine.handle(estimate(avatarId, 20)))).toMatchObject({ result: { estimate: { worstMicros: 4_275_000 } } });
+  });
+
+  test("a model with no quality knob (null) is priced at its plain 1K price: grok-imagine-image-quality is $0.05 + $0.01", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await engineOver(runNetwork(), { imageModel: "x-ai/grok-imagine-image-quality", imageQuality: null });
+    expect(ok(await engine.handle(estimate(avatarId, 20)))).toMatchObject({ result: { estimate: { worstMicros: 20 * 3 * 60_000 + 75_000 } } });
+  });
+
+  test("a model whose endpoints list no price for the reference is PRICE_UNAVAILABLE: the estimate is refused and nothing is sent (review round 1, M1)", async () => {
+    const avatarId = await seedAvatar();
+    const flux = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "imageModels", "fixtures", "endpoints", "black-forest-labs_flux-3-image.json"), "utf8"));
+    const net = runNetwork({ prices: (call) => (call.url.endsWith("black-forest-labs/flux-3-image/endpoints") ? { status: 200, body: flux } : OFFLINE) });
+    const { engine } = await engineOver(net, { imageModel: "black-forest-labs/flux-3-image", imageQuality: null });
+
+    expect(failed(await engine.handle(estimate(avatarId, 4))).error.code).toBe("PRICE_UNAVAILABLE");
+    expect(failed(await engine.handle(startRun(avatarId, FOUR_WORST))).error.code).toBe("PRICE_UNAVAILABLE");
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
   test("is NOT_FOUND for an unknown avatar and for a draft: only a saved avatar with a master gets photos", async () => {
@@ -379,6 +406,42 @@ describe("runs.start", () => {
 
     expect(planOf(runId).capMicros).toBe(FOUR_WORST);
     expect(planOf(runId).plannedWorstMicros).toBe(FOUR_WORST);
+  });
+
+  test("the chosen quality and camera realism reach plan.json and the first image request: medium, and the realism clause last", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const { engine, events } = await engineOver(net, { imageQuality: "medium", cameraRealism: true });
+    const worst = 4 * 3 * 70_000 + 2 * 37_500;
+
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId, worst)));
+    await until(() => net.imageCalls().length > 0, "the first image request");
+    const stored = planOf(runId);
+    const body = net.imageCalls()[0]?.json() ?? {};
+
+    expect(stored.models.imageQuality).toBe("medium");
+    expect(stored.cameraRealism).toBe(true);
+    expect(body.quality).toBe("medium");
+    expect(String(body.prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
+  });
+
+  test("the settings' camera realism is captured when the run starts: switching it off afterwards does not change that run", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const { engine, events } = await engineOver(net, { cameraRealism: true });
+
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId, FOUR_WORST)));
+    await engine.applyControl({ kind: "control", type: "settings.update", settings: engineSettings(dir(), { imageAgeCheck: "off", cameraRealism: false }) });
+    await until(() => net.imageCalls().length > 0, "the first image request");
+
+    expect(planOf(runId).cameraRealism).toBe(true);
+    expect(String(net.imageCalls()[0]?.json().prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+
+    ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
   });
 
   test("the run's poses reach the planner: plan.json holds exactly the plan its seed and those poses draw", async () => {
@@ -1436,6 +1499,30 @@ describe("runs.list", () => {
     expect(most).toBe(6);
     expect(runs.map((r) => r.runId).sort()).toEqual([first, second].sort());
     expect(runs.every((r) => r.remainingWorstMicros !== null && r.remainingWorstMicros > 0)).toBe(true);
+  });
+
+  // Fix round 2: one saved run whose model's live prices lost the input_image row (a reference of unknown price cannot be reserved) must
+  // not hide the healthy runs: its remaining worst case is unknown (null), and the rest are listed.
+  test("a saved run whose model has no listed reference price is listed with an unknown remaining cost, and the other runs stay listed", async () => {
+    const a = await seedAvatar();
+    const b = await seedAvatar();
+    const net = runNetwork({ image: () => ({ hang: true }) });
+    const one = await engineOver(net);
+    const first = await stoppedRun(one.engine, one.events, net, a);
+    await one.engine.applyControl({ kind: "control", type: "settings.update", settings: engineSettings(dir(), { imageAgeCheck: "off", imageModel: "x-ai/grok-imagine-image-quality" }) });
+    const second = await stoppedRun(one.engine, one.events, net, b);
+    const grok = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "money", "fixtures", "endpoints-grok-imagine-image-2.0.json"), "utf8"));
+    for (const endpoint of grok.endpoints) endpoint.pricing = endpoint.pricing.filter((row: { billable: string }) => row.billable !== "input_image");
+    const prices = (call: FetchCall): Reply => (call.url.endsWith("x-ai/grok-imagine-image-2.0/endpoints") ? { status: 200, body: grok } : OFFLINE);
+    const { engine } = await engineOver(runNetwork({ prices }), { bootId: "boot-0000-dddd" });
+
+    const runs = listed(await engine.handle(command("runs.list")));
+    const byId = new Map(runs.map((r) => [r.runId, r]));
+
+    expect(runs.map((r) => r.runId).sort()).toEqual([first, second].sort());
+    expect(byId.get(first)?.remainingWorstMicros).toBeNull();
+    expect(byId.get(first)?.resumable).toBe(true);
+    expect(byId.get(second)?.remainingWorstMicros ?? 0).toBeGreaterThan(0);
   });
 
   function listed(response: ResponseMessage) {

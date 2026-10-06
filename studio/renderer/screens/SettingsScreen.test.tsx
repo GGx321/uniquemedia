@@ -356,12 +356,13 @@ test("focus follows the key flow: into the field on «Заменить», back t
   expect(focusedLabel()).toBe(describeElement(screen.getByRole("button", { name: "Заменить" })));
 });
 
-test("models are shown read-only, with the face check's hybrid mode", async () => {
+test("the text model is shown read-only and the image model is a select, with the face check's hybrid mode", async () => {
   await openSettings();
-  expect(screen.getByText("x-ai/grok-imagine-image-2.0")).toBeDefined();
+  expect(screen.getByRole<HTMLSelectElement>("combobox", { name: "Фото" }).value).toBe("x-ai/grok-imagine-image-2.0");
   expect(screen.getByText("x-ai/grok-4.3")).toBeDefined();
   expect(screen.getByText("гибрид")).toBeDefined();
-  expect(screen.queryByRole("combobox") === null).toBe(true);
+  // The text model has no select: only the photo model and its quality are choices.
+  expect(screen.getAllByRole("combobox").map((c) => c.id).length).toBe(2);
   // The face-gate hint's threshold is hand-typed (the renderer bundle never
   // imports engine code for it): pin it against the engine's own real
   // default so the two numbers cannot silently drift apart.
@@ -392,7 +393,7 @@ describe("model rows describe what photo runs use them for", () => {
 
   test("the photos row says the image model makes both portraits and photo runs' photos, with no resolution choice left", async () => {
     await openSettings();
-    const row = screen.getByText("x-ai/grok-imagine-image-2.0").closest(".row");
+    const row = screen.getByRole("combobox", { name: "Фото" }).closest(".row");
     expect(row?.textContent).not.toContain("появятся вместе с фото-ранами");
     expect(row?.textContent).toContain("портреты аватара и фото-раны");
     expect(row?.textContent).not.toContain("2K");

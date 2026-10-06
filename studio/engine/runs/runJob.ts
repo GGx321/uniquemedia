@@ -13,7 +13,7 @@ import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "..
 import { assembleRun } from "../scenes";
 import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
-import { contractCategory, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, runRoute, runWriterConfig, type RunPlan } from "./plan";
+import { contractCategory, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, planRoute, runWriterConfig, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
@@ -133,8 +133,8 @@ interface Context {
   job: RunJob;
   plan: RunPlan;
   scope: Scope;
-  primary: ReturnType<typeof runRoute>[0];
-  fallback: ReturnType<typeof runRoute>[0] | null;
+  primary: ReturnType<typeof planRoute>[0];
+  fallback: ReturnType<typeof planRoute>[0] | null;
   /** The first reason no attempt may start any more: a fatal error, or an attempt that got no answer. */
   halt: EngineError | null;
   /** A QA gate could not run: images that arrive now cannot be judged, so they are dropped. */
@@ -421,7 +421,7 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   }
   let assembled: Map<number, string>;
   try {
-    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, plan.categories).map((a) => [a.slotIndex, a.prompt]));
+    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { cameraRealism: plan.cameraRealism === true, categories: plan.categories }).map((a) => [a.slotIndex, a.prompt]));
   } catch (error) {
     return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the scene prompts could not be assembled: ${messageOf(error)}`) } } };
   }
@@ -927,7 +927,7 @@ export async function preflightMaster(deps: MasterTarget["deps"], avatarId: stri
 
 /** Runs one job of the run to its end. Never throws: whatever fails ends it as failed. */
 export async function runPhotoRun(deps: RunJobDeps, job: RunJob): Promise<RunJobEnd> {
-  const route = runRoute(job.plan.models.image);
+  const route = planRoute(job.plan);
   const ctx: Context = {
     deps,
     job,

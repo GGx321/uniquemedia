@@ -86,6 +86,22 @@ export const POSE_PHRASE: Record<Pose, string> = {
 const REALISM_EDITORIAL = "Editorial photo, natural skin texture, no heavy retouching.";
 const REALISM_PHONE = "Smartphone photo, natural skin texture, slight noise, no retouching, no beauty filter.";
 
+/**
+ * «Реализм камеры» (Settings, off by default): the one fixed clause appended to the END of every image prompt of a run
+ * that started with the switch on. The default phrases above already ask for natural skin and no retouching, yet some
+ * models still draw too clean («будто кистью нарисовано»); this names the camera artefacts those models leave out. It is a
+ * constant in this one place, never built from a descriptor, a sentence or any user text, and it avoids every stop-word.
+ */
+export const CAMERA_REALISM_CLAUSE =
+  "Candid smartphone photo, natural skin texture with pores, slight sensor noise, imperfect natural light, no retouching, no airbrushing.";
+
+/**
+ * The same clause for a `photoshoot` slot, whose prompt already says «Editorial photo» (REALISM_EDITORIAL): a camera, not a phone, so
+ * the two sentences do not contradict each other (review round 1, M4). Every other category takes CAMERA_REALISM_CLAUSE.
+ */
+export const CAMERA_REALISM_CLAUSE_EDITORIAL =
+  "Shot on a camera, natural skin texture with pores, subtle grain, imperfect natural light, no retouching, no airbrushing.";
+
 const BASE_CONSTRAINTS = "She is an adult woman. Only she is in focus; no text, logos, brand names or watermark.";
 const PHONE_HAND_CONSTRAINT = " One hand holds the phone; only her other hand acts.";
 
@@ -142,6 +158,13 @@ function constraintsFor(slot: PlanSlot): string {
   return BASE_CONSTRAINTS + (phoneInHand(slot.shot) ? PHONE_HAND_CONSTRAINT : "");
 }
 
+export interface AssembleOptions {
+  /** «Реализм камеры»: append CAMERA_REALISM_CLAUSE (CAMERA_REALISM_CLAUSE_EDITORIAL for an editorial category). Off when absent. */
+  cameraRealism?: boolean;
+  /** The plan's own category snapshots: a custom category's finish (editorial or phone) is its snapshot's, never the library's. */
+  categories?: readonly CategorySnapshot[] | undefined;
+}
+
 export interface AssembledScene {
   slotIndex: number;
   prompt: string;
@@ -159,7 +182,8 @@ export interface AssembledScene {
  * (runs/writerPhase.ts / readWriterAnswer): a defense-in-depth last resort, since
  * this is the last engine code to see the text before an image is paid for.
  */
-export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sentence: string, master: LibraryReference, snapshots: readonly CategorySnapshot[] = []): AssembledScene {
+export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sentence: string, master: LibraryReference, options: AssembleOptions = {}): AssembledScene {
+  const snapshots = options.categories ?? [];
   const [problem] = sentenceProblems(sentence);
   if (problem !== undefined) {
     const kind = problem.reason === "youth-word" ? "a youth word" : "a revealing word";
@@ -168,19 +192,24 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sente
 
   const anchor = promptSubject(descriptor);
   // A built-in's finish is fixed (the photoshoot is editorial); a custom category's is its snapshot's, never the category library's.
-  const realism = categoryStyleOf(slot.category, snapshots) === "editorial" ? REALISM_EDITORIAL : REALISM_PHONE;
+  const editorial = categoryStyleOf(slot.category, snapshots) === "editorial";
+  const realism = editorial ? REALISM_EDITORIAL : REALISM_PHONE;
   const raw =
     `${BINDING} ${BINDING_ANCHOR[slot.pose]}; ${anchor}. ` +
     `${SHOT_PHRASE[slot.shot]}. ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
     `${realism} ${constraintsFor(slot)}`;
-  return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };
+  const prompt = normalize(raw);
+  // «Реализм камеры» goes last, after normalize, and in the same style as the finish above: a camera for an editorial category (a photoshoot, or a custom
+  // category whose snapshot says so), a phone for the rest, so the two sentences never contradict each other.
+  const clause = editorial ? CAMERA_REALISM_CLAUSE_EDITORIAL : CAMERA_REALISM_CLAUSE;
+  return { slotIndex: slot.slotIndex, prompt: options.cameraRealism === true ? `${prompt} ${clause}` : prompt, references: [master] };
 }
 
-/** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. `snapshots` are the plan's own. */
-export function assembleRun(descriptor: AvatarDescriptor, scenePlan: ScenePlan, sentences: ReadonlyMap<number, string>, master: LibraryReference, snapshots: readonly CategorySnapshot[] = []): AssembledScene[] {
+/** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. `options.categories` are the plan's own snapshots. */
+export function assembleRun(descriptor: AvatarDescriptor, scenePlan: ScenePlan, sentences: ReadonlyMap<number, string>, master: LibraryReference, options: AssembleOptions = {}): AssembledScene[] {
   return scenePlan.slots.map((slot) => {
     const sentence = sentences.get(slot.slotIndex);
     if (sentence === undefined) throw new RangeError(`no writer sentence for slot ${slot.slotIndex}`);
-    return assembleSlot(descriptor, slot, sentence, master, snapshots);
+    return assembleSlot(descriptor, slot, sentence, master, options);
   });
 }

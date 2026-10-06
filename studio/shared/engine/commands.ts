@@ -4,6 +4,7 @@ import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
+import { ImageModelCatalogue, ImageQuality } from "./imageModels";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
 import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult } from "./media";
@@ -254,7 +255,14 @@ const ENGINE_SPECS = [
   defineCommand("settings.get", Empty, Settings),
   defineCommand("settings.setBudget", z.strictObject({ monthlyBudgetMicros: Micros }), Settings),
   defineCommand("settings.setLibraryPath", z.strictObject({ path: AbsolutePath }), Settings),
-  defineCommand("settings.setModels", z.strictObject({ imageModel: ModelId, textModel: ModelId }), Settings),
+  // `imageQuality` is additive: absent keeps the current one when the model lists it (else low, else the model's first; null for a
+  // model with no quality knob). The image model and quality must come from `settings.imageModels` (VALIDATION with a Russian
+  // `detail` otherwise); they apply to NEW runs only.
+  defineCommand("settings.setModels", z.strictObject({ imageModel: ModelId, imageQuality: ImageQuality.nullable().optional(), textModel: ModelId }), Settings),
+  // The image models Settings offers: live from OpenRouter (cached), or the bundled list when it cannot be reached.
+  defineCommand("settings.imageModels", Empty, ImageModelCatalogue),
+  // «Реализм камеры»; applies to NEW runs.
+  defineCommand("settings.setCameraRealism", z.strictObject({ cameraRealism: z.boolean() }), Settings),
   defineCommand("settings.setConcurrency", z.strictObject({ network: NetworkConcurrency }), Settings),
   defineCommand("settings.setImageAgeCheck", z.strictObject({ imageAgeCheck: ImageAgeCheck }), Settings),
   // money

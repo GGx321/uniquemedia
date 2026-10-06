@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
 import { handleMediaPickCommand, isMediaPickCommand, type MediaImportFlowDeps } from "../../../main/mediaImportFlow";
+import { handleSettingsCommand, isSettingsCommand, type SettingsFlowDeps } from "../../../main/settingsFlow";
 import { SettingsStore } from "../../../main/settingsStore";
 import { createApngEncoder } from "../../../shared/stickers/apngWriter";
 import { EngineReply } from "../../control";
@@ -790,6 +791,21 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     home: () => dir,
     platform: process.platform,
   };
+  // Main's half of the settings commands it owns (`settings.setModels`, `settings.setCameraRealism`): the real flow (main/settingsFlow.ts) over
+  // the real engine and the same settings file. The engine answers `settings.imageModels` itself (offline here: its bundled list).
+  const settingsDeps: SettingsFlowDeps = {
+    settings: mainSettings,
+    engine: {
+      send: (control) => void told.push(engine.applyControl(control)),
+      request: (asked) => engine.handle(asked),
+      openLibrary: async () => ({ code: "INTERNAL", detail: "the parity rig never switches the library" }),
+      confirmLibrary: async () => ({ code: "INTERNAL", detail: "the parity rig never switches the library" }),
+    },
+    pickFolder: async () => null,
+    keyStatus: () => ({ stored: true, last4: "wxyz", encryptionAvailable: true, rejected: false }),
+    musicKeyStatus: () => ({ stored: false, last4: null, rejected: false }),
+    newId: () => `host-${String(++hostCalls).padStart(8, "0")}`,
+  };
   // Main's half of `media.pickImport` (3f.1): the real flow (main/mediaImportFlow.ts) over the real engine, with the dialog answered by the
   // rig and the engine's staging area inside the rig's library. No importer is wired, as in the app until 3f.2, so a good file is refused.
   let nextMedia: string[] | null = null;
@@ -823,6 +839,13 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         const asked = CommandMessage.safeParse({ v: 5, id: `msg-${String(++hostCalls).padStart(6, "0")}`, kind: "command", type, payload });
         if (!asked.success || !isExportFolderCommand(asked.data)) return { ok: false, error: { code: "VALIDATION", detail: `${type}: the payload breaks the contract` } };
         const response = await handleExportFolderCommand(asked.data, mainDeps);
+        await Promise.all(told.splice(0));
+        return answerOf(ResponseMessage.parse(response));
+      }
+      if (type === "settings.setModels" || type === "settings.setCameraRealism") {
+        const asked = CommandMessage.safeParse({ v: 5, id: `msg-${String(++hostCalls).padStart(6, "0")}`, kind: "command", type, payload });
+        if (!asked.success || !isSettingsCommand(asked.data)) return { ok: false, error: { code: "VALIDATION", detail: `${type}: the payload breaks the contract` } };
+        const response = await handleSettingsCommand(asked.data, settingsDeps);
         await Promise.all(told.splice(0));
         return answerOf(ResponseMessage.parse(response));
       }

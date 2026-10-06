@@ -24,7 +24,9 @@ test("a missing file gives the defaults: $10 a month, the library in userData, t
       monthlyBudgetMicros: 10_000_000,
       libraryPath: join(userData, "library"),
       imageModel: "x-ai/grok-imagine-image-2.0",
+      imageQuality: "low",
       textModel: "x-ai/grok-4.3",
+      cameraRealism: false,
       concurrency: { network: 6 },
       imageAgeCheck: "off",
       exportPath: join(homedir(), "Studio", "export"),
@@ -109,6 +111,19 @@ test("an older file that predates the image age check loads it as off, and the f
   expect(JSON.parse(await readFile(path(), "utf8"))).not.toHaveProperty("imageAgeCheck");
 });
 
+test("an older file that predates the image quality and the camera realism loads low and off, and is left untouched", async () => {
+  const { imageQuality: _q, cameraRealism: _r, ...older } = defaultSettings(userData);
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...older }));
+  const loaded = await loadSettings(userData);
+  expect(loaded).toEqual({ source: "file", settings: { ...defaultSettings(userData), imageQuality: "low", cameraRealism: false } });
+  expect(JSON.parse(await readFile(path(), "utf8"))).not.toHaveProperty("imageQuality");
+});
+
+test("a file with an explicit null image quality (a model with no quality knob) keeps it, not the backfilled low", async () => {
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...defaultSettings(userData), imageQuality: null }));
+  expect(await loadSettings(userData)).toEqual({ source: "file", settings: { ...defaultSettings(userData), imageQuality: null } });
+});
+
 test("an older file that also carries an explicit imageAgeCheck keeps it, not the backfilled default", async () => {
   await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...defaultSettings(userData), imageAgeCheck: "on" }));
   const loaded = await loadSettings(userData);
@@ -154,6 +169,8 @@ const invalidFiles: [string, Record<string, unknown>][] = [
   ["an unknown field such as a key", { apiKey: "sk-or-v1-0123456789" }],
   ["another schema version", { schemaVersion: 2 }],
   ["an imageAgeCheck outside off/on", { imageAgeCheck: "maybe" }],
+  ["an image quality outside low/medium/null", { imageQuality: "ultra" }],
+  ["a camera realism that is not a boolean", { cameraRealism: "yes" }],
 ];
 
 for (const [name, patch] of invalidFiles) {

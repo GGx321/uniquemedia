@@ -62,6 +62,8 @@ function init(overrides: Partial<EngineInit> = {}): EngineInit {
       // this file's own createDraft calls; engine.imageAgeCheck.test.ts
       // covers the toggle itself.
       imageAgeCheck: "on",
+      imageQuality: "low",
+      cameraRealism: false,
       exportPath: join(dir, "export"),
       renderConcurrency: "auto",
     },
