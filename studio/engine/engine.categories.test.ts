@@ -845,6 +845,71 @@ describe("categories.delete", () => {
     await seedCategory({ name: "Gone" });
   });
 
+  test("a regenerate issued while the delete of its category is queued behind another write is refused, with nothing sent or reserved: the paid pool would have nowhere to go", async () => {
+    const id = await seedCategory({ name: "Gone" });
+    const busy = await seedCategory({ name: "Busy" });
+    // A write of another category holds the folder's lock, so the delete has passed its checks and waits for the record to be removed.
+    let letGo: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      letGo = resolve;
+    });
+    let holding = false;
+    const net = network({ descriptors: [poolReply()] });
+    const { engine } = await startEngine(dir(), {
+      net,
+      deps: {
+        library: {
+          testHooks: {
+            beforeRename: async (path) => {
+              if (!path.includes(busy)) return;
+              holding = true;
+              await gate;
+            },
+          },
+        },
+      },
+    });
+
+    const renaming = engine.handle(command("categories.update", { categoryId: busy, name: "Busy renamed" }));
+    await until(() => holding, "the rename to hold the folder's lock");
+    const removing = engine.handle(command("categories.delete", { categoryId: id }));
+    // The delete command is past its first await only once the library is live: give it that, then ask for the regenerate.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // Not awaited before the lock is let go: a regenerate that is not refused waits on the same lock before it can record its call.
+    const regenerating = engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    letGo();
+    const [renamed, removed, regenerated] = await Promise.all([renaming, removing, regenerating]);
+
+    expect(failed(regenerated).error.code).toBe("IN_FLIGHT");
+    expect(ok(renamed).ok).toBe(true);
+    expect(ok(removed).result).toEqual({ categoryId: id });
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  test("a rename issued while the delete of its category is under way is refused too", async () => {
+    const id = await seedCategory({ name: "Gone" });
+    const { engine } = await startEngine(dir());
+
+    const deleting = engine.handle(command("categories.delete", { categoryId: id }));
+    const renaming = engine.handle(command("categories.update", { categoryId: id, name: "Renamed" }));
+    const [deleted, renamed] = await Promise.all([deleting, renaming]);
+
+    expect(ok(deleted).ok).toBe(true);
+    expect(failed(renamed).error.code).toBe("IN_FLIGHT");
+  });
+
+  test("once the delete has ended the category is simply not there: a regenerate is NOT_FOUND, not IN_FLIGHT", async () => {
+    const id = await seedCategory({ name: "Gone" });
+    const { engine } = await startEngine(dir(), { net: network({ descriptors: [poolReply()] }) });
+    ok(await engine.handle(command("categories.delete", { categoryId: id })));
+
+    const refused = failed(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+  });
+
   test("an unknown category is NOT_FOUND", async () => {
     const { engine } = await startEngine(dir());
     expect(failed(await engine.handle(command("categories.delete", { categoryId: "cat-nobody-here" }))).error.code).toBe("NOT_FOUND");

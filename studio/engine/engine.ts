@@ -679,6 +679,8 @@ export class Engine {
    * read from the category for a regenerate; `jobId` once the call's ledger id is issued.
    */
   #categoryCall: CategoryCall | null = null;
+  /** Categories whose removal has begun and not ended, marked before the removal's first await: a regenerate or an update of one is refused (IN_FLIGHT), so a paid pool is never written for a record that is going. */
+  readonly #removingCategories = new Set<string>();
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs: JobRegistry;
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
@@ -1452,6 +1454,7 @@ export class Engine {
         }
       }
       case "categories.regenerate": {
+        this.#assertNotBeingRemoved(command.payload.categoryId);
         this.#claimCategoryCall({ kind: "regenerate", categoryId: command.payload.categoryId, name: null, jobId: null });
         this.#paidCommands++;
         try {
@@ -1463,8 +1466,16 @@ export class Engine {
       }
       case "categories.update":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#updateCategory(library, command.payload)) };
-      case "categories.delete":
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#deleteCategory(library, command.payload.categoryId)) };
+      case "categories.delete": {
+        // Marked before the first await, so a regenerate that arrives while the removal waits for the library or the folder's lock is refused with nothing reserved.
+        const { categoryId } = command.payload;
+        this.#removingCategories.add(categoryId);
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#deleteCategory(library, categoryId)) };
+        } finally {
+          this.#removingCategories.delete(categoryId);
+        }
+      }
       case "categories.dismissInterrupted":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#dismissInterrupted(library, command.payload.jobId)) };
       case "runs.estimate": {
@@ -2740,6 +2751,13 @@ export class Engine {
    * VALIDATION (`name-taken`), free, for a rename to the name a running create is about to take: the create is paid for and would be lost at its
    * write, so the owner is told now, while nothing is spent twice.
    */
+  /** IN_FLIGHT for a category whose removal is under way: it is about to be gone, so nothing may be reserved or written for it. */
+  #assertNotBeingRemoved(categoryId: CustomCategoryId): void {
+    if (this.#removingCategories.has(categoryId)) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: `category ${categoryId} is being deleted; nothing can be changed or regenerated for it` });
+    }
+  }
+
   #assertNameNotBeingCreated(name: string | undefined): void {
     const call = this.#categoryCall;
     if (name === undefined || call?.kind !== "create" || call.name === null) return;
@@ -2750,6 +2768,7 @@ export class Engine {
 
   async #updateCategory(library: Library, payload: CommandPayload<"categories.update">): Promise<CommandResult<"categories.update">> {
     this.#assertNotRegenerating(payload.categoryId);
+    this.#assertNotBeingRemoved(payload.categoryId);
     this.#assertNameNotBeingCreated(payload.name);
     try {
       const updated = await library.categories.update(payload.categoryId, {
