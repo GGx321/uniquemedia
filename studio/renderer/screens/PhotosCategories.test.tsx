@@ -366,7 +366,9 @@ describe("«Новая категория»", () => {
     runAll(scheduler);
     await flush();
     expect(within(dialog()).getByText("Цена выросла")).toBeDefined();
-    expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog()).getByRole("alert")));
+    // The same element, kept: the price landed in it, the focus never moved.
+    expect(within(dialog()).getByRole("alert") === notice).toBe(true);
+    expect(document.activeElement === notice).toBe(true);
   });
 
   test("PRICE_CHANGED, then the fresh price fails: the notice stays beside «Цену не узнать» and «Повторить»", async () => {
