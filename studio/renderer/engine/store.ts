@@ -45,7 +45,7 @@ export interface JobView {
   /** An own-media import (3f.1b) is not an avatar's job: the store keeps it out of this list, in `EngineView.imports` (3f.6). */
   readonly kind: Exclude<JobState["kind"], "import">;
   readonly avatarId: string;
-  /** A run job's own run; null exactly for a candidates job. */
+  /** A run job's own run; null for any other kind. */
   readonly runId: string | null;
   /**
    * The montage draft a render job came from: the drafts screen's «Рендер 42 %» and the editor's button find it by
@@ -203,6 +203,7 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
 type JobRef = { readonly jobId: string; readonly avatarId: string } & (
   | { readonly kind: "avatar.candidates" }
   | { readonly kind: "run"; readonly runId: string }
+  | { readonly kind: "scenes"; readonly sceneSetId: string }
   | { readonly kind: "render"; readonly montageId: string | null; readonly videoId: string | null }
 );
 
@@ -250,6 +251,12 @@ export type CategoryStoreChange = Extract<EventMessage, { type: "category.change
 
 /** What the category listeners hear (CS.2): each `category.changed`, and `resynced` after a snapshot taken again (the categories are listed on demand with `categories.list`). */
 export type CategorySignal = CategoryStoreChange | { readonly change: "resynced" };
+
+/** What `scenes.changed` carries: a scene set stored or changed (with the whole set), or removed (CS.4a). */
+export type SceneSetStoreChange = Extract<EventMessage, { type: "scenes.changed" }>["payload"];
+
+/** What the scene set listeners hear (CS.4a): each `scenes.changed`, and `resynced` after a snapshot taken again (the set is read on demand with `scenes.get`). */
+export type SceneSetSignal = SceneSetStoreChange | { readonly change: "resynced" };
 
 /** Dismissed imports, and imports this window asked to cancel, remembered at most (so a snapshot does not undo them); the oldest go first. */
 const MAX_DISMISSED_IMPORTS = 200;
@@ -335,6 +342,7 @@ export class EngineStore {
   private readonly videoListeners = new Set<(signal: VideoSignal) => void>();
   private readonly mediaListeners = new Set<(signal: MediaSignal) => void>();
   private readonly categoryListeners = new Set<(signal: CategorySignal) => void>();
+  private readonly sceneSetListeners = new Set<(signal: SceneSetSignal) => void>();
   private readonly avatarRemovedListeners = new Set<(avatarId: string) => void>();
   /** The imports the owner dismissed (3f.6): a snapshot that still lists one does not bring it back. Insertion-ordered, capped. */
   private readonly dismissedImports = new Set<string>();
@@ -434,6 +442,13 @@ export class EngineStore {
    * change in the gap is lost). The categories are not kept in the view: the window lists them with `categories.list` on mount and on a library
    * switch, and follows the events here.
    */
+  readonly subscribeSceneSets = (listener: (signal: SceneSetSignal) => void): (() => void) => {
+    this.sceneSetListeners.add(listener);
+    return () => {
+      this.sceneSetListeners.delete(listener);
+    };
+  };
+
   readonly subscribeCategories = (listener: (signal: CategorySignal) => void): (() => void) => {
     this.categoryListeners.add(listener);
     return () => {
@@ -533,6 +548,14 @@ export class EngineStore {
    * starting over from zero); merges with any events that beat the reply.
    * `runId` comes straight off the same command reply.
    */
+  /**
+   * CS.4a: records a scene set's writer job this window just started (a compose or a «Дописать»), with the scenes it will write as the total until the
+   * first job.progress says otherwise; merges with any events that beat the reply.
+   */
+  trackScenesJob(jobId: string, sceneSetId: string, avatarId: string, total: number): void {
+    this.patchJob({ kind: "scenes", jobId, sceneSetId, avatarId }, (job) => ({ ...job, total: job.total || total }));
+  }
+
   trackRunJob(jobId: string, runId: string, avatarId: string, total: number, ended = 0): void {
     this.patchJob({ kind: "run", jobId, runId, avatarId }, (job) => {
       const size = job.total || total;
@@ -951,6 +974,7 @@ export class EngineStore {
     if (again) for (const listener of [...this.videoListeners]) listener({ change: "resynced" });
     if (again) for (const listener of [...this.mediaListeners]) listener({ change: "resynced" });
     if (again) for (const listener of [...this.categoryListeners]) listener({ change: "resynced" });
+    if (again) for (const listener of [...this.sceneSetListeners]) listener({ change: "resynced" });
     // The snapshot carries no music status: one that was shown may have missed its events, or describe a refresh of an engine
     // that has since restarted (no event will ever end it), so it is asked again.
     if (again && this.view.music !== null) void this.refreshMusic();
@@ -994,13 +1018,17 @@ export class EngineStore {
         const resultTotal =
           result.kind === "run"
             ? result.photoIds.length + result.failedSlots
-            : result.kind === "render"
+            : result.kind === "scenes"
+              ? result.written + result.unwritten
+              : result.kind === "render"
               ? Math.round((result.durationMs * 3) / 100)
               : result.candidates.length + result.failedSlots.length;
         const ref: JobRef =
           result.kind === "run"
             ? { kind: "run", jobId, runId: result.runId, avatarId: result.avatarId }
-            : result.kind === "render"
+            : result.kind === "scenes"
+              ? { kind: "scenes", jobId, sceneSetId: result.sceneSetId, avatarId: result.avatarId }
+              : result.kind === "render"
               ? // The result names no draft: a render first heard of here keeps none (one already known keeps its own).
                 { kind: "render", jobId, avatarId: result.avatarId, montageId: null, videoId: result.videoId }
               : { kind: "avatar.candidates", jobId, avatarId: result.avatarId };
@@ -1118,6 +1146,11 @@ export class EngineStore {
         // Categories are listed on demand (categories.list): the view keeps only the seq, and the listeners hear the change.
         this.update({ lastSeq });
         for (const listener of [...this.categoryListeners]) listener(event.payload);
+        return;
+      case "scenes.changed":
+        // A scene set is read on demand (scenes.get): the view keeps only the seq, and the listeners hear the change.
+        this.update({ lastSeq });
+        for (const listener of [...this.sceneSetListeners]) listener(event.payload);
         return;
       case "montage.changed":
         // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.
