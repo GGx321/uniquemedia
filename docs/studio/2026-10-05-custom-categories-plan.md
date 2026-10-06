@@ -820,6 +820,35 @@ Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio su
 Tests seen red first: every item above (the engine, store, job, shared, renderer-text and mock tests); the golden lines of the category scenarios
 changed only where the new fields appear (they are this branch's own entries), and no older golden line moved.
 
+#### CS.2 fix round 2 (2026-10-06): the booked-jobs key
+
+A review of round 1 reproduced a double count: `#dismissInterrupted` wrote the spend before removing the record, so a removal the disk refused
+(EBUSY/EPERM after `unlinkWithRetry`, EIO/EACCES) left the call listed and every further «Убрать» added the spend again. Two relatives had the same cause:
+after a restart a finished regenerate whose record survived looked interrupted, and `replacePool`'s write could throw after its rename (the folder's flush).
+All three are closed by one idempotency key on disk (CS.2 is unmerged, so the format was still free):
+
+- **`bookedJobs`** in the category record (`cat-*.json`, not in the contract; `summaryOf` drops it): the ids of the paid calls whose cost is already in
+  `spentMicros`. `create` (its own job), `replacePool` and `addSpend` take the `jobId` and write it in the same atomic record write as the amount; a job already
+  listed is a no-op and writes nothing. A record without the field reads as `[]` (zod `default`), so older records and fixtures still parse.
+- **Cap: the last 200 ids, the oldest dropped** (`BOOKED_JOBS_CAP`). Only one paid call runs at a time and its record is either removed at the end of the call or listed
+  as interrupted for the owner to dismiss, so a call that can still be booked again is a recent one: 200 later bookings of the same category before its stale record
+  is dismissed is out of reach, and the record stays a few KB however long the category lives.
+- **`#dismissInterrupted`**: when the removal of the record throws after the cost is booked (or the call is already known to have ended), the call is remembered as
+  ended, a warning is logged and `{ jobId }` is answered; the listing no longer offers it, the next listing retries the removal, and a repeated «Убрать» is a no-op by
+  memory and by the key. A removal that fails for a call with nothing booked is still an error.
+- **A record write that threw after its rename** (the flush of the folder) is recognised by the key: the engine reads the record back, finds the job in `bookedJobs`
+  and answers success, so the owner is not told «не удалось» for a pool that is in the library, and the failure path books nothing a second time. The test seam for it is
+  `testHooks.afterRename` (runs between the rename and the flush).
+
+Contract parity (the UI in CS.3 is built against the mock): the mock refuses `categories.dismissInterrupted` of an interrupted regenerate whose cost is unknown
+(`spentMicros: null`, or a ledger marked unavailable) with the ledger's code and keeps the record, as the engine does, and books a job once. `exists` (an id clash after the
+pool was paid for) is now `INTERNAL`: the id is `cat-` + a random UUID, so it is unreachable except by a record planted by hand under that exact name, and it names no
+`categoryReason`, which now holds for every category VALIDATION. Not done, in the backlog: a test for a rename to the name of a hidden (51st and later) category.
+
+Verification: `tsc` clean for `studio/` and the root; full Studio suite in three shards, 5905 + 6209 + 6745 = 18859 tests passing, 0 failing. Tests seen red first: the store key (17 000 for 11 000, the key list
+missing), the engine cases (dismiss twice 17 000 for 11 000, restart 15 200 for 10 100, write after rename 15 200 for 10 100 and a failure answer, a create that failed
+after its rename, `exists` as VALIDATION), the mock (a regenerate with unknown cost dismissed, a job counted twice).
+
 ### CS.3 — Categories UI (designer, opus)
 
 Scope: chips (built-ins, then custom, counts from `splitCount`); «+ Своя» dialog with price,
