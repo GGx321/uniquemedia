@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MAX_CUSTOM_CATEGORIES, type CategoryPool } from "../../shared/engine";
-import { CategoryError, CategoryStore, StoredCategory, type CategoryErrorCode, type NewCategory } from "./categories";
+import { BOOKED_JOBS_CAP, CategoryError, CategoryStore, StoredCategory, type CategoryErrorCode, type NewCategory } from "./categories";
 import { openLibrary } from "./library";
 import { rejectionOf, steppingClock, useTempDir } from "./testing/helpers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -172,7 +172,7 @@ describe("unreadable and newer records", () => {
     expect(await s.get("cat-paris-cafes")).toBeNull();
     expect(await codeOf(s.update("cat-paris-cafes", { name: "Renamed" }))).toBe("not-found");
     expect(await codeOf(s.remove("cat-paris-cafes"))).toBe("not-found");
-    expect(await s.addSpend("cat-paris-cafes", 10)).toBeNull();
+    expect(await s.addSpend("cat-paris-cafes", 10, "job-00000001")).toBeNull();
     expect(await readFile(join(dirOf(), "cat-paris-cafes.json"), "utf8")).toBe(newer);
   });
 
@@ -394,7 +394,7 @@ describe("replacePool (a regeneration) and addSpend", () => {
     const made = await s.create(input({ categoryId: "cat-paris-cafes", name: "Кофейни", spentMicros: 5_000 }));
     const next = pool({ outfits: ["a red coat", "a blue scarf", "a green dress"] });
 
-    const replaced = await s.replacePool("cat-paris-cafes", { description: "новое описание", label: "Paris bakeries", style: "editorial", pool: next, model: "x-ai/grok-4.3", spentMicros: 6_000 });
+    const replaced = await s.replacePool("cat-paris-cafes", { description: "новое описание", label: "Paris bakeries", style: "editorial", pool: next, model: "x-ai/grok-4.3", spentMicros: 6_000, jobId: "job-00000001" });
 
     expect(replaced).toMatchObject({ categoryId: "cat-paris-cafes", name: "Кофейни", createdAt: made.createdAt, description: "новое описание", label: "Paris bakeries", style: "editorial", pool: next, spentMicros: 11_000 });
     expect(replaced.updatedAt > made.updatedAt).toBe(true);
@@ -402,18 +402,110 @@ describe("replacePool (a regeneration) and addSpend", () => {
   });
 
   test("a regeneration of an unknown category is refused", async () => {
-    expect(await codeOf(store().replacePool("cat-nobody-here", { description: "d", label: "l", style: "phone", pool: pool(), model: "x-ai/grok-4.3", spentMicros: 1 }))).toBe("not-found");
+    expect(await codeOf(store().replacePool("cat-nobody-here", { description: "d", label: "l", style: "phone", pool: pool(), model: "x-ai/grok-4.3", spentMicros: 1, jobId: "job-00000001" }))).toBe("not-found");
   });
 
   test("spend alone adds to the total and touches nothing else", async () => {
     const s = store();
     const made = await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
-    const after = await s.addSpend("cat-paris-cafes", 6_000);
-    expect(after).toEqual({ ...made, spentMicros: 11_000, updatedAt: after?.updatedAt ?? "" });
+    const after = await s.addSpend("cat-paris-cafes", 6_000, "job-00000001");
+    expect(after).toEqual({ ...made, spentMicros: 11_000, bookedJobs: ["job-00000001"], updatedAt: after?.updatedAt ?? "" });
   });
 
   test("spend for a category that is not there is nobody's: null, nothing written", async () => {
-    expect(await store().addSpend("cat-nobody-here", 10)).toBeNull();
+    expect(await store().addSpend("cat-nobody-here", 10, "job-00000001")).toBeNull();
+  });
+});
+
+describe("a job's spend is booked once (the booked-jobs key)", () => {
+  const next = () => ({ description: "новое описание", label: "Paris bakeries", style: "editorial" as const, pool: pool({ outfits: ["a red coat", "a blue scarf", "a green dress"] }), model: "x-ai/grok-4.3" });
+
+  test("addSpend with a job id that is already booked changes nothing: the total and the record stay as they were", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
+    const first = await s.addSpend("cat-paris-cafes", 6_000, "job-00000001");
+    const bytes = await readFile(join(dirOf(), "cat-paris-cafes.json"), "utf8");
+
+    const again = await s.addSpend("cat-paris-cafes", 6_000, "job-00000001");
+
+    expect(first?.spentMicros).toBe(11_000);
+    expect(again).toEqual(first);
+    expect(await readFile(join(dirOf(), "cat-paris-cafes.json"), "utf8")).toBe(bytes);
+  });
+
+  test("two different jobs both count", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
+    await s.addSpend("cat-paris-cafes", 6_000, "job-00000001");
+    const after = await s.addSpend("cat-paris-cafes", 7_000, "job-00000002");
+    expect(after?.spentMicros).toBe(18_000);
+  });
+
+  test("the job id is written in the same record write as the amount", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
+    await s.addSpend("cat-paris-cafes", 6_000, "job-00000001");
+    expect(await readRecord("cat-paris-cafes")).toMatchObject({ spentMicros: 11_000, bookedJobs: ["job-00000001"] });
+  });
+
+  test("a create books its own job, so a later booking of the same job is a no-op", async () => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }), "job-00000001");
+    expect(made.bookedJobs).toEqual(["job-00000001"]);
+    expect((await s.addSpend("cat-paris-cafes", 5_000, "job-00000001"))?.spentMicros).toBe(5_000);
+  });
+
+  test("replacePool with a job id that is already booked is a no-op: neither the pool nor the total changes", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
+    const first = await s.replacePool("cat-paris-cafes", { ...next(), spentMicros: 6_000, jobId: "job-00000001" });
+
+    const again = await s.replacePool("cat-paris-cafes", { ...next(), description: "ещё одно", spentMicros: 6_000, jobId: "job-00000001" });
+
+    expect(first.spentMicros).toBe(11_000);
+    expect(again).toEqual(first);
+    expect((await s.get("cat-paris-cafes"))?.description).toBe("новое описание");
+  });
+
+  test("a spend booked by addSpend is not counted again by the replacePool of the same job", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
+    await s.addSpend("cat-paris-cafes", 6_000, "job-00000001");
+    const after = await s.replacePool("cat-paris-cafes", { ...next(), spentMicros: 6_000, jobId: "job-00000001" });
+    expect(after.spentMicros).toBe(11_000);
+  });
+
+  test("a record written before the key existed (no bookedJobs) is read with an empty list and takes the first booking", async () => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
+    const { bookedJobs: _dropped, ...old } = made;
+    await mkdir(dirOf(), { recursive: true });
+    await writeFile(join(dirOf(), "cat-paris-cafes.json"), JSON.stringify(old));
+
+    expect((await s.get("cat-paris-cafes"))?.bookedJobs).toEqual([]);
+    expect((await s.addSpend("cat-paris-cafes", 1_000, "job-00000001"))?.spentMicros).toBe(6_000);
+  });
+
+  test("the list is capped at the last 200 jobs: the oldest is dropped, the newest is kept", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 0 }));
+    const id = (n: number) => `job-${String(n).padStart(8, "0")}`;
+    for (let n = 1; n <= 201; n += 1) await s.addSpend("cat-paris-cafes", 1, id(n));
+
+    const kept = (await s.get("cat-paris-cafes"))?.bookedJobs ?? [];
+    expect(kept).toHaveLength(BOOKED_JOBS_CAP);
+    expect(BOOKED_JOBS_CAP).toBe(200);
+    expect(kept[0]).toBe(id(2));
+    expect(kept.at(-1)).toBe(id(201));
+    expect((await s.get("cat-paris-cafes"))?.spentMicros).toBe(201);
+  });
+
+  test("a job still inside the cap is not booked twice after 199 later jobs", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 0 }));
+    const id = (n: number) => `job-${String(n).padStart(8, "0")}`;
+    for (let n = 1; n <= 200; n += 1) await s.addSpend("cat-paris-cafes", 1, id(n));
+    expect((await s.addSpend("cat-paris-cafes", 1, id(1)))?.spentMicros).toBe(200);
   });
 });
 

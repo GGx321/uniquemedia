@@ -70,6 +70,8 @@ export interface LibraryDeps {
    *  before it is renamed into place. Throwing simulates a crash there. */
   testHooks?: {
     beforeRename?: (finalPath: string) => void | Promise<void>;
+    /** Called after each category record is renamed into place and before the folder is flushed; what it throws is what the flush threw. */
+    afterRename?: (finalPath: string) => void | Promise<void>;
     /** Called before each video record file is read by `reloadVideoRecords` and the quarantine, as part of the read: what it
      *  throws is what the read threw. */
     beforeReadVideoRecord?: (path: string) => void | Promise<void>;
@@ -252,7 +254,7 @@ export class Library {
   private constructor(root: string, deps: LibraryDeps, createdAt: string) {
     this.root = root;
     this.createdAt = createdAt;
-    this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, beforeUnlink: deps.testHooks?.beforeUnlink });
+    this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink });
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;

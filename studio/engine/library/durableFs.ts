@@ -11,6 +11,8 @@ export interface AtomicWriteOptions {
   /** Test seam: runs after the temp file is durable and before the rename.
    *  Throwing here leaves the disk exactly as a crash at that point would. */
   beforeRename?: (finalPath: string) => void | Promise<void>;
+  /** Test seam: runs after the rename and before the folder's flush. Throwing here is a flush that failed with the new file already in place. */
+  afterRename?: (finalPath: string) => void | Promise<void>;
 }
 
 /** Temp names are dot-prefixed siblings ending in `.tmp`, so startup
@@ -83,6 +85,7 @@ export async function writeFileAtomic(
   }
   await options.beforeRename?.(path);
   await renameWithRetry(temp, path);
+  await options.afterRename?.(path);
   await fsyncDir(dirname(path));
 }
 

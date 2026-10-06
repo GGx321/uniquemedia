@@ -48,8 +48,20 @@ export class CategoryError extends Error {
   }
 }
 
-/** The record on disk: the contract's summary and the file's schema version. */
-export const StoredCategory = CategorySummary.extend({ schemaVersion: z.literal(CATEGORY_FILE_SCHEMA_VERSION) });
+/** How many booked job ids a record keeps (the last ones, the oldest dropped). */
+export const BOOKED_JOBS_CAP = 200;
+
+/**
+ * The record on disk: the contract's summary, the file's schema version, and `bookedJobs`, the ids of the paid calls whose cost is already in
+ * `spentMicros` (never part of the contract). It is the idempotency key of the money: a job's cost is added together with its id in ONE record
+ * write, and a job already listed adds nothing, so a retried booking (a dismiss whose record removal failed, a restart that shows a finished call as
+ * interrupted, a write that threw after its rename) cannot count a call twice. A record written without the field reads as an empty list.
+ *
+ * The list is the last `BOOKED_JOBS_CAP` ids, the oldest dropped. A call that can still be booked again is a recent one: only one paid call runs at a
+ * time, and its pending record is either removed at its end or shown as interrupted at the next listing for the owner to dismiss, so 200 later
+ * bookings of one category before that record is dismissed is out of reach; the cap keeps the record at a few KB however long the category lives.
+ */
+export const StoredCategory = CategorySummary.extend({ schemaVersion: z.literal(CATEGORY_FILE_SCHEMA_VERSION), bookedJobs: z.array(Id).max(BOOKED_JOBS_CAP).default([]) });
 export type StoredCategory = z.infer<typeof StoredCategory>;
 
 /** A paid call that has begun and not ended. */
@@ -66,11 +78,11 @@ export const PendingCall = z
   .refine((p) => (p.kind === "regenerate") === (p.categoryId !== null), { message: "a regenerate names its category and a create has none", path: ["categoryId"] });
 export type PendingCall = Omit<z.infer<typeof PendingCall>, "schemaVersion">;
 
-export type NewCategory = Omit<StoredCategory, "schemaVersion" | "createdAt" | "updatedAt">;
+export type NewCategory = Omit<StoredCategory, "schemaVersion" | "createdAt" | "updatedAt" | "bookedJobs">;
 
 /** The record as the contract carries it (the file's schema version is the store's own business). */
 export function summaryOf(stored: StoredCategory): CategorySummary {
-  const { schemaVersion: _schemaVersion, ...summary } = stored;
+  const { schemaVersion: _schemaVersion, bookedJobs: _bookedJobs, ...summary } = stored;
   return summary;
 }
 
@@ -83,6 +95,8 @@ export interface CategoryStoreDeps {
   now?: () => Date;
   /** Test seam: called after each temp file is durable and before it is renamed into place. Throwing simulates a crash there. */
   beforeRename?: ((finalPath: string) => void | Promise<void>) | undefined;
+  /** Test seam: called after each record is renamed into place and before the folder is flushed. Throwing simulates a flush that failed. */
+  afterRename?: ((finalPath: string) => void | Promise<void>) | undefined;
   /** Test seam: called before each record is unlinked. Throwing simulates a disk that refuses the delete. */
   beforeUnlink?: ((path: string) => void | Promise<void>) | undefined;
   /** Test seam: the flush of the folder after an unlink; defaults to the library's own. */
@@ -104,11 +118,17 @@ function readRecord(raw: unknown, fileId: string): StoredCategory | null {
   return PoolSchema.safeParse(poolOf(parsed.data.pool)).success ? parsed.data : null;
 }
 
+/** The record's booked jobs with `jobId` last, the list cut to its newest `BOOKED_JOBS_CAP`. */
+function booked(record: StoredCategory, jobId: string): string[] {
+  return [...record.bookedJobs, jobId].slice(-BOOKED_JOBS_CAP);
+}
+
 export class CategoryStore {
   readonly dir: string;
   readonly #lockKey: string;
   readonly #now: () => Date;
   readonly #beforeRename: ((finalPath: string) => void | Promise<void>) | undefined;
+  readonly #afterRename: ((finalPath: string) => void | Promise<void>) | undefined;
   readonly #beforeUnlink: ((path: string) => void | Promise<void>) | undefined;
   readonly #fsyncDir: (dir: string) => Promise<void>;
 
@@ -117,6 +137,7 @@ export class CategoryStore {
     this.#lockKey = `categories:${this.dir}`;
     this.#now = deps.now ?? (() => new Date());
     this.#beforeRename = deps.beforeRename;
+    this.#afterRename = deps.afterRename;
     this.#beforeUnlink = deps.beforeUnlink;
     this.#fsyncDir = deps.fsyncDir ?? fsyncDir;
   }
@@ -134,7 +155,10 @@ export class CategoryStore {
 
   async #write(path: string, value: unknown): Promise<void> {
     await mkdir(this.dir, { recursive: true });
-    await writeJsonAtomic(path, value, this.#beforeRename === undefined ? {} : { beforeRename: this.#beforeRename });
+    await writeJsonAtomic(path, value, {
+      ...(this.#beforeRename === undefined ? {} : { beforeRename: this.#beforeRename }),
+      ...(this.#afterRename === undefined ? {} : { afterRename: this.#afterRename }),
+    });
   }
 
   async #names(): Promise<string[]> {
@@ -193,8 +217,11 @@ export class CategoryStore {
     return read.ok ? readRecord(read.value, id) : null;
   }
 
-  /** Creates a category: refused with `limit` when 50 category files are already there (readable or not), `name-taken` for a name another holds, `exists` for an id already used. */
-  async create(input: NewCategory): Promise<StoredCategory> {
+  /**
+   * Creates a category: refused with `limit` when 50 category files are already there (readable or not), `name-taken` for a name another holds, `exists` for an id already used.
+   * `jobId` is the paid call that made it: its cost (`spentMicros`) is booked under that id from the first write.
+   */
+  async create(input: NewCategory, jobId?: string): Promise<StoredCategory> {
     return runExclusive(this.#lockKey, async () => {
       const { categories, unreadable } = await this.#readAll();
       const name = input.name.trim();
@@ -202,7 +229,7 @@ export class CategoryStore {
       const existing = await readJsonFile(this.#path(input.categoryId));
       if (existing.ok || (await this.#names()).includes(`${input.categoryId}.json`)) throw new CategoryError("exists", `category ${input.categoryId} already exists`);
       const stamp = this.#now().toISOString();
-      const record: StoredCategory = { schemaVersion: CATEGORY_FILE_SCHEMA_VERSION, ...input, name, createdAt: stamp, updatedAt: stamp };
+      const record: StoredCategory = { schemaVersion: CATEGORY_FILE_SCHEMA_VERSION, ...input, name, bookedJobs: jobId === undefined ? [] : [jobId], createdAt: stamp, updatedAt: stamp };
       await this.#write(this.#path(input.categoryId), record);
       return record;
     });
@@ -241,27 +268,35 @@ export class CategoryStore {
     });
   }
 
-  /** A regeneration's answer: the new description, label, style and pool, the money it cost added to the total; the id, name and creation time stay. */
+  /**
+   * A regeneration's answer: the new description, label, style and pool, the money it cost added to the total; the id, name and creation time stay.
+   * A job already booked on the record is a no-op (its answer and its cost are in the record already): the record is returned as it is.
+   */
   async replacePool(
     id: string,
-    input: { description: string; label: string; style: CategoryStyle; pool: CategoryPool; model: string; spentMicros: number },
+    input: { description: string; label: string; style: CategoryStyle; pool: CategoryPool; model: string; spentMicros: number; jobId: string },
   ): Promise<StoredCategory> {
     return runExclusive(this.#lockKey, async () => {
       const current = await this.get(id);
       if (current === null) throw new CategoryError("not-found", `no readable category ${id}`);
-      const { spentMicros, ...fresh } = input;
-      const updated: StoredCategory = { ...current, ...fresh, spentMicros: current.spentMicros + spentMicros, updatedAt: this.#nextStamp(current.updatedAt) };
+      if (current.bookedJobs.includes(input.jobId)) return current;
+      const { spentMicros, jobId, ...fresh } = input;
+      const updated: StoredCategory = { ...current, ...fresh, spentMicros: current.spentMicros + spentMicros, bookedJobs: booked(current, jobId), updatedAt: this.#nextStamp(current.updatedAt) };
       await this.#write(this.#path(id), updated);
       return updated;
     });
   }
 
-  /** Adds money a call cost to a category's total (a failed regeneration still cost it); null when there is no readable category. */
-  async addSpend(id: string, micros: number): Promise<StoredCategory | null> {
+  /**
+   * Adds money a call cost to a category's total (a failed regeneration still cost it), under the call's id; null when there is no readable category.
+   * A job already booked on the record adds nothing: the record is returned as it is, and nothing is written.
+   */
+  async addSpend(id: string, micros: number, jobId: string): Promise<StoredCategory | null> {
     return runExclusive(this.#lockKey, async () => {
       const current = await this.get(id);
       if (current === null) return null;
-      const updated: StoredCategory = { ...current, spentMicros: current.spentMicros + micros, updatedAt: this.#nextStamp(current.updatedAt) };
+      if (current.bookedJobs.includes(jobId)) return current;
+      const updated: StoredCategory = { ...current, spentMicros: current.spentMicros + micros, bookedJobs: booked(current, jobId), updatedAt: this.#nextStamp(current.updatedAt) };
       await this.#write(this.#path(id), updated);
       return updated;
     });
