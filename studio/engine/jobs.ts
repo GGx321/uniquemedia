@@ -17,6 +17,12 @@ export type RenderJobEnd =
   | { status: "failed"; error: EngineError }
   | { status: "cancelled" };
 
+/** How a scene set's writer job ends: what it wrote and what its chunks left without text, why it failed, or a cancel. */
+export type ScenesJobEnd =
+  | { status: "done"; written: number; unwritten: number }
+  | { status: "failed"; error: EngineError }
+  | { status: "cancelled" };
+
 /** How an import job ends; `done` carries the record that was stored. */
 export type ImportJobEnd =
   | { status: "done"; result: ImportResult }
@@ -61,6 +67,40 @@ export class JobRegistry {
   /** Registers a running job of a photo run; `done` counts the slots its earlier jobs already finished. */
   startRun(jobId: string, run: { runId: string; avatarId: string; total: number; done: number }): AbortSignal {
     return this.#start({ kind: "run", jobId, runId: run.runId, avatarId: run.avatarId, status: "running", done: run.done, total: run.total });
+  }
+
+  /** Registers a running writer job of a scene set; `total` counts the scenes it will ask the writer for, `done` the ones it has written. Its signal fires on `cancel`. */
+  startScenes(jobId: string, set: { sceneSetId: string; avatarId: string; total: number }): AbortSignal {
+    return this.#start({ kind: "scenes", jobId, sceneSetId: set.sceneSetId, avatarId: set.avatarId, status: "running", done: 0, total: set.total });
+  }
+
+  /** Ends a running scenes job; its final state, or null for any other job or one that already ended. */
+  finishScenes(jobId: string, end: ScenesJobEnd): JobState | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.status !== "running" || entry.state.kind !== "scenes") return null;
+    const { kind, sceneSetId, avatarId, done, total } = entry.state;
+    const common = { kind, jobId, sceneSetId, avatarId, total };
+    switch (end.status) {
+      case "done":
+        entry.state = { ...common, status: "done", done, result: { kind, sceneSetId, avatarId, written: end.written, unwritten: end.unwritten } };
+        break;
+      case "failed":
+        entry.state = { ...common, status: "failed", done, error: end.error };
+        break;
+      case "cancelled":
+        entry.state = { ...common, status: "cancelled", done };
+        break;
+    }
+    this.#dropOldFinished(jobId);
+    return entry.state;
+  }
+
+  /** The running job of `sceneSetId`, if one is running. */
+  runningJobOfSet(sceneSetId: string): string | null {
+    for (const entry of this.#jobs.values()) {
+      if (entry.state.kind === "scenes" && entry.state.sceneSetId === sceneSetId && entry.state.status === "running") return entry.state.jobId;
+    }
+    return null;
   }
 
   /**
@@ -192,6 +232,8 @@ export class JobRegistry {
         return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total, ...(entry.state.saving === true ? { saving: true } : {}) };
       case "avatar.candidates":
         return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
+      case "scenes":
+        return { kind: "scenes", jobId, sceneSetId: entry.state.sceneSetId, avatarId: entry.state.avatarId, done, total };
       case "import": {
         const { stage, prepare } = entry.state;
         return {
