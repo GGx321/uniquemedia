@@ -331,6 +331,56 @@ describe("«Новая категория»", () => {
     expect(screen.getByRole("dialog", { name: "Рынки" })).toBeDefined();
   });
 
+  test("PRICE_CHANGED: until the fresh price answers the button shows no price and sends nothing", async () => {
+    const { engine, scheduler } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    engine.delayNext("categories.estimate", 100);
+    fireEvent.click(createButton());
+    await flush();
+    expect(createButton().textContent).toBe("Создать · до …");
+    expect(isDisabled(createButton())).toBe(true);
+    fireEvent.click(createButton());
+    await flush();
+    expect(callsOf(engine, "categories.create")).toHaveLength(1);
+    runAll(scheduler);
+    await flush();
+    expect(createButton().textContent).toBe("Подтвердить новую цену · до $0.052");
+    expect(isDisabled(createButton())).toBe(false);
+  });
+
+  test("a change of the text model while its price is asked: no price of the old model is offered, the button waits for the new one", async () => {
+    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    expect(createButton().textContent).toBe("Создать · до $0.045");
+    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    engine.delayNext("categories.estimate", 100);
+    await act(async () => {
+      await client.request("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "openai/gpt-5-mini" });
+    });
+    await flush();
+    expect(createButton().textContent).toBe("Создать · до …");
+    expect(isDisabled(createButton())).toBe(true);
+    runAll(scheduler);
+    await flush();
+    expect(createButton().textContent).toBe("Создать · до $0.052");
+    expect(isDisabled(createButton())).toBe(false);
+  });
+
+  test("Enter that ends an input method's composition in «Название» is not «Создать»", async () => {
+    const { engine } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    fireEvent.keyDown(field(/^Название/), { key: "Enter", isComposing: true });
+    await flush();
+    expect(callsOf(engine, "categories.create")).toHaveLength(0);
+    fireEvent.keyDown(field(/^Название/), { key: "Enter" });
+    await flush();
+    expect(callsOf(engine, "categories.create")).toHaveLength(1);
+  });
+
   test("the library's limit sends to «Мои категории»; a pool paid for but not stored sends to Settings", async () => {
     const { engine } = await openPhotos({ categories: [PARIS] });
     await openCreate();
@@ -362,6 +412,51 @@ describe("«Новая категория»", () => {
     await act(async () => {
       await other;
     });
+  });
+
+  test("another window composing a category: «Создать» waits with the note, and both go when that call ends", async () => {
+    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
+    engine.delayNext("categories.create", 500);
+    let other: Promise<unknown> = Promise.resolve();
+    inAct(() => {
+      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
+    });
+    await flush();
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    expect(isDisabled(createButton())).toBe(true);
+    fireEvent.click(createButton());
+    await flush();
+    expect(callsOf(engine, "categories.create")).toHaveLength(1);
+    runAll(scheduler);
+    await act(async () => {
+      await other;
+    });
+    await flush();
+    expect(within(dialog()).queryByText(/Сейчас составляется/) === null).toBe(true);
+    expect(isDisabled(createButton())).toBe(false);
+  });
+
+  test("a create refused because another window composes: the note goes and «Создать» is back when that call ends", async () => {
+    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    engine.delayNext("categories.create", 500);
+    let other: Promise<unknown> = Promise.resolve();
+    inAct(() => {
+      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
+    });
+    await flush();
+    fireEvent.click(createButton());
+    await flush();
+    expect(within(dialog()).getByText(/Сейчас составляется «Горы зимой»/)).toBeDefined();
+    runAll(scheduler);
+    await act(async () => {
+      await other;
+    });
+    await flush();
+    expect(within(dialog()).queryByText(/Сейчас составляется/) === null).toBe(true);
+    expect(isDisabled(createButton())).toBe(false);
   });
 
   test("without a usable key, or until a reconcile, «Создать» is unavailable and says why", async () => {

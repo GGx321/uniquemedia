@@ -8,7 +8,7 @@ import { useNavigate } from "../../navigation";
 import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { useModalDialog } from "../../ui/useModalDialog";
-import { categoryPrice, PoolPreview, priceRange, priceSource, useSeconds, worstOf } from "./categoryParts";
+import { busyElsewhere, categoryPrice, PoolPreview, priceRange, priceSource, useSeconds, worstOf } from "./categoryParts";
 import { callFailure, createdTime, descriptionProblem, nameProblem } from "./categoryText";
 import { paidBlockedReason } from "./runForm";
 
@@ -76,18 +76,18 @@ export function CategoryCreateDialog({
   // PRICE_CHANGED: the refused worst case against the fresh one, which only a new click accepts.
   const priceChanged = failure !== null && failure.error.code === "PRICE_CHANGED" && estimate !== null ? { was: failure.previousWorstMicros ?? 0, now: estimate.worstMicros } : null;
   // One category call at a time (the engine's IN_FLIGHT): this window's own regeneration, another window's call, or a refusal that said so.
-  const listBusy = list.status === "ready" ? list.busy : null;
+  const elsewhere = busyElsewhere(view);
   const waitingFor =
     call !== null || done !== null
       ? null
       : regenerating !== null
         ? regenerating.name
-        : listBusy !== null
-          ? listBusy.name
+        : elsewhere !== null
+          ? elsewhere
           : failure?.error.code === "IN_FLIGHT"
             ? ""
             : null;
-  const canSend = call === null && regenerating === null && estimate !== null && valid && blocked === null;
+  const canSend = call === null && regenerating === null && estimate !== null && valid && blocked === null && elsewhere === null;
   const seconds = useSeconds(call?.startedAt ?? null);
 
   const nameRef = useRef<HTMLInputElement>(null);
@@ -186,7 +186,8 @@ export function CategoryCreateDialog({
                     }}
                     onBlur={() => setTouched((t) => ({ ...t, name: true }))}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
+                      // Enter that ends an input method's composition belongs to the composition, not to a paid create.
+                      if (e.key === "Enter" && !e.nativeEvent.isComposing) {
                         e.preventDefault();
                         send();
                       }

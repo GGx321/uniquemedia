@@ -4,7 +4,7 @@ import type { CategoryLibrary, CategoryLibraryView } from "../../engine/category
 import { useEngineView } from "../../engine/react";
 import { errorText } from "../../lib/errors";
 import { Icon } from "../../ui/Icon";
-import { categoryPrice, worstOf } from "./categoryParts";
+import { busyElsewhere, categoryPrice, worstOf } from "./categoryParts";
 import { hiddenFailureText, interruptedText } from "./categoryText";
 import { paidBlockedReason } from "./runForm";
 
@@ -37,7 +37,8 @@ export function InterruptedNotice({
   const [error, setError] = useState<EngineError | null>(null);
   const { title, text } = interruptedText(call);
   const { estimate } = categoryPrice(engine, slice);
-  const blocked = paidBlockedReason(engine) ?? (slice.call !== null ? `Сейчас составляется «${slice.call.name}». По одной категории за раз — дождитесь её.` : null);
+  const composing = slice.call?.name ?? busyElsewhere(slice);
+  const blocked = paidBlockedReason(engine) ?? (composing !== null ? `Сейчас составляется «${composing}». По одной категории за раз — дождитесь её.` : null);
   const canRetry = blocked === null && estimate !== null;
 
   async function dismiss(): Promise<void> {

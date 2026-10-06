@@ -238,6 +238,47 @@ describe("regenerate (paid)", () => {
     expect(callsOf(engine, "categories.regenerate").map((c) => c.payload.acceptedWorstMicros)).toEqual([45_000, 52_000]);
   });
 
+  test("PRICE_CHANGED: until the fresh price answers the button shows no price and sends nothing", async () => {
+    const { engine, scheduler } = await openPhotos({ categories: [PARIS] });
+    await openSheet();
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
+    await flush();
+    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    engine.delayNext("categories.estimate", 100);
+    fireEvent.click(regenButton());
+    await flush();
+    expect(regenButton().textContent).toBe("Пересоздать · до …");
+    expect(isDisabled(regenButton())).toBe(true);
+    fireEvent.click(regenButton());
+    await flush();
+    expect(callsOf(engine, "categories.regenerate")).toHaveLength(1);
+    runAll(scheduler);
+    await flush();
+    expect(regenButton().textContent).toBe("Подтвердить новую цену · до $0.052");
+  });
+
+  test("another window composing a category: «Пересоздать» waits with the note until that call ends", async () => {
+    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
+    engine.delayNext("categories.create", 500);
+    let other: Promise<unknown> = Promise.resolve();
+    inAct(() => {
+      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
+    });
+    await flush();
+    await openSheet();
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Пересоздать…" }));
+    await flush();
+    expect(isDisabled(regenButton())).toBe(true);
+    expect(within(sheet()).getByText("Сейчас составляется «Горы зимой». По одной категории за раз — дождитесь её.")).toBeDefined();
+    runAll(scheduler);
+    await act(async () => {
+      await other;
+    });
+    await flush();
+    expect(within(sheet()).queryByText(/Сейчас составляется/) === null).toBe(true);
+    expect(isDisabled(regenButton())).toBe(false);
+  });
+
   test("until a reconcile the button waits with the reconcile's reason", async () => {
     const { engine } = await openPhotos({ categories: [PARIS] });
     inAct(() => engine.requireReconcile(["open-reserves"]));
@@ -290,6 +331,27 @@ describe("calls a closed Studio left", () => {
     await flush();
     expect(callsOf(engine, "categories.dismissInterrupted").map((c) => c.payload)).toEqual([{ jobId: "job-left-0001" }]);
     expect(screen.queryByText("Создание прервано — Studio закрылась") === null).toBe(true);
+  });
+
+  test("«Создать снова» waits while another window composes a category, with the note, and is back when that call ends", async () => {
+    const { engine, client, scheduler } = await openPhotos({ categories: [PARIS], interruptedCategories: [interruptedCreate({ spentMicros: 0, openReserveMicros: 0 })] });
+    engine.delayNext("categories.create", 500);
+    let other: Promise<unknown> = Promise.resolve();
+    inAct(() => {
+      other = client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
+    });
+    await flush();
+    fireEvent.click(myCategories());
+    await flush();
+    const retry = within(sheet()).getByRole("button", { name: "Создать снова · до $0.045" });
+    expect(isDisabled(retry)).toBe(true);
+    expect(within(sheet()).getByText("Сейчас составляется «Горы зимой». По одной категории за раз — дождитесь её.")).toBeDefined();
+    runAll(scheduler);
+    await act(async () => {
+      await other;
+    });
+    await flush();
+    expect(isDisabled(within(sheet()).getByRole("button", { name: "Создать снова · до $0.045" }))).toBe(false);
   });
 
   test("«Создать снова» is a new request at the price on it, followed in the dialog; «Изменить описание» opens the dialog with the text", async () => {

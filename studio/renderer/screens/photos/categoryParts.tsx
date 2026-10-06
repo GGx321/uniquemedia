@@ -23,6 +23,15 @@ export function categoryPrice(engine: EngineView, slice: CategoryLibraryView): {
   return { estimate, error: estimate === null ? slice.priceError : null };
 }
 
+/**
+ * The name of the category call another window of this app is making (`categories.list`'s `busy`), while this window sends none: the engine
+ * takes one category call at a time, so a paid button waits for it. Null when nothing else is composing.
+ */
+export function busyElsewhere(slice: CategoryLibraryView): string | null {
+  if (slice.call !== null || slice.list.status !== "ready") return null;
+  return slice.list.busy === null ? null : slice.list.busy.name;
+}
+
 /** «≈ $0.006 · до $0.045», the design's money rule. */
 export function priceRange(estimate: Estimate): string {
   return `≈ ${formatUsdTiered(estimate.expectedMicros, "nearest")} · до ${formatUsdTiered(estimate.worstMicros, "up")}`;

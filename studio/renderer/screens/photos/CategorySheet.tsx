@@ -19,7 +19,7 @@ import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { useConfirmFocus } from "../../ui/useConfirmFocus";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
-import { categoryPrice, EditablePlace, ShotShares, useSeconds, worstOf } from "./categoryParts";
+import { busyElsewhere, categoryPrice, EditablePlace, ShotShares, useSeconds, worstOf } from "./categoryParts";
 import { categoryMeta, descriptionProblem, interruptedText, libraryHeld, nameProblem, outfitsNote, overLimitNote, placesNote, poolCounts, regenFailure, styleNote, unreadableNote } from "./categoryText";
 import { InterruptedNotice } from "./CategoryNotices";
 import type { CreateDialogStart } from "./CategoryCreateDialog";
@@ -289,7 +289,7 @@ function CategoryDetail({
   const regenDone = outcome?.ok === true ? outcome : null;
   const priceChanged = regenFailed !== null && regenFailed.error.code === "PRICE_CHANGED" && estimate !== null ? { was: regenFailed.previousWorstMicros ?? 0, now: estimate.worstMicros } : null;
   const failure = regenFailed !== null && priceChanged === null && regenFailed.error.code !== "PRICE_CHANGED" ? regenFailure(regenFailed.error) : null;
-  const otherCall = call !== null && regenerating === null ? call : null;
+  const otherCall = call !== null && regenerating === null ? call.name : busyElsewhere(slice);
   const descProblem = descriptionProblem(regenText, true);
   const canRegen = regenerating === null && otherCall === null && estimate !== null && blocked === null && descProblem === null;
   const busy = regenerating !== null;
@@ -442,7 +442,7 @@ function CategoryDetail({
   const state = slice.regenerated.get(categoryId) ?? "created";
   const regenLabel = busy ? "Пересоздаём…" : priceChanged !== null ? "Подтвердить новую цену" : interrupted !== null ? "Пересоздать снова" : "Пересоздать";
   const regenWorst = regenerating !== null ? `до ${formatUsdTiered(regenerating.acceptedWorstMicros, "up")}` : worstOf(estimate);
-  const regenWhy = regenerating === null ? (blocked ?? (otherCall !== null ? `Сейчас составляется «${otherCall.name}». По одной категории за раз — дождитесь её.` : null)) : null;
+  const regenWhy = regenerating === null ? (blocked ?? (otherCall !== null ? `Сейчас составляется «${otherCall}». По одной категории за раз — дождитесь её.` : null)) : null;
   const regenWhyId = `${ids}-regen-why`;
 
   return (
