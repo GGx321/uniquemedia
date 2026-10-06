@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { ImageModelEntry } from "../../shared/engine";
-import { modelOptionLabel, photoPriceMicros, qualityOptionLabel, QUALITY_LABEL_RU } from "./imageModels";
+import { catalogueFreshMs, modelOptionLabel, photoPriceMicros, qualityOptionLabel, QUALITY_LABEL_RU } from "./imageModels";
 
 const GROK: ImageModelEntry = {
   id: "x-ai/grok-imagine-image-2.0",
@@ -48,5 +48,12 @@ describe("qualityOptionLabel", () => {
 
   test("has a Russian word for each quality the contract knows", () => {
     expect(Object.keys(QUALITY_LABEL_RU).sort()).toEqual(["low", "medium"]);
+  });
+});
+
+describe("catalogueFreshMs", () => {
+  test("is the engine's cache window: 30 minutes for OpenRouter's list, a minute for the bundled one (the outage may be over)", () => {
+    expect(catalogueFreshMs({ models: [GROK], source: "live" })).toBe(30 * 60_000);
+    expect(catalogueFreshMs({ models: [GROK], source: "fallback" })).toBe(60_000);
   });
 });

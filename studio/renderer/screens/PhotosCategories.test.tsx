@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CATEGORY_REASONS_RU } from "../../shared/engine";
-import { callsOf, describeElement, flush, inAct, runAll } from "../testing";
+import { callsOf, describeElement, flush, inAct, runAll, withText } from "../testing";
 import { category, chipsGroup, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
 
 // CS.3 (phase 1 of custom categories): the category row of the generate card and the «Новая категория» dialog, against the mock engine.
@@ -272,7 +272,9 @@ describe("«Новая категория»", () => {
     await flush();
     runAll(scheduler);
     await flush();
-    expect(screen.getByText("Категория «Рынки» не создана: модель дважды вернула неподходящий набор — переформулируйте описание. Потрачено $0.011.")).toBeDefined();
+    const notice = screen.getByText(withText(/^Категория «Рынки» не создана: модель дважды вернула неподходящий набор — переформулируйте описание\. Потрачено \$0\.011\.$/));
+    // The amount is set in mono, as the design has it.
+    expect(within(notice).getByText("$0.011").className).toBe("mono");
     expect(within(chipsGroup()).queryByRole("button", { name: /Рынки/ }) === null).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Изменить описание" }));
     await flush();
@@ -348,6 +350,42 @@ describe("«Новая категория»", () => {
     await flush();
     expect(createButton().textContent).toBe("Подтвердить новую цену · до $0.052");
     expect(isDisabled(createButton())).toBe(false);
+  });
+
+  test("PRICE_CHANGED: while the fresh price loads the notice says so and holds the focus; the new price lands in it, the focus kept", async () => {
+    const { engine, scheduler } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    engine.delayNext("categories.estimate", 100);
+    fireEvent.click(createButton());
+    await flush();
+    const notice = within(dialog()).getByRole("alert");
+    expect(notice.textContent).toContain("узнаём новую цену…");
+    expect(describeElement(document.activeElement)).toBe(describeElement(notice));
+    runAll(scheduler);
+    await flush();
+    expect(within(dialog()).getByText("Цена выросла")).toBeDefined();
+    // The same element, kept: the price landed in it, the focus never moved.
+    expect(within(dialog()).getByRole("alert") === notice).toBe(true);
+    expect(document.activeElement === notice).toBe(true);
+  });
+
+  test("PRICE_CHANGED, then the fresh price fails: the notice stays beside «Цену не узнать» and «Повторить»", async () => {
+    const { engine } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    engine.failNext("categories.estimate", { code: "INTERNAL" });
+    fireEvent.click(createButton());
+    await flush();
+    expect(within(dialog()).getByText("Цена изменилась")).toBeDefined();
+    expect(within(dialog()).getByText(/^Цену не узнать/)).toBeDefined();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Повторить" }));
+    await flush();
+    expect(within(dialog()).getByText("Цена выросла")).toBeDefined();
+    expect(createButton().textContent).toBe("Подтвердить новую цену · до $0.052");
+    expect(callsOf(engine, "categories.create")).toHaveLength(1);
   });
 
   test("a change of the text model while its price is asked: no price of the old model is offered, the button waits for the new one", async () => {

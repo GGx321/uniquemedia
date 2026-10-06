@@ -86,11 +86,14 @@ function shortDate(iso: string): string {
  */
 export type RegenState = "created" | "regenerated" | "retried";
 
-/** The line under a category's name in the sheet: its English label for the model, its style, its day and its whole spend. */
-export function categoryMeta(category: CategorySummary, state: RegenState): string {
+/**
+ * The line under a category's name in the sheet: its English label for the model, its style, its day and its whole spend. Segments, which
+ * the sheet joins with « · » and never breaks inside (a label is at most 24 characters, so none is too long for a line).
+ */
+export function categoryMeta(category: CategorySummary, state: RegenState): string[] {
   const day = state === "regenerated" ? `пересоздана ${shortDate(category.updatedAt)}` : `создана ${shortDate(category.createdAt)}`;
   const spent = `${state === "created" ? "потрачено" : "всего потрачено"} ${formatUsdTiered(category.spentMicros, "nearest")}`;
-  return `для модели «${category.label}» · ${STYLE_RU[category.style]} · ${day} · ${spent}`;
+  return [`для модели «${category.label}»`, STYLE_RU[category.style], day, spent];
 }
 
 /** The create dialog's line once the category is made: its label, its style, and what this call cost. */
@@ -177,25 +180,31 @@ export function callFailure(error: EngineError): { text: string; code: string | 
   return { text: errorText(error), code: spent === undefined ? null : spentLine(error, spent) };
 }
 
-/** A failed regenerate, in the sheet's box: the old pool stays, what the call cost, why, and the mono line where the design has one. */
-export function regenFailure(error: EngineError): { title: string; text: string; code: string | null } {
-  const spent = error.spentMicros;
-  const title = spent === undefined ? "Старый набор остался" : `Старый набор остался · потрачено ${formatUsdTiered(spent, "nearest")}`;
-  if (error.code === "POOL_REJECTED") return { title, text: "Модель дважды вернула неподходящий набор — переформулируйте описание и пересоздайте снова.", code: "POOL_REJECTED · обе попытки учтены" };
+/**
+ * A failed regenerate, in the sheet's box: the old pool stays, what the call cost (`spent`, which the title ends with as «· потрачено $…»
+ * in mono; null when nothing is known), why, and the mono line where the design has one.
+ */
+export function regenFailure(error: EngineError): { title: string; spent: string | null; text: string; code: string | null } {
+  const title = "Старый набор остался";
+  const spent = error.spentMicros === undefined ? null : formatUsdTiered(error.spentMicros, "nearest");
+  if (error.code === "POOL_REJECTED") return { title, spent, text: "Модель дважды вернула неподходящий набор — переформулируйте описание и пересоздайте снова.", code: "POOL_REJECTED · обе попытки учтены" };
   if (error.code === "MODERATION_REFUSED") {
-    return { title, text: MODERATION_TEXT, code: spent !== undefined && spent > 0 ? "MODERATION_REFUSED · отказ не списан, оплачена первая попытка" : "MODERATION_REFUSED · отказ на первой попытке не списан" };
+    const paid = (error.spentMicros ?? 0) > 0;
+    return { title, spent, text: MODERATION_TEXT, code: paid ? "MODERATION_REFUSED · отказ не списан, оплачена первая попытка" : "MODERATION_REFUSED · отказ на первой попытке не списан" };
   }
   if (paidNotStored(error)) {
-    return { title, text: "Новый набор оплачен, но не сохранился: папка библиотеки недоступна для записи. Проверьте её в Настройках и пересоздайте снова.", code: null };
+    return { title, spent, text: "Новый набор оплачен, но не сохранился: папка библиотеки недоступна для записи. Проверьте её в Настройках и пересоздайте снова.", code: null };
   }
-  return { title, text: errorText(error), code: null };
+  return { title, spent, text: errorText(error), code: null };
 }
 
-/** The notice under the generate card when the dialog was hidden and the create failed: which category, why, and what it cost. */
-export function hiddenFailureText(name: string, error: EngineError): string {
+/**
+ * The notice under the generate card when the dialog was hidden and the create failed: which category and why, and what it cost (`spent`,
+ * which the notice adds as «Потрачено $….» in mono; null when nothing is known).
+ */
+export function hiddenFailure(name: string, error: EngineError): { text: string; spent: string | null } {
   const reason = error.code === "PRICE_CHANGED" ? "цена выросла, ничего не отправлено — подтвердите новую цену в окне." : callFailure(error).text;
-  const spent = error.spentMicros === undefined ? "" : ` Потрачено ${formatUsdTiered(error.spentMicros, "nearest")}.`;
-  return `Категория «${name}» не создана: ${afterColon(reason)}${spent}`;
+  return { text: `Категория «${name}» не создана: ${afterColon(reason)}`, spent: error.spentMicros === undefined ? null : formatUsdTiered(error.spentMicros, "nearest") };
 }
 
 /** What an interrupted call is counted at, as the ledger knows it now. */

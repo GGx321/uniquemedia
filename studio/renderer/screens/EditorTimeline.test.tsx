@@ -332,6 +332,30 @@ describe("selecting and acting on a clip", () => {
     expect(plain(clipButtons()[0]?.getAttribute("aria-label"))).toBe("Кадр 1: 1 фото, 9.1 с");
   });
 
+  test("a 0.1 s clip at fit zoom: the handles fit its ~5 px slot (the right one drawn, the left one keyboard-only), and both still trim", async () => {
+    const { client } = await studio();
+    await makeDraft(client, MIA.avatarId, [P1, P2]);
+    await openEditor();
+    fireEvent.click(clipButtons()[0] ?? document.body);
+    const right = within(timeline()).getByRole("slider", { name: "Длительность кадра 1: правый край" });
+    fireEvent.keyDown(right, { key: "Home" });
+    fireEvent.keyUp(right, { key: "Home" });
+    expect(right.getAttribute("aria-valuenow")).toBe("100");
+    const left = within(timeline()).getByRole("slider", { name: "Длительность кадра 1: левый край" });
+    // 1048 px for 15 s: the slot is 100 × 1048 / 15000 − 2 ≈ 5 px.
+    expect({ left: left.style.width, right: right.style.width }).toEqual({ left: "0px", right: "3px" });
+    expect(left.classList.contains("hd-key")).toBe(true);
+    // The left edge still answers its keys: ← makes the clip longer, and the handles grow with the slot.
+    left.focus();
+    fireEvent.keyDown(left, { key: "ArrowLeft" });
+    fireEvent.keyUp(left, { key: "ArrowLeft" });
+    expect(left.getAttribute("aria-valuenow")).toBe("200");
+    expect(document.activeElement === left).toBe(true);
+    // 200 ms ≈ 12 px: two 4 px handles.
+    expect({ left: left.style.width, right: right.style.width }).toEqual({ left: "4px", right: "4px" });
+    expect(left.classList.contains("hd-key")).toBe(false);
+  });
+
   test("«Дублировать выбранное» copies a photo clip with an empty cell (CF4); a click on a photo then fills it", async () => {
     const { client, engine } = await studio();
     await makeDraft(client, MIA.avatarId, [P1]);

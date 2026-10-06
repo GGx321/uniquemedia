@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { boundaryAt, boundaryMs, clampZoom, clockMs, msAtFraction, rulerMarks, seekInto, snapEdge, snapMove, snapPlayhead, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
+import { boundaryAt, boundaryMs, clampZoom, clockMs, msAtFraction, rulerMarks, seekInto, snapEdge, snapMove, snapPlayhead, snapTargets, stepPlayhead, tileCount, TIMELINE_MS, trimHandlePx } from "./timelineScale";
 
 // 3d.3a: the timeline's scale and the playhead. The ruler always spans 0–15 s; the zoom (1–8) widens it. The
 // playhead is the renderer's clock on the 100 ms grid, within the montage.
@@ -145,5 +145,30 @@ describe("snapping a layer's edges (3d.3b: they stick to the playhead and the cl
     // A start already on a target stays there, however near a target the end is.
     expect(snapMove(2_000, 1_030, targets, 50)).toBe(2_000);
     expect(snapMove(1_970, 1_030, targets, 50)).toBe(1_970);
+  });
+});
+
+describe("the trim handles of a selected clip", () => {
+  const SLOTS = [0, 0.5, 2.67, 4.99, 5.99, 6, 7.5, 10, 17.9, 18, 22.5, 40, 400];
+
+  test("never cover each other nor reach past the slot into a neighbour, at any width", () => {
+    for (const slot of SLOTS) {
+      const { start, end } = trimHandlePx(slot);
+      expect({ slot, fits: start + end <= slot }).toEqual({ slot, fits: true });
+    }
+  });
+
+  test("are the full 9 px on a wide slot, at most 40% of a narrower one, and never under 3 px while both are drawn", () => {
+    expect(trimHandlePx(400)).toEqual({ start: 9, end: 9 });
+    expect(trimHandlePx(22.5)).toEqual({ start: 9, end: 9 });
+    expect(trimHandlePx(18)).toEqual({ start: 7, end: 7 });
+    expect(trimHandlePx(10)).toEqual({ start: 4, end: 4 });
+    expect(trimHandlePx(6)).toEqual({ start: 3, end: 3 });
+  });
+
+  test("a slot too narrow for two (a 0.1 s clip at fit zoom, ~5 px) draws only the right one, no wider than the slot", () => {
+    expect(trimHandlePx(4.99)).toEqual({ start: 0, end: 3 });
+    expect(trimHandlePx(2.5)).toEqual({ start: 0, end: 2.5 });
+    expect(trimHandlePx(0)).toEqual({ start: 0, end: 0 });
   });
 });

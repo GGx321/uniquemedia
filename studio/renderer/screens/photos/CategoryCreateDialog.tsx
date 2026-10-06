@@ -74,7 +74,8 @@ export function CategoryCreateDialog({
   const { estimate, error: priceError } = categoryPrice(engine, view);
   const blocked = paidBlockedReason(engine);
   // PRICE_CHANGED: the refused worst case against the fresh one, which only a new click accepts.
-  const priceChanged = failure !== null && failure.error.code === "PRICE_CHANGED" && estimate !== null ? { was: failure.previousWorstMicros ?? 0, now: estimate.worstMicros } : null;
+  const repriced = failure !== null && failure.error.code === "PRICE_CHANGED" ? (failure.previousWorstMicros ?? 0) : null;
+  const priceChanged = repriced !== null && estimate !== null ? { was: repriced, now: estimate.worstMicros } : null;
   // One category call at a time (the engine's IN_FLIGHT): this window's own regeneration, another window's call, or a refusal that said so.
   const elsewhere = busyElsewhere(view);
   const waitingFor =
@@ -283,17 +284,26 @@ export function CategoryCreateDialog({
                 </div>
               )}
 
-              {priceChanged !== null && (
+              {repriced !== null && (
+                // One notice from the refusal on: it takes the focus while the fresh price is asked (or could not be), and the price lands in it.
                 <div ref={noticeRef} className="notice notice-warn" role="alert" tabIndex={-1}>
                   <span className="notice-icon">
                     <Icon name="alert" size={16} />
                   </span>
                   <div className="notice-body">
-                    <p className="notice-title">{priceChanged.now > priceChanged.was ? "Цена выросла" : "Цена изменилась"}</p>
+                    <p className="notice-title">{priceChanged !== null && priceChanged.now > priceChanged.was ? "Цена выросла" : "Цена изменилась"}</p>
                     <div className="notice-text">
-                      Было не больше <span className="mono">{formatUsdTiered(priceChanged.was, "up")}</span>, теперь не больше{" "}
-                      <span className="mono">{formatUsdTiered(priceChanged.now, "up")}</span>. Проверьте новую оценку и подтвердите снова — без подтверждения ничего не
-                      отправляется.
+                      Было не больше <span className="mono">{formatUsdTiered(repriced, "up")}</span>,{" "}
+                      {priceChanged !== null ? (
+                        <>
+                          теперь не больше <span className="mono">{formatUsdTiered(priceChanged.now, "up")}</span>. Проверьте новую оценку и подтвердите снова — без
+                          подтверждения ничего не отправляется.
+                        </>
+                      ) : priceError !== null ? (
+                        "новую цену узнать не удалось. Ничего не отправлено — повторите оценку ниже."
+                      ) : (
+                        "узнаём новую цену… Ничего не отправлено."
+                      )}
                     </div>
                   </div>
                 </div>

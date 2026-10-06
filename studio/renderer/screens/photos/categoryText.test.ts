@@ -5,7 +5,7 @@ import {
   categoryMeta,
   createdTime,
   descriptionProblem,
-  hiddenFailureText,
+  hiddenFailure,
   interruptedText,
   libraryHeld,
   nameProblem,
@@ -83,18 +83,22 @@ describe("the pool as shown", () => {
 });
 
 describe("the meta line under a category's name", () => {
+  // Segments, joined with « · » on screen: none breaks inside («создана 5 окт.» stays on one line).
   test("a new category: its label for the model, its style, the day it was made and what it cost", () => {
-    expect(categoryMeta(PARIS, "created")).toBe("для модели «Paris cafes» · телефон · создана 5 окт. · потрачено $0.005");
+    expect(categoryMeta(PARIS, "created")).toEqual(["для модели «Paris cafes»", "телефон", "создана 5 окт.", "потрачено $0.005"]);
   });
 
   test("regenerated in this window: the day of the new pool and the whole spend", () => {
-    expect(categoryMeta({ ...PARIS, label: "Paris cafes and bistros", spentMicros: 11_000, updatedAt: "2026-10-06T10:00:00.000Z" }, "regenerated")).toBe(
-      "для модели «Paris cafes and bistros» · телефон · пересоздана 6 окт. · всего потрачено $0.011",
-    );
+    expect(categoryMeta({ ...PARIS, label: "Paris cafes and bistros", spentMicros: 11_000, updatedAt: "2026-10-06T10:00:00.000Z" }, "regenerated")).toEqual([
+      "для модели «Paris cafes and bistros»",
+      "телефон",
+      "пересоздана 6 окт.",
+      "всего потрачено $0.011",
+    ]);
   });
 
   test("a regeneration that failed in this window keeps the old pool, but the spend is the whole of it", () => {
-    expect(categoryMeta({ ...PARIS, spentMicros: 16_000 }, "retried")).toBe("для модели «Paris cafes» · телефон · создана 5 окт. · всего потрачено $0.016");
+    expect(categoryMeta({ ...PARIS, spentMicros: 16_000 }, "retried")).toEqual(["для модели «Paris cafes»", "телефон", "создана 5 окт.", "всего потрачено $0.016"]);
   });
 
   test("the create dialog's line once the category is made: what this call cost", () => {
@@ -176,31 +180,39 @@ describe("a failed create or regenerate", () => {
     expect(callFailure({ code: "AUTH_INVALID" }).code).toBeNull();
   });
 
+  // The amount is apart from the title: the notice sets it in mono, as the design does («· потрачено $0.011»).
   test("a regenerate keeps the old pool and says so", () => {
     expect(regenFailure({ code: "POOL_REJECTED", spentMicros: 11_000 })).toEqual({
-      title: "Старый набор остался · потрачено $0.011",
+      title: "Старый набор остался",
+      spent: "$0.011",
       text: "Модель дважды вернула неподходящий набор — переформулируйте описание и пересоздайте снова.",
       code: "POOL_REJECTED · обе попытки учтены",
     });
     expect(regenFailure({ code: "MODERATION_REFUSED", spentMicros: 6_000 })).toEqual({
-      title: "Старый набор остался · потрачено $0.006",
+      title: "Старый набор остался",
+      spent: "$0.006",
       text: "Модель отказалась составлять набор по этому описанию — переформулируйте его.",
       code: "MODERATION_REFUSED · отказ не списан, оплачена первая попытка",
     });
     expect(regenFailure({ code: "INTERNAL", spentMicros: 5_000 })).toEqual({
-      title: "Старый набор остался · потрачено $0.005",
+      title: "Старый набор остался",
+      spent: "$0.005",
       text: "Новый набор оплачен, но не сохранился: папка библиотеки недоступна для записи. Проверьте её в Настройках и пересоздайте снова.",
       code: null,
     });
     // Refused before any spend: nothing to add up.
-    expect(regenFailure({ code: "IN_FLIGHT" }).title).toBe("Старый набор остался");
+    expect(regenFailure({ code: "IN_FLIGHT" }).spent).toBeNull();
   });
 
-  test("the notice under the card when the dialog was hidden names the category and what it cost", () => {
-    expect(hiddenFailureText("Кофейни Парижа", { code: "POOL_REJECTED", spentMicros: 11_000 })).toBe(
-      "Категория «Кофейни Парижа» не создана: модель дважды вернула неподходящий набор — переформулируйте описание. Потрачено $0.011.",
-    );
-    expect(hiddenFailureText("Рынки", { code: "PRICE_CHANGED" })).toBe("Категория «Рынки» не создана: цена выросла, ничего не отправлено — подтвердите новую цену в окне.");
+  test("the notice under the card when the dialog was hidden names the category and what it cost (the amount apart, set in mono)", () => {
+    expect(hiddenFailure("Кофейни Парижа", { code: "POOL_REJECTED", spentMicros: 11_000 })).toEqual({
+      text: "Категория «Кофейни Парижа» не создана: модель дважды вернула неподходящий набор — переформулируйте описание.",
+      spent: "$0.011",
+    });
+    expect(hiddenFailure("Рынки", { code: "PRICE_CHANGED" })).toEqual({
+      text: "Категория «Рынки» не создана: цена выросла, ничего не отправлено — подтвердите новую цену в окне.",
+      spent: null,
+    });
   });
 });
 

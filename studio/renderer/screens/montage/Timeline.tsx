@@ -18,7 +18,7 @@ import { type OwnVideos, type VideoProblem, videoLookup } from "./ownVideos";
 import type { PhotoProblem } from "./renderBlock";
 import { type ActionState, resolveSelection, selectionActions } from "./selection";
 import type { DraftSession } from "./session";
-import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, seekInto, snapEdge, snapTargets, stepPlayhead, tileCount, TIMELINE_MS } from "./timelineScale";
+import { boundaryAt, boundaryMs, clockMs, MAX_ZOOM, MIN_ZOOM, msAtFraction, rulerMarks, seekInto, snapEdge, snapTargets, stepPlayhead, tileCount, TIMELINE_MS, trimHandlePx } from "./timelineScale";
 import { usePlayheadRest, usePlayheadStep, usePlaying } from "./usePlayhead";
 import { playheadStep, type TimelineState, useSelectionCommands } from "./useTimeline";
 import { durationLimitMs, trimStartTo } from "./videoTrim";
@@ -621,11 +621,14 @@ export function Timeline({ session, spec, avatarId, flagged, highlighted, flagge
                               : null;
                     const refused = problem !== null || videoProblem !== null;
                     const classes = ["ed-clip-slot", selected ? "ed-clip-on" : "", refused ? "ed-clip-flagged" : highlighted.includes(i) ? "ed-clip-warn" : "", lifted ? "ed-clip-lifted" : ""].filter(Boolean).join(" ");
+                    // The slot is drawn 2 px narrower than its time (1 px each side); its handles fit inside it.
+                    const handlePx = trimHandlePx(clip.durationMs * pxPerMs - 2);
                     const handle = (edge: "start" | "end") => (
                       <span
                         role="slider"
                         tabIndex={0}
-                        className={edge === "start" ? "hd hd-l" : "hd hd-r"}
+                        className={edge === "start" ? (handlePx.start === 0 ? "hd hd-l hd-key" : "hd hd-l") : "hd hd-r"}
+                        style={{ width: `${edge === "start" ? handlePx.start : handlePx.end}px` }}
                         aria-label={`Длительность кадра ${i + 1}: ${edge === "start" ? "левый" : "правый"} край`}
                         aria-valuemin={MIN_CLIP_MS}
                         aria-valuemax={edgeMax(spec, i, clip, edge)}

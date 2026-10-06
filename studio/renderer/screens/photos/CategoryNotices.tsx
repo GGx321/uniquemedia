@@ -5,7 +5,7 @@ import { useEngineView } from "../../engine/react";
 import { errorText } from "../../lib/errors";
 import { Icon } from "../../ui/Icon";
 import { busyElsewhere, categoryPrice, worstOf } from "./categoryParts";
-import { hiddenFailureText, interruptedText } from "./categoryText";
+import { hiddenFailure, interruptedText } from "./categoryText";
 import { paidBlockedReason } from "./runForm";
 
 // CS.3: what the category calls leave under the generate card (the CategoryStates sheet): a create that failed while its dialog was hidden,
@@ -109,7 +109,7 @@ export function CategoryCardNotices({
   onEditInterrupted: (call: CategoryInterrupted) => void;
 }) {
   const outcome = slice.outcomes.create;
-  const failed = !dialogOpen && outcome?.ok === false ? outcome : null;
+  const failed = !dialogOpen && outcome?.ok === false ? hiddenFailure(outcome.call.name, outcome.error) : null;
   const interrupted = slice.list.status === "ready" ? slice.list.interrupted.filter((c) => c.kind === "create") : [];
   return (
     <>
@@ -119,7 +119,15 @@ export function CategoryCardNotices({
             <Icon name="alert" size={16} />
           </span>
           <div className="notice-body">
-            <div className="notice-text">{hiddenFailureText(failed.call.name, failed.error)}</div>
+            <div className="notice-text">
+              {failed.text}
+              {failed.spent !== null && (
+                <>
+                  {" "}
+                  Потрачено <span className="mono">{failed.spent}</span>.
+                </>
+              )}
+            </div>
             <div className="notice-actions">
               <button type="button" className="btn btn-s" onClick={onEdit}>
                 Изменить описание

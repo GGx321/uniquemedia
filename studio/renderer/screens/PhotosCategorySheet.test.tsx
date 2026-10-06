@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CATEGORY_REASONS_RU, ERROR_MESSAGES_RU } from "../../shared/engine";
-import { callsOf, describeElement, flush, inAct, runAll } from "../testing";
+import { callsOf, describeElement, flush, inAct, runAll, withText } from "../testing";
 import { chipsGroup, interruptedCreate, interruptedRegenerate, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
 
 // CS.3: «Мои категории» (CatSheet, CatSheetRename, CatSheetRegen, CatSheetRegenBusy, CatSheetRegenFailed, CatSheetRegenDone,
@@ -42,7 +42,9 @@ describe("the panel", () => {
     expect(within(row("Горы зимой")).getByText("5 мест · 3 наряда")).toBeDefined();
     expect(describeElement(document.activeElement)).toBe(describeElement(row("Кофейни Парижа")));
     expect(within(sheet()).getByRole("heading", { level: 3, name: "Кофейни Парижа" })).toBeDefined();
-    expect(within(sheet()).getByText("для модели «Paris cafes» · телефон · создана 1 сент. · потрачено $0.005")).toBeDefined();
+    expect(within(sheet()).getByText(withText(/^для модели «Paris cafes» · телефон · создана 1 сент\. · потрачено \$0\.005$/))).toBeDefined();
+    // Each segment of the line is its own unbreakable piece: «создана 1 сент.» never splits over two lines.
+    expect(within(sheet()).getByText("создана 1 сент.").className).toBe("nowrap");
     expect(within(sheet()).getByText(PARIS.description)).toBeDefined();
     expect(within(sheet()).getByText("Места · 6")).toBeDefined();
     expect(within(sheet()).getByText("Наряды · 4")).toBeDefined();
@@ -196,7 +198,8 @@ describe("regenerate (paid)", () => {
     runAll(scheduler);
     await flush();
     expect(within(sheet()).getByText((_, el) => el?.textContent === "Набор пересоздан · потрачено $0.006")).toBeDefined();
-    expect(within(sheet()).getByText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · пересоздана \d+ \S+ · всего потрачено \$0\.011$/)).toBeDefined();
+    expect(within(sheet()).getByText(withText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · пересоздана \d+ \S+ · всего потрачено \$0\.011$/))).toBeDefined();
+    expect(within(sheet()).getByText(/^пересоздана \d+ \S+$/).className).toBe("nowrap");
     expect(within(sheet()).getByText("Кофейни и бистро Парижа")).toBeDefined();
     expect(within(sheet()).queryByLabelText(/^Новое описание/) === null).toBe(true);
     // The box closed with the focus in it: the focus goes to «Пересоздать…», which opens it again.
@@ -216,8 +219,10 @@ describe("regenerate (paid)", () => {
     expect(describeElement(document.activeElement)).toBe(describeElement(notice));
     expect(within(sheet()).getByText("Модель дважды вернула неподходящий набор — переформулируйте описание и пересоздайте снова.")).toBeDefined();
     expect(within(sheet()).getByText("POOL_REJECTED · обе попытки учтены")).toBeDefined();
+    // The amount in the title is set in mono, as the design has it.
+    expect(within(notice as HTMLElement).getByText("$0.011").className).toBe("mono");
     expect(within(sheet()).getByText("Места · 6")).toBeDefined();
-    expect(within(sheet()).getByText("для модели «Paris cafes» · телефон · создана 1 сент. · всего потрачено $0.016")).toBeDefined();
+    expect(within(sheet()).getByText(withText(/^для модели «Paris cafes» · телефон · создана 1 сент\. · всего потрачено \$0\.016$/))).toBeDefined();
     expect(isDisabled(regenButton())).toBe(false);
     expect(regenButton().textContent).toBe("Пересоздать · до $0.045");
   });
@@ -382,7 +387,7 @@ describe("calls a closed Studio left", () => {
     await flush();
     expect(callsOf(engine, "categories.dismissInterrupted")).toHaveLength(1);
     await waitFor(() => expect(within(sheet()).queryByText("Пересоздание прервано") === null).toBe(true));
-    expect(within(sheet()).getByText("для модели «Paris cafes» · телефон · создана 1 сент. · потрачено $0.028")).toBeDefined();
+    expect(within(sheet()).getByText(withText(/^для модели «Paris cafes» · телефон · создана 1 сент\. · потрачено \$0\.028$/))).toBeDefined();
   });
 
   test("an interrupted regeneration whose cost the ledger cannot tell is not forgotten: the refusal says why", async () => {
