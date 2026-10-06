@@ -15,6 +15,7 @@ import {
   writeJsonAtomic,
 } from "./durableFs";
 import { CategoryStore } from "./categories";
+import { SceneSetStore } from "./sceneSets";
 import { isEligiblePhoto, replayRejected, type PhotoState } from "./eligibility";
 import { LibraryError } from "./errors";
 import { isLibraryId } from "./ids";
@@ -217,6 +218,8 @@ export class Library {
   readonly root: string;
   /** The owner's own scene categories (CS.2): `<root>/categories`, library-wide, shared by every avatar. */
   readonly categories: CategoryStore;
+  /** The avatars' scene sets (CS.4a): `<root>/avatars/<avatarId>/scenes`, an avatar's planned run held before its images are paid for. */
+  readonly sceneSets: SceneSetStore;
   /**
    * The folder's own `library.json` `createdAt` (review, real bug: canary
    * run 36272376999). A folder's canonical path plus its dev:ino
@@ -255,6 +258,7 @@ export class Library {
     this.root = root;
     this.createdAt = createdAt;
     this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink });
+    this.sceneSets = new SceneSetStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink });
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;
@@ -1175,6 +1179,11 @@ export class Library {
       await renameWithRetry(tempDir, finalDir);
       await fsyncDir(this.#runsDir());
     });
+  }
+
+  /** Whether `runs/<runId>/` is there (a scene set is used exactly when its pre-issued run's folder exists). */
+  async runFolderExists(runId: string): Promise<boolean> {
+    return this.#runExists(runId);
   }
 
   /**

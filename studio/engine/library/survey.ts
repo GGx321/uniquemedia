@@ -12,6 +12,7 @@ import {
   MONTAGES_DIR,
   PHOTOS_DIR,
   RUNS_DIR,
+  SCENES_DIR,
   THUMBS_DIR,
   REJECTED_FILE,
   isFromNewerVersion,
@@ -211,6 +212,11 @@ export async function surveyLibrary(root: string): Promise<Survey> {
     const montagesDir = join(path, MONTAGES_DIR);
     for (const { name } of await entriesOf(montagesDir)) {
       if (isTempName(name)) survey.moves.push({ path: join(montagesDir, name), reason: "temp-file" });
+    }
+    // A scene set is written to a temp name first, like a draft; a crash mid-write leaves that temp behind (the set itself is the old one or the new one).
+    const scenesDir = join(path, SCENES_DIR);
+    for (const { name } of await entriesOf(scenesDir)) {
+      if (isTempName(name)) survey.moves.push({ path: join(scenesDir, name), reason: "temp-file" });
     }
     // A torn last line is an interrupted append; the next append moves it to
     // rejected.jsonl.torn, so it is only skipped here. A bad complete line is
