@@ -1,13 +1,17 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { SceneCategory, type AvatarSummary, type EngineError, type Estimate, type RunRequest } from "../../../shared/engine";
-import { useEngine } from "../../engine/react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import type { AvatarSummary, CategoryInterrupted, EngineError, Estimate, RunRequest } from "../../../shared/engine";
+import { useCategoryLibrary, useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
 import { formatUsd } from "../../lib/money";
 import { useNavigate } from "../../navigation";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { CategoryCreateDialog, type CreateDialogClose, type CreateDialogStart } from "./CategoryCreateDialog";
+import { CategoryCardNotices } from "./CategoryNotices";
+import { CategoryRow } from "./CategoryRow";
+import { CategorySheet } from "./CategorySheet";
 import {
-  CATEGORY_LABEL,
+  arrangeCategories,
   clampCount,
   COUNT_MAX,
   COUNT_MIN,
@@ -19,6 +23,8 @@ import {
   type RunCategory,
   type RunForm,
   runRequest,
+  sameCategories,
+  toggleCategory,
 } from "./runForm";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
 
@@ -95,7 +101,24 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const [error, setError] = useState<EngineError | null>(null);
   const [retry, setRetry] = useState(0);
 
-  const request = runRequest(avatar.avatarId, form);
+  // CS.3: the owner's own categories (the window's slice): chips after the built-ins in creation order, the create dialog and the sheet.
+  const { library, view: categorySlice } = useCategoryLibrary();
+  const customs = categorySlice.list.status === "ready" ? categorySlice.list.categories : null;
+  const customOrder = useMemo(() => (customs ?? []).map((c) => c.categoryId), [customs]);
+  // The run asks only for categories the library holds, the custom ones in creation order (a chip clicked last never takes a remainder
+  // photo from one made earlier); a category deleted, or another library's, is not asked for at all.
+  const categories = arrangeCategories(form.categories, customOrder);
+  const listReady = customs !== null;
+  useEffect(() => {
+    // The form itself forgets them once the library is listed (not while it is being listed again: nothing is dropped meanwhile).
+    if (listReady && !sameCategories(categories, form.categories)) onFormChange({ ...form, categories });
+  }, [listReady, categories, form, onFormChange]);
+  const [createOpen, setCreateOpen] = useState<CreateDialogStart | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const chipsRef = useRef<HTMLDivElement>(null);
+  const ownCreate = categorySlice.call?.kind === "create" ? categorySlice.call : null;
+
+  const request = runRequest(avatar.avatarId, { ...form, categories });
   // The engine prices a run with the age check and the models it has now: a
   // change to any of them (Settings, another window) asks again, and the old
   // price is not shown meanwhile.
@@ -201,7 +224,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   // Another paid command (a resume row's) is in flight for this avatar (L5): this card locks too, though it is not the one sending.
   const lockedByOther = paidInFlight && !busy;
   const locked = busy || lockedByOther;
-  const perCategory = photosPerCategory(form.count, form.categories);
+  const perCategory = photosPerCategory(form.count, categories);
   const blockedReason =
     paidBlockedReason(view) ??
     (avatar.status !== "active"
@@ -214,10 +237,59 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
             ? "Дождитесь окончания другого платного действия."
             : null);
 
-  function toggleCategory(category: RunCategory): void {
-    const on = form.categories.includes(category);
-    onFormChange({ ...form, categories: on ? form.categories.filter((c) => c !== category) : [...form.categories, category] });
+  function toggle(category: RunCategory): void {
+    onFormChange({ ...form, categories: toggleCategory(categories, category, customOrder) });
   }
+
+  // ---------- the create dialog and the sheet ----------
+
+  /** What opened the dialog: the focus goes back there when it is cancelled («+ Своя», or «Мои категории» for one opened from the sheet). */
+  const createOpener = useRef<"add" | "sheet" | null>(null);
+
+  /** Opens «Новая категория». A fresh one forgets the last outcome; `keep` keeps a failure the dialog is opened to show again. */
+  function openCreate(start: CreateDialogStart, from: "add" | "sheet" | null, keep = false): void {
+    if (!keep && categorySlice.call?.kind !== "create") library.clearOutcome("create");
+    // A fresh list says whether another window composes a category now; a fresh price is the one the button offers.
+    library.reload();
+    library.refreshPrice();
+    createOpener.current = from;
+    setSheetOpen(false);
+    setCreateOpen(start);
+  }
+
+  function openSheet(): void {
+    library.reload();
+    library.refreshPrice();
+    setSheetOpen(true);
+  }
+
+  const rowControl = (name: "add" | "sheet"): HTMLElement | null =>
+    chipsRef.current?.querySelector<HTMLElement>(name === "add" ? "[data-add-category]" : "[data-my-categories]") ?? null;
+
+  function closeCreate(how: CreateDialogClose): void {
+    setCreateOpen(null);
+    // Seen in the dialog: not told again under the card. Hidden while the model works, the outcome is still to come.
+    if (how !== "hide") library.clearOutcome("create");
+  }
+
+  /** «Создать снова» on a create a closed Studio left: a new request at the price the button showed, followed in the dialog. */
+  function retryInterrupted(call: CategoryInterrupted, accepted: Estimate): void {
+    library.clearOutcome("create");
+    void library.create(call.name, call.description, accepted);
+    createOpener.current = sheetOpen ? "sheet" : null;
+    setSheetOpen(false);
+    setCreateOpen({ name: call.name, description: call.description, focus: "name" });
+  }
+
+  // After «Скрыть» the chip with the spinner; after «Готово» the new chip; after a cancel what opened the dialog.
+  const focusAfterCreate = (how: CreateDialogClose, categoryId: string | null): HTMLElement | null =>
+    how === "hide"
+      ? (chipsRef.current?.querySelector<HTMLElement>("[data-chip-wait]") ?? null)
+      : how === "done" && categoryId !== null
+        ? (chipsRef.current?.querySelector<HTMLElement>(`[data-category="${categoryId}"]`) ?? null)
+        : createOpener.current !== null
+          ? rowControl(createOpener.current)
+          : null;
 
   // ---------- the button ----------
 
@@ -258,7 +330,6 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const anglesLabel = `${ids}-angles`;
   const anglesHint = `${ids}-angles-hint`;
   const countLabel = `${ids}-count`;
-  const catsLabel = `${ids}-cats`;
   const imageModel = view.settings ? modelName(view.settings.imageModel) : null;
   // The engine's own route (runs/plan.ts's runRoute) sends the settings' image quality (null for a model with no quality knob) to the
   // settings' own image model, but none once that model already is the Seedream fallback — nothing lower to fall back to (L3).
@@ -301,34 +372,23 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
               </div>
             </div>
 
-            <div className="photos-gen-cats">
-              <span id={catsLabel} className="lbl">
-                Категории · фото в каждой
-              </span>
-              <div className="photos-chips" role="group" aria-labelledby={catsLabel}>
-                {SceneCategory.options.map((category) => {
-                  const on = form.categories.includes(category);
-                  const n = perCategory.get(category);
-                  return (
-                    <button
-                      key={category}
-                      type="button"
-                      className={on ? "chip chip-on" : "chip"}
-                      aria-pressed={on}
-                      aria-label={on && n !== undefined ? `${CATEGORY_LABEL[category]}: ${n} фото` : CATEGORY_LABEL[category]}
-                      onClick={() => toggleCategory(category)}
-                    >
-                      {CATEGORY_LABEL[category]}
-                      {/* Always present, like the mockup's: an off chip keeps the same 6px gap after its label. */}
-                      <span className="mono photos-chip-n" aria-hidden="true">
-                        {on && n !== undefined ? n : ""}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-              {form.categories.includes("glam") && <span className="faint photos-note photos-cats-note">Гламур — только неоткровенные наряды: мини, корсет, облегающее платье.</span>}
-            </div>
+            <CategoryRow
+              rootRef={chipsRef}
+              categories={categories}
+              perCategory={perCategory}
+              list={categorySlice.list}
+              creating={ownCreate}
+              outcome={categorySlice.outcomes.create}
+              onToggle={toggle}
+              onCreate={() => openCreate({ name: "", description: "", focus: "name" }, "add")}
+              onReopen={() => {
+                if (ownCreate === null) return;
+                createOpener.current = "add";
+                setCreateOpen({ name: ownCreate.name, description: ownCreate.description, focus: "name" });
+              }}
+              onSheet={openSheet}
+              onRetry={() => library.reload()}
+            />
 
             <div className="photos-gen-shots">
               <div className="photos-lbl-row">
@@ -444,6 +504,36 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
               </button>
             ) : undefined
           }
+        />
+      )}
+      <CategoryCardNotices
+        library={library}
+        slice={categorySlice}
+        dialogOpen={createOpen !== null}
+        onEdit={() => {
+          const failed = categorySlice.outcomes.create;
+          if (failed !== null) openCreate({ name: failed.call.name, description: failed.call.description, focus: "description" }, "add", true);
+        }}
+        onRetryInterrupted={retryInterrupted}
+        onEditInterrupted={(call) => openCreate({ name: call.name, description: call.description, focus: "description" }, "add")}
+      />
+      {createOpen !== null && (
+        <CategoryCreateDialog
+          start={createOpen}
+          onClose={closeCreate}
+          onOpenSheet={() => {
+            closeCreate("cancel");
+            openSheet();
+          }}
+          focusAfter={focusAfterCreate}
+        />
+      )}
+      {sheetOpen && (
+        <CategorySheet
+          onClose={() => setSheetOpen(false)}
+          onCreate={(start) => openCreate(start, "sheet")}
+          onRetryCreate={retryInterrupted}
+          returnFocus={() => rowControl("sheet")}
         />
       )}
     </>

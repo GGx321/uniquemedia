@@ -1,0 +1,835 @@
+/* CS.3: custom categories on the Photos screen (the CS.0 artboards: PhotosCS.dc.html, CategoryStates.dc.html). The category row's
+   chips, the «Новая категория» dialog and the «Мои категории» panel. Sizes and colours are the artboards' own, through theme.css's
+   tokens; the new classes are the README's «Classes» (.chip-add, .chip-wait, .lbtn, .lrow, .xbtn, .link-btn …), prefixed .cat-
+   where they are this feature's own. */
+
+/* ── shared ── */
+
+.nowrap {
+  white-space: nowrap;
+}
+
+/* An inline text button (a link to an action), the design's .link-btn. */
+.link-btn {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--link);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: var(--accent-40);
+  text-underline-offset: 2px;
+}
+
+.link-btn:hover {
+  color: var(--accent-text);
+}
+
+/* A small text button in a label row: «Мои категории · 3», «Пересоздать…». */
+.lbtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  margin: -3px -6px -3px 0;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.lbtn:hover:not(:disabled) {
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.lbtn-n {
+  font-size: 10.5px;
+  color: var(--faint);
+}
+
+.ibtn-s {
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+}
+
+/* A small × on a pool row or an outfit tag. */
+.xbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.xbtn:hover:not([aria-disabled="true"]) {
+  background: var(--border-strong);
+  color: var(--text);
+}
+
+.xbtn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── the category row ── */
+
+.cat-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  height: 16px;
+}
+
+/* A custom name is up to 40 chars: the chip stops at 220px and the name ends in «…» (the whole of it in title and aria-label). */
+.cat-chip {
+  max-width: 220px;
+}
+
+.chip-cap {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chip-add {
+  padding: 0 12px 0 10px;
+  border-style: dashed;
+  border-color: var(--dashed);
+  color: var(--muted);
+}
+
+.chip-add:hover:not([aria-disabled="true"]) {
+  border-color: var(--accent-ring);
+  color: var(--accent-text);
+}
+
+.chip-add[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* A pool being composed: it spins and reopens its dialog; it is not a choice. */
+.chip-wait {
+  color: var(--muted);
+}
+
+.chip-spin {
+  width: 11px;
+  height: 11px;
+  border-width: 1.6px;
+}
+
+.chip-more {
+  color: var(--muted);
+}
+
+.chip-more-icon {
+  display: inline-flex;
+}
+
+.chip-more-up {
+  transform: rotate(180deg);
+}
+
+.cat-list-failed {
+  color: var(--danger);
+}
+
+/* A photo's category on its tile (CS.0 decision 6): a custom name is up to 40 chars, cut with «…» inside the tile. */
+.photo-label {
+  display: block;
+  max-width: calc(100% - 16px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 22px;
+}
+
+/* ── dialog and panel over the window ── */
+
+.cat-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--scrim);
+}
+
+.cat-scrim-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* ── «Новая категория» ── */
+
+.cat-dlg {
+  display: flex;
+  flex-direction: column;
+  width: 520px;
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: var(--shadow-frame);
+}
+
+.cat-dlg:focus {
+  outline: none;
+}
+
+.cat-dlg-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 18px 20px 14px;
+}
+
+.cat-dlg-titles {
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.cat-dlg-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cat-dlg-title {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-done-tag {
+  background: var(--ok-14);
+  color: var(--ok);
+}
+
+.cat-dlg-sub {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.cat-dlg-meta {
+  margin: 0;
+}
+
+.cat-dlg-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-height: 0;
+  padding: 0 20px 18px;
+  overflow-y: auto;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.cat-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.cat-form-busy {
+  opacity: 0.6;
+}
+
+.cat-ta {
+  display: block;
+  width: 100%;
+  height: 112px;
+  padding: 9px 12px;
+  line-height: 1.45;
+  resize: none;
+}
+
+.cat-ta-busy {
+  opacity: 0.6;
+}
+
+/* The app's focus ring (ui.css draws it for buttons and inputs): a textarea gets the same accent ring, not the browser's own. */
+.cat-ta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* The pool being composed, the design's .job-progress in one row with a spinner. */
+.cat-progress {
+  flex-direction: row;
+  padding: 12px 16px;
+}
+
+.cat-progress-s {
+  padding: 10px 12px;
+}
+
+.cat-progress-spin {
+  margin-top: 2px;
+  color: var(--link);
+}
+
+.cat-progress-label {
+  margin: 0;
+}
+
+.cat-progress-text {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text-2);
+}
+
+.cat-code {
+  margin: 0;
+  font-size: 10.5px;
+}
+
+.notice:focus {
+  outline: none;
+}
+
+.notice:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.cat-cost {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--inset);
+}
+
+.cat-cost-busy {
+  opacity: 0.6;
+}
+
+.cat-cost-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.cat-cost-source {
+  font-size: 10.5px;
+}
+
+.cat-cost-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  font-size: 11.5px;
+}
+
+.cat-dlg-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+}
+
+.cat-dlg-foot-note {
+  margin-right: auto;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+/* A paid button's reason when it waits (paidBlockedReason), under the notice's own buttons. */
+.cat-why {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.cat-why-end {
+  text-align: right;
+}
+
+/* ── the pool: places, outfits, shots ── */
+
+.cat-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cat-block-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.cat-block-note {
+  font-size: 10.5px;
+}
+
+.cat-places {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cat-place {
+  display: grid;
+  grid-template-areas:
+    "name times"
+    "acts acts";
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 2px 12px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+/* In the panel the times follow the name, and the × stands at the right. */
+.cat-place-edit {
+  grid-template-areas:
+    "name times . x"
+    "acts acts acts acts";
+  grid-template-columns: minmax(0, auto) auto minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 8px 0;
+}
+
+.cat-place-name {
+  display: flex;
+  grid-area: name;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cat-place-text {
+  overflow: hidden;
+  font-size: 12.5px;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-mirror {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--info);
+}
+
+.cat-times {
+  display: flex;
+  grid-area: times;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.cat-place-edit .cat-times {
+  justify-content: flex-start;
+}
+
+.cat-place .xbtn {
+  grid-area: x;
+}
+
+.cat-time {
+  height: 18px;
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+
+.cat-acts {
+  grid-area: acts;
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-outfits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cat-outfit {
+  height: 22px;
+}
+
+.cat-outfit-edit {
+  gap: 4px;
+  height: 24px;
+  padding: 0 4px 0 10px;
+}
+
+.cat-shot-bar {
+  display: flex;
+  gap: 2px;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 5px;
+}
+
+.cat-shot-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+}
+
+.cat-shot-legend li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+
+.cat-pool {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.cat-pool-busy {
+  opacity: 0.5;
+}
+
+.cat-pool-note {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+}
+
+/* ── «Мои категории» ── */
+
+.cat-sheet {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  width: 760px;
+  max-width: 100%;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow-frame);
+}
+
+.cat-sheet:focus {
+  outline: none;
+}
+
+.cat-sheet-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 12px;
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+/* The titles push «Новая» and × to the right (an empty panel has no «Новая»). */
+.cat-sheet-titles {
+  min-width: 0;
+  margin-right: auto;
+}
+
+.cat-sheet-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
+}
+
+.cat-sheet-sub {
+  margin: 5px 0 0;
+}
+
+.cat-sheet-alerts {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 24px 0;
+}
+
+.cat-sheet-state {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+}
+
+.cat-sheet-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin: auto 0;
+  padding: 48px 40px;
+  text-align: center;
+}
+
+.cat-sheet-empty-title {
+  margin: 4px 0 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.cat-sheet-empty-text {
+  max-width: 440px;
+  font-size: 12.5px;
+}
+
+.cat-sheet-body {
+  display: flex;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+.cat-sheet-list {
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 2px;
+  width: 220px;
+  padding: 12px;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.cat-sheet-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lrow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.lrow:hover {
+  background: var(--panel-2);
+}
+
+.lrow-on,
+.lrow-on:hover {
+  background: var(--accent-soft);
+}
+
+.lrow-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lrow-on .lrow-name {
+  color: var(--accent-text);
+}
+
+.lrow-meta {
+  font-size: 10.5px;
+}
+
+.cat-sheet-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 10px 0;
+}
+
+.cat-sheet-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--warn);
+}
+
+.cat-sheet-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.cat-sheet-builtins {
+  margin: auto 0 0;
+  padding: 10px;
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.cat-detail {
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+  padding: 18px 24px 20px;
+  overflow-y: auto;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.cat-detail-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cat-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+}
+
+.cat-name {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cat-delete {
+  margin-left: auto;
+}
+
+.cat-meta {
+  margin: 0;
+}
+
+.cat-rename-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cat-rename-in {
+  flex-grow: 1;
+  height: 34px;
+}
+
+.cat-rename .field-error {
+  margin-top: 6px;
+}
+
+.cat-confirm {
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.cat-confirm-title {
+  margin-bottom: 4px;
+}
+
+.cat-confirm-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.cat-desc {
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.cat-regen {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--inset);
+}
+
+.cat-regen .cat-ta {
+  height: 92px;
+}
+
+.cat-regen-notice {
+  padding: 10px 12px;
+}
+
+.cat-regen-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cat-regen-price {
+  margin-right: auto;
+}
+
+/* Under 1440 the panel is narrower (the design's 680 px at 1200) and its list too. */
+@media (max-width: 1439px) {
+  .cat-sheet {
+    width: 680px;
+  }
+
+  .cat-sheet-list {
+    width: 196px;
+  }
+}
