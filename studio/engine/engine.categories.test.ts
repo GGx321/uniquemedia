@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { chmod, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CategoryPool, CategorySummary, Estimate } from "../shared/engine";
@@ -809,6 +809,160 @@ describe("a regenerate whose paid pool cannot be stored", () => {
     expect(kept?.spentMicros).toBe(5_000 + 5_100);
     expect(kept?.pool).toEqual(POOL);
     expect(events().filter((e) => e.type === "category.changed")).toHaveLength(1);
+  });
+});
+
+// ---------- a job's cost is booked once (the booked-jobs key) ----------
+
+describe("a job's cost is booked into its category once", () => {
+  /** A disk that refuses to unlink a pending record while `refuse.on`, and fails the folder's flush after a category record's rename while `flush.on`. */
+  const refuse = { on: false, times: Infinity };
+  const flush = { on: false };
+  const hooks = {
+    beforeUnlink: (path: string) => {
+      if (refuse.on && path.includes("pending-") && refuse.times > 0) {
+        refuse.times -= 1;
+        throw Object.assign(new Error("EBUSY: the record cannot be removed"), { code: "EBUSY" });
+      }
+    },
+    afterRename: (path: string) => {
+      if (flush.on && !path.includes("pending-")) {
+        flush.on = false;
+        throw Object.assign(new Error("EIO: the folder could not be flushed"), { code: "EIO" });
+      }
+    },
+  };
+  beforeEach(() => {
+    refuse.on = false;
+    refuse.times = Infinity;
+    flush.on = false;
+  });
+
+  const disk = () => ({ library: { testHooks: hooks } });
+
+  async function leaveRegenerate(id: `cat-${string}`, jobId: string): Promise<void> {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.writePending({ jobId, kind: "regenerate", name: "Кофейни", description: "кофейни", categoryId: id, startedAt: "2026-10-05T12:05:00.000Z" });
+  }
+
+  async function settledAt(jobId: string, costMicros: number): Promise<void> {
+    await writeLedger(dir(), [
+      { type: "reserve", attemptId: `${jobId}:pool#1`, jobId, scope: { avatarJobId: jobId }, model: "x-ai/grok-4.3", worstMicros: ATTEMPT_WORST, at: "2026-10-05T12:05:01.000Z" },
+      { type: "settle", attemptId: `${jobId}:pool#1`, costMicros, estimated: false, at: "2026-10-05T12:05:09.000Z" },
+    ]);
+  }
+
+  const dismiss = (engine: Awaited<ReturnType<typeof startEngine>>["engine"], jobId: string) => engine.handle(command("categories.dismissInterrupted", { jobId }));
+
+  test("a «Убрать» whose record cannot be removed answers ok, and the next «Убрать» and listing add nothing more", async () => {
+    refuse.on = true;
+    refuse.times = 1;
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    await leaveRegenerate(id, "job-00000042");
+    await settledAt("job-00000042", 6_000);
+    const { engine } = await startEngine(dir(), { deps: disk() });
+
+    const first = await dismiss(engine, "job-00000042");
+    const second = await dismiss(engine, "job-00000042");
+    const listed = await listOf(engine);
+
+    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 6_000);
+    expect(ok(first).result).toEqual({ jobId: "job-00000042" });
+    expect(ok(second).result).toEqual({ jobId: "job-00000042" });
+    expect(listed.interrupted).toEqual([]);
+    expect(await folder()).toEqual([`${id}.json`]);
+  });
+
+  test("a disk that keeps refusing never makes a repeated «Убрать» count the call again", async () => {
+    refuse.on = true;
+    refuse.times = Infinity;
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    await leaveRegenerate(id, "job-00000042");
+    await settledAt("job-00000042", 6_000);
+    const { engine } = await startEngine(dir(), { deps: disk() });
+
+    for (let n = 0; n < 3; n += 1) ok(await dismiss(engine, "job-00000042"));
+
+    expect((await listOf(engine)).categories[0]?.spentMicros).toBe(5_000 + 6_000);
+    expect((await listOf(engine)).interrupted).toEqual([]);
+  });
+
+  test("after a restart, a regenerate that finished but whose record survived is dismissed without counting its cost a second time", async () => {
+    refuse.on = true;
+    refuse.times = Infinity;
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+    const first = await startEngine(dir(), { net, deps: disk() });
+    ok(await first.engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+    const jobId = String(ledgerLines(dir())[0]?.jobId);
+    expect((await listOf(first.engine)).categories[0]?.spentMicros).toBe(5_000 + 5_100);
+
+    // The process is gone; a new one over the same library sees a pending record and no memory of the call.
+    refuse.on = false;
+    const second = await startEngine(dir());
+    expect((await listOf(second.engine)).interrupted.map((i) => i.jobId)).toEqual([jobId]);
+    ok(await dismiss(second.engine, jobId));
+
+    const listed = await listOf(second.engine);
+    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 5_100);
+    expect(listed.interrupted).toEqual([]);
+    expect(await folder()).toEqual([`${id}.json`]);
+  });
+
+  test("a regenerate whose record write threw after the rename is counted once, and the owner is told it worked", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const net = network({ descriptors: [poolReply(answer({ label: "Seine cafes" }), 0.0051)] });
+    const { engine } = await startEngine(dir(), { net, deps: disk() });
+    flush.on = true;
+
+    const response = await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros }));
+
+    const listed = await listOf(engine);
+    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 5_100);
+    expect(listed.categories[0]?.label).toBe("Seine cafes");
+    expect(ok(response).type).toBe("categories.regenerate");
+    expect((await folder()).filter((n) => n.startsWith("cat-"))).toEqual([`${id}.json`]);
+  });
+
+  test("a create whose record write threw after the rename is one category at its cost, and the owner is told it worked", async () => {
+    const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+    const { engine } = await startEngine(dir(), { net, deps: disk() });
+    flush.on = true;
+
+    const response = await engine.handle(createCommand());
+
+    const listed = await listOf(engine);
+    expect(listed.categories.map((c) => [c.name, c.spentMicros])).toEqual([["Кофейни Парижа", 5_100]]);
+    expect(ok(response).type).toBe("categories.create");
+  });
+
+  test("a regenerate that failed, whose record survived a restart, is dismissed without counting its cost again", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const net = network({ descriptors: [poolReply({ pool: "cafes" }, 0.0051), poolReply({ pool: "cafes" }, 0.0062)] });
+    const { engine } = await startEngine(dir(), { net, deps: disk() });
+    refuse.on = true;
+    refuse.times = Infinity;
+
+    failed(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+    const jobId = String(ledgerLines(dir())[0]?.jobId);
+    refuse.on = false;
+    const restarted = await startEngine(dir());
+    ok(await dismiss(restarted.engine, jobId));
+
+    expect((await listOf(restarted.engine)).categories[0]?.spentMicros).toBe(5_000 + 11_300);
+  });
+});
+
+describe("a create whose id is already taken after its pool was paid for", () => {
+  test("is the engine's own fault, not a rule the owner broke: INTERNAL, with the cost", async () => {
+    await seedCategory({ categoryId: "cat-same-00000001", name: "Other" });
+    const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+    const { engine } = await startEngine(dir(), { net, deps: { newId: () => "same-00000001" } });
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(refused.error).toMatchObject({ code: "INTERNAL", spentMicros: 5_100 });
+    expect(refused.error.categoryReason).toBeUndefined();
   });
 });
 
