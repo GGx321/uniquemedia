@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, stat } from "node:fs/promises";
 import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -528,7 +528,8 @@ interface OpenedLibrary {
 /** Whether the library's own folder and its `library.json` are on the disk now (false for an unmounted disk, a moved folder, a read that cannot be done). */
 async function libraryIsThere(root: string): Promise<boolean> {
   try {
-    return (await lstat(root)).isDirectory() && (await lstat(join(root, LIBRARY_FILE))).isFile();
+    // `stat` for the root: it follows a link, so a library folder that is a link to the real one (a folder on another disk) is there; a link to nothing throws.
+    return (await stat(root)).isDirectory() && (await lstat(join(root, LIBRARY_FILE))).isFile();
   } catch {
     return false;
   }

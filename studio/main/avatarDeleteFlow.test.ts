@@ -554,6 +554,59 @@ describe("the Trash is asked about the REAL place, not the plan's spelling", () 
   });
 });
 
+describe("the Trash is asked about the very path it is then given", () => {
+  /** After the first look the library is reached by another spelling of the same place (one inode), as a rename of the folder's parent would leave it. */
+  function respelledAfterFirstAsk(r: Rig, answer: (path: string) => boolean, asked: string[]): void {
+    r.deps.trashable = async (path) => {
+      asked.push(path);
+      if (asked.length === 1) {
+        r.real.set(`${LIBRARY}/avatars`, `${LIBRARY}/AVATARS`);
+        r.real.set(FOLDER, `${LIBRARY}/AVATARS/${AVATAR}`);
+        r.disk.set(`${LIBRARY}/AVATARS`, "directory");
+        r.disk.set(`${LIBRARY}/AVATARS/${AVATAR}`, "directory");
+        r.ids.set(`${LIBRARY}/AVATARS/${AVATAR}`, "dev1:ino1");
+        r.ids.set(`${LIBRARY}/avatars/${AVATAR}`, "dev1:ino1");
+      }
+      return answer(path);
+    };
+  }
+
+  test("a folder whose real path changed between the two looks is asked about again, at the path that moves", async () => {
+    const asked: string[] = [];
+    const r = rig({ platform: "darwin" });
+    respelledAfterFirstAsk(r, () => true, asked);
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(asked.slice(0, 2)).toEqual([FOLDER, `${LIBRARY}/AVATARS/${AVATAR}`]);
+    expect(r.log[1]).toBe(`trash:${LIBRARY}/AVATARS/${AVATAR}`);
+  });
+
+  test("a Trash that takes the first spelling but not the one that would move is refused: nothing is moved", async () => {
+    const asked: string[] = [];
+    const r = rig({ platform: "darwin" });
+    respelledAfterFirstAsk(r, (path) => path === FOLDER, asked);
+
+    const response = await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(r.log).toEqual(["prepare", "finish:kept"]);
+    expect(response).toMatchObject({ ok: false, error: { code: "TRASH_UNAVAILABLE" } });
+  });
+
+  test("a folder whose real path did not change is asked about once", async () => {
+    const asked: string[] = [];
+    const r = rig();
+    r.deps.trashable = async (path) => {
+      asked.push(path);
+      return true;
+    };
+
+    await handleAvatarDeleteCommand(command, r.deps);
+
+    expect(asked.filter((path) => path === FOLDER)).toHaveLength(1);
+  });
+});
+
 describe("two spellings are one place only when the disk says they are one thing (dev and inode), never by folding the case", () => {
   /** The export subfolder the engine named is `Mia`; the real path of its files says `mia`. */
   function renamed(r: Rig): void {
