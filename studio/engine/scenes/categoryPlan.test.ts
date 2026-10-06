@@ -19,7 +19,12 @@ describe("categoryPriceModels", () => {
 
 describe("categoryEstimate", () => {
   test("is two attempts at their ceiling for the worst case and one attempt at the typical tokens for the expected, at the fallback prices", () => {
-    expect(categoryEstimate(priced, MODEL)).toEqual({ expectedMicros: 6_000, worstMicros: 45_000, prices: "fallback", pricesAsOf: "2026-09-24" });
+    // Typical: the measured real call (2026-10-06), 1,300 in x $1.25/M + 1,400 out x $2.50/M = $0.005125.
+    expect(categoryEstimate(priced, MODEL)).toEqual({ expectedMicros: 5_125, worstMicros: 45_000, prices: "fallback", pricesAsOf: "2026-09-24" });
+  });
+
+  test("the typical counts are the measured real call's, rounded: 1,300 tokens in and 1,400 out (measured 1,250 in, 1,397 out of which 992 reasoning, $0.0038)", () => {
+    expect(poolCall(MODEL).typical).toEqual({ inputTokens: 1_300, outputTokens: 1_400 });
   });
 
   test("the worst case is the call's attempts times one attempt's ceiling, as the price book computes it", () => {

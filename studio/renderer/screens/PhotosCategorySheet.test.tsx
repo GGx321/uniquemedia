@@ -195,8 +195,8 @@ describe("regenerate (paid)", () => {
     expect(within(sheet()).getByRole("button", { name: "Убрать место: bookshop by the river" }).getAttribute("aria-disabled")).toBe("true");
     runAll(scheduler);
     await flush();
-    expect(within(sheet()).getByText((_, el) => el?.textContent === "Набор пересоздан · потрачено $0.006")).toBeDefined();
-    expect(within(sheet()).getByText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · пересоздана \d+ \S+ · всего потрачено \$0\.011$/)).toBeDefined();
+    expect(within(sheet()).getByText((_, el) => el?.textContent === "Набор пересоздан · потрачено $0.005")).toBeDefined();
+    expect(within(sheet()).getByText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · пересоздана \d+ \S+ · всего потрачено \$0\.010$/)).toBeDefined();
     expect(within(sheet()).getByText("Кофейни и бистро Парижа")).toBeDefined();
     expect(within(sheet()).queryByLabelText(/^Новое описание/) === null).toBe(true);
     // The box closed with the focus in it: the focus goes to «Пересоздать…», which opens it again.

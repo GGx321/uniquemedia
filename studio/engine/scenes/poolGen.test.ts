@@ -419,10 +419,10 @@ describe("POOL_CALL", () => {
     expect(POOL_MAX_ATTEMPTS).toBe(2);
   });
 
-  test("one attempt's ceiling is $0.0225 and a call's two attempts $0.045 at the fallback prices; typical is $0.006", () => {
+  test("one attempt's ceiling is $0.0225 and a call's two attempts $0.045 at the fallback prices; typical is $0.005125", () => {
     const attempt = book.chatWorstCase({ model: call.model, maxTokens: call.maxTokens, inputTokens: call.inputTokens, images: call.images });
     expect(attempt).toBe(22_500);
     expect(POOL_MAX_ATTEMPTS * attempt).toBe(45_000);
-    expect(book.chatCost({ model: call.model, images: 0, ...call.typical })).toBe(6_000);
+    expect(book.chatCost({ model: call.model, images: 0, ...call.typical })).toBe(5_125);
   });
 });

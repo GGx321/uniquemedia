@@ -22,7 +22,7 @@ const MIA: AvatarSummary = {
 };
 
 /** The pool call's price in the mock, as the engine's at the fallback prices: one typical attempt, two at their ceilings. */
-const ESTIMATE = { expectedMicros: 6_000, worstMicros: 45_000 };
+const ESTIMATE = { expectedMicros: 5_125, worstMicros: 45_000 };
 
 function makeMock(options: ConstructorParameters<typeof MockEngine>[0] = {}) {
   const scheduler = new ManualScheduler();
@@ -59,7 +59,7 @@ async function created(m: Mock, name = "Кофейни Парижа"): Promise<C
 const changes = (events: EventMessage[]) => events.flatMap((e) => (e.type === "category.changed" ? [e.payload] : []));
 
 describe("categories.estimate", () => {
-  test("is the pool call's price: $0.006 expected, $0.045 worst, at the prices the mock's others use", async () => {
+  test("is the pool call's price: $0.005125 expected, $0.045 worst, at the prices the mock's others use", async () => {
     const { client } = makeMock();
     expect(await unwrap(client.request("categories.estimate", {}))).toMatchObject(ESTIMATE);
   });
@@ -99,12 +99,12 @@ describe("categories.create", () => {
 
     const { category, spentMicros } = await unwrap(create(m, "  Кофейни Парижа "));
 
-    expect(category).toMatchObject({ name: "Кофейни Парижа", description: "кофейни и булочные Парижа", spentMicros: 6_000 });
-    expect(spentMicros).toBe(6_000);
+    expect(category).toMatchObject({ name: "Кофейни Парижа", description: "кофейни и булочные Парижа", spentMicros: 5_125 });
+    expect(spentMicros).toBe(5_125);
     expect(CategoryPool.safeParse(category.pool).success).toBe(true);
     expect(category.categoryId).toMatch(/^cat-/);
     expect(changes(m.events)).toEqual([{ change: "upserted", category }]);
-    expect((await spentOf(m)) - before).toBe(6_000);
+    expect((await spentOf(m)) - before).toBe(5_125);
     expect((await unwrap(m.client.request("categories.list", {}))).categories).toEqual([category]);
   });
 
@@ -251,8 +251,8 @@ describe("categories.regenerate", () => {
 
     const result = await unwrap(regenerate(m, old.categoryId));
 
-    expect(result.spentMicros).toBe(6_000);
-    expect(result.category).toMatchObject({ categoryId: old.categoryId, name: "Кофейни", description: "кофейни и булочные у Сены", spentMicros: 12_000 });
+    expect(result.spentMicros).toBe(5_125);
+    expect(result.category).toMatchObject({ categoryId: old.categoryId, name: "Кофейни", description: "кофейни и булочные у Сены", spentMicros: 10_250 });
     expect(result.category.pool).not.toEqual(old.pool);
     expect(changes(m.events)).toEqual([{ change: "upserted", category: result.category }]);
   });
@@ -274,7 +274,7 @@ describe("categories.regenerate", () => {
 
     const [kept] = (await unwrap(m.client.request("categories.list", {}))).categories;
     expect(kept?.pool).toEqual(old.pool);
-    expect(kept?.spentMicros).toBe(6_000 + 11_300);
+    expect(kept?.spentMicros).toBe(5_125 + 11_300);
     expect(changes(m.events)).toHaveLength(1);
   });
 

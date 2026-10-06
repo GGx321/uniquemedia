@@ -76,8 +76,8 @@ describe("planRoute", () => {
 });
 
 describe("runPriceModels", () => {
-  test("prices both image models of the route and the settings' text model for the writer", () => {
-    expect(runPriceModels(MODELS, "off")).toEqual({ imageModels: [MODELS.imageModel, FALLBACK_IMAGE_MODEL], chatModels: ["x-ai/grok-4.3"] });
+  test("prices both image models of the route and the settings' text model for the writer, and asks for the image endpoints to be rechecked against Studio's requests", () => {
+    expect(runPriceModels(MODELS, "off")).toEqual({ imageModels: [MODELS.imageModel, FALLBACK_IMAGE_MODEL], chatModels: ["x-ai/grok-4.3"], checkRequestShape: true });
   });
 
   test("adds the age check's own model when the image age check is on, once", () => {
@@ -290,6 +290,29 @@ describe("buildRunPlan", () => {
     const run = buildRunPlan(newRun(2));
     const twin = run.scenes.slots.map((s) => ({ ...s, slotIndex: 1 }));
     expect(RunPlanSchema.safeParse({ ...run, scenes: { ...run.scenes, slots: twin }, slotAttempts: run.slotAttempts.map((a) => ({ ...a, slotIndex: 1 })) }).success).toBe(false);
+  });
+
+  /** The plan with every slot index shifted by `by`, consistently in the slots, their attempts and the writer's chunks: only the range is wrong. */
+  function shifted(count: number, by: number) {
+    const run = buildRunPlan(newRun(count));
+    return {
+      ...run,
+      scenes: { ...run.scenes, slots: run.scenes.slots.map((s) => ({ ...s, slotIndex: s.slotIndex + by })) },
+      slotAttempts: run.slotAttempts.map((a) => ({ ...a, slotIndex: a.slotIndex + by })),
+      writerChunks: run.writerChunks.map((c) => ({ ...c, slotIndexes: c.slotIndexes.map((i) => i + by) })),
+    };
+  }
+
+  test("the schema refuses slot indexes that are unique but not 1..count (here 2..count+1)", () => {
+    expect(RunPlanSchema.safeParse(shifted(3, 1)).success).toBe(false);
+  });
+
+  test("the schema refuses a slot index far above the count", () => {
+    expect(RunPlanSchema.safeParse(shifted(2, 40)).success).toBe(false);
+  });
+
+  test("the schema takes slot indexes 1..count, the way the planner numbers them", () => {
+    expect(RunPlanSchema.safeParse(shifted(3, 0)).success).toBe(true);
   });
 
   test("the schema refuses a cap above the worst case estimated when the run was planned; both are kept", () => {

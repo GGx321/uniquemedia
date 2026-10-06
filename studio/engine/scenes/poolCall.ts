@@ -11,9 +11,10 @@ export const POOL_MAX_ATTEMPTS = 2;
  * call's two attempts are $0.045. The prompt is at most ~6.5K bytes (the owner's 500 chars at three bytes each, the worst
  * feedback, the rules, the example and the schema), and the client counts one token per byte as a floor under `inputTokens`:
  * poolGen.floor.test.ts pins that the ceiling stays above that floor with a margin, so a reserve is always the price the owner accepted.
- * `maxTokens` covers low-effort reasoning plus a ~900-token answer. Typical counts are an estimate (no real call yet).
+ * `maxTokens` covers low-effort reasoning plus a ~900-token answer. Typical counts are the measured real call's, rounded (2026-10-06:
+ * prompt 1,250 tokens, completion 1,397 of which 992 reasoning, $0.0038): 1,300 in and 1,400 out.
  */
-const POOL_LIMITS = { maxTokens: 4_000, inputTokens: 10_000, images: 0, typical: { inputTokens: 1_800, outputTokens: 1_500 } } as const;
+const POOL_LIMITS = { maxTokens: 4_000, inputTokens: 10_000, images: 0, typical: { inputTokens: 1_300, outputTokens: 1_400 } } as const;
 
 /** One pool attempt on the settings' text model. */
 export function poolCall(textModel: string): ChatCall {

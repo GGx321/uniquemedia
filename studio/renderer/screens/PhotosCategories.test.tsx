@@ -153,7 +153,7 @@ describe("«Новая категория»", () => {
     const { engine } = await openPhotos({ categories: [PARIS] });
     await openCreate();
     expect(describeElement(document.activeElement)).toBe(describeElement(field(/^Название/)));
-    expect(within(dialog()).getByText("≈ $0.006 · до $0.045")).toBeDefined();
+    expect(within(dialog()).getByText("≈ $0.005 · до $0.045")).toBeDefined();
     expect(within(dialog()).getByText(/^grok-4\.3 · не больше 2 попыток · цены OpenRouter · \d+ \S+$/)).toBeDefined();
     // Nothing typed yet: the button waits, no error is shouted.
     expect(isDisabled(createButton())).toBe(true);
@@ -215,7 +215,7 @@ describe("«Новая категория»", () => {
     await flush();
     const done = screen.getByRole("dialog", { name: "Рынки" });
     expect(within(done).getByText("готово")).toBeDefined();
-    expect(within(done).getByText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · потрачено \$0\.006$/)).toBeDefined();
+    expect(within(done).getByText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · потрачено \$0\.005$/)).toBeDefined();
     expect(within(done).getByText("Места · 5")).toBeDefined();
     expect(within(done).getByText("текст уходит в промпты по-английски")).toBeDefined();
     expect(within(done).getByText(/^Наряды · [3-5]$/)).toBeDefined();

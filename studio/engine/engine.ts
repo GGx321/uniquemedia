@@ -2757,6 +2757,8 @@ export class Engine {
         // answer and its cost. That is a success the owner is told about, not a failure with a paid pool in raw/.
         const landed = await library.categories.get(call.recordId).catch(() => null);
         if (landed !== null && landed.bookedJobs.includes(jobId)) {
+          // Reported as done, but the folder's flush failed: the record may not survive a power cut. Said in the log, not to the owner.
+          console.warn(`studio engine: category call ${jobId} was written but the folder could not be flushed (${messageOf(error, "unknown error")})`);
           this.#emitCategory({ change: "upserted", category: summaryOf(landed) });
           return { record: landed, spentMicros: result.spentMicros };
         }

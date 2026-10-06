@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { chmod, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CategoryPool, CategorySummary, Estimate } from "../shared/engine";
@@ -18,7 +18,7 @@ const dir = useEngineDir("studio-engine-categories-");
 /** One pool attempt at its ceilings (grok-4.3, fallback prices): 10K in at $1.25/M + 4K out at $2.50/M. */
 const ATTEMPT_WORST = 22_500;
 /** The estimate at the dated fallback prices: one typical attempt, and both attempts at their ceilings. */
-const ESTIMATE: Estimate = { expectedMicros: 6_000, worstMicros: 2 * ATTEMPT_WORST, prices: "fallback", pricesAsOf: "2026-09-24" };
+const ESTIMATE: Estimate = { expectedMicros: 5_125, worstMicros: 2 * ATTEMPT_WORST, prices: "fallback", pricesAsOf: "2026-09-24" };
 
 type Json = Record<string, unknown>;
 
@@ -151,8 +151,8 @@ describe("categories.estimate", () => {
 
     const response = ok(await engine.handle(command("categories.estimate")));
 
-    // 10K in × $1/M + 4K out × $2/M = $0.018 an attempt; typical 1,800 in + 1,500 out = $0.0048.
-    expect(response.result).toEqual({ expectedMicros: 4_800, worstMicros: 36_000, prices: "live", pricesAsOf: "2026-09-24" });
+    // 10K in × $1/M + 4K out × $2/M = $0.018 an attempt; typical 1,300 in + 1,400 out = $0.0041.
+    expect(response.result).toEqual({ expectedMicros: 4_100, worstMicros: 36_000, prices: "live", pricesAsOf: "2026-09-24" });
     expect(net.calls.map((c) => [c.method, "Authorization" in c.headers])).toEqual([["GET", false]]);
   });
 
@@ -772,6 +772,58 @@ describe("a call that ended but whose record could not be removed", () => {
   });
 });
 
+describe("a call whose record cannot be written", () => {
+  const refuse = { on: false };
+  const hooks = {
+    beforeRename: (path: string) => {
+      if (refuse.on && path.includes("pending-")) throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+    },
+  };
+  beforeEach(() => {
+    refuse.on = false;
+  });
+
+  test("sends nothing and books nothing: the call could not be recorded, so no request goes out", async () => {
+    const net = network({ descriptors: [poolReply()] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: hooks } } });
+    refuse.on = true;
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(refused.error.code).toBe("INTERNAL");
+    expect(refused.error.detail).toContain("nothing was sent");
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+    // No record of the call: a temp file the refused write left behind is not one.
+    expect((await folder()).filter((name) => !name.startsWith("."))).toEqual([]);
+  });
+
+  test("a regenerate is the same: the category keeps its pool and total, and nothing is sent", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const net = network({ descriptors: [poolReply()] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: hooks } } });
+    refuse.on = true;
+
+    failed(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+    expect((await listOf(engine)).categories[0]?.spentMicros).toBe(5_000);
+  });
+
+  test("the failed call does not hold the engine: the next one, once the disk is back, is sent", async () => {
+    const net = network({ descriptors: [poolReply()] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: hooks } } });
+    refuse.on = true;
+    failed(await engine.handle(createCommand()));
+    refuse.on = false;
+
+    await creating(engine);
+
+    expect(chatCalls(net)).toHaveLength(1);
+  });
+});
+
 describe("a regenerate whose paid pool cannot be stored", () => {
   test("still adds its cost to the category's total: the old pool stays, the call was paid, and the pool is kept in raw/", async () => {
     const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
@@ -922,6 +974,59 @@ describe("a job's cost is booked into its category once", () => {
     expect(listed.categories[0]?.label).toBe("Seine cafes");
     expect(ok(response).type).toBe("categories.regenerate");
     expect((await folder()).filter((n) => n.startsWith("cat-"))).toEqual([`${id}.json`]);
+  });
+
+  test("a regenerate whose record write threw after the rename is logged: the folder's flush failed even though the call is reported as done", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+      const net = network({ descriptors: [poolReply(answer({ label: "Seine cafes" }), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net, deps: disk() });
+      flush.on = true;
+
+      ok(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+
+      const jobId = String(ledgerLines(dir())[0]?.jobId);
+      const lines = warn.mock.calls.map((call) => call.map(String).join(" "));
+      expect(lines.some((line) => line.includes(jobId) && line.includes("EIO: the folder could not be flushed"))).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a regenerate whose record is written and flushed says nothing about a flush", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+      const net = network({ descriptors: [poolReply(answer({ label: "Seine cafes" }), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net, deps: disk() });
+
+      ok(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+
+      expect(warn.mock.calls.map((call) => call.map(String).join(" ")).filter((line) => line.includes("flush"))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("a «Убрать» of a call that booked nothing, whose record the disk refuses to remove, is an error: the record stays and the call is still listed as interrupted", async () => {
+    refuse.on = true;
+    refuse.times = 1;
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    await leaveRegenerate(id, "job-00000042");
+    const { engine } = await startEngine(dir(), { deps: disk() });
+
+    const refused = failed(await dismiss(engine, "job-00000042"));
+
+    expect(refused.error.code).toBe("INTERNAL");
+    expect(await folder()).toEqual([`${id}.json`, "pending-job-00000042.json"]);
+    expect((await listOf(engine)).interrupted.map((i) => i.jobId)).toEqual(["job-00000042"]);
+    expect((await listOf(engine)).categories[0]?.spentMicros).toBe(5_000);
+
+    // The disk recovers: the same «Убрать» now goes through, and still adds nothing.
+    ok(await dismiss(engine, "job-00000042"));
+    expect(await folder()).toEqual([`${id}.json`]);
+    expect((await listOf(engine)).categories[0]?.spentMicros).toBe(5_000);
   });
 
   test("a create whose record write threw after the rename is one category at its cost, and the owner is told it worked", async () => {

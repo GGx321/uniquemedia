@@ -118,9 +118,21 @@ function readRecord(raw: unknown, fileId: string): StoredCategory | null {
   return PoolSchema.safeParse(poolOf(parsed.data.pool)).success ? parsed.data : null;
 }
 
-/** The record's booked jobs with `jobId` last, the list cut to its newest `BOOKED_JOBS_CAP`. */
-function booked(record: StoredCategory, jobId: string): string[] {
-  return [...record.bookedJobs, jobId].slice(-BOOKED_JOBS_CAP);
+/**
+ * The record's booked jobs with `jobId` last, the list cut to `BOOKED_JOBS_CAP`, the oldest dropped first. An id whose
+ * `pending-<id>.json` is still in the folder is skipped (that call is not over: its booking may be retried), unless the cap
+ * cannot be kept otherwise, which is the file's own limit.
+ */
+function booked(record: StoredCategory, jobId: string, livePending: ReadonlySet<string>): string[] {
+  const ids = [...record.bookedJobs, jobId];
+  let excess = ids.length - BOOKED_JOBS_CAP;
+  if (excess <= 0) return ids;
+  const kept: string[] = [];
+  for (const id of ids) {
+    if (excess > 0 && id !== jobId && !livePending.has(id)) excess -= 1;
+    else kept.push(id);
+  }
+  return excess > 0 ? kept.slice(excess) : kept;
 }
 
 export class CategoryStore {
@@ -281,7 +293,7 @@ export class CategoryStore {
       if (current === null) throw new CategoryError("not-found", `no readable category ${id}`);
       if (current.bookedJobs.includes(input.jobId)) return current;
       const { spentMicros, jobId, ...fresh } = input;
-      const updated: StoredCategory = { ...current, ...fresh, spentMicros: current.spentMicros + spentMicros, bookedJobs: booked(current, jobId), updatedAt: this.#nextStamp(current.updatedAt) };
+      const updated: StoredCategory = { ...current, ...fresh, spentMicros: current.spentMicros + spentMicros, bookedJobs: booked(current, jobId, await this.#pendingIds()), updatedAt: this.#nextStamp(current.updatedAt) };
       await this.#write(this.#path(id), updated);
       return updated;
     });
@@ -296,7 +308,7 @@ export class CategoryStore {
       const current = await this.get(id);
       if (current === null) return null;
       if (current.bookedJobs.includes(jobId)) return current;
-      const updated: StoredCategory = { ...current, spentMicros: current.spentMicros + micros, bookedJobs: booked(current, jobId), updatedAt: this.#nextStamp(current.updatedAt) };
+      const updated: StoredCategory = { ...current, spentMicros: current.spentMicros + micros, bookedJobs: booked(current, jobId, await this.#pendingIds()), updatedAt: this.#nextStamp(current.updatedAt) };
       await this.#write(this.#path(id), updated);
       return updated;
     });
@@ -308,6 +320,16 @@ export class CategoryStore {
       if ((await this.get(id)) === null) throw new CategoryError("not-found", `no readable category ${id}`);
       await this.#unlink(this.#path(id));
     });
+  }
+
+  /** The ids of the paid calls whose pending record is in the folder now. Read inside the store's lock, which writes and removes them. */
+  async #pendingIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    for (const name of await this.#names()) {
+      const match = PENDING_NAME.exec(name);
+      if (match?.[1] !== undefined) ids.add(match[1]);
+    }
+    return ids;
   }
 
   /** An update time that is never earlier than the record's own, even when the clock is. */

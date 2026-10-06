@@ -116,7 +116,7 @@ export const MOCK_ESTIMATE: Readonly<Estimate> = {
   pricesAsOf: "2026-09-24",
 };
 /** CS.2: one pool call attempt typical, two at their ceilings — the engine's own figures at the fallback prices (scenes/poolCall.ts, categoryPlan.ts). */
-const MOCK_CATEGORY_PRICE = { expectedMicros: 6_000, worstMicros: 45_000 };
+const MOCK_CATEGORY_PRICE = { expectedMicros: 5_125, worstMicros: 45_000 };
 /**
  * T6c (import an existing avatar), L8: up to two vision describe attempts and
  * no age check (owner decision 2026-10-05) — the shared IMPORT_FALLBACK_PRICE's
