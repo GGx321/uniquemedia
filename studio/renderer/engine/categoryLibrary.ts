@@ -94,12 +94,16 @@ export class CategoryLibrary {
   #retained = 0;
   /** The library (engine and folder) the list belongs to, and the one the store is on now. */
   #listedKey: string | null = null;
+  /** A snapshot or a library switch was heard while no screen showed the slice: the next one to retain it lists again. */
+  #stale = false;
   /** The list asked for and not yet answered: its library key, and whether it must be asked again once it answers. */
   #listing: { key: string; generation: number; again: boolean } | null = null;
   #generation = 0;
   /** Changes heard while the list was on its way: applied to its answer. */
   #early: CategoryStoreChange[] = [];
   #pricing: string | null = null;
+  /** The newest price request: only its answer counts, so a forced re-price outranks an older estimate still on its way. */
+  #priceGeneration = 0;
   #sending = false;
   #stop: (() => void) | null = null;
 
@@ -213,15 +217,22 @@ export class CategoryLibrary {
     let regenerated = this.#view.regenerated;
     if (call.kind === "regenerate") {
       const was = regenerated.get(call.categoryId);
-      regenerated = new Map(regenerated).set(call.categoryId, outcome.ok || was === "regenerated" ? "regenerated" : "retried");
+      // A failed one is «retried» only if it cost something: a refusal for free (PRICE_CHANGED, IN_FLIGHT, VALIDATION) changed nothing.
+      const spent = !outcome.ok && (outcome.error.spentMicros ?? 0) > 0;
+      if (outcome.ok || was === "regenerated") regenerated = new Map(regenerated).set(call.categoryId, "regenerated");
+      else if (spent) regenerated = new Map(regenerated).set(call.categoryId, "retried");
     }
     // A list taken while this call ran names it as the engine's call in flight: it is over now.
     const list = this.#view.list;
     const ownBusy = list.status === "ready" && list.busy !== null && list.busy.kind === call.kind && list.busy.categoryId === call.categoryId && list.busy.name === call.name;
     this.#update({ call: null, outcomes: { ...this.#view.outcomes, [call.kind]: outcome }, regenerated, ...(ownBusy ? { list: { ...list, busy: null } } : {}) });
     if (outcome.ok && call.kind === "create") for (const listener of [...this.#created]) listener(outcome.category);
-    // Refused for its price: nothing was sent, and the price the screen offers next is a fresh one, confirmed by a new click.
-    if (!outcome.ok && outcome.error.code === "PRICE_CHANGED") this.#price(true);
+    // Refused for its price: nothing was sent. The price just refused is taken off, so no button offers it again; the fresh one answers
+    // (and outranks an estimate already on its way), and a new click confirms it.
+    if (!outcome.ok && outcome.error.code === "PRICE_CHANGED") {
+      this.#update({ price: null, priceError: null });
+      this.#price(true);
+    }
     // Refused because another call runs (another window's): a fresh list names it.
     if (!outcome.ok && outcome.error.code === "IN_FLIGHT") this.#list();
   }
@@ -272,18 +283,19 @@ export class CategoryLibrary {
     if (this.#retained === 0) return;
     const key = this.#libraryKey();
     if (key === null) return;
-    if (key !== this.#listedKey && this.#listing?.key !== key) {
-      // Another engine or library folder: what was listed belongs to the old one and is never shown for the new one.
-      if (this.#listedKey !== null && this.#view.list.status !== "loading") this.#update({ list: { status: "loading" } });
-      this.#list();
+    if (this.#listing?.key !== key) {
+      // Another engine or library folder: what was listed belongs to the old one and is never shown for the new one, also when the switch
+      // was heard while no screen showed the slice.
+      if (this.#listedKey !== null && key !== this.#listedKey && this.#view.list.status !== "loading") this.#update({ list: { status: "loading" } });
+      if (key !== this.#listedKey || this.#stale) this.#list();
     }
     this.#price(false);
   }
 
   #list(): void {
     if (this.#retained === 0) {
-      // Nobody shows it: the next screen to retain the slice lists afresh.
-      this.#listedKey = null;
+      // Nobody shows it: the next screen to retain the slice lists afresh (and starts from loading if the library is another one).
+      this.#stale = true;
       return;
     }
     const key = this.#libraryKey();
@@ -294,6 +306,7 @@ export class CategoryLibrary {
       return;
     }
     const generation = ++this.#generation;
+    this.#stale = false;
     this.#listing = { key, generation, again: false };
     this.#early = [];
     void this.client.request("categories.list", {}).then((reply) => {
@@ -308,7 +321,10 @@ export class CategoryLibrary {
       if (reply.ok) {
         this.#listedKey = key;
         const list = this.#early.splice(0).reduce(applyChange, reply.result);
-        this.#update({ list: { status: "ready", ...list } });
+        // Nothing composing any more: a refusal that said another call was running is over.
+        const { create, regenerate } = this.#view.outcomes;
+        const over = (o: CategoryOutcome | null): boolean => list.busy === null && o?.ok === false && o.error.code === "IN_FLIGHT";
+        this.#update({ list: { status: "ready", ...list }, ...(over(create) || over(regenerate) ? { outcomes: { create: over(create) ? null : create, regenerate: over(regenerate) ? null : regenerate } } : {}) });
       } else if (this.#view.list.status !== "ready" || this.#listedKey !== key) {
         this.#update({ list: { status: "failed", error: reply.error } });
       }
@@ -319,6 +335,9 @@ export class CategoryLibrary {
   #onChange(change: CategoryStoreChange): void {
     if (this.#listing !== null) this.#early.push(change);
     this.#apply(change);
+    // A call another window made was named as busy: a change says it may be over, and a fresh list says whether it is.
+    const list = this.#view.list;
+    if (list.status === "ready" && list.busy !== null) this.#list();
   }
 
   #apply(change: CategoryStoreChange): void {
@@ -333,11 +352,12 @@ export class CategoryLibrary {
   #price(fresh: boolean): void {
     if (this.#retained === 0) return;
     const key = this.#priceKey();
-    if (key === null || this.#pricing === key) return;
-    if (!fresh && this.#view.price?.key === key) return;
+    if (key === null) return;
+    if (!fresh && (this.#pricing === key || this.#view.price?.key === key)) return;
+    const generation = ++this.#priceGeneration;
     this.#pricing = key;
     void this.client.request("categories.estimate", {}).then((reply) => {
-      if (this.#pricing !== key) return;
+      if (generation !== this.#priceGeneration) return;
       this.#pricing = null;
       if (this.#priceKey() !== key) {
         // The text model moved on while this was asked: the new one is priced instead.

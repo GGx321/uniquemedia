@@ -154,6 +154,36 @@ describe("the list", () => {
     expect(h.library.getView().list.status).toBe("ready");
   });
 
+  test("a library switch while no screen shows the slice: the next screen starts from loading, never from the old library's list", async () => {
+    const h = await started({ categories: [PARIS] });
+    const release = await retained(h);
+    expect(names(h)).toEqual(["Кофейни Парижа"]);
+    release();
+    await h.client.request("settings.setLibraryPath", { path: "/Users/studio/Other library" });
+    await settle();
+    const lists = callsOf(h.engine, "categories.list").length;
+    h.engine.delayNext("categories.list", 50);
+    h.library.retain();
+    expect(h.library.getView().list.status).toBe("loading");
+    await settle();
+    expect(callsOf(h.engine, "categories.list").length).toBe(lists + 1);
+    expect(h.library.getView().list.status).toBe("loading");
+    h.scheduler.runAll();
+    await settle();
+    expect(h.library.getView().list.status).toBe("ready");
+  });
+
+  test("a snapshot taken again while no screen shows the slice: the next screen lists afresh", async () => {
+    const h = await started({ categories: [PARIS] });
+    const release = await retained(h);
+    release();
+    h.store.reload();
+    await settle();
+    const lists = callsOf(h.engine, "categories.list").length;
+    await retained(h);
+    expect(callsOf(h.engine, "categories.list").length).toBe(lists + 1);
+  });
+
   test("a failed list says why, and a reload asks again", async () => {
     const h = await started({ categories: [PARIS] });
     h.engine.failNext("categories.list", { code: "LIBRARY_UNAVAILABLE" });
@@ -244,6 +274,36 @@ describe("a create", () => {
     expect(price(h)).toMatchObject({ worstMicros: 52_000 });
   });
 
+  test("PRICE_CHANGED takes the old price off until the fresh one answers: no button offers a price that was just refused", async () => {
+    const h = await started();
+    await retained(h);
+    const accepted = price(h);
+    h.engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    h.engine.delayNext("categories.estimate", 50);
+    await h.library.create("Рынки", "рынки", accepted);
+    await settle();
+    expect(h.library.getView().price).toBeNull();
+    h.scheduler.runAll();
+    await settle();
+    expect(price(h)).toMatchObject({ worstMicros: 52_000 });
+  });
+
+  test("PRICE_CHANGED while an estimate is already on its way: the forced re-price wins over the older answer", async () => {
+    const h = await started();
+    await retained(h);
+    const accepted = price(h);
+    h.engine.delayNext("categories.estimate", 100);
+    h.library.refreshPrice();
+    await settle();
+    h.engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    await h.library.create("Рынки", "рынки", accepted);
+    await settle();
+    expect(price(h)).toMatchObject({ worstMicros: 52_000 });
+    h.scheduler.runAll();
+    await settle();
+    expect(price(h)).toMatchObject({ worstMicros: 52_000 });
+  });
+
   test("a list taken while this window's call ran stops naming it as busy once the call is over", async () => {
     const h = await started();
     await retained(h);
@@ -257,6 +317,36 @@ describe("a create", () => {
     await done;
     await settle();
     expect(ready(h.library.getView()).busy).toBeNull();
+  });
+
+  test("another window's call named as busy stops being named once it ends: category.changed lists again", async () => {
+    const h = await started();
+    await retained(h);
+    h.engine.delayNext("categories.create", 500);
+    const other = h.client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
+    await settle();
+    h.library.reload();
+    await settle();
+    expect(ready(h.library.getView()).busy).toEqual({ kind: "create", name: "Горы зимой", categoryId: null });
+    h.scheduler.runAll();
+    await other;
+    await settle();
+    expect(ready(h.library.getView()).busy).toBeNull();
+  });
+
+  test("an IN_FLIGHT refusal is dropped once the list shows nothing composing any more", async () => {
+    const h = await started();
+    await retained(h);
+    h.engine.delayNext("categories.create", 500);
+    const other = h.client.request("categories.create", { name: "Горы зимой", description: "горы", acceptedWorstMicros: 45_000 });
+    await settle();
+    await h.library.create("Рынки", "рынки", price(h));
+    await settle();
+    expect(h.library.getView().outcomes.create?.ok === false && h.library.getView().outcomes.create?.error.code).toBe("IN_FLIGHT");
+    h.scheduler.runAll();
+    await other;
+    await settle();
+    expect(h.library.getView().outcomes.create).toBeNull();
   });
 
   test("refused because another window's call runs: nothing is sent twice, and a fresh list names the other call", async () => {
@@ -322,6 +412,28 @@ describe("a regenerate", () => {
     const outcome = h.library.getView().outcomes.regenerate;
     expect(outcome?.ok === false && outcome.error.code).toBe("POOL_REJECTED");
     expect(h.library.getView().regenerated.get(PARIS.categoryId)).toBe("retried");
+  });
+});
+
+describe("a regenerate that was refused for free", () => {
+  test("PRICE_CHANGED, IN_FLIGHT and VALIDATION spent nothing: the category is not marked as retried", async () => {
+    const h = await started({ categories: [PARIS] });
+    await retained(h);
+    const accepted = price(h);
+    h.engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    await h.library.regenerate(PARIS.categoryId, "кофейни и бистро", accepted);
+    await settle();
+    expect(h.library.getView().outcomes.regenerate?.ok === false && h.library.getView().outcomes.regenerate?.error.code).toBe("PRICE_CHANGED");
+    expect(h.library.getView().regenerated.has(PARIS.categoryId)).toBe(false);
+    h.engine.failNext("categories.regenerate", { code: "VALIDATION", categoryReason: "limit" });
+    await h.library.regenerate(PARIS.categoryId, "кофейни и бистро", price(h));
+    await settle();
+    expect(h.library.getView().outcomes.regenerate?.ok === false && h.library.getView().outcomes.regenerate?.error.code).toBe("VALIDATION");
+    expect(h.library.getView().regenerated.has(PARIS.categoryId)).toBe(false);
+    h.engine.failNext("categories.regenerate", { code: "IN_FLIGHT" });
+    await h.library.regenerate(PARIS.categoryId, "кофейни и бистро", price(h));
+    await settle();
+    expect(h.library.getView().regenerated.has(PARIS.categoryId)).toBe(false);
   });
 });
 
