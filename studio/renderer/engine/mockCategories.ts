@@ -108,7 +108,14 @@ export class MockCategories {
   list(): CategoriesListResult {
     const call = this.#call;
     const busy: CategoryBusy | null = call === null || call.name === null ? null : { kind: call.kind, name: call.name, categoryId: call.categoryId };
-    return { categories: [...this.#categories], unreadable: this.#unreadable, interrupted: [...this.#interrupted], busy };
+    // As the engine's store answers: at most 50, the oldest first, and a count of the readable ones left out.
+    return {
+      categories: this.#categories.slice(0, MAX_CUSTOM_CATEGORIES),
+      unreadable: this.#unreadable,
+      overLimit: Math.max(0, this.#categories.length - MAX_CUSTOM_CATEGORIES),
+      interrupted: [...this.#interrupted],
+      busy,
+    };
   }
 
   get(categoryId: string): CategorySummary | undefined {
@@ -157,7 +164,8 @@ export class MockCategories {
 
   /** VALIDATION when the library is full or another category holds the name (any letter case, edge spaces). */
   roomRefusal(name: string, exceptId: string | null): EngineError | null {
-    if (exceptId === null && this.#categories.length >= MAX_CUSTOM_CATEGORIES) {
+    // Every category file holds a place, readable or not.
+    if (exceptId === null && this.#categories.length + this.#unreadable >= MAX_CUSTOM_CATEGORIES) {
       return { code: "VALIDATION", categoryReason: "limit", detail: `the library already holds ${MAX_CUSTOM_CATEGORIES} categories; delete one first` };
     }
     if (this.#categories.some((c) => c.categoryId !== exceptId && categoryNameKey(c.name) === categoryNameKey(name))) {

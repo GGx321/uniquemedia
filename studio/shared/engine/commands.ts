@@ -531,8 +531,9 @@ const ENGINE_SPECS = [
   defineCommand("media.cancelImport", MediaCancelImportPayload, MediaCancelImportResult),
   // CS.2: the owner's own scene categories, one library-wide list shared by every avatar (plan §4.1). All of them but the estimate need an
   // open library (LIBRARY_UNAVAILABLE without one); the estimate needs neither a library nor a key.
-  // `categories.list`: the readable categories in creation order, `unreadable` files kept as they are, the creates and regenerates a closed
-  // Studio left unanswered (`interrupted`) and the paid call in flight (`busy`).
+  // `categories.list`: the readable categories in creation order (at most 50, the oldest first), `unreadable` files kept as they are, `overLimit`
+  // readable ones past the 50th that the list leaves out (kept on disk; every category file holds a place towards the limit), the creates and
+  // regenerates a closed Studio left unanswered (`interrupted`, each with its spend and the open part of it) and the paid call in flight (`busy`).
   // `categories.estimate`: the price of one pool call, shown before «Создать» / «Пересоздать»: expected at the typical tokens of one attempt,
   // worst = both attempts at their ceilings. It is the `acceptedWorstMicros` of the two paid commands.
   // `categories.create` / `categories.regenerate`: paid and synchronous (one pool call, at most two attempts). One at a time (IN_FLIGHT);

@@ -92,7 +92,7 @@ describe("create and list", () => {
   });
 
   test("a library with no categories folder lists nothing", async () => {
-    expect(await store().list()).toEqual({ categories: [], unreadable: 0 });
+    expect(await store().list()).toEqual({ categories: [], unreadable: 0, overLimit: 0 });
   });
 
   test("get finds one category by id, and null for one that is not there", async () => {
@@ -140,7 +140,7 @@ describe("unreadable and newer records", () => {
     await put("cat-broken-json.json", "{not json");
     await put("cat-wrong-shape.json", JSON.stringify({ schemaVersion: 1, categoryId: "cat-wrong-shape", name: 3 }));
 
-    expect(await s.list()).toEqual({ categories: [good], unreadable: 2 });
+    expect(await s.list()).toEqual({ categories: [good], unreadable: 2, overLimit: 0 });
     expect(await files()).toEqual(["cat-broken-json.json", "cat-paris-cafes.json", "cat-wrong-shape.json"]);
   });
 
@@ -150,7 +150,7 @@ describe("unreadable and newer records", () => {
     const tampered = { ...made, pool: { ...made.pool, locations: made.pool.locations.map((l, i) => (i === 0 ? { ...l, name: "a school courtyard" } : l)) } };
     await put("cat-paris-cafes.json", JSON.stringify(tampered));
 
-    expect(await s.list()).toEqual({ categories: [], unreadable: 1 });
+    expect(await s.list()).toEqual({ categories: [], unreadable: 1, overLimit: 0 });
     expect(await s.get("cat-paris-cafes")).toBeNull();
   });
 
@@ -168,7 +168,7 @@ describe("unreadable and newer records", () => {
     const newer = `${JSON.stringify({ ...made, schemaVersion: 2, shiny: true })}\n`;
     await put("cat-paris-cafes.json", newer);
 
-    expect(await s.list()).toEqual({ categories: [], unreadable: 1 });
+    expect(await s.list()).toEqual({ categories: [], unreadable: 1, overLimit: 0 });
     expect(await s.get("cat-paris-cafes")).toBeNull();
     expect(await codeOf(s.update("cat-paris-cafes", { name: "Renamed" }))).toBe("not-found");
     expect(await codeOf(s.remove("cat-paris-cafes"))).toBe("not-found");
@@ -182,7 +182,7 @@ describe("unreadable and newer records", () => {
     await put(".cat-x.json.0123456789ab.tmp", "half");
     await put("notes.txt", "hello");
 
-    expect(await s.list()).toEqual({ categories: [], unreadable: 0 });
+    expect(await s.list()).toEqual({ categories: [], unreadable: 0, overLimit: 0 });
   });
 });
 
@@ -255,12 +255,61 @@ describe("the 50-category limit", () => {
     expect((await s.list()).categories).toHaveLength(MAX_CUSTOM_CATEGORIES);
   });
 
-  test("a file that cannot be read does not count towards the limit", async () => {
+  test("a file that cannot be read counts towards the limit: it is kept on disk, so it holds its place and the folder stays bounded", async () => {
     const s = store();
     await fill(s, MAX_CUSTOM_CATEGORIES - 1);
     await writeFile(join(dirOf(), "cat-broken-json.json"), "{nope");
-    await s.create(input({ name: "Still fits" }));
-    expect((await s.list()).categories).toHaveLength(MAX_CUSTOM_CATEGORIES);
+
+    expect(await codeOf(s.create(input({ name: "Does not fit" })))).toBe("limit");
+
+    expect((await files()).filter((n) => n.startsWith("cat-"))).toHaveLength(MAX_CUSTOM_CATEGORIES);
+    expect(await s.list()).toMatchObject({ unreadable: 1, overLimit: 0 });
+  });
+
+  test("a record from a newer Studio counts towards the limit too", async () => {
+    const s = store();
+    await fill(s, MAX_CUSTOM_CATEGORIES - 1);
+    const first = JSON.parse(await readFile(join(dirOf(), "cat-fill-0000.json"), "utf8"));
+    await writeFile(join(dirOf(), "cat-from-newer.json"), JSON.stringify({ ...first, categoryId: "cat-from-newer", schemaVersion: 99 }));
+
+    expect(await codeOf(s.create(input({ name: "Does not fit" })))).toBe("limit");
+  });
+
+  test("more than 50 readable records on disk: the list holds the 50 oldest, in order, and counts the rest as over the limit", async () => {
+    const s = store();
+    await fill(s, MAX_CUSTOM_CATEGORIES + 3);
+
+    const listed = await s.list();
+
+    expect(listed.categories).toHaveLength(MAX_CUSTOM_CATEGORIES);
+    expect(listed.overLimit).toBe(3);
+    expect(listed.unreadable).toBe(0);
+    expect(listed.categories[0]?.categoryId).toBe("cat-fill-0000");
+    // The records written straight to the folder carry the first one's stamps: equal times, so the id decides the order.
+    expect(listed.categories.at(-1)?.categoryId).toBe("cat-fill-0049");
+    expect((await files()).filter((n) => n.startsWith("cat-"))).toHaveLength(MAX_CUSTOM_CATEGORIES + 3);
+  });
+
+  test("a library at or under the limit has nothing over it", async () => {
+    const s = store();
+    await fill(s, MAX_CUSTOM_CATEGORIES);
+    expect((await s.list()).overLimit).toBe(0);
+  });
+
+  test("with more than 50 on disk no create fits, and a name held by one the list leaves out is still taken", async () => {
+    const s = store();
+    await fill(s, MAX_CUSTOM_CATEGORIES + 3);
+
+    expect(await codeOf(s.create(input({ name: "Brand new" })))).toBe("limit");
+    expect(await codeOf(s.assertRoom("Fill 52", null))).toBe("limit");
+    expect(await codeOf(s.assertRoom("fill 52", "cat-fill-0001"))).toBe("name-taken");
+  });
+
+  test("assertRoom lets a fitting new name through, and a rename ignores the library's limit", async () => {
+    const s = store();
+    await fill(s, MAX_CUSTOM_CATEGORIES - 1);
+    await s.assertRoom("Fits", null);
+    await s.assertRoom("Fill 1", "cat-fill-0001");
   });
 });
 
@@ -426,7 +475,7 @@ describe("pending records of paid calls", () => {
   test("a pending record is not a category and does not count as an unreadable one", async () => {
     const s = store();
     await s.writePending(call);
-    expect(await s.list()).toEqual({ categories: [], unreadable: 0 });
+    expect(await s.list()).toEqual({ categories: [], unreadable: 0, overLimit: 0 });
   });
 
   test("removing a record that is not there says so and throws nothing", async () => {

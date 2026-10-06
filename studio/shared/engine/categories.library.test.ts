@@ -244,17 +244,23 @@ describe("categories.* commands", () => {
 
   test("categories.list answers the categories, the unreadable count, the interrupted calls and the busy one", () => {
     expect(command("categories.list", {}).success).toBe(true);
-    expect(answer("categories.list", { categories: [summary()], unreadable: 1, interrupted: [], busy: null }).success).toBe(true);
+    expect(answer("categories.list", { categories: [summary()], unreadable: 1, overLimit: 0, interrupted: [], busy: null }).success).toBe(true);
+  });
+
+  test("categories.list says how many readable categories past the 50th it kept out of the list, and always says it", () => {
+    expect(answer("categories.list", { categories: [summary()], unreadable: 0, overLimit: 3, interrupted: [], busy: null }).success).toBe(true);
+    expect(answer("categories.list", { categories: [summary()], unreadable: 0, overLimit: -1, interrupted: [], busy: null }).success).toBe(false);
+    expect(answer("categories.list", { categories: [summary()], unreadable: 0, interrupted: [], busy: null }).success).toBe(false);
   });
 
   test("categories.list holds at most 50 categories", () => {
     const many = (n: number) => Array.from({ length: n }, (_, i) => summary({ categoryId: `cat-category-${String(i).padStart(3, "0")}` }));
-    expect(answer("categories.list", { categories: many(MAX_CUSTOM_CATEGORIES), unreadable: 0, interrupted: [], busy: null }).success).toBe(true);
-    expect(answer("categories.list", { categories: many(MAX_CUSTOM_CATEGORIES + 1), unreadable: 0, interrupted: [], busy: null }).success).toBe(false);
+    expect(answer("categories.list", { categories: many(MAX_CUSTOM_CATEGORIES), unreadable: 0, overLimit: 0, interrupted: [], busy: null }).success).toBe(true);
+    expect(answer("categories.list", { categories: many(MAX_CUSTOM_CATEGORIES + 1), unreadable: 0, overLimit: 0, interrupted: [], busy: null }).success).toBe(false);
   });
 
   test("the list result schema is the one the answer uses", () => {
-    expect(CategoriesListResult.safeParse({ categories: [], unreadable: 0, interrupted: [], busy: null }).success).toBe(true);
+    expect(CategoriesListResult.safeParse({ categories: [], unreadable: 0, overLimit: 0, interrupted: [], busy: null }).success).toBe(true);
     expect(CategoriesListResult.safeParse({ categories: [], unreadable: 0 }).success).toBe(false);
   });
 

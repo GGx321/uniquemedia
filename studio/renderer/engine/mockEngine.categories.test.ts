@@ -74,7 +74,7 @@ describe("categories.estimate", () => {
 describe("categories.list", () => {
   test("an empty library lists nothing, with nothing unreadable, interrupted or busy", async () => {
     const { client } = makeMock();
-    expect(await unwrap(client.request("categories.list", {}))).toEqual({ categories: [], unreadable: 0, interrupted: [], busy: null });
+    expect(await unwrap(client.request("categories.list", {}))).toEqual({ categories: [], unreadable: 0, overLimit: 0, interrupted: [], busy: null });
   });
 
   test("answers the categories the mock was seeded with, the unreadable count and the interrupted calls", async () => {
@@ -82,7 +82,7 @@ describe("categories.list", () => {
     const interrupted: CategoryInterrupted = { jobId: "job-00000041", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 };
     const { client } = makeMock({ categories: [first], unreadableCategories: 2, interruptedCategories: [interrupted] });
 
-    expect(await unwrap(client.request("categories.list", {}))).toEqual({ categories: [first], unreadable: 2, interrupted: [interrupted], busy: null });
+    expect(await unwrap(client.request("categories.list", {}))).toEqual({ categories: [first], unreadable: 2, overLimit: 0, interrupted: [interrupted], busy: null });
   });
 
   test("without a library: LIBRARY_UNAVAILABLE", async () => {
@@ -160,6 +160,27 @@ describe("categories.create", () => {
     for (let i = 0; i < 50; i++) await created(m, `Category ${i}`);
     expect(await create(m, "One too many")).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "limit" } });
     expect((await unwrap(m.client.request("categories.list", {}))).categories).toHaveLength(50);
+  });
+
+  test("a file that cannot be read counts towards the limit, as it does in the engine: 49 readable and one unreadable leave no room", async () => {
+    const m = makeMock();
+    for (let i = 0; i < 49; i++) await created(m, `Category ${i}`);
+    const full = makeMock({ categories: (await unwrap(m.client.request("categories.list", {}))).categories, unreadableCategories: 1 });
+
+    expect(await create(full, "One too many")).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "limit" } });
+  });
+
+  test("more than 50 seeded categories list as the 50 oldest and a count of the rest, never an answer the contract refuses", async () => {
+    const m = makeMock();
+    for (let i = 0; i < 50; i++) await created(m, `Category ${i}`);
+    const fifty = (await unwrap(m.client.request("categories.list", {}))).categories;
+    const extra = { ...fifty[0], categoryId: "cat-fifty-one-0001" as const, name: "Fifty one" } as CategorySummary;
+    const over = makeMock({ categories: [...fifty, extra] });
+
+    const listed = await unwrap(over.client.request("categories.list", {}));
+
+    expect(listed.categories).toHaveLength(50);
+    expect(listed.overLimit).toBe(1);
   });
 
   test("a forced failure of the call books what it cost, carries it in the error, and stores nothing", async () => {

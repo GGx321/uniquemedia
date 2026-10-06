@@ -2535,7 +2535,7 @@ async function runCategoryScenario(target: Target): Promise<void> {
 
     // 1. The library starts with no category; the pool call is priced before it is accepted.
     const empty = await req(cdp, "categories.list");
-    check("category scenario: categories.list of a new library is empty, with nothing unreadable, interrupted or busy", JSON.stringify(field(empty, "result")) === JSON.stringify({ categories: [], unreadable: 0, interrupted: [], busy: null }), empty);
+    check("category scenario: categories.list of a new library is empty, with nothing unreadable, interrupted or busy", JSON.stringify(field(empty, "result")) === JSON.stringify({ categories: [], unreadable: 0, overLimit: 0, interrupted: [], busy: null }), empty);
     const estimate = await req(cdp, "categories.estimate");
     const worstMicros = Number(field(estimate, "result", "worstMicros"));
     check("category scenario: categories.estimate prices the pool call (a worst case above the expected one)", field(estimate, "ok") === true && worstMicros > Number(field(estimate, "result", "expectedMicros")) && worstMicros > 0, estimate);

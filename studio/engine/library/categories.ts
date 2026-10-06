@@ -30,7 +30,9 @@ import { unlinkWithRetry } from "./unlinkRetry";
 // A record is read through the schema AND the engine's own pool rules (a hand-edited file with a youth word in a place is not
 // served). A file that cannot be read, or that a newer Studio wrote, is counted in `unreadable` and left exactly where it is: it
 // is never moved, rewritten or removed. Names are unique per library (compared case-insensitively after trim, NFC), because two
-// categories with one name cannot be told apart in the montage bin's filter. At most 50 readable categories.
+// categories with one name cannot be told apart in the montage bin's filter. At most 50 category files: every `cat-*.json` counts towards the limit,
+// readable or not (an unreadable or newer record is kept, so it holds its place and the folder stays bounded), and `list()` answers at most 50 of the
+// readable ones, the oldest first, counting the rest in `overLimit`.
 //
 // `pending-<jobId>.json` is the record of a paid create or regenerate that has not ended: written before the call, removed on any
 // outcome. A leftover after a restart is the call a closed Studio left (`categories.list`'s `interrupted`).
@@ -160,9 +162,28 @@ export class CategoryStore {
     return { categories, unreadable };
   }
 
-  /** The readable categories in creation order (equal times by id), and how many files could not be read (they stay where they are). */
-  async list(): Promise<{ categories: StoredCategory[]; unreadable: number }> {
-    return this.#readAll();
+  /**
+   * The readable categories in creation order (equal times by id), at most 50 and the oldest first; how many files could not be read (they stay where
+   * they are); and how many readable ones are past the 50th and left out (they stay too).
+   */
+  async list(): Promise<{ categories: StoredCategory[]; unreadable: number; overLimit: number }> {
+    const { categories, unreadable } = await this.#readAll();
+    return { categories: categories.slice(0, MAX_CUSTOM_CATEGORIES), unreadable, overLimit: Math.max(0, categories.length - MAX_CUSTOM_CATEGORIES) };
+  }
+
+  /**
+   * `limit` for a new category when the folder already holds 50 category files (readable or not), `name-taken` when another readable category (the
+   * ones a listing leaves out included) has the name. `exceptId` is the category being renamed: it is not in its own way, and a rename has no limit.
+   */
+  async assertRoom(name: string, exceptId: string | null): Promise<void> {
+    const { categories, unreadable } = await this.#readAll();
+    this.#checkRoom(categories, unreadable, name, exceptId);
+  }
+
+  #checkRoom(categories: readonly StoredCategory[], unreadable: number, name: string, exceptId: string | null): void {
+    if (exceptId === null && categories.length + unreadable >= MAX_CUSTOM_CATEGORIES) throw new CategoryError("limit", `the library already holds ${MAX_CUSTOM_CATEGORIES} categories`);
+    const key = categoryNameKey(name);
+    if (categories.some((c) => c.categoryId !== exceptId && categoryNameKey(c.name) === key)) throw new CategoryError("name-taken", "another category already has this name");
   }
 
   /** One category; null when there is no such record or it cannot be read (a newer Studio's included). */
@@ -172,13 +193,12 @@ export class CategoryStore {
     return read.ok ? readRecord(read.value, id) : null;
   }
 
-  /** Creates a category: refused with `limit` past 50, `name-taken` for a name another holds, `exists` for an id already used. */
+  /** Creates a category: refused with `limit` when 50 category files are already there (readable or not), `name-taken` for a name another holds, `exists` for an id already used. */
   async create(input: NewCategory): Promise<StoredCategory> {
     return runExclusive(this.#lockKey, async () => {
-      const { categories } = await this.#readAll();
-      if (categories.length >= MAX_CUSTOM_CATEGORIES) throw new CategoryError("limit", `the library already holds ${MAX_CUSTOM_CATEGORIES} categories`);
+      const { categories, unreadable } = await this.#readAll();
       const name = input.name.trim();
-      if (categories.some((c) => categoryNameKey(c.name) === categoryNameKey(name))) throw new CategoryError("name-taken", "another category already has this name");
+      this.#checkRoom(categories, unreadable, name, null);
       const existing = await readJsonFile(this.#path(input.categoryId));
       if (existing.ok || (await this.#names()).includes(`${input.categoryId}.json`)) throw new CategoryError("exists", `category ${input.categoryId} already exists`);
       const stamp = this.#now().toISOString();

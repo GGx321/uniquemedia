@@ -2562,7 +2562,7 @@ export class Engine {
   async #listCategories(): Promise<CommandResult<"categories.list">> {
     const library = this.library;
     if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
-    const { categories, unreadable } = await library.categories.list();
+    const { categories, unreadable, overLimit } = await library.categories.list();
     await this.#forgetEndedCalls(library);
     const pending = await library.categories.listPending();
     const running = this.#categoryCall?.jobId ?? null;
@@ -2581,7 +2581,7 @@ export class Engine {
     // A regenerate names its category as soon as it is claimed: the name is read from the store here when the call has not read it yet.
     const callName = call === null ? null : (call.name ?? (call.categoryId === null ? null : (categories.find((c) => c.categoryId === call.categoryId)?.name ?? null)));
     const busy = call === null || callName === null ? null : { kind: call.kind, name: callName, categoryId: call.categoryId };
-    return { categories: categories.map(summaryOf), unreadable, interrupted, busy };
+    return { categories: categories.map(summaryOf), unreadable, overLimit, interrupted, busy };
   }
 
   /** Tries again to remove the records of calls that ended but could not be forgotten; a record that is gone, or removed now, is no longer remembered. */
@@ -2597,15 +2597,15 @@ export class Engine {
     }
   }
 
-  /** VALIDATION, free, when the library is full or another category holds the name; the store checks the same again at the write, under its own lock. */
+  /**
+   * VALIDATION, free, when the library holds 50 category files (readable or not) or another category holds the name; the store checks the same again at
+   * the write, under its own lock. The name check sees every readable category, the ones a listing leaves out included.
+   */
   async #assertRoomForCategory(library: Library, name: string, exceptId: CustomCategoryId | null): Promise<void> {
-    const { categories } = await library.categories.list();
-    if (exceptId === null && categories.length >= MAX_CUSTOM_CATEGORIES) {
-      throw new EngineFailure({ code: "VALIDATION", categoryReason: "limit", detail: `the library already holds ${MAX_CUSTOM_CATEGORIES} categories; delete one first` });
-    }
-    const key = categoryNameKey(name);
-    if (categories.some((c) => c.categoryId !== exceptId && categoryNameKey(c.name) === key)) {
-      throw new EngineFailure({ code: "VALIDATION", categoryReason: "name-taken", detail: "another category already has this name" });
+    try {
+      await library.categories.assertRoom(name, exceptId);
+    } catch (error) {
+      throw Engine.#categoryFailure(error);
     }
   }
 

@@ -280,10 +280,16 @@ export const CategoryBusy = z
   });
 export type CategoryBusy = z.infer<typeof CategoryBusy>;
 
-/** `categories.list`'s answer: the readable categories in creation order, how many files could not be read (they are kept), the calls a closed Studio left, and the call in flight. */
+/**
+ * `categories.list`'s answer: the readable categories in creation order (at most 50, the oldest first), how many files could not be read (they are
+ * kept), how many readable categories past the 50th are left out of `categories` (they are kept too: a library edited by hand or by another build can
+ * hold more than the limit, and the list must still answer; deleting categories brings them back), the calls a closed Studio left, and the call in flight.
+ * `unreadable` and `overLimit` both count files that hold a place towards the limit: a create is refused while categories + unreadable + overLimit reach 50.
+ */
 export const CategoriesListResult = z.strictObject({
   categories: z.array(CategorySummary).max(MAX_CUSTOM_CATEGORIES),
   unreadable: Count,
+  overLimit: Count,
   interrupted: z.array(CategoryInterrupted).max(MAX_CUSTOM_CATEGORIES),
   busy: CategoryBusy.nullable(),
 });

@@ -177,7 +177,7 @@ describe("categories.estimate", () => {
 describe("categories.list", () => {
   test("an empty library lists nothing, with nothing unreadable, interrupted or busy", async () => {
     const { engine } = await startEngine(dir());
-    expect(await listOf(engine)).toEqual({ categories: [], unreadable: 0, interrupted: [], busy: null });
+    expect(await listOf(engine)).toEqual({ categories: [], unreadable: 0, overLimit: 0, interrupted: [], busy: null });
   });
 
   test("lists the categories in creation order with their pool, model and what each has cost", async () => {
@@ -206,6 +206,50 @@ describe("categories.list", () => {
   test("a library with no folder open answers LIBRARY_UNAVAILABLE", async () => {
     const { engine } = await startEngine(dir(), { init: { settings: engineSettings(dir(), { libraryPath: join(dir(), "missing") }) } });
     expect(failed(await engine.handle(command("categories.list"))).error.code).toBe("LIBRARY_UNAVAILABLE");
+  });
+
+  /** `count` readable records: the first made by the library, the rest copies of it written straight to the folder. */
+  async function fillOnDisk(count: number): Promise<void> {
+    await seedCategory({ categoryId: "cat-fifty-0000", name: "Fifty 0" });
+    const stored = JSON.parse(await readFile(join(categoriesDir(), "cat-fifty-0000.json"), "utf8"));
+    for (let i = 1; i < count; i++) {
+      const id = `cat-fifty-${String(i).padStart(4, "0")}`;
+      await writeFile(join(categoriesDir(), `${id}.json`), JSON.stringify({ ...stored, categoryId: id, name: `Fifty ${i}` }));
+    }
+  }
+
+  test("more than 50 readable records on disk still list: the answer holds the 50 oldest and says how many it left out, so it stays inside the contract", async () => {
+    await fillOnDisk(53);
+    const { engine } = await startEngine(dir());
+
+    const listed = await listOf(engine);
+
+    expect(listed.categories).toHaveLength(50);
+    expect(listed.overLimit).toBe(3);
+    expect(listed.unreadable).toBe(0);
+    expect(await folder()).toHaveLength(53);
+  });
+
+  test("a create is refused by the limit at 49 readable records and one that cannot be read: nothing sent, nothing booked", async () => {
+    await fillOnDisk(49);
+    await writeFile(join(categoriesDir(), "cat-broken-json.json"), "{nope");
+    const net = network({ descriptors: [poolReply()] });
+    const { engine } = await startEngine(dir(), { net });
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "limit" });
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  test("with more than 50 on disk a create is refused by the limit, and a name held by a category the list leaves out is not offered to a paid call", async () => {
+    await fillOnDisk(52);
+    const net = network({ descriptors: [poolReply(), poolReply()] });
+    const { engine } = await startEngine(dir(), { net });
+
+    expect(failed(await engine.handle(createCommand({ name: "Brand new" }))).error).toMatchObject({ code: "VALIDATION", categoryReason: "limit" });
+    expect(chatCalls(net)).toHaveLength(0);
   });
 
   test("a call a closed Studio left is listed as interrupted, counted at the worst case its reserve holds until the reconcile", async () => {
