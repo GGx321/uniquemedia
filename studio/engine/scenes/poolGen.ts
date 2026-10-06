@@ -12,7 +12,8 @@ import {
   PLACE_TIMES_MAX,
   PoolShot,
   PoolText,
-  TimeOfDay,
+  POOL_TIMES,
+  PoolTime,
   youthRuleNames,
   youthWords,
   type CategoryStyle,
@@ -25,13 +26,10 @@ import { revealingWordsIn } from "./words";
 // CS.2: the pool of a custom category, written by the text model from the owner's description. The answer is read like the
 // avatar descriptor's: what is sound is kept, an item that breaks a pool rule is dropped (never kept, never repaired), and
 // what cannot be salvaged is refused with fixed reasons that the one retry is told. The rules are the ones the built-in
-// pools are held to (`PoolSchema`) plus the contract's technical bounds (`PoolText`, `TimeOfDay`, `CategoryLabel`, the counts).
+// pools are held to (`PoolSchema`) plus the contract's technical bounds (`PoolText`, `PoolTime`, `CategoryLabel`, the counts).
 // No new content rule: the youth words and the revealing outfits are the Stage 2 rules as built.
 
 export { POOL_MAX_ATTEMPTS, poolCall } from "./poolCall";
-
-/** The times of day a built-in pool uses; the call's schema offers exactly these. */
-export const POOL_TIMES: readonly string[] = ["morning", "midday", "golden hour", "evening", "night", "studio lighting"];
 
 // ---------- the call ----------
 
@@ -291,7 +289,7 @@ function readPlace(raw: unknown, collector: Collector): { place: ReadPlace; drop
 
   const times = Array.isArray(raw.times) ? raw.times : [];
   const goodTimes = times.filter((t): t is string => {
-    const ok = TimeOfDay.safeParse(t).success;
+    const ok = PoolTime.safeParse(t).success;
     if (!ok) inner.dropped += 1;
     return ok;
   });

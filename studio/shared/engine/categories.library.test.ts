@@ -110,6 +110,15 @@ describe("CategoryPool", () => {
     expect(CategoryPool.safeParse(pool({ locations, outfits })).success).toBe(true);
   });
 
+  test.each(["morning", "midday", "golden hour", "evening", "night", "studio lighting"])("accepts the time of day «%s» from the plan's vocabulary", (time) => {
+    expect(CategoryPool.safeParse(pool({ locations: [place({ times: [time], mirror: true }), ...(pool().locations as unknown[]).slice(1)] })).success).toBe(true);
+  });
+
+  test.each(["dawn", "after school", "teen hangout", "Morning", "golden  hour"])("refuses the time of day «%s», which is plain text but not in the vocabulary", (time) => {
+    const locations = [place({ times: ["morning", time], mirror: true }), ...(pool().locations as unknown[]).slice(1)];
+    expect(CategoryPool.safeParse(pool({ locations })).success).toBe(false);
+  });
+
   test.each([
     ["4 places", pool({ locations: (pool().locations as unknown[]).slice(0, 4) })],
     ["8 places", pool({ locations: Array.from({ length: 8 }, (_, i) => place({ name: `place ${i}` })) })],

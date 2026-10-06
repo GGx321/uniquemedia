@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CATEGORY_LABEL_MAX, CategoryPool, POOL_SHOTS, POOL_TEXT_MAX } from "../../shared/engine";
+import { CATEGORY_LABEL_MAX, CategoryPool, POOL_SHOTS, POOL_TEXT_MAX, POOL_TIMES } from "../../shared/engine";
 import { PriceBook } from "../money/prices";
 import { chatAttemptWorstMicros, promptTokenFloor } from "../openrouter/chat";
 import { PoolSchema } from "./pools";
@@ -7,7 +7,6 @@ import {
   POOL_EXAMPLE_ANSWER,
   POOL_JSON_SCHEMA,
   POOL_MAX_ATTEMPTS,
-  POOL_TIMES,
   POOL_TOLD_WORDS_MAX,
   POOL_TOLD_WORD_BYTES_MAX,
   poolCall,
@@ -174,6 +173,18 @@ describe("readPoolAnswer: salvage drops the items that break the pool rules and 
     const locations = (answer().locations as Json[]).map((l, i) => (i === 0 ? { ...l, times: ["morning", "a very long time of day"] } : l));
     const result = okOf(answer({ locations }));
     expect(result.pool.locations[0]?.times).toEqual(["morning"]);
+  });
+
+  test.each(["dawn", "after school", "teen hangout"])("a time of day outside the vocabulary («%s») is dropped from its place; the place keeps its other time", (time) => {
+    const locations = (answer().locations as Json[]).map((l, i) => (i === 0 ? { ...l, times: ["morning", time] } : l));
+    const result = okOf(answer({ locations }));
+    expect(result.pool.locations[0]?.times).toEqual(["morning"]);
+    expect(result.dropped).toBe(1);
+  });
+
+  test("a place whose only time is outside the vocabulary follows the below-minimum rule: dropped, and the pool is refused when too few places are left", () => {
+    const locations = (answer().locations as Json[]).map((l, i) => (i === 0 ? { ...l, times: ["after school"] } : l));
+    expect(refusalOf(answer({ locations })).problems).toContain("too-few-places");
   });
 
   test("an activity marked one-handed that says «both hands» comes out two-handed", () => {

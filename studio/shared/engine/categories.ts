@@ -162,13 +162,21 @@ export const PLACE_TIMES_MAX = 3;
 export const PLACE_ACTIVITIES_MIN = 2;
 export const PLACE_ACTIVITIES_MAX = 4;
 
+/**
+ * The times of day a pool's place may name: the built-in vocabulary (plan section 4.1 step 3). The pool call's JSON schema offers exactly
+ * these, and the reader drops anything else, so a record on disk never holds a time the vocabulary lacks.
+ */
+export const POOL_TIMES = ["morning", "midday", "golden hour", "evening", "night", "studio lighting"] as const;
+export const PoolTime = z.enum(POOL_TIMES);
+export type PoolTime = z.infer<typeof PoolTime>;
+
 const PoolActivity = z.strictObject({ text: PoolText, twoHanded: z.boolean() });
 
 /** A place with the times of day it fits and what she can do there; `mirror` marks a place a mirror shot may land on. */
 export const CategoryPlace = z
   .strictObject({
     name: PoolText,
-    times: z.array(TimeOfDay).min(1).max(PLACE_TIMES_MAX),
+    times: z.array(PoolTime).min(1).max(PLACE_TIMES_MAX),
     activities: z.array(PoolActivity).min(PLACE_ACTIVITIES_MIN).max(PLACE_ACTIVITIES_MAX),
     mirror: z.boolean(),
   })

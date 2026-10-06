@@ -259,7 +259,7 @@ const customCategory = {
   pool: {
     locations: ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"].map((name, i) => ({
       name,
-      times: ["morning", "midday"],
+      times: ["morning" as const, "midday" as const],
       activities: [
         { text: "reading a menu", twoHanded: false },
         { text: "stirring a cappuccino", twoHanded: true },
