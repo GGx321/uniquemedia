@@ -2531,7 +2531,10 @@ export class Engine {
   static #categoryFailure(error: unknown, spentMicros?: number): EngineFailure {
     const extra = spentMicros === undefined ? {} : { spentMicros };
     if (error instanceof CategoryError) {
-      return new EngineFailure({ code: error.code === "not-found" ? "NOT_FOUND" : "VALIDATION", detail: detailOf(error.message), ...extra });
+      if (error.code === "not-found") return new EngineFailure({ code: "NOT_FOUND", detail: detailOf(error.message), ...extra });
+      // `exists` (an id already used) is the engine's own bug to report, not a rule the owner broke: it names no reason.
+      const reason = error.code === "exists" ? {} : { categoryReason: error.code };
+      return new EngineFailure({ code: "VALIDATION", detail: detailOf(error.message), ...reason, ...extra });
     }
     return new EngineFailure({ code: "INTERNAL", detail: messageOf(error, "the category could not be written"), ...extra });
   }
@@ -2562,11 +2565,11 @@ export class Engine {
   async #assertRoomForCategory(library: Library, name: string, exceptId: CustomCategoryId | null): Promise<void> {
     const { categories } = await library.categories.list();
     if (exceptId === null && categories.length >= MAX_CUSTOM_CATEGORIES) {
-      throw new EngineFailure({ code: "VALIDATION", detail: `the library already holds ${MAX_CUSTOM_CATEGORIES} categories; delete one first` });
+      throw new EngineFailure({ code: "VALIDATION", categoryReason: "limit", detail: `the library already holds ${MAX_CUSTOM_CATEGORIES} categories; delete one first` });
     }
     const key = categoryNameKey(name);
     if (categories.some((c) => c.categoryId !== exceptId && categoryNameKey(c.name) === key)) {
-      throw new EngineFailure({ code: "VALIDATION", detail: "another category already has this name" });
+      throw new EngineFailure({ code: "VALIDATION", categoryReason: "name-taken", detail: "another category already has this name" });
     }
   }
 

@@ -1768,6 +1768,20 @@ const CATEGORY_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: "custom categories: a refusal names its reason, so the sheet can tell a taken name from a missing item and from the pool's minimum",
+    rig: { categories: true, secondCategory: true },
+    async run(t) {
+      t.note("a rename to the name the other category holds (any letter case, edge spaces); the category's own name in another case is no clash");
+      await t.call("categories.update", { categoryId: "cat-parity-0002", name: " кофейни ПАРИЖА " });
+      t.note("an item the category does not hold, and a removal that would take the pool below its minimum");
+      await t.call("categories.update", { categoryId: "cat-parity-0002", removeLocations: ["a place nobody has"] });
+      await t.call("categories.update", { categoryId: "cat-parity-0002", removeOutfits: ["a hat nobody has"] });
+      await t.call("categories.update", { categoryId: "cat-parity-0002", removeLocations: ["a flower stall"] });
+      t.note("a refusal that is no category's own (a blank name, caught by the contract) names no reason");
+      await t.call("categories.update", { categoryId: "cat-parity-0002", name: " " });
+    },
+  },
+  {
     name: "custom categories: a run names a category the library does not hold, and is refused before any price",
     rig: { categories: true },
     async run(t, w) {

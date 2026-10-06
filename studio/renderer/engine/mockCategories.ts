@@ -153,10 +153,10 @@ export class MockCategories {
   /** VALIDATION when the library is full or another category holds the name (any letter case, edge spaces). */
   roomRefusal(name: string, exceptId: string | null): EngineError | null {
     if (exceptId === null && this.#categories.length >= MAX_CUSTOM_CATEGORIES) {
-      return { code: "VALIDATION", detail: `the library already holds ${MAX_CUSTOM_CATEGORIES} categories; delete one first` };
+      return { code: "VALIDATION", categoryReason: "limit", detail: `the library already holds ${MAX_CUSTOM_CATEGORIES} categories; delete one first` };
     }
     if (this.#categories.some((c) => c.categoryId !== exceptId && categoryNameKey(c.name) === categoryNameKey(name))) {
-      return { code: "VALIDATION", detail: "another category already has this name" };
+      return { code: "VALIDATION", categoryReason: "name-taken", detail: "another category already has this name" };
     }
     return null;
   }
@@ -204,16 +204,16 @@ export class MockCategories {
     }
     let { locations, outfits } = current.pool;
     for (const text of change.removeLocations ?? []) {
-      if (!locations.some((l) => categoryNameKey(l.name) === categoryNameKey(text))) return { code: "VALIDATION", detail: "the category has no such place" };
+      if (!locations.some((l) => categoryNameKey(l.name) === categoryNameKey(text))) return { code: "VALIDATION", categoryReason: "item-not-found", detail: "the category has no such place" };
       locations = locations.filter((l) => categoryNameKey(l.name) !== categoryNameKey(text));
     }
     for (const text of change.removeOutfits ?? []) {
-      if (!outfits.some((o) => categoryNameKey(o) === categoryNameKey(text))) return { code: "VALIDATION", detail: "the category has no such outfit" };
+      if (!outfits.some((o) => categoryNameKey(o) === categoryNameKey(text))) return { code: "VALIDATION", categoryReason: "item-not-found", detail: "the category has no such outfit" };
       outfits = outfits.filter((o) => categoryNameKey(o) !== categoryNameKey(text));
     }
-    if (locations.length < POOL_PLACES_MIN) return { code: "VALIDATION", detail: `a pool keeps at least ${POOL_PLACES_MIN} places` };
-    if (outfits.length < POOL_OUTFITS_MIN) return { code: "VALIDATION", detail: `a pool keeps at least ${POOL_OUTFITS_MIN} outfits` };
-    if (current.pool.shotDeck.includes("mirror") && !locations.some((l) => l.mirror)) return { code: "VALIDATION", detail: "the deck draws mirror shots: keep a place with a mirror" };
+    if (locations.length < POOL_PLACES_MIN) return { code: "VALIDATION", categoryReason: "below-minimum", detail: `a pool keeps at least ${POOL_PLACES_MIN} places` };
+    if (outfits.length < POOL_OUTFITS_MIN) return { code: "VALIDATION", categoryReason: "below-minimum", detail: `a pool keeps at least ${POOL_OUTFITS_MIN} outfits` };
+    if (current.pool.shotDeck.includes("mirror") && !locations.some((l) => l.mirror)) return { code: "VALIDATION", categoryReason: "mirror-needed", detail: "the deck draws mirror shots: keep a place with a mirror" };
     return this.#put({ ...current, name, pool: { ...current.pool, locations, outfits }, updatedAt: this.#nextStamp(current.updatedAt) });
   }
 

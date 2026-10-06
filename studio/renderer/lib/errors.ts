@@ -7,6 +7,7 @@ import {
   MONTAGE_ISSUE_MESSAGES_RU,
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
+  CATEGORY_REASONS_RU,
   PHOTO_UNAVAILABLE_REASONS_RU,
   RENDER_NO_SPACE_DETAIL_PREFIX,
   RENDER_TIMEOUT_DETAIL_PREFIX,
@@ -50,6 +51,8 @@ function baseText(error: EngineError): string {
   }
   // A refused photo says why: one photo goes into one video, a render holds its photos, a broken record refuses the whole avatar.
   if (error.code === "PHOTO_UNAVAILABLE" && error.photoReason !== undefined) return PHOTO_UNAVAILABLE_REASONS_RU[error.photoReason];
+  // A category command the engine refused says which rule it broke (the limit, a taken name, the pool's minimum, the mirror place, a missing item).
+  if (error.code === "VALIDATION" && error.categoryReason !== undefined) return CATEGORY_REASONS_RU[error.categoryReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.

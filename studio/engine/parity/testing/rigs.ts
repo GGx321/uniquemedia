@@ -283,6 +283,8 @@ export interface RigOptions {
    * (`PARITY_INTERRUPTED`). The real rig writes them through the library's own store before the engine opens it; the mock is seeded with the same.
    */
   readonly categories?: boolean;
+  /** CS.2: with `categories`, a second readable category (`PARITY_SECOND_CATEGORY`), so a rename can meet a name another category holds. */
+  readonly secondCategory?: boolean;
 }
 
 /** The custom category of a rig with `categories`: what the real store holds and the mock lists. */
@@ -308,6 +310,9 @@ export const PARITY_CATEGORY: Omit<CategorySummary, "createdAt" | "updatedAt"> =
   model: "x-ai/grok-4.3",
   spentMicros: 5_000,
 };
+
+/** The second category of a rig with `categories` and `secondCategory`. */
+export const PARITY_SECOND_CATEGORY: Omit<CategorySummary, "createdAt" | "updatedAt"> = { ...PARITY_CATEGORY, categoryId: "cat-parity-0002", name: "Горы зимой", description: "горы зимой" };
 
 /** The create a closed Studio left in a rig with `categories`: nothing of it is in the rig's ledger, so it is counted at nothing. */
 export const PARITY_INTERRUPTED = {
@@ -395,7 +400,12 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     photos,
     renderConcurrency: options.renderConcurrency ?? 1,
     ...(options.categories === true
-      ? { categories: [{ ...PARITY_CATEGORY, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" }], unreadableCategories: 1, interruptedCategories: [{ ...PARITY_INTERRUPTED }] }
+      ? {
+          categories: [
+            { ...PARITY_CATEGORY, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" },
+            ...(options.secondCategory === true ? [{ ...PARITY_SECOND_CATEGORY, createdAt: "2026-10-05T10:01:00.000Z", updatedAt: "2026-10-05T10:01:00.000Z" }] : []),
+          ],
+          unreadableCategories: 1, interruptedCategories: [{ ...PARITY_INTERRUPTED }] }
       : {}),
   });
   const events: EventMessage[] = [];
@@ -640,6 +650,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   if (options.usage !== undefined) await breakUsage(join(dir, "library", "avatars", avatarId), avatarId, options.usage);
   if (options.categories === true) {
     await library.categories.create(PARITY_CATEGORY);
+    if (options.secondCategory === true) await library.categories.create(PARITY_SECOND_CATEGORY);
     const { spentMicros: _counted, ...record } = PARITY_INTERRUPTED;
     await library.categories.writePending(record);
     await writeFile(join(dir, "library", "categories", "cat-parity-broken.json"), "{not json");

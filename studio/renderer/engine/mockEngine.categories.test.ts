@@ -149,7 +149,7 @@ describe("categories.create", () => {
     await created(m, "Кофейни Парижа");
     const spent = await spentOf(m);
 
-    expect(await create(m, " кофейни парижа ")).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(await create(m, " кофейни парижа ")).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "name-taken" } });
 
     expect(await spentOf(m)).toBe(spent);
     expect((await unwrap(m.client.request("categories.list", {}))).categories).toHaveLength(1);
@@ -158,7 +158,7 @@ describe("categories.create", () => {
   test("the 51st category is VALIDATION", async () => {
     const m = makeMock();
     for (let i = 0; i < 50; i++) await created(m, `Category ${i}`);
-    expect(await create(m, "One too many")).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(await create(m, "One too many")).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "limit" } });
     expect((await unwrap(m.client.request("categories.list", {}))).categories).toHaveLength(50);
   });
 
@@ -271,7 +271,7 @@ describe("categories.update and categories.delete", () => {
     expect(category.name).toBe("Alpha two");
     expect(category.updatedAt >= alpha.updatedAt).toBe(true);
     expect(changes(m.events)).toEqual([{ change: "upserted", category }]);
-    expect(await m.client.request("categories.update", { categoryId: alpha.categoryId, name: "BETA" })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(await m.client.request("categories.update", { categoryId: alpha.categoryId, name: "BETA" })).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "name-taken" } });
   });
 
   test("removes a place or an outfit by its text, never below the pool's minimums, never the last mirror place, never one that is not there", async () => {
@@ -282,8 +282,8 @@ describe("categories.update and categories.delete", () => {
     if (firstOutfit === undefined || firstPlace === undefined) throw new Error("unreachable");
 
     // A fresh pool is at its minimum in places: no place can go.
-    expect(await m.client.request("categories.update", { categoryId: made.categoryId, removeLocations: [firstPlace.name] })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
-    expect(await m.client.request("categories.update", { categoryId: made.categoryId, removeOutfits: ["a hat nobody has"] })).toMatchObject({ ok: false, error: { code: "VALIDATION" } });
+    expect(await m.client.request("categories.update", { categoryId: made.categoryId, removeLocations: [firstPlace.name] })).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "below-minimum" } });
+    expect(await m.client.request("categories.update", { categoryId: made.categoryId, removeOutfits: ["a hat nobody has"] })).toMatchObject({ ok: false, error: { code: "VALIDATION", categoryReason: "item-not-found" } });
     const kept = (await unwrap(m.client.request("categories.list", {}))).categories[0];
     expect(kept?.pool).toEqual(made.pool);
     // Outfits: the mock's pool has more than the minimum, so one can go.

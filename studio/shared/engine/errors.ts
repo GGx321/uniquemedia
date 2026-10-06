@@ -270,6 +270,20 @@ export function commonPhotoReason(reasons: readonly (PhotoUnavailableReason | un
 }
 
 /**
+ * Why a category command was refused (VALIDATION's `categoryReason`, additive in v5): the sheet's text depends on it, so it is a closed code and
+ * not the engine's free `detail`. Absent on a VALIDATION that is no category's own (a payload the contract refuses).
+ *
+ * - limit: the library already holds the most categories (50).
+ * - name-taken: another category has this name (the one name rule: trimmed, NFC, case-folded).
+ * - below-minimum: the removal would leave fewer places or outfits than a pool keeps.
+ * - mirror-needed: the removal would take the last place with a mirror from a deck that can draw a mirror shot.
+ * - item-not-found: the place or outfit to remove is not in the category (it may have been removed already).
+ */
+export const CATEGORY_REASONS = ["limit", "name-taken", "below-minimum", "mirror-needed", "item-not-found"] as const;
+export const CategoryReason = z.enum(CATEGORY_REASONS);
+export type CategoryReason = z.infer<typeof CategoryReason>;
+
+/**
  * An error as it travels between processes: a code plus optional diagnostics,
  * never user text. Six codes must say more than their name: MONTAGE_INVALID
  * carries the `issues` (a closed list of codes and paths, never values),
@@ -290,6 +304,11 @@ export const EngineError = z
     mediaReason: MediaUnsupportedReason.optional(),
     photoReason: PhotoUnavailableReason.optional(),
     /**
+     * Additive (CS.2): which rule a category command broke; only on VALIDATION, and on every category VALIDATION (create, update, regenerate,
+     * and the one a create meets after its pool was paid for, which also carries `spentMicros`). The sheet's text for it is `CATEGORY_REASONS_RU`.
+     */
+    categoryReason: CategoryReason.optional(),
+    /**
      * Additive (CS.2): what a failed paid category call cost, in micro-dollars as the ledger booked it (a settled attempt at its cost, an
      * open reserve at its worst case). Present on every failure of `categories.create` / `categories.regenerate` from the moment its call
      * was started — a provider's refusal (0), two rejected pools, a dropped connection, a pool paid for and not storable — and absent on
@@ -309,6 +328,10 @@ export const EngineError = z
   .refine((e) => e.photoReason === undefined || e.code === "PHOTO_UNAVAILABLE", {
     message: "photoReason may only be present on PHOTO_UNAVAILABLE",
     path: ["photoReason"],
+  })
+  .refine((e) => e.categoryReason === undefined || e.code === "VALIDATION", {
+    message: "categoryReason may only be present on VALIDATION",
+    path: ["categoryReason"],
   })
   .refine((e) => (e.code === "EXPORT_UNAVAILABLE") === (e.exportReason !== undefined), {
     message: "exportReason must be present exactly on EXPORT_UNAVAILABLE",

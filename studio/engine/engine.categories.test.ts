@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CategoryPool, CategorySummary, Estimate } from "../shared/engine";
 import { openLibrary } from "./library";
@@ -50,6 +50,21 @@ function poolReply(content: unknown = answer(), cost = 0.005): Step {
 }
 
 const MODERATION_STEP: Step = MODERATION;
+
+/** A chat answer held until `release`, after the request has arrived. */
+function held(content: Step) {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let arrived = false;
+  const step: Step = async () => {
+    arrived = true;
+    await gate;
+    return content as Reply;
+  };
+  return { step, release, arrived: () => arrived };
+}
 
 function createCommand(over: Json = {}): unknown {
   return command("categories.create", { name: "Кофейни Парижа", description: "кофейни и булочные Парижа", acceptedWorstMicros: ESTIMATE.worstMicros, ...over });
@@ -407,6 +422,7 @@ describe("categories.create", () => {
     const refused = failed(await engine.handle(createCommand({ name: " кофейни парижа " })));
 
     expect(refused.error.code).toBe("VALIDATION");
+    expect(refused.error.categoryReason).toBe("name-taken");
     expect(chatCalls(net)).toHaveLength(0);
     expect(ledgerLines(dir())).toEqual([]);
   });
@@ -418,9 +434,29 @@ describe("categories.create", () => {
     const net = network({ descriptors: [poolReply()] });
     const { engine } = await startEngine(dir(), { net });
 
-    expect(failed(await engine.handle(createCommand())).error.code).toBe("VALIDATION");
+    const refused = failed(await engine.handle(createCommand()));
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(refused.error.categoryReason).toBe("limit");
     expect(chatCalls(net)).toHaveLength(0);
     expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  test("a name taken while the paid call runs (a record that appeared in the folder) is VALIDATION with the reason, the cost and the kept pool", async () => {
+    await seedCategory({ categoryId: "cat-appears-0001", name: "Appears Later" });
+    const record = await readFile(join(categoriesDir(), "cat-appears-0001.json"), "utf8");
+    await unlink(join(categoriesDir(), "cat-appears-0001.json"));
+    const hold = held(poolReply());
+    const net = network({ descriptors: [hold.step] });
+    const { engine } = await startEngine(dir(), { net });
+
+    const creatingNow = engine.handle(createCommand({ name: "appears later" }));
+    await until(hold.arrived, "the request to arrive");
+    await writeFile(join(categoriesDir(), "cat-appears-0001.json"), record);
+    hold.release();
+    const refused = failed(await creatingNow);
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "name-taken", spentMicros: 5_000 });
+    expect(refused.error.detail).toContain("raw/");
   });
 
   test("a library write that fails after the paid call fails the command; the money stays booked and the paid pool is kept in raw/", async () => {
@@ -457,21 +493,6 @@ describe("categories.create", () => {
 // ---------- serialisation ----------
 
 describe("one category call at a time", () => {
-  /** A chat answer held until `release`, after the request has arrived. */
-  function held(content: Step) {
-    let release: () => void = () => {};
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let arrived = false;
-    const step: Step = async () => {
-      arrived = true;
-      await gate;
-      return content as Reply;
-    };
-    return { step, release, arrived: () => arrived };
-  }
-
   test("a second create while one runs is IN_FLIGHT: nothing reserved for it, and the busy call is named; the first still ends well", async () => {
     const hold = held(poolReply());
     const net = network({ descriptors: [hold.step, poolReply()] });
@@ -701,7 +722,9 @@ describe("categories.update", () => {
     const beta = await seedCategory({ name: "Beta" });
     const { engine } = await startEngine(dir());
 
-    expect(failed(await engine.handle(command("categories.update", { categoryId: beta, name: "ALPHA" }))).error.code).toBe("VALIDATION");
+    const refused = failed(await engine.handle(command("categories.update", { categoryId: beta, name: "ALPHA" })));
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(refused.error.categoryReason).toBe("name-taken");
     expect((await listOf(engine)).categories.map((c) => c.name)).toEqual(["Alpha", "Beta"]);
   });
 
@@ -719,16 +742,37 @@ describe("categories.update", () => {
     const id = await seedCategory();
     const { engine } = await startEngine(dir());
 
-    expect(failed(await engine.handle(command("categories.update", { categoryId: id, removeLocations: ["a flower stall"] }))).error.code).toBe("VALIDATION");
+    const refused = failed(await engine.handle(command("categories.update", { categoryId: id, removeLocations: ["a flower stall"] })));
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(refused.error.categoryReason).toBe("below-minimum");
     expect((await listOf(engine)).categories[0]?.pool).toEqual(POOL);
+  });
+
+  test("removing the last place with a mirror from a deck that draws one is VALIDATION with the reason mirror-needed", async () => {
+    const id = await seedCategory();
+    // The seeded pool holds the minimum of 5 places: a 6th, without a mirror, makes room for the removal.
+    const file = join(categoriesDir(), `${id}.json`);
+    const stored = JSON.parse(await readFile(file, "utf8"));
+    stored.pool.locations.push({ name: "a quiet lane", times: ["morning"], activities: [{ text: "walking", twoHanded: false }, { text: "carrying bags", twoHanded: true }], mirror: false });
+    await writeFile(file, JSON.stringify(stored));
+    const { engine } = await startEngine(dir());
+
+    const refused = failed(await engine.handle(command("categories.update", { categoryId: id, removeLocations: ["a bookshop"] })));
+
+    expect(refused.error.code).toBe("VALIDATION");
+    expect(refused.error.categoryReason).toBe("mirror-needed");
   });
 
   test("a text that names no item is VALIDATION, an unknown category NOT_FOUND", async () => {
     const id = await seedCategory();
     const { engine } = await startEngine(dir());
 
-    expect(failed(await engine.handle(command("categories.update", { categoryId: id, removeOutfits: ["a hat nobody has"] }))).error.code).toBe("VALIDATION");
-    expect(failed(await engine.handle(command("categories.update", { categoryId: "cat-nobody-here", name: "x" }))).error.code).toBe("NOT_FOUND");
+    const unknownItem = failed(await engine.handle(command("categories.update", { categoryId: id, removeOutfits: ["a hat nobody has"] })));
+    expect(unknownItem.error.code).toBe("VALIDATION");
+    expect(unknownItem.error.categoryReason).toBe("item-not-found");
+    const unknownCategory = failed(await engine.handle(command("categories.update", { categoryId: "cat-nobody-here", name: "x" })));
+    expect(unknownCategory.error.code).toBe("NOT_FOUND");
+    expect(unknownCategory.error.categoryReason).toBeUndefined();
   });
 
   test("without a library: LIBRARY_UNAVAILABLE", async () => {
