@@ -130,6 +130,27 @@ describe("the image model select", () => {
     expect(modelSelect().value).toBe(GROK);
   });
 
+  test("a refresh that fails keeps the list on show, and the next return asks again at once", async () => {
+    const { engine } = await openSettings();
+    const asked = (): number => callsOf(engine, "settings.imageModels").length;
+    const before = asked();
+    const loaded = Date.now();
+    try {
+      engine.failNext("settings.imageModels", { code: "INTERNAL" });
+      setSystemTime(new Date(loaded + 61_000));
+      fireEvent.focus(window);
+      await flush();
+      expect(asked()).toBe(before + 1);
+      expect(modelSelect().value).toBe(GROK);
+      setSystemTime(new Date(loaded + 62_000));
+      fireEvent.focus(window);
+      await flush();
+      expect(asked()).toBe(before + 2);
+    } finally {
+      setSystemTime();
+    }
+  });
+
   test("a model that is set but not in the catalogue stays selectable as the current one, marked", async () => {
     await openSettings({ imageModel: "acme/old-image" });
     const options = within(modelSelect()).getAllByRole("option");

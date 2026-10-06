@@ -767,7 +767,10 @@ function ImageModelRows({ settings }: { settings: Settings }) {
     let current = true;
     askedAt.current = Date.now();
     void client.request("settings.imageModels", {}).then((reply) => {
-      if (current) setState((was) => (reply.ok ? { status: "ready", catalogue: reply.result } : was.status === "ready" ? was : { status: "failed" }));
+      if (!current) return;
+      // A refresh that failed got nothing fresh: the next return asks again, not a whole cache window later.
+      if (!reply.ok) askedAt.current = 0;
+      setState((was) => (reply.ok ? { status: "ready", catalogue: reply.result } : was.status === "ready" ? was : { status: "failed" }));
     });
     return () => {
       current = false;
