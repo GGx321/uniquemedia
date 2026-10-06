@@ -80,7 +80,10 @@ function PhotoTile({ photo, position, picked, refused, onToggle, mark, onOpen }:
       <div className="photo-badges">
         <PhotoBadges photo={photo} />
       </div>
-      <span className="pill photo-label">{label}</span>
+      {/* A custom category's name is up to 40 chars: cut with «…» on the tile, whole in its title (CS.0 decision 6). */}
+      <span className="pill photo-label" title={label}>
+        {label}
+      </span>
       <button
         type="button"
         className={photo.rejected ? "photo-mark photo-mark-on" : "photo-mark"}

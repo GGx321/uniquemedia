@@ -1,4 +1,4 @@
-import { isCustomCategory, orderCategories, SceneCategory, splitCount, type PhotoSummary, type RunRequest } from "../../../shared/engine";
+import { isCustomCategory, orderCategories, SceneCategory, splitCount, type CustomCategoryId, type PhotoSummary, type RunRequest } from "../../../shared/engine";
 import type { EngineView } from "../../engine/store";
 import { paidStop, restartStopText } from "../../lib/paidStop";
 
@@ -62,6 +62,28 @@ export function photoCategoryLabel(photo: Pick<PhotoSummary, "category" | "categ
  */
 export function photosPerCategory(count: number, categories: readonly RunCategory[]): Map<RunCategory, number> {
   return new Map(splitCount(count, categories).map(({ ref, count: n }) => [ref, n]));
+}
+
+/**
+ * The form's categories as a run asks for them (CS.3): the built-ins that are on, in their canonical order, then the custom
+ * ones that are on, in the library's creation order (`customOrder`, as `categories.list` answers it). `runRequest` keeps the
+ * form's order for custom refs and the engine splits the count in that order, so a chip clicked last must not take a
+ * remainder photo from one made earlier. A custom ref the library does not hold (deleted, or another library's) is dropped:
+ * a run naming it would be refused.
+ */
+export function arrangeCategories(on: readonly RunCategory[], customOrder: readonly CustomCategoryId[]): RunCategory[] {
+  const wanted = new Set<string>(on);
+  return [...SceneCategory.options.filter((c) => wanted.has(c)), ...customOrder.filter((id) => wanted.has(id))];
+}
+
+/** A chip clicked: `ref` on or off, the rest arranged as `arrangeCategories` does. */
+export function toggleCategory(categories: readonly RunCategory[], ref: RunCategory, customOrder: readonly CustomCategoryId[]): RunCategory[] {
+  return arrangeCategories(categories.includes(ref) ? categories.filter((c) => c !== ref) : [...categories, ref], customOrder);
+}
+
+/** Whether two category lists are the same, element by element (order included). */
+export function sameCategories(a: readonly RunCategory[], b: readonly RunCategory[]): boolean {
+  return a.length === b.length && a.every((c, i) => c === b[i]);
 }
 
 /** The exact request a price is asked for and a run is started with; categories in the contract's order, so equal forms give equal requests. */

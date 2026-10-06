@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars } from "./money";
+import { dollarsInputValue, formatUsd, formatUsdRange, formatUsdTiered, parseDollars } from "./money";
 
 test("formats micros as dollars with two decimals, rounding to the nearest cent", () => {
   expect(formatUsd(207_600)).toBe("$0.21");
@@ -80,4 +80,27 @@ test("the input value round-trips with the parser", () => {
   expect(dollarsInputValue(10_000_000_000)).toBe("10000.00");
   const parsed = parseDollars(dollarsInputValue(7_050_000));
   expect(parsed).toEqual({ ok: true, micros: 7_050_000 });
+});
+
+// CS.3, the design's «Деньги на экране»: one rule for the small prices of custom categories (the pool call is $0.006 typical, $0.045 worst).
+test("formatUsdTiered shows three decimals below $0.10 and two from $0.10, rounding a ceiling up and the rest to the nearest", () => {
+  // The pool call's own figures at the fallback prices.
+  expect(formatUsdTiered(45_000, "up")).toBe("$0.045");
+  expect(formatUsdTiered(6_000, "nearest")).toBe("$0.006");
+  // An open writer reserve, $0.0375: «до» rounds up, «≈» and spent money to the nearest.
+  expect(formatUsdTiered(37_500, "up")).toBe("$0.038");
+  expect(formatUsdTiered(5_400, "nearest")).toBe("$0.005");
+  expect(formatUsdTiered(5_500, "nearest")).toBe("$0.006");
+  // The boundary: 99 999 µ$ is still below $0.10 (three decimals, and rounding up reaches «$0.100»); 100 000 is two.
+  expect(formatUsdTiered(99_999, "up")).toBe("$0.100");
+  expect(formatUsdTiered(100_000, "up")).toBe("$0.10");
+  expect(formatUsdTiered(112_500, "up")).toBe("$0.12");
+  expect(formatUsdTiered(112_500, "nearest")).toBe("$0.11");
+  // Nothing spent is said as nothing.
+  expect(formatUsdTiered(0, "nearest")).toBe("$0.000");
+});
+
+test("formatUsdTiered refuses what formatUsd refuses", () => {
+  expect(() => formatUsdTiered(-1, "up")).toThrow(RangeError);
+  expect(() => formatUsdTiered(0.5, "nearest")).toThrow(RangeError);
 });

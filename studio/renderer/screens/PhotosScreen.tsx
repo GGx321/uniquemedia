@@ -13,7 +13,7 @@ import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
 import { usablePicks, useMontagePicks } from "./photos/picks";
-import { DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
+import { arrangeCategories, DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
 import { useMounted } from "./photos/shared";
 import { UsageNotice } from "./photos/UsageNotice";
@@ -66,6 +66,17 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   const [tab, setTab] = useState<PhotosTab>(initialTab);
 
   const [form, setForm] = useState<RunForm>(DEFAULT_RUN_FORM);
+  // CS.3 (owner decision 4): a category this window made comes into the run at once, its dialog shown or hidden; in creation order.
+  const { categories: categoryLibrary } = useEngine();
+  useEffect(
+    () =>
+      categoryLibrary.subscribeCreated((created) => {
+        const list = categoryLibrary.getView().list;
+        const order = list.status === "ready" ? list.categories.map((c) => c.categoryId) : [created.categoryId];
+        setForm((now) => ({ ...now, categories: arrangeCategories([...now.categories, created.categoryId], order) }));
+      }),
+    [categoryLibrary],
+  );
   /** The last list photos.list answered (null until the first); a later failure is shown above it, never instead of it. */
   const [gallery, setGallery] = useState<GalleryList | null>(null);
   const [galleryError, setGalleryError] = useState<EngineError | null>(null);

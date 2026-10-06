@@ -34,6 +34,19 @@ export function formatUsd(micros: number, decimals: 2 | 3 | 4 = 2, rounding: Rou
   return `$${groupThousands(whole)}.${String(fraction).padStart(decimals, "0")}`;
 }
 
+/** Below this an amount is shown with three decimals (the design's «Деньги на экране»): $0.045, not $0.05. */
+const TIERED_THREE_DECIMALS_BELOW = 100_000;
+
+/**
+ * The small prices of custom categories and scene review (the CS.0 design's «Деньги на экране»): three decimals below $0.10,
+ * two from there. `up` for a ceiling (after «до», a cap, an open reserve), `nearest` for an estimate after «≈» and for money
+ * already spent, so the price line and the button never disagree («$0.045» on both, not «$0.05» on one).
+ */
+export function formatUsdTiered(micros: number, rounding: Exclude<Rounding, "down">): string {
+  assertMicros(micros);
+  return formatUsd(micros, micros < TIERED_THREE_DECIMALS_BELOW ? 3 : 2, rounding);
+}
+
 /**
  * "$0.01–0.04": an expected price to its worst case, sharing one "$" — or
  * just "$0.01" when the two round to the same string (a swing too small to

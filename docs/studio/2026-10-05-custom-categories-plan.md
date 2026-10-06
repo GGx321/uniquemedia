@@ -861,6 +861,78 @@ mock-engine screen tests for each dialog state; keyboard and screen-reader label
 chips.
 Review notes: sonnet review for UI logic, opus conformance pass against the canvas.
 
+#### CS.3 built (2026-10-06, branch `feat/studio-custom-categories-ui`)
+
+What shipped. Renderer only: no contract, engine, mock or golden change.
+
+- **Window slice** (`renderer/engine/categoryLibrary.ts`, owned by `EngineProvider`, read with `useCategoryLibrary()`): the library's
+  categories (`categories.list`, asked when a screen first retains the slice, again on the store's `resynced` — a gap, a restarted engine, a
+  library switch — and for another engine or library folder; the last list stays on show while the same library is listed again; changes heard
+  while a list is on its way are applied to its answer; a delete while `overLimit > 0` lists again so the category coming back is shown), the pool
+  call's price (`categories.estimate`, keyed by the settings' text model: a change asks again, a price for another model is never offered), and the
+  window's one paid category call: sent only with the worst case a priced button showed, never twice, its outcome kept per kind (`create`,
+  `regenerate`) until the screen clears it, PRICE_CHANGED re-priced at once (the refused worst case kept to compare), IN_FLIGHT re-listed so the
+  dialog can name the other call, and a `busy` that was this window's own call forgotten when it ends. Because the call lives in the window and not in
+  the dialog, a create hidden with «Скрыть», or a Photos screen left while a pool is composed, still lands. `subscribeCreated` puts a category
+  this window made into the run at once (owner decision 4).
+- **Category row** (`photos/CategoryRow.tsx`): built-ins, then custom chips in creation order, drawn alike (max 220 px, the name cut with «…», whole
+  in `title` and `aria-label`, counts from `splitCount` in `aria-label` like the built-ins); a chip spinning while this window composes a pool
+  (hidden dialog: it takes the focus and reopens the dialog; when the pool lands the focus moves to the new chip, or to «+ Своя» if it failed);
+  more than four custom ones: the first four and every one turned on stay, the rest behind «ещё N» (`aria-expanded`), opened in place; «+ Своя»
+  dashed and last, unavailable at 50 held places (categories + unreadable + overLimit) with «50 из 50 — удалите ненужную в «Мои категории».»;
+  «Мои категории · N» in the label row. The form keeps custom refs in creation order (`arrangeCategories` / `toggleCategory` in `runForm.ts`), so a
+  chip clicked last never takes a remainder photo from one made earlier; a category deleted, or another library's, leaves the request at once and
+  the form once the library is listed.
+- **«Новая категория»** (`photos/CategoryCreateDialog.tsx`, a portal on `useModalDialog`): free checks before sending (blank once touched, 40 /
+  500 chars, hidden chars, a name the library holds — `categoryNameKey`); price «≈ … · до …» with model, attempts and price source; one priced
+  click; busy with seconds and «Скрыть»; done with the pool read-only (places with Russian times, outfits, shot shares) and «Готово» → the new chip;
+  every failure in the design's words with what it cost (`spentMicros`): POOL_REJECTED, MODERATION_REFUSED (first attempt free / second paid), the
+  limit («Мои категории»), a pool paid for but not stored (INTERNAL with a cost → «Открыть Настройки»), PRICE_CHANGED («Подтвердить новую цену ·
+  до $X»), IN_FLIGHT (names the other call), `paidBlockedReason`. A create that failed while hidden is a notice under the card with «Изменить
+  описание».
+- **«Мои категории»** (`photos/CategorySheet.tsx`): the right panel (760 / 680 px), list with counts, detail with label, style, date, spend;
+  rename (Enter / Escape, free checks); × on a place or an outfit (free; unavailable with the reason at the minimums and for the only mirror place
+  of a mirror deck; the focus goes to the next ×); regenerate with its price, busy (rename, delete, × locked), failure keeps the old pool and says
+  what it cost, PRICE_CHANGED, done with the new pool; delete confirmed on the spot (focus on «Отмена», Escape back to «Удалить», then the next
+  category); empty invitation; unreadable and overLimit notes; Escape cancels what is open inside before it closes the panel.
+- **Interrupted calls** (`photos/CategoryNotices.tsx`): a create a closed Studio left stands under the card and atop the panel, a regenerate in its
+  category's box; «Создать снова / Пересоздать снова · до $X» (a new request, unavailable with `paidBlockedReason` until the reconcile),
+  «Изменить описание», «Убрать» (`categories.dismissInterrupted`; a refusal, e.g. an unknown cost, is said and the record stays).
+- **Money** on these screens follows the design's «Деньги на экране»: `formatUsdTiered` (three decimals below $0.10, a ceiling up, an estimate and
+  spent money to the nearest).
+- **Gallery**: a photo's category label is cut with «…» on the tile and whole in its `title` (decision 6).
+
+Deviations from the artboards, and why: a busy paid button stays at full colour with its spinner (the app's own rule for `aria-busy` buttons) where
+the boards dim it; «пересоздана … · всего потрачено» is known only for a regeneration this window made (the contract keeps no date or count of
+regenerations; after a restart the line reads «создана … · потрачено» with the true total); the overLimit note, the money sentence of an interrupted
+call whose reserve is closed or unknown, the list's loading and failure states have no board and use their own wording; an interrupted regenerate
+also offers «Убрать» (the contract notes ask for it; the board's box has only «Отмена» / «Пересоздать снова»); with another window's call in
+flight «Создать» stays available (the `busy` it names is a snapshot; the engine refuses a second call for free); the board's sample outfit «beige
+trench coat over a striped tee» is 36 chars, over `POOL_TEXT_MAX`, so fixtures cut it. Phase 2 parts of the boards (the «готово» line for an open
+scene set, «Мои категории» in the set's strip) are not built.
+
+Tests, written first and run red for the intended reason: `formatUsdTiered`, `arrangeCategories` / `toggleCategory` / `sameCategories`, every
+wording in `categoryText.ts`, the slice (`categoryLibrary.test.ts`), the chip row and the create dialog (`PhotosCategories.test.tsx`), the gallery
+label. The sheet's tests (`PhotosCategorySheet.test.tsx`) were written after its code; each key one was proven by breaking the behaviour it pins
+(Escape order, focus after ×, delete focus, the busy lock, the reconcile lock, the focus after a regeneration) and seeing it fail. Focus is compared
+through `describeElement` and absence through `=== null`, as the repo's `studio/testing/domMatchers` guard requires: a DOM node handed to a matcher
+that prints it makes Bun print the node's whole graph (one such failure here ran for minutes and was then reported as a pass).
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 6489 + 5865 + 6762 = 19116 tests passing,
+0 failing; screenshots of every phase-1 board at 1200 and 1440 against the mock (`.omc/stage3/design/custom-categories/impl-shots/`, untracked),
+no console errors.
+
+CS.3 fix round 1 (2026-10-06), each fix with a test run red for its reason first: (1) the slice marks its list stale instead of forgetting the
+library key when no screen shows it, so a library switch heard while unretained resets the list to `loading` on the next retain (a library's
+categories are never shown for another); (2) PRICE_CHANGED takes the refused price off until the fresh answer, and a forced re-price outranks an
+estimate already on its way (a price-request generation); (3) the price-key guard is pinned by a screen test (text model changed while an estimate
+is pending: «до …», disabled); (4) Enter during IME composition in «Название» no longer sends the paid create; (5) `category.changed` re-lists
+while a `busy` is named, an IN_FLIGHT refusal is dropped once the list shows nothing composing, and «Создать», «Пересоздать» and «… снова» wait,
+with the note, while another window's call is named (this replaces the earlier deviation that «Создать» stays available); (6) a failed
+regenerate is «retried» only if it spent; (7) an interrupted call's reserve is told in money: «Запрос учтён по худшей цене — до $0.023 — до
+сверки расходов.» Verification: `tsc` clean for both configs; renderer 2947 tests; full suite in three shards, 6494 + 5876 + 6762 = 19132
+passing, 0 failing.
+
 ### CS.4a — Scene sets, core (test-engineer)
 
 Scope: `library` scene-set store (per avatar, atomic, `revision`, one open set, pre-issued run id,
