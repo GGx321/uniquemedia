@@ -104,6 +104,7 @@ import { planWithPools, POOLS } from "./scenes";
 import { runCategoryJob } from "./scenes/categoryJob";
 import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
 import { poolOf } from "./scenes/poolGen";
+import { SceneSetService } from "./sceneSets/service";
 import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
@@ -693,6 +694,8 @@ export class Engine {
   readonly #dismissingCalls = new Set<string>();
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs: JobRegistry;
+  /** CS.4a: the scene sets' commands and their writer job (an avatar's planned run held before its images are paid for). */
+  readonly #sceneSets: SceneSetService;
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
   readonly #reportedBadJobs = new Set<string>();
   /**
@@ -879,6 +882,52 @@ export class Engine {
     this.#imageCatalogue = new ImageCatalogueCache({
       load: () => loadImageCatalogue({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl }),
       monotonic: deps.monotonic,
+    });
+    this.#sceneSets = new SceneSetService({
+      newId: () => this.#deps.newId(),
+      currentLibrary: () => this.library,
+      withLiveLibrary: (work) => this.#withLiveLibrary(work),
+      liveLibrary: () => this.#liveLibrary(),
+      usableKey: (purpose) => this.#usableKey(purpose),
+      paidBudget: () => this.#paidBudget(),
+      ledger: () => (this.#money.ok ? this.#money.budget.ledger : null),
+      runnableAvatar: (library, avatarId) => this.#runnableAvatar(library, avatarId),
+      assertAvatarOnDisk: (library, avatarId) => this.#assertAvatarOnDisk(library, avatarId),
+      customCategories: (library, categories) => this.#customCategories(library, categories),
+      textModel: () => this.#avatarModels().textModel,
+      prices: (models) => this.#prices.get(models),
+      checkAccepted: (worstMicros, acceptedWorstMicros) => Engine.#checkAccepted(worstMicros, acceptedWorstMicros),
+      checkMonthlyRoom: (budget, worstMicros) => Engine.#checkMonthlyRoom(budget, worstMicros),
+      claimAvatar: (avatarId, detail) => this.#claimAvatar(avatarId, detail),
+      releaseAvatar: (avatarId) => {
+        this.#busyAvatars.delete(avatarId);
+      },
+      paidStart: () => {
+        this.#paidCommands++;
+      },
+      paidEnd: () => {
+        this.#paidCommands--;
+      },
+      setCap: (key, micros) => {
+        this.#caps.set(key, micros);
+      },
+      clearCap: (key) => {
+        this.#caps.delete(key);
+      },
+      openRouter: (key) => this.#openRouter(key, reportingTo(this.#networkPool, this.#deps.fetch)),
+      networkPool: this.#networkPool,
+      jobs: this.#jobs,
+      emit: (event) => this.#emit(event),
+      emitMoney: () => this.#emitMoney(),
+      markKeyRejected: (key) => this.markKeyRejected(key),
+      recentPairs: (library, avatarId) =>
+        library.recentPairs(avatarId, RECENT_PAIRS).catch((error: unknown) => {
+          // A hint for the planner, never a reason to refuse a set: plan without it, and say so.
+          console.warn(`studio engine: avatar ${avatarId}'s scene history could not be read; planning without it (${messageOf(error, "unknown error")})`);
+          return [];
+        }),
+      errorOf: (error) => engineErrorFrom(error),
+      warn: (line) => console.warn(line),
     });
   }
 
@@ -1494,6 +1543,24 @@ export class Engine {
       }
       case "categories.dismissInterrupted":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#dismissInterrupted(library, command.payload.jobId)) };
+      case "scenes.estimateCompose":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate: await this.#sceneSets.estimateCompose(command.payload) } };
+      case "scenes.compose":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.compose(command.payload) };
+      case "scenes.get":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.get(command.payload.avatarId) };
+      case "scenes.edit":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.edit(command.payload) };
+      case "scenes.estimateWrite":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate: await this.#sceneSets.estimateWrite(command.payload.sceneSetId, command.payload.target) } };
+      case "scenes.write":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.write(command.payload) };
+      case "scenes.cancel":
+        await this.#sceneSets.cancel(command.payload.sceneSetId);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { sceneSetId: command.payload.sceneSetId } };
+      case "scenes.discard":
+        await this.#sceneSets.discard(command.payload.sceneSetId);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { sceneSetId: command.payload.sceneSetId } };
       case "runs.estimate": {
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
