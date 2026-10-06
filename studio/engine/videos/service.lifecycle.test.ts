@@ -179,15 +179,36 @@ describe("a commit that stalls after its claim (the review's double-use probe)",
     const release = new Promise<void>((resolve) => {
       wake = resolve;
     });
+    // The deadline runs on a clock the test moves, never on a short real one: a 50 ms real deadline races the disk the commit
+    // writes to, and on a loaded Windows runner it fired before the claim, so the job failed and never reached the step under test.
+    const timers = new FakeTimers();
+    let claimed: () => void = () => undefined;
+    const claimedName = new Promise<void>((resolve) => {
+      claimed = resolve;
+    });
     const r = serviceRig(w, {
       size: 2,
-      deps: { renderOverrides: { commitDeadlineMs: 50, hooks: { reached: async (step) => (step === "name-claimed" ? release : undefined) } } },
+      deps: {
+        renderOverrides: {
+          commitDeadlineMs: 50,
+          deadlineTimers: timers,
+          hooks: {
+            reached: async (step) => {
+              if (step !== "name-claimed") return;
+              claimed();
+              await release;
+            },
+          },
+        },
+      },
     });
 
     const first = await r.service.render({ spec: specFor(w) });
-    await until(() => r.jobs.stateOf(first.jobId)?.status === "running" && r.tracker.placeholderPaths().size === 1, "the first commit to claim its name");
-    await new Promise((resolve) => setTimeout(resolve, 200)); // four deadlines later
+    await claimedName; // the hook says so: no polling, no budget
+    expect(timers.delays).toEqual([]); // the point of no return took the deadline away
+    await timers.advance(200); // four deadlines later
     expect(r.jobs.stateOf(first.jobId)).toMatchObject({ status: "running", saving: true });
+    expect(r.tracker.placeholderPaths().size).toBe(1);
 
     const second = await r.service.render({ spec: specFor(w) }).then(
       () => "accepted",

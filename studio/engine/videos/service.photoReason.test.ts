@@ -5,7 +5,7 @@ import type { EngineError } from "../../shared/engine";
 import { LibraryError } from "../library";
 import { sceneSpec, writeVideoRecord } from "../library/testing/videoRecords";
 import { specOf, useWorld, type World } from "./testing/kit";
-import { serviceRig, until, withOverrides } from "./testing/serviceKit";
+import { FakeTimers, serviceRig, withOverrides } from "./testing/serviceKit";
 useNativeGlobals();
 
 // `videos.render` says WHY a scene photo was refused (`photoReason`), so the window can tell «уже в видео», «держит рендер» and «записи нельзя
@@ -42,9 +42,29 @@ describe("videos.render: photoReason of PHOTO_UNAVAILABLE", () => {
     const release = new Promise<void>((resolve) => {
       wake = resolve;
     });
-    const r = serviceRig(w, { size: 2, deps: { renderOverrides: { commitDeadlineMs: 50, hooks: { reached: async (step) => (step === "name-claimed" ? release : undefined) } } } });
-    const first = await r.service.render({ spec: specOf(w.avatar.id, [photoId(w, 0)], 4_000) });
-    await until(() => r.jobs.stateOf(first.jobId)?.status === "running" && r.tracker.placeholderPaths().size === 1, "the first commit to claim its name");
+    // The commit's deadline sits on a clock nobody moves (a short real one races the disk and fires before the claim on a slow runner).
+    let claimed: () => void = () => undefined;
+    const claimedName = new Promise<void>((resolve) => {
+      claimed = resolve;
+    });
+    const r = serviceRig(w, {
+      size: 2,
+      deps: {
+        renderOverrides: {
+          commitDeadlineMs: 50,
+          deadlineTimers: new FakeTimers(),
+          hooks: {
+            reached: async (step) => {
+              if (step !== "name-claimed") return;
+              claimed();
+              await release;
+            },
+          },
+        },
+      },
+    });
+    await r.service.render({ spec: specOf(w.avatar.id, [photoId(w, 0)], 4_000) });
+    await claimedName; // the hook says so: no polling, no budget
 
     const error = await failureOf(r.service.render({ spec: specOf(w.avatar.id, [photoId(w, 0)], 4_000) }));
 
