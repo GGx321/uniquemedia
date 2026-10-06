@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setSystemTime, test } from "bun:test";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { UNKNOWN_IMAGE_MODEL_RU } from "../../shared/engine";
 import { callsOf, flush, openSection, setup } from "../testing";
@@ -88,6 +88,48 @@ describe("the image model select", () => {
     expect(screen.getByText(/список моделей не загрузился/i)).toBeDefined();
   });
 
+  test("a catalogue that did not load offers «Повторить» in its row, which asks again and brings the select", async () => {
+    const { engine } = setup();
+    engine.failNext("settings.imageModels", { code: "INTERNAL" });
+    await flush();
+    await openSection("Настройки");
+    await screen.findByRole("heading", { level: 2, name: "Модели" });
+    await flush();
+    const row = screen.getByText(/список моделей не загрузился/i).closest(".row") as HTMLElement;
+    fireEvent.click(within(row).getByRole("button", { name: "Повторить" }));
+    await flush();
+
+    expect(callsOf(engine, "settings.imageModels")).toHaveLength(2);
+    expect(modelSelect().value).toBe(GROK);
+  });
+
+  test("the window coming back after the engine's cache window asks for the catalogue again; sooner, it does not", async () => {
+    const { engine } = await openSettings();
+    const asked = (): number => callsOf(engine, "settings.imageModels").length;
+    const before = asked();
+    // The mock's list is the bundled one: the engine keeps it for a minute.
+    const loaded = Date.now();
+    try {
+      setSystemTime(new Date(loaded + 30_000));
+      fireEvent.focus(window);
+      await flush();
+      expect(asked()).toBe(before);
+      setSystemTime(new Date(loaded + 61_000));
+      fireEvent.focus(window);
+      fireEvent(document, new Event("visibilitychange"));
+      await flush();
+      // Focus and visibility come together on a return: one ask.
+      expect(asked()).toBe(before + 1);
+      setSystemTime(new Date(loaded + 125_000));
+      fireEvent(document, new Event("visibilitychange"));
+      await flush();
+      expect(asked()).toBe(before + 2);
+    } finally {
+      setSystemTime();
+    }
+    expect(modelSelect().value).toBe(GROK);
+  });
+
   test("a model that is set but not in the catalogue stays selectable as the current one, marked", async () => {
     await openSettings({ imageModel: "acme/old-image" });
     const options = within(modelSelect()).getAllByRole("option");
@@ -122,6 +164,21 @@ describe("the quality select", () => {
     expect(callsOf(engine, "settings.setModels").at(-1)?.payload).toEqual({ imageModel: GROK, imageQuality: "medium", textModel: "x-ai/grok-4.3" });
     expect(qualitySelect()?.value).toBe("medium");
     expect(modelSelect().closest(".row")?.textContent).toContain("≈ $0.070 за фото");
+  });
+
+  test("a saved quality of null shows none chosen (not «Низкое»), and choosing «Низкое» saves it", async () => {
+    const { engine } = await openSettings({ imageQuality: null });
+    const select = qualitySelect() as HTMLSelectElement;
+
+    expect(select.value).toBe("");
+    expect(select.selectedOptions[0]?.textContent).toBe("не задано");
+    fireEvent.change(select, { target: { value: "low" } });
+    await flush();
+
+    expect(callsOf(engine, "settings.setModels").at(-1)?.payload).toEqual({ imageModel: GROK, imageQuality: "low", textModel: "x-ai/grok-4.3" });
+    expect(qualitySelect()?.value).toBe("low");
+    // Once a quality is saved, the placeholder goes: there is nothing to go back to.
+    expect(within(qualitySelect() as HTMLElement).queryByRole("option", { name: "не задано" }) === null).toBe(true);
   });
 
   test("is not shown for a model with no quality knob", async () => {

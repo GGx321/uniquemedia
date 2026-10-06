@@ -23,7 +23,7 @@ import { isActiveJob, type SyncPhase } from "../engine/store";
 import { errorText } from "../lib/errors";
 import { EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText, type PickedNotice } from "../lib/exportFolder";
 import { countOf, monthName, NBSP, waitLabel } from "../lib/format";
-import { modelOptionLabel, photoPriceMicros, qualityOptionLabel } from "../lib/imageModels";
+import { catalogueFreshMs, modelOptionLabel, photoPriceMicros, qualityOptionLabel } from "../lib/imageModels";
 import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type DollarsParse } from "../lib/money";
 import { listLine, musicFailureText, quotaView, recoveryText, refreshGate, refreshLabel, refusalText } from "../lib/music";
 import { paidStop, restartStopText } from "../lib/paidStop";
@@ -748,8 +748,9 @@ type CatalogueState = { status: "loading" } | { status: "failed" } | { status: "
 /**
  * «Фото»: the image model (a select over the engine's catalogue: name, price of one photo, «не проверена» for a model outside the
  * spike) and, for a model with two qualities, the quality. They apply to NEW runs and new portraits; a run that has started keeps
- * what it was planned and priced with. The catalogue is read once when the card opens; until it arrives, or when it cannot be
- * read, the model is shown as plain text, as before the choice existed.
+ * what it was planned and priced with. The catalogue is read when the card opens, again on «Повторить», and again when the window
+ * comes back after the engine's cache window; until it arrives, or when it cannot be read, the model is shown as plain text, as
+ * before the choice existed. A refresh that fails keeps the list on show.
  */
 function ImageModelRows({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
@@ -757,18 +758,38 @@ function ImageModelRows({ settings }: { settings: Settings }) {
   const qualityId = useId();
   const hintId = useId();
   const [state, setState] = useState<CatalogueState>({ status: "loading" });
+  const [asks, setAsks] = useState(0);
+  const askedAt = useRef(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EngineError | null>(null);
 
   useEffect(() => {
     let current = true;
+    askedAt.current = Date.now();
     void client.request("settings.imageModels", {}).then((reply) => {
-      if (current) setState(reply.ok ? { status: "ready", catalogue: reply.result } : { status: "failed" });
+      if (current) setState((was) => (reply.ok ? { status: "ready", catalogue: reply.result } : was.status === "ready" ? was : { status: "failed" }));
     });
     return () => {
       current = false;
     };
-  }, [client]);
+  }, [client, asks]);
+
+  // Focus and visibility come together on a return: the first asks, the second finds the ask fresh.
+  const shown = state.status === "ready" ? state.catalogue : null;
+  useEffect(() => {
+    if (shown === null) return;
+    const again = (): void => {
+      if (document.visibilityState !== "visible" || Date.now() - askedAt.current < catalogueFreshMs(shown)) return;
+      askedAt.current = Date.now();
+      setAsks((n) => n + 1);
+    };
+    window.addEventListener("focus", again);
+    document.addEventListener("visibilitychange", again);
+    return () => {
+      window.removeEventListener("focus", again);
+      document.removeEventListener("visibilitychange", again);
+    };
+  }, [shown]);
 
   async function save(imageModel: string, imageQuality?: ImageQuality): Promise<void> {
     setBusy(true);
@@ -785,6 +806,18 @@ function ImageModelRows({ settings }: { settings: Settings }) {
       <>
         <Row label="Фото" hint={state.status === "failed" ? `${explanation} · список моделей не загрузился, выбор недоступен` : explanation}>
           <span className="mono row-value">{settings.imageModel}</span>
+          {state.status === "failed" && (
+            <button
+              type="button"
+              className="btn btn-s"
+              onClick={() => {
+                setState({ status: "loading" });
+                setAsks((n) => n + 1);
+              }}
+            >
+              Повторить
+            </button>
+          )}
         </Row>
       </>
     );
@@ -826,6 +859,12 @@ function ImageModelRows({ settings }: { settings: Settings }) {
               if (next !== undefined) void save(settings.imageModel, next);
             }}
           >
+            {/* No quality saved (the request sends none): without this the select would show the first one, and choosing it would change nothing. */}
+            {settings.imageQuality === null && (
+              <option value="" disabled>
+                не задано
+              </option>
+            )}
             {entry.qualities.map((q) => (
               <option key={q} value={q}>
                 {qualityOptionLabel(entry, q)}

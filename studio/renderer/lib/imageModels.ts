@@ -1,7 +1,15 @@
-import type { ImageModelEntry, ImageQuality } from "../../shared/engine";
+import type { ImageModelCatalogue, ImageModelEntry, ImageQuality } from "../../shared/engine";
 import { formatUsd } from "./money";
 
 /** The Settings «Фото» card's words for the engine's image-model catalogue: labels and prices, pure. */
+
+/**
+ * How long the engine serves a catalogue from memory (engine/imageModels/catalogue.ts: LIVE_CATALOGUE_TTL_MS, FALLBACK_CATALOGUE_TTL_MS):
+ * a card left open longer asks again when the window comes back, so its prices are never older than the engine's.
+ */
+export function catalogueFreshMs(catalogue: ImageModelCatalogue): number {
+  return catalogue.source === "live" ? 30 * 60_000 : 60_000;
+}
 
 export const QUALITY_LABEL_RU: Record<ImageQuality, string> = { low: "Низкое", medium: "Среднее" };
 
