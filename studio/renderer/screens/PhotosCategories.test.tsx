@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CATEGORY_REASONS_RU } from "../../shared/engine";
-import { callsOf, describeElement, flush, inAct, runAll } from "../testing";
+import { callsOf, describeElement, flush, inAct, runAll, withText } from "../testing";
 import { category, chipsGroup, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
 
 // CS.3 (phase 1 of custom categories): the category row of the generate card and the «Новая категория» dialog, against the mock engine.
@@ -272,7 +272,9 @@ describe("«Новая категория»", () => {
     await flush();
     runAll(scheduler);
     await flush();
-    expect(screen.getByText("Категория «Рынки» не создана: модель дважды вернула неподходящий набор — переформулируйте описание. Потрачено $0.011.")).toBeDefined();
+    const notice = screen.getByText(withText(/^Категория «Рынки» не создана: модель дважды вернула неподходящий набор — переформулируйте описание\. Потрачено \$0\.011\.$/));
+    // The amount is set in mono, as the design has it.
+    expect(within(notice).getByText("$0.011").className).toBe("mono");
     expect(within(chipsGroup()).queryByRole("button", { name: /Рынки/ }) === null).toBe(true);
     fireEvent.click(screen.getByRole("button", { name: "Изменить описание" }));
     await flush();

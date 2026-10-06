@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { Fragment, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import {
   CATEGORY_DESCRIPTION_MAX,
@@ -533,7 +533,14 @@ function CategoryDetail({
             </button>
           </div>
         )}
-        <p className="mono muted cat-meta">{categoryMeta(category, state)}</p>
+        <p className="mono muted cat-meta">
+          {categoryMeta(category, state).map((part, i) => (
+            <Fragment key={part}>
+              {i > 0 && " · "}
+              <span className="nowrap">{part}</span>
+            </Fragment>
+          ))}
+        </p>
         {asking && (
           <div className="notice notice-danger cat-confirm" role="alertdialog" aria-labelledby={`${ids}-del-title`} aria-describedby={`${ids}-del-text`}>
             <div className="notice-text">
@@ -580,7 +587,7 @@ function CategoryDetail({
       )}
 
       <div className="cat-block">
-        <div className="cat-block-head">
+        <div className="cat-block-head cat-desc-head">
           <span className="lbl">Описание</span>
           {!regenOpen && (
             <button ref={regenLinkRef} type="button" className="lbtn" onClick={() => openRegen(category.description)}>
@@ -591,7 +598,7 @@ function CategoryDetail({
         </div>
         {!regenOpen && <p className="muted cat-desc">{category.description}</p>}
         {regenDone !== null && !regenOpen && (
-          <div className="notice notice-ok" role="status">
+          <div className="notice notice-ok cat-regen-done" role="status">
             <span className="notice-icon">
               <Icon name="check" size={16} strokeWidth={2.4} />
             </span>
@@ -656,7 +663,15 @@ function CategoryDetail({
                   <Icon name="alert" size={16} />
                 </span>
                 <div className="notice-body">
-                  <p className="notice-title">{failure.title}</p>
+                  <p className="notice-title">
+                    {failure.title}
+                    {failure.spent !== null && (
+                      <>
+                        {" "}
+                        · потрачено <span className="mono">{failure.spent}</span>
+                      </>
+                    )}
+                  </p>
                   <div className="notice-text">{failure.text}</div>
                   {failure.code !== null && <p className="mono faint cat-code">{failure.code}</p>}
                 </div>
