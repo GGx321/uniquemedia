@@ -350,6 +350,40 @@ describe("«Новая категория»", () => {
     expect(isDisabled(createButton())).toBe(false);
   });
 
+  test("PRICE_CHANGED: while the fresh price loads the notice says so and holds the focus; the new price lands in it, the focus kept", async () => {
+    const { engine, scheduler } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    engine.delayNext("categories.estimate", 100);
+    fireEvent.click(createButton());
+    await flush();
+    const notice = within(dialog()).getByRole("alert");
+    expect(notice.textContent).toContain("узнаём новую цену…");
+    expect(describeElement(document.activeElement)).toBe(describeElement(notice));
+    runAll(scheduler);
+    await flush();
+    expect(within(dialog()).getByText("Цена выросла")).toBeDefined();
+    expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog()).getByRole("alert")));
+  });
+
+  test("PRICE_CHANGED, then the fresh price fails: the notice stays beside «Цену не узнать» and «Повторить»", async () => {
+    const { engine } = await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки");
+    engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
+    engine.failNext("categories.estimate", { code: "INTERNAL" });
+    fireEvent.click(createButton());
+    await flush();
+    expect(within(dialog()).getByText("Цена изменилась")).toBeDefined();
+    expect(within(dialog()).getByText(/^Цену не узнать/)).toBeDefined();
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Повторить" }));
+    await flush();
+    expect(within(dialog()).getByText("Цена выросла")).toBeDefined();
+    expect(createButton().textContent).toBe("Подтвердить новую цену · до $0.052");
+    expect(callsOf(engine, "categories.create")).toHaveLength(1);
+  });
+
   test("a change of the text model while its price is asked: no price of the old model is offered, the button waits for the new one", async () => {
     const { engine, client, scheduler } = await openPhotos({ categories: [PARIS] });
     await openCreate();
