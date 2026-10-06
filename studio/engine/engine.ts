@@ -82,7 +82,7 @@ import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./librar
 import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
-import { jobSpentMicros } from "./money/jobSpend";
+import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
 import { Ledger, type Scope } from "./money/ledger";
 import { PriceCache, type PricedBook } from "./money/priceCache";
 import type { PriceBook } from "./money/prices";
@@ -2551,13 +2551,20 @@ export class Engine {
     const pending = await library.categories.listPending();
     const running = this.#categoryCall?.jobId ?? null;
     const ledger = this.#money.ok ? this.#money.budget.ledger : null;
-    // A leftover record is a call this process is not making: what it is counted at is what the ledger holds for its job.
+    // A leftover record is a call this process is not making: what it is counted at is what the ledger holds for its job, and how much of that is a
+    // reserve still open at its worst case. An unreadable ledger leaves both unknown (null), which is not the same as a call killed before its reserve (0 and 0).
     const interrupted = pending
       .filter((p) => p.jobId !== running)
       .slice(0, MAX_CUSTOM_CATEGORIES)
-      .map((p) => ({ ...p, spentMicros: ledger === null ? 0 : jobSpentMicros(ledger, p.jobId) }));
+      .map((p) => ({
+        ...p,
+        spentMicros: ledger === null ? null : jobSpentMicros(ledger, p.jobId),
+        openReserveMicros: ledger === null ? null : jobOpenReserveMicros(ledger, p.jobId),
+      }));
     const call = this.#categoryCall;
-    const busy = call === null || call.name === null ? null : { kind: call.kind, name: call.name, categoryId: call.categoryId };
+    // A regenerate names its category as soon as it is claimed: the name is read from the store here when the call has not read it yet.
+    const callName = call === null ? null : (call.name ?? (call.categoryId === null ? null : (categories.find((c) => c.categoryId === call.categoryId)?.name ?? null)));
+    const busy = call === null || callName === null ? null : { kind: call.kind, name: callName, categoryId: call.categoryId };
     return { categories: categories.map(summaryOf), unreadable, interrupted, busy };
   }
 

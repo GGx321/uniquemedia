@@ -223,9 +223,30 @@ describe("categories.list", () => {
     const { interrupted } = await listOf(engine);
 
     expect(interrupted).toEqual([
-      { jobId: "job-00000041", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: ATTEMPT_WORST },
-      { jobId: "job-00000042", kind: "regenerate", name: "Кофейни", description: "кофейни и булочные", categoryId: "cat-paris-cafes", startedAt: "2026-10-05T12:05:00.000Z", spentMicros: 6_000 },
+      { jobId: "job-00000041", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: ATTEMPT_WORST, openReserveMicros: ATTEMPT_WORST },
+      { jobId: "job-00000042", kind: "regenerate", name: "Кофейни", description: "кофейни и булочные", categoryId: "cat-paris-cafes", startedAt: "2026-10-05T12:05:00.000Z", spentMicros: 6_000, openReserveMicros: 0 },
     ]);
+  });
+
+  test("a call killed before its reserve was written is counted at nothing, with no open reserve: a known zero", async () => {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.writePending({ jobId: "job-00000051", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z" });
+    const { engine } = await startEngine(dir());
+
+    const { interrupted } = await listOf(engine);
+
+    expect(interrupted.map((i) => [i.jobId, i.spentMicros, i.openReserveMicros])).toEqual([["job-00000051", 0, 0]]);
+  });
+
+  test("a ledger that cannot be read leaves the interrupted call's cost unknown (null), not 0", async () => {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.writePending({ jobId: "job-00000052", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z" });
+    await mkdir(join(dir(), "userData", "ledger.jsonl"), { recursive: true });
+    const { engine } = await startEngine(dir());
+
+    const { interrupted } = await listOf(engine);
+
+    expect(interrupted.map((i) => [i.jobId, i.spentMicros, i.openReserveMicros])).toEqual([["job-00000052", null, null]]);
   });
 });
 
@@ -665,6 +686,22 @@ describe("categories.regenerate", () => {
     const [call] = chatCalls(net);
     expect(call?.body).toContain("кофейни и булочные у Сены");
     expect(call?.body?.toLowerCase()).not.toContain("zebra-name-marker");
+  });
+
+  test("the busy call names its category from the moment the command is issued, before the engine has read the category itself", async () => {
+    const id = await seedCategory({ name: "Кофейни" });
+    const hold = held(poolReply(NEW_ANSWER));
+    const net = network({ descriptors: [hold.step] });
+    const { engine } = await startEngine(dir(), { net });
+
+    const running = engine.handle(regenerate(id));
+    // No await between the command and the list: the regenerate has claimed its call and read nothing yet.
+    const listed = await listOf(engine);
+
+    expect(listed.busy).toEqual({ kind: "regenerate", name: "Кофейни", categoryId: id });
+    await until(hold.arrived, "the request to arrive");
+    hold.release();
+    ok(await running);
   });
 
   test("while it runs a rename or a delete of that category is IN_FLIGHT, another category's is not, and the busy call names its category", async () => {

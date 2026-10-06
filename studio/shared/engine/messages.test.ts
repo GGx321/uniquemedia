@@ -334,7 +334,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: {
       categories: [customCategory],
       unreadable: 1,
-      interrupted: [{ jobId: "job-00000002", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500 }],
+      interrupted: [{ jobId: "job-00000002", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 }],
       busy: { kind: "regenerate", name: "Кофейни Парижа", categoryId: "cat-paris-cafes" },
     },
   },

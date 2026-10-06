@@ -323,6 +323,7 @@ export const PARITY_INTERRUPTED = {
   categoryId: null,
   startedAt: "2026-10-05T12:00:00.000Z",
   spentMicros: 0,
+  openReserveMicros: 0,
 } as const satisfies CategoryInterrupted;
 
 export interface ParityRig extends Recorded {
@@ -651,7 +652,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   if (options.categories === true) {
     await library.categories.create(PARITY_CATEGORY);
     if (options.secondCategory === true) await library.categories.create(PARITY_SECOND_CATEGORY);
-    const { spentMicros: _counted, ...record } = PARITY_INTERRUPTED;
+    const { spentMicros: _counted, openReserveMicros: _open, ...record } = PARITY_INTERRUPTED;
     await library.categories.writePending(record);
     await writeFile(join(dir, "library", "categories", "cat-parity-broken.json"), "{not json");
   }

@@ -238,7 +238,12 @@ export type CategoryCallKind = z.infer<typeof CategoryCallKind>;
 /**
  * A create or a regenerate that a closed Studio left unanswered: its request may have been billed, and the reserve stays at its
  * worst case until the owner reconciles. The call is not resumable (a new request has its own cap): the sheet offers «Создать
- * снова» and forgets the record with `categories.dismissInterrupted`. `spentMicros` is what the call is counted at now.
+ * снова» and forgets the record with `categories.dismissInterrupted`.
+ *
+ * `spentMicros` is what the call is counted at now, as the ledger books it; `openReserveMicros` is the part of it that is a reserve still open,
+ * counted at its attempt's worst case until the owner reconciles. «Запрос учтён по худшей цене до сверки» is true exactly when
+ * `openReserveMicros > 0`; a call killed before its reserve was written is a known 0 and 0. Both are null together when the ledger cannot be
+ * read (the cost is unknown, which is not the same as nothing): the sheet then says so and offers nothing that depends on the number.
  */
 export const CategoryInterrupted = z
   .strictObject({
@@ -249,11 +254,20 @@ export const CategoryInterrupted = z
     /** The category a regenerate was for; null for a create. */
     categoryId: CustomCategoryId.nullable(),
     startedAt: IsoDateTime,
-    spentMicros: Micros,
+    spentMicros: Micros.nullable(),
+    openReserveMicros: Micros.nullable(),
   })
   .refine((i) => (i.kind === "regenerate") === (i.categoryId !== null), {
     message: "a regenerate names its category and a create has none",
     path: ["categoryId"],
+  })
+  .refine((i) => (i.spentMicros === null) === (i.openReserveMicros === null), {
+    message: "the spend and its open reserve are both known or both unknown",
+    path: ["openReserveMicros"],
+  })
+  .refine((i) => i.spentMicros === null || i.openReserveMicros === null || i.openReserveMicros <= i.spentMicros, {
+    message: "the open reserve is part of the spend",
+    path: ["openReserveMicros"],
   });
 export type CategoryInterrupted = z.infer<typeof CategoryInterrupted>;
 

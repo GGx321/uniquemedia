@@ -79,7 +79,7 @@ describe("categories.list", () => {
 
   test("answers the categories the mock was seeded with, the unreadable count and the interrupted calls", async () => {
     const first = await created(makeMock(), "Alpha");
-    const interrupted: CategoryInterrupted = { jobId: "job-00000041", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500 };
+    const interrupted: CategoryInterrupted = { jobId: "job-00000041", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 };
     const { client } = makeMock({ categories: [first], unreadableCategories: 2, interruptedCategories: [interrupted] });
 
     expect(await unwrap(client.request("categories.list", {}))).toEqual({ categories: [first], unreadable: 2, interrupted: [interrupted], busy: null });
@@ -315,7 +315,7 @@ describe("categories.update and categories.delete", () => {
 });
 
 describe("categories.dismissInterrupted", () => {
-  const interrupted: CategoryInterrupted = { jobId: "job-00000041", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500 };
+  const interrupted: CategoryInterrupted = { jobId: "job-00000041", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 };
 
   test("forgets the record of an interrupted call", async () => {
     const m = makeMock({ interruptedCategories: [interrupted] });

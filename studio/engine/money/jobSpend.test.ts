@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { setupMoney, type Money } from "../openrouter/testing/fakes";
-import { jobSpentMicros } from "./jobSpend";
+import { jobOpenReserveMicros, jobSpentMicros } from "./jobSpend";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -63,5 +63,32 @@ describe("jobSpentMicros", () => {
     expect(jobSpentMicros(money.ledger, "job-00000001")).toBe(5_000);
     expect(jobSpentMicros(money.ledger, "job-00000002")).toBe(7_000);
     void SCOPE;
+  });
+});
+
+describe("jobOpenReserveMicros", () => {
+  test("is nothing for a job the ledger has never heard of", async () => {
+    expect(jobOpenReserveMicros(money.ledger, "job-00000001")).toBe(0);
+  });
+
+  test("is the worst case of an attempt still open: the part of the job's spend that is counted at a worst-case price until the reconcile", async () => {
+    await reserve("job-00000001:pool#1", "job-00000001", 22_500);
+    await settle("job-00000001:pool#1", 5_000);
+    await reserve("job-00000001:pool#2", "job-00000001", 22_500);
+    expect(jobOpenReserveMicros(money.ledger, "job-00000001")).toBe(22_500);
+    expect(jobSpentMicros(money.ledger, "job-00000001")).toBe(27_500);
+  });
+
+  test("is nothing once every attempt is settled, a reconcile's estimated settle included", async () => {
+    await reserve("job-00000001:pool#1", "job-00000001", 22_500);
+    await settle("job-00000001:pool#1", 22_500, true);
+    expect(jobOpenReserveMicros(money.ledger, "job-00000001")).toBe(0);
+  });
+
+  test("is nothing for a released attempt, and never counts another job's open one", async () => {
+    await reserve("job-00000001:pool#1", "job-00000001", 22_500);
+    await release("job-00000001:pool#1");
+    await reserve("job-00000002:pool#1", "job-00000002", 22_500);
+    expect(jobOpenReserveMicros(money.ledger, "job-00000001")).toBe(0);
   });
 });

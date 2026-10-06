@@ -16,3 +16,15 @@ export function jobSpentMicros(ledger: Pick<Ledger, "lines" | "closeOf">, jobId:
   }
   return total;
 }
+
+/**
+ * The part of `jobSpentMicros` that is a reserve still open: counted at its attempt's worst case until the owner reconciles. It is what
+ * decides whether «учтён по худшей цене до сверки» is true of a job; a job whose attempts are all closed has none.
+ */
+export function jobOpenReserveMicros(ledger: Pick<Ledger, "lines" | "closeOf">, jobId: string): number {
+  let total = 0;
+  for (const line of ledger.lines) {
+    if (line.type === "reserve" && line.jobId === jobId && ledger.closeOf(line.attemptId) === undefined) total += line.worstMicros;
+  }
+  return total;
+}

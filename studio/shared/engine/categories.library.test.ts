@@ -198,7 +198,7 @@ describe("CategorySummary", () => {
 });
 
 describe("CategoryInterrupted and CategoryBusy", () => {
-  const interrupted = { jobId: "job-00000001", kind: "create", name: "Кофейни Парижа", description: "кофейни", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500 };
+  const interrupted = { jobId: "job-00000001", kind: "create", name: "Кофейни Парижа", description: "кофейни", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 };
 
   test("an interrupted create carries no category id, an interrupted regenerate names its category", () => {
     expect(CategoryInterrupted.safeParse(interrupted).success).toBe(true);
@@ -209,6 +209,25 @@ describe("CategoryInterrupted and CategoryBusy", () => {
     expect(CategoryInterrupted.safeParse({ ...interrupted, kind: "regenerate" }).success).toBe(false);
     expect(CategoryInterrupted.safeParse({ ...interrupted, categoryId: CATEGORY_ID }).success).toBe(false);
     expect(CategoryInterrupted.safeParse({ ...interrupted, kind: "rename" }).success).toBe(false);
+  });
+
+  test("says how much of the spend is a reserve still open at its worst case, so «учтён по худшей цене до сверки» is told only when it is true", () => {
+    expect(CategoryInterrupted.safeParse({ ...interrupted, spentMicros: 6_000, openReserveMicros: 0 }).success).toBe(true);
+    expect(CategoryInterrupted.safeParse({ ...interrupted, spentMicros: 28_500, openReserveMicros: 22_500 }).success).toBe(true);
+    expect(CategoryInterrupted.safeParse({ ...interrupted, spentMicros: 0, openReserveMicros: 0 }).success).toBe(true);
+  });
+
+  test("a call counted at nothing and a call the ledger could not be read for are told apart: unknown is null, never 0", () => {
+    expect(CategoryInterrupted.safeParse({ ...interrupted, spentMicros: null, openReserveMicros: null }).success).toBe(true);
+    expect(CategoryInterrupted.safeParse({ ...interrupted, spentMicros: null, openReserveMicros: 0 }).success).toBe(false);
+    expect(CategoryInterrupted.safeParse({ ...interrupted, spentMicros: 0, openReserveMicros: null }).success).toBe(false);
+  });
+
+  test("the open reserve is part of the spend, so it never exceeds it, and it is always given", () => {
+    expect(CategoryInterrupted.safeParse({ ...interrupted, spentMicros: 1_000, openReserveMicros: 2_000 }).success).toBe(false);
+    const { openReserveMicros: _open, ...without } = interrupted;
+    expect(CategoryInterrupted.safeParse(without).success).toBe(false);
+    expect(CategoryInterrupted.safeParse({ ...interrupted, openReserveMicros: -1 }).success).toBe(false);
   });
 
   test("busy names what is being composed right now", () => {
