@@ -530,6 +530,18 @@ describe("request deadline", () => {
     },
   );
 
+  // CS.4a: a compose and a «Дописать» answer once their checks and a price load are done (the job runs on and reports by events), like a resume.
+  test.each(["scenes.estimateCompose", "scenes.estimateWrite", "scenes.compose", "scenes.write"] as const)(
+    "%s waits for a price load that times out and then answers, as an estimate does",
+    (type) => {
+      expect(COMMAND_DEADLINE_MS[type]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+    },
+  );
+
+  test.each(["scenes.get", "scenes.edit", "scenes.cancel", "scenes.discard"] as const)("%s is a local read or write and keeps main's default deadline", (type) => {
+    expect(COMMAND_DEADLINE_MS[type]).toBeUndefined();
+  });
+
   test("estimateRewriteDescriptor waits as long as an estimate", () => {
     expect(COMMAND_DEADLINE_MS["avatars.estimateRewriteDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });

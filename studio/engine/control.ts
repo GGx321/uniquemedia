@@ -324,6 +324,12 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "runs.start": PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + COMMAND_SLACK_MS,
   "runs.resume": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "runs.list": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  // CS.4a: a set's compose and «Дописать» answer once their checks and a price load are done (the writer's job runs on and reports by events); the
+  // estimates wait for a price load that times out, so the fallback estimate is not lost. The other scenes commands are local and keep the default.
+  "scenes.estimateCompose": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "scenes.estimateWrite": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "scenes.compose": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "scenes.write": PRICE_FETCH_TIMEOUT_MS + 15_000,
   // The export check and then the bounded delete (a full hash on a slow drive): main must outwait both, or the engine's own timeout text
   // («look at the video list before trying again») never reaches the window.
   "videos.delete": VIDEOS_DELETE_DEADLINE_MS,
