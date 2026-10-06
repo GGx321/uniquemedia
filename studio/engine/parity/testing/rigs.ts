@@ -284,6 +284,11 @@ export interface RigOptions {
    * (`PARITY_INTERRUPTED`). The real rig writes them through the library's own store before the engine opens it; the mock is seeded with the same.
    */
   readonly categories?: boolean;
+  /**
+   * CS.4a: Mia holds one open scene set (`PARITY_SCENE_SET`: three scenes, the first written, a compose a closed Studio did not finish) and one set file
+   * nothing can read. The real rig writes them through the library's own store before the engine opens it; the mock is seeded with the same.
+   */
+  readonly sceneSets?: boolean;
   /** CS.2: with `categories`, a second readable category (`PARITY_SECOND_CATEGORY`), so a rename can meet a name another category holds. */
   readonly secondCategory?: boolean;
 }
@@ -326,6 +331,15 @@ export const PARITY_INTERRUPTED = {
   spentMicros: 0,
   openReserveMicros: 0,
 } as const satisfies CategoryInterrupted;
+
+/** The scenes of a rig with `sceneSets`: what the real store holds and the mock lists. The first has its sentence. */
+export const PARITY_SCENES = [
+  { category: "home", shot: "friend", pose: "front", place: { location: "a sunny kitchen", timeOfDay: "morning", activity: "pouring coffee", outfit: "a linen shirt and shorts" }, text: "A friend catches her pouring coffee in the morning light." },
+  { category: "home", shot: "selfie", pose: "three-quarter", place: { location: "a cosy living room", timeOfDay: "evening", activity: "reading on the sofa", outfit: "an oversized knit sweater" } },
+  { category: "home", shot: "candid", pose: "front", place: { location: "a bedroom mirror", timeOfDay: "morning", activity: "fixing her hair", outfit: "a silk robe and slacks" } },
+] as const;
+
+export const PARITY_SCENE_SET_ID = "set-parity-0001";
 
 export interface ParityRig extends Recorded {
   readonly name: "mock" | "real";
@@ -408,6 +422,9 @@ export function mockRig(options: RigOptions = {}): ParityRig {
             ...(options.secondCategory === true ? [{ ...PARITY_SECOND_CATEGORY, createdAt: "2026-10-05T10:01:00.000Z", updatedAt: "2026-10-05T10:01:00.000Z" }] : []),
           ],
           unreadableCategories: 1, interruptedCategories: [{ ...PARITY_INTERRUPTED }] }
+      : {}),
+    ...(options.sceneSets === true
+      ? { sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: PARITY_SCENE_SET_ID, count: PARITY_SCENES.length, written: 1, stopped: "closed" as const, scenes: PARITY_SCENES }], unreadableSceneSets: 1 }
       : {}),
   });
   const events: EventMessage[] = [];
@@ -656,6 +673,28 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     const { spentMicros: _counted, openReserveMicros: _open, ...record } = PARITY_INTERRUPTED;
     await library.categories.writePending(record);
     await writeFile(join(dir, "library", "categories", "cat-parity-broken.json"), "{not json");
+  }
+
+  if (options.sceneSets === true) {
+    await library.sceneSets.create({
+      sceneSetId: PARITY_SCENE_SET_ID,
+      avatarId,
+      runId: "run-parity-0001",
+      request: { count: PARITY_SCENES.length, categories: ["home"], poses: { profile: false, back: false } },
+      models: { text: "x-ai/grok-4.3" },
+      scenes: PARITY_SCENES.map((scene, i) => ({
+        sceneId: i + 1,
+        origin: "planned" as const,
+        slot: { slotIndex: i + 1, category: scene.category, ...scene.place, shot: scene.shot, pose: scene.pose, attemptIdBase: `slot-${i + 1}`, repeatedPair: false },
+        text: "text" in scene ? scene.text : null,
+        edited: false,
+        removed: false,
+      })),
+      chunks: [{ chunk: 1, sceneIds: PARITY_SCENES.map((_, i) => i + 1), attemptIds: [1, 2, 3, 4].map((n) => `${PARITY_SCENE_SET_ID}:writer-1#${n}`) }],
+      write: { k: 1, kind: "compose", jobId: "job-parity-0001" },
+      writes: 1,
+    });
+    await writeFile(join(dir, "library", "avatars", avatarId, "scenes", "set-parity-broken.json"), "{not json");
   }
 
   const world: World = { avatarId, photoIds, otherAvatarId, otherPhotoIds, archivedAvatarId, scored: scored(photoIds) };

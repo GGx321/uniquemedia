@@ -54,6 +54,8 @@ export interface MockSceneSetSeed {
   /** The write that did not finish: the set reads stopped, for this reason (`closed` when no outcome was kept). Absent: the set is ready. */
   stopped?: SceneStoppedBy;
   categories?: readonly CategoryRef[];
+  /** The scenes themselves, instead of the mock's own plan (the parity rig seeds the real engine's store with the very same ones). A `text` is a written scene. */
+  scenes?: readonly { category: CategoryRef; shot: SceneView["shot"]; pose: SceneView["pose"]; place: ScenePlace; text?: string }[];
 }
 
 interface Attempt {
@@ -252,10 +254,13 @@ export class MockSceneSets {
 
   #seed(seed: MockSceneSetSeed): void {
     const refs = seed.categories ?? ["home"];
-    const scenes = planScenes(seed.count, refs, { profile: false, back: false }, this.#deps.category);
+    const scenes: Scene[] =
+      seed.scenes === undefined
+        ? planScenes(seed.count, refs, { profile: false, back: false }, this.#deps.category)
+        : seed.scenes.map((s, i) => ({ sceneId: i + 1, category: s.category, shot: s.shot, pose: s.pose, place: { ...s.place }, text: s.text ?? null, edited: false, removed: false }));
     const chunks = chunksOf(seed.sceneSetId, scenes);
     const written = seed.written ?? 0;
-    for (const scene of scenes) if (scene.sceneId <= written) scene.text = sentenceOf(scene);
+    if (seed.scenes === undefined) for (const scene of scenes) if (scene.sceneId <= written) scene.text = sentenceOf(scene);
     // A chunk whose scenes were written was answered once.
     for (const chunk of chunks) {
       if (chunk.sceneIds.every((id) => id <= written)) chunk.attempts.push({ key: `${seed.sceneSetId}:writer-${chunk.chunk}#1`, paid: true, cost: Math.round(chunk.sceneIds.length * TYPICAL_PER_SCENE), open: false });

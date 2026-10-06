@@ -1794,7 +1794,55 @@ const CATEGORY_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS];
+// CS.4a: the scene sets. Only the free commands are played here (the parity rig scripts no chat, so a compose and a «Дописать» have their own tests, and the
+// estimates differ by design: the mock's prices are «live», the engine's offline ones the table). What is pinned: the order of checks, every refusal's
+// code, the view of a set that a closed Studio left half-written, each reason a text is turned away, one revision per edit, and the events.
+const SCENE_SET_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "scene sets: the open set a closed Studio left, free edits and their refusals",
+    rig: { sceneSets: true },
+    async run(t, w) {
+      t.note("the avatar's set: one scene written, two waiting, the compose a closed Studio did not finish; one set file nobody can read");
+      await t.call("scenes.get", { avatarId: w.avatarId });
+      await t.call("scenes.get", { avatarId: "avatar-nobody-404" });
+      t.note("a text the assembler's own rule would refuse, and the bounds, are results that change nothing");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "text", sceneId: 1, text: "She walks the beach in a bikini." } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "text", sceneId: 1, text: "   " } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "text", sceneId: 1, text: "one\ntwo" } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "text", sceneId: 1, text: "A teenage girl smiles." } });
+      t.note("a text typed into a waiting scene makes it written; the same revision again is stale");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "text", sceneId: 2, text: "She reads on the sofa." } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "remove", sceneIds: [3] } });
+      t.note("one change removes many scenes, and restores them; a scene the set lacks refuses the whole change");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 2, op: { op: "remove", sceneIds: [2, 3] } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 3, op: { op: "remove", sceneIds: [1, 99] } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 3, op: { op: "text", sceneId: 3, text: "Typed on a removed scene." } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 3, op: { op: "restore", sceneIds: [2, 3] } });
+      await t.call("scenes.get", { avatarId: w.avatarId });
+    },
+  },
+  {
+    name: "scene sets: one open set, an empty set is free, a discard and a cancel with their refusals",
+    rig: { sceneSets: true },
+    async run(t, w) {
+      const request = { avatarId: w.avatarId, count: 0, categories: [], poses: { profile: false, back: false }, acceptedWorstMicros: 0 };
+      t.note("the avatar already has an open set: a second compose, even an empty one, is refused");
+      await t.call("scenes.compose", request);
+      t.note("an unknown set is NOT_FOUND for every command that names one; a cancel of a set that does not run is ok");
+      await t.call("scenes.edit", { sceneSetId: "set-nobody-0404", revision: 1, op: { op: "remove", sceneIds: [1] } });
+      await t.call("scenes.cancel", { sceneSetId: "set-nobody-0404" });
+      await t.call("scenes.discard", { sceneSetId: "set-nobody-0404" });
+      await t.call("scenes.cancel", { sceneSetId: "set-parity-0001" });
+      t.note("a discard frees the avatar: an empty set is then free, and is the one the avatar has");
+      await t.call("scenes.discard", { sceneSetId: "set-parity-0001" });
+      await t.call("scenes.get", { avatarId: w.avatarId });
+      await t.call("scenes.compose", request);
+      await t.call("scenes.get", { avatarId: w.avatarId });
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {
