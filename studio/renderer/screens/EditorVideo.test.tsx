@@ -416,7 +416,7 @@ describe("fix round 1", () => {
   });
 
   test("L9: a window too narrow for both edges is judged on the strip as laid out, not on the artboard's width", async () => {
-    // A 0.5 s clip of the 14 s video: 9.7 px of the artboard's 272 px strip, 71 px of a 2000 px one.
+    // The fixture's 500 ms clip (not the shortest the contract allows, 100 ms) of the 14 s video (storeVideo): 500 / 14000 of the strip, 9.7 px of the artboard's 272 px one, 71 px of a 2000 px one.
     const real = globalThis.ResizeObserver;
     const narrow = (): boolean => props().querySelector(".ed-trim")?.classList.contains("ed-trim-narrow") ?? false;
     try {

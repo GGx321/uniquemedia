@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { youthWords, type AvatarDescriptor, type CategorySnapshot } from "../../shared/engine";
+import { DESCRIPTOR_MAX_CHARS, youthWords, type AvatarDescriptor, type CategorySnapshot } from "../../shared/engine";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { AssemblerRefusalError, assembleRun, assembleSlot, CAMERA_REALISM_CLAUSE, CAMERA_REALISM_CLAUSE_EDITORIAL, sentenceProblems } from "./assembler";
 import type { PlanSlot } from "./schema";
@@ -147,12 +147,25 @@ describe("camera realism on a custom category", () => {
     expect(() => assembleSlot(DESCRIPTOR, slot(), "The girl waves.", MASTER, { categories: [PHONE], cameraRealism: true })).toThrow(AssemblerRefusalError);
   });
 
-  test("a custom category's texts at their bounds (35, 35, 35 and 15 characters, a 400-character sentence) stay under 2000 characters with either clause", () => {
-    const bounds = slot({ location: "l".repeat(35), activity: "a".repeat(35), outfit: "o".repeat(35), timeOfDay: "t".repeat(15), shot: "photographer", pose: "three-quarter" });
+  // The slot's own fields (place, time, activity, outfit) never reach the prompt: the writer's sentence carries them. What sets the prompt's size is
+  // the descriptor, the sentence and the clauses, so the bound is measured with the descriptor at its own limit.
+  test("the prompt with the descriptor at DESCRIPTOR_MAX_CHARS, a 400-character sentence and either realism clause stays under 2000 characters", () => {
+    const text = `25-year-old European woman, ${"light olive skin, warm hazel eyes, soft wavy chestnut hair, ".repeat(12)}`.slice(0, DESCRIPTOR_MAX_CHARS - 1) + ".";
+    expect(text).toHaveLength(DESCRIPTOR_MAX_CHARS);
     const sentence = `${"She walks along the quay in the soft evening light, ".repeat(8)}`.slice(0, 399) + ".";
     for (const snapshot of [PHONE, EDITORIAL]) {
-      const { prompt } = assembleSlot(DESCRIPTOR, bounds, sentence, MASTER, { categories: [snapshot], cameraRealism: true });
+      const { prompt } = assembleSlot({ age: 25, text }, slot(), sentence, MASTER, { categories: [snapshot], cameraRealism: true });
+      expect(prompt).toContain(text);
+      expect(prompt.endsWith(snapshot.style === "phone" ? CAMERA_REALISM_CLAUSE : CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
       expect(prompt.length).toBeLessThan(2000);
     }
+  });
+
+  test("a custom slot's place, time, activity and outfit are not in the prompt at all, at their bounds or not", () => {
+    const bounds = slot({ location: "lllll".repeat(7), activity: "aaaaa".repeat(7), outfit: "ooooo".repeat(7), timeOfDay: "t".repeat(15), shot: "photographer", pose: "three-quarter" });
+
+    const { prompt } = assembleSlot(DESCRIPTOR, bounds, SENTENCE, MASTER, { categories: [PHONE], cameraRealism: true });
+
+    for (const field of [bounds.location, bounds.activity, bounds.outfit, bounds.timeOfDay]) expect(prompt).not.toContain(field);
   });
 });
