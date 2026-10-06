@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { CategoryPool, CategorySummary, Estimate } from "../shared/engine";
 import { openLibrary } from "./library";
@@ -619,6 +619,45 @@ describe("one category call at a time", () => {
     expect(ok(await engine.handle(command("categories.update", { categoryId: other, name: "Другое имя" }))).ok).toBe(true);
     hold.release();
     ok(await creatingNow);
+  });
+});
+
+// ---------- a ledger that cannot be written ----------
+
+describe("a ledger write that fails during a category call", () => {
+  /** A chat answer that makes the ledger unwritable the moment the request has arrived, so the settle of the attempt cannot be recorded. */
+  function answerThenBreakLedger(content: Step): Step {
+    return async () => {
+      await chmod(join(dir(), "userData", "ledger.jsonl"), 0o444);
+      return content as Reply;
+    };
+  }
+
+  test("a create fails with the ledger's own code and the cost the ledger holds; nothing is stored", async () => {
+    const net = network({ descriptors: [answerThenBreakLedger(poolReply())] });
+    const { engine } = await startEngine(dir(), { net });
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(chatCalls(net)).toHaveLength(1);
+    expect(refused.error.spentMicros).toBe(ATTEMPT_WORST);
+    expect((await listOf(engine)).categories).toEqual([]);
+    expect(await folder()).toEqual([]);
+  });
+
+  test("a regenerate that fails the same way books what the ledger holds into the category's total, and keeps the old pool", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const net = network({ descriptors: [answerThenBreakLedger(poolReply())] });
+    const { engine, events } = await startEngine(dir(), { net });
+
+    const refused = failed(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+
+    expect(refused.error.spentMicros).toBe(ATTEMPT_WORST);
+    const kept = (await listOf(engine)).categories[0];
+    expect(kept?.spentMicros).toBe(5_000 + ATTEMPT_WORST);
+    expect(kept?.pool).toEqual(POOL);
+    expect(events().filter((e) => e.type === "category.changed")).toHaveLength(1);
+    expect((await listOf(engine)).interrupted).toEqual([]);
   });
 });
 

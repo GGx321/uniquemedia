@@ -2697,7 +2697,7 @@ export class Engine {
       const linesBefore = budget.ledger.lines.length;
       let result: Awaited<ReturnType<typeof runCategoryJob>>;
       try {
-        result = await runCategoryJob({ chat: (params) => client.chat(params), budget, priceBook: call.priced.book }, { jobId, scope, description: call.description, textModel: call.textModel });
+        result = await runCategoryJob({ chat: (params) => client.chat(params), budget, priceBook: call.priced.book, errorOf: engineErrorFrom }, { jobId, scope, description: call.description, textModel: call.textModel });
       } finally {
         this.#caps.delete(scopeKey(scope));
         if (budget.ledger.lines.length !== linesBefore || budget.ledger.failed) this.#emitMoney();

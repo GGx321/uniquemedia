@@ -17,6 +17,11 @@ export interface CategoryJobDeps {
   budget: Budget;
   /** The prices the job was accepted at; the reserve of each attempt is its worst case at these prices. */
   priceBook: PriceBook;
+  /**
+   * An error thrown out of an attempt (a ledger that cannot record the reserve or the settle) as the contract's error. The job answers it as a
+   * failure with what the ledger booked, instead of throwing past the one place that knows the call's cost.
+   */
+  errorOf: (error: unknown) => EngineError;
 }
 
 export interface CategoryJob {
@@ -56,20 +61,26 @@ export async function runCategoryJob(deps: CategoryJobDeps, job: CategoryJob): P
   };
   let feedback: PoolRefusal | undefined;
   for (let attempt = 1; attempt <= POOL_MAX_ATTEMPTS; attempt++) {
-    const result = await deps.chat({
-      attemptId: `${job.jobId}:pool#${attempt}`,
-      jobId: job.jobId,
-      scope: job.scope,
-      model: job.textModel,
-      budget: deps.budget,
-      priceBook: deps.priceBook,
-      signal: NEVER_ABORTED,
-      messages: poolMessages(job.description, feedback),
-      jsonSchema: POOL_JSON_SCHEMA,
-      maxTokens: call.maxTokens,
-      inputTokens: call.inputTokens,
-      reasoningEffort: "low",
-    });
+    let result: Awaited<ReturnType<typeof deps.chat>>;
+    try {
+      result = await deps.chat({
+        attemptId: `${job.jobId}:pool#${attempt}`,
+        jobId: job.jobId,
+        scope: job.scope,
+        model: job.textModel,
+        budget: deps.budget,
+        priceBook: deps.priceBook,
+        signal: NEVER_ABORTED,
+        messages: poolMessages(job.description, feedback),
+        jsonSchema: POOL_JSON_SCHEMA,
+        maxTokens: call.maxTokens,
+        inputTokens: call.inputTokens,
+        reasoningEffort: "low",
+      });
+    } catch (error) {
+      // The ledger could not record the reserve or the settle: what it holds for the job (an attempt left open counts at its worst case) is the cost.
+      return failed(deps.errorOf(error));
+    }
     // A bill above the worst case still bought a usable answer; the Budget has halted every later reserve and the money status says so.
     if (result.status === "ok") {
       const read = readPoolAnswer(result.content);

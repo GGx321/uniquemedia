@@ -1,6 +1,7 @@
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { CATEGORY_DESCRIPTION_MAX } from "../../shared/engine";
-import type { Scope } from "../money/ledger";
+import { afterEach, beforeEach, expect, spyOn, test } from "bun:test";
+import { open } from "node:fs/promises";
+import { CATEGORY_DESCRIPTION_MAX, type EngineError } from "../../shared/engine";
+import type { OpenFile, Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type Money, type Step } from "../openrouter/testing/fakes";
 import { runCategoryJob, type CategoryJob } from "./categoryJob";
 import { poolCall } from "./poolGen";
@@ -52,11 +53,27 @@ afterEach(async () => {
   await money.cleanup();
 });
 
-function run(steps: Step[], job: CategoryJob = JOB) {
+/** The engine's mapping of a thrown error, as far as these tests need it: the message is the detail. */
+function errorOf(error: unknown): EngineError {
+  return { code: "INTERNAL", detail: error instanceof Error ? error.message : "unexpected engine error" };
+}
+
+function run(steps: Step[], job: CategoryJob = JOB, using: Money = money) {
   const net = fakeFetch(steps);
   const { client } = makeClient(net.fetch);
-  const result = runCategoryJob({ chat: client.chat, budget: money.budget, priceBook: money.priceBook }, job);
+  const result = runCategoryJob({ chat: client.chat, budget: using.budget, priceBook: using.priceBook, errorOf }, job);
   return { net, result };
+}
+
+/** A ledger whose `n`th write (counting from 1, across every append) fails the way a full disk does, and every one after it. */
+function failingFromWrite(n: number): OpenFile {
+  let writes = 0;
+  return async (path, flags) => {
+    const handle = await open(path, flags);
+    const real = handle.write.bind(handle) as (...args: unknown[]) => Promise<unknown>;
+    spyOn(handle, "write").mockImplementation(((...args: unknown[]) => (++writes >= n ? Promise.reject(new Error("ENOSPC: no space left on device")) : real(...args))) as never);
+    return handle;
+  };
 }
 
 test("a valid first answer is the pool: one reserve at the attempt's worst case, settled at usage.cost, and the job cost is that cost", async () => {
@@ -215,4 +232,47 @@ test("a call is not resumable: running the job again is a new request under its 
   await again.result;
 
   expect(money.lines().filter((l) => l.type === "reserve").map((l) => l.attemptId)).toEqual(["job-00000001:pool#1", "job-00000002:pool#1"]);
+});
+
+test("a ledger write that fails when the attempt is settled ends the job as a failure that carries what the ledger booked, not as a throw past it", async () => {
+  // Write 1 is the reserve, write 2 the settle: the request was sent and answered, and the ledger could not record the cost.
+  const failing = await setupMoney({ ledger: { openFile: failingFromWrite(2) } });
+  try {
+    const { net, result } = run([reply(answer(), 0.0051)], JOB, failing);
+
+    const outcome = await result;
+
+    expect(net.calls).toHaveLength(1);
+    // The attempt stays open at its worst case: that is what the ledger holds for the job, so it is what the call is counted at.
+    expect(outcome).toMatchObject({ ok: false, spentMicros: ATTEMPT_WORST, error: { code: "INTERNAL", spentMicros: ATTEMPT_WORST } });
+    if (!outcome.ok) expect(outcome.error.detail).toContain("ENOSPC");
+  } finally {
+    await failing.cleanup();
+  }
+});
+
+test("a ledger write that fails at the reserve ends the job as a failure that cost nothing: nothing was sent", async () => {
+  const failing = await setupMoney({ ledger: { openFile: failingFromWrite(1) } });
+  try {
+    const { net, result } = run([reply(answer())], JOB, failing);
+
+    const outcome = await result;
+
+    expect(net.calls).toHaveLength(0);
+    expect(outcome).toMatchObject({ ok: false, spentMicros: 0, error: { spentMicros: 0 } });
+  } finally {
+    await failing.cleanup();
+  }
+});
+
+test("a ledger write that fails when the second attempt is settled keeps the first attempt's cost in what the job spent", async () => {
+  // Writes: 1 reserve, 2 settle (first answer, rejected), 3 reserve, 4 settle (fails).
+  const failing = await setupMoney({ ledger: { openFile: failingFromWrite(4) } });
+  try {
+    const { result } = run([reply({ pool: "cafes" }, 0.0051), reply(answer(), 0.0062)], JOB, failing);
+
+    expect(await result).toMatchObject({ ok: false, spentMicros: 5_100 + ATTEMPT_WORST });
+  } finally {
+    await failing.cleanup();
+  }
 });
