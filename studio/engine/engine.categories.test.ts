@@ -269,6 +269,58 @@ describe("categories.dismissInterrupted", () => {
     expect(net.calls).toHaveLength(0);
   });
 
+  test("dismissing an interrupted regenerate adds what the call is counted at to its category's total: the sheet's «потрачено» must hold every regeneration", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.writePending({ jobId: "job-00000042", kind: "regenerate", name: "Кофейни", description: "кофейни и булочные", categoryId: id, startedAt: "2026-10-05T12:05:00.000Z" });
+    await writeLedger(dir(), [
+      { type: "reserve", attemptId: "job-00000042:pool#1", jobId: "job-00000042", scope: { avatarJobId: "job-00000042" }, model: "x-ai/grok-4.3", worstMicros: ATTEMPT_WORST, at: "2026-10-05T12:05:01.000Z" },
+      { type: "settle", attemptId: "job-00000042:pool#1", costMicros: 6_000, estimated: false, at: "2026-10-05T12:05:09.000Z" },
+      { type: "reserve", attemptId: "job-00000042:pool#2", jobId: "job-00000042", scope: { avatarJobId: "job-00000042" }, model: "x-ai/grok-4.3", worstMicros: ATTEMPT_WORST, at: "2026-10-05T12:05:10.000Z" },
+    ]);
+    const { engine, events } = await startEngine(dir());
+
+    ok(await engine.handle(command("categories.dismissInterrupted", { jobId: "job-00000042" })));
+
+    const listed = await listOf(engine);
+    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 6_000 + ATTEMPT_WORST);
+    expect(listed.interrupted).toEqual([]);
+    expect(events().filter((e) => e.type === "category.changed")).toHaveLength(1);
+  });
+
+  test("dismissing an interrupted create changes no category", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    await leave("job-00000041");
+    const { engine, events } = await startEngine(dir());
+
+    ok(await engine.handle(command("categories.dismissInterrupted", { jobId: "job-00000041" })));
+
+    expect((await listOf(engine)).categories.find((c) => c.categoryId === id)?.spentMicros).toBe(5_000);
+    expect(events().filter((e) => e.type === "category.changed")).toEqual([]);
+  });
+
+  test("dismissing an interrupted regenerate of a category that is gone just forgets the record", async () => {
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.writePending({ jobId: "job-00000043", kind: "regenerate", name: "Удалена", description: "кофейни", categoryId: "cat-long-gone", startedAt: "2026-10-05T12:05:00.000Z" });
+    const { engine } = await startEngine(dir());
+
+    expect(ok(await engine.handle(command("categories.dismissInterrupted", { jobId: "job-00000043" }))).result).toEqual({ jobId: "job-00000043" });
+
+    expect((await listOf(engine)).interrupted).toEqual([]);
+  });
+
+  test("with a ledger that cannot be read an interrupted regenerate is not dismissed: its cost is unknown, and forgetting it would lose it", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.writePending({ jobId: "job-00000044", kind: "regenerate", name: "Кофейни", description: "кофейни", categoryId: id, startedAt: "2026-10-05T12:05:00.000Z" });
+    await mkdir(join(dir(), "userData", "ledger.jsonl"), { recursive: true });
+    const { engine } = await startEngine(dir());
+
+    expect(failed(await engine.handle(command("categories.dismissInterrupted", { jobId: "job-00000044" }))).error.code).toBe("LEDGER_UNREADABLE");
+
+    expect((await listOf(engine)).interrupted.map((i) => i.jobId)).toEqual(["job-00000044"]);
+  });
+
   test("answers NOT_FOUND for a record that is not listed", async () => {
     const { engine } = await startEngine(dir());
     expect(failed(await engine.handle(command("categories.dismissInterrupted", { jobId: "job-00000099" }))).error.code).toBe("NOT_FOUND");
@@ -619,6 +671,46 @@ describe("one category call at a time", () => {
     expect(ok(await engine.handle(command("categories.update", { categoryId: other, name: "Другое имя" }))).ok).toBe(true);
     hold.release();
     ok(await creatingNow);
+  });
+});
+
+describe("a regenerate whose paid pool cannot be stored", () => {
+  test("still adds its cost to the category's total: the old pool stays, the call was paid, and the pool is kept in raw/", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    let failTheStore = false;
+    // The answer arms the failure for the pool's own write only; the booking of the spend that follows is a write of the same record and must go through.
+    const net = network({
+      descriptors: [
+        async () => {
+          failTheStore = true;
+          return poolReply(answer(), 0.0051) as Reply;
+        },
+      ],
+    });
+    const { engine, events } = await startEngine(dir(), {
+      net,
+      deps: {
+        library: {
+          testHooks: {
+            beforeRename: (path) => {
+              if (failTheStore && !path.includes("pending-")) {
+                failTheStore = false;
+                throw new Error("the disk is full");
+              }
+            },
+          },
+        },
+      },
+    });
+
+    const refused = failed(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
+
+    expect(refused.error).toMatchObject({ code: "INTERNAL", spentMicros: 5_100 });
+    expect(refused.error.detail).toContain("raw/");
+    const kept = (await listOf(engine)).categories[0];
+    expect(kept?.spentMicros).toBe(5_000 + 5_100);
+    expect(kept?.pool).toEqual(POOL);
+    expect(events().filter((e) => e.type === "category.changed")).toHaveLength(1);
   });
 });
 

@@ -681,6 +681,8 @@ export class Engine {
   #categoryCall: CategoryCall | null = null;
   /** Categories whose removal has begun and not ended, marked before the removal's first await: a regenerate or an update of one is refused (IN_FLIGHT), so a paid pool is never written for a record that is going. */
   readonly #removingCategories = new Set<string>();
+  /** Interrupted calls being dismissed: a second dismissal of one must not add its spend to the category again. */
+  readonly #dismissingCalls = new Set<string>();
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs: JobRegistry;
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
@@ -2720,6 +2722,8 @@ export class Engine {
           (saveError: unknown) => `the paid category could not be kept either (${messageOf(saveError, "unknown error")})`,
         );
         const failure = Engine.#categoryFailure(error, result.spentMicros);
+        // The old pool stays, but the call was paid: the category's total says so, as it does for a regeneration that failed before its answer.
+        if (call.kind === "regenerate" && call.categoryId !== null && result.spentMicros > 0) await this.#bookCategorySpend(library, call.categoryId, result.spentMicros);
         // Where it is kept comes first, so the 500-char cut of `detail` cannot drop it.
         throw new EngineFailure({ ...failure.error, detail: detailOf(`${where}: ${failure.error.detail ?? "the category could not be written"}`) });
       }
@@ -2795,11 +2799,35 @@ export class Engine {
     return { categoryId };
   }
 
-  /** Forgets the record of a call a closed Studio left; NOT_FOUND for one that is not there, IN_FLIGHT for the call running now. */
+  /**
+   * Forgets the record of a call a closed Studio left; NOT_FOUND for one that is not there, IN_FLIGHT for the call running now. An interrupted
+   * regenerate is first counted into its category's total at what the ledger holds for it (an open reserve at its worst case, a reconciled one at its
+   * estimate): the category's «потрачено» holds every regeneration, answered or not, and this call is its only trace once the record is gone. With a
+   * ledger that cannot be read that cost is unknown, so the record stays. The total is written before the record is removed: a crash between the
+   * two can only count the call twice, never lose it.
+   */
   async #dismissInterrupted(library: Library, jobId: string): Promise<CommandResult<"categories.dismissInterrupted">> {
-    if (this.#categoryCall?.jobId === jobId) throw new EngineFailure({ code: "IN_FLIGHT", detail: `call ${jobId} is running now` });
-    if (!(await library.categories.removePending(jobId))) throw new EngineFailure({ code: "NOT_FOUND", detail: `no interrupted category call ${jobId}` });
-    return { jobId };
+    if (this.#categoryCall?.jobId === jobId || this.#dismissingCalls.has(jobId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `call ${jobId} is running now` });
+    this.#dismissingCalls.add(jobId);
+    try {
+      const call = (await library.categories.listPending()).find((p) => p.jobId === jobId);
+      if (call === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no interrupted category call ${jobId}` });
+      if (call.kind === "regenerate" && call.categoryId !== null) {
+        const money = this.#money;
+        if (!money.ok) throw new EngineFailure({ code: money.unavailable.cause, detail: money.unavailable.detail });
+        const spentMicros = jobSpentMicros(money.budget.ledger, jobId);
+        if (spentMicros > 0) {
+          const updated = await library.categories.addSpend(call.categoryId, spentMicros).catch((error: unknown) => {
+            throw Engine.#categoryFailure(error);
+          });
+          if (updated !== null) this.#emitCategory({ change: "upserted", category: summaryOf(updated) });
+        }
+      }
+      if (!(await library.categories.removePending(jobId))) throw new EngineFailure({ code: "NOT_FOUND", detail: `no interrupted category call ${jobId}` });
+      return { jobId };
+    } finally {
+      this.#dismissingCalls.delete(jobId);
+    }
   }
 
   /**

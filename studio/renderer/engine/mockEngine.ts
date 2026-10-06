@@ -1716,7 +1716,14 @@ export class MockEngine implements EngineBridge {
       case "categories.dismissInterrupted": {
         const gone = this.libraryGate();
         if (gone) return this.fail(c, gone);
-        if (!this.categories.dismiss(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no interrupted category call ${c.payload.jobId}` });
+        const call = this.categories.interruptedOf(c.payload.jobId);
+        if (call === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no interrupted category call ${c.payload.jobId}` });
+        // An interrupted regenerate is counted into its category's total before it is forgotten (the engine does the same: the call's only trace).
+        if (call.kind === "regenerate" && call.categoryId !== null && call.spentMicros !== null && call.spentMicros > 0) {
+          const booked = this.categories.addSpend(call.categoryId, call.spentMicros);
+          if (booked !== undefined) this.categoryEvent(booked);
+        }
+        this.categories.dismiss(c.payload.jobId);
         return this.ok(c, { jobId: c.payload.jobId });
       }
       case "avatars.pickImportPhoto": {

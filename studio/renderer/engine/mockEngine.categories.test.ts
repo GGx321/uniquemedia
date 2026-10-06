@@ -338,6 +338,26 @@ describe("categories.dismissInterrupted", () => {
     expect((await unwrap(m.client.request("categories.list", {}))).interrupted).toEqual([]);
   });
 
+  test("dismissing an interrupted regenerate adds what it is counted at to its category's total and announces the change, as the engine does", async () => {
+    const m = makeMock();
+    const made = await created(m, "Кофейни");
+    const regenerating: CategoryInterrupted = { jobId: "job-00000042", kind: "regenerate", name: "Кофейни", description: "кофейни", categoryId: made.categoryId, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 };
+    m.engine.seedInterruptedCategory(regenerating);
+    m.events.length = 0;
+
+    await unwrap(m.client.request("categories.dismissInterrupted", { jobId: regenerating.jobId }));
+
+    const listed = await unwrap(m.client.request("categories.list", {}));
+    expect(listed.categories[0]?.spentMicros).toBe(made.spentMicros + 22_500);
+    expect(changes(m.events)).toEqual([{ change: "upserted", category: listed.categories[0] }]);
+  });
+
+  test("dismissing an interrupted create changes no category", async () => {
+    const m = makeMock({ interruptedCategories: [interrupted] });
+    await unwrap(m.client.request("categories.dismissInterrupted", { jobId: interrupted.jobId }));
+    expect(changes(m.events)).toEqual([]);
+  });
+
   test("NOT_FOUND for a record that is not listed", async () => {
     const { client } = makeMock();
     expect(await client.request("categories.dismissInterrupted", { jobId: "job-00000099" })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });

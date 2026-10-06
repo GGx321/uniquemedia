@@ -234,6 +234,11 @@ export class MockCategories {
     this.#interrupted = [...this.#interrupted, call];
   }
 
+  /** The record of an interrupted call, or undefined when none is listed under that id. */
+  interruptedOf(jobId: string): CategoryInterrupted | undefined {
+    return this.#interrupted.find((i) => i.jobId === jobId);
+  }
+
   dismiss(jobId: string): boolean {
     const before = this.#interrupted.length;
     this.#interrupted = this.#interrupted.filter((i) => i.jobId !== jobId);
