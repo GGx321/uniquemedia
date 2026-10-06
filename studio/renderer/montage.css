@@ -2316,6 +2316,17 @@
   background: var(--warn);
 }
 
+/* A slot too narrow for two handles (a 0.1 s clip at fit zoom) draws only the right one, its width set inline
+   (timelineScale.ts trimHandlePx); the left one stays a keyboard slider, out of the pointer's way, seen by its focus ring. */
+.hd.hd-key {
+  background: none;
+  pointer-events: none;
+}
+
+.hd.hd-key::after {
+  display: none;
+}
+
 /* «Добавить кадр в конец»: the dashed «+» after the last clip. */
 .ed-add-end {
   position: absolute;

@@ -26,6 +26,21 @@ export interface RulerLabel {
   readonly after: boolean;
 }
 
+/** A selected clip's trim handle at full size (montage.css `.hd`), and the narrowest one still drawn beside its pair. */
+const HANDLE_PX = 9;
+const HANDLE_MIN_PX = 3;
+
+/**
+ * How wide a selected clip's two trim handles are in a slot `slotPx` wide, so they never cover each other or reach a neighbour:
+ * 9 px, at most 40% of the slot each, at least 3 px. A slot too narrow for two of those (a 0.1 s clip at fit zoom is ~5 px) draws
+ * only the right one, no wider than the slot; the left one stays a keyboard slider (0 px, seen by its focus ring).
+ */
+export function trimHandlePx(slotPx: number): { start: number; end: number } {
+  const each = Math.min(HANDLE_PX, Math.max(HANDLE_MIN_PX, Math.floor(slotPx * 0.4)));
+  if (2 * each <= slotPx) return { start: each, end: each };
+  return { start: 0, end: Math.max(0, Math.min(HANDLE_MIN_PX, slotPx)) };
+}
+
 /** A whole zoom step from 1 to 8; anything else (NaN included) lands on the nearest bound. */
 export function clampZoom(zoom: number): number {
   if (!Number.isFinite(zoom)) return MIN_ZOOM;
