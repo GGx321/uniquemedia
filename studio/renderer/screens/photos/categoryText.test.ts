@@ -219,14 +219,19 @@ describe("a call a closed Studio left", () => {
   test("a create: the design's words, the worst case counted until the reconcile", () => {
     expect(interruptedText(left)).toEqual({
       title: "Создание прервано — Studio закрылась",
-      text: "Модель составляла набор для «Кофейни Парижа», когда Studio закрылась. Категория не создана; описание сохранено. Запрос до сверки расходов учтён по худшей цене.",
+      text: "Модель составляла набор для «Кофейни Парижа», когда Studio закрылась. Категория не создана; описание сохранено. Запрос учтён по худшей цене — до $0.023 — до сверки расходов.",
     });
+  });
+
+  test("the worst case it is counted at is told in money, rounded up", () => {
+    expect(interruptedText({ ...left, openReserveMicros: 1_000, spentMicros: 1_000 }).text).toEndWith("Запрос учтён по худшей цене — до $0.001 — до сверки расходов.");
+    expect(interruptedText({ ...left, openReserveMicros: 22_501, spentMicros: 22_501 }).text).toEndWith("Запрос учтён по худшей цене — до $0.023 — до сверки расходов.");
   });
 
   test("a regenerate keeps its old pool", () => {
     expect(interruptedText({ ...left, kind: "regenerate", categoryId: "cat-paris-0001" })).toEqual({
       title: "Пересоздание прервано",
-      text: "Studio закрылась, пока модель составляла новый набор. Старый набор остался. Запрос до сверки расходов учтён по худшей цене.",
+      text: "Studio закрылась, пока модель составляла новый набор. Старый набор остался. Запрос учтён по худшей цене — до $0.023 — до сверки расходов.",
     });
   });
 

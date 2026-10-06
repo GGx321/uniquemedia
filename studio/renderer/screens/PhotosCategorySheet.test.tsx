@@ -280,7 +280,7 @@ describe("calls a closed Studio left", () => {
     inAct(() => engine.requireReconcile(["open-reserves"]));
     await flush();
     await screen.findByText("Создание прервано — Studio закрылась");
-    const text = "Модель составляла набор для «Рынки», когда Studio закрылась. Категория не создана; описание сохранено. Запрос до сверки расходов учтён по худшей цене.";
+    const text = "Модель составляла набор для «Рынки», когда Studio закрылась. Категория не создана; описание сохранено. Запрос учтён по худшей цене — до $0.023 — до сверки расходов.";
     expect(screen.getByText(text)).toBeDefined();
     const retry = screen.getByRole("button", { name: "Создать снова · до $0.045" });
     expect(isDisabled(retry)).toBe(true);
@@ -313,7 +313,7 @@ describe("calls a closed Studio left", () => {
     const { engine } = await openPhotos({ categories: [PARIS], interruptedCategories: [interruptedRegenerate(PARIS.categoryId)] });
     await openSheet();
     expect(within(sheet()).getByText("Пересоздание прервано")).toBeDefined();
-    expect(within(sheet()).getByText("Studio закрылась, пока модель составляла новый набор. Старый набор остался. Запрос до сверки расходов учтён по худшей цене.")).toBeDefined();
+    expect(within(sheet()).getByText("Studio закрылась, пока модель составляла новый набор. Старый набор остался. Запрос учтён по худшей цене — до $0.023 — до сверки расходов.")).toBeDefined();
     expect((within(sheet()).getByLabelText(/^Новое описание/) as HTMLTextAreaElement).value).toBe("Кофейни и бистро");
     expect(regenButton().textContent).toBe("Пересоздать снова · до $0.045");
     fireEvent.click(within(sheet()).getByRole("button", { name: "Убрать" }));

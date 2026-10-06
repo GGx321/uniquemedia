@@ -201,7 +201,7 @@ export function hiddenFailureText(name: string, error: EngineError): string {
 /** What an interrupted call is counted at, as the ledger knows it now. */
 function interruptedSpend(call: CategoryInterrupted): string {
   if (call.spentMicros === null || call.openReserveMicros === null) return "Сколько стоил запрос, неизвестно: журнал расходов сейчас не читается.";
-  if (call.openReserveMicros > 0) return "Запрос до сверки расходов учтён по худшей цене.";
+  if (call.openReserveMicros > 0) return `Запрос учтён по худшей цене — до ${formatUsdTiered(call.openReserveMicros, "up")} — до сверки расходов.`;
   if (call.spentMicros > 0) return `Запрос учтён: потрачено ${formatUsdTiered(call.spentMicros, "nearest")}.`;
   return "Запрос не успел уйти — ничего не потрачено.";
 }
