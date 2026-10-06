@@ -786,6 +786,40 @@ commands (red: INTERNAL «not implemented yet»), the deadlines, the mock, the s
 code and checked red afterwards by switching the lookup back to CS.1's refusal: the custom-run tests in `engine.runs.test.ts`. Passing at once by
 nature: the canary tests (a leak-free property) and the smoke scenario.
 
+#### CS.2 fix round 1 (2026-10-06): what CS.3 builds on
+
+The review returned MERGEABLE; this round fixes what gets expensive after merge (the on-disk format, the contract) and the cheap money and data
+items in the same files. Contract additions, all additive in protocol v5:
+
+- **`PoolTime` / `POOL_TIMES`** (shared): a place's `times` are bound to the plan's vocabulary (morning, midday, golden hour, evening, night,
+  studio lighting), no longer any short ASCII text. `readPlace` drops a time outside it (normal salvage); a place left with no time follows the
+  below-minimum rule. The mock already used the vocabulary.
+- **`EngineError.categoryReason`**: `"limit" | "name-taken" | "below-minimum" | "mirror-needed" | "item-not-found"`, only on `VALIDATION`, set on every
+  category VALIDATION: create, update and the one a create meets after its pool was paid for (it then also carries `spentMicros`). `exists`
+  (an id clash) and `not-found` carry none. Russian texts: `CATEGORY_REASONS_RU` in `errorMessagesRu.ts`, read by `errorText`. The mock sets the same; the parity
+  golden covers the free ones (`transcript.ts` writes the field; a new scenario with a second category plays a taken name).
+- **`CategoryInterrupted`**: `spentMicros` and the new `openReserveMicros` are both `number | null`. `openReserveMicros` is the part of the spend that is a
+  reserve still open at its worst case, so «Запрос учтён по худшей цене до сверки» is true exactly when it is above 0. A call killed before its reserve
+  was written is a known `0` and `0`; a ledger that cannot be read gives `null` and `null` (unknown, not nothing). The refinements: both null or both set,
+  the open part never above the spend.
+- **`categories.list`**: a new `overLimit` count (a separate field, not folded into `unreadable`: those files can be read). `categories` holds at most 50, the
+  oldest first; `overLimit` counts the readable ones past the 50th, which stay on disk and come back as categories are deleted. Every `cat-*.json`
+  holds a place towards the limit, readable or not, so a create is refused (`limit`) at 50 files and the folder stays bounded; a name held by a category the
+  list leaves out still counts as taken (`CategoryStore.assertRoom` reads the whole folder).
+- **`busy`** of a regenerate names its category from the moment the command is claimed (the listing looks the name up when the call has not read it yet).
+- **`categories.dismissInterrupted`** on an interrupted regenerate first adds the call's spend to its category (written before the record is removed: a crash
+  between the two can only count it twice, never lose it); with an unreadable ledger it is refused with the ledger's own code. A call that ended in this
+  process but whose record could not be removed is not listed as interrupted, is removed again at the next listing, and its dismissal books nothing.
+
+Engine behaviour: a rename to the name a running create is about to take is refused (`VALIDATION`, `name-taken`), so the paid create is no longer lost at its
+write; a delete marks its category before its first await and a regenerate or an update of it is refused (`IN_FLIGHT`) with nothing reserved; a ledger write
+that fails in an attempt's reserve or settle ends the job as a failed call that carries what the ledger holds (`CategoryJobDeps.errorOf`), and a regenerate
+books it; a regenerate whose paid pool could not be stored also books its cost; both delete paths flush the folder (`fsyncDir`) after the unlink.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 5898 + 6196 + 6745 = 18839 tests passing, 0 failing.
+Tests seen red first: every item above (the engine, store, job, shared, renderer-text and mock tests); the golden lines of the category scenarios
+changed only where the new fields appear (they are this branch's own entries), and no older golden line moved.
+
 ### CS.3 — Categories UI (designer, opus)
 
 Scope: chips (built-ins, then custom, counts from `splitCount`); «+ Своя» dialog with price,
