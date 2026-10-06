@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import type { StoredSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { beginWrite, withChunkGivenUp, withChunkWritten, withWriteFinished, withWriteStopped } from "./mutations";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // CS.4a: the changes a write makes to its set's record, as pure functions. The record is rewritten by the store (revision, atomic); these say what changes.
 

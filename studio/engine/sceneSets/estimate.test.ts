@@ -5,6 +5,8 @@ import { WRITER_CALL, writerWorstMicros } from "../money/estimate";
 import { PriceBook } from "../money/prices";
 import { composeEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
 import { fakeLedger } from "./testing/fakeLedger";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // CS.4a: what a compose and a «Дописать» could cost. The estimate IS the accepted worst the job's cap is set to, so it prices exactly the calls the
 // job may send: per chunk `min(2 − answered, unused ids) × the writer's ceiling` (never a fresh pair after an interruption).

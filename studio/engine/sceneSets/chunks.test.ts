@@ -3,6 +3,8 @@ import type { StoredSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { chunkState, pendingChunks, requestSceneIds } from "./chunks";
 import { fakeLedger } from "./testing/fakeLedger";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // CS.4a: what a writer chunk may still do. THE ATTEMPT INVARIANT: answered attempts per chunk are at most 2 across ALL jobs of the set, an open
 // reserve and a reconcile's estimated settle count as answered (runs/journal.ts's attemptPaid), and a chunk is never given a fresh pair.

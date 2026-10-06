@@ -4,6 +4,8 @@ import type { StoredSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { fakeLedger, WRITER_ATTEMPT_WORST } from "./testing/fakeLedger";
 import { buildSceneSetView, type ViewContext } from "./view";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // CS.4a: what the window is shown of a set. Status and `stoppedBy` are DERIVED (never stored): no outcome and no live job reads `closed`. The spend is the
 // set's closed attempts plus its open reserves that are NOT in flight; per-chunk attempts left come from the ledger, so the UI never guesses.

@@ -4,6 +4,8 @@ import { orderCategories, splitCount, type CategoryRef } from "../../shared/engi
 import { SceneSetFile } from "../library/sceneSets";
 import { planWithPools, plannerCategoryOf, POOLS, type Pool } from "../scenes";
 import { planSceneSet, seedOfSet, type ComposeInput } from "./compose";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // CS.4a: a compose plans the set with the same planner a run uses, issues the set's run id and every writer chunk's attempt ids, and records the first
 // write — all of it in the set that is written BEFORE the first call.

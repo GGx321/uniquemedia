@@ -960,6 +960,72 @@ Review notes (opus): the state machine (writing/stopped/ready/used) at every cra
 ordering (`scenes.changed` before `job.done`); that the run's own writer phase still stops at its
 first unwritable chunk (only the set's job continues past one).
 
+#### Owner decisions for phase 2 (2026-10-07), binding
+
+1. **«Сцены на проверку» is ON by default and remembered** (a renderer setting, per machine; CS.6). The engine only has to support both paths: CS.4a's
+   compose/«Дописать» are the review path, `runs.start` is the unchanged path with review off.
+2. **Own scenes only «По описанию»** (an idea written by the model). There is no «Как есть»: no `addOwn` op exists, and CS.4b/CS.6 do not build one.
+3. **⟳ redraws the whole scene** (a new place, outfit, activity and pose from the same category, and a new sentence), as the recommended default of §11.4 said (CS.4b).
+
+#### CS.4a built (2026-10-07, branch `feat/studio-scene-sets-core`)
+
+What shipped. Protocol v5 stays open and additive. No paid or live call anywhere (the fake OpenRouter only).
+
+- **Contract** (`shared/engine/scenes.ts`, new): `SceneSetView {sceneSetId, avatarId, createdAt, revision, status writing|stopped|ready|used, stoppedBy, stoppedError,
+  runId (named only when used), poses, categories [{ref, name}] (the set's own snapshot), textModel, spentMicros, openReserveMicros (both null when the ledger is
+  unreadable), write {kind, count} (the live write), lastCompose {total, written, gaveUp}, chunks [{chunk, sceneIds, attemptsLeft, gaveUpBy}], scenes}`;
+  `SceneView {sceneId, origin, category, categoryName, shot, pose, place, idea, text, edited, removed, unwritten pending|gave-up, gaveUpBy rejected|refused|no-attempts, chunk}`;
+  `SceneStoppedBy` (`closed` is derived, never stored), `ComposeRequest`, `SceneEditOp` (`text`, `remove {1..100}`, `restore {1..100}`), `SceneProblem` (`empty | too-long |
+  not-one-line | control-char | youth-word | revealing-word`, with the words), `SceneWriteTarget` (`unwritten` only), `ScenesResult`. Commands `scenes.estimateCompose`, `compose`,
+  `get` (`{sceneSet, unreadable}`), `edit` (`{sceneSet}` or `{problem}`), `estimateWrite`, `write`, `cancel`, `discard`. Event `scenes.changed` (`upserted {sceneSet}` | `removed
+  {sceneSetId, avatarId}`), always before the job's `job.done|failed|cancelled`. Job kind `scenes` (`JobProgress`, `JobFailed`, `JobCancelled`, `JobResult`, `JobState`, snapshot).
+  Error code `SCENES_CHANGED` (Russian text in `errorMessagesRu.ts`). Deadlines: the two estimates, compose and write = price fetch + 15 s; the other four keep main's default.
+- **Store** (`library/sceneSets.ts`): `avatars/<avatarId>/scenes/<sceneSetId>.json`, atomic (temp, fsync, rename, fsyncDir), `revision` on every write, one lock per set
+  (`scenes:<id>`), a stale revision is refused before the mutation runs, a `guard` runs under the lock before the revision is compared (used / job live). Unreadable or newer-schema
+  files are counted and never touched; the survey moves crash temps. The set holds its pre-issued run id; **used ⇔ `runs/<runId>/` exists** (`Library.runFolderExists`).
+- **Engine** (`engine/sceneSets/`): `compose.ts` (the planner a run uses, seeded by the set id, recent pairs avoided, chunk ids `${setId}:writer-${n}#1..4` written into the file
+  BEFORE the first call), `chunks.ts` (attempts per chunk from the ledger: `answered` = `attemptPaid`, `attemptsLeft = min(2 − answered, unused ids)`), `estimate.ts`, `view.ts`,
+  `edit.ts`, `mutations.ts`, `writeJob.ts` (drives `runWriterPhase` one pending chunk at a time), `service.ts` (the commands; engine.ts only wires them).
+- **Mock and parity**: `renderer/engine/mockSceneSets.ts` (same states, same order of refusals, controls `failNextSceneAttempt`, `markSceneSetUsed`, seeds `sceneSets`,
+  `unreadableSceneSets`); store: `trackScenesJob`, `subscribeSceneSets`; the sidebar counts a scenes job with the photo-side jobs unchanged. Two golden scenarios appended
+  (55 lines, nothing else moved); `sceneSetId` joined the transcript's id kinds.
+
+State machine (derived on every view; the file stores only the write record `{k, kind, jobId, stoppedBy?}`):
+
+| Crash or stop point | Ledger | View |
+|---|---|---|
+| set written, no reserve yet | nothing | `stopped`/`closed`, both attempts left, spent 0 |
+| between a reserve and its answer | open reserve | `stopped`/`closed`, spent and open reserve = $0.0375, ONE attempt left; paid calls wait for the reconcile |
+| after the reconcile closed it | estimated settle | same spend, no longer open; «Дописать» sends ONE attempt, never a fresh pair, never the reserved id |
+| answer settled, chunk not yet saved | settle | `stopped`/`closed`, that attempt counted, scenes still waiting (the raw answer is kept by the client) |
+| chunk 1 saved, chunk 2 not asked | settle | `stopped`/`closed`, chunk 2's scenes pending |
+| all chunks saved, write not cleared | settles | `ready` (nothing left to write) |
+| job stopped by a 429/5xx | free settle | `stopped`/`rate-limited` or `provider-error`, both attempts kept |
+| job stopped by a dropped connection / timeout | open reserve | `stopped`/`network` or `timeout`, one attempt left |
+| cancel mid-request | open reserve | `stopped`/`cancelled`, written chunks kept |
+| two rejected answers / a provider's refusal | settles / none | chunk `gaveUp` `rejected` / `refused`, the job goes on; never retried |
+| all ids or attempts used | settles | scenes `gave-up`/`no-attempts`, skipped, «Дописать» does not count them |
+| every waiting scene removed | any | `ready` (the button is «Отрисовать») |
+| run folder exists | any | `used`, read-only, names its run |
+
+Money (fallback prices): one attempt $0.0375 (14K in, 8K out); compose 20 = $0.075 worst, ≈ $0.009 expected; 26 = $0.15; 100 = $0.30. «Дописать» of 35 scenes fresh = $0.15;
+after the first chunk's request was interrupted $0.1125 (one attempt + two); remove the second chunk's 10 scenes → $0.0375; a chunk the owner typed text into entirely is not asked and
+costs nothing. The writer prompt floor pin holds for every chunk a set can send (the file holds custom scenes to `POOL_TEXT_MAX`, chunks to 25: `sceneSets/floor.test.ts`).
+
+Deviations, and why: (1) **the job's cap is the estimate's worst case** (`min(accepted, estimate)`; `accepted ≥ estimate` is checked, so they are equal for a window that sends the price it
+showed) rather than the accepted value itself, so an inflated acceptance cannot raise a cap. (2) **No per-scene «interrupted write» markers**: in CS.4a only compose and «Дописать»
+exist, and an interrupted one reads as the set `stopped`; the per-scene markers (`rewriteInterrupted`, `interruptedIdeas`, `dismissInterrupted`) arrive with CS.4b's rewrite and idea writes.
+(3) **A paid answer whose chunk could not be written to disk is lost to the set** (the client keeps the raw body in `raw/`); the attempt stays counted. (4) `scenes.get` answers the open
+set, else the newest used one; it reads every set file of the avatar (a prune of used sets is a backlog item). (5) The set is live (edits refused `IN_FLIGHT`) from the claim of its
+write, while its prices are still being fetched, so no edit can land between the checks and the first call. (6) Own scenes (CS.4b) will join `SceneRecord` as a second variant.
+
+Tests seen red first, for the intended reason (a stub that throws «not implemented yet», or a permissive stub that accepts what the contract must refuse): the contract (40 of 52
+assertions), the store (30), `chunks` (20), `estimate` (18), `compose` (13), `edit` (29), `view` (34), `mutations` (12), the write job (23), the job registry (10), the store `guard` (3),
+the engine commands (71 of 72: INTERNAL «not implemented yet»), the deadlines (4), the mock (35). Written after the code and checked by mutation: the floor pins
+(`sceneSets/floor.test.ts`: a chunk bound of 30 turns «a chunk holds at most 25» red) and the renderer store tests; the parity golden was generated from agreeing engines.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 6991 + 6570 + 5977 = 19538 tests, 0 failing (after one fix: the new test files call `useNativeGlobals()`).
+
 ### CS.4b — Scene sets, writes (test-engineer)
 
 Scope: `scenes.write` targets `rewrite` (1..5, `redraw`) and `idea` (1..5); the idea prompt

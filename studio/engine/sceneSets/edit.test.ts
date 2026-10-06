@@ -3,6 +3,8 @@ import { SCENE_TEXT_MAX } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { applyEdit, textProblem } from "./edit";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // CS.4a: the owner's free edits. A text is checked by the assembler's own rule (`sentenceProblems`) the moment it is typed, plus technical bounds;
 // remove and restore take one scene or many in ONE change; nothing a refusal says changes the set.

@@ -6,6 +6,8 @@ import { WRITER_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import { runWriterConfig } from "../runs/plan";
 import { WRITER_JSON_SCHEMA, type PlanSlot, type WriterRefusal } from "../scenes";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // CS.4a: THE WRITER PROMPT FLOOR PIN holds for every chunk a scene set can send. The set's request is a subset of one chunk of at most 25 scenes, built by the
 // same `writerMessages` a run uses, and the set file holds every custom scene to the bounds a plan holds it to — so the worst chunk a set can carry is the worst
