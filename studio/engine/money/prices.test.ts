@@ -243,7 +243,7 @@ test("an unrecognised variant disables the base price: the dearest output is the
   expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(90_000);
 });
 
-test("a quality the model does not list takes the dearest quality at that resolution", () => {
+test("a quality the model does not list takes the dearest of ALL variants, 2K included: no 1K price exists for it", () => {
   expect(imageWorstCase(GROK_2_PRICE, { quality: "medium", refs: 0 })).toBe(60_000);
   const noLow: ImagePrice = {
     outputs: [
@@ -253,7 +253,7 @@ test("a quality the model does not list takes the dearest quality at that resolu
     ],
     inputImageMicros: 0,
   };
-  expect(imageWorstCase(noLow, { quality: "low", refs: 0 })).toBe(70_000);
+  expect(imageWorstCase(noLow, { quality: "low", refs: 0 })).toBe(90_000);
 });
 
 test("refs must be a non-negative integer", () => {
@@ -527,6 +527,45 @@ test.each([null, "low", "medium"] as const)("quality-prefixed fractional tiers w
   const price: ImagePrice = { outputs: [{ variant: null, micros: 30_000 }, { variant: "low_1.5k", micros: 70_000 }, { variant: "medium_1.5k", micros: 70_000 }], inputImageMicros: 0 };
 
   expect(imageWorstCase(price, { quality, refs: 0 })).toBe(70_000);
+});
+
+// Fix round 3: a `<quality>_1k` variant beside a recognised-but-not-1K tier must not hide that tier. Only the exact
+// `<quality>_1k` price is safe to pick; every other case reserves the dearest of ALL variants.
+const FIX_ROUND_3_CASES: { name: string; outputs: ImagePrice["outputs"]; low: number; medium: number; none: number }[] = [
+  { name: "low_1k + medium_1.5k", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1.5k", micros: 70_000 }], low: 40_000, medium: 70_000, none: 70_000 },
+  { name: "low_1k + 768", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "768", micros: 60_000 }], low: 40_000, medium: 60_000, none: 60_000 },
+  { name: "low_1k + 1.5k", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "1.5k", micros: 70_000 }], low: 40_000, medium: 70_000, none: 70_000 },
+  { name: "low_1k + medium_2k (no medium_1k)", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_2k", micros: 80_000 }], low: 40_000, medium: 80_000, none: 40_000 },
+  { name: "low_1k + medium_2k + dearer base", outputs: [{ variant: null, micros: 90_000 }, { variant: "low_1k", micros: 40_000 }, { variant: "medium_2k", micros: 80_000 }], low: 40_000, medium: 90_000, none: 90_000 },
+];
+
+test.each(FIX_ROUND_3_CASES)("$name: the exact quality_1k price when it exists; otherwise null skips 2K+ tiers and a missing quality takes the dearest of all", ({ outputs, low, medium, none }) => {
+  const price: ImagePrice = { outputs, inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: "low", refs: 0 })).toBe(low);
+  expect(imageWorstCase(price, { quality: "medium", refs: 0 })).toBe(medium);
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(none);
+});
+
+test("no quality: a fractional 1.5K tier beside low_1k is still priced, a 2K tier is not", () => {
+  const price: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1.5k", micros: 70_000 }, { variant: "medium_2k", micros: 95_000 }, { variant: "high_resolution", micros: 99_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(70_000);
+});
+
+test.each([
+  ["low", 40_000],
+  ["medium", 60_000],
+] as const)("a plain two-quality model still reserves exactly its own price (quality %p)", (quality, expected) => {
+  const price: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1k", micros: 60_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality, refs: 0 })).toBe(expected);
+});
+
+test("a plain two-quality model with no quality reserves the dearer quality", () => {
+  const price: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1k", micros: 60_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(60_000);
 });
 
 test("a prefixed sub-1K fractional tier (hd_0.75k) beside a base price reserves the dearest too", () => {

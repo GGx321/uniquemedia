@@ -209,6 +209,14 @@ const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+(?:\.\d+)?k|\d{3}|high_resolution
 /** Tiers named by a pixel size or a fractional K (`768`, `1.5k`): they sit around 1K, so a base price beside them is not known to be the 1K one. */
 const AROUND_1K_TIER = /^(?:(?:[a-z]+_)?\d+\.\d+k|\d{3})$/;
 
+/** `2k`, `medium_4k`, `high_resolution`: tiers above 1K, which Studio never requests. */
+function isLargerThan1k(variant: string | null): boolean {
+  if (variant === null) return false;
+  if (variant === "high_resolution") return true;
+  const k = /^(?:[a-z]+_)?(\d+(?:\.\d+)?)k$/.exec(variant);
+  return k !== null && Number(k[1]) >= 2;
+}
+
 /**
  * Output price of a 1K image at a quality, never an underestimate: Studio
  * only ever asks for 1K (owner decision 2026-09-29: 2K removed), so a live
@@ -216,8 +224,10 @@ const AROUND_1K_TIER = /^(?:(?:[a-z]+_)?\d+\.\d+k|\d{3})$/;
  * priced. Variant names are compared in lower case. Any unrecognised
  * variant: the dearest price (nothing can be mapped safely). Otherwise, in
  * order:
- * - `<quality>_1k` variants exist: the requested quality; if it is missing
- *   or null, the dearest of them or the base price, whichever is higher;
+ * - `<quality>_1k` variants exist: the exact `<quality>_1k` price; with no
+ *   quality, the dearest price below 2K (a `medium_1.5k` or `768` tier beside
+ *   `low_1k` must not be skipped; fix round 3); with a quality that has no
+ *   `_1k` price, the dearest of ALL variants, 2K included;
  * - a `1k` variant;
  * - tiers named `768` or `1.5k` with no `1k` tier: nothing says which price a
  *   1K request pays, so the dearest price (review round 1, M2);
@@ -235,7 +245,10 @@ export function imageOutputMicros(price: ImagePrice, quality: ImageQuality | nul
   const withQuality = outputs.filter((o) => o.variant?.endsWith("_1k"));
   if (withQuality.length > 0) {
     const exact = quality === null ? undefined : find(`${quality}_1k`);
-    return exact ?? Math.max(dearest(withQuality), base ?? 0);
+    if (exact !== undefined) return exact;
+    // No quality: Studio never requests 2K+, so those tiers are skipped. A quality with no 1K price: only the dearest
+    // of ALL variants is a safe upper bound.
+    return dearest(quality === null ? outputs.filter((o) => !isLargerThan1k(o.variant)) : outputs);
   }
   const plain = find("1k");
   if (plain !== undefined) return plain;
