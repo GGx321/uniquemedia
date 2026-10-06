@@ -3,7 +3,22 @@ import { plan } from "../../../engine/scenes/planner";
 import { contractCategory } from "../../../engine/runs/plan";
 import { plannerCategoryOf } from "../../../engine/scenes";
 import { RunRequest, SceneCategory, splitCount } from "../../../shared/engine";
-import { CATEGORY_LABEL, clampCount, COUNT_MAX, COUNT_MIN, COUNT_STEP, DEFAULT_RUN_FORM, photoCategoryLabel, photosPerCategory, requestKey, runRequest, type RunCategory } from "./runForm";
+import {
+  arrangeCategories,
+  CATEGORY_LABEL,
+  clampCount,
+  COUNT_MAX,
+  COUNT_MIN,
+  COUNT_STEP,
+  DEFAULT_RUN_FORM,
+  photoCategoryLabel,
+  photosPerCategory,
+  requestKey,
+  runRequest,
+  sameCategories,
+  toggleCategory,
+  type RunCategory,
+} from "./runForm";
 
 // ---------- clampCount (M4: the stepper's own boundaries) ----------
 
@@ -98,6 +113,48 @@ test("equal forms in a different category order give one request and one key", (
 
 test("a request with a custom category parses as a RunRequest", () => {
   expect(RunRequest.safeParse(runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, categories: ["home", CUSTOM_A] })).success).toBe(true);
+});
+
+// ---------- CS.3: the chips keep the custom categories in creation order, whatever order they were clicked in ----------
+
+/** The library's creation order: A was made first, then B, then C. */
+const CREATED = ["cat-paris-cafes", "cat-night-market", "cat-mono-studio"] as const;
+const [FIRST, SECOND, THIRD] = CREATED;
+
+test("toggleCategory keeps custom categories in creation order, not click order", () => {
+  let categories: readonly RunCategory[] = ["home"];
+  categories = toggleCategory(categories, THIRD, CREATED);
+  categories = toggleCategory(categories, FIRST, CREATED);
+  categories = toggleCategory(categories, SECOND, CREATED);
+  expect(categories).toEqual(["home", FIRST, SECOND, THIRD]);
+  // So the remainder of an uneven split goes to the custom category made first, as the engine (which keeps the request's order) draws it.
+  expect([...photosPerCategory(10, categories).entries()]).toEqual([
+    ["home", 3],
+    [FIRST, 3],
+    [SECOND, 2],
+    [THIRD, 2],
+  ]);
+});
+
+test("toggleCategory turns a chip off, and keeps the built-ins in their canonical order", () => {
+  expect(toggleCategory(["fit", FIRST, "home"], "home", CREATED)).toEqual(["fit", FIRST]);
+  expect(toggleCategory(["fit", FIRST], "travel", CREATED)).toEqual(["travel", "fit", FIRST]);
+  expect(toggleCategory(["home", FIRST, SECOND], FIRST, CREATED)).toEqual(["home", SECOND]);
+});
+
+test("arrangeCategories drops a custom category the library no longer holds (deleted, or another library's)", () => {
+  expect(arrangeCategories(["home", SECOND, "cat-gone-for-good", FIRST], CREATED)).toEqual(["home", FIRST, SECOND]);
+  // With no custom category listed at all (the library not read yet, or another library), only the built-ins stay.
+  expect(arrangeCategories(["home", FIRST], [])).toEqual(["home"]);
+  // Empty stays empty.
+  expect(arrangeCategories([], CREATED)).toEqual([]);
+});
+
+test("sameCategories compares two lists element by element", () => {
+  expect(sameCategories(["home", FIRST], ["home", FIRST])).toBe(true);
+  expect(sameCategories(["home", FIRST], [FIRST, "home"])).toBe(false);
+  expect(sameCategories(["home"], ["home", FIRST])).toBe(false);
+  expect(sameCategories([], [])).toBe(true);
 });
 
 // ---------- a photo's category label (gallery, viewer, montage bin) ----------
