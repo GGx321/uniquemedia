@@ -321,3 +321,52 @@ describe("photo runs: no writer, image or age-check request carries the vibe", (
     expectNoCallCarriesMarkerExceptDescriptorAttempts(net);
   });
 });
+
+// CS.2: a custom category's pool call is written from the owner's description alone. The avatar's vibe, her traits and her descriptor are
+// the avatar's business; no avatar takes part in the call, so not one request of a category call may carry a marker word (unlike the
+// descriptor attempts above, which must).
+describe("categories.create and categories.regenerate: the avatar's vibe never leaves the engine", () => {
+  const categoriesDir = useEngineDir("studio-engine-canary-categories-");
+
+  function poolAnswer(over: Record<string, unknown> = {}): Record<string, unknown> {
+    const activities = [
+      { text: "reading a menu", twoHanded: false },
+      { text: "stirring a cappuccino", twoHanded: true },
+    ];
+    return {
+      label: "Paris cafes",
+      locations: ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"].map((name, i) => ({ name, times: ["morning", "midday"], activities, mirror: i === 2 })),
+      outfits: ["a beige trench coat and jeans", "a striped tee and a beret", "a black midi dress"],
+      shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+      ...over,
+    };
+  }
+
+  const poolReply = (answer: Record<string, unknown>): Reply => ({ status: 200, body: chatBody(JSON.stringify(answer), { cost: 0.005 }) });
+  const poolCalls = (net: ReturnType<typeof network>) => net.calls.filter((c) => c.url.endsWith("/chat/completions") && schemaName(c) === "scene_pool");
+
+  test("a create, a rejected first answer's retry included, sends the description and nothing of the avatar's marked vibe", async () => {
+    await seedDraft(categoriesDir(), { traits: MARKED });
+    const net = network({ descriptors: [poolReply(poolAnswer({ shotDeck: [] })), poolReply(poolAnswer())] });
+    const { engine } = await startEngine(categoriesDir(), { net });
+
+    const response = ok(await engine.handle(command("categories.create", { name: "Кофейни Парижа", description: "кофейни и булочные Парижа", acceptedWorstMicros: 45_000 })));
+
+    expect(response.type).toBe("categories.create");
+    expect(poolCalls(net)).toHaveLength(2);
+    expect(net.calls.filter(carriesMarker)).toEqual([]);
+  });
+
+  test("a regenerate sends the new description and nothing of the avatar's marked vibe", async () => {
+    await seedDraft(categoriesDir(), { traits: MARKED });
+    const net = network({ descriptors: [poolReply(poolAnswer()), poolReply(poolAnswer({ label: "Seine bakeries" }))] });
+    const { engine } = await startEngine(categoriesDir(), { net });
+    const created = ok(await engine.handle(command("categories.create", { name: "Кофейни Парижа", description: "кофейни", acceptedWorstMicros: 45_000 })));
+    if (created.type !== "categories.create") throw new Error("wrong type");
+
+    ok(await engine.handle(command("categories.regenerate", { categoryId: created.result.category.categoryId, description: "кофейни и булочные у Сены", acceptedWorstMicros: 45_000 })));
+
+    expect(poolCalls(net)).toHaveLength(2);
+    expect(net.calls.filter(carriesMarker)).toEqual([]);
+  });
+});

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CategorySummary, CustomCategoryId } from "./categories";
 import { nonEmpty, ProtocolVersion, Seq } from "./envelope";
 import { EngineError } from "./errors";
 import { Montage } from "./montage";
@@ -40,6 +41,8 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `export.status`: the export folder's status changed (not on every check): the Render button follows the disk live.
  * - `media.changed`: an own-media record was stored (`upserted`, with its summary) or is gone (`removed`).
  * - `music.changed`: the music status changed (a refresh started, progressed, ended or failed; the quota moved), whole.
+ * - `category.changed`: a custom category was stored or changed (`upserted`, with its summary: created, renamed, an item removed, regenerated, or only its
+ *   spend moved after a failed regeneration) or is gone (`removed`). Categories are listed on demand (`categories.list`); the event keeps the windows in step.
  */
 const EVENT_SPECS = [
   defineEvent("job.progress", JobProgress),
@@ -76,6 +79,13 @@ const EVENT_SPECS = [
     z.discriminatedUnion("change", [
       z.strictObject({ change: z.literal("upserted"), media: MediaSummary }),
       z.strictObject({ change: z.literal("removed"), mediaId: Id }),
+    ]),
+  ),
+  defineEvent(
+    "category.changed",
+    z.discriminatedUnion("change", [
+      z.strictObject({ change: z.literal("upserted"), category: CategorySummary }),
+      z.strictObject({ change: z.literal("removed"), categoryId: CustomCategoryId }),
     ]),
   ),
 ] as const;

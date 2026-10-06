@@ -106,6 +106,33 @@ async function seedAvatar(opts: { status?: "active" | "draft" | "archived" } = {
   return avatar.id;
 }
 
+let seededCategories = 0;
+
+/** A custom category in the library, as a create would have left it: five places, three outfits, a deck with a mirror shot. */
+async function seedCustomCategory(opts: { name?: string; label?: string; style?: "editorial" | "phone" } = {}): Promise<`cat-${string}`> {
+  const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`seedcat${++seededCategories}`) });
+  const categoryId = `cat-seed-${String(++seededCategories).padStart(6, "0")}` as const;
+  const activities = [
+    { text: "reading a menu", twoHanded: false },
+    { text: "stirring a cappuccino", twoHanded: true },
+  ];
+  await library.categories.create({
+    categoryId,
+    name: opts.name ?? `Seeded ${seededCategories}`,
+    description: "кофейни",
+    label: opts.label ?? "Paris cafes",
+    style: opts.style ?? "phone",
+    pool: {
+      locations: ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"].map((name, i) => ({ name, times: ["morning", "midday"], activities, mirror: i === 2 })),
+      outfits: ["a beige trench coat and jeans", "a striped tee and a beret", "a black midi dress"],
+      shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+    },
+    model: "x-ai/grok-4.3",
+    spentMicros: 5_000,
+  });
+  return categoryId;
+}
+
 function request(avatarId: string, count = 4) {
   return { avatarId, count, categories: ["home"], poses: { profile: false, back: false } };
 }
@@ -313,9 +340,9 @@ describe("runs.estimate", () => {
   });
 });
 
-// CS.1: the contract names custom categories, but the engine has no category library yet (CS.2 adds it), so every
-// custom ref is an unknown one: NOT_FOUND, free, before a price is fetched, a reserve is made or a folder is written.
-describe("a custom category in a run request, before the category library exists (CS.1)", () => {
+// CS.1/CS.2: a run names its custom categories by id, and the library either holds them or not. An unknown or deleted one is NOT_FOUND, free,
+// before a price is fetched, a reserve is made or a folder is written (CS.1 refused every custom id; CS.2's lookup refuses the unknown ones).
+describe("a custom category in a run request that the library does not hold", () => {
   const CUSTOM = "cat-paris-cafes";
   const withCustom = (avatarId: string) => ({ ...request(avatarId), categories: ["home", CUSTOM] });
 
@@ -355,6 +382,112 @@ describe("a custom category in a run request, before the category library exists
     await jobEnd(events, jobId);
     const raw: Record<string, unknown> = JSON.parse(readFileSync(join(dir(), "library", "runs", runId, "plan.json"), "utf8"));
     expect("categories" in raw).toBe(false);
+  });
+
+  test("the avatar check stays first: a run for an avatar whose manifest is gone says so, not that the category is unknown", async () => {
+    const avatarId = await seedAvatar();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    await rm(join(dir(), "library", "avatars", avatarId, "avatar.json"));
+
+    const refused = failed(await engine.handle(command("runs.start", { ...withCustom(avatarId), acceptedWorstMicros: 10_000_000 })));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(refused.error.detail).toContain("no longer on the disk");
+  });
+
+  test("a category the owner deleted is unknown again: NOT_FOUND, nothing fetched, nothing sent, no run folder", async () => {
+    const avatarId = await seedAvatar();
+    const id = await seedCustomCategory();
+    const net = runNetwork();
+    const { engine } = await engineOver(net);
+    ok(await engine.handle(command("categories.delete", { categoryId: id })));
+
+    const refused = failed(await engine.handle(command("runs.start", { ...request(avatarId), categories: ["home", id], acceptedWorstMicros: 10_000_000 })));
+
+    expect(refused.error.code).toBe("NOT_FOUND");
+    expect(net.calls).toHaveLength(0);
+    expect(readdirSync(join(dir(), "library", "runs"))).toEqual([]);
+  });
+});
+
+// CS.2: a custom category the library holds is a category like the five: the estimate prices it, the plan draws its slots from its own pool and keeps
+// a snapshot of it, and the writer is told its English label.
+describe("a custom category in a run request that the library holds", () => {
+  const PLACES = ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"];
+  const OUTFITS = ["a beige trench coat and jeans", "a striped tee and a beret", "a black midi dress"];
+
+  test("runs.estimate prices it as any run of the same size: the category changes no price", async () => {
+    const avatarId = await seedAvatar();
+    const id = await seedCustomCategory();
+    const { engine } = await engineOver(runNetwork());
+
+    const builtIn = ok(await engine.handle(estimate(avatarId, 4)));
+    const custom = ok(await engine.handle(command("runs.estimate", { ...request(avatarId, 4), categories: ["home", id] })));
+
+    expect(custom.result).toEqual(builtIn.result);
+  });
+
+  test("runs.start plans its slots from the category's own pool and writes a snapshot of it next to the request", async () => {
+    const avatarId = await seedAvatar();
+    const id = await seedCustomCategory({ name: "Кофейни Парижа", label: "Paris cafes", style: "phone" });
+    const { engine, events } = await engineOver(runNetwork());
+
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { ...request(avatarId, 4), categories: ["home", id], acceptedWorstMicros: FOUR_WORST })));
+    await jobEnd(events, jobId);
+
+    const plan = planOf(runId);
+    expect(plan.request?.categories).toEqual(["home", id]);
+    expect(plan.categories).toEqual([{ ref: id, name: "Кофейни Парижа", label: "Paris cafes", style: "phone" }]);
+    const customSlots = plan.scenes.slots.filter((s) => s.category === id);
+    expect(customSlots).toHaveLength(2);
+    for (const slot of customSlots) {
+      expect(PLACES).toContain(slot.location);
+      expect(OUTFITS).toContain(slot.outfit);
+    }
+    expect(plan.scenes.slots.filter((s) => s.category === "home")).toHaveLength(2);
+  });
+
+  test("the writer is told the category's English label, never its id or the owner's name", async () => {
+    const avatarId = await seedAvatar();
+    const id = await seedCustomCategory({ name: "ZEBRA-NAME-MARKER", label: "Paris cafes" });
+    const net = runNetwork();
+    const { engine, events } = await engineOver(net);
+
+    const { jobId } = started(await engine.handle(command("runs.start", { ...request(avatarId, 4), categories: [id], acceptedWorstMicros: FOUR_WORST })));
+    await jobEnd(events, jobId);
+
+    const body = net.writerCalls()[0]?.body ?? "";
+    expect(body).toContain("Paris cafes");
+    expect(body).not.toContain(id);
+    expect(body.toLowerCase()).not.toContain("zebra-name-marker");
+  });
+
+  test("a run that names it twice with built-ins keeps the contract's order: the five first, then the custom ones as named", async () => {
+    const avatarId = await seedAvatar();
+    const first = await seedCustomCategory({ name: "First" });
+    const second = await seedCustomCategory({ name: "Second" });
+    const { engine, events } = await engineOver(runNetwork());
+
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { ...request(avatarId, 4), categories: ["home", second, first], acceptedWorstMicros: FOUR_WORST })));
+    await jobEnd(events, jobId);
+
+    expect([...new Set(planOf(runId).scenes.slots.map((s) => s.category))]).toEqual(["home", second, first]);
+  });
+
+  test("a category deleted after the run started changes nothing: the plan keeps its snapshot, and the run is still listed from its plan alone", async () => {
+    const avatarId = await seedAvatar();
+    const id = await seedCustomCategory({ name: "Кофейни Парижа" });
+    const { engine, events } = await engineOver(runNetwork());
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { ...request(avatarId, 4), categories: [id], acceptedWorstMicros: FOUR_WORST })));
+    await jobEnd(events, jobId);
+    const before = readFileSync(join(dir(), "library", "runs", runId, "plan.json"), "utf8");
+
+    ok(await engine.handle(command("categories.delete", { categoryId: id })));
+
+    expect(readFileSync(join(dir(), "library", "runs", runId, "plan.json"), "utf8")).toBe(before);
+    const listed = ok(await engine.handle(command("runs.list")));
+    expect(listed.type === "runs.list" && listed.result.runs.map((r) => r.runId)).toEqual([runId]);
   });
 });
 

@@ -7,6 +7,7 @@ import { LibraryError } from "./errors";
 import { isLibraryId } from "./ids";
 import {
   AVATARS_DIR,
+  CATEGORIES_DIR,
   MANIFEST_FILE,
   MONTAGES_DIR,
   PHOTOS_DIR,
@@ -232,6 +233,11 @@ export async function surveyLibrary(root: string): Promise<Survey> {
   const runsDir = join(root, RUNS_DIR);
   for (const { name } of await entriesOf(runsDir)) {
     if (isTempName(name)) survey.moves.push({ path: join(runsDir, name), reason: "temp-file" });
+  }
+  // A category record is written to a temp name first; a crash mid-write leaves that temp behind (the record itself is the old one or the new one).
+  const categoriesDir = join(root, CATEGORIES_DIR);
+  for (const { name } of await entriesOf(categoriesDir)) {
+    if (isTempName(name)) survey.moves.push({ path: join(categoriesDir, name), reason: "temp-file" });
   }
   return survey;
 }

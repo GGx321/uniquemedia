@@ -245,6 +245,12 @@ export type MediaStoreChange = Extract<EventMessage, { type: "media.changed" }>[
 /** What the media listeners hear (3f.6): each `media.changed`, and `resynced` after a snapshot taken again (the records are listed on demand). */
 export type MediaSignal = MediaStoreChange | { readonly change: "resynced" };
 
+/** What `category.changed` carries: a custom category stored or changed, or removed (CS.2). */
+export type CategoryStoreChange = Extract<EventMessage, { type: "category.changed" }>["payload"];
+
+/** What the category listeners hear (CS.2): each `category.changed`, and `resynced` after a snapshot taken again (the categories are listed on demand with `categories.list`). */
+export type CategorySignal = CategoryStoreChange | { readonly change: "resynced" };
+
 /** Dismissed imports, and imports this window asked to cancel, remembered at most (so a snapshot does not undo them); the oldest go first. */
 const MAX_DISMISSED_IMPORTS = 200;
 
@@ -328,6 +334,7 @@ export class EngineStore {
   private readonly montageListeners = new Set<(signal: MontageSignal) => void>();
   private readonly videoListeners = new Set<(signal: VideoSignal) => void>();
   private readonly mediaListeners = new Set<(signal: MediaSignal) => void>();
+  private readonly categoryListeners = new Set<(signal: CategorySignal) => void>();
   private readonly avatarRemovedListeners = new Set<(avatarId: string) => void>();
   /** The imports the owner dismissed (3f.6): a snapshot that still lists one does not bring it back. Insertion-ordered, capped. */
   private readonly dismissedImports = new Set<string>();
@@ -419,6 +426,18 @@ export class EngineStore {
     this.mediaListeners.add(listener);
     return () => {
       this.mediaListeners.delete(listener);
+    };
+  };
+
+  /**
+   * `category.changed` as the store applies it (CS.2), the media way: in seq order, once each, and `resynced` after a snapshot taken again (any
+   * change in the gap is lost). The categories are not kept in the view: the window lists them with `categories.list` on mount and on a library
+   * switch, and follows the events here.
+   */
+  readonly subscribeCategories = (listener: (signal: CategorySignal) => void): (() => void) => {
+    this.categoryListeners.add(listener);
+    return () => {
+      this.categoryListeners.delete(listener);
     };
   };
 
@@ -931,6 +950,7 @@ export class EngineStore {
     if (again) for (const listener of [...this.montageListeners]) listener({ change: "resynced" });
     if (again) for (const listener of [...this.videoListeners]) listener({ change: "resynced" });
     if (again) for (const listener of [...this.mediaListeners]) listener({ change: "resynced" });
+    if (again) for (const listener of [...this.categoryListeners]) listener({ change: "resynced" });
     // The snapshot carries no music status: one that was shown may have missed its events, or describe a refresh of an engine
     // that has since restarted (no event will ever end it), so it is asked again.
     if (again && this.view.music !== null) void this.refreshMusic();
@@ -1093,6 +1113,11 @@ export class EngineStore {
         // Own media are listed on demand (`media.list`, 3f.6's «Мои» tab): the view keeps only the seq, and the listeners hear the change.
         this.update({ lastSeq });
         for (const listener of [...this.mediaListeners]) listener(event.payload);
+        return;
+      case "category.changed":
+        // Categories are listed on demand (categories.list): the view keeps only the seq, and the listeners hear the change.
+        this.update({ lastSeq });
+        for (const listener of [...this.categoryListeners]) listener(event.payload);
         return;
       case "montage.changed":
         // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.

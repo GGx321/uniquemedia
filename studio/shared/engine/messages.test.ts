@@ -252,6 +252,31 @@ const ownMedia = {
   delayFrames: null,
 };
 
+const customCategory = {
+  categoryId: "cat-paris-cafes" as const,
+  name: "Кофейни Парижа",
+  description: "Парижские кофейни и улочки вокруг них",
+  label: "Paris cafes",
+  style: "phone" as const,
+  pool: {
+    locations: ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"].map((name, i) => ({
+      name,
+      times: ["morning" as const, "midday" as const],
+      activities: [
+        { text: "reading a menu", twoHanded: false },
+        { text: "stirring a cappuccino", twoHanded: true },
+      ],
+      mirror: i === 2,
+    })),
+    outfits: ["a beige trench coat and jeans", "a striped tee and a beret", "a black midi dress"],
+    shotDeck: ["friend" as const, "friend" as const, "selfie" as const, "mirror" as const, "candid" as const],
+  },
+  model: "x-ai/grok-4.3",
+  spentMicros: 5_000,
+  createdAt: "2026-10-05T12:00:00.000Z",
+  updatedAt: "2026-10-05T12:00:00.000Z",
+};
+
 const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "settings.get": { payload: {}, result: settings },
   "settings.setApiKey": { payload: { key: API_KEY }, result: keyStatus },
@@ -314,6 +339,22 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "media.list": { payload: { kind: "photo" }, result: { media: [ownMedia], total: 1 } },
   "media.delete": { payload: { mediaId: "media-00000001" }, result: { mediaId: "media-00000001" } },
   "media.cancelImport": { payload: { jobId: "job-00000001" }, result: { jobId: "job-00000001" } },
+  "categories.list": {
+    payload: {},
+    result: {
+      categories: [customCategory],
+      unreadable: 1,
+      overLimit: 0,
+      interrupted: [{ jobId: "job-00000002", kind: "create", name: "Горы зимой", description: "горы", categoryId: null, startedAt: "2026-10-05T12:00:00.000Z", spentMicros: 22_500, openReserveMicros: 22_500 }],
+      busy: { kind: "regenerate", name: "Кофейни Парижа", categoryId: "cat-paris-cafes" },
+    },
+  },
+  "categories.estimate": { payload: {}, result: { ...estimate, expectedMicros: 6_000, worstMicros: 45_000 } },
+  "categories.create": { payload: { name: "Кофейни Парижа", description: "кофейни", acceptedWorstMicros: 45_000 }, result: { category: customCategory, spentMicros: 5_000 } },
+  "categories.regenerate": { payload: { categoryId: "cat-paris-cafes", description: "кофейни и булочные", acceptedWorstMicros: 45_000 }, result: { category: customCategory, spentMicros: 6_000 } },
+  "categories.update": { payload: { categoryId: "cat-paris-cafes", name: "Кофейни", removeLocations: ["a bookshop"] }, result: { category: customCategory } },
+  "categories.delete": { payload: { categoryId: "cat-paris-cafes" }, result: { categoryId: "cat-paris-cafes" } },
+  "categories.dismissInterrupted": { payload: { jobId: "job-00000002" }, result: { jobId: "job-00000002" } },
   "avatars.estimateImport": { payload: { stagingId: "staging-0001" }, result: { ...estimate, expectedMicros: 6_500, worstMicros: 42_000 } },
   "avatars.importAvatar": {
     payload: { stagingId: "staging-0001", name: "Лиза", acceptedWorstMicros: 42_000 },
@@ -431,6 +472,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "export.status": { exportStatus: { status: "unavailable", reason: "missing" } },
   "music.changed": { status: { ...musicStatus, refresh: { state: "running", done: 1, total: 31 } } },
   "media.changed": { change: "upserted", media: ownMedia },
+  "category.changed": { change: "upserted", category: customCategory },
 };
 
 // ---------- helpers ----------
@@ -509,6 +551,13 @@ describe("contract surface", () => {
         "media.list",
         "media.delete",
         "media.cancelImport",
+        "categories.list",
+        "categories.estimate",
+        "categories.create",
+        "categories.regenerate",
+        "categories.update",
+        "categories.delete",
+        "categories.dismissInterrupted",
         "avatars.estimateImport",
         "avatars.importAvatar",
         "runs.estimate",
@@ -568,6 +617,7 @@ describe("contract surface", () => {
         "export.status",
         "music.changed",
         "media.changed",
+        "category.changed",
       ].sort(),
     );
   });

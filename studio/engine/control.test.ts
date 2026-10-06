@@ -6,6 +6,7 @@ import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
+import { POOL_MAX_ATTEMPTS } from "./scenes/poolGen";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -22,6 +23,26 @@ describe("HostCall: import.stagePhoto's bytes are bounded (L3)", () => {
 
   test("one byte over the cap is rejected", () => {
     expect(HostCall.safeParse({ ...base, bytes: new Uint8Array(MAX_IMPORT_PHOTO_BYTES + 1) }).success).toBe(false);
+  });
+});
+
+// CS.2: a paid category command answers after its price load and every pool attempt at its slowest, like createDraft's descriptor, so main does not
+// answer INTERNAL for a call the engine is still making (the owner would click again and pay twice); the estimate waits for a price load that times out.
+describe("COMMAND_DEADLINE_MS for the category commands (CS.2)", () => {
+  test("categories.create and categories.regenerate wait for a price load and both pool attempts at their slowest, plus the engine's own slack", () => {
+    const awaited = PRICE_FETCH_TIMEOUT_MS + POOL_MAX_ATTEMPTS * MAX_ATTEMPT_MS;
+    expect(COMMAND_DEADLINE_MS["categories.create"]).toBe(awaited + 30_000);
+    expect(COMMAND_DEADLINE_MS["categories.regenerate"]).toBe(awaited + 30_000);
+  });
+
+  test("categories.estimate waits for a price load that times out, so the fallback estimate still arrives", () => {
+    expect(COMMAND_DEADLINE_MS["categories.estimate"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+  });
+
+  test("the free commands keep main's default: they never wait on the network", () => {
+    for (const type of ["categories.list", "categories.update", "categories.delete", "categories.dismissInterrupted"] as const) {
+      expect(COMMAND_DEADLINE_MS[type]).toBeUndefined();
+    }
   });
 });
 

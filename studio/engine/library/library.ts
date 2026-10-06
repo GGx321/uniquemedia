@@ -14,6 +14,7 @@ import {
   writeFileDurable,
   writeJsonAtomic,
 } from "./durableFs";
+import { CategoryStore } from "./categories";
 import { isEligiblePhoto, replayRejected, type PhotoState } from "./eligibility";
 import { LibraryError } from "./errors";
 import { isLibraryId } from "./ids";
@@ -69,9 +70,13 @@ export interface LibraryDeps {
    *  before it is renamed into place. Throwing simulates a crash there. */
   testHooks?: {
     beforeRename?: (finalPath: string) => void | Promise<void>;
+    /** Called after each category record is renamed into place and before the folder is flushed; what it throws is what the flush threw. */
+    afterRename?: (finalPath: string) => void | Promise<void>;
     /** Called before each video record file is read by `reloadVideoRecords` and the quarantine, as part of the read: what it
      *  throws is what the read threw. */
     beforeReadVideoRecord?: (path: string) => void | Promise<void>;
+    /** Called before each category record or pending record is unlinked; what it throws is what the unlink threw. */
+    beforeUnlink?: (path: string) => void | Promise<void>;
   };
   /**
    * Downscales a face reference's raw bytes to the JPEG `ImageParams.references`
@@ -210,6 +215,8 @@ function byCreation(a: { createdAt: string; id: string }, b: { createdAt: string
 
 export class Library {
   readonly root: string;
+  /** The owner's own scene categories (CS.2): `<root>/categories`, library-wide, shared by every avatar. */
+  readonly categories: CategoryStore;
   /**
    * The folder's own `library.json` `createdAt` (review, real bug: canary
    * run 36272376999). A folder's canonical path plus its dev:ino
@@ -247,6 +254,7 @@ export class Library {
   private constructor(root: string, deps: LibraryDeps, createdAt: string) {
     this.root = root;
     this.createdAt = createdAt;
+    this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink });
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;

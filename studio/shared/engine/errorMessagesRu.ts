@@ -1,4 +1,4 @@
-import type { CaptionIssue, ErrorCode, ExportUnavailableReason, MusicUnavailableReason, PhotoUnavailableReason } from "./errors";
+import type { CaptionIssue, CategoryReason, ErrorCode, ExportUnavailableReason, MusicUnavailableReason, PhotoUnavailableReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -65,6 +65,7 @@ export const ERROR_MESSAGES_RU = {
   TRASH_UNAVAILABLE:
     "Системная Корзина не приняла папку аватара (сетевой диск, том без Корзины или сбой перемещения). Аватар не удалён и остался как был: ничего не пропало.",
   MUSIC_UNAVAILABLE: "Не удалось получить список музыки; предыдущий список остался как был. Если запрос был отправлен, он засчитан в лимит. Попробуйте позже.",
+  POOL_REJECTED: "Модель дважды вернула неподходящий набор — переформулируйте описание.",
 } as const satisfies Record<ErrorCode, string>;
 
 /**
@@ -172,6 +173,15 @@ export const PHOTO_UNAVAILABLE_REASONS_RU = {
   "log-needs-repair":
     "Записи об этом аватаре повреждены или недоступны, и Studio не знает, какие его фото уже в видео, поэтому не подходят все фото этого аватара, а не одно. Откройте «Фото» этого аватара: там написано, что случилось и что можно сделать.",
 } as const satisfies Record<PhotoUnavailableReason, string>;
+
+/** Why a category command was refused, for VALIDATION's `categoryReason`: each text names the cause and the way out. */
+export const CATEGORY_REASONS_RU = {
+  limit: "В библиотеке уже 50 своих категорий — это предел. Удалите ненужную и повторите. Ничего не потрачено.",
+  "name-taken": "Такое имя уже есть у другой категории (регистр и пробелы по краям не считаются). Выберите другое имя.",
+  "below-minimum": "Набор не может стать меньше: в категории остаются не меньше 5 мест и 3 образов. Уберите другое или пересоздайте набор.",
+  "mirror-needed": "Колода кадров включает съёмку в зеркале, поэтому в наборе должно остаться место с зеркалом. Уберите другое место.",
+  "item-not-found": "Этого места или образа в категории уже нет — возможно, его убрали. Обновите список.",
+} as const satisfies Record<CategoryReason, string>;
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {

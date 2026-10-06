@@ -733,6 +733,122 @@ Tests first:
 Review notes (opus): the scope reuse (`avatarJobId`) and that the ledger format is unchanged; the
 salvage rule never keeps an item that breaks `PoolSchema`.
 
+#### CS.2 built (2026-10-06, branch `feat/studio-custom-categories-engine`)
+
+What shipped. Protocol v5 stays open and additive.
+
+- **Contract**: `categories.list` (`{categories, unreadable, interrupted[], busy}`), `categories.estimate`, `categories.create`,
+  `categories.regenerate` (both answer `{category, spentMicros}`: what THIS call cost; the category's own `spentMicros` is its total),
+  `categories.update`, `categories.delete`, and a seventh command, `categories.dismissInterrupted {jobId}`, which the CS.0 contract notes need
+  («Убрать» forgets the record). Event `category.changed` (`upserted {category}` | `removed {categoryId}`). Error code `POOL_REJECTED`
+  (Russian text in `errorMessagesRu.ts`). `EngineError.spentMicros` (additive): on every failure of a paid category call from the moment
+  its call started, 0 for a provider refusal, absent on the refusals before it. Shared: `CategoryDescription` (1..500, line break allowed),
+  `CategoryPool`/`CategoryPlace`/`PoolShot` (counts 5..7 places, 3..6 outfits, deck of 5, 1..3 times, 2..4 activities, one free hand per
+  place, a mirror place when the deck can draw a mirror shot), `CategorySummary {categoryId, name, description, label, style, pool, model,
+  spentMicros, createdAt, updatedAt}`, `CategoryInterrupted`, `CategoryBusy`, `categoryNameKey` (the one name-uniqueness rule), `MAX_CUSTOM_CATEGORIES`.
+- **Engine**: `library/categories.ts` (`CategoryStore`, one record per category, one lock for the folder, atomic writes, unreadable and newer
+  records counted and kept, names unique per library, the 50 limit, `pending-<jobId>.json` records of calls in flight; the survey moves its crash
+  temps), `scenes/poolGen.ts` (prompt, strict `scene_pool` schema, `readPoolAnswer` with salvage and the `twoHanded` normalisation),
+  `scenes/poolCall.ts` (`POOL_MAX_ATTEMPTS`, `poolCall`, kept light because `control.ts` reads it), `scenes/categoryJob.ts` (two attempts, the
+  descriptor job's mould), `scenes/categoryPlan.ts` (price), `money/jobSpend.ts` (what the ledger booked for a job id: the one source of every
+  «потрачено»). `#categoryCall` serialises create/regenerate (IN_FLIGHT, counted in `#paidCommands`); the call's scope is `{avatarJobId}`
+  (ledger format unchanged), capped at the accepted worst; the pending record is written before the first send and removed on any outcome; a
+  paid pool that cannot be stored is kept in `raw/<jobId>:category`. A failed regenerate keeps the old pool and adds its cost to the category's
+  total (event `upserted`). `runs.estimate`/`runs.start` look custom refs up in the library (unknown or deleted → NOT_FOUND, after the avatar
+  checks, before any price), plan from the pool and write the `categories` snapshot. `control.ts` deadlines as the descriptor's.
+- **Mock and parity**: `MockCategories` (deterministic pool from name + description), controls `setCategoryPrice`, `failNextCategoryCall`,
+  `seedInterruptedCategory`; the store follows `category.changed` through `subscribeCategories`. `mockOpenRouter.ts` answers `scene_pool`. Two
+  golden scenarios appended (+44 lines, nothing changed).
+- **Smoke**: `runCategoryScenario` (`--only category`): create, list, a run of 5 photos with the category, label-only writer, canary, money.
+
+Money numbers (fallback prices): `POOL_CALL` 10,000 tokens in / 4,000 out = $0.0225 an attempt, $0.045 for two (the estimate and the
+default cap, accepted worst = cap), typical 1,800 + 1,500 tokens = $0.006. Floor pin (`poolGen.floor.test.ts`): worst prompt = a 500-char
+description of 3-byte chars (CJK) with the worst feedback (all 8 reasons, 6 words of 32 bytes) = **6,442 tokens**, margin **3,558** under the
+10,000 ceiling (the pin requires 3,000; Cyrillic measures 5,942); the reserve of that prompt equals the ceiling's price (22,500 µ$).
+
+Deviations from the plan, and why:
+1. **The category's name is not sent to the pool call** (§4.1 step 3 says name + description; §4.4 and the CS.0 dialog say the name is UI-only):
+   only the description goes; the canary and the smoke pin it.
+2. The seventh command, `categories.dismissInterrupted`, and `categories.list`'s `busy` (so a second dialog can say what it waits for) are
+   additions the design notes ask for.
+3. The pool is salvaged item by item without any rewriting: no normalisation of quotes or accents, a bad item is dropped; a mirror deck with no
+   mirror place is refused (never given a place it did not name). Repeats and items past the pool's largest size are ignored.
+4. The floor pin is measured with 3-byte characters, not only Cyrillic: a 500-char description can cost 1,500 bytes.
+5. `categories.estimate` is not in the parity golden: the mock's prices are «live» by design, the engine's offline ones the table.
+6. Not shown in the transcript of the golden: events (the existing rig records none).
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7032 + 6115 + 5627 = 18774 tests
+passing, 0 failing; the E2E smoke's category scenario, 25 of 25 checks (unpackaged E2E build); the packaged smoke and the Windows and macOS CI
+dispatch are recorded in the task's report.
+
+Tests seen red first: the contract, `readPoolAnswer`, the floor pin, the store, `categoryJob`, `jobSpend`, `categoryPlan`, the engine
+commands (red: INTERNAL «not implemented yet»), the deadlines, the mock, the store listeners, the mock OpenRouter route. Written after the
+code and checked red afterwards by switching the lookup back to CS.1's refusal: the custom-run tests in `engine.runs.test.ts`. Passing at once by
+nature: the canary tests (a leak-free property) and the smoke scenario.
+
+#### CS.2 fix round 1 (2026-10-06): what CS.3 builds on
+
+The review returned MERGEABLE; this round fixes what gets expensive after merge (the on-disk format, the contract) and the cheap money and data
+items in the same files. Contract additions, all additive in protocol v5:
+
+- **`PoolTime` / `POOL_TIMES`** (shared): a place's `times` are bound to the plan's vocabulary (morning, midday, golden hour, evening, night,
+  studio lighting), no longer any short ASCII text. `readPlace` drops a time outside it (normal salvage); a place left with no time follows the
+  below-minimum rule. The mock already used the vocabulary.
+- **`EngineError.categoryReason`**: `"limit" | "name-taken" | "below-minimum" | "mirror-needed" | "item-not-found"`, only on `VALIDATION`, set on every
+  category VALIDATION: create, update and the one a create meets after its pool was paid for (it then also carries `spentMicros`). `exists`
+  (an id clash) and `not-found` carry none. Russian texts: `CATEGORY_REASONS_RU` in `errorMessagesRu.ts`, read by `errorText`. The mock sets the same; the parity
+  golden covers the free ones (`transcript.ts` writes the field; a new scenario with a second category plays a taken name).
+- **`CategoryInterrupted`**: `spentMicros` and the new `openReserveMicros` are both `number | null`. `openReserveMicros` is the part of the spend that is a
+  reserve still open at its worst case, so «Запрос учтён по худшей цене до сверки» is true exactly when it is above 0. A call killed before its reserve
+  was written is a known `0` and `0`; a ledger that cannot be read gives `null` and `null` (unknown, not nothing). The refinements: both null or both set,
+  the open part never above the spend.
+- **`categories.list`**: a new `overLimit` count (a separate field, not folded into `unreadable`: those files can be read). `categories` holds at most 50, the
+  oldest first; `overLimit` counts the readable ones past the 50th, which stay on disk and come back as categories are deleted. Every `cat-*.json`
+  holds a place towards the limit, readable or not, so a create is refused (`limit`) at 50 files and the folder stays bounded; a name held by a category the
+  list leaves out still counts as taken (`CategoryStore.assertRoom` reads the whole folder).
+- **`busy`** of a regenerate names its category from the moment the command is claimed (the listing looks the name up when the call has not read it yet).
+- **`categories.dismissInterrupted`** on an interrupted regenerate first adds the call's spend to its category (written before the record is removed: a crash
+  between the two can only count it twice, never lose it); with an unreadable ledger it is refused with the ledger's own code. A call that ended in this
+  process but whose record could not be removed is not listed as interrupted, is removed again at the next listing, and its dismissal books nothing.
+
+Engine behaviour: a rename to the name a running create is about to take is refused (`VALIDATION`, `name-taken`), so the paid create is no longer lost at its
+write; a delete marks its category before its first await and a regenerate or an update of it is refused (`IN_FLIGHT`) with nothing reserved; a ledger write
+that fails in an attempt's reserve or settle ends the job as a failed call that carries what the ledger holds (`CategoryJobDeps.errorOf`), and a regenerate
+books it; a regenerate whose paid pool could not be stored also books its cost; both delete paths flush the folder (`fsyncDir`) after the unlink.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 5898 + 6196 + 6745 = 18839 tests passing, 0 failing.
+Tests seen red first: every item above (the engine, store, job, shared, renderer-text and mock tests); the golden lines of the category scenarios
+changed only where the new fields appear (they are this branch's own entries), and no older golden line moved.
+
+#### CS.2 fix round 2 (2026-10-06): the booked-jobs key
+
+A review of round 1 reproduced a double count: `#dismissInterrupted` wrote the spend before removing the record, so a removal the disk refused
+(EBUSY/EPERM after `unlinkWithRetry`, EIO/EACCES) left the call listed and every further «Убрать» added the spend again. Two relatives had the same cause:
+after a restart a finished regenerate whose record survived looked interrupted, and `replacePool`'s write could throw after its rename (the folder's flush).
+All three are closed by one idempotency key on disk (CS.2 is unmerged, so the format was still free):
+
+- **`bookedJobs`** in the category record (`cat-*.json`, not in the contract; `summaryOf` drops it): the ids of the paid calls whose cost is already in
+  `spentMicros`. `create` (its own job), `replacePool` and `addSpend` take the `jobId` and write it in the same atomic record write as the amount; a job already
+  listed is a no-op and writes nothing. A record without the field reads as `[]` (zod `default`), so older records and fixtures still parse.
+- **Cap: the last 200 ids, the oldest dropped** (`BOOKED_JOBS_CAP`). Only one paid call runs at a time and its record is either removed at the end of the call or listed
+  as interrupted for the owner to dismiss, so a call that can still be booked again is a recent one: 200 later bookings of the same category before its stale record
+  is dismissed is out of reach, and the record stays a few KB however long the category lives.
+- **`#dismissInterrupted`**: when the removal of the record throws after the cost is booked (or the call is already known to have ended), the call is remembered as
+  ended, a warning is logged and `{ jobId }` is answered; the listing no longer offers it, the next listing retries the removal, and a repeated «Убрать» is a no-op by
+  memory and by the key. A removal that fails for a call with nothing booked is still an error.
+- **A record write that threw after its rename** (the flush of the folder) is recognised by the key: the engine reads the record back, finds the job in `bookedJobs`
+  and answers success, so the owner is not told «не удалось» for a pool that is in the library, and the failure path books nothing a second time. The test seam for it is
+  `testHooks.afterRename` (runs between the rename and the flush).
+
+Contract parity (the UI in CS.3 is built against the mock): the mock refuses `categories.dismissInterrupted` of an interrupted regenerate whose cost is unknown
+(`spentMicros: null`, or a ledger marked unavailable) with the ledger's code and keeps the record, as the engine does, and books a job once. `exists` (an id clash after the
+pool was paid for) is now `INTERNAL`: the id is `cat-` + a random UUID, so it is unreachable except by a record planted by hand under that exact name, and it names no
+`categoryReason`, which now holds for every category VALIDATION. Not done, in the backlog: a test for a rename to the name of a hidden (51st and later) category.
+
+Verification: `tsc` clean for `studio/` and the root; full Studio suite in three shards, 5905 + 6209 + 6745 = 18859 tests passing, 0 failing. Tests seen red first: the store key (17 000 for 11 000, the key list
+missing), the engine cases (dismiss twice 17 000 for 11 000, restart 15 200 for 10 100, write after rename 15 200 for 10 100 and a failure answer, a create that failed
+after its rename, `exists` as VALIDATION), the mock (a regenerate with unknown cost dismissed, a job counted twice).
+
 ### CS.3 — Categories UI (designer, opus)
 
 Scope: chips (built-ins, then custom, counts from `splitCount`); «+ Своя» dialog with price,

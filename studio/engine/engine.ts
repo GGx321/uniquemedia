@@ -4,15 +4,22 @@ import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import {
   AvatarDescriptor,
+  categoryNameKey,
+  CustomCategoryId,
   Id,
   AvatarTraits,
   errorResponseFor,
   EventLog,
   isCustomCategory,
+  MAX_CUSTOM_CATEGORIES,
   parseEngineCommand,
   PROTOCOL_VERSION,
   type ApiKeyStatus,
+  type CategoryCallKind,
+  type CategoryDescription,
   type CategoryRef,
+  type CategorySummary,
+  type CommandResult,
   type MusicKeyStatus,
   type AvatarSummary,
   type CommandPayload,
@@ -70,12 +77,13 @@ import { CaseSensitivityProbe } from "./exportCase";
 import { checkExportRoot, exportStatusOf, NODE_EXPORT_ROOT_FS, type ExportRootCheck, type ExportRootFs } from "./exportRoot";
 import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity";
 import { EngineReply, HostCall, HostControl, isControlMessage, MEDIA_IMPORT_ENGINE_DEADLINE_MS, type AvatarDeletePlan, type EngineInit, type EngineSettings } from "./control";
-import { LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, type AvatarManifest, type DetachedAvatar, type Library, type LibraryDeps, type LogIssue } from "./library";
+import { CategoryError, LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, snapshotOf, summaryOf, type AvatarManifest, type DetachedAvatar, type Library, type LibraryDeps, type LogIssue, type StoredCategory } from "./library";
 import type { ImageMediaType } from "./library/media";
 import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
+import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
 import { Ledger, type Scope } from "./money/ledger";
 import { PriceCache, type PricedBook } from "./money/priceCache";
 import type { PriceBook } from "./money/prices";
@@ -92,7 +100,10 @@ import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
 import { capFundsResume, remainingPlan, scopeCommitted } from "./runs/remaining";
 import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
-import { plan as planScenes } from "./scenes";
+import { planWithPools, POOLS } from "./scenes";
+import { runCategoryJob } from "./scenes/categoryJob";
+import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
+import { poolOf } from "./scenes/poolGen";
 import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
@@ -442,6 +453,14 @@ function reconcileResultOf(result: Exclude<LedgerReconcileResult, { reason: "IN_
 
 type Money = { ok: true; budget: Budget } | { ok: false; unavailable: LedgerUnavailable };
 
+/** The paid category call in flight (CS.2): what it is, for which category, and its ledger job id once issued. */
+interface CategoryCall {
+  kind: CategoryCallKind;
+  categoryId: CustomCategoryId | null;
+  name: string | null;
+  jobId: string | null;
+}
+
 /** The manifest needs a name; a draft gets the user's name only when a candidate is picked. */
 const DRAFT_NAME = "Draft";
 
@@ -660,6 +679,18 @@ export class Engine {
   } | null = null;
   /** One avatars.importAvatar at a time, like #creatingDraft. */
   #importing = false;
+  /**
+   * CS.2: the one paid category call (a create or a regenerate) in flight, or null. Set before the command's first await, so a second one is
+   * refused IN_FLIGHT with nothing reserved, and the 50-category limit is checked by one call at a time. `name` is known at once for a create and
+   * read from the category for a regenerate; `jobId` once the call's ledger id is issued.
+   */
+  #categoryCall: CategoryCall | null = null;
+  /** Categories whose removal has begun and not ended, marked before the removal's first await: a regenerate or an update of one is refused (IN_FLIGHT), so a paid pool is never written for a record that is going. */
+  readonly #removingCategories = new Set<string>();
+  /** Calls that ended in this process whose record could not be removed (the disk refused): not interrupted, so never listed as such, and removed again at the next listing. */
+  readonly #endedCalls = new Set<string>();
+  /** Interrupted calls being dismissed: a second dismissal of one must not add its spend to the category again. */
+  readonly #dismissingCalls = new Set<string>();
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs: JobRegistry;
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
@@ -1419,10 +1450,55 @@ export class Engine {
           this.#importing = false;
         }
       }
+      case "categories.list":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#listCategories() };
+      case "categories.estimate": {
+        // Free, like avatars.estimate: only the text model is priced, and neither a key nor a library is needed.
+        const { textModel } = this.#avatarModels();
+        const result = categoryEstimate(await this.#prices.get(categoryPriceModels(textModel)), textModel);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+      }
+      case "categories.create": {
+        // One paid category call at a time, claimed before the first await (see #categoryCall); counted in #paidCommands so a library switch is refused meanwhile.
+        this.#claimCategoryCall({ kind: "create", categoryId: null, name: command.payload.name.trim(), jobId: null });
+        this.#paidCommands++;
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#createCategory(command.payload) };
+        } finally {
+          this.#paidCommands--;
+          this.#categoryCall = null;
+        }
+      }
+      case "categories.regenerate": {
+        this.#assertNotBeingRemoved(command.payload.categoryId);
+        this.#claimCategoryCall({ kind: "regenerate", categoryId: command.payload.categoryId, name: null, jobId: null });
+        this.#paidCommands++;
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#regenerateCategory(command.payload) };
+        } finally {
+          this.#paidCommands--;
+          this.#categoryCall = null;
+        }
+      }
+      case "categories.update":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#updateCategory(library, command.payload)) };
+      case "categories.delete": {
+        // Marked before the first await, so a regenerate that arrives while the removal waits for the library or the folder's lock is refused with nothing reserved.
+        const { categoryId } = command.payload;
+        this.#removingCategories.add(categoryId);
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#deleteCategory(library, categoryId)) };
+        } finally {
+          this.#removingCategories.delete(categoryId);
+        }
+      }
+      case "categories.dismissInterrupted":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#dismissInterrupted(library, command.payload.jobId)) };
       case "runs.estimate": {
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
-        Engine.#assertCategoriesExist(command.payload.categories);
+        // NOT_FOUND for a custom category the library does not hold (never one the owner deleted), before any price is fetched.
+        await this.#customCategories(this.library, command.payload.categories);
         const models = this.#avatarModels();
         const imageAgeCheck = this.#settings.imageAgeCheck;
         const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, command.payload, imageAgeCheck);
@@ -1924,13 +2000,18 @@ export class Engine {
    * life. The job runs on after the answer.
    */
   /**
-   * A run may only name categories the engine knows. CS.1 widened the contract to custom category ids, but the category library
-   * they live in arrives with CS.2, so until then every custom id is unknown: NOT_FOUND, free, before any price is fetched, any
-   * reserve is made or any folder is written. (CS.2 replaces this with a lookup in the library.)
+   * A run may only name categories the library holds. The custom ones are looked up in the open library: an unknown or deleted id (or one
+   * whose record cannot be read) is NOT_FOUND, free, before any price is fetched, any reserve is made or any folder is written. Answers
+   * the stored categories the request names, each once, in the order the request names them.
    */
-  static #assertCategoriesExist(categories: readonly CategoryRef[]): void {
-    const unknown = categories.find(isCustomCategory);
-    if (unknown !== undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${unknown}` });
+  async #customCategories(library: Library | null, categories: readonly CategoryRef[]): Promise<StoredCategory[]> {
+    const found: StoredCategory[] = [];
+    for (const ref of new Set(categories.filter(isCustomCategory))) {
+      const stored = (await library?.categories.get(ref)) ?? null;
+      if (stored === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${ref}` });
+      found.push(stored);
+    }
+    return found;
   }
 
   async #startRun(payload: CommandPayload<"runs.start">): Promise<{ runId: string; jobId: string }> {
@@ -1940,7 +2021,8 @@ export class Engine {
     const { avatarId, count, categories, poses } = payload;
     const manifest = this.#runnableAvatar(library, avatarId);
     await this.#assertAvatarOnDisk(library, avatarId);
-    Engine.#assertCategoriesExist(categories);
+    // The custom categories the run names, read once: the pool the planner draws from and the snapshot the plan keeps come from this one read.
+    const custom = await this.#customCategories(library, categories);
     if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
     // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
     const imageAgeCheck = this.#settings.imageAgeCheck;
@@ -1970,14 +2052,17 @@ export class Engine {
       console.warn(`studio engine: avatar ${avatarId}'s scene history could not be read; planning without it (${messageOf(error, "unknown error")})`);
       return [];
     });
-    const scenes = planScenes({
-      seed: seedOf(runId),
-      count,
-      categories: categories.map(sceneCategory),
-      excludePairs: recent.map(({ location, outfit }) => ({ location, outfit })),
-      // Profile and back only when the run allows them (T5c, owner decision); selfie and mirror stay front or three-quarter.
-      poses,
-    });
+    const scenes = planWithPools(
+      {
+        seed: seedOf(runId),
+        count,
+        categories: categories.map(sceneCategory),
+        excludePairs: recent.map(({ location, outfit }) => ({ location, outfit })),
+        // Profile and back only when the run allows them (T5c, owner decision); selfie and mirror stay front or three-quarter.
+        poses,
+      },
+      { ...POOLS, ...Object.fromEntries(custom.map((c) => [c.categoryId, poolOf(c.pool)])) },
+    );
     const plan = buildRunPlan({
       runId,
       avatarId,
@@ -1989,6 +2074,8 @@ export class Engine {
       plannedWorstMicros: estimate.worstMicros,
       scenes,
       cameraRealism,
+      // A snapshot of every custom category the run uses: a resume or a writer chunk never reads the library, so a rename, a regeneration or a delete changes no run in flight.
+      categories: custom.map(snapshotOf),
     });
     await library.createRun(runId, plan, RunPlanSchema);
     this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, 0);
@@ -2466,6 +2553,351 @@ export class Engine {
     if (updated.status === "draft") this.#emitDraft(library, avatarId);
     else this.#announceAvatarOrLog(library, avatarId);
     return { avatarId };
+  }
+
+  // ---------- CS.2: the owner's own scene categories ----------
+
+  /** Claims the one paid category call; IN_FLIGHT, with nothing reserved, when another is running. */
+  #claimCategoryCall(call: CategoryCall): void {
+    if (this.#categoryCall !== null) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: "a category is already being composed; wait for it to finish" });
+    }
+    this.#categoryCall = call;
+  }
+
+  /** A category the library refused, as the contract's error: the owner's own mistakes are VALIDATION, a category that is not there NOT_FOUND. */
+  static #categoryFailure(error: unknown, spentMicros?: number): EngineFailure {
+    const extra = spentMicros === undefined ? {} : { spentMicros };
+    if (error instanceof CategoryError) {
+      if (error.code === "not-found") return new EngineFailure({ code: "NOT_FOUND", detail: detailOf(error.message), ...extra });
+      // `exists` (an id already used) is not a rule the owner broke and names no reason: it is INTERNAL. The ids are `cat-` + a random UUID, so it can only
+      // be met by a record planted by hand under the very name the engine drew, which is why every other category VALIDATION can promise its reason.
+      if (error.code === "exists") return new EngineFailure({ code: "INTERNAL", detail: detailOf(error.message), ...extra });
+      return new EngineFailure({ code: "VALIDATION", detail: detailOf(error.message), categoryReason: error.code, ...extra });
+    }
+    return new EngineFailure({ code: "INTERNAL", detail: messageOf(error, "the category could not be written"), ...extra });
+  }
+
+  #emitCategory(change: { change: "upserted"; category: CategorySummary } | { change: "removed"; categoryId: CustomCategoryId }): void {
+    this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "category.changed", payload: change });
+  }
+
+  /** The categories of the open library, the unreadable files, the calls a closed Studio left, and the call in flight. */
+  async #listCategories(): Promise<CommandResult<"categories.list">> {
+    const library = this.library;
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    const { categories, unreadable, overLimit } = await library.categories.list();
+    await this.#forgetEndedCalls(library);
+    const pending = await library.categories.listPending();
+    const running = this.#categoryCall?.jobId ?? null;
+    const ledger = this.#money.ok ? this.#money.budget.ledger : null;
+    // A leftover record is a call this process is not making: what it is counted at is what the ledger holds for its job, and how much of that is a
+    // reserve still open at its worst case. An unreadable ledger leaves both unknown (null), which is not the same as a call killed before its reserve (0 and 0).
+    const interrupted = pending
+      .filter((p) => p.jobId !== running && !this.#endedCalls.has(p.jobId))
+      .slice(0, MAX_CUSTOM_CATEGORIES)
+      .map((p) => ({
+        ...p,
+        spentMicros: ledger === null ? null : jobSpentMicros(ledger, p.jobId),
+        openReserveMicros: ledger === null ? null : jobOpenReserveMicros(ledger, p.jobId),
+      }));
+    const call = this.#categoryCall;
+    // A regenerate names its category as soon as it is claimed: the name is read from the store here when the call has not read it yet.
+    const callName = call === null ? null : (call.name ?? (call.categoryId === null ? null : (categories.find((c) => c.categoryId === call.categoryId)?.name ?? null)));
+    const busy = call === null || callName === null ? null : { kind: call.kind, name: callName, categoryId: call.categoryId };
+    return { categories: categories.map(summaryOf), unreadable, overLimit, interrupted, busy };
+  }
+
+  /** Tries again to remove the records of calls that ended but could not be forgotten; a record that is gone, or removed now, is no longer remembered. */
+  async #forgetEndedCalls(library: Library): Promise<void> {
+    for (const jobId of [...this.#endedCalls]) {
+      if (this.#categoryCall?.jobId === jobId) continue;
+      try {
+        await library.categories.removePending(jobId);
+        this.#endedCalls.delete(jobId);
+      } catch {
+        // The disk still refuses: the call stays remembered as ended and is tried at the next listing.
+      }
+    }
+  }
+
+  /**
+   * VALIDATION, free, when the library holds 50 category files (readable or not) or another category holds the name; the store checks the same again at
+   * the write, under its own lock. The name check sees every readable category, the ones a listing leaves out included.
+   */
+  async #assertRoomForCategory(library: Library, name: string, exceptId: CustomCategoryId | null): Promise<void> {
+    try {
+      await library.categories.assertRoom(name, exceptId);
+    } catch (error) {
+      throw Engine.#categoryFailure(error);
+    }
+  }
+
+  /**
+   * A new category: the paid pool call, then the record in the library. Checked before anything is spent, in the order `#rewriteDescriptor`
+   * uses: a usable key, a ledger that allows paid calls, an open library, the accepted worst case (PRICE_CHANGED), room in the month, then the
+   * category limit and the name (VALIDATION, free). One call at a time (#categoryCall), so the limit cannot be passed by two creates.
+   */
+  async #createCategory(payload: CommandPayload<"categories.create">): Promise<CommandResult<"categories.create">> {
+    const key = this.#usableKey("create a category");
+    const budget = this.#paidBudget();
+    const library = await this.#liveLibrary();
+    const name = payload.name.trim();
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(categoryPriceModels(models.textModel));
+    const job = categoryEstimate(priced, models.textModel);
+    Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, job.worstMicros);
+    await this.#assertRoomForCategory(library, name, null);
+
+    const categoryId = `cat-${this.#deps.newId()}`;
+    if (!CustomCategoryId.safeParse(categoryId).success) throw new Error(`unreachable: ${categoryId} is not a category id`);
+    const stored = await this.#runCategoryCall({
+      key,
+      budget,
+      library,
+      priced,
+      textModel: models.textModel,
+      acceptedWorstMicros: payload.acceptedWorstMicros,
+      kind: "create",
+      name,
+      description: payload.description,
+      categoryId: null,
+      recordId: categoryId as CustomCategoryId,
+      write: (pool, spentMicros, jobId) =>
+        library.categories.create({ categoryId: categoryId as CustomCategoryId, name, description: payload.description, label: pool.label, style: pool.style, pool: pool.pool, model: models.textModel, spentMicros }, jobId),
+    });
+    return { category: summaryOf(stored.record), spentMicros: stored.spentMicros };
+  }
+
+  /**
+   * A new pool for an existing category from a new description: the same pool call, the same id and name. The old pool stays when anything fails
+   * (a failed call still costs what it cost, and that is added to the category's total).
+   */
+  async #regenerateCategory(payload: CommandPayload<"categories.regenerate">): Promise<CommandResult<"categories.regenerate">> {
+    const key = this.#usableKey("regenerate a category");
+    const budget = this.#paidBudget();
+    const library = await this.#liveLibrary();
+    const { categoryId } = payload;
+    const current = await library.categories.get(categoryId);
+    if (current === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no readable category ${categoryId}` });
+    if (this.#categoryCall !== null) this.#categoryCall.name = current.name;
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(categoryPriceModels(models.textModel));
+    const job = categoryEstimate(priced, models.textModel);
+    Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, job.worstMicros);
+
+    const stored = await this.#runCategoryCall({
+      key,
+      budget,
+      library,
+      priced,
+      textModel: models.textModel,
+      acceptedWorstMicros: payload.acceptedWorstMicros,
+      kind: "regenerate",
+      name: current.name,
+      description: payload.description,
+      categoryId,
+      recordId: categoryId,
+      write: (pool, spentMicros, jobId) =>
+        library.categories.replacePool(categoryId, { description: payload.description, label: pool.label, style: pool.style, pool: pool.pool, model: models.textModel, spentMicros, jobId }),
+    });
+    return { category: summaryOf(stored.record), spentMicros: stored.spentMicros };
+  }
+
+  /**
+   * The paid part of a create or a regenerate, after its free checks. The call's own scope is `{ avatarJobId }` (the ledger's existing shape),
+   * capped at the worst case the owner accepted. A record of the call is written to the library BEFORE anything is sent and removed on any outcome:
+   * a Studio that closes in between leaves it, and the next listing shows the call as interrupted. A paid pool whose write failed is kept in raw/.
+   */
+  async #runCategoryCall(call: {
+    key: string;
+    budget: Budget;
+    library: Library;
+    priced: PricedBook;
+    textModel: string;
+    acceptedWorstMicros: number;
+    kind: CategoryCallKind;
+    name: string;
+    description: CategoryDescription;
+    categoryId: CustomCategoryId | null;
+    /** The record the call writes: a create's new id, a regenerate's own. */
+    recordId: CustomCategoryId;
+    /** Writes the answer and books `spentMicros` under `jobId` in the same record write. */
+    write: (pool: { label: string; style: StoredCategory["style"]; pool: StoredCategory["pool"] }, spentMicros: number, jobId: string) => Promise<StoredCategory>;
+  }): Promise<{ record: StoredCategory; spentMicros: number }> {
+    const { library, budget } = call;
+    const jobId = this.#deps.newId();
+    const scope: Scope = { avatarJobId: jobId };
+    if (this.#categoryCall !== null) this.#categoryCall.jobId = jobId;
+    // The scope only ever sends pool attempts: its cap is the worst case the owner accepted (the Budget checks each attempt against it).
+    this.#caps.set(scopeKey(scope), call.acceptedWorstMicros);
+    try {
+      await library.categories.writePending({ jobId, kind: call.kind, name: call.name, description: call.description, categoryId: call.categoryId, startedAt: new Date(this.#deps.clock()).toISOString() });
+    } catch (error) {
+      this.#caps.delete(scopeKey(scope));
+      throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`nothing was sent: the call could not be recorded in the library (${messageOf(error, "unknown error")})`) });
+    }
+    try {
+      const client = this.#openRouter(call.key);
+      const linesBefore = budget.ledger.lines.length;
+      let result: Awaited<ReturnType<typeof runCategoryJob>>;
+      try {
+        result = await runCategoryJob({ chat: (params) => client.chat(params), budget, priceBook: call.priced.book, errorOf: engineErrorFrom }, { jobId, scope, description: call.description, textModel: call.textModel });
+      } finally {
+        this.#caps.delete(scopeKey(scope));
+        if (budget.ledger.lines.length !== linesBefore || budget.ledger.failed) this.#emitMoney();
+      }
+      if (!result.ok) {
+        if (result.error.code === "AUTH_INVALID") this.markKeyRejected(call.key);
+        // A failed regeneration keeps the old pool but still cost what it cost: the category's total says so.
+        if (call.kind === "regenerate" && call.categoryId !== null && result.spentMicros > 0) await this.#bookCategorySpend(library, call.categoryId, result.spentMicros, jobId);
+        throw new EngineFailure(result.error);
+      }
+      try {
+        const record = await call.write({ label: result.label, style: result.style, pool: result.pool }, result.spentMicros, jobId);
+        this.#emitCategory({ change: "upserted", category: summaryOf(record) });
+        return { record, spentMicros: result.spentMicros };
+      } catch (error) {
+        // A write that threw after its rename (the folder's flush failed) did land: the record carries this job's id, written in the same file as its
+        // answer and its cost. That is a success the owner is told about, not a failure with a paid pool in raw/.
+        const landed = await library.categories.get(call.recordId).catch(() => null);
+        if (landed !== null && landed.bookedJobs.includes(jobId)) {
+          this.#emitCategory({ change: "upserted", category: summaryOf(landed) });
+          return { record: landed, spentMicros: result.spentMicros };
+        }
+        // The pool is paid for: keep it where the owner can find it, and say where.
+        const kept = `${jobId}:category`;
+        const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ kind: call.kind, name: call.name, description: call.description, categoryId: call.categoryId, label: result.label, style: result.style, pool: result.pool, model: call.textModel })).then(
+          () => `the paid category is kept in raw/${rawFileName(kept)} next to the ledger`,
+          (saveError: unknown) => `the paid category could not be kept either (${messageOf(saveError, "unknown error")})`,
+        );
+        const failure = Engine.#categoryFailure(error, result.spentMicros);
+        // The old pool stays, but the call was paid: the category's total says so, as it does for a regeneration that failed before its answer.
+        if (call.kind === "regenerate" && call.categoryId !== null && result.spentMicros > 0) await this.#bookCategorySpend(library, call.categoryId, result.spentMicros, jobId);
+        // Where it is kept comes first, so the 500-char cut of `detail` cannot drop it.
+        throw new EngineFailure({ ...failure.error, detail: detailOf(`${where}: ${failure.error.detail ?? "the category could not be written"}`) });
+      }
+    } finally {
+      await library.categories.removePending(jobId).catch((error: unknown) => {
+        // The call ended, whatever the record says: it is remembered so it is not taken for an interrupted one, and the removal is tried again at the next listing.
+        this.#endedCalls.add(jobId);
+        console.warn(`studio engine: the record of category call ${jobId} could not be removed (${messageOf(error, "unknown error")})`);
+      });
+    }
+  }
+
+  /** Adds what a failed regeneration cost to its category's total, best effort: the failure itself is what the owner is told. */
+  async #bookCategorySpend(library: Library, categoryId: CustomCategoryId, spentMicros: number, jobId: string): Promise<void> {
+    try {
+      const updated = await library.categories.addSpend(categoryId, spentMicros, jobId);
+      if (updated !== null) this.#emitCategory({ change: "upserted", category: summaryOf(updated) });
+    } catch (error) {
+      console.warn(`studio engine: category ${categoryId}'s spend of ${spentMicros} µ$ could not be recorded (${messageOf(error, "unknown error")})`);
+    }
+  }
+
+  /** IN_FLIGHT for the category a regeneration is under way for: its record is about to be replaced. */
+  #assertNotRegenerating(categoryId: CustomCategoryId): void {
+    if (this.#categoryCall?.kind === "regenerate" && this.#categoryCall.categoryId === categoryId) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: `category ${categoryId} is being regenerated; change it when that ends` });
+    }
+  }
+
+  /**
+   * VALIDATION (`name-taken`), free, for a rename to the name a running create is about to take: the create is paid for and would be lost at its
+   * write, so the owner is told now, while nothing is spent twice.
+   */
+  /** IN_FLIGHT for a category whose removal is under way: it is about to be gone, so nothing may be reserved or written for it. */
+  #assertNotBeingRemoved(categoryId: CustomCategoryId): void {
+    if (this.#removingCategories.has(categoryId)) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: `category ${categoryId} is being deleted; nothing can be changed or regenerated for it` });
+    }
+  }
+
+  #assertNameNotBeingCreated(name: string | undefined): void {
+    const call = this.#categoryCall;
+    if (name === undefined || call?.kind !== "create" || call.name === null) return;
+    if (categoryNameKey(name) === categoryNameKey(call.name)) {
+      throw new EngineFailure({ code: "VALIDATION", categoryReason: "name-taken", detail: "a category with this name is being composed right now; wait for it to finish" });
+    }
+  }
+
+  async #updateCategory(library: Library, payload: CommandPayload<"categories.update">): Promise<CommandResult<"categories.update">> {
+    this.#assertNotRegenerating(payload.categoryId);
+    this.#assertNotBeingRemoved(payload.categoryId);
+    this.#assertNameNotBeingCreated(payload.name);
+    try {
+      const updated = await library.categories.update(payload.categoryId, {
+        ...(payload.name === undefined ? {} : { name: payload.name }),
+        ...(payload.removeLocations === undefined ? {} : { removeLocations: payload.removeLocations }),
+        ...(payload.removeOutfits === undefined ? {} : { removeOutfits: payload.removeOutfits }),
+      });
+      const category = summaryOf(updated);
+      this.#emitCategory({ change: "upserted", category });
+      return { category };
+    } catch (error) {
+      throw Engine.#categoryFailure(error);
+    }
+  }
+
+  async #deleteCategory(library: Library, categoryId: CustomCategoryId): Promise<CommandResult<"categories.delete">> {
+    this.#assertNotRegenerating(categoryId);
+    try {
+      await library.categories.remove(categoryId);
+    } catch (error) {
+      throw Engine.#categoryFailure(error);
+    }
+    this.#emitCategory({ change: "removed", categoryId });
+    return { categoryId };
+  }
+
+  /**
+   * Forgets the record of a call a closed Studio left; NOT_FOUND for one that is not there, IN_FLIGHT for the call running now. An interrupted
+   * regenerate is first counted into its category's total at what the ledger holds for it (an open reserve at its worst case, a reconciled one at its
+   * estimate): the category's «потрачено» holds every regeneration, answered or not, and this call is its only trace once the record is gone. With a
+   * ledger that cannot be read that cost is unknown, so the record stays. The total is written before the record is removed, under the call's id (the
+   * category's `bookedJobs`): a crash between the two, a removal the disk refuses, or a restart that shows a finished call as interrupted can only
+   * repeat a booking that is then a no-op, never count the call twice and never lose it.
+   */
+  async #dismissInterrupted(library: Library, jobId: string): Promise<CommandResult<"categories.dismissInterrupted">> {
+    if (this.#categoryCall?.jobId === jobId || this.#dismissingCalls.has(jobId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `call ${jobId} is running now` });
+    this.#dismissingCalls.add(jobId);
+    try {
+      const call = (await library.categories.listPending()).find((p) => p.jobId === jobId);
+      if (call === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `no interrupted category call ${jobId}` });
+      // A call that ended in this process already booked its cost where it belongs: only the record is left to forget.
+      let booked = false;
+      if (call.kind === "regenerate" && call.categoryId !== null && !this.#endedCalls.has(jobId)) {
+        const money = this.#money;
+        if (!money.ok) throw new EngineFailure({ code: money.unavailable.cause, detail: money.unavailable.detail });
+        const spentMicros = jobSpentMicros(money.budget.ledger, jobId);
+        if (spentMicros > 0) {
+          const updated = await library.categories.addSpend(call.categoryId, spentMicros, jobId).catch((error: unknown) => {
+            throw Engine.#categoryFailure(error);
+          });
+          booked = true;
+          if (updated !== null) this.#emitCategory({ change: "upserted", category: summaryOf(updated) });
+        }
+      }
+      let removed: boolean;
+      try {
+        removed = await library.categories.removePending(jobId);
+      } catch (error) {
+        // The cost is booked (here, or by the call itself) and the disk refuses the delete: the call is as good as dismissed. It is remembered as ended so the
+        // listing does not offer it again, the record is retried at the next listing, and a repeated «Убрать» is a no-op by memory and by the id in the record.
+        if (!booked && !this.#endedCalls.has(jobId)) throw error;
+        this.#endedCalls.add(jobId);
+        console.warn(`studio engine: the record of category call ${jobId} could not be removed (${messageOf(error, "unknown error")})`);
+        return { jobId };
+      }
+      if (!removed) throw new EngineFailure({ code: "NOT_FOUND", detail: `no interrupted category call ${jobId}` });
+      this.#endedCalls.delete(jobId);
+      return { jobId };
+    } finally {
+      this.#dismissingCalls.delete(jobId);
+    }
   }
 
   /**

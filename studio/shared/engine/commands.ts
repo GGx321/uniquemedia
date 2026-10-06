@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { AvatarName, AvatarTraits } from "./avatar";
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
+import { CategoriesListResult, CategoryDescription, CategoryName, CategorySummary, CustomCategoryId, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -536,6 +537,51 @@ const ENGINE_SPECS = [
   defineCommand("media.list", MediaListPayload, MediaListResult),
   defineCommand("media.delete", MediaDeletePayload, MediaDeleteResult),
   defineCommand("media.cancelImport", MediaCancelImportPayload, MediaCancelImportResult),
+  // CS.2: the owner's own scene categories, one library-wide list shared by every avatar (plan §4.1). All of them but the estimate need an
+  // open library (LIBRARY_UNAVAILABLE without one); the estimate needs neither a library nor a key.
+  // `categories.list`: the readable categories in creation order (at most 50, the oldest first), `unreadable` files kept as they are, `overLimit`
+  // readable ones past the 50th that the list leaves out (kept on disk; every category file holds a place towards the limit), the creates and
+  // regenerates a closed Studio left unanswered (`interrupted`, each with its spend and the open part of it) and the paid call in flight (`busy`).
+  // `categories.estimate`: the price of one pool call, shown before «Создать» / «Пересоздать»: expected at the typical tokens of one attempt,
+  // worst = both attempts at their ceilings. It is the `acceptedWorstMicros` of the two paid commands.
+  // `categories.create` / `categories.regenerate`: paid and synchronous (one pool call, at most two attempts). One at a time (IN_FLIGHT);
+  // VALIDATION for a name another category holds (`categoryNameKey`: trim, Unicode-normalised, case-folded) or past the 50-category limit
+  // (`MAX_CUSTOM_CATEGORIES`; a window that wants to tell the two apart checks both against `categories.list` first); PRICE_CHANGED
+  // above the accepted worst case; MODERATION_REFUSED (free) when the provider refuses the description; POOL_REJECTED after two unusable
+  // answers. A failure carries `spentMicros` in its error, and a failed regenerate keeps the old pool. The answer's `spentMicros` is what
+  // THIS call cost; the category's own `spentMicros` is its total.
+  // `categories.update`: free; a new name, and places / outfits to remove by their text (refused with VALIDATION below the pool's minimums).
+  // IN_FLIGHT for a category whose regeneration is under way. `categories.delete`: free. Photos and plans already made keep their snapshot.
+  // `categories.dismissInterrupted`: free; forgets an interrupted call's record (NOT_FOUND for one that is not listed).
+  defineCommand("categories.list", Empty, CategoriesListResult),
+  defineCommand("categories.estimate", Empty, Estimate),
+  defineCommand(
+    "categories.create",
+    z.strictObject({ name: CategoryName, description: CategoryDescription, ...AcceptedWorst }),
+    z.strictObject({ category: CategorySummary, spentMicros: Micros }),
+  ),
+  defineCommand(
+    "categories.regenerate",
+    z.strictObject({ categoryId: CustomCategoryId, description: CategoryDescription, ...AcceptedWorst }),
+    z.strictObject({ category: CategorySummary, spentMicros: Micros }),
+  ),
+  defineCommand(
+    "categories.update",
+    z
+      .strictObject({
+        categoryId: CustomCategoryId,
+        name: CategoryName.optional(),
+        removeLocations: z.array(PoolText).min(1).max(POOL_PLACES_MAX).optional(),
+        removeOutfits: z.array(PoolText).min(1).max(POOL_OUTFITS_MAX).optional(),
+      })
+      .refine((p) => p.name !== undefined || p.removeLocations !== undefined || p.removeOutfits !== undefined, {
+        message: "name a change: a new name, places to remove or outfits to remove",
+        path: ["name"],
+      }),
+    z.strictObject({ category: CategorySummary }),
+  ),
+  defineCommand("categories.delete", z.strictObject({ categoryId: CustomCategoryId }), z.strictObject({ categoryId: CustomCategoryId })),
+  defineCommand("categories.dismissInterrupted", z.strictObject({ jobId: Id }), z.strictObject({ jobId: Id })),
   // A fresh look at the export folder (3e.3, K9): the same check a render attempt makes, without a render. Free. The answer is the
   // status as the check found it, and `export.status` follows when it CHANGED, so a window that asks on focus shows an
   // unplugged drive, and a plugged one, without a render attempt.
