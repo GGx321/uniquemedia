@@ -73,6 +73,12 @@ function ready(view: CategoryLibraryView) {
 
 const names = (h: Harness) => ready(h.library.getView()).categories.map((c) => c.name);
 
+/** The error code the window's last create or regenerate failed with; null when it did not fail. */
+function failedWith(h: Harness, kind: "create" | "regenerate"): string | null {
+  const outcome = h.library.getView().outcomes[kind];
+  return outcome?.ok === false ? outcome.error.code : null;
+}
+
 function price(h: Harness): Estimate {
   const p = h.library.getView().price;
   if (p === null) throw new Error("no price");
@@ -342,7 +348,7 @@ describe("a create", () => {
     await settle();
     await h.library.create("Рынки", "рынки", price(h));
     await settle();
-    expect(h.library.getView().outcomes.create?.ok === false && h.library.getView().outcomes.create?.error.code).toBe("IN_FLIGHT");
+    expect(failedWith(h, "create")).toBe("IN_FLIGHT");
     h.scheduler.runAll();
     await other;
     await settle();
@@ -423,12 +429,12 @@ describe("a regenerate that was refused for free", () => {
     h.engine.setCategoryPrice({ expectedMicros: 7_000, worstMicros: 52_000 });
     await h.library.regenerate(PARIS.categoryId, "кофейни и бистро", accepted);
     await settle();
-    expect(h.library.getView().outcomes.regenerate?.ok === false && h.library.getView().outcomes.regenerate?.error.code).toBe("PRICE_CHANGED");
+    expect(failedWith(h, "regenerate")).toBe("PRICE_CHANGED");
     expect(h.library.getView().regenerated.has(PARIS.categoryId)).toBe(false);
     h.engine.failNext("categories.regenerate", { code: "VALIDATION", categoryReason: "limit" });
     await h.library.regenerate(PARIS.categoryId, "кофейни и бистро", price(h));
     await settle();
-    expect(h.library.getView().outcomes.regenerate?.ok === false && h.library.getView().outcomes.regenerate?.error.code).toBe("VALIDATION");
+    expect(failedWith(h, "regenerate")).toBe("VALIDATION");
     expect(h.library.getView().regenerated.has(PARIS.categoryId)).toBe(false);
     h.engine.failNext("categories.regenerate", { code: "IN_FLIGHT" });
     await h.library.regenerate(PARIS.categoryId, "кофейни и бистро", price(h));
