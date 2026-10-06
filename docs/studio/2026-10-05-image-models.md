@@ -53,16 +53,24 @@ per-endpoint record (every endpoint, not the union):
 2. `resolution` lists `1K` and `aspect_ratio` lists `9:16`, so the request above
    is valid as sent;
 3. `input_references.max >= 1`, so the master portrait is accepted;
-4. every pricing line is per **image** (`unit: "image"`) and a billable we
-   can bound (`output_image`, `input_image`). That keeps the worst case an
-   exact integer in micro-dollars, which the reserve/settle ledger needs;
+4. every pricing line is per **image** (`unit: "image"`, or no `unit` stated:
+   the code refuses only a `unit` that is present and not `image`) and a
+   billable we can bound (`output_image`, `input_image`). That keeps the worst
+   case an exact integer in micro-dollars, which the reserve/settle ledger
+   needs;
 5. the endpoints list an explicit `input_image` row (review round 1, M1). A
    photo run sends one reference, so its price must be stated. A MISSING row
    is an unknown price, not a free one: if OpenRouter billed the reference
    anyway, the settle would exceed the reserve (`SETTLE_ABOVE_WORST`) and halt
    all paid work until a reconcile. An explicit row of `0` is a price the
    provider states and is accepted (seedream-5-0-flash and 4.5 list one). An
-   `output_image` price of 0 is refused too: it would reserve nothing.
+   `output_image` price of 0 is refused too: it would reserve nothing;
+6. the avatar portrait and candidate requests are valid too: `aspect_ratio`
+   lists `3:4` and `input_references.min` is stated and is `0` (a portrait
+   sends no reference at all). A run rechecks rules 2, 3 and 6 on the live
+   endpoints when it loads its price, and refuses with `PRICE_UNAVAILABLE`
+   before any reserve when they no longer hold. The "7 models" count below
+   was made before rule 6.
 
 Result on 2026-10-05, 7 models selectable (10 met rules 1 to 4; 3 of them fail
 rule 5 and are excluded until a paid check confirms how a reference is billed). Prices are USD per image at 1K; "ref" is the

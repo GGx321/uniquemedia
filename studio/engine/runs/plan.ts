@@ -105,7 +105,8 @@ function writerCall(textModel: string): typeof WRITER_CALL {
 export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck): PriceModels {
   const imageModels = [...new Set(runRoute(models.imageModel, models.imageQuality).map((c) => c.model))];
   const chatModels = imageAgeCheck === "on" ? [models.textModel, AGE_CHECK_CALL.model] : [models.textModel];
-  return { imageModels, chatModels: [...new Set(chatModels)] };
+  // A run sends photo requests: its image models' endpoints are rechecked when the price loads.
+  return { imageModels, chatModels: [...new Set(chatModels)], checkRequestShape: true };
 }
 
 /**

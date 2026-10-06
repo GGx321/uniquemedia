@@ -9,6 +9,7 @@ import {
   FALLBACK_CATALOGUE_TTL_MS,
   fallbackImageCatalogue,
   ImageCatalogueCache,
+  TESTED_IMAGE_MODELS,
   LIVE_CATALOGUE_TTL_MS,
   loadImageCatalogue,
   type CatalogueLoad,
@@ -88,6 +89,55 @@ test("leaves out a model without a 1K size, one priced per token, one with no pr
   }
 });
 
+// ---------- backlog item 1: avatar portraits and candidates ask for 3:4 and no reference ----------
+
+type EndpointEdit = (params: Record<string, unknown>) => Record<string, unknown>;
+
+/** The fixtures, but `id`'s endpoints edited: `edit` gets each endpoint's `supported_parameters`. */
+function fetchEditing(id: string, edit: EndpointEdit): Fake {
+  const inner = fakeFetch();
+  const fetch: FetchLike = async (url) => {
+    if (!url.endsWith(`/images/models/${id}/endpoints`)) return inner.fetch(url);
+    inner.urls.push(url);
+    const body = z.object({ endpoints: z.array(z.record(z.string(), z.unknown())) }).and(z.record(z.string(), z.unknown())).parse(fixture(endpointsFile(id)));
+    const endpoints = body.endpoints.map((e) => ({ ...e, supported_parameters: edit(z.record(z.string(), z.unknown()).parse(e.supported_parameters)) }));
+    return { ok: true, status: 200, json: async () => ({ ...body, endpoints }) };
+  };
+  return { fetch, urls: inner.urls };
+}
+
+test("a model whose endpoints do not list the 3:4 aspect ratio is not offered: the avatar portrait asks for it", async () => {
+  const without34 = fetchEditing(GROK, (p) => ({ ...p, aspect_ratio: { type: "enum", values: ["9:16", "1:1"] } }));
+
+  expect(ids(await load(without34))).not.toContain(GROK);
+  expect(ids(await load(fakeFetch()))).toContain(GROK);
+});
+
+test("a model whose references cannot be left out (input_references.min above 0) is not offered: a candidate portrait sends none", async () => {
+  const mustHaveReference = fetchEditing(GROK, (p) => ({ ...p, input_references: { type: "range", min: 1, max: 3 } }));
+
+  expect(ids(await load(mustHaveReference))).not.toContain(GROK);
+});
+
+test("a model whose endpoints state no minimum for references is not offered: 'may be zero' is not stated", async () => {
+  const noMin = fetchEditing(GROK, (p) => ({ ...p, input_references: { type: "range", max: 3 } }));
+
+  expect(ids(await load(noMin))).not.toContain(GROK);
+});
+
+test("one endpoint that fails the portrait request is enough to leave the model out", async () => {
+  const inner = fakeFetch();
+  const fetch: FetchLike = async (url) => {
+    const res = await inner.fetch(url);
+    if (!url.endsWith(`/images/models/${GROK}/endpoints`)) return res;
+    const body = z.object({ endpoints: z.array(z.record(z.string(), z.unknown())) }).and(z.record(z.string(), z.unknown())).parse(await res.json());
+    const second = { ...body.endpoints[0], supported_parameters: { ...z.record(z.string(), z.unknown()).parse(body.endpoints[0]?.supported_parameters), aspect_ratio: { type: "enum", values: ["9:16"] } } };
+    return { ok: true, status: 200, json: async () => ({ ...body, endpoints: [...body.endpoints, second] }) };
+  };
+
+  expect(ids(await load({ fetch, urls: [] }))).not.toContain(GROK);
+});
+
 test("a model with a quality knob lists it and prices each quality with one reference image", async () => {
   const grok = (await load(fakeFetch())).models.find((m) => m.id === GROK);
 
@@ -120,10 +170,12 @@ test("the bundled list obeys the same rule: every model of the dated table has a
   expect(ids(await load(fakeFetch({ failList: true }))).sort()).toEqual([...FALLBACK_IMAGE.keys()].sort());
 });
 
-test("only the models of the dated price table are marked tested", async () => {
+test("only the face-hold-tested models are marked tested: the three of the 2026-09-24 spike, named explicitly", async () => {
   const models = (await load(fakeFetch())).models;
 
-  expect(models.filter((m) => m.tested).map((m) => m.id).sort()).toEqual([...FALLBACK_IMAGE.keys()].sort());
+  const spiked = [GROK, "bytedance-seed/seedream-5-0-pro", "x-ai/grok-imagine-image-quality"].sort();
+  expect(models.filter((m) => m.tested).map((m) => m.id).sort()).toEqual(spiked);
+  expect([...TESTED_IMAGE_MODELS].sort()).toEqual(spiked);
 });
 
 test("the tested models come first, then the others by name, and the provider prefix is dropped from a name", async () => {
@@ -265,11 +317,12 @@ const FLASH = "bytedance-seed/seedream-5-0-flash";
 const Listed = z.object({ data: z.array(z.record(z.string(), z.unknown())) });
 
 /** A live list of the fixture's models plus `extra` entries, each a copy of seedream-5-0-flash under its own id and name. */
-function fetchWithExtras(extra: readonly { id: string; name?: string }[]): Fake {
+function fetchWithExtras(extra: readonly { id: string; name?: string }[], opts: { before?: boolean } = {}): Fake {
   const base = Listed.parse(LIST);
   const flash = base.data.find((m) => m.id === FLASH);
   if (flash === undefined) throw new Error("the fixture lacks seedream-5-0-flash");
-  const list = { data: [...base.data, ...extra.map((e) => ({ ...flash, id: e.id, name: e.name ?? `Clone ${e.id}` }))] };
+  const clones = extra.map((e) => ({ ...flash, id: e.id, name: e.name ?? `Clone ${e.id}` }));
+  const list = { data: opts.before === true ? [...clones, ...base.data] : [...base.data, ...clones] };
   const urls: string[] = [];
   const fetch: FetchLike = async (url) => {
     urls.push(url);
@@ -301,11 +354,13 @@ test("an entry the contract refuses (a name over 120 characters) is dropped, the
 });
 
 test("more than 100 priced models are cut to 100, the tested ones first, and the answer passes the schema", async () => {
+  // The clones come BEFORE the fixtures in the live list: only "tested first, then cap" keeps the tested models; a cap before the sort drops them.
   const many = Array.from({ length: 105 }, (_, i) => ({ id: `acme/clone-${i}` }));
-  const catalogue = await load(fetchWithExtras(many));
+  const catalogue = await load(fetchWithExtras(many, { before: true }));
 
   expect(catalogue.models).toHaveLength(100);
   expect(ids(catalogue)).toContain(GROK);
+  expect(catalogue.models[0]?.tested).toBe(true);
   expect(ImageModelCatalogue.safeParse(catalogue).success).toBe(true);
 });
 

@@ -515,6 +515,11 @@ describe("request deadline", () => {
     expect(COMMAND_DEADLINE_MS["avatars.estimateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 
+  test("settings.imageModels waits for the model list and then every endpoints GET, each at its own timeout, so a slow OpenRouter does not hit the 30 s default", () => {
+    expect(COMMAND_DEADLINE_MS["settings.imageModels"]).toBe(2 * PRICE_FETCH_TIMEOUT_MS + 15_000);
+    expect(COMMAND_DEADLINE_MS["settings.imageModels"] ?? 0).toBeGreaterThan(REQUEST_TIMEOUT_MS);
+  });
+
   test("generateCandidates answers once its checks and a price load are done (the job runs on), so it waits as long as an estimate", () => {
     expect(COMMAND_DEADLINE_MS["avatars.generateCandidates"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });

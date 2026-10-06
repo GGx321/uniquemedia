@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { MoneyError } from "./errors";
-import { costToMicros } from "./settleRule";
+import { costToMicrosCeil } from "./settleRule";
 import { timeoutSignal } from "./timeoutSignal";
 
 export const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1";
@@ -63,6 +63,51 @@ export type FetchLike = (
 
 // ---------- /api/v1/images/models/<id>/endpoints ----------
 
+/** The requests Studio sends an image model (openrouter/image.ts): a photo run's 1K, 9:16 and one reference; an avatar portrait's 3:4 and none. */
+export const WANTED_RESOLUTION = "1K";
+export const PHOTO_ASPECT_RATIO = "9:16";
+export const PORTRAIT_ASPECT_RATIO = "3:4";
+/** A photo run's master portrait is the one reference; a candidate portrait sends none. */
+export const PHOTO_REFERENCES = 1;
+
+const EnumParam = z.object({ values: z.array(z.string()) });
+const RangeParam = z.object({ max: z.number() });
+export { EnumParam, RangeParam };
+
+/** What `/endpoints` says an endpoint accepts. An absent key means unsupported. */
+export const EndpointParams = z.object({
+  supported_parameters: z.object({
+    resolution: EnumParam.optional(),
+    aspect_ratio: EnumParam.optional(),
+    quality: EnumParam.optional(),
+    input_references: RangeParam.extend({ min: z.number().optional() }).optional(),
+  }),
+});
+export const EndpointsParams = z.object({ endpoints: z.array(EndpointParams).min(1) });
+
+/**
+ * True when EVERY endpoint accepts both requests Studio sends: a photo (1K,
+ * 9:16, one reference) and an avatar portrait (3:4, no reference at all, so
+ * `input_references.min` must be stated and be 0). The catalogue offers a
+ * model only then, and a run rechecks it when it loads the price. A body that
+ * does not parse is refused.
+ */
+export function endpointsAcceptRequests(body: unknown): boolean {
+  const params = EndpointsParams.safeParse(body);
+  if (!params.success) return false;
+  return params.data.endpoints.every(({ supported_parameters: p }) => acceptsRequests(p));
+}
+
+export function acceptsRequests(p: z.infer<typeof EndpointParams>["supported_parameters"]): boolean {
+  return (
+    p.resolution?.values.includes(WANTED_RESOLUTION) === true &&
+    p.aspect_ratio?.values.includes(PHOTO_ASPECT_RATIO) === true &&
+    p.aspect_ratio.values.includes(PORTRAIT_ASPECT_RATIO) &&
+    p.input_references?.min === 0 &&
+    p.input_references.max >= PHOTO_REFERENCES
+  );
+}
+
 const PricingEntry = z.object({
   billable: z.string(),
   unit: z.string().optional(),
@@ -95,7 +140,8 @@ export function parseImageEndpoints(body: unknown, model: string): ImagePrice {
       if (entry.unit !== undefined && entry.unit !== "image") {
         throw new Error(`${model}: ${entry.billable} is priced per ${entry.unit}, not per image`);
       }
-      const micros = costToMicros(entry.cost_usd);
+      // The price book feeds the RESERVE: read up, never under the bill by a micro-dollar (the settle path rounds to nearest).
+      const micros = costToMicrosCeil(entry.cost_usd);
       if (entry.billable === "output_image") {
         if (micros === 0) throw new Error(`${model}: output_image is priced 0, which would reserve nothing`);
         const variant = entry.variant ?? null;
@@ -204,8 +250,8 @@ function assertCount(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative integer, got ${value}`);
 }
 
-/** `1k`, `1.5k`, `low_2k`, `768`, `high_resolution`, … — the variant names whose resolution can be read. */
-const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?\d+(?:\.\d+)?k|\d{3}|high_resolution)$/;
+/** `1k`, `1.5k`, `low_2k`, `768`, `high_resolution`, … — the variant names whose resolution can be read. A leading-zero tier (`01k`, `02k`) is not one: it is unrecognised, so the dearest price is reserved. */
+const RECOGNISED_VARIANT = /^(?:(?:[a-z]+_)?(?:0|[1-9]\d*)(?:\.\d+)?k|[1-9]\d{2}|high_resolution)$/;
 /** Tiers named by a pixel size or a fractional K (`768`, `1.5k`): they sit around 1K, so a base price beside them is not known to be the 1K one. */
 const AROUND_1K_TIER = /^(?:(?:[a-z]+_)?\d+\.\d+k|\d{3})$/;
 
@@ -428,6 +474,8 @@ async function liveOrFallback<T>(model: string, table: ReadonlyMap<string, T>, l
   try {
     return { price: await load(), source: "live" };
   } catch (err) {
+    // A refusal that is already a money error (the endpoints read fine and say no) is the answer: the table stands in for a failed read only.
+    if (err instanceof MoneyError) throw err;
     const fallback = table.get(model);
     if (fallback === undefined) {
       throw new MoneyError(
@@ -450,6 +498,12 @@ export async function loadPriceBook(opts: {
   baseUrl: string;
   imageModels: readonly string[];
   chatModels: readonly string[];
+  /**
+   * A run's load: every image model's LIVE endpoints must still accept the requests Studio sends (`endpointsAcceptRequests`),
+   * else PRICE_UNAVAILABLE (never the dated table, which only stands in for a fetch that failed). Without it every attempt of a
+   * run on a model that dropped 9:16 would get its own free 400, slot by slot.
+   */
+  checkRequestShape?: boolean;
   /** Per GET; PRICE_FETCH_TIMEOUT_MS unless a test shortens it. */
   timeoutMs?: number;
 }): Promise<PriceBook> {
@@ -457,9 +511,14 @@ export async function loadPriceBook(opts: {
   const timeoutMs = opts.timeoutMs ?? PRICE_FETCH_TIMEOUT_MS;
   const images = Promise.all(
     opts.imageModels.map(async (model) => {
-      const entry = await liveOrFallback(model, FALLBACK_IMAGE, async () =>
-        parseImageEndpoints(await getJson(opts.fetch, `${base}/images/models/${model}/endpoints`, timeoutMs), model)
-      );
+      const entry = await liveOrFallback(model, FALLBACK_IMAGE, async () => {
+        const body = await getJson(opts.fetch, `${base}/images/models/${model}/endpoints`, timeoutMs);
+        const price = parseImageEndpoints(body, model);
+        if (opts.checkRequestShape === true && !endpointsAcceptRequests(body)) {
+          throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept Studio's request (1K, 9:16 and one reference for a photo; 3:4 and none for a portrait)`);
+        }
+        return price;
+      });
       return [model, entry] as const;
     })
   );

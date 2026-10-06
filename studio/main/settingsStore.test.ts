@@ -119,6 +119,13 @@ test("an older file that predates the image quality and the camera realism loads
   expect(JSON.parse(await readFile(path(), "utf8"))).not.toHaveProperty("imageQuality");
 });
 
+test.each(["x-ai/grok-imagine-image-quality", "bytedance-seed/seedream-5-0-pro", "acme/unknown-model"])("an older file whose image model (%s) has no quality knob is backfilled with null, not low", async (imageModel) => {
+  const { imageQuality: _q, ...older } = { ...defaultSettings(userData), imageModel };
+  await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...older }));
+  const loaded = await loadSettings(userData);
+  expect(loaded).toEqual({ source: "file", settings: { ...defaultSettings(userData), imageModel, imageQuality: null } });
+});
+
 test("a file with an explicit null image quality (a model with no quality knob) keeps it, not the backfilled low", async () => {
   await writeFile(path(), JSON.stringify({ schemaVersion: 1, ...defaultSettings(userData), imageQuality: null }));
   expect(await loadSettings(userData)).toEqual({ source: "file", settings: { ...defaultSettings(userData), imageQuality: null } });

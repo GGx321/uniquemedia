@@ -664,7 +664,8 @@ export class MockEngine implements EngineBridge {
   private readonly skippedPhotos: Record<string, number>;
   /** Stored run photos whose sidecar cannot be read now (`setPhotoSidecarReadable`): `photos.list` alone skips them. */
   private readonly unreadableSidecars = new Set<string>();
-  private runImagePrice = MOCK_RUN_IMAGE;
+  /** `setRunImagePrice`'s override of the image attempt's price; null = the chosen model and quality's own (`runImagePrice`). */
+  private runImageOverride: number | null = null;
   /** The next run job's trailing `count` open slots end without a photo. */
   private failedRunSlotsNext = 0;
   /** seedRun's own id counter, apart from nextId's, so a seed never shifts the ids handed out later. */
@@ -1340,7 +1341,14 @@ export class MockEngine implements EngineBridge {
 
   /** T8b: changes one image attempt's price, so a run accepted at a lower worst case gets PRICE_CHANGED. */
   setRunImagePrice(micros: number): void {
-    this.runImagePrice = micros;
+    this.runImageOverride = micros;
+  }
+
+  /** One image attempt (1K, one reference) at the chosen model and quality, from the catalogue like the engine's price book; MOCK_RUN_IMAGE if the model is not in it. */
+  private get runImagePrice(): number {
+    if (this.runImageOverride !== null) return this.runImageOverride;
+    const model = MOCK_IMAGE_CATALOGUE.models.find((m) => m.id === this.settings.imageModel);
+    return model?.prices.find((p) => p.quality === this.settings.imageQuality)?.micros ?? MOCK_RUN_IMAGE;
   }
 
   /** The next run job's trailing `count` open slots end without a photo (their attempts all failed). */
