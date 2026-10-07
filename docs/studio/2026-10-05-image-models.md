@@ -139,7 +139,7 @@ its reference price anyway (rule 5), but the pricing rule stands on its own.
 - The catalogue is built from `/images/models` (names, structural pre-filter)
   and `/endpoints` (definitive parameters and prices), filtered by section 3,
   cached in memory. A live catalogue is refreshed after 30 minutes only when it
-  is `complete` (every candidate was priced); a bundled fallback list, or a live
+  is `complete` (every candidate's endpoints record was fetched and parsed); a bundled fallback list, or a live
   one with a model left out by a transient failure (`complete: false`), is read
   again after 60 seconds (`catalogueTtlMs`, `studio/shared/engine/imageModels.ts`).
   A model whose endpoints record cannot be fetched or parsed is not
