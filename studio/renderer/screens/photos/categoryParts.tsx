@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import type { CategoryPool, EngineError, Estimate } from "../../../shared/engine";
 import type { CategoryLibraryView } from "../../engine/categoryLibrary";
 import type { EngineView } from "../../engine/store";
 import { formatUsdTiered } from "../../lib/money";
 import { Icon } from "../../ui/Icon";
-import { placeRemoval, shotShares, timeLabel } from "./categoryText";
+import { POSE_CHIP, sortPoses } from "./angles";
+import { anglesNote, placeRemoval, shotShares, timeLabel } from "./categoryText";
 import { modelName } from "./runForm";
 
 // CS.3: the pieces the create dialog and the «Мои категории» sheet share: the pool call's price as a button may show it, the seconds a
@@ -112,7 +113,38 @@ function PlaceRow({ place, aside }: { place: CategoryPool["locations"][number]; 
   );
 }
 
-/** The pool as the create dialog shows it once made: read-only (places and outfits are removed in «Мои категории»). */
+/**
+ * CS.8 (CatCreateDone, CatCreateDoneAngles; CategoryStates F): the pool's angles after «Кадры», display only — the tags sorted front → back with where they
+ * came from and what they mean, or «как в карточке генерации» when the description named none (the footer says where to change them).
+ */
+function AnglesPreview({ pool }: { pool: CategoryPool }) {
+  const labelId = useId();
+  const poses = pool.poses;
+  return (
+    <div className="cat-block cat-angles-ro">
+      <div className="cat-angles-row">
+        <span id={labelId} className="lbl">
+          Ракурсы
+        </span>
+        {poses !== undefined ? (
+          <span role="list" aria-labelledby={labelId} className="cat-angles-tags">
+            {sortPoses(poses).map((pose) => (
+              <span key={pose} role="listitem" className="tag tag-o cat-angle-tag">
+                {POSE_CHIP[pose]}
+              </span>
+            ))}
+          </span>
+        ) : (
+          <span className="cat-angles-none">как в карточке генерации</span>
+        )}
+        <span className="mono faint cat-block-note cat-angles-src">{poses !== undefined ? "из описания" : "в описании не названы"}</span>
+      </div>
+      {poses !== undefined && <p className="faint cat-pool-note">{anglesNote(poses, pool.shotDeck)}</p>}
+    </div>
+  );
+}
+
+/** The pool as the create dialog shows it once made: read-only (places and outfits are removed in «Мои категории», the angles too). */
 export function PoolPreview({ pool }: { pool: CategoryPool }) {
   return (
     <>
@@ -140,6 +172,7 @@ export function PoolPreview({ pool }: { pool: CategoryPool }) {
         </div>
       </div>
       <ShotShares pool={pool} />
+      <AnglesPreview pool={pool} />
     </>
   );
 }

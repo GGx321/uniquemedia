@@ -5,7 +5,9 @@ import {
   CATEGORY_NAME_MAX,
   MAX_CUSTOM_CATEGORIES,
   POOL_OUTFITS_MIN,
+  ScenePose,
   type CategoryInterrupted,
+  type CategoryPoses,
   type CategorySummary,
   type CustomCategoryId,
   type EngineError,
@@ -19,11 +21,34 @@ import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { useConfirmFocus } from "../../ui/useConfirmFocus";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
+import { CARD_POSES, nextPoses, POSE_CHIP } from "./angles";
 import { busyElsewhere, categoryPrice, EditablePlace, ShotShares, useSeconds, worstOf } from "./categoryParts";
-import { categoryMeta, deleteConfirmText, descriptionProblem, interruptedText, libraryHeld, nameProblem, outfitsNote, overLimitNote, placesNote, poolCounts, regenFailure, styleNote, unreadableNote } from "./categoryText";
+import {
+  ANGLES_CLEAR_TITLE,
+  anglesHint,
+  anglesLockedTitle,
+  anglesSaveFailure,
+  categoryMeta,
+  deleteConfirmText,
+  descriptionProblem,
+  impliedChipTitle,
+  interruptedText,
+  libraryHeld,
+  nameProblem,
+  outfitsNote,
+  overLimitNote,
+  placesNote,
+  poolCounts,
+  REGEN_DONE_TEXT,
+  REGEN_HINT,
+  regenFailure,
+  styleNote,
+  unreadableNote,
+} from "./categoryText";
 import { InterruptedNotice } from "./CategoryNotices";
 import type { CreateDialogStart } from "./CategoryCreateDialog";
 import { paidBlockedReason } from "./runForm";
+import { useMounted } from "./shared";
 
 // CS.3: «Мои категории» (CatSheet, CatSheetRename, CatSheetRegen, CatSheetRegenBusy, CatSheetRegenFailed, CatSheetRegenDone,
 // CatSheetDelete; the CategoryStates sheet: empty, limits, unreadable, regenerate failures, interrupted calls). A right-side panel over the
@@ -419,6 +444,31 @@ function CategoryDetail({
     setFocusRemove({ kind, index: at });
   }
 
+  // ---------- CS.8: the angles (free, saved at once, one save at a time) ----------
+  // A press shows at once and is sent at once (`categories.update { poses }`); while it is on its way the group is busy and every press waits; a refusal
+  // flips the chips back and the hint says why. The chips stay mounted, so the focus stays on the one pressed.
+  const [anglesSaving, setAnglesSaving] = useState<{ readonly poses: CategoryPoses | null } | null>(null);
+  const [anglesError, setAnglesError] = useState<EngineError | null>(null);
+  const anglesSendingRef = useRef(false);
+  const frontChipRef = useRef<HTMLButtonElement>(null);
+  const mounted = useMounted();
+  const shownPoses = anglesSaving !== null ? (anglesSaving.poses ?? undefined) : category.pool.poses;
+  const anglesLocked = busy ? anglesLockedTitle("regenerate") : deleting ? anglesLockedTitle("delete") : null;
+  const anglesWait = anglesLocked !== null || anglesSaving !== null;
+
+  async function saveAngles(poses: CategoryPoses | null): Promise<void> {
+    // Two presses in one batch: the second finds the first on its way (state would not show it yet).
+    if (anglesSendingRef.current || anglesLocked !== null) return;
+    anglesSendingRef.current = true;
+    setAnglesSaving({ poses });
+    setAnglesError(null);
+    const reply = await library.update(categoryId, { poses });
+    anglesSendingRef.current = false;
+    if (!mounted.current) return;
+    setAnglesSaving(null);
+    if (!reply.ok) setAnglesError(reply.error);
+  }
+
   async function remove(): Promise<void> {
     if (deleting) return;
     setDeleting(true);
@@ -613,11 +663,8 @@ function CategoryDetail({
               <p className="notice-title">
                 Набор пересоздан · потрачено <span className="mono">{formatUsdTiered(regenDone.spentMicros, "nearest")}</span>
               </p>
-              {/* CS.7 L3: the open set keeps the scenes it has, but its ⟳ draws a place from the category as it is now (engine sceneSets/reviewPlan.ts). */}
-              <div className="notice-text">
-                Ниже — новые места, наряды и кадры. Они идут в следующие наборы и запуски. Идущий запуск остался со старым — у него своя копия. В открытом наборе сцен
-                готовые сцены остались как были, а «Другая сцена» возьмёт место уже из нового.
-              </div>
+              {/* CS.7 L3, CS.8: the open set keeps the scenes it has, but its ⟳ draws from the category as it is now, its angles too (README contract note 4). */}
+              <div className="notice-text">{REGEN_DONE_TEXT}</div>
             </div>
           </div>
         )}
@@ -703,7 +750,7 @@ function CategoryDetail({
               </div>
             )}
             {!busy && failure === null && priceChanged === null && interrupted === null && (
-              <p className="field-hint">Новый набор заменит места, наряды и кадры; название останется. Уже составленные сцены и идущие запуски не изменятся.</p>
+              <p className="field-hint">{REGEN_HINT}</p>
             )}
             <div className="cat-regen-actions">
               <span className="mono muted cat-regen-price">
@@ -763,6 +810,71 @@ function CategoryDetail({
       )}
 
       <div className={busy ? "cat-pool cat-pool-busy" : "cat-pool"}>
+        <div className="cat-block cat-angles">
+          <div className="cat-block-head cat-angles-head">
+            <span className="cat-angles-label">
+              <span id={`${ids}-angles`} className="lbl">
+                Ракурсы
+              </span>
+              <span className="faint cat-angles-free">бесплатно, сохраняется сразу</span>
+            </span>
+            {anglesSaving !== null ? (
+              <span className="mono faint cat-angles-saving">
+                <Spin />
+                сохраняем…
+              </span>
+            ) : (
+              shownPoses !== undefined && (
+                <button
+                  type="button"
+                  className="lbtn"
+                  aria-disabled={anglesLocked !== null}
+                  title={anglesLocked ?? ANGLES_CLEAR_TITLE}
+                  onClick={() => {
+                    if (anglesWait) return;
+                    // The button goes with the own angles: the focus goes to «Анфас», the first chip.
+                    confirm.moveTo(() => frontChipRef.current);
+                    void saveAngles(null);
+                  }}
+                >
+                  <Icon name="close" size={12} strokeWidth={2.4} />
+                  Как в карточке
+                </button>
+              )
+            )}
+          </div>
+          <div role="group" className="cat-angle-chips" aria-labelledby={`${ids}-angles`} aria-describedby={`${ids}-angles-hint`} aria-busy={anglesSaving !== null}>
+            {ScenePose.options.map((pose) => {
+              const implied = shownPoses === undefined && CARD_POSES.includes(pose);
+              const on = shownPoses?.includes(pose) === true;
+              return (
+                <button
+                  key={pose}
+                  ref={pose === "front" ? frontChipRef : undefined}
+                  type="button"
+                  className={["chip", on || implied ? "chip-on" : "", implied ? "cat-angle-implied" : ""].filter(Boolean).join(" ")}
+                  aria-pressed={on || implied}
+                  aria-disabled={anglesWait}
+                  title={anglesLocked ?? (implied && (pose === "front" || pose === "three-quarter") ? impliedChipTitle(pose) : undefined)}
+                  onClick={() => {
+                    if (!anglesWait) void saveAngles(nextPoses(shownPoses, pose));
+                  }}
+                >
+                  {POSE_CHIP[pose]}
+                </button>
+              );
+            })}
+          </div>
+          <p
+            id={`${ids}-angles-hint`}
+            className={anglesError !== null ? "cat-pool-note cat-angles-error" : "faint cat-pool-note"}
+            role={anglesError !== null ? "alert" : undefined}
+            aria-live={anglesError !== null ? "assertive" : "polite"}
+          >
+            {anglesError !== null ? anglesSaveFailure(anglesError) : anglesHint(shownPoses, category.pool.shotDeck, openSetScenes)}
+          </p>
+        </div>
+
         <div className="cat-block">
           <div className="cat-block-head">
             <span className="lbl">Места · {category.pool.locations.length}</span>

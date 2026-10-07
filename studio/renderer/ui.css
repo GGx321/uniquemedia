@@ -2007,6 +2007,72 @@ input[type="range"]::-webkit-slider-thumb {
   text-wrap: balance;
 }
 
+/* CS.8 (CatChipsAngles): the line under the toggles when a category of the run keeps its own angles — one line, under the chips (218 px: the label's 202 and
+   the row's 16) while the label sits beside them, under the label once it wraps above them (1200). The message first; the name capped at 180 px. */
+.photos-angles-own {
+  flex-basis: 100%;
+  min-width: 0;
+  margin-left: 218px;
+}
+
+.photos-angles-own-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.photos-angles-own-line > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.photos-angles-own-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.angles-owner-name {
+  color: var(--text-2);
+}
+
+.photos-angles-own-name {
+  display: inline-block;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+/* «ещё N категорий» / the strip's «ещё N»: a disclosure in the sentence, the list it opens under it. */
+.angles-more {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  text-decoration: none;
+}
+
+.angles-owners {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 6px 0 0 19px;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.angles-owners[hidden] {
+  display: none;
+}
+
 .photos-gen-side {
   display: flex;
   flex-direction: column;
@@ -2281,6 +2347,11 @@ input[type="range"]::-webkit-slider-thumb {
 
   .photos-scenes {
     width: 400px;
+  }
+
+  /* «Ракурсы» sits above its chips here: the line under them starts under the label. */
+  .photos-angles-own {
+    margin-left: 0;
   }
 }
 

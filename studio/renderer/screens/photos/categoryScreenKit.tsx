@@ -68,11 +68,34 @@ export function category(n: number, name: string, pool: CategoryPool = PARIS_POO
   };
 }
 
+/**
+ * CS.8: «Домашнее у кровати» (CatCreateDoneAngles, CatSheetAngles): a description that names the angle («Вид сзади или вполоборота») keeps it in the pool,
+ * stored as the model gave it (back first); its activities open with the body position, each within the 35 characters.
+ */
+export const BED_POOL: CategoryPool = {
+  locations: [
+    place("unmade bed with white linen", ["morning", "midday"], ["lying on her stomach, reading", "lying on her back, stretching"]),
+    place("edge of the bed by the window", ["morning"], ["sitting on the bed edge, yawning", "sitting up in bed, pulling on socks"]),
+    place("pillows against the headboard", ["evening", "night"], ["lying on her side, reading a book", "kneeling, fluffing a pillow"]),
+    place("bedroom window with sheer curtains", ["morning", "golden hour"], ["standing at the window, stretching", "leaning on the sill, holding a mug"]),
+    place("bedside nightstand with a lamp", ["evening"], ["kneeling on the bed, by the lamp", "lying on her stomach, writing"]),
+    place("rug at the foot of the bed", ["midday"], ["sitting cross-legged on the rug", "lying on the rug, scrolling"]),
+  ],
+  outfits: ["oversized tee", "striped pyjamas", "satin nightgown", "grey lounge set"],
+  shotDeck: ["friend", "friend", "candid", "candid", "selfie"],
+  poses: ["back", "three-quarter"],
+};
+
 export const PARIS = category(1, "Кофейни Парижа", PARIS_POOL, {
   description: "Парижские кофейни и улочки вокруг них: утро с круассаном у окна, терраса на тротуаре, книжная лавка рядом, прогулка по набережной Сены.",
 });
 export const WINTER = category(2, "Горы зимой", WINTER_POOL);
 export const MONO = category(3, "Студия ч/б", WINTER_POOL);
+export const BED = category(4, "Домашнее у кровати", BED_POOL, {
+  description: "Дома у кровати: лежит на животе и листает журнал, сидит на краю кровати, потягивается утром у окна. Вид сзади или вполоборота, лица почти не видно. Пижама, атласная сорочка, оверсайз-футболка.",
+  label: "bedside at home",
+  spentMicros: 6_000,
+});
 
 export function interruptedCreate(patch: Partial<CategoryInterrupted> = {}): CategoryInterrupted {
   return {

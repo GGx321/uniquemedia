@@ -182,7 +182,12 @@ describe("regenerate (paid)", () => {
     const box = within(sheet()).getByLabelText(/^Новое описание/) as HTMLTextAreaElement;
     expect(describeElement(document.activeElement)).toBe(describeElement(box));
     expect(box.value).toBe(PARIS.description);
-    expect(within(sheet()).getByText("Новый набор заменит места, наряды и кадры; название останется. Уже составленные сцены и идущие запуски не изменятся.")).toBeDefined();
+    // CS.8: the angles are re-read from the new description, and ⟳ in an open set takes the new pool.
+    expect(
+      within(sheet()).getByText(
+        "Новый набор заменит места, наряды, кадры и ракурсы — ракурсы снова возьмутся из описания; название останется. Составленные сцены и идущие запуски не изменятся; «Другая сцена» возьмёт уже новый.",
+      ),
+    ).toBeDefined();
     expect(regenButton().textContent).toBe("Пересоздать · до $0.045");
     fireEvent.change(box, { target: { value: "Кофейни и бистро Парижа" } });
     engine.delayNext("categories.regenerate", 100);
@@ -199,10 +204,10 @@ describe("regenerate (paid)", () => {
     runAll(scheduler);
     await flush();
     expect(within(sheet()).getByText((_, el) => el?.textContent === "Набор пересоздан · потрачено $0.005")).toBeDefined();
-    // What it changes, truly (CS.7 L3): a running run keeps its own copy; an open set keeps the scenes it has, but its ⟳ draws from the new pool.
+    // What it changes, truly (CS.7 L3; CS.8 adds the angles): a running run keeps its own copy; an open set keeps the scenes it has, but its ⟳ draws from the new pool.
     expect(
       within(sheet()).getByText(
-        "Ниже — новые места, наряды и кадры. Они идут в следующие наборы и запуски. Идущий запуск остался со старым — у него своя копия. В открытом наборе сцен готовые сцены остались как были, а «Другая сцена» возьмёт место уже из нового.",
+        "Ниже — новые места, наряды, кадры и ракурсы. Они идут в следующие наборы и запуски. Уже составленные сцены остались как были; «Другая сцена» в открытом наборе возьмёт новые. Идущий запуск — со старым, у него своя копия.",
       ),
     ).toBeDefined();
     expect(within(sheet()).getByText(withText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · пересоздана \d+ \S+ · всего потрачено \$0\.010$/))).toBeDefined();

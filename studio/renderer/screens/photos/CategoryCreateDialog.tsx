@@ -10,7 +10,7 @@ import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { useModalDialog } from "../../ui/useModalDialog";
 import { busyElsewhere, categoryPrice, PoolPreview, priceRange, priceSource, useSeconds, worstOf } from "./categoryParts";
-import { callFailure, createdLine, createdTime, descriptionProblem, nameProblem } from "./categoryText";
+import { callFailure, createdLine, createdTime, DESCRIPTION_HINT, descriptionProblem, nameProblem } from "./categoryText";
 import { paidBlockedReason } from "./runForm";
 
 // CS.3: «Новая категория» (CatCreate, CatCreateBusy, CatCreateDone, CatCreateRejected, CatCreatePrice; the CategoryStates sheet's checks,
@@ -234,7 +234,7 @@ export function CategoryCreateDialog({
                     </p>
                   )}
                   <p id={hintId} className="field-hint">
-                    Где она бывает, что там делает, во что одета. Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — только неоткровенные, как во всех категориях.
+                    {DESCRIPTION_HINT}
                   </p>
                 </div>
               </fieldset>

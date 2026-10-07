@@ -836,6 +836,88 @@
   margin-right: auto;
 }
 
+/* ── CS.8: a category's angles (CatCreateDoneAngles, CatSheet, CatSheetAngles; CategoryStates F) ── */
+
+/* Read-only after «Кадры» in the «готово» dialog: the label, the tags (or «как в карточке генерации»), where they came from on the right; the note under. */
+.cat-angles-ro {
+  gap: 6px;
+}
+
+.cat-angles-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 22px;
+}
+
+.cat-angles-tags {
+  display: flex;
+  gap: 6px;
+}
+
+.cat-angle-tag {
+  height: 22px;
+  color: var(--text);
+}
+
+.cat-angles-none {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.cat-angles-src {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* In the sheet, between «Описание» and «Места»: the label row keeps the label's 16 px (as «Описание» does), the chips on one line, the hint under them. */
+.cat-angles-head {
+  align-items: center;
+  height: 16px;
+}
+
+.cat-angles-label {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.cat-angles-free {
+  font-size: 11px;
+}
+
+.cat-angles-saving {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+
+.cat-angles-saving .spin {
+  width: 11px;
+  height: 11px;
+  border-width: 1.6px;
+}
+
+.cat-angle-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* «как в карточке»: the two angles the card always gives, pressed but dimmed (README «CS.8d round 1» M1). */
+.cat-angle-implied {
+  opacity: 0.55;
+}
+
+.cat-angle-chips .chip[aria-disabled="true"] {
+  cursor: default;
+}
+
+.cat-angles-error {
+  color: var(--danger);
+}
+
 /* Under 1440 the panel is narrower (the design's 680 px at 1200) and its list too. */
 @media (max-width: 1439px) {
   .cat-sheet {
