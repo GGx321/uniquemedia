@@ -182,6 +182,7 @@ export const CATEGORY_REASONS_RU = {
   "below-minimum": "Набор не может стать меньше: в категории остаются не меньше 5 мест и 3 образов. Уберите другое или пересоздайте набор.",
   "mirror-needed": "Колода кадров включает съёмку в зеркале, поэтому в наборе должно остаться место с зеркалом. Уберите другое место.",
   "item-not-found": "Этого места или образа в категории уже нет — возможно, его убрали. Обновите список.",
+  "library-unreadable": "Диск не отдал часть записей библиотеки (так бывает, когда файл занят антивирусом или диск не отвечает), поэтому Studio не может проверить имя и число категорий. Ничего не создано и не потрачено — повторите через секунду.",
 } as const satisfies Record<CategoryReason, string>;
 
 /** Why a scene-set command was refused, for VALIDATION's `sceneReason`: each text names the cause and the way out; the window names the scene itself from `sceneId`. */
@@ -202,6 +203,7 @@ export const SCENE_REASONS_RU = {
   "no-open-write": "Такой незавершённой записи уже нет — возможно, её закрыли в другом окне. Обновите экран.",
   "no-attempts-left": "У этой записи не осталось попыток. Закройте её или напишите сцены заново.",
   "nothing-to-dismiss": "У этой сцены нет незавершённой записи, которую можно закрыть. Обновите экран.",
+  "library-unreadable": "Диск не отдал часть наборов сцен этого аватара (так бывает, когда файл занят антивирусом или диск не отвечает), поэтому Studio не может проверить, нет ли уже открытого набора. Ничего не записано и не потрачено — повторите через секунду.",
 } as const satisfies Record<SceneReason, string>;
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */

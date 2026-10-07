@@ -47,6 +47,19 @@ describe("EngineError.sceneReason", () => {
   });
 });
 
+describe("library-unreadable (CS.7 fix round 2)", () => {
+  test("is a scene reason that names no scene", () => {
+    expect(SCENE_REASONS).toContain("library-unreadable");
+    expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "library-unreadable" }).success).toBe(true);
+    expect(EngineError.safeParse({ code: "VALIDATION", sceneReason: "library-unreadable", sceneId: 3 }).success).toBe(false);
+  });
+
+  test("its text says nothing was written or spent, and to retry", () => {
+    expect(SCENE_REASONS_RU["library-unreadable"]).toContain("Ничего не записано");
+    expect(SCENE_REASONS_RU["library-unreadable"]).toContain("повторите");
+  });
+});
+
 describe("SCENE_REASONS_RU", () => {
   test("every reason has a text of its own, and none is the general one", () => {
     const texts = SCENE_REASONS.map((reason) => SCENE_REASONS_RU[reason]);

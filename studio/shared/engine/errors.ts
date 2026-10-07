@@ -283,8 +283,9 @@ export function commonPhotoReason(reasons: readonly (PhotoUnavailableReason | un
  * - below-minimum: the removal would leave fewer places or outfits than a pool keeps.
  * - mirror-needed: the removal would take the last place with a mirror from a deck that can draw a mirror shot.
  * - item-not-found: the place or outfit to remove is not in the category (it may have been removed already).
+ * - library-unreadable: the disk failed a read (a record or the folder) that the check for a new name or the limit needs, so the engine could not tell and wrote nothing (additive, CS.7 fix round 2).
  */
-export const CATEGORY_REASONS = ["limit", "name-taken", "below-minimum", "mirror-needed", "item-not-found"] as const;
+export const CATEGORY_REASONS = ["limit", "name-taken", "below-minimum", "mirror-needed", "item-not-found", "library-unreadable"] as const;
 export const CategoryReason = z.enum(CATEGORY_REASONS);
 export type CategoryReason = z.infer<typeof CategoryReason>;
 
@@ -311,6 +312,7 @@ const SceneIdNumber = z.number().int().min(1).max(10_000);
  * - no-open-write: the set has no unresolved write with that number (resume, dismiss).
  * - no-attempts-left: the unresolved write has no attempt left (resume).
  * - nothing-to-dismiss: a scene named in a dismissal has no unresolved rewrite.
+ * - library-unreadable: the disk failed a read of the avatar's scene sets (a record or the folder) in the check that lets a new set in, so the engine could not tell whether one is open and wrote nothing (additive, CS.7 fix round 2).
  */
 export const SCENE_REASONS = [
   "set-used",
@@ -329,6 +331,7 @@ export const SCENE_REASONS = [
   "no-open-write",
   "no-attempts-left",
   "nothing-to-dismiss",
+  "library-unreadable",
 ] as const;
 export const SceneReason = z.enum(SCENE_REASONS);
 export type SceneReason = z.infer<typeof SceneReason>;
