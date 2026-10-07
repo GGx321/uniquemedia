@@ -368,6 +368,8 @@ export class SceneSetService {
     let claimed: string | null = null;
     /** The live entry THIS call made: a refused write must never delete another job's. */
     let mine: LiveJob | null = null;
+    /** Set when a cancel beat the job's start: it is registered and ended cancelled once the call has let go of the set. */
+    let cancelledJob: { jobId: string; avatarId: string } | null = null;
     try {
       // A set whose job runs refuses before anything is read, claimed or written.
       if (this.#live.has(sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${sceneSetId} is being written; wait for that to end (or cancel it)` });
@@ -398,6 +400,12 @@ export class SceneSetService {
       const estimate = plan === null ? writeEstimate(priced, set, ledger) : reviewWriteEstimate(priced, set.models.text, plan.count, plan.attemptsLeft);
       deps.checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
       deps.checkMonthlyRoom(budget, estimate.worstMicros);
+      // A cancel that came while the prices loaded ends the job before the file is touched: no write number, no marker, no reserve held.
+      if (mine.cancelled === true) {
+        deps.jobs.startScenes(jobId, { sceneSetId, avatarId, total: 0 });
+        cancelledJob = { jobId, avatarId };
+        return { jobId };
+      }
       let started: StoredSceneSet;
       try {
         started = await library.sceneSets.update(
@@ -425,7 +433,19 @@ export class SceneSetService {
         if (mine !== null && this.#live.get(sceneSetId) === mine) this.#live.delete(sceneSetId);
         deps.paidEnd();
         if (claimed !== null) deps.releaseAvatar(claimed);
+        if (cancelledJob !== null) this.#endCancelledUnstarted(sceneSetId, cancelledJob);
       }
+    }
+  }
+
+  /** Ends a job that was cancelled before it began, announcing it like any other cancelled job; the set's file was never touched. */
+  #endCancelledUnstarted(sceneSetId: string, job: { jobId: string; avatarId: string }): void {
+    const deps = this.#deps;
+    try {
+      deps.jobs.finishScenes(job.jobId, { status: "cancelled" });
+      deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.cancelled", payload: { kind: "scenes", jobId: job.jobId, sceneSetId, avatarId: job.avatarId } });
+    } catch (error) {
+      deps.warn(`studio engine: the end of scenes job ${job.jobId} could not be announced (${detailOfError(error)})`);
     }
   }
 

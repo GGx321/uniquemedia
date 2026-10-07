@@ -719,6 +719,37 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     expect((await setOf(engine, avatarId)).status).toBe("ready");
   });
 
+  test("a cancel while the write awaits the prices leaves the set's file untouched: no write number, no marker, no idea write", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let asked = false;
+    const net = sceneNetwork({
+      prices: async () => {
+        asked = true;
+        await gate;
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    const view = await setOf(engine, avatarId);
+    const before = readFileSync(setPath(avatarId), "utf8");
+    const pending = engine.handle(writeCommand(view.revision, 2 * ATTEMPT, idea("кофе", 1)));
+    await until(() => asked, "the price request");
+
+    ok(await engine.handle(command("scenes.cancel", { sceneSetId: SET })));
+    release();
+    const end = await jobEnd(events, jobOf(await pending));
+
+    expect(end.type).toBe("job.cancelled");
+    expect(readFileSync(setPath(avatarId), "utf8")).toBe(before);
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
+  });
+
   test("a cancel mid-request leaves the reserve open and marks the scene as cancelled", async () => {
     const avatarId = await seedAvatar();
     await seedReview(avatarId);
