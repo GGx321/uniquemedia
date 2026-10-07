@@ -1478,13 +1478,20 @@ them to the draw the write was recorded with (a write recorded before CS.8a and 
 gives). Floor pin for the idea call (`ideaWriter.test.ts`): five 500-character ideas, the worst refusal, 12,832 tokens against 14,000 (1,168 of headroom, was
 11,757 and 2,243; the pin requires 200).
 
+**The mirror on «Авто» (owner addition after the design review).** `scenes.ts` `ideaNamesMirror(idea)` (`/зеркал|mirror/i`, a test on the text alone) is decided
+BEFORE the call: `planIdea` stores `mirrorAllowed: true` in the idea write's record (only when the shot is «Авто» and the idea names a mirror; absent in every older record and
+read as false). Only then does the idea prompt offer «friend, selfie, mirror, candid or photographer» (otherwise «Never choose the mirror shot.»), the `scene_ideas` schema (`ideaJsonSchema(mirrorAllowed)`)
+list `mirror`, and `readIdeaAnswer` accept it; without it a `mirror` answer is a `bad-angle` refusal, and the pairing rule holds either way (a mirror shot faces the camera: back and profile
+are refused). A mirror the owner chose himself works as before. **Set view:** `SceneSetCategory` gained optional `poses` (the category snapshot's angles, from the set's own snapshot), so the strip's
+«у «{имя}» — свои; у своих сцен — по описанию» line has what it needs; the per-scene `pose` was already in the view. The mock does the same at plan time (a redraw does not refresh the mock's angles).
+
 **Mock.** `mockCategoryPool` reads the angles and the body position from the description (сзади / со спины / back view / from behind → back, профиль / profile →
 profile, спереди / анфас → front, в три четверти → three-quarter; на животе → «lying on her stomach, » + the activity's first word, within the 35 characters);
 the canary's description gives `["back"]` and activities that all open with «lying on her stomach». The mock's compose, redraw and idea writes follow the engine's
 rules, `categories.update` takes `poses`, and `studio/scripts/mockOpenRouter.ts` answers the pool call (the same description, `["back"]`) and the idea schema. Parity:
 one new free-command scenario (set, replace, clear, with a rename, a refused removal, the contract's refusals, an unknown category); the golden only grew.
 
-Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 6996 + 6799 + 6821 = 20616 passing, 34 skipped, 0 failing (this
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7436 + 6650 + 6561 = 20647 passing, 34 skipped, 0 failing (this
 machine; CI is the run of record). Two existing tests changed on purpose, both because the behaviour they pinned is the one the decision replaced: an idea write's
 pose no longer follows the set's «Ракурсы» (the model picks it), and the fake model in the idea tests now answers the new schema.
 
