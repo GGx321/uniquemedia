@@ -238,6 +238,21 @@ describe("the 50-category limit", () => {
     expect((await s.list()).categories).toHaveLength(MAX_CUSTOM_CATEGORIES);
   });
 
+  test("a rename to the name of a hidden (51st or later) category is refused: the listing cuts at 50, the name check does not", async () => {
+    const s = store();
+    await fill(s, MAX_CUSTOM_CATEGORIES + 1);
+    const listed = await s.list();
+    expect(listed.overLimit).toBe(1);
+    const shown = new Set(listed.categories.map((c) => c.name));
+    const hidden = Array.from({ length: MAX_CUSTOM_CATEGORIES + 1 }, (_, i) => `Fill ${i}`).find((name) => !shown.has(name));
+    expect(hidden).toBeDefined();
+    const target = listed.categories[0];
+    if (target === undefined || hidden === undefined) throw new Error("the fill left nothing to rename");
+
+    expect(await codeOf(s.update(target.categoryId, { name: hidden }))).toBe("name-taken");
+    expect(await codeOf(s.update(target.categoryId, { name: ` ${hidden.toUpperCase()} ` }))).toBe("name-taken");
+  });
+
   test("the 50th is allowed, and a deleted one makes room", async () => {
     const s = store();
     await fill(s, MAX_CUSTOM_CATEGORIES - 1);
@@ -498,6 +513,79 @@ describe("a job's spend is booked once (the booked-jobs key)", () => {
     expect(kept[0]).toBe(id(2));
     expect(kept.at(-1)).toBe(id(201));
     expect((await s.get("cat-paris-cafes"))?.spentMicros).toBe(201);
+  });
+
+  test("the cap does not evict an id whose pending record is still in the folder: that call may yet be booked again", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 0 }));
+    const id = (n: number) => `job-${String(n).padStart(8, "0")}`;
+    await s.writePending({ jobId: id(1), kind: "regenerate", name: "Кофейни", description: "кофейни", categoryId: "cat-paris-cafes", startedAt: "2026-10-05T12:00:00.000Z" });
+    for (let n = 1; n <= 201; n += 1) await s.addSpend("cat-paris-cafes", 1, id(n));
+
+    const kept = (await s.get("cat-paris-cafes"))?.bookedJobs ?? [];
+    expect(kept).toHaveLength(BOOKED_JOBS_CAP);
+    expect(kept).toContain(id(1));
+    expect(kept).not.toContain(id(2));
+    expect(kept.at(-1)).toBe(id(201));
+    // The retried booking of the pending call (a dismiss whose removal failed) still adds nothing.
+    expect((await s.addSpend("cat-paris-cafes", 1, id(1)))?.spentMicros).toBe(201);
+  });
+
+  test("the list never grows past its cap, even when every id in it has a pending record", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 0 }));
+    const id = (n: number) => `job-${String(n).padStart(8, "0")}`;
+    for (let n = 1; n <= BOOKED_JOBS_CAP; n += 1) {
+      await s.addSpend("cat-paris-cafes", 1, id(n));
+      await s.writePending({ jobId: id(n), kind: "regenerate", name: "Кофейни", description: "кофейни", categoryId: "cat-paris-cafes", startedAt: "2026-10-05T12:00:00.000Z" });
+    }
+    await s.addSpend("cat-paris-cafes", 1, id(BOOKED_JOBS_CAP + 1));
+
+    const kept = (await s.get("cat-paris-cafes"))?.bookedJobs ?? [];
+    expect(kept).toHaveLength(BOOKED_JOBS_CAP);
+    expect(kept.at(-1)).toBe(id(BOOKED_JOBS_CAP + 1));
+  });
+
+  test("a crash between the amount and the key cannot happen: both go in one record write, so a write that dies leaves neither and a retry books once", async () => {
+    // The disk lets the first record write after arming through and refuses every later one: a booking made of TWO writes (the amount, then the
+    // key) would die between them, leave the amount without its key, and a retry would add the amount again.
+    let armed = false;
+    let renames = 0;
+    const s = store({
+      beforeRename: () => {
+        if (!armed) return;
+        renames += 1;
+        if (renames > 1) throw new Error("the process died here");
+      },
+    });
+    await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000 }));
+    armed = true;
+
+    await s.addSpend("cat-paris-cafes", 1_000, "job-00000001").catch(() => null);
+    armed = false;
+    const retried = await s.addSpend("cat-paris-cafes", 1_000, "job-00000001");
+
+    expect(retried?.spentMicros).toBe(6_000);
+    expect(retried?.bookedJobs).toEqual(["job-00000001"]);
+  });
+
+  test("a regeneration's answer and its cost are one write too: a write that dies leaves the old pool and the old total", async () => {
+    let fail = false;
+    const s = store({
+      beforeRename: () => {
+        if (fail) throw new Error("the process died here");
+      },
+    });
+    const made = await s.create(input({ categoryId: "cat-paris-cafes", spentMicros: 5_000, label: "Old label" }));
+    fail = true;
+
+    await s.replacePool("cat-paris-cafes", { description: "new", label: "New label", style: "phone", pool: made.pool, model: "x-ai/grok-4.3", spentMicros: 1_000, jobId: "job-00000002" }).catch(() => null);
+    fail = false;
+
+    const after = await s.get("cat-paris-cafes");
+    expect(after?.label).toBe("Old label");
+    expect(after?.spentMicros).toBe(5_000);
+    expect(after?.bookedJobs).toEqual([]);
   });
 
   test("a job still inside the cap is not booked twice after 199 later jobs", async () => {

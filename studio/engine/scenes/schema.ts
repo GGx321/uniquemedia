@@ -60,6 +60,7 @@ export const AttemptIdBaseSchema = z.string().regex(/^slot-[1-9][0-9]*$/, "must 
  *  avoidance succeeded. */
 export const PlanSlotSchema = z
   .strictObject({
+    // Only positive here: that it is also at most the run's count, and unique, is the run plan's own check (runs/plan.ts RunPlanSchema).
     slotIndex: z.int().positive(),
     category: PlannerCategorySchema,
     location: NonEmpty,

@@ -308,6 +308,9 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  // The image-model catalogue: the list GET, then every candidate's endpoints GET at once, each with its own timeout. Without an entry
+  // it fell back to the default 30 s, which is exactly two timeouts.
+  "settings.imageModels": 2 * PRICE_FETCH_TIMEOUT_MS + 15_000,
   // CS.2: the pool call is the descriptor's mould: a price load, then every pool attempt at its slowest. The estimate waits for a price load that times out.
   "categories.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "categories.create": PRICE_FETCH_TIMEOUT_MS + POOL_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

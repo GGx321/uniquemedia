@@ -105,7 +105,8 @@ function writerCall(textModel: string): typeof WRITER_CALL {
 export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck): PriceModels {
   const imageModels = [...new Set(runRoute(models.imageModel, models.imageQuality).map((c) => c.model))];
   const chatModels = imageAgeCheck === "on" ? [models.textModel, AGE_CHECK_CALL.model] : [models.textModel];
-  return { imageModels, chatModels: [...new Set(chatModels)] };
+  // A run sends photo requests: its image models' endpoints are rechecked when the price loads.
+  return { imageModels, chatModels: [...new Set(chatModels)], checkRequestShape: true };
 }
 
 /**
@@ -199,6 +200,8 @@ export const RunPlanSchema = z
     if (slots.length !== run.request.count) ctx.addIssue({ code: "custom", message: `the plan has ${slots.length} slots for a request of ${run.request.count}`, path: ["scenes", "slots"] });
     if (run.request.avatarId !== run.avatarId) ctx.addIssue({ code: "custom", message: "the request must name the plan's own avatar", path: ["request", "avatarId"] });
     if (new Set(slots.map((s) => s.slotIndex)).size !== slots.length) ctx.addIssue({ code: "custom", message: "a slot index must never repeat", path: ["scenes", "slots"] });
+    // The planner numbers the slots 1..count, and everything downstream (the writer's chunks, the attempt ids) is keyed by that number.
+    if (slots.some((s) => s.slotIndex > run.request.count)) ctx.addIssue({ code: "custom", message: `a slot index must be between 1 and the request's count (${run.request.count})`, path: ["scenes", "slots"] });
     if (run.capMicros > run.plannedWorstMicros) ctx.addIssue({ code: "custom", message: "the cap must not exceed the worst case estimated when the run was planned", path: ["capMicros"] });
     const sameSlots = run.slotAttempts.length === slots.length && slots.every((s, i) => run.slotAttempts[i]?.slotIndex === s.slotIndex);
     if (!sameSlots) ctx.addIssue({ code: "custom", message: "every planned slot needs its own pre-allocated attempts, in plan order", path: ["slotAttempts"] });

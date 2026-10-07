@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { FRAME_W } from "./constants";
+import { FRAME_W, MAX_CLIPS, MAX_TOTAL_MS } from "./constants";
 import { mulberry32, randInt } from "./random.testkit";
 import { progressSegments, SEGMENT_GAP, SEGMENT_HEIGHT, SEGMENT_MARGIN, SEGMENT_TOP, segmentFillWidth } from "./segments";
 import { clipRanges } from "./timeline";
@@ -58,9 +58,15 @@ describe("progressSegments (preview-only: never rendered)", () => {
     }
   });
 
-  test("a 500 ms clip beside nineteen 15.0 s clips still gets a visible bar", () => {
-    const segments = progressSegments(clipsOf([500, ...Array.from({ length: 19 }, () => 15_000)]));
-    expect(segments[0]?.rect.w).toBeGreaterThanOrEqual(1);
+  test("in a full montage (twenty clips, 15.0 s in all) the shortest clip, 100 ms, gets a 4 px bar: floor(742 px x 3 of 450 frames)", () => {
+    const clips = clipsOf([100, 500, ...Array.from({ length: 18 }, () => 800)]);
+    expect(clips).toHaveLength(MAX_CLIPS);
+    expect(clips.reduce((sum, clip) => sum + clip.durationMs, 0)).toBe(MAX_TOTAL_MS);
+
+    const segments = progressSegments(clips);
+
+    expect(segments[0]?.rect.w).toBe(4);
+    expect(segments.every((segment) => segment.rect.w >= 4)).toBe(true);
   });
 
   test("refuses a duration that is not a multiple of 100 ms", () => {

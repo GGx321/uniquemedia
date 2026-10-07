@@ -332,6 +332,18 @@ describe("runs.estimate", () => {
     expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
   });
 
+  test("a model whose live endpoints no longer list 9:16 is PRICE_UNAVAILABLE: the run is refused before any reserve, not slot by slot with a free 400 each", async () => {
+    const avatarId = await seedAvatar();
+    const grok = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "money", "fixtures", "endpoints-grok-imagine-image-2.0.json"), "utf8"));
+    const dropped = { ...grok, endpoints: grok.endpoints.map((e: { supported_parameters: object }) => ({ ...e, supported_parameters: { ...e.supported_parameters, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } } })) };
+    const net = runNetwork({ prices: (call) => (call.url.endsWith("x-ai/grok-imagine-image-2.0/endpoints") ? { status: 200, body: dropped } : OFFLINE) });
+    const { engine } = await engineOver(net, { imageQuality: "low" });
+
+    expect(failed(await engine.handle(startRun(avatarId, FOUR_WORST))).error.code).toBe("PRICE_UNAVAILABLE");
+    expect(net.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    expect(readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve")).toHaveLength(0);
+  });
+
   test("is NOT_FOUND for an unknown avatar and for a draft: only a saved avatar with a master gets photos", async () => {
     const draft = await seedAvatar({ status: "draft" });
     const { engine } = await engineOver(runNetwork());

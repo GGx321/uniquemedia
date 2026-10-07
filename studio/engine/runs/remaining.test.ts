@@ -1,12 +1,13 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ImageAgeCheck } from "../../shared/engine";
 import type { ReleaseLine, ReserveLine, SettleLine } from "../money/ledger";
-import { PriceBook } from "../money/prices";
+import { MoneyError } from "../money/errors";
+import { PriceBook, type ImageWorstCaseRequest } from "../money/prices";
 import { setupMoney, type Money } from "../openrouter/testing/fakes";
 import { plan } from "../scenes";
 import { foldRun, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, runEstimate, type RunPlan } from "./plan";
-import { remainingEstimate, remainingPlan, scopeCommitted } from "./remaining";
+import { remainingEstimate, remainingPlan, remainingPlanOrNull, scopeCommitted } from "./remaining";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -276,5 +277,65 @@ describe("scopeCommitted", () => {
     ] as const;
     for (const line of lines) await money.ledger.append(line);
     expect(scopeCommitted(money.ledger, { runId: RUN_ID })).toBe(40_000 + IMAGE_WORST);
+  });
+});
+
+// ---------- remainingPlanOrNull: only an unpriceable run is unknown; a defect is not swallowed ----------
+
+class EmptyBook extends PriceBook {
+  constructor() {
+    super(new Map(), new Map());
+  }
+}
+
+class DefectiveBook extends PriceBook {
+  constructor() {
+    super(new Map(), new Map());
+  }
+  override imageWorstCase(_req: ImageWorstCaseRequest): number {
+    throw new RangeError("a defect that is not a missing price");
+  }
+}
+
+function stateOf(run: RunPlan) {
+  const ledger = { reserveOf: () => undefined, closeOf: () => undefined };
+  return { ledger, state: foldRun(run, { events: [], photos: [], ...ledger }) };
+}
+
+describe("remainingPlanOrNull", () => {
+  test("is the plan itself when the run can be priced", () => {
+    const run = runPlan(2);
+    const { ledger, state } = stateOf(run);
+
+    expect(remainingPlanOrNull(PRICED, run, state, 0, ledger)).toEqual(remainingPlan(PRICED, run, state, 0, ledger));
+  });
+
+  test("is null when the book has no price for the run's models (PRICE_UNAVAILABLE), so runs.list can still show the other runs", () => {
+    const run = runPlan(2);
+    const { ledger, state } = stateOf(run);
+
+    expect(remainingPlanOrNull({ book: new EmptyBook(), asOf: "2026-09-24" }, run, state, 0, ledger)).toBeNull();
+  });
+
+  test("lets an error that is not PRICE_UNAVAILABLE propagate: a RangeError is a defect, not an unknown price", () => {
+    const run = runPlan(2);
+    const { ledger, state } = stateOf(run);
+
+    expect(() => remainingPlanOrNull({ book: new DefectiveBook(), asOf: "2026-09-24" }, run, state, 0, ledger)).toThrow(RangeError);
+  });
+
+  test("lets a money error with another code propagate too", () => {
+    class LedgerBook extends PriceBook {
+      constructor() {
+        super(new Map(), new Map());
+      }
+      override imageWorstCase(_req: ImageWorstCaseRequest): number {
+        throw new MoneyError("LEDGER_CORRUPT", "not a price problem");
+      }
+    }
+    const run = runPlan(2);
+    const { ledger, state } = stateOf(run);
+
+    expect(() => remainingPlanOrNull({ book: new LedgerBook(), asOf: "2026-09-24" }, run, state, 0, ledger)).toThrow(MoneyError);
   });
 });

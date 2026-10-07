@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { lstat, mkdir, readFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, stat } from "node:fs/promises";
 import { availableParallelism, totalmem } from "node:os";
 import { join } from "node:path";
 import {
@@ -98,7 +98,7 @@ import { buildRunPlan, RunPlanSchema, runEstimate, runPriceModels, sceneCategory
 import { CpuPool, NetworkPool } from "./runs/pools";
 import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
-import { capFundsResume, remainingPlan, scopeCommitted } from "./runs/remaining";
+import { capFundsResume, remainingPlan, remainingPlanOrNull, scopeCommitted } from "./runs/remaining";
 import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
 import { planWithPools, POOLS } from "./scenes";
 import { runCategoryJob } from "./scenes/categoryJob";
@@ -528,7 +528,8 @@ interface OpenedLibrary {
 /** Whether the library's own folder and its `library.json` are on the disk now (false for an unmounted disk, a moved folder, a read that cannot be done). */
 async function libraryIsThere(root: string): Promise<boolean> {
   try {
-    return (await lstat(root)).isDirectory() && (await lstat(join(root, LIBRARY_FILE))).isFile();
+    // `stat` for the root: it follows a link, so a library folder that is a link to the real one (a folder on another disk) is there; a link to nothing throws.
+    return (await stat(root)).isDirectory() && (await lstat(join(root, LIBRARY_FILE))).isFile();
   } catch {
     return false;
   }
@@ -1947,14 +1948,7 @@ export class Engine {
       // Ended by its cap only when prices are known: unpriced, the engine cannot tell and leaves the run resumable.
       // A run whose model's prices cannot reserve its requests now (no listed price for a reference image) is unknown like an unpriced one:
       // it must not make `runs.list` fail and hide the healthy runs. A resume of it is refused with PRICE_UNAVAILABLE by `#remaining`.
-      let remaining: ReturnType<typeof remainingPlan> | null = null;
-      if (open > 0 && book !== null) {
-        try {
-          remaining = remainingPlan(book, plan, state, committed, ledger);
-        } catch (error) {
-          if (!(error instanceof MoneyError && error.code === "PRICE_UNAVAILABLE")) throw error;
-        }
-      }
+      const remaining = open > 0 && book !== null ? remainingPlanOrNull(book, plan, state, committed, ledger) : null;
       const capExhausted = !running && open > 0 && remaining !== null && !money.budget.scopeNeedsReconcile({ runId }) && !capFundsResume(plan, committed, remaining.minToProgressMicros);
       return {
         runId,
@@ -2764,6 +2758,8 @@ export class Engine {
         // answer and its cost. That is a success the owner is told about, not a failure with a paid pool in raw/.
         const landed = await library.categories.get(call.recordId).catch(() => null);
         if (landed !== null && landed.bookedJobs.includes(jobId)) {
+          // Reported as done, but the folder's flush failed: the record may not survive a power cut. Said in the log, not to the owner.
+          console.warn(`studio engine: category call ${jobId} was written but the folder could not be flushed (${messageOf(error, "unknown error")})`);
           this.#emitCategory({ change: "upserted", category: summaryOf(landed) });
           return { record: landed, spentMicros: result.spentMicros };
         }

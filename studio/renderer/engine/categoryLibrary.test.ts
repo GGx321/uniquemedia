@@ -100,7 +100,7 @@ describe("the list", () => {
     await retained(h);
     expect(callsOf(h.engine, "categories.list")).toHaveLength(1);
     expect(names(h)).toEqual(["Кофейни Парижа", "Горы зимой"]);
-    expect(price(h)).toMatchObject({ expectedMicros: 6_000, worstMicros: 45_000 });
+    expect(price(h)).toMatchObject({ expectedMicros: 5_125, worstMicros: 45_000 });
     // A second screen retaining it asks nothing more.
     await retained(h);
     expect(callsOf(h.engine, "categories.list")).toHaveLength(1);
@@ -249,7 +249,7 @@ describe("a create", () => {
     expect(names(h)).toEqual(["Кофейни Парижа", "Рынки"]);
     expect(created).toEqual(["Рынки"]);
     const outcome = h.library.getView().outcomes.create;
-    expect(outcome?.ok === true && outcome.spentMicros).toBe(6_000);
+    expect(outcome?.ok === true && outcome.spentMicros).toBe(5_125);
   });
 
   test("a second create or a regenerate while one is on its way sends nothing", async () => {
@@ -395,9 +395,9 @@ describe("a regenerate", () => {
     await settle();
     const after = ready(h.library.getView()).categories[0];
     expect(after?.description).toBe("кофейни и бистро");
-    expect(after?.spentMicros).toBe(PARIS.spentMicros + 6_000);
+    expect(after?.spentMicros).toBe(PARIS.spentMicros + 5_125);
     const outcome = h.library.getView().outcomes.regenerate;
-    expect(outcome?.ok === true && outcome.spentMicros).toBe(6_000);
+    expect(outcome?.ok === true && outcome.spentMicros).toBe(5_125);
     expect(h.library.getView().regenerated.get(PARIS.categoryId)).toBe("regenerated");
     // A later failure does not take back that the pool was regenerated.
     h.engine.failNextCategoryCall({ code: "POOL_REJECTED" }, 11_000);

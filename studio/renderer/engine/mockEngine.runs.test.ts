@@ -44,6 +44,31 @@ test("runs.estimate prices a run like the Photos mockup: 20 photos is ≈ $1.01,
   expect(estimate).toMatchObject({ expectedMicros: 1_009_160, worstMicros: 3_075_000 });
 });
 
+test("runs.estimate prices the chosen quality like the engine: medium is $0.06 + $0.01 an attempt, so 20 photos cap at $4.275 (low: $3.075)", async () => {
+  const { client } = makeMock();
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(3_075_000);
+
+  await unwrap(client.request("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", imageQuality: "medium", textModel: "x-ai/grok-4.3" }));
+
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(4_275_000);
+});
+
+test("runs.estimate prices the chosen model like the engine: seedream-5-0-pro, with no quality knob, is its own $0.048 an attempt", async () => {
+  const { client } = makeMock();
+
+  await unwrap(client.request("settings.setModels", { imageModel: "bytedance-seed/seedream-5-0-pro", textModel: "x-ai/grok-4.3" }));
+
+  expect((await unwrap(client.request("runs.estimate", REQUEST))).estimate.worstMicros).toBe(60 * 48_000 + 75_000);
+});
+
+test("runs.start caps the run at the chosen quality's worst case, so a price accepted at the low quality is PRICE_CHANGED once medium is chosen", async () => {
+  const { client } = makeMock();
+  await unwrap(client.request("settings.setModels", { imageModel: "x-ai/grok-imagine-image-2.0", imageQuality: "medium", textModel: "x-ai/grok-4.3" }));
+
+  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 3_075_000 })).toMatchObject({ ok: false, error: { code: "PRICE_CHANGED" } });
+  expect(await client.request("runs.start", { ...REQUEST, acceptedWorstMicros: 4_275_000 })).toMatchObject({ ok: true });
+});
+
 test("the age check, when on, is priced into every attempt", async () => {
   const { client } = makeMock({ imageAgeCheck: "on" });
   const { estimate } = await unwrap(client.request("runs.estimate", REQUEST));

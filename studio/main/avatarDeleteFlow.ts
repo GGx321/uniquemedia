@@ -147,6 +147,13 @@ export async function handleAvatarDeleteCommand(command: AvatarDeleteCommand, de
       return errorResponseFor(command, NOT_VERIFIED);
     }
 
+    // The Trash takes a REAL path or not, and it is asked about the path that is moved: when the second look found the folder at another spelling
+    // than the first, the first answer was about a different path.
+    if (again.real !== checked.real && !(await deps.trashable(again.real))) {
+      await finish("kept");
+      return errorResponseFor(command, TRASH_REFUSED);
+    }
+
     let moveError: unknown = null;
     try {
       await deps.trash(again.real);

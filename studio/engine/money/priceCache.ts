@@ -5,6 +5,8 @@ import type { PriceBook } from "./prices";
 export interface PriceModels {
   imageModels: readonly string[];
   chatModels: readonly string[];
+  /** A run's models: the image endpoints are rechecked against Studio's requests (`loadPriceBook`'s `checkRequestShape`). */
+  checkRequestShape?: boolean;
 }
 
 /** A price book and the day its prices are from: the load's UTC day, or the fallback table's date. */
@@ -49,7 +51,7 @@ export class PriceCache {
   }
 
   get(models: PriceModels): Promise<PricedBook> {
-    const wanted = { imageModels: unique(models.imageModels), chatModels: unique(models.chatModels) };
+    const wanted: PriceModels = { imageModels: unique(models.imageModels), chatModels: unique(models.chatModels), ...(models.checkRequestShape === true ? { checkRequestShape: true } : {}) };
     const key = JSON.stringify(wanted);
     const entry = this.#entries.get(key);
     if (entry !== undefined && this.#monotonic() - entry.loadedAtMono < this.#ttl(entry.priced)) return Promise.resolve(entry.priced);
@@ -69,7 +71,7 @@ export class PriceCache {
 
   /** The last prices loaded for these models, due for a refresh or not; never loads. */
   peek(models: PriceModels): PricedBook | null {
-    const key = JSON.stringify({ imageModels: unique(models.imageModels), chatModels: unique(models.chatModels) });
+    const key = JSON.stringify({ imageModels: unique(models.imageModels), chatModels: unique(models.chatModels), ...(models.checkRequestShape === true ? { checkRequestShape: true } : {}) });
     return this.#entries.get(key)?.priced ?? null;
   }
 

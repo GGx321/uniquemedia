@@ -530,7 +530,8 @@ test.each([null, "low", "medium"] as const)("quality-prefixed fractional tiers w
 });
 
 // Fix round 3: a `<quality>_1k` variant beside a recognised-but-not-1K tier must not hide that tier. Only the exact
-// `<quality>_1k` price is safe to pick; every other case reserves the dearest of ALL variants.
+// `<quality>_1k` price is safe to pick. A quality with no `<quality>_1k` price reserves the dearest of ALL variants;
+// a null quality skips the tiers of 2K and above (Studio never requests them) and takes the dearest of the rest.
 const FIX_ROUND_3_CASES: { name: string; outputs: ImagePrice["outputs"]; low: number; medium: number; none: number }[] = [
   { name: "low_1k + medium_1.5k", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "medium_1.5k", micros: 70_000 }], low: 40_000, medium: 70_000, none: 70_000 },
   { name: "low_1k + 768", outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "768", micros: 60_000 }], low: 40_000, medium: 60_000, none: 60_000 },
@@ -539,7 +540,7 @@ const FIX_ROUND_3_CASES: { name: string; outputs: ImagePrice["outputs"]; low: nu
   { name: "low_1k + medium_2k + dearer base", outputs: [{ variant: null, micros: 90_000 }, { variant: "low_1k", micros: 40_000 }, { variant: "medium_2k", micros: 80_000 }], low: 40_000, medium: 90_000, none: 90_000 },
 ];
 
-test.each(FIX_ROUND_3_CASES)("$name: the exact quality_1k price when it exists; otherwise null skips 2K+ tiers and a missing quality takes the dearest of all", ({ outputs, low, medium, none }) => {
+test.each(FIX_ROUND_3_CASES)("$name: the exact quality_1k price when it exists; otherwise a missing tier takes the dearest of all, and null skips 2K+ tiers", ({ outputs, low, medium, none }) => {
   const price: ImagePrice = { outputs, inputImageMicros: 0 };
 
   expect(imageWorstCase(price, { quality: "low", refs: 0 })).toBe(low);
@@ -586,4 +587,180 @@ test("flux-3: sub-1K and fractional-K tiers are recognised, so the 1k price is t
   // flux-3 lists no input_image row: its output tier is 48_000, but a request with a reference cannot be reserved (M1).
   expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(48_000);
   expect(() => imageWorstCase(price, { quality: null, refs: 1 })).toThrow(MoneyError);
+});
+
+// ---------- reserve rounding (backlog item 8) ----------
+
+test("a listed price with a fraction of a micro-dollar is read up, so a reserve is never under the bill", () => {
+  const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.0400004 }, { billable: "input_image", unit: "image", cost_usd: 0.0000004 }] }] };
+
+  expect(parseImageEndpoints(body, "acme/img")).toEqual({ outputs: [{ variant: null, micros: 40_001 }], inputImageMicros: 1 });
+});
+
+test("a listed output price of a tenth of a micro-dollar is 1, not 0 (which would reserve nothing)", () => {
+  const body = { id: "acme/img", endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.0000001 }, { billable: "input_image", unit: "image", cost_usd: 0 }] }] };
+
+  expect(parseImageEndpoints(body, "acme/img").outputs).toEqual([{ variant: null, micros: 1 }]);
+});
+
+// ---------- backlog item 7: a leading-zero tier is not a tier we can read ----------
+
+test.each(["01k", "low_01k", "02k"])("a %s tier is unrecognised: the dearest output is the worst case", (variant) => {
+  const price: ImagePrice = { outputs: [{ variant: null, micros: 40_000 }, { variant, micros: 90_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(90_000);
+});
+
+test("a 0.75k tier (a real fractional tier) stays recognised: it is not mistaken for a leading-zero tier", () => {
+  const price: ImagePrice = { outputs: [{ variant: "1k", micros: 40_000 }, { variant: "0.75k", micros: 90_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(price, { quality: null, refs: 0 })).toBe(40_000);
+});
+
+test("at null quality an upper-case 4K or HIGH_RESOLUTION tier beside low_1k is skipped, but a 02k tier is unrecognised and the dearest wins", () => {
+  const upper: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "4K", micros: 120_000 }, { variant: "HIGH_RESOLUTION", micros: 130_000 }], inputImageMicros: 0 };
+  const zero: ImagePrice = { outputs: [{ variant: "low_1k", micros: 40_000 }, { variant: "02k", micros: 90_000 }], inputImageMicros: 0 };
+
+  expect(imageWorstCase(upper, { quality: null, refs: 0 })).toBe(40_000);
+  expect(imageWorstCase(zero, { quality: null, refs: 0 })).toBe(90_000);
+});
+
+// ---------- backlog item 3: a run rechecks that the endpoints still accept the requests Studio sends ----------
+
+/** The grok-imagine-image-2.0 endpoints body with its `supported_parameters` edited. */
+function grokEndpointsWith(edit: (p: Record<string, unknown>) => Record<string, unknown>): unknown {
+  const body = fixture("endpoints-grok-imagine-image-2.0.json") as { endpoints: { supported_parameters: Record<string, unknown> }[] };
+  return { ...body, endpoints: body.endpoints.map((e) => ({ ...e, supported_parameters: edit(e.supported_parameters) })) };
+}
+const GROK_URL = `${BASE}/images/models/${GROK_2}/endpoints`;
+
+async function loadChecked(routes: Record<string, unknown>, checkRequestShape: boolean) {
+  return loadPriceBook({ fetch: fakeFetch(routes), baseUrl: BASE, imageModels: [GROK_2], chatModels: [], checkRequestShape });
+}
+
+test("a run's price load refuses a model whose live endpoints no longer list 9:16: PRICE_UNAVAILABLE, not the dated table", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } }));
+
+  const err = await loadChecked({ [GROK_URL]: body }, true).catch((e: unknown) => e);
+
+  expect(err).toBeInstanceOf(MoneyError);
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a run's price load still prices a model that now requires a reference: a photo run always sends one", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, input_references: { type: "range", min: 1, max: 3 } }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load still prices a model that states no minimum for references", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, input_references: { type: "range", max: 3 } }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load refuses a model whose live endpoints accept no reference at all (max 0)", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, input_references: { type: "range", min: 0, max: 0 } }));
+
+  const err = await loadChecked({ [GROK_URL]: body }, true).catch((e: unknown) => e);
+
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a run's price load still prices a model that lost 3:4: a photo run never sends it", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "9:16"] } }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load refuses a model whose live endpoints no longer list 1K", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, resolution: { type: "enum", values: ["2K"] } }));
+
+  const err = await loadChecked({ [GROK_URL]: body }, true).catch((e: unknown) => e);
+
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a run's price load prices a model whose endpoints carry no supported_parameters: unknown is not a refusal", async () => {
+  const body = fixture("endpoints-grok-imagine-image-2.0.json") as { endpoints: Record<string, unknown>[] };
+  const stripped = { ...body, endpoints: body.endpoints.map(({ supported_parameters: _drop, ...rest }) => rest) };
+
+  const book = await loadChecked({ [GROK_URL]: stripped }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load prices a model whose supported_parameters has no readable values (schema drift)", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum" }, resolution: "1K" }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+// The fixed fallback model rides in EVERY run's imageModels, so its drift must not block a run on another main model.
+function seedreamWith(edit: (p: Record<string, unknown>) => Record<string, unknown>): unknown {
+  const body = fixture("endpoints-seedream-5-0-pro.json") as { endpoints: { supported_parameters: Record<string, unknown> }[] };
+  return { ...body, endpoints: body.endpoints.map((e) => ({ ...e, supported_parameters: edit(e.supported_parameters) })) };
+}
+async function loadRunWith(overrides: Record<string, unknown>) {
+  return loadPriceBook({
+    fetch: fakeFetch({ ...LIVE, ...overrides }),
+    baseUrl: BASE,
+    imageModels: [GROK_2, SEEDREAM],
+    chatModels: [],
+    checkRequestShape: true,
+  });
+}
+const SEEDREAM_URL = `${BASE}/images/models/${SEEDREAM}/endpoints`;
+
+test("a run is still priced when the fallback model lost 3:4", async () => {
+  const book = await loadRunWith({ [SEEDREAM_URL]: seedreamWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "9:16"] } })) });
+
+  expect(book.source).toBe("live");
+});
+
+test("a run is still priced when the fallback model now requires a reference (min 1)", async () => {
+  const book = await loadRunWith({ [SEEDREAM_URL]: seedreamWith((p) => ({ ...p, input_references: { type: "range", min: 1, max: 14 } })) });
+
+  expect(book.source).toBe("live");
+});
+
+test("a run is refused when the fallback model lost 9:16: PRICE_UNAVAILABLE", async () => {
+  const err = await loadRunWith({ [SEEDREAM_URL]: seedreamWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } })) }).catch((e: unknown) => e);
+
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a run is refused when a run model lost 9:16 even though the fallback is intact", async () => {
+  const err = await loadRunWith({ [GROK_URL]: grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } })) }).catch((e: unknown) => e);
+
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a price load that was not asked to check the request keeps its old behaviour: the same body is priced", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, false);
+
+  expect(book.imageWorstCase({ model: GROK_2, quality: "low", refs: 1 })).toBe(50_000);
+});
+
+test("a checked price load whose live fetch fails still serves the dated table: the model is one the table lists", async () => {
+  const book = await loadChecked({ [GROK_URL]: 503 }, true);
+
+  expect(book.source).toBe("fallback");
+  expect(book.imageWorstCase({ model: GROK_2, quality: "low", refs: 1 })).toBe(50_000);
+});
+
+test("a checked price load of an unchanged live body is priced live", async () => {
+  const book = await loadChecked({ [GROK_URL]: fixture("endpoints-grok-imagine-image-2.0.json") }, true);
+
+  expect(book.source).toBe("live");
 });

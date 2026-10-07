@@ -1,11 +1,28 @@
 import { z } from "zod";
 import { ImageModelCatalogue, ImageModelEntry, ImageQuality, ModelId } from "../../shared/engine";
 import type { Clock } from "../money/ledger";
-import { FALLBACK_IMAGE, getJson, imageWorstCase, parseImageEndpoints, PRICE_FETCH_TIMEOUT_MS, type FetchLike, type ImagePrice } from "../money/prices";
+import {
+  acceptsRequests,
+  EndpointsParams,
+  EnumParam,
+  FALLBACK_IMAGE,
+  getJson,
+  imageWorstCase,
+  parseImageEndpoints,
+  PHOTO_ASPECT_RATIO,
+  PHOTO_REFERENCES,
+  PORTRAIT_ASPECT_RATIO,
+  PRICE_FETCH_TIMEOUT_MS,
+  RangeParam,
+  WANTED_RESOLUTION,
+  type FetchLike,
+  type ImagePrice,
+} from "../money/prices";
 
 // The image models Settings offers (docs/studio/2026-10-05-image-models.md has
 // the research behind every rule here). A model is listed only when the exact
-// request photo runs send (1K, 9:16, one reference image) is valid for it AND
+// requests Studio sends are valid for it (a photo: 1K, 9:16, one reference image;
+// an avatar portrait: 3:4 and no reference) AND
 // its price is a per-image figure the ledger can bound. Everything is decided
 // from two free, public GETs: `/images/models` (names, a cheap pre-filter on
 // the union of the endpoints' parameters) and each candidate's
@@ -20,16 +37,7 @@ export const LIVE_CATALOGUE_TTL_MS = 30 * 60_000;
 /** A bundled or partial catalogue retries the live read sooner: the outage may be over. */
 export const FALLBACK_CATALOGUE_TTL_MS = 60_000;
 
-/** The request's fixed shape (openrouter/image.ts): the size and the aspect ratio a model must accept. */
-const WANTED_RESOLUTION = "1K";
-const WANTED_ASPECT_RATIO = "9:16";
-/** A photo run's master portrait is the one reference; a candidate portrait sends none. */
-const PHOTO_REFERENCES = 1;
-
-const EnumParam = z.object({ values: z.array(z.string()) });
-const RangeParam = z.object({ max: z.number() });
 const Modalities = z.array(z.string());
-
 const ListedModel = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
@@ -41,17 +49,6 @@ const ListedModel = z.object({
   }),
 });
 const ListBody = z.object({ data: z.array(z.unknown()) });
-
-/** What `/endpoints` says an endpoint accepts. An absent key means unsupported. */
-const EndpointParams = z.object({
-  supported_parameters: z.object({
-    resolution: EnumParam.optional(),
-    aspect_ratio: EnumParam.optional(),
-    quality: EnumParam.optional(),
-    input_references: RangeParam.optional(),
-  }),
-});
-const EndpointsParams = z.object({ endpoints: z.array(EndpointParams).min(1) });
 
 export interface ListedImageModel {
   id: string;
@@ -73,7 +70,8 @@ export function listedCandidates(body: unknown): ListedImageModel[] | null {
       architecture.output_modalities.length === 1 &&
       architecture.output_modalities[0] === "image" &&
       p.resolution?.values.includes(WANTED_RESOLUTION) === true &&
-      p.aspect_ratio?.values.includes(WANTED_ASPECT_RATIO) === true &&
+      p.aspect_ratio?.values.includes(PHOTO_ASPECT_RATIO) === true &&
+      p.aspect_ratio.values.includes(PORTRAIT_ASPECT_RATIO) &&
       (p.input_references?.max ?? 0) >= PHOTO_REFERENCES;
     // The id goes into a URL (`/images/models/<id>/endpoints`) and into the contract: one that is not a model id is never used.
     // An id listed twice is kept once (the first): two identical entries would make the whole catalogue break its contract.
@@ -92,8 +90,16 @@ function displayName(name: string): string {
   return rest.trim().length > 0 ? rest.trim() : name;
 }
 
+/**
+ * The models whose face-hold was seen working: the three of the 2026-09-24
+ * spike (docs/studio/2026-10-05-image-models.md, "in the spike"). An explicit
+ * list, not "has a dated price": a model added to the price table is not
+ * thereby tested.
+ */
+export const TESTED_IMAGE_MODELS: ReadonlySet<string> = new Set(["x-ai/grok-imagine-image-2.0", "x-ai/grok-imagine-image-quality", "bytedance-seed/seedream-5-0-pro"]);
+
 function tested(id: string): boolean {
-  return FALLBACK_IMAGE.has(id);
+  return TESTED_IMAGE_MODELS.has(id);
 }
 
 /** The photo price of each quality: output at that quality plus one reference image, at 1K; the worst case the run is estimated by. */
@@ -121,13 +127,7 @@ export function entryFromEndpoints(listed: ListedImageModel, body: unknown): Ima
   const params = EndpointsParams.safeParse(body);
   if (!params.success) return null;
   const endpoints = params.data.endpoints.map((e) => e.supported_parameters);
-  const takesRequest = endpoints.every(
-    (p) =>
-      p.resolution?.values.includes(WANTED_RESOLUTION) === true &&
-      p.aspect_ratio?.values.includes(WANTED_ASPECT_RATIO) === true &&
-      (p.input_references?.max ?? 0) >= PHOTO_REFERENCES,
-  );
-  if (!takesRequest) return null;
+  if (!endpoints.every(acceptsRequests)) return null;
   let price: ImagePrice;
   try {
     price = parseImageEndpoints(body, listed.id);

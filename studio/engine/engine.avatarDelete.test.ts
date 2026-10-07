@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, realpath, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 import { EngineReply } from "./control";
 import { EventMessage, RelativePath, type AvatarSummary } from "../shared/engine";
@@ -468,6 +468,34 @@ describe("avatars.pruneMissing", () => {
     await rm(libraryDir(), { recursive: true });
 
     await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b007" });
+
+    expect(removedEvents(started)).toEqual([]);
+    expect(started.engine.library?.listAvatars().map((a) => a.id).sort()).toEqual([seeded.avatarId, seeded.draftId].sort());
+  });
+
+  test("a library folder that is a link to the real one is still there: an avatar whose folder is gone is pruned", async () => {
+    const seeded = await seed();
+    const real = join(dir(), "real-library");
+    await rename(libraryDir(), real);
+    await symlink(real, libraryDir(), process.platform === "win32" ? "junction" : "dir");
+    const started = await start();
+    await rm(join(real, "avatars", seeded.avatarId), { recursive: true });
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b009" });
+
+    expect(removedEvents(started)).toEqual([seeded.avatarId]);
+    expect((await avatarsOf(started)).avatars).toEqual([]);
+  });
+
+  test("a library link that leads nowhere is not there: nothing is pruned", async () => {
+    const seeded = await seed();
+    const real = join(dir(), "real-library");
+    await rename(libraryDir(), real);
+    await symlink(real, libraryDir(), process.platform === "win32" ? "junction" : "dir");
+    const started = await start();
+    await rm(real, { recursive: true });
+
+    await ask(started, { kind: "control", type: "avatars.pruneMissing", callId: "call-0000b010" });
 
     expect(removedEvents(started)).toEqual([]);
     expect(started.engine.library?.listAvatars().map((a) => a.id).sort()).toEqual([seeded.avatarId, seeded.draftId].sort());

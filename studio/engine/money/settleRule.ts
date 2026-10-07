@@ -40,6 +40,16 @@ export function costToMicros(costUsd: number): number {
 }
 
 /**
+ * The RESERVE path's conversion: dollars to micro-dollars rounded UP, so a
+ * reserve built from a listed price is never under the bill by a micro-dollar.
+ * `costUsd * 1e6` carries float noise (0.045 * 1e6 is 45000.00000000001), so it
+ * is first cut to 1e-6 of a micro-dollar: an exact price stays exact.
+ */
+export function costToMicrosCeil(costUsd: number): number {
+  return Math.ceil(Number((costUsd * 1e6).toFixed(6)));
+}
+
+/**
  * The money model's settle rule. OpenRouter bills a 2xx and nothing else, so:
  * a 2xx settles at its `usage.cost` (the worst case, marked estimated, when
  * the cost is missing or unreadable); any final non-2xx settles at zero; an

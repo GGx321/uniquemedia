@@ -6,6 +6,7 @@ import { EngineSettings } from "../engine/control";
 import type { PathFlavour } from "../engine/pathFlavour";
 import { AbsolutePath } from "../shared/engine";
 import { writeJsonAtomic } from "../engine/library/durableFs";
+import { fallbackImageCatalogue } from "../engine/imageModels/catalogue";
 
 export const SETTINGS_FILE = "settings.json";
 
@@ -79,6 +80,11 @@ function isMissing(error: unknown): boolean {
   return error instanceof Error && "code" in error && error.code === "ENOENT";
 }
 
+/** Whether the model is known to have a quality knob: the bundled list (the dated price table) says so; an unknown model has none we could send. */
+function hasQualityKnob(model: string): boolean {
+  return (fallbackImageCatalogue().models.find((m) => m.id === model)?.qualities.length ?? 0) > 0;
+}
+
 /** Settings added after the first release: an older file lacks them, and `loadSettings` fills in the default. */
 const BACKFILLED_KEYS = ["imageAgeCheck", "exportPath", "renderConcurrency", "imageQuality", "cameraRealism"] as const;
 
@@ -86,6 +92,12 @@ function withMissingKeysBackfilled(raw: unknown, defaults: EngineSettings): unkn
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return raw;
   const filled: Record<string, unknown> = { ...raw };
   for (const key of BACKFILLED_KEYS) if (!(key in filled)) filled[key] = defaults[key];
+  // The quality is the model's own knob: a file that never had one is "low" only for a model that has the knob (what every run sent
+  // before the choice existed), and null for one that has none (a request never sends a quality to it).
+  if (!("imageQuality" in raw)) {
+    const model = typeof filled.imageModel === "string" ? filled.imageModel : defaults.imageModel;
+    filled.imageQuality = hasQualityKnob(model) ? DEFAULT_IMAGE_QUALITY : null;
+  }
   return filled;
 }
 

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { costToMicros, settleRule } from "./settleRule";
+import { costToMicros, costToMicrosCeil, settleRule } from "./settleRule";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -119,4 +119,17 @@ test("costToMicros rounds float dollars to the nearest integer micro-dollar", ()
   expect(costToMicros(0.0014)).toBe(1_400);
   expect(costToMicros(0.0000004)).toBe(0);
   expect(costToMicros(0.0000005)).toBe(1);
+});
+
+test("costToMicrosCeil rounds a reserve figure up, never under by a micro-dollar", () => {
+  expect(costToMicrosCeil(0.0000004)).toBe(1);
+  expect(costToMicrosCeil(0.0000015)).toBe(2);
+  expect(costToMicrosCeil(0.0400004)).toBe(40_001);
+});
+
+test("costToMicrosCeil keeps an exact price exact: float noise in dollars * 1e6 does not add a micro-dollar", () => {
+  expect(costToMicrosCeil(0.045)).toBe(45_000);
+  expect(costToMicrosCeil(0.0014)).toBe(1_400);
+  expect(costToMicrosCeil(0.07)).toBe(70_000);
+  expect(costToMicrosCeil(0)).toBe(0);
 });

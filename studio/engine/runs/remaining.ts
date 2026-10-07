@@ -1,6 +1,7 @@
 import type { Estimate } from "../../shared/engine";
 import { scopeKey } from "../money/budget";
 import { AGE_CHECK_CALL, WRITER_CALL, type ImageChoice } from "../money/estimate";
+import { MoneyError } from "../money/errors";
 import type { Ledger, Scope } from "../money/ledger";
 import type { PricedBook } from "../money/priceCache";
 import type { PriceBook } from "../money/prices";
@@ -59,6 +60,20 @@ export function remainingEstimate(priced: PricedBook, plan: RunPlan, state: RunS
 /** Whether the run's cap leaves room for a resume to make progress: at least `minToProgressMicros`, or nothing to send at all. */
 export function capFundsResume(plan: RunPlan, committedMicros: number, minToProgressMicros: number | null): boolean {
   return minToProgressMicros === null || plan.capMicros - committedMicros >= minToProgressMicros;
+}
+
+/**
+ * `remainingPlan`, or null when the run's models cannot be priced now (PRICE_UNAVAILABLE: no listed price for a reference image, a
+ * model gone from the book). `runs.list` must not fail and hide the healthy runs over one such run; a resume of it is refused with
+ * PRICE_UNAVAILABLE by the engine's `#remaining`. Any other error is a defect and propagates.
+ */
+export function remainingPlanOrNull(priced: PricedBook, plan: RunPlan, state: RunState, committedMicros: number, ledger: LedgerView): RemainingPlan | null {
+  try {
+    return remainingPlan(priced, plan, state, committedMicros, ledger);
+  } catch (error) {
+    if (error instanceof MoneyError && error.code === "PRICE_UNAVAILABLE") return null;
+    throw error;
+  }
 }
 
 export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState, committedMicros: number, ledger: LedgerView): RemainingPlan {
