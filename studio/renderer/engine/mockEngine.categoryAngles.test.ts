@@ -3,6 +3,7 @@ import { CategoryPool, POOL_TEXT_MAX, type AvatarSummary, type CategorySummary, 
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { mockCategoryPool } from "./mockCategories";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
+import { anglePick } from "./mockSceneSets";
 import { ManualScheduler } from "./scheduler";
 
 // CS.8a: the angles a category's description asks for, in the mock. A pool is made from the description alone, so «Вид сзади» gives `poses: ["back"]` and
@@ -280,6 +281,55 @@ describe("⟳ on a scene of a category with poses", () => {
       view = await writeAndRun(m, view, { kind: "rewrite", sceneIds: [scene.sceneId], redraw: true });
     }
     expect(view.scenes.every((s) => s.pose === "back" && !phone(s.shot))).toBe(true);
+  });
+});
+
+describe("⟳ refreshes the set's snapshot of the category's angles, as the engine does (CS.8a fix round 1)", () => {
+  async function redrawOne(m: Mock, view: SceneSetView): Promise<SceneSetView> {
+    const scene = view.scenes.find((s) => s.origin === "planned");
+    if (scene === undefined) throw new Error("no planned scene");
+    return writeAndRun(m, view, { kind: "rewrite", sceneIds: [scene.sceneId], redraw: true });
+  }
+
+  test("angles the owner replaced after the set was planned show in the view after a redraw", async () => {
+    const m = makeMock();
+    const category = await createCategory(m, CANARY, "Лежит дома");
+    const view = await composed(m, 4, [category.categoryId]);
+    expect(view.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома", poses: ["back"] }]);
+    await unwrap(m.client.request("categories.update", { categoryId: category.categoryId, poses: ["profile"] }));
+    expect((await setOf(m)).categories).toEqual(view.categories);
+    const after = await redrawOne(m, view);
+    expect(after.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома", poses: ["profile"] }]);
+  });
+
+  test("angles the owner cleared show no key after a redraw", async () => {
+    const m = makeMock();
+    const category = await createCategory(m, CANARY, "Лежит дома");
+    const view = await composed(m, 4, [category.categoryId]);
+    await unwrap(m.client.request("categories.update", { categoryId: category.categoryId, poses: null }));
+    const after = await redrawOne(m, view);
+    expect(after.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома" }]);
+  });
+
+  test("a redraw of a category whose angles did not change leaves them as they were", async () => {
+    const m = makeMock();
+    const category = await createCategory(m, CANARY, "Лежит дома");
+    const after = await redrawOne(m, await composed(m, 4, [category.categoryId]));
+    expect(after.categories).toEqual([{ ref: category.categoryId, name: "Лежит дома", poses: ["back"] }]);
+  });
+});
+
+describe("the shot a turned-away scene takes when the deck holds no other", () => {
+  test("a deck of selfies and mirrors only falls back to a friend, never the photographer (the category is a phone photo)", () => {
+    const deck = ["selfie", "mirror", "selfie", "mirror", "selfie"] as const;
+    for (const pose of ["back", "profile"] as const) {
+      for (const shot of ["selfie", "mirror"] as const) expect(anglePick([pose], 0, shot, deck).shot).toBe("friend");
+    }
+  });
+
+  test("a deck with another shot gives that one, and a pose that faces the camera keeps the shot", () => {
+    expect(anglePick(["back"], 0, "selfie", ["selfie", "candid"]).shot).toBe("candid");
+    expect(anglePick(["front"], 0, "selfie", ["selfie", "mirror"]).shot).toBe("selfie");
   });
 });
 

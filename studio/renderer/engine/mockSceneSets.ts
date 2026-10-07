@@ -132,8 +132,8 @@ interface Review {
   shot?: SceneView["shot"] | null;
   /** The shot and pose drawn for each scene an idea write will add. */
   own: { sceneId: number; shot: SceneView["shot"]; pose: SceneView["pose"] }[];
-  /** What a redraw will refresh the set's snapshot of each custom category with: the name the library had when the write was PLANNED, kept until accepted. */
-  snapshots: { ref: CategoryRef; name: string | null }[];
+  /** What a redraw will refresh the set's snapshot of each custom category with: the name and the angles the library had when the write was PLANNED, kept until accepted. */
+  snapshots: { ref: CategoryRef; name: string | null; poses?: ScenePose[] }[];
   attempts: Attempt[];
   stoppedBy?: Exclude<SceneStoppedBy, "closed">;
   stoppedError?: EngineError;
@@ -324,12 +324,12 @@ function holdsPhone(shot: SceneView["shot"]): boolean {
 
 /**
  * CS.8a: the pose and shot of the k-th scene of a category whose description named its angles: the k-th pose of the list round and round, and, when it turns the
- * scene away (back or profile) while the shot holds a phone, the first shot of the deck nobody holds a phone for, or the photographer when the deck has none.
+ * scene away (back or profile) while the shot holds a phone, the first shot of the deck nobody holds a phone for, or a friend when the deck has none (never the photographer: such a category is finished as a phone photo).
  */
-function anglePick(poses: readonly SceneView["pose"][], k: number, shot: SceneView["shot"], deck: readonly SceneView["shot"][]): { pose: SceneView["pose"]; shot: SceneView["shot"] } {
+export function anglePick(poses: readonly SceneView["pose"][], k: number, shot: SceneView["shot"], deck: readonly SceneView["shot"][]): { pose: SceneView["pose"]; shot: SceneView["shot"] } {
   const pose = poses[k % poses.length] ?? "front";
   if (!holdsPhone(shot) || pose === "front" || pose === "three-quarter") return { pose, shot };
-  return { pose, shot: deck.find((candidate) => !holdsPhone(candidate)) ?? "photographer" };
+  return { pose, shot: deck.find((candidate) => !holdsPhone(candidate)) ?? "friend" };
 }
 
 /** The angle an idea asks for in its own words («вид сзади», «в профиль», "back view"), or undefined when it says nothing: what the model would pick for «Авто». */
@@ -946,7 +946,7 @@ export class MockSceneSets {
     if (target.redraw) {
       for (const ref of new Set(planned.flatMap((sc) => (sc.category !== "own" && isCustomCategory(sc.category) ? [sc.category] : [])))) {
         const fresh = this.#deps.category(ref);
-        if (fresh !== undefined) snapshots.push({ ref, name: fresh.name });
+        if (fresh !== undefined) snapshots.push({ ref, name: fresh.name, ...(fresh.pool.poses === undefined ? {} : { poses: [...fresh.pool.poses] }) });
       }
     }
     if (target.redraw) {
@@ -1127,7 +1127,10 @@ export class MockSceneSets {
       for (const snapshot of review.snapshots) {
         const entry = set.categories.find((c) => c.ref === snapshot.ref);
         if (entry === undefined || (set.snapshotWrites.get(snapshot.ref) ?? 0) >= review.k) continue;
+        // The whole snapshot is put in place, as the engine's `snapshotOf` does: angles the category no longer has are gone from the view.
         entry.name = snapshot.name;
+        if (snapshot.poses === undefined) delete entry.poses;
+        else entry.poses = [...snapshot.poses];
         set.snapshotWrites.set(snapshot.ref, review.k);
       }
     }
