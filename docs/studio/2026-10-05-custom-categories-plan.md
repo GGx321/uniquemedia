@@ -1473,7 +1473,7 @@ pairing rule and reads the sentence against the angle that was picked (two-hande
 from behind, the mirror on «Авто») is a new `bad-angle` refusal that names the slots, which the next attempt is told — nothing is repaired or invented, and two
 such answers resolve the write with no scene added. A shot the owner chose stays; a rewrite of an own scene keeps its shot and pose and asks for neither. The
 accepted angles ride from the reader through `runWriterPhase` (optional `jsonSchema` and `read`, absent for a run) to `withReviewWriteAccepted`, which prefers
-them to the draw the write was recorded with (a write recorded before CS.8a and resumed after it keeps the draw). The idea prompt gained one rule about «choose»
+them to the draw the write was recorded with (`askedOf` asks the pose, and on «Авто» the shot, for ANY idea record, so a write recorded before CS.8a and resumed after it is decided by the model's pick too; the recorded draw is only a fallback for a caller that passes no angles). The idea prompt gained one rule about «choose»
 (friend, selfie, candid or photographer; front, three-quarter, profile or back; «back» for a view from behind; a selfie and a mirror shot face the camera; never the mirror on «Авто»; null for what the slot
 gives). Floor pin for the idea call (`ideaWriter.test.ts`): five 500-character ideas, the worst refusal, 12,832 tokens against 14,000 (1,168 of headroom, was
 11,757 and 2,243; the pin requires 200).
@@ -1483,7 +1483,7 @@ BEFORE the call: `planIdea` stores `mirrorAllowed: true` in the idea write's rec
 read as false). Only then does the idea prompt offer «friend, selfie, mirror, candid or photographer» (otherwise «Never choose the mirror shot.»), the `scene_ideas` schema (`ideaJsonSchema(mirrorAllowed)`)
 list `mirror`, and `readIdeaAnswer` accept it; without it a `mirror` answer is a `bad-angle` refusal, and the pairing rule holds either way (a mirror shot faces the camera: back and profile
 are refused). A mirror the owner chose himself works as before. **Set view:** `SceneSetCategory` gained optional `poses` (the category snapshot's angles, from the set's own snapshot), so the strip's
-«у «{имя}» — свои; у своих сцен — по описанию» line has what it needs; the per-scene `pose` was already in the view. The mock does the same at plan time (a redraw does not refresh the mock's angles).
+«у «{имя}» — свои; у своих сцен — по описанию» line has what it needs; the per-scene `pose` was already in the view. The mock does the same at plan time, and a redraw (⟳) refreshes the mock's snapshot of the angles as the engine's `snapshotOf` does (fix round 1).
 
 **Mock.** `mockCategoryPool` reads the angles and the body position from the description (сзади / со спины / back view / from behind → back, профиль / profile →
 profile, спереди / анфас → front, в три четверти → three-quarter; на животе → «lying on her stomach, » + the activity's first word, within the 35 characters);
@@ -1497,6 +1497,35 @@ pose no longer follows the set's «Ракурсы» (the model picks it), and th
 
 Not done on purpose: the UI (the sheet's angles, the create preview, the «Ракурсы» hint, the idea form) is CS.8b/CS.8d; no paid call was made; the canary is repeated
 by the owner.
+
+**Fix round 1 (after the opus review, NOT MERGEABLE).** Where the text above and this block differ, this block is the state of the branch.
+
+1. **Body-position prefixes dropped the places (HIGH, money).** The owner's real pool for «Лежит на животе… Вид сзади» had 11 activities of 14-27 characters
+   and exactly 5 places; «lying on her stomach, » is 22 characters, so none of them fit the 35 (`POOL_TEXT_MAX`) and the pool would have been refused
+   (`POOL_REJECTED`, paid, no category), and the retry reason never mentioned the limit. Decision A: the pool prompt asks for the SHORTEST form of the
+   position (`"on her stomach, "`, `"on her back, "`, `"sitting, "`, 16 characters or less), says the arithmetic («the position counts toward the 35 characters: keep
+   the action to about 15», example «on her stomach, reading a book» = 30), and never shows the long form. The `too-few-places` and `too-few-outfits` retry reasons
+   end with «(each text is at most 35 characters, the position included; longer ones are dropped)». The reader is unchanged (a text over 35 is dropped, never
+   shortened); a reader test with a realistic answer pins which places survive (a place left with one activity goes, six places survive on five, exactly five with
+   one loss is `too-few-places`). `POOL_LIMITS` (the call's ceiling, 10,000 input tokens) and the price are unchanged. **Pool floor pin:** the worst prompt (500 CJK,
+   the worst feedback) is 7,226 tokens against 10,000: 2,774 of headroom (was 3,007). The pin's `MARGIN_TOKENS` went 3,000 → 2,000, with the reason written in the
+   test: the real requirement is floor ≤ ceiling (then the reserve equals the accepted price); the floor counts every byte as a token, an upper bound, and the
+   measured real prompt was about 1,250 tokens. The mock pool still opens its activities with the long form (it fits the 35 by construction and the mock is not the engine's prompt).
+2. **`bad-angle` reason (MEDIUM, money).** It hard-coded «pick the shot from friend, selfie, candid or photographer (never the mirror)… a selfie faces the camera»,
+   wrong for an idea that names a mirror and for the owner's «Зеркало», on what can be the last paid attempt. It is neutral now: «gave a shot or a pose that is
+   missing, outside the lists the rules give, or a selfie or mirror shot not facing the camera (front or three-quarter only)»; the lists live in the system prompt, which
+   already knows `mirrorAllowed`. Tests for «Авто» without a mirror, «Авто» with `mirrorAllowed`, and the owner's mirror.
+3. **The photographer against the phone finish (MEDIUM).** `FALLBACK_SHOT` is `friend` (it is reached only when the deck has no non-phone shot, so the category is a phone
+   photo and the assembler's «never contradict» invariant holds), and «Авто» no longer offers the photographer: `PICKABLE_SHOTS` is friend, selfie, candid (mirror added only with
+   `mirrorAllowed`), as before CS.8a, because own scenes are finished as phone photos. A photographer the owner chose himself is kept as is. The mock's `anglePick` mirrors the fallback.
+4. **No nullable enums in the strict schema (MEDIUM).** `ideaJsonSchema(mirrorAllowed, asks)` is built per write: `shot` only when the write leaves it to the model,
+   `pose` only when it does, as plain required string enums; an own-scene rewrite asks for neither (only `slotIndex` and `sentence`). No `null` anywhere in the schema (the
+   first nullable-enum schema for grok via OpenRouter would have risked a 400 on every idea write). The prompt no longer says «return null»: a given shot or pose «is kept as given: never return it».
+   The reader still tolerates a `null` or a missing key for a given slot (it ignores it), and an asked slot with a missing key is `bad-angle`. The mock answers with a key only for what was asked.
+5. **LOWs.** The idea floor pin takes the worst over every shot label × pose label × mirror × {asked, given} instead of one pair: 12,847 tokens (500 CJK, photographer + three-quarter) against 14,000,
+   1,153 of headroom (the pin requires 200; the previous 12,832 was the mirror label, the true worst was 13,037 with the old prompt). The mock's ⟳ now refreshes `poses` in the set's snapshot (the strip's line of CS.8b
+   reads `view.categories[].poses`). `CategoryStore.update` takes `CategoryPoses | null` and parses it before writing. Tests: a resumed «Авто» write keeps the same ids and the stored `mirrorAllowed`; an old
+   record without the flag whose idea names a mirror stays not allowed.
 
 Phase 1 = CS.0 (category states), CS.1, CS.2, CS.3. Phase 2 = CS.0 (review states), CS.4a, CS.4b,
 CS.5, CS.6, CS.7. Rough size: phase 1 ≈ one L and two M tasks; phase 2 ≈ two L and three M tasks

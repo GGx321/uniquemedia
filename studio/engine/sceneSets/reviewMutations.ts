@@ -134,7 +134,8 @@ export function withReviewWriteAccepted(set: StoredSceneSet, k: number, sentence
   const record = openRecordOf(set, k);
   if (record.kind === "idea") {
     // CS.8a: the angle the model settled on (the owner's idea, read by `readIdeaAnswer`) wins over the draw the write was recorded with, which is only what a scene
-    // holds when the answer gave none (a write recorded before CS.8a, resumed after it).
+    // holds when a caller passes no angles. The write job always passes them: `askedOf` asks the pose (and, on «Авто», the shot) for EVERY idea record, so a write
+    // recorded before CS.8a and resumed after it is decided by the model's pick too, not by the draw it was recorded with.
     const added: SceneRecord[] = record.scenes.map((s) => {
       const angle = angles.get(s.sceneId);
       return { sceneId: s.sceneId, origin: "own", idea: record.idea, shot: angle?.shot ?? s.shot, pose: angle?.pose ?? s.pose, text: sentenceFor(sentences, s.sceneId, k), edited: false, removed: false };
