@@ -129,7 +129,11 @@ export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneS
   const status = ctx.used ? "used" : ctx.live !== null ? "writing" : stopped ? "stopped" : "ready";
   const stoppedBy = stopped ? (set.write?.stoppedBy ?? "closed") : null;
   const spend = spendOf(set, ctx.ledger, ctx.inFlight);
-  const categories = set.request.categories.map((ref: CategoryRef) => ({ ref, name: isCustomCategory(ref) ? ((set.categories ?? []).find((c) => c.ref === ref)?.name ?? null) : null }));
+  // CS.8a: a custom category's own angles ride with it, from the set's snapshot, for the strip's «у «{имя}» — свои» line.
+  const categories = set.request.categories.map((ref: CategoryRef) => {
+    const snapshot = isCustomCategory(ref) ? (set.categories ?? []).find((c) => c.ref === ref) : undefined;
+    return { ref, name: snapshot?.name ?? null, ...(snapshot?.poses === undefined ? {} : { poses: [...snapshot.poses] }) };
+  });
   return {
     sceneSetId: set.sceneSetId,
     avatarId: set.avatarId,

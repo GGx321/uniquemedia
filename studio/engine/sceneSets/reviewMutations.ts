@@ -70,7 +70,7 @@ export function beginRewrite(
 }
 
 /** Records an idea write as the next write BEFORE its first call, with the scene ids it reserves and the shot and pose drawn for each. No scene is added yet. */
-export function beginIdea(set: StoredSceneSet, write: { jobId: string; idea: string; count: number; shot: Shot | null; scenes: readonly { sceneId: number; shot: Shot; pose: Pose }[] }): StoredSceneSet {
+export function beginIdea(set: StoredSceneSet, write: { jobId: string; idea: string; count: number; shot: Shot | null; scenes: readonly { sceneId: number; shot: Shot; pose: Pose }[]; mirrorAllowed?: boolean }): StoredSceneSet {
   const k = set.writes + 1;
   const record: IdeaWriteRecord = {
     kind: "idea",
@@ -82,6 +82,8 @@ export function beginIdea(set: StoredSceneSet, write: { jobId: string; idea: str
     count: write.count,
     shot: write.shot,
     scenes: write.scenes.map((s) => ({ sceneId: s.sceneId, shot: s.shot, pose: s.pose })),
+    // CS.8a: kept only when true (an idea that names a mirror, on «Авто»): the model may then pick the mirror shot. Absent reads as false, as in every older record.
+    ...(write.mirrorAllowed === true ? { mirrorAllowed: true as const } : {}),
   };
   return { ...set, reviewWrites: [...reviewWritesOf(set), record], writes: k };
 }

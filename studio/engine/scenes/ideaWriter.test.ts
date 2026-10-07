@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { SceneWriteTarget } from "../../shared/engine";
 import { WRITER_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
-import { IDEA_JSON_SCHEMA, ideaMessages, ideaSystemPrompt, readIdeaAnswer, type FixedIdeaSlot, type IdeaSlot } from "./ideaWriter";
+import { IDEA_JSON_SCHEMA, ideaJsonSchema, ideaMessages, ideaSystemPrompt, readIdeaAnswer, type FixedIdeaSlot, type IdeaSlot } from "./ideaWriter";
 import { readWriterAnswer, writerMessages, writerRefusalText, type WriterRefusal } from "./writer";
 import { plan } from "./planner";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -220,6 +220,60 @@ describe("readIdeaAnswer", () => {
     const text = writerRefusalText(read);
     expect(text).toContain("slot(s) 5");
     expect(text).toContain("front or three-quarter");
+  });
+});
+
+// ---------- CS.8a: the mirror, only when the idea names one ----------
+
+describe("the mirror on «Авто»", () => {
+  const MIRROR_IDEA: IdeaSlot = { slotIndex: 9, idea: "селфи в зеркале лифта", shot: null, pose: null };
+  const reply = (shot: string, pose: string) => JSON.stringify({ scenes: [{ slotIndex: 9, sentence: "She takes a selfie in a tall elevator mirror, one hand on the phone.", shot, pose }] });
+
+  test("the prompt never offers the mirror when the idea does not name one", () => {
+    const prompt = ideaSystemPrompt(false);
+    expect(prompt).toBe(ideaSystemPrompt());
+    expect(prompt).toContain("friend, selfie, candid or photographer");
+    expect(prompt).toContain("Never choose the mirror");
+  });
+
+  test("it offers the mirror when the idea names one, and says it faces the camera", () => {
+    const prompt = ideaSystemPrompt(true);
+    expect(prompt).toContain("friend, selfie, mirror, candid or photographer");
+    expect(prompt).not.toContain("Never choose the mirror");
+    expect(prompt).toContain("mirror shot");
+  });
+
+  test("the schema's shots include the mirror only then", () => {
+    type Node = { properties?: Record<string, Node>; items?: Node; enum?: (string | null)[] };
+    const shots = (schema: { schema: Record<string, unknown> }) => ((schema.schema as Node).properties?.scenes?.items?.properties?.shot?.enum ?? []);
+    expect(shots(ideaJsonSchema(false))).toEqual(["friend", "selfie", "candid", "photographer", null]);
+    expect(shots(ideaJsonSchema(true))).toEqual(["friend", "selfie", "mirror", "candid", "photographer", null]);
+    expect(ideaJsonSchema(true).name).toBe("scene_ideas");
+    expect(IDEA_JSON_SCHEMA).toEqual(ideaJsonSchema(false));
+  });
+
+  test("an answer that picks the mirror is refused when the idea named none, however sound the rest", () => {
+    expect(readIdeaAnswer(reply("mirror", "front"), [MIRROR_IDEA])).toMatchObject({ ok: false, problems: ["bad-angle"], angleSlots: [9] });
+    expect(readIdeaAnswer(reply("mirror", "front"), [MIRROR_IDEA], false)).toMatchObject({ ok: false, problems: ["bad-angle"] });
+  });
+
+  test("and taken when it did: the mirror with a pose that faces the camera", () => {
+    const read = readIdeaAnswer(reply("mirror", "three-quarter"), [MIRROR_IDEA], true);
+    expect(read.ok && read.angles.get(9)).toEqual({ shot: "mirror", pose: "three-quarter" });
+  });
+
+  test("the pairing rule holds with it: a mirror shot facing away is refused even when the mirror is allowed", () => {
+    expect(readIdeaAnswer(reply("mirror", "back"), [MIRROR_IDEA], true)).toMatchObject({ ok: false, problems: ["bad-angle"] });
+    expect(readIdeaAnswer(reply("mirror", "profile"), [MIRROR_IDEA], true)).toMatchObject({ ok: false, problems: ["bad-angle"] });
+  });
+
+  test("allowing it does not make the other picks easier: no pick, a selfie from behind", () => {
+    expect(readIdeaAnswer(reply("selfie", "back"), [MIRROR_IDEA], true)).toMatchObject({ ok: false, problems: ["bad-angle"] });
+  });
+
+  test("the messages carry the prompt that matches", () => {
+    expect(ideaMessages([MIRROR_IDEA], undefined, true)[0]?.content).toBe(ideaSystemPrompt(true));
+    expect(ideaMessages([MIRROR_IDEA])[0]?.content).toBe(ideaSystemPrompt(false));
   });
 });
 

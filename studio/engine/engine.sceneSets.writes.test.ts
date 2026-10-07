@@ -134,7 +134,8 @@ function pickedAngle(slot: { [key: string]: unknown; idea?: unknown; shot?: unkn
   if (typeof slot.idea !== "string") return {};
   const behind = /сзади/i.test(slot.idea);
   const phone = slot.shot === "front-camera selfie" || slot.shot === "mirror selfie";
-  return { shot: slot.shot === "choose" ? (behind ? "candid" : "friend") : null, pose: slot.pose === "choose" ? (behind && !phone ? "back" : "front") : null };
+  const mirror = /зеркал/i.test(slot.idea);
+  return { shot: slot.shot === "choose" ? (mirror ? "mirror" : behind ? "candid" : "friend") : null, pose: slot.pose === "choose" ? (behind && !phone ? "back" : "front") : null };
 }
 
 const goodAnswer: Handler = (call) => ({
@@ -898,6 +899,46 @@ describe("scenes.write: an idea", () => {
 
     const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
     expect(own.map((s) => [s.shot, s.pose])).toEqual([["selfie", "front"], ["selfie", "front"], ["friend", "back"], ["friend", "back"]]);
+  });
+
+  test("«Авто» with an idea that names a mirror may pick the mirror, facing the camera; the record keeps that it was allowed (CS.8a)", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const onArrival: ReturnType<typeof fileOf>[] = [];
+    const net = sceneNetwork({
+      writer: (call, n) => {
+        onArrival.push(fileOf(avatarId));
+        return goodAnswer(call, n);
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    await writeAndWait(engine, events, avatarId, idea("селфи в зеркале лифта", 2, null));
+
+    expect(onArrival[0]?.reviewWrites?.[0]).toMatchObject({ kind: "idea", mirrorAllowed: true });
+    expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("friend, selfie, mirror, candid or photographer");
+    const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
+    expect(own.every((s) => s.shot === "mirror" && (s.pose === "front" || s.pose === "three-quarter"))).toBe(true);
+  });
+
+  test("an idea that names no mirror never gets one: the record does not allow it, the prompt does not offer it, and a model that answers it is refused", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const onArrival: ReturnType<typeof fileOf>[] = [];
+    const net = sceneNetwork({
+      writer: (call) => {
+        onArrival.push(fileOf(avatarId));
+        return {
+          status: 200,
+          body: chatBody(JSON.stringify({ scenes: listAsked(call).map((slot) => ({ slotIndex: slot.slotIndex, sentence: `${SENTENCE} (${slot.slotIndex})`, shot: "mirror", pose: "front" })) }), { cost: 0.0112 }),
+        };
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    await writeAndWait(engine, events, avatarId, idea("кофе на балконе", 1, null));
+
+    expect(onArrival[0]?.reviewWrites?.[0]).not.toHaveProperty("mirrorAllowed");
+    expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("Never choose the mirror");
+    expect((await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own")).toHaveLength(0);
   });
 
   test("an answer that picks a selfie from behind is refused and asked again, told why; the second answer is stored", async () => {

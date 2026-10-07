@@ -191,11 +191,12 @@ describe("the idea writer call", () => {
   });
 
   describe("a slot whose angle the model picks (CS.8a)", () => {
-    const pick = async (asked: readonly IdeaSlot[]) => {
+    const pickWith = async (asked: readonly IdeaSlot[], mirrorAllowed: boolean) => {
       const m = await started();
       const reply = (await (await post(m, asked)).json()) as { choices: { message: { content: string } }[] };
-      return readIdeaAnswer(reply.choices[0]?.message.content ?? "", asked);
+      return readIdeaAnswer(reply.choices[0]?.message.content ?? "", asked, mirrorAllowed);
     };
+    const pick = (asked: readonly IdeaSlot[]) => pickWith(asked, false);
 
     test("an idea that asks for a view from behind, in Russian, gets back and a shot nobody holds a phone for", async () => {
       const read = await pick([{ slotIndex: 6, idea: "лежит на животе, вид сзади", shot: null, pose: null }]);
@@ -215,6 +216,13 @@ describe("the idea writer call", () => {
     test("an idea that says nothing of the angle gets a friend's photo facing the camera", async () => {
       const read = await pick([{ slotIndex: 6, idea: "кофе на балконе утром", shot: null, pose: null }]);
       expect(read.ok && read.angles.get(6)).toEqual({ shot: "friend", pose: "front" });
+    });
+
+    test("an idea that names a mirror gets the mirror on «Авто», facing the camera; one that names none never does", async () => {
+      const named = await pickWith([{ slotIndex: 6, idea: "селфи в зеркале лифта", shot: null, pose: null }], true);
+      expect(named.ok && named.angles.get(6)).toEqual({ shot: "mirror", pose: "front" });
+      const plain = await pickWith([{ slotIndex: 6, idea: "кофе на балконе", shot: null, pose: null }], false);
+      expect(plain.ok && plain.angles.get(6)?.shot).toBe("friend");
     });
 
     test("a shot the owner chose stays, and a mirror or selfie is never turned away", async () => {

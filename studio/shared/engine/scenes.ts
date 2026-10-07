@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoryRef, PhotoCategory, PoolShot, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
+import { CategoryPoses, CategoryRef, PhotoCategory, PoolShot, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
 import { EngineError } from "./errors";
 import { Count, Id, Micros, ModelId } from "./primitives";
 
@@ -64,6 +64,14 @@ export type ScenePlace = z.infer<typeof ScenePlace>;
 
 /** The idea an own scene was written from (CS.4b): any script, up to 500 chars. */
 export const SCENE_IDEA_MAX = 500;
+
+/**
+ * CS.8a: whether the owner's idea names a mirror («в зеркале», «зеркальное», "mirror" in any letter case). On «Авто» the model may pick the mirror shot only then.
+ * A test on the text alone, made before the call, so the write record, the engine, the mock and the tests agree on it.
+ */
+export function ideaNamesMirror(idea: string): boolean {
+  return /зеркал|mirror/i.test(idea);
+}
 export const SceneIdea = z.string().min(1).max(SCENE_IDEA_MAX);
 /**
  * The most bytes a character of an idea may weigh once it is JSON-escaped into the writer's prompt (a CJK character is 3; a quote, a newline and a tab are 2).
@@ -143,7 +151,12 @@ export const SceneChunkView = z.strictObject({
 export type SceneChunkView = z.infer<typeof SceneChunkView>;
 
 /** A category the set was planned from, as the set's own snapshot says (a rename or a delete later changes none of it). */
-export const SceneSetCategory = z.strictObject({ ref: CategoryRef, name: z.string().min(1).max(40).nullable() });
+export const SceneSetCategory = z.strictObject({
+  ref: CategoryRef,
+  name: z.string().min(1).max(40).nullable(),
+  /** CS.8a: the angles the category's snapshot carries (the set's «у «{имя}» — свои» line); absent for a built-in and for a category without a preference. */
+  poses: CategoryPoses.optional(),
+});
 export type SceneSetCategory = z.infer<typeof SceneSetCategory>;
 
 /** The write that runs now: placeholders and the task line read it. `sceneIds` names the scenes of a rewrite (CS.4b); an idea write says only how many. */

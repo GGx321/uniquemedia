@@ -119,6 +119,14 @@ describe("beginIdea", () => {
     expect(next.writes).toBe(2);
   });
 
+  test("records that the idea names a mirror (CS.8a), before any call; a record of an idea that names none carries no such key", () => {
+    const named = beginIdea(stored({ writes: 1 }), { jobId: "job-aaaa-0002", idea: "селфи в зеркале лифта", count: 2, shot: null, scenes: drawn, mirrorAllowed: true });
+    expect(recordsOf(named)[0]).toMatchObject({ kind: "idea", mirrorAllowed: true });
+    const plain = beginIdea(stored({ writes: 1 }), { jobId: "job-aaaa-0002", idea: "кофе", count: 2, shot: null, scenes: drawn, mirrorAllowed: false });
+    expect(recordsOf(plain)[0]).not.toHaveProperty("mirrorAllowed");
+    expect(SceneSetFile.safeParse({ ...named, revision: 4 }).success).toBe(true);
+  });
+
   test("adds no scene yet: the scenes join the set with their accepted sentences", () => {
     const set = stored({ writes: 1 });
     expect(beginIdea(set, { jobId: "job-aaaa-0002", idea: "кофе", count: 2, shot: null, scenes: drawn }).scenes).toEqual(set.scenes);

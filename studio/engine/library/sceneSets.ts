@@ -154,6 +154,8 @@ export const IdeaWriteRecord = z.strictObject({
   count: z.number().int().min(1).max(MAX_SCENES_PER_WRITE),
   shot: PoolShot.nullable(),
   scenes: z.array(z.strictObject({ sceneId: SceneId, shot: PoolShot, pose: ScenePose }).refine(facesCamera, FACES_CAMERA)).min(1).max(MAX_SCENES_PER_WRITE),
+  /** CS.8a: the idea names a mirror and the owner left the shot on «Авто», so the model may pick the mirror. Decided from the idea's text before the call; absent means no. */
+  mirrorAllowed: z.literal(true).optional(),
 });
 export type IdeaWriteRecord = z.infer<typeof IdeaWriteRecord>;
 

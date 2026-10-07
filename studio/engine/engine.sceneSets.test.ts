@@ -479,6 +479,8 @@ describe("scenes.compose", () => {
     const view = await setOf(engine, avatarId);
     expect(view.scenes).toHaveLength(12);
     expect(view.scenes.every((s) => s.pose === "back" && s.shot !== "selfie" && s.shot !== "mirror")).toBe(true);
+    // The view carries the category's own angles, from the snapshot, for the strip's line; a category without them (and a built-in) carries no key.
+    expect(view.categories).toEqual([{ ref: "cat-lying-down", name: "Лежит на животе", poses: ["back"] }]);
     const stored = JSON.parse(readFileSync(setFile(avatarId, view.sceneSetId), "utf8"));
     expect(stored.categories).toEqual([{ ref: "cat-lying-down", name: "Лежит на животе", label: "Lying at home", style: "phone", poses: ["back"] }]);
   });

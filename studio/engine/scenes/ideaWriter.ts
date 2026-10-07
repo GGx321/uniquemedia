@@ -18,6 +18,13 @@ import { NO_REFUSAL, POSE_LABEL, readWriterScenes, SHOT_LABEL, writerRefusalText
 /** The shots the model may pick for an «Авто» slot: «Авто» never draws the mirror (an own scene has no place for a mirror to sit on). */
 export const PICKABLE_SHOTS = ["friend", "selfie", "candid", "photographer"] as const satisfies readonly Shot[];
 
+/** With the mirror, which only an idea that names a mirror (`ideaNamesMirror`, tested before the call) may be written with on «Авто». */
+const PICKABLE_SHOTS_WITH_MIRROR = ["friend", "selfie", "mirror", "candid", "photographer"] as const satisfies readonly Shot[];
+
+function pickable(mirrorAllowed: boolean): readonly Shot[] {
+  return mirrorAllowed ? PICKABLE_SHOTS_WITH_MIRROR : PICKABLE_SHOTS;
+}
+
 /**
  * One own scene as the writer is asked about it. `slotIndex` is the scene's id in its set, so the answer is read as a plan's. A null `shot` or `pose` is the
  * model's to pick (the prompt says "choose"); one that is set is given and kept.
@@ -52,7 +59,7 @@ export function toIdeaSlot(ask: IdeaAsk): IdeaSlot {
   return { slotIndex: ask.slotIndex, idea: ask.idea, shot: ask.askShot ? null : ask.shot, pose: ask.askPose ? null : ask.pose };
 }
 
-export function ideaSystemPrompt(): string {
+export function ideaSystemPrompt(mirrorAllowed = false): string {
   return [
     "You write one photorealistic scene sentence for each of the given photo slots, of one recurring adult woman.",
     "Reference images supply her identity, so you never describe her face, never give her a name, and never change her hair, eyes or body type.",
@@ -64,7 +71,7 @@ export function ideaSystemPrompt(): string {
     "- When several slots share an idea, make each one a different moment of it: vary the place, her outfit, the time of day and what she does.",
     '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
     '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the camera, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the camera. For any other pose she may face or glance toward the camera as the shot allows.',
-    '- When a slot\'s "shot" or "pose" is "choose", pick it from the idea and return it in that slot\'s "shot" or "pose": the shot is friend, selfie, candid or photographer; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend, candid or photographer. Never choose the mirror shot. Then write the scene for what you picked. For a shot or a pose the slot gives, return null.',
+    `- When a slot's "shot" or "pose" is "choose", pick it from the idea and return it in that slot's "shot" or "pose": the shot is ${mirrorAllowed ? "friend, selfie, mirror, candid or photographer" : "friend, selfie, candid or photographer"}; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend, candid or photographer. ${mirrorAllowed ? "The idea names a mirror, so you may pick the mirror shot, only for a mirror selfie." : "Never choose the mirror shot."} Then write the scene for what you picked. For a shot or a pose the slot gives, return null.`,
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
     "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says, describe her clothing as covering and non-revealing.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
@@ -78,7 +85,7 @@ export function ideaSystemPrompt(): string {
 const CHOOSE = "choose";
 
 /** The messages of one attempt of an idea write; `refusal` is why the previous answer was rejected, told in the compose prompt's own words. */
-export function ideaMessages(slots: readonly IdeaSlot[], refusal: WriterRefusal = NO_REFUSAL): ChatMessage[] {
+export function ideaMessages(slots: readonly IdeaSlot[], refusal: WriterRefusal = NO_REFUSAL, mirrorAllowed = false): ChatMessage[] {
   const items = slots.map((slot) => ({
     slotIndex: slot.slotIndex,
     idea: slot.idea,
@@ -90,13 +97,14 @@ export function ideaMessages(slots: readonly IdeaSlot[], refusal: WriterRefusal 
     lines.push("", `An earlier answer was rejected: ${writerRefusalText(refusal)}. Write a new answer that follows every rule.`);
   }
   return [
-    { role: "system", content: ideaSystemPrompt() },
+    { role: "system", content: ideaSystemPrompt(mirrorAllowed) },
     { role: "user", content: lines.join("\n") },
   ];
 }
 
 /** Structured output: {slotIndex, sentence, shot, pose} per scene; the shot and the pose are null for a slot that gave them. */
-export const IDEA_JSON_SCHEMA: { name: string; schema: Record<string, unknown> } = {
+export function ideaJsonSchema(mirrorAllowed: boolean): { name: string; schema: Record<string, unknown> } {
+  return {
   name: "scene_ideas",
   schema: {
     type: "object",
@@ -112,14 +120,18 @@ export const IDEA_JSON_SCHEMA: { name: string; schema: Record<string, unknown> }
           properties: {
             slotIndex: { type: "integer" },
             sentence: { type: "string" },
-            shot: { type: ["string", "null"], enum: [...PICKABLE_SHOTS, null] },
+            shot: { type: ["string", "null"], enum: [...pickable(mirrorAllowed), null] },
             pose: { type: ["string", "null"], enum: [...ScenePose.options, null] },
           },
         },
       },
     },
   },
-};
+  };
+}
+
+/** The schema of an idea whose text names no mirror: the shots without it. */
+export const IDEA_JSON_SCHEMA = ideaJsonSchema(false);
 
 // ---------- reading the answer ----------
 
@@ -140,8 +152,8 @@ const IdeaOutputSchema = z.strictObject({
 
 export type IdeaAnswer = { ok: true; sentences: Map<number, string>; angles: Map<number, IdeaAngle> } | ({ ok: false } & WriterRefusal);
 
-function pickedShot(value: unknown): Shot | undefined {
-  return PICKABLE_SHOTS.find((shot) => shot === value);
+function pickedShot(value: unknown, mirrorAllowed: boolean): Shot | undefined {
+  return pickable(mirrorAllowed).find((shot) => shot === value);
 }
 
 function pickedPose(value: unknown): Pose | undefined {
@@ -150,8 +162,8 @@ function pickedPose(value: unknown): Pose | undefined {
 }
 
 /** The angle one scene settles on, or undefined when the pick is missing, outside the vocabulary, or a selfie or a mirror shot facing away. */
-function settle(slot: IdeaSlot, scene: { shot?: unknown; pose?: unknown }): IdeaAngle | undefined {
-  const shot = slot.shot ?? pickedShot(scene.shot);
+function settle(slot: IdeaSlot, scene: { shot?: unknown; pose?: unknown }, mirrorAllowed: boolean): IdeaAngle | undefined {
+  const shot = slot.shot ?? pickedShot(scene.shot, mirrorAllowed);
   const pose = slot.pose ?? pickedPose(scene.pose);
   if (shot === undefined || pose === undefined) return undefined;
   if (isPhoneInHandShot(shot) && (pose === "back" || pose === "profile")) return undefined;
@@ -162,9 +174,9 @@ function settle(slot: IdeaSlot, scene: { shot?: unknown; pose?: unknown }): Idea
  * The model's answer to an idea write: one sentence per scene, read by the writer's own rules (`readWriterScenes`) against the angle each scene settled on, and
  * that angle. A shot or a pose the slot gave is kept whatever the answer says; one it left to the model must be a real pick, and a selfie or a mirror shot must
  * face the camera. A pick that fails either is a `bad-angle` refusal naming the slot; the sentence rules still run for it on the angle it was given, so one
- * retry is told everything that was wrong.
+ * retry is told everything that was wrong. The mirror is a real pick only when `mirrorAllowed` (the idea names a mirror, tested before the call).
  */
-export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[]): IdeaAnswer {
+export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[], mirrorAllowed = false): IdeaAnswer {
   const parsed = IdeaOutputSchema.safeParse(parseJson(content));
   if (!parsed.success) return { ok: false, problems: ["not-json"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
 
@@ -176,7 +188,7 @@ export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[]): Ide
   const readable: ReadableSlot[] = slots.map((slot) => {
     const scene = first.get(slot.slotIndex);
     // A scene the answer lacks is the number rules' to report; it reads as a given angle here.
-    const settled = scene === undefined ? undefined : settle(slot, scene);
+    const settled = scene === undefined ? undefined : settle(slot, scene, mirrorAllowed);
     if (scene !== undefined && settled === undefined) angleSlots.push(slot.slotIndex);
     const angle = settled ?? { shot: slot.shot ?? "friend", pose: slot.pose ?? "front" };
     if (settled !== undefined) angles.set(slot.slotIndex, settled);

@@ -45,6 +45,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
+import { ideaNamesMirror } from "../shared/engine";
 import { IDEA_JSON_SCHEMA } from "../engine/scenes/ideaWriter";
 import { POOL_JSON_SCHEMA } from "../engine/scenes/poolGen";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
@@ -190,8 +191,10 @@ function ideaAngleFor(slot: z.infer<typeof IdeaRequestSlot>): { shot: string | n
   const idea = slot.idea.toLowerCase();
   const wanted = /сзади|\bback\b|from behind/.test(idea) ? "back" : /профил|profile/.test(idea) ? "profile" : "front";
   const phoneInHand = slot.shot === "front-camera selfie" || slot.shot === "mirror selfie";
-  const shot = slot.shot === "choose" ? (wanted === "front" ? "friend" : "candid") : null;
-  const pose = slot.pose === "choose" ? (phoneInHand ? "front" : wanted) : null;
+  // The mirror, only for an idea that names one (the engine offers it then and not otherwise), facing the camera.
+  const mirror = slot.shot === "choose" && ideaNamesMirror(slot.idea);
+  const shot = slot.shot === "choose" ? (mirror ? "mirror" : wanted === "front" ? "friend" : "candid") : null;
+  const pose = slot.pose === "choose" ? (phoneInHand || mirror ? "front" : wanted) : null;
   return { shot, pose };
 }
 

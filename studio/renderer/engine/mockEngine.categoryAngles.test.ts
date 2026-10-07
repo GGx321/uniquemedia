@@ -249,6 +249,28 @@ describe("scenes.compose with a category that has poses", () => {
   });
 });
 
+describe("the set's view carries the angles of its categories (CS.8a)", () => {
+  test("a category with poses shows them, a built-in and a category without show no key", async () => {
+    const m = makeMock();
+    const angled = await createCategory(m, CANARY, "Лежит дома");
+    const plain = await createCategory(m, "кофейни", "Кофейни");
+    const view = await composed(m, 6, ["home", angled.categoryId, plain.categoryId]);
+    expect(view.categories).toEqual([
+      { ref: "home", name: null },
+      { ref: angled.categoryId, name: "Лежит дома", poses: ["back"] },
+      { ref: plain.categoryId, name: "Кофейни" },
+    ]);
+  });
+
+  test("the set keeps what the category had when it was planned: a later update does not change the view", async () => {
+    const m = makeMock();
+    const angled = await createCategory(m, CANARY);
+    const view = await composed(m, 4, [angled.categoryId]);
+    await unwrap(m.client.request("categories.update", { categoryId: angled.categoryId, poses: ["front"] }));
+    expect((await setOf(m)).categories).toEqual(view.categories);
+  });
+});
+
 describe("⟳ on a scene of a category with poses", () => {
   test("a redraw keeps the pose in the category's list and never leaves a phone facing away", async () => {
     const m = makeMock();
@@ -299,6 +321,16 @@ describe("scenes.write: an idea, the angle from the idea", () => {
       ["selfie", false],
       ["mirror", false],
     ]);
+  });
+
+  test("an idea that names a mirror gets the mirror on «Авто», facing the camera; one that names none never does (CS.8a)", async () => {
+    const m = makeMock();
+    let view = await readySet(m);
+    view = await writeAndRun(m, view, { kind: "idea", idea: "селфи в зеркале лифта", count: 2, shot: null });
+    view = await writeAndRun(m, view, { kind: "idea", idea: "кофе на балконе", count: 2, shot: null });
+    const own = view.scenes.filter((s) => s.origin === "own");
+    expect(own.slice(0, 2).every((s) => s.shot === "mirror" && (s.pose === "front" || s.pose === "three-quarter"))).toBe(true);
+    expect(own.slice(2).some((s) => s.shot === "mirror")).toBe(false);
   });
 
   test("an idea with no angle in it faces the camera, never the mirror on «Авто»", async () => {

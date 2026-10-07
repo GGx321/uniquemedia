@@ -6,7 +6,7 @@ import type { PriceBook } from "../money/prices";
 import { runWriterConfig } from "../runs/plan";
 import { runWriterPhase, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
 import type { PlanSlot } from "../scenes";
-import { IDEA_JSON_SCHEMA, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
+import { ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
 import { writerMessages } from "../scenes/writer";
 import { categoryLabelOf } from "../scenes/categories";
 import { reviewWriteState, reviewWritesOf } from "./reviewWrites";
@@ -66,11 +66,11 @@ function snapshotsFor(set: StoredSceneSet, record: ReviewWriteRecord): CategoryS
 }
 
 /** What the write asks the writer about. A write is of one kind: planned slots (the compose prompt) or ideas. */
-type Asked = { kind: "slots"; slots: PlanSlot[]; labelOf: ReturnType<typeof categoryLabelOf> } | { kind: "ideas"; slots: IdeaAsk[] };
+type Asked = { kind: "slots"; slots: PlanSlot[]; labelOf: ReturnType<typeof categoryLabelOf> } | { kind: "ideas"; slots: IdeaAsk[]; mirrorAllowed: boolean };
 
 function askedOf(set: StoredSceneSet, record: ReviewWriteRecord): Asked {
   // CS.8a: a new idea write leaves the pose to the model, and the shot too when the owner chose «Авто» (the record's shot is null); the stored draw is only what the slot holds meanwhile.
-  if (record.kind === "idea") return { kind: "ideas", slots: record.scenes.map((s) => ({ slotIndex: s.sceneId, idea: record.idea, shot: s.shot, pose: s.pose, askShot: record.shot === null, askPose: true })) };
+  if (record.kind === "idea") return { kind: "ideas", slots: record.scenes.map((s) => ({ slotIndex: s.sceneId, idea: record.idea, shot: s.shot, pose: s.pose, askShot: record.shot === null, askPose: true })), mirrorAllowed: record.mirrorAllowed === true };
   const scenes = record.sceneIds.map((sceneId) => {
     const scene = set.scenes.find((s) => s.sceneId === sceneId);
     if (scene === undefined) throw new Error(`rewrite ${record.k} names scene ${sceneId}, which the set does not have`);
@@ -84,7 +84,7 @@ function askedOf(set: StoredSceneSet, record: ReviewWriteRecord): Asked {
   // A rewrite of an own scene keeps its shot and its pose: the model is asked for neither.
   const own = scenes.flatMap((s) => (s.origin === "own" ? [{ slotIndex: s.sceneId, idea: s.idea, shot: s.shot, pose: s.pose, askShot: false, askPose: false }] : []));
   if (own.length !== scenes.length) throw new Error(`rewrite ${record.k} mixes planned and own scenes: one request is one kind`);
-  return { kind: "ideas", slots: own };
+  return { kind: "ideas", slots: own, mirrorAllowed: false };
 }
 
 export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWriteRequest): Promise<ReviewWriteEnd> {
@@ -130,9 +130,9 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
       ...base,
       call,
       slots: asked.slots,
-      jsonSchema: IDEA_JSON_SCHEMA,
-      read: (content, slots) => readIdeaAnswer(content, slots.map(toIdeaSlot)),
-      messages: (slots, feedback) => ideaMessages(slots.map(toIdeaSlot), feedback),
+      jsonSchema: ideaJsonSchema(asked.mirrorAllowed),
+      read: (content, slots) => readIdeaAnswer(content, slots.map(toIdeaSlot), asked.mirrorAllowed),
+      messages: (slots, feedback) => ideaMessages(slots.map(toIdeaSlot), feedback, asked.mirrorAllowed),
     };
     result = await runWriterPhase(phaseDeps, phase);
   }

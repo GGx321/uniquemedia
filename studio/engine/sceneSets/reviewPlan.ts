@@ -1,4 +1,4 @@
-import { isCustomCategory, MAX_SCENES_PER_SET, type CategoryRef, type CategorySnapshot, type SceneWriteTarget } from "../../shared/engine";
+import { ideaNamesMirror, isCustomCategory, MAX_SCENES_PER_SET, type CategoryRef, type CategorySnapshot, type SceneWriteTarget } from "../../shared/engine";
 import { EngineFailure } from "../engineFailure";
 import { snapshotOf, type StoredCategory } from "../library/categories";
 import { MAX_REVIEW_WRITES, type StoredSceneSet } from "../library/sceneSets";
@@ -90,7 +90,7 @@ function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "id
     k,
     count: target.count,
     attemptsLeft: 2,
-    begin: (current, jobId) => beginIdea(current, { jobId, idea: target.idea, count: target.count, shot: target.shot, scenes }),
+    begin: (current, jobId) => beginIdea(current, { jobId, idea: target.idea, count: target.count, shot: target.shot, scenes, mirrorAllowed: target.shot === null && ideaNamesMirror(target.idea) }),
   };
 }
 

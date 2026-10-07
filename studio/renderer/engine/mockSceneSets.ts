@@ -1,4 +1,5 @@
 import {
+  ideaNamesMirror,
   isCustomCategory,
   MAX_COMPOSE_SCENES,
   orderCategories,
@@ -13,6 +14,7 @@ import {
   type EngineError,
   type JobState,
   type ScenePlace,
+  type ScenePose,
   type SceneEditOp,
   type SceneGaveUpBy,
   type SceneComposeTally,
@@ -163,7 +165,7 @@ interface MockSet {
   revision: number;
   runId: string;
   poses: { profile: boolean; back: boolean };
-  categories: { ref: CategoryRef; name: string | null }[];
+  categories: { ref: CategoryRef; name: string | null; poses?: ScenePose[] }[];
   scenes: Scene[];
   chunks: Chunk[];
   write: { k: number; kind: "compose" | "unwritten"; stoppedBy?: Exclude<SceneStoppedBy, "closed">; stoppedError?: EngineError } | null;
@@ -451,7 +453,7 @@ export class MockSceneSets {
       revision: 1,
       runId: this.#deps.nextId("run"),
       poses: { profile: false, back: false },
-      categories: refs.map((ref) => ({ ref, name: isCustomCategory(ref) ? (this.#deps.category(ref)?.name ?? null) : null })),
+      categories: refs.map((ref) => this.#categoryEntry(ref)),
       scenes,
       chunks,
       write: stopped === undefined ? null : { k: 1, kind: "compose", ...(stopped === "closed" ? {} : { stoppedBy: stopped, ...(stopped === "failed" ? { stoppedError: { code: "INTERNAL" as const } } : {}) }) },
@@ -781,6 +783,12 @@ export class MockSceneSets {
 
   // ---------- the paid writes ----------
 
+  /** What a set keeps of a category it is planned from: the name, and (CS.8a) the angles its pool carried then. */
+  #categoryEntry(ref: CategoryRef): { ref: CategoryRef; name: string | null; poses?: ScenePose[] } {
+    const custom = isCustomCategory(ref) ? this.#deps.category(ref) : undefined;
+    return { ref, name: custom?.name ?? null, ...(custom?.pool.poses === undefined ? {} : { poses: [...custom.pool.poses] }) };
+  }
+
   /** A compose that passed the engine's gates: plans and stores the set, launches its job (none for an empty set). */
   compose(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses: { profile: boolean; back: boolean } }): { sceneSetId: string; jobId: string | null } {
     const sceneSetId = this.#deps.nextId("set");
@@ -793,7 +801,7 @@ export class MockSceneSets {
       revision: 1,
       runId: this.#deps.nextId("run"),
       poses: { ...request.poses },
-      categories: request.categories.map((ref) => ({ ref, name: isCustomCategory(ref) ? (this.#deps.category(ref)?.name ?? null) : null })),
+      categories: request.categories.map((ref) => this.#categoryEntry(ref)),
       scenes,
       chunks: chunksOf(sceneSetId, scenes),
       write: scenes.length === 0 ? null : { k: 1, kind: "compose" },
@@ -899,7 +907,9 @@ export class MockSceneSets {
       // owner chose stays, and a selfie or a mirror shot faces the camera whatever the idea says. An idea with no angle in it faces the camera.
       const wanted = ideaAngle(target.idea);
       const own = Array.from({ length: target.count }, (_, i) => {
-        const shot = target.shot ?? (wanted === undefined ? (AUTO_SHOTS[(k + i) % AUTO_SHOTS.length] ?? "friend") : "candid");
+        // On «Авто» an idea that names a mirror gets the mirror (the engine allows it then and not otherwise), facing the camera.
+        const mirror = target.shot === null && ideaNamesMirror(target.idea);
+        const shot = target.shot ?? (mirror ? "mirror" : wanted === undefined ? (AUTO_SHOTS[(k + i) % AUTO_SHOTS.length] ?? "friend") : "candid");
         const pose: SceneView["pose"] = holdsPhone(shot) || wanted === undefined ? ((k + i) % 2 === 0 ? "front" : "three-quarter") : wanted;
         return { sceneId: first + i, shot, pose };
       });
