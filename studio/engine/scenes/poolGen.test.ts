@@ -389,6 +389,46 @@ describe("readPoolAnswer: the angles the description asks for (CS.8a)", () => {
   });
 });
 
+describe("readPoolAnswer: a realistic answer for a body position, with the short prefix (CS.8a fix round 1)", () => {
+  const P = "on her stomach, ";
+  const act = (text: string) => ({ text: P + text, twoHanded: false });
+  // Actions of 7..18 characters like the owner's real pool; one of them pushes the text past the 35.
+  const FITS = ["texting", "reading a book", "scrolling a phone", "sipping a tea", "painting her nails"];
+  const TOO_LONG = "reading a fashion magazine";
+  const realPlaces = (): Json[] => [
+    place("a bedroom bed", { activities: [act(FITS[0] as string), act(FITS[1] as string), act(TOO_LONG)] }),
+    place("a living room rug", { activities: [act(FITS[2] as string), act(FITS[3] as string)] }),
+    place("a sunny balcony", { activities: [act(FITS[4] as string), act(TOO_LONG)] }),
+    place("a sofa corner", { mirror: true, activities: [act(FITS[0] as string), act(FITS[3] as string)] }),
+    place("a window seat", { activities: [act(FITS[1] as string), act(FITS[2] as string)] }),
+  ];
+  const hallway = (): Json => place("a hallway floor", { activities: [act("texting"), act("sipping a tea")] });
+
+  test("the arithmetic: the short prefix is 16 characters, so 19 are left for the action", () => {
+    expect(P.length).toBe(16);
+    expect(POOL_TEXT_MAX - P.length).toBe(19);
+    expect((P + TOO_LONG).length).toBeGreaterThan(POOL_TEXT_MAX);
+    for (const fit of FITS) expect((P + fit).length).toBeLessThanOrEqual(POOL_TEXT_MAX);
+  });
+
+  test("a place that keeps two activities survives with only the ones that fit", () => {
+    const result = okOf(answer({ poses: ["back"], locations: [...realPlaces(), hallway()] }));
+    const bed = result.pool.locations.find((l) => l.name === "a bedroom bed");
+    expect(bed?.activities.map((a) => a.text)).toEqual([P + "texting", P + "reading a book"]);
+  });
+
+  test("a place left with one activity is dropped, and with six places the pool still stands on five", () => {
+    const result = okOf(answer({ poses: ["back"], locations: [...realPlaces(), hallway()] }));
+    expect(result.pool.locations.map((l) => l.name)).not.toContain("a sunny balcony");
+    expect(result.pool.locations).toHaveLength(5);
+    expect(result.pool.poses).toEqual(["back"]);
+  });
+
+  test("with exactly five places, the one that loses its second activity costs the answer: too-few-places", () => {
+    expect(refusalOf(answer({ poses: ["back"], locations: realPlaces() })).problems).toEqual(["too-few-places"]);
+  });
+});
+
 describe("poolOf", () => {
   test("carries the pool's poses to the engine's pool, and nothing when the pool has none", () => {
     expect(poolOf(okOf(answer({ poses: ["back"] })).pool).poses).toEqual(["back"]);
@@ -437,12 +477,29 @@ describe("poolMessages", () => {
     for (const needle of ['"poses"', "front, three-quarter, profile, back", "empty list"]) expect(system).toContain(needle);
   });
 
-  test("asks for the body position in EVERY activity, inside the 35 characters", () => {
+  test("asks for the body position in EVERY activity, in its SHORTEST form, with the arithmetic of the 35 characters", () => {
     const system = poolMessages("x")[0]?.content ?? "";
     expect(system).toContain("body position");
     expect(system).toContain("EVERY activity");
-    expect(system).toContain("lying on her stomach, texting");
-    expect(system).toContain("include the position");
+    for (const needle of ['"on her stomach, "', '"on her back, "', '"sitting, "']) expect(system).toContain(needle);
+    expect(system).toContain("counts toward the 35 characters");
+    expect(system).toContain("keep the action to about 15");
+    expect(system).toContain("on her stomach, reading a book");
+  });
+
+  test("never teaches the long form of a position: «lying on her stomach, » alone eats 22 of the 35", () => {
+    const system = poolMessages("x")[0]?.content ?? "";
+    expect(system).not.toContain("lying on her stomach");
+  });
+
+  test.each(["too-few-places", "too-few-outfits"] as const)("the %s retry reason tells the 35-character limit, the position included", (problem) => {
+    const text = poolMessages("x", { problems: [problem], words: [] })[1]?.content ?? "";
+    expect(text).toContain("each text is at most 35 characters, the position included; longer ones are dropped");
+  });
+
+  test("a reason that has nothing to do with lengths does not carry the limit", () => {
+    const text = poolMessages("x", { problems: ["bad-shot-deck"], words: [] })[1]?.content ?? "";
+    expect(text).not.toContain("longer ones are dropped");
   });
 
   test("the example it shows is itself a pool the reader accepts", () => {

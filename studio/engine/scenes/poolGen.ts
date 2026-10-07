@@ -142,7 +142,7 @@ function systemPrompt(): string {
     `- "poses": the camera angles the description asks for, 0 to ${ScenePose.options.length} of: ${ScenePose.options.join(", ")} (back is seen from behind). An empty list when it says nothing about the angle.`,
     "",
     "Rules:",
-    '- If the description gives a body position (lying on her stomach, sitting on the floor), start EVERY activity with it, e.g. "lying on her stomach, texting"; the 35 characters include the position, so keep the rest short. Places and outfits suit it.',
+    '- If the description gives a body position, start EVERY activity with its SHORTEST form: "on her stomach, ", "on her back, " or "sitting, " (16 characters or less). The position counts toward the 35 characters: keep the action to about 15, e.g. "on her stomach, reading a book" (30). Places and outfits suit it.',
     '- Every text is plain English in ASCII: letters, digits, spaces and ordinary punctuation. Never a quote (") and never a backslash, and no space at either end.',
     "- No person's name, no brand and no readable sign. She is a grown adult woman: never a word that suggests she or anyone else is young.",
     "- Outfits are covering and non-revealing: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
@@ -193,12 +193,15 @@ function toldWords(words: readonly string[]): string[] {
   return [...told.values()].slice(0, POOL_TOLD_WORDS_MAX);
 }
 
+/** Said after the reasons that come from texts over the bound: a position in front of an activity eats the 35 characters, and a long text is dropped, not shortened. */
+const LENGTH_NOTE = "(each text is at most 35 characters, the position included; longer ones are dropped)";
+
 const REASON: Record<PoolProblem, string> = {
   "not-json": "it was not the JSON object asked for",
   empty: "it was empty",
   "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash',
-  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one with a free hand)`,
-  "too-few-outfits": `fewer than ${POOL_OUTFITS_MIN} of its outfits were usable`,
+  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one with a free hand) ${LENGTH_NOTE}`,
+  "too-few-outfits": `fewer than ${POOL_OUTFITS_MIN} of its outfits were usable ${LENGTH_NOTE}`,
   "bad-shot-deck": `its "shotDeck" was not exactly five shots from ${POOL_SHOTS.join(", ")}`,
   "mirror-without-place": 'its "shotDeck" had a mirror shot but no place had "mirror": true',
   invalid: "it broke the rules",
