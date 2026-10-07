@@ -167,9 +167,15 @@ describe("a ready set: the strip and «Отрисовать»", () => {
     expect(within(card()).getByRole("list", { name: "Категории набора" }).textContent).toContain("Дом");
     expect(card().textContent).toContain("Ракурсы: анфас, три четверти.");
     expect(card().textContent).toContain("текст grok-4.3");
+    // The models line says which of it is today's Settings and which is the set's own (CS.7).
+    expect(within(card()).getByText(/текст grok-4\.3/).closest("p")?.getAttribute("title")).toBe(
+      "Картинки — по текущим Настройкам: модель и качество можно сменить до «Отрисовать», цена пересчитается. Текст — модель этого набора: ею написаны его сцены.",
+    );
     expect(priceRow("Сцены")).toMatch(/\$0\.00\d/);
     expect(priceRow(/фото$/)).toContain("≈ $1.00");
     expect(priceRow("Ожидаемая")).toContain("≈ $1.00");
+    // The price source fits beside «Цены»: no year for this year's prices (CS.7 V1).
+    expect(within(card()).getByText(/^OpenRouter · |^резервные · /).textContent).toMatch(/^(OpenRouter|резервные) · \d{1,2} [а-я]+\.$/);
   });
 
   test("approve sends the revision it priced and the worst case on the button; the set becomes a read-only run (ReviewUsed)", async () => {
@@ -230,6 +236,8 @@ describe("«Пересоставить…»", () => {
     expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" })));
     expect(dialog.textContent).toContain("Набор удалится целиком.");
     expect(dialog.textContent).toMatch(/Набор уже стоил \$0\.0\d\d\. Эти деньги потрачены и не вернутся\./);
+    // «Деньги на экране»: the amount in mono, as the artboard sets it (CS.7 V5).
+    expect(within(dialog).getByText(/^\$0\.0\d\d$/).className).toBe("mono");
     expect(dialog.textContent).toContain("«Составить 20 сцен»");
     const buttons = within(dialog).getAllByRole("button").map((b) => b.textContent);
     expect(buttons.indexOf("Удалить набор")).toBeLessThan(buttons.indexOf("Отмена"));

@@ -17,6 +17,7 @@ import {
   offNoteSet,
   otherScenesButton,
   ownRewriteText,
+  priceSourceText,
   problemText,
   progressLabel,
   progressNote,
@@ -297,6 +298,16 @@ describe("the task line of a scenes job", () => {
   });
 });
 
+describe("the price source beside «Цены» (CS.7 V1)", () => {
+  test("the day and month; the year only when it is not this one, so the line fits at both widths", () => {
+    const now = new Date("2026-10-07T12:00:00Z");
+    expect(priceSourceText("live", "2026-09-24", now)).toBe("OpenRouter · 24 сент.");
+    expect(priceSourceText("fallback", "2026-09-24", now)).toBe("резервные · 24 сент.");
+    expect(priceSourceText("fallback", "2025-12-30", now)).toBe("резервные · 30 дек. 2025 г.");
+    expect(priceSourceText(null, null, now)).toBe("—");
+  });
+});
+
 describe("«Пересоставить сцены?»", () => {
   test("what goes with the set, and what it already cost", () => {
     const set = sceneSet([scene(1), scene(2, { edited: true }), scene(3, { removed: true }), scene(21, { origin: "own" }), scene(22, { origin: "own" })], { spentMicros: 15_000 });
@@ -306,8 +317,13 @@ describe("«Пересоставить сцены?»", () => {
       nb("1 правка текста и 1 убранная сцена."),
     ]);
     expect(recomposeLosses(sceneSet(written(3)), 0)).toEqual([]);
-    expect(recomposeSpent(set)).toBe("Набор уже стоил $0.015. Эти деньги потрачены и не вернутся.");
-    expect(recomposeSpent(sceneSet(written(3), { spentMicros: 46_500, openReserveMicros: 37_500 }))).toBe("Набор уже стоил до $0.047. Эти деньги потрачены и не вернутся.");
+    // The amount on its own, to be set in mono (CS.7 V5), the sentence around it.
+    const spent = recomposeSpent(set);
+    expect(spent === null ? null : `${spent.before}${spent.amount}${spent.after}`).toBe("Набор уже стоил $0.015. Эти деньги потрачены и не вернутся.");
+    expect(spent?.amount).toBe("$0.015");
+    const open = recomposeSpent(sceneSet(written(3), { spentMicros: 46_500, openReserveMicros: 37_500 }));
+    expect(open === null ? null : `${open.before}${open.amount}${open.after}`).toBe("Набор уже стоил до $0.047. Эти деньги потрачены и не вернутся.");
+    expect(open?.amount).toBe("$0.047");
     expect(recomposeSpent(sceneSet([], { spentMicros: 0 }))).toBe(null);
   });
 });

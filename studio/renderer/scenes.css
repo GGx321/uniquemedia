@@ -471,9 +471,12 @@
   min-height: 28px;
 }
 
+/* CS.7 V2: when a flag and three actions leave the tags too little room (1200), the shot tag goes under the category instead of the category
+   shrinking to «К» — at the problem scenes, where its category matters most. Status and actions keep the first line (decision 9). */
 .scene-card-tags {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   min-width: 0;
 }
 
@@ -771,6 +774,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* CS.7 V3: the chip as wide as the shot it shows («Авто»), not as its widest option, so «Кадр» stays on the row at 1200 (ReviewAddIdea-1200) */
+.scene-idea-shot select {
+  field-sizing: content;
 }
 
 .scene-idea-stepper {

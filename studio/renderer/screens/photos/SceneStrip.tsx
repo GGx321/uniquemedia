@@ -9,7 +9,7 @@ import { ErrorNotice, Notice } from "../../ui/Notice";
 import { modelName, paidBlockedReason } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
-import { approveReason, approveTitle, continueTitle, SCENES_CHANGED_APPROVE, stepScenes } from "./sceneText";
+import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 
@@ -19,7 +19,6 @@ import { usePaidAction } from "./usePaidAction";
 // «Дописать N сцен» while scenes wait, else «Отрисовать M фото».
 
 const SET_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const PRICE_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
 /** Tags the strip shows before «ещё N»: about two lines at the window's width (the design's 7 at 1440, 5 at 1200). */
 function tagsThatFit(): number {
@@ -59,13 +58,6 @@ export function modelSegments(view: EngineView, textModel: string): string[] {
   if (s === null) return [];
   const quality = s.imageQuality !== null && s.imageModel !== SEEDREAM_FALLBACK_IMAGE_MODEL ? [s.imageQuality] : [];
   return [modelName(s.imageModel), ...quality, "9:16", "референс — мастер-портрет", ...(s.cameraRealism ? ["реализм камеры"] : []), `текст ${modelName(textModel)}`];
-}
-
-/** «OpenRouter · 5 окт. 2026 г.» for live prices, «резервные · …» for the dated fallback table (the generate card's own words). */
-export function priceSourceText(prices: "live" | "fallback" | null, asOf: string | null): string {
-  if (prices === null || asOf === null) return "—";
-  const date = PRICE_DATE.format(Date.parse(`${asOf}T00:00:00Z`));
-  return prices === "live" ? `OpenRouter · ${date}` : `резервные · ${date}`;
 }
 
 interface SceneStripProps {
@@ -313,7 +305,7 @@ export function SceneStrip({
               </span>
             </p>
             {models.length > 0 && (
-              <p className="faint scene-strip-models" title="Текущие Настройки — не часть набора: модель и качество можно сменить до «Отрисовать», цена пересчитается">
+              <p className="faint scene-strip-models" title={MODELS_LINE_TITLE}>
                 {models.map((segment, i) => (
                   <span key={segment}>
                     <span className="nowrap">{segment}</span>

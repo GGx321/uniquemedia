@@ -155,7 +155,8 @@ export function SceneIdeaForm({ set, view, start, blocked, onPaidInFlightChange,
           </label>
           <span className={shot === null ? "chip ed-chip-select" : "chip chip-on ed-chip-select"}>
             <select id={shotId} value={shot ?? ""} disabled={write.sending} onChange={(e) => setShot(POOL_SHOTS.find((s) => s === e.target.value) ?? null)}>
-              <option value="">Авто · без зеркала</option>
+              {/* CS.7 V3: «Авто» alone keeps «Кадр» in the form's row at 1200; that it never takes the mirror is said in the hint below. */}
+              <option value="">Авто</option>
               {POOL_SHOTS.map((s) => (
                 <option key={s} value={s}>
                   {SHOT_LABEL[s]}

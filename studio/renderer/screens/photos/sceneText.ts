@@ -472,11 +472,18 @@ export function recomposeLosses(set: SceneSetView, replaced: number): string[] {
   return lines;
 }
 
-/** What the set already cost (its `spentMicros`; an open reserve at its ceiling), or null when it cost nothing. */
-export function recomposeSpent(set: SceneSetView): string | null {
+/**
+ * What the set already cost (its `spentMicros`; an open reserve at its ceiling), or null when it cost nothing: the amount apart from the words around
+ * it, for the dialog to set it in mono (CS.7 V5, «Деньги на экране»).
+ */
+export function recomposeSpent(set: SceneSetView): { before: string; amount: string; after: string } | null {
   if (set.spentMicros === null || set.spentMicros === 0) return null;
   const open = set.openReserveMicros !== null && set.openReserveMicros > 0;
-  return `Набор уже стоил ${open ? `до ${usd(set.spentMicros, "up")}` : usd(set.spentMicros, "nearest")}. Эти деньги потрачены и не вернутся.`;
+  return {
+    before: open ? "Набор уже стоил до " : "Набор уже стоил ",
+    amount: usd(set.spentMicros, open ? "up" : "nearest"),
+    after: ". Эти деньги потрачены и не вернутся.",
+  };
 }
 
 /** After the discard: the card opens for settings again, with its own price on «Составить». */
@@ -485,6 +492,26 @@ export function recomposeAfter(count: number): string {
 }
 
 // ---------- fixed lines ----------
+
+// ---------- the price column and the models line ----------
+
+const PRICE_DAY = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });
+const PRICE_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+/**
+ * «OpenRouter · 24 сент.» for live prices, «резервные · 24 сент.» for the dated fallback table — the generate card's and the strip's «Цены» line. The year
+ * only when it is not this one (CS.7 V1: with it the line wrapped at both widths; the design draws «OpenRouter · 5 окт.»); an old table keeps it.
+ */
+export function priceSourceText(prices: "live" | "fallback" | null, asOf: string | null, now: Date = new Date()): string {
+  if (prices === null || asOf === null) return "—";
+  const at = Date.parse(`${asOf}T00:00:00Z`);
+  const date = (new Date(at).getUTCFullYear() === now.getFullYear() ? PRICE_DAY : PRICE_DATE).format(at);
+  return prices === "live" ? `OpenRouter · ${date}` : `резервные · ${date}`;
+}
+
+/** The strip's models line, hovered: the image side is today's Settings, the text model is the set's own (CS.7). */
+export const MODELS_LINE_TITLE =
+  "Картинки — по текущим Настройкам: модель и качество можно сменить до «Отрисовать», цена пересчитается. Текст — модель этого набора: ею написаны его сцены.";
 
 /** CS.7 M3: why «Сцены на проверку» cannot be turned off now — off would hide the running write and its «Отменить». */
 export const SWITCH_WAITS = "Пока модель пишет сцены, проверку не выключить — дождитесь конца или отмените запись.";

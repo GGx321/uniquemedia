@@ -31,7 +31,7 @@ import {
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, Why } from "./scenePaid";
 import { categorySceneCount } from "./sceneReview";
 import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
-import { composeTitle, SWITCH_WAITS } from "./sceneText";
+import { composeTitle, priceSourceText, SWITCH_WAITS } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 
@@ -56,12 +56,9 @@ const SHOT_TYPES = [
   { label: "Фотограф", tone: "photographer" },
 ] as const;
 
-const PRICE_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-
-/** "OpenRouter · 24 сент. 2026 г." for live prices, "резервные · 24 сент. 2026 г." for the dated fallback table (B5: the year, like the sheet's own). */
+/** «OpenRouter · 24 сент.», «резервные · …»: the strip's own words (B5's year only when it is not this one — CS.7 V1, so the line fits). */
 function priceSource(estimate: Estimate): string {
-  const date = PRICE_DATE.format(Date.parse(`${estimate.pricesAsOf}T00:00:00Z`));
-  return estimate.prices === "live" ? `OpenRouter · ${date}` : `резервные · ${date}`;
+  return priceSourceText(estimate.prices, estimate.pricesAsOf);
 }
 
 interface GenerateCardProps {

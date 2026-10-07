@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { callsOf, describeElement, flush, runAll } from "../testing";
+import { callsOf, describeElement, flush, runAll, withText } from "../testing";
 import { MIA } from "./photos/categoryScreenKit";
 import { ATTEMPT, card, column, fieldValue, goButton, isDisabled, nb, openReview, priceRow, sceneCard } from "./photos/sceneScreenKit";
 
@@ -33,7 +33,9 @@ describe("a compose cut off by a closed Studio", () => {
     expect(isDisabled(goButton())).toBe(true);
     expect(within(card()).getByText("Платные запросы остановлены до сверки расходов.")).toBeDefined();
     // The account banner tells an open reserve by «Деньги на экране»: three decimals below $0.10, rounded up.
-    expect(screen.getByText(/Незакрытые резервы считаются по худшей цене: до \$0\.038\./)).toBeDefined();
+    const banner = screen.getByText(withText(/Незакрытые резервы считаются по худшей цене: до \$0\.038\./));
+    // In mono, as every amount beside it (CS.7 V5).
+    expect(within(banner).getByText("$0.038").className).toBe("mono");
     expect(priceRow("Сцены")).toBe("1 Сцены 25 из 60");
     expect(card().textContent).toMatch(/потрачено до \$0\.04\d/);
     expect(priceRow(/фото$/)).toContain("≈ $3.00");
