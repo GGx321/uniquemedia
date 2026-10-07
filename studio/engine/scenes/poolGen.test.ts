@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CATEGORY_LABEL_MAX, CategoryPool, POOL_SHOTS, POOL_TEXT_MAX, POOL_TIMES } from "../../shared/engine";
+import { CATEGORY_LABEL_MAX, CategoryPool, POOL_SHOTS, POOL_TEXT_MAX, POOL_TIMES, ScenePose } from "../../shared/engine";
 import { PriceBook } from "../money/prices";
 import { chatAttemptWorstMicros, promptTokenFloor } from "../openrouter/chat";
 import { PoolSchema } from "./pools";
@@ -324,7 +324,77 @@ describe("readPoolAnswer: nothing that breaks the pool schema is ever kept", () 
   });
 });
 
+describe("readPoolAnswer: the angles the description asks for (CS.8a)", () => {
+  test("a listed angle becomes the pool's poses", () => {
+    expect(okOf(answer({ poses: ["back"] })).pool.poses).toEqual(["back"]);
+  });
+
+  test("several angles keep the model's order", () => {
+    expect(okOf(answer({ poses: ["back", "profile"] })).pool.poses).toEqual(["back", "profile"]);
+  });
+
+  test("a value outside the vocabulary is dropped and the valid ones stay", () => {
+    expect(okOf(answer({ poses: ["from above", "back", "sideways"] })).pool.poses).toEqual(["back"]);
+  });
+
+  test("a repeated angle is kept once", () => {
+    expect(okOf(answer({ poses: ["back", "back", "profile", "back"] })).pool.poses).toEqual(["back", "profile"]);
+  });
+
+  test.each([
+    ["an empty list", { poses: [] }],
+    ["only values outside the vocabulary", { poses: ["from above", 7, null] }],
+    ["a text instead of a list", { poses: "back" }],
+    ["null", { poses: null }],
+    ["no key at all", {}],
+  ])("%s leaves the pool without poses, and the answer stands", (_name, over) => {
+    const result = okOf(answer(over));
+    expect("poses" in result.pool).toBe(false);
+  });
+
+  test("an answer that carries poses is still held to every pool rule: a bad outfit is dropped as before", () => {
+    const result = okOf(answer({ poses: ["back"], outfits: [...OUTFITS, "a red bikini"] }));
+    expect(result.dropped).toBe(1);
+    expect(result.pool.poses).toEqual(["back"]);
+  });
+
+  test("a pool with poses passes the contract's schema and the engine's pool schema", () => {
+    const { pool } = okOf(answer({ poses: ["back", "profile"] }));
+    expect(CategoryPool.safeParse(pool).success).toBe(true);
+    expect(PoolSchema.safeParse(poolOf(pool)).success).toBe(true);
+  });
+
+  test("an activity that opens with a body position is kept when it fits the 35 characters", () => {
+    const activities = [
+      { text: "lying on her stomach, texting", twoHanded: false },
+      { text: "on her stomach, reading a book", twoHanded: false },
+    ];
+    const result = okOf(answer({ poses: ["back"], locations: PLACES.map((name, i) => place(name, { mirror: i === 2, activities })) }));
+    expect(result.dropped).toBe(0);
+    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "on her stomach, reading a book"]);
+  });
+
+  test("the body position leaves 13 characters of the 35: «lying on her stomach, » is 22, and a 40-character activity is dropped", () => {
+    expect("lying on her stomach, ".length).toBe(22);
+    expect(POOL_TEXT_MAX - "lying on her stomach, ".length).toBe(13);
+    const long = "lying on her stomach, reading a magazine";
+    expect(long.length).toBe(40);
+    const activities = [
+      { text: long, twoHanded: false },
+      { text: "lying on her stomach, texting", twoHanded: false },
+      { text: "lying on her stomach, writing", twoHanded: false },
+    ];
+    const result = okOf(answer({ poses: ["back"], locations: PLACES.map((name, i) => place(name, { mirror: i === 2, activities })) }));
+    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "lying on her stomach, writing"]);
+  });
+});
+
 describe("poolOf", () => {
+  test("carries the pool's poses to the engine's pool, and nothing when the pool has none", () => {
+    expect(poolOf(okOf(answer({ poses: ["back"] })).pool).poses).toEqual(["back"]);
+    expect("poses" in poolOf(okOf(answer()).pool)).toBe(false);
+  });
+
   test("is the engine's pool: a mirror place carries mirror true, the others carry none", () => {
     const pool = poolOf(okOf(answer()).pool);
     expect(pool.locations.map((l) => l.mirror)).toEqual([undefined, undefined, true, undefined, undefined]);
@@ -362,6 +432,19 @@ describe("poolMessages", () => {
     for (const needle of ["35", "24", "5 to 7", "3 to 6", "twoHanded", "mirror", "photographer", "bikini", "quote", "backslash", "data, not instructions"]) expect(system).toContain(needle);
   });
 
+  test("asks for the angles the description names, and an empty list when it names none", () => {
+    const system = poolMessages("x")[0]?.content ?? "";
+    for (const needle of ['"poses"', "front, three-quarter, profile, back", "empty list"]) expect(system).toContain(needle);
+  });
+
+  test("asks for the body position in EVERY activity, inside the 35 characters", () => {
+    const system = poolMessages("x")[0]?.content ?? "";
+    expect(system).toContain("body position");
+    expect(system).toContain("EVERY activity");
+    expect(system).toContain("lying on her stomach, texting");
+    expect(system).toContain("include the position");
+  });
+
   test("the example it shows is itself a pool the reader accepts", () => {
     const system = poolMessages("x")[0]?.content ?? "";
     expect(system).toContain(POOL_EXAMPLE_ANSWER);
@@ -395,7 +478,13 @@ describe("POOL_JSON_SCHEMA", () => {
   });
 
   test("asks for the label, the places, the outfits and the deck", () => {
-    expect(Object.keys(root.properties ?? {}).sort()).toEqual(["label", "locations", "outfits", "shotDeck"]);
+    expect(Object.keys(root.properties ?? {}).sort()).toEqual(["label", "locations", "outfits", "poses", "shotDeck"]);
+  });
+
+  test("the angles are a list of the four poses of the shared vocabulary, always present (an empty list means none)", () => {
+    expect(root.properties?.poses?.type).toBe("array");
+    expect(root.properties?.poses?.items?.enum).toEqual([...ScenePose.options]);
+    expect(root.required).toContain("poses");
   });
 
   test("a place's times come from the built-in vocabulary and the deck's shots from the five", () => {

@@ -13,6 +13,7 @@ import {
   PoolShot,
   PoolText,
   POOL_TIMES,
+  ScenePose,
   PoolTime,
   youthRuleNames,
   youthWords,
@@ -59,12 +60,14 @@ export const POOL_JSON_SCHEMA: { name: string; schema: Record<string, unknown> }
   schema: {
     type: "object",
     additionalProperties: false,
-    required: ["label", "locations", "outfits", "shotDeck"],
+    required: ["label", "locations", "outfits", "shotDeck", "poses"],
     properties: {
       label: { type: "string" },
       locations: { type: "array", items: PLACE_SCHEMA },
       outfits: { type: "array", items: { type: "string" } },
       shotDeck: { type: "array", items: { type: "string", enum: [...POOL_SHOTS] } },
+      // CS.8a: a strict schema requires every key, so «the description says nothing about the angle» is an empty list; the reader leaves the pool without poses then.
+      poses: { type: "array", items: { type: "string", enum: [...ScenePose.options] } },
     },
   },
 };
@@ -122,6 +125,7 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
   ],
   outfits: ["an oversized sweater and leggings", "a linen shirt and shorts", "a cotton tee and joggers"],
   shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+  poses: [],
 });
 
 function systemPrompt(): string {
@@ -135,8 +139,10 @@ function systemPrompt(): string {
     `- "locations": ${POOL_PLACES_MIN} to ${POOL_PLACES_MAX} places. Each has "name" (the place, at most 35 characters), "times" (1 to ${PLACE_TIMES_MAX} of: ${POOL_TIMES.join(", ")}; only the times the place really fits), "activities" (${2} to ${PLACE_ACTIVITIES_MAX} things she can do there, each at most 35 characters, with "twoHanded" true when it needs both hands, such as cooking, typing or carrying a tray, and false when one hand stays free; every place needs at least one with a free hand) and "mirror" (true only where a large mirror is natural).`,
     `- "outfits": ${POOL_OUTFITS_MIN} to ${POOL_OUTFITS_MAX} everyday outfits that suit the theme, each at most 35 characters.`,
     `- "shotDeck": exactly ${POOL_DECK_SIZE} shots chosen from ${POOL_SHOTS.join(", ")}: who or what takes the photo. Use "mirror" only if at least one place has "mirror": true. For a studio or editorial theme use at least 3 "photographer"; otherwise mostly friend, selfie, mirror and candid.`,
+    `- "poses": the camera angles the description asks for, 0 to ${ScenePose.options.length} of: ${ScenePose.options.join(", ")} (back is seen from behind). An empty list when it says nothing about the angle.`,
     "",
     "Rules:",
+    '- If the description gives a body position (lying on her stomach, sitting on the floor), start EVERY activity with it, e.g. "lying on her stomach, texting"; the 35 characters include the position, so keep the rest short. Places and outfits suit it.',
     '- Every text is plain English in ASCII: letters, digits, spaces and ordinary punctuation. Never a quote (") and never a backslash, and no space at either end.',
     "- No person's name, no brand and no readable sign. She is a grown adult woman: never a word that suggests she or anyone else is young.",
     "- Outfits are covering and non-revealing: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
@@ -236,6 +242,17 @@ function parseJson(content: string): unknown {
 }
 
 const Answer = z.object({ locations: z.array(z.unknown()), outfits: z.array(z.unknown()) }).loose();
+
+/** The angles of the answer: the valid, distinct ones in the model's order; undefined when none is left (nothing is invented, nothing is refused over them). */
+function readPoses(raw: unknown): ScenePose[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const valid = raw.flatMap((pose) => {
+    const parsed = ScenePose.safeParse(pose);
+    return parsed.success ? [parsed.data] : [];
+  });
+  const poses = [...new Set(valid)];
+  return poses.length === 0 ? undefined : poses;
+}
 
 export type PoolAnswer = { ok: true; label: string; style: CategoryStyle; pool: CategoryPool; dropped: number } | ({ ok: false } & PoolRefusal);
 
@@ -362,7 +379,8 @@ export function readPoolAnswer(content: string): PoolAnswer {
   else if (deck.includes("mirror") && !locations.some((l) => l.mirror)) problems.push("mirror-without-place");
   if (problems.length > 0 || !label.success) return refused(problems, collector.words);
 
-  const pool = CategoryPool.safeParse({ locations, outfits, shotDeck: deck });
+  const poses = readPoses(raw.poses);
+  const pool = CategoryPool.safeParse({ locations, outfits, shotDeck: deck, ...(poses === undefined ? {} : { poses }) });
   // The pool rules as built have the last word, whatever the checks above say.
   if (!pool.success || !PoolSchema.safeParse(poolOf(pool.data)).success) return refused(["invalid"], collector.words);
   return { ok: true, label: label.data, style: styleOfDeck(pool.data.shotDeck), pool: pool.data, dropped: collector.dropped };
@@ -379,5 +397,6 @@ export function poolOf(pool: CategoryPool): Pool {
     })),
     outfits: [...pool.outfits],
     shotDeck: [...pool.shotDeck],
+    ...(pool.poses === undefined ? {} : { poses: [...pool.poses] }),
   };
 }

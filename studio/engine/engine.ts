@@ -3034,6 +3034,7 @@ export class Engine {
         ...(payload.name === undefined ? {} : { name: payload.name }),
         ...(payload.removeLocations === undefined ? {} : { removeLocations: payload.removeLocations }),
         ...(payload.removeOutfits === undefined ? {} : { removeOutfits: payload.removeOutfits }),
+        ...(payload.poses === undefined ? {} : { poses: payload.poses }),
       });
       const category = summaryOf(updated);
       this.#emitCategory({ change: "upserted", category });

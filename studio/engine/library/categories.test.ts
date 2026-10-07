@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MAX_CUSTOM_CATEGORIES, type CategoryPool } from "../../shared/engine";
-import { BOOKED_JOBS_CAP, CategoryError, CategoryStore, StoredCategory, type CategoryErrorCode, type NewCategory } from "./categories";
+import { BOOKED_JOBS_CAP, CategoryError, CategoryStore, snapshotOf, StoredCategory, type CategoryErrorCode, type NewCategory } from "./categories";
 import { openLibrary } from "./library";
 import { rejectionOf, steppingClock, useTempDir } from "./testing/helpers";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -467,6 +467,64 @@ describe("update: rename and remove an item", () => {
   });
 });
 
+describe("update: the category's angles (CS.8a)", () => {
+  test("sets the poses and changes nothing else", async () => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes" }));
+    const updated = await s.update("cat-paris-cafes", { poses: ["back", "profile"] });
+
+    expect(updated.pool.poses).toEqual(["back", "profile"]);
+    expect(updated).toEqual({ ...made, pool: { ...made.pool, poses: ["back", "profile"] }, updatedAt: updated.updatedAt });
+    expect(updated.updatedAt > made.updatedAt).toBe(true);
+    expect(await readRecord("cat-paris-cafes")).toMatchObject({ pool: { poses: ["back", "profile"] } });
+  });
+
+  test("replaces the poses the pool had", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", pool: pool({ poses: ["back"] }) }));
+    expect((await s.update("cat-paris-cafes", { poses: ["front"] })).pool.poses).toEqual(["front"]);
+  });
+
+  test("null clears them: the record goes back to a pool without the key", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", pool: pool({ poses: ["back"] }) }));
+    const cleared = await s.update("cat-paris-cafes", { poses: null });
+    expect("poses" in cleared.pool).toBe(false);
+    expect(JSON.stringify(await readRecord("cat-paris-cafes"))).not.toContain("poses");
+  });
+
+  test("goes together with a rename in one write", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", name: "Old" }));
+    const updated = await s.update("cat-paris-cafes", { name: "New", poses: ["back"] });
+    expect(updated.name).toBe("New");
+    expect(updated.pool.poses).toEqual(["back"]);
+  });
+
+  test("a refused removal leaves the poses as they were", async () => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes" }));
+    expect(await codeOf(s.update("cat-paris-cafes", { poses: ["back"], removeOutfits: ["a black midi dress"] }))).toBe("below-minimum");
+    expect(await s.get("cat-paris-cafes")).toEqual(made);
+  });
+
+  test("a record written before CS.8a (no poses) is read as it is", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes" }));
+    const read = await s.get("cat-paris-cafes");
+    expect(read).not.toBeNull();
+    expect(read !== null && "poses" in read.pool).toBe(false);
+  });
+
+  test("the snapshot of a plan carries the poses, and no key without them", async () => {
+    const s = store();
+    const plain = await s.create(input({ categoryId: "cat-plain-one" }));
+    const angled = await s.create(input({ categoryId: "cat-angled-one", pool: pool({ poses: ["back"] }) }));
+    expect(snapshotOf(angled).poses).toEqual(["back"]);
+    expect("poses" in snapshotOf(plain)).toBe(false);
+  });
+});
+
 describe("replacePool (a regeneration) and addSpend", () => {
   test("a new pool, label, style and description replace the old; the name, id and creation time stay; the spend adds up", async () => {
     const s = store();
@@ -478,6 +536,18 @@ describe("replacePool (a regeneration) and addSpend", () => {
     expect(replaced).toMatchObject({ categoryId: "cat-paris-cafes", name: "Кофейни", createdAt: made.createdAt, description: "новое описание", label: "Paris bakeries", style: "editorial", pool: next, spentMicros: 11_000 });
     expect(replaced.updatedAt > made.updatedAt).toBe(true);
     expect(await s.get("cat-paris-cafes")).toEqual(replaced);
+  });
+
+  test("a regeneration re-derives the poses: the new pool's replace the old, and a pool without them clears them", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", pool: pool({ poses: ["back"] }) }));
+    const fresh = { description: "d", label: "l", style: "phone" as const, model: "x-ai/grok-4.3", spentMicros: 1 };
+
+    const angled = await s.replacePool("cat-paris-cafes", { ...fresh, pool: pool({ poses: ["profile"] }), jobId: "job-00000001" });
+    expect(angled.pool.poses).toEqual(["profile"]);
+
+    const plain = await s.replacePool("cat-paris-cafes", { ...fresh, pool: pool(), jobId: "job-00000002" });
+    expect("poses" in plain.pool).toBe(false);
   });
 
   test("a regeneration of an unknown category is refused", async () => {

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { youthWords } from "../../shared/engine";
+import { CategoryPoses, youthWords } from "../../shared/engine";
+import type { Pose } from "./schema";
 import { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
 import { REVEALING_WORDS } from "./words";
 
@@ -48,6 +49,11 @@ export interface Pool {
   locations: readonly Place[];
   outfits: readonly string[];
   shotDeck: readonly Shot[];
+  /**
+   * CS.8a: the angles a custom category's description asked for. A slot of the category draws its pose from them, whatever the run's «Ракурсы» toggles say
+   * (planner.ts). Absent on every built-in and on a custom category without a preference.
+   */
+  poses?: readonly Pose[];
 }
 
 /** Every category but Photoshoot: 2 friend, 1 selfie, 1 mirror, 1 candid. */
@@ -302,6 +308,7 @@ export const PoolSchema = z
     locations: z.array(PlaceSchema).min(1),
     outfits: z.array(OutfitSchema).min(1),
     shotDeck: z.array(z.enum(SHOTS)).min(1),
+    poses: CategoryPoses.optional(),
   })
   .refine((pool) => !pool.shotDeck.includes("mirror") || pool.locations.some((l) => l.mirror === true), {
     message: "a shot deck that can draw a mirror shot needs at least one mirror location to place it on",

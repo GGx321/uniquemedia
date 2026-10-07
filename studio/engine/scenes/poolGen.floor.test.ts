@@ -17,7 +17,8 @@ const book = PriceBook.fallback();
 
 /**
  * The margin the ceiling keeps over the worst prompt's floor, in tokens. As built the worst floor (500 CJK chars, the worst feedback) is
- * 6,442 tokens against the 10,000 ceiling: 3,558 of headroom, of which this pin requires 3,000, so a longer system prompt shows up here.
+ * 6,993 tokens against the 10,000 ceiling: 3,007 of headroom, of which this pin requires 3,000, so a longer system prompt shows up here. (CS.8a: the angles
+ * and the body-position rule took 551 tokens of the 3,558 the prompt had before; a further line needs the prompt trimmed or the ceiling re-priced.)
  */
 const MARGIN_TOKENS = 3_000;
 
