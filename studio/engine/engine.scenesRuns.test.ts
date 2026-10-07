@@ -243,6 +243,32 @@ describe("runs.estimateFromScenes", () => {
     expect(highWorst).toBeGreaterThan(lowWorst);
   });
 
+  describe("prices", () => {
+    /** Live endpoints for any image model asked about, and a /models list that holds none of the chat models Studio might use. */
+    const liveImagesOnly = (call: FetchCall): Reply => {
+      if (call.url.endsWith("/models")) return { status: 200, body: { data: [{ id: "acme/other", pricing: { prompt: "0.000001", completion: "0.000002" } }] } };
+      const id = /\/images\/models\/(.+)\/endpoints$/.exec(call.url)?.[1];
+      if (id === undefined) throw new Error(`unexpected request to ${call.url}`);
+      return { status: 200, body: { id, endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.05 }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] }] } };
+    };
+
+    test("a text model nobody lists does not block an images-only run: no writer, no text price", async () => {
+      const avatarId = await seedAvatar();
+      await seedSet(avatarId, { count: 5 });
+      const { engine } = await engineOver(network(), { settings: { textModel: "acme/unlisted-text" } });
+      expect(estimateOf(await engine.handle(estimateCommand((await setOf(engine, avatarId)).revision))).worstMicros).toBe(5 * 3 * IMAGE);
+    });
+
+    test("the prices are live when the images' are, whatever became of the text model's", async () => {
+      const avatarId = await seedAvatar();
+      await seedSet(avatarId, { count: 5 });
+      const { engine } = await engineOver(network({ prices: liveImagesOnly }));
+      const result = ok(await engine.handle(estimateCommand((await setOf(engine, avatarId)).revision)));
+      if (result.type !== "runs.estimateFromScenes") throw new Error("expected an estimate");
+      expect(result.result.estimate.prices).toBe("live");
+    });
+  });
+
   describe("refuses for free, in order", () => {
     async function ready(opts: SeedOptions = {}) {
       const avatarId = await seedAvatar();

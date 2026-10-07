@@ -94,7 +94,7 @@ import { priceFetchFrom } from "./openrouter/priceFetch";
 import { ImageCatalogueCache, loadImageCatalogue } from "./imageModels/catalogue";
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
-import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, type RunPlan } from "./runs/plan";
+import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
 import { commitApproval, loadApprovable } from "./sceneSets/approve";
 import { runSnapshots, runSources } from "./sceneSets/toRun";
 import { CpuPool, NetworkPool } from "./runs/pools";
@@ -2181,7 +2181,7 @@ export class Engine {
     this.#runnableAvatar(library, avatarId);
     const models = this.#avatarModels();
     const imageAgeCheck = this.#settings.imageAgeCheck;
-    return runEstimateFromScenes(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, { count: runSources(set).length }, imageAgeCheck);
+    return runEstimateFromScenes(await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck)), models, { count: runSources(set).length }, imageAgeCheck);
   }
 
   /**
@@ -2210,7 +2210,7 @@ export class Engine {
     this.#assertAgeGate(imageAgeCheck);
     this.#assertFaceGate();
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck));
+    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
     const estimate = runEstimateFromScenes(priced, models, { count: runSources(approved.set).length }, imageAgeCheck);
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, estimate.worstMicros);

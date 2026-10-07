@@ -25,6 +25,7 @@ import { snapshotOf } from "../library/categories";
 import type { JobRegistry, ScenesJobEnd } from "../jobs";
 import { pendingChunks } from "./chunks";
 import { planSceneSet } from "./compose";
+import { findSceneSet } from "./approve";
 import { applyEdit, type EditOutcome } from "./edit";
 import { composeEstimate, reviewWriteEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
 import { beginWrite, withChunkGivenUp, withChunkWritten, withOutcome, withWriteFinished, withWriteStopped } from "./mutations";
@@ -143,12 +144,8 @@ export class SceneSetService {
   }
 
   /** The set with this id, in whichever avatar's folder it lies; NOT_FOUND when none of them has it. */
-  async #find(library: Library, sceneSetId: string): Promise<{ set: StoredSceneSet; avatarId: string }> {
-    for (const manifest of library.listAvatars()) {
-      const set = await library.sceneSets.get(manifest.id, sceneSetId).catch(() => null);
-      if (set !== null) return { set, avatarId: manifest.id };
-    }
-    throw new EngineFailure({ code: "NOT_FOUND", detail: `no scene set ${sceneSetId} in the open library` });
+  #find(library: Library, sceneSetId: string): Promise<{ set: StoredSceneSet; avatarId: string }> {
+    return findSceneSet(library, sceneSetId);
   }
 
   #needLibrary(): Library {

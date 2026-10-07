@@ -110,6 +110,14 @@ export function runPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck):
 }
 
 /**
+ * The models a run made from a reviewed scene set needs priced (CS.5): its image models and, when the check is on, the age check's. No text model: every
+ * sentence exists, so nothing is asked of the writer, and a text price that cannot be loaded must not block (or mark as «fallback») an images-only run.
+ */
+export function sceneRunPriceModels(models: RunModels, imageAgeCheck: ImageAgeCheck): PriceModels {
+  return { ...runPriceModels(models, imageAgeCheck), chatModels: imageAgeCheck === "on" ? [AGE_CHECK_CALL.model] : [] };
+}
+
+/**
  * The run's expected and worst cost in the contract's shape (money/estimate.ts's
  * `estimateRun`): every slot's every attempt at the dearest model of its route
  * plus, when the image age check is on, an age check per attempt, and the
@@ -297,6 +305,15 @@ export interface NewRunPlan {
   cameraRealism?: boolean;
 }
 
+/**
+ * The `models` a plan persists. `imageQuality` is written only when it differs from what a plan without the key means (`low`, or none for Seedream), so
+ * a default run's plan.json is byte-for-byte the one written before the image-model choice existed.
+ */
+function planModels(route: readonly [ImageChoice, ...ImageChoice[]], textModel: string) {
+  const [first, second] = route;
+  return { image: first.model, ...(first.quality === "low" || first.model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: first.quality }), fallback: second?.model ?? null, text: textModel };
+}
+
 /** The plan to persist: the planner's slots with every attempt id pre-allocated, and the writer's chunks with theirs. */
 export function buildRunPlan(input: NewRunPlan): RunPlan {
   const route = runRoute(input.models.imageModel, input.models.imageQuality);
@@ -312,7 +329,7 @@ export function buildRunPlan(input: NewRunPlan): RunPlan {
     // Written only when it differs from what a plan without the key means (no clause; `low`, or none for Seedream), so a default run's
     // plan.json is byte-for-byte the one written before the image-model choice existed.
     ...(input.cameraRealism === true ? { cameraRealism: true } : {}),
-    models: { image: route[0].model, ...(route[0].quality === "low" || route[0].model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: route[0].quality }), fallback: route[1]?.model ?? null, text: input.models.textModel },
+    models: planModels(route, input.models.textModel),
     capMicros: input.capMicros,
     plannedWorstMicros: input.plannedWorstMicros,
     scenes: input.scenes,
@@ -368,7 +385,7 @@ export function buildSceneRunPlan(input: NewSceneRunPlan): RunPlan {
     ...(input.categories === undefined || input.categories.length === 0 ? {} : { categories: input.categories }),
     imageAgeCheck: input.imageAgeCheck,
     ...(input.cameraRealism === true ? { cameraRealism: true } : {}),
-    models: { image: route[0].model, ...(route[0].quality === "low" || route[0].model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: route[0].quality }), fallback: route[1]?.model ?? null, text: input.models.textModel },
+    models: planModels(route, input.models.textModel),
     capMicros: input.capMicros,
     plannedWorstMicros: input.plannedWorstMicros,
     scenes: { version: 1, seed: 0, slots },
