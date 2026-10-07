@@ -1370,6 +1370,33 @@ Not done on purpose (backlog or the owner's call): a redraw restyles every scene
 fixtures for the disk records, a category the new pool rules made unreadable cannot be deleted, used sets are never pruned, a manual removal of `runs/<runId>/`
 turns a used set back into an open one (OQ1: `used` is derived, not stored), and `runs.start` does not refuse during a library switch in the mock.
 
+#### CS.7 fixes, round 2 (a read the OS fails)
+
+The verifier found a MEDIUM money/data regression in item 1 above: `#read` answered `unreadable` for ANY OS error, and `update` turned that into `not-found`, which
+`store()` does not retry. One EIO/EMFILE/EBUSY (an antivirus on Windows) while saving an accepted, paid chunk or review answer ended the job `failed`, the
+sentences in memory were lost and the attempt was already counted, so «Дописать» paid again. Each change below was seen red for its intended reason first.
+
+- **Three outcomes of a read, kept apart** (`durableFs.ts` `readRecordFile` / `readFolderNames`, which replace the `*Tolerant` helpers): `missing` (ENOENT, ENOTDIR),
+  a record whose CONTENT cannot be used (not JSON, schema, a newer version, another set's file; a folder in its place, EISDIR, is this too, since nothing can
+  be read from it), and `io` with the OS's own error (everything else: EIO, EMFILE, EBUSY, EPERM, EACCES, a cloud placeholder).
+- **Listings count, writers rethrow.** `list`, `get` and the survey count an `io` file as unreadable and go on (what 4b07e0e6 wanted). `SceneSetStore.update`/`remove`
+  and the category `update`/`replacePool`/`addSpend`/`remove` (and the pending-id scan they use) throw the OS error itself, so `store()`'s one retry applies and a
+  persistent error ends the job with the real cause, not `not-found`. A job's `load` uses the new `SceneSetStore.load`, which throws an `io` error instead of
+  reading it as «gone».
+- **Checks before a new write fail closed.** `SceneSetStore.listForWrite` (compose's «one open set per avatar») and `create`'s id check, and the category store's
+  `assertRoom` / `create` / rename name check refuse with `library-unreadable` when a record or the folder listing hits an OS error: nothing written, nothing
+  reserved. The category create also tries its write once more after the pool was paid for when the refusal is `library-unreadable` (nothing was written).
+- **Contract (additive):** `library-unreadable` in `CATEGORY_REASONS` (`categoryReason`) and in `SCENE_REASONS` (`sceneReason`, names no scene), each with its
+  Russian text («Ничего не создано / не записано и не потрачено — повторите»). It is a VALIDATION, not LIBRARY_UNAVAILABLE: that code means no library is open and
+  sends the owner to Settings, which is wrong for a read that passes on a retry. The reason table is now seventeen scene and six category reasons.
+- **Seams that run on every platform:** the stores take `beforeRead` / `beforeList` (and the library's `testHooks` pass them), so EIO/EMFILE/EBUSY/EPERM are injected
+  without `chmod`; the `chmod 000` tests stay, skipped on Windows and as root. One test changed on purpose: a change of an EACCES record is the OS error, no longer
+  `not-found`.
+- **Renderer:** `errorText` names the scene from `sceneId` («Текст сцены 04 не проходит…», «У сцены 12 нет текста…», also `scene-missing` and `target-removed`);
+  without the number the reason's general text stays. `sceneNumber` moved to `renderer/lib/format.ts` (re-exported by `sceneReview.ts`).
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7117 + 5628 + 7679 = 20424 passing, 0 failing (this machine; CI is the run of record, and Windows is where the antivirus case lives).
+
 Phase 1 = CS.0 (category states), CS.1, CS.2, CS.3. Phase 2 = CS.0 (review states), CS.4a, CS.4b,
 CS.5, CS.6, CS.7. Rough size: phase 1 ≈ one L and two M tasks; phase 2 ≈ two L and three M tasks
 plus the review.
