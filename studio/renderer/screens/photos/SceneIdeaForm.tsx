@@ -5,7 +5,7 @@ import type { EngineView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { formatUsdTiered } from "../../lib/money";
 import { Icon } from "../../ui/Icon";
-import { about, InlinePaidButton, paidButtonState, setPriceKey } from "./scenePaid";
+import { about, describedBy, InlinePaidButton, paidButtonState, PriceFailed, setPriceKey } from "./scenePaid";
 import { SHOT_LABEL, writeCapRefusal } from "./sceneReview";
 import { IDEA_HINT, ideaTitle, WRITE_CAP_TEXT } from "./sceneText";
 import { usePaidAction } from "./usePaidAction";
@@ -50,6 +50,7 @@ export function SceneIdeaForm({ set, view, start, blocked, onPaidInFlightChange,
   const { client, store, sceneSets } = useEngine();
   const ids = useId();
   const field = useRef<HTMLTextAreaElement>(null);
+  const writeRef = useRef<HTMLButtonElement>(null);
   const [idea, setIdea] = useState(start.idea);
   const [count, setCount] = useState(start.count);
   const [shot, setShot] = useState<PoolShot | null>(start.shot);
@@ -90,6 +91,7 @@ export function SceneIdeaForm({ set, view, start, blocked, onPaidInFlightChange,
   const shotId = `${ids}-shot`;
   const whyId = `${ids}-why`;
   const invalidId = `${ids}-invalid`;
+  const priceId = `${ids}-price`;
 
   return (
     <section className="card scene-idea-form" aria-labelledby={titleId} onKeyDown={onKey}>
@@ -184,13 +186,14 @@ export function SceneIdeaForm({ set, view, start, blocked, onPaidInFlightChange,
         <button type="button" className="btn btn-s" disabled={write.sending} onClick={onClose}>
           Отмена
         </button>
-        <InlinePaidButton state={state} describedBy={blocked !== null ? whyId : undefined} onClick={write.click} />
+        <InlinePaidButton buttonRef={writeRef} state={state} describedBy={describedBy(blocked !== null && whyId, write.priceError !== null && priceId)} onClick={write.click} />
       </div>
       {blocked !== null && (
         <p id={whyId} className="faint scene-idea-why">
           {blocked}
         </p>
       )}
+      {write.priceError !== null && <PriceFailed id={priceId} error={write.priceError} onRetry={write.retryPrice} after={() => writeRef.current} />}
     </section>
   );
 }

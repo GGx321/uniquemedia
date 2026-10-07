@@ -110,6 +110,27 @@
   line-height: 1.35;
 }
 
+/* CS.7 M2: «Цену не узнать: … · Повторить» under a paid control — CS.3's .cat-cost-error line, on its own row */
+.price-failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.notice-actions .price-failed {
+  flex-basis: 100%;
+}
+
+.scene-idea-form .price-failed {
+  justify-content: flex-end;
+  margin-top: -4px;
+  text-align: right;
+}
+
 /* ── the set's strip (decision 8): the card collapsed while a set is open ── */
 
 .scene-strip {

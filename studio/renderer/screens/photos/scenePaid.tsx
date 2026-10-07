@@ -2,6 +2,8 @@ import { type ReactNode, type Ref, useEffect, useLayoutEffect, useRef, useState 
 import type { EngineError, Estimate, SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
+import { errorText } from "../../lib/errors";
+import { afterColon } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { Spin } from "../../ui/Icon";
 import { Notice } from "../../ui/Notice";
@@ -190,6 +192,58 @@ export function Why({ id, children }: { id: string; children: ReactNode }) {
   return (
     <p id={id} className="field-hint scene-why">
       {children}
+    </p>
+  );
+}
+
+/** The ids a control is described by, the lines not shown left out; undefined when none is. */
+export function describedBy(...ids: readonly (string | null | false | undefined)[]): string | undefined {
+  const shown = ids.filter((id): id is string => typeof id === "string" && id !== "");
+  return shown.length === 0 ? undefined : shown.join(" ");
+}
+
+/** Whether the focus is nowhere a person put it: on the page itself, or on an element that has left it. */
+export function focusLost(): boolean {
+  const active = document.activeElement;
+  return active === null || active === document.body || !active.isConnected;
+}
+
+/**
+ * CS.7 M2: the free price of a paid control could not be had — why, and «Повторить» (decision 16: a paid control that cannot send says why), in the words of
+ * CS.3's create dialog: «Цену не узнать: … · Повторить». «Повторить» asks again (free). Once the price comes this line goes, and a focus it held goes to
+ * `after` — the paid control, priced now — instead of to the page.
+ */
+export function PriceFailed({ id, error, onRetry, after }: { id: string; error: EngineError; onRetry: () => void; after: () => HTMLElement | null }) {
+  const [asking, setAsking] = useState(false);
+  const retried = useRef(false);
+  const latestAfter = useRef(after);
+  useLayoutEffect(() => {
+    latestAfter.current = after;
+  });
+  // A fresh refusal ends the ask: the line says why again.
+  useEffect(() => setAsking(false), [error]);
+  useEffect(
+    () => () => {
+      if (retried.current && focusLost()) latestAfter.current()?.focus();
+    },
+    [],
+  );
+  return (
+    <p id={id} className="price-failed">
+      <span className={asking ? "faint" : "danger-text"}>{asking ? "Узнаём цену…" : `Цену не узнать: ${afterColon(errorText(error))}`}</span>
+      <button
+        type="button"
+        className="link-btn"
+        aria-disabled={asking}
+        onClick={() => {
+          if (asking) return;
+          retried.current = true;
+          setAsking(true);
+          onRetry();
+        }}
+      >
+        Повторить
+      </button>
     </p>
   );
 }

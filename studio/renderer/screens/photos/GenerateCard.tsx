@@ -28,7 +28,7 @@ import {
   sameCategories,
   toggleCategory,
 } from "./runForm";
-import { about, ceiling, paidButtonState, PriceChangedNotice, StackButton, Why } from "./scenePaid";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, Why } from "./scenePaid";
 import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
 import { composeTitle } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
@@ -413,6 +413,7 @@ export function GenerateCard({
   const buttonBusy = busy || estimating;
 
   const hintId = `${ids}-why`;
+  const priceFailedId = `${ids}-price`;
   const anglesLabel = `${ids}-angles`;
   const anglesHint = `${ids}-angles-hint`;
   const countLabel = `${ids}-count`;
@@ -583,7 +584,7 @@ export function GenerateCard({
             <StackButton
               buttonRef={goRef}
               state={composeButton}
-              describedBy={composeBlocked !== null && !composeButton.busy ? hintId : undefined}
+              describedBy={describedBy(composeBlocked !== null && !composeButton.busy && hintId, compose.priceError !== null && priceFailedId)}
               onClick={compose.click}
             />
           ) : (
@@ -615,6 +616,7 @@ export function GenerateCard({
                   {blockedReason}
                 </p>
               )}
+          {review && compose.priceError !== null && <PriceFailed id={priceFailedId} error={compose.priceError} onRetry={compose.retryPrice} after={() => goRef.current} />}
         </div>
       </section>
   );

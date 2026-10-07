@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, type Ref, useId, useMemo, useState } from "react";
+import { Fragment, type ReactNode, type Ref, type RefObject, useId, useMemo, useState } from "react";
 import type { AvatarSummary, SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
@@ -7,7 +7,7 @@ import { countOf } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { modelName, paidBlockedReason } from "./runForm";
-import { about, ceiling, paidButtonState, PriceChangedNotice, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
 import { approveReason, approveTitle, continueTitle, SCENES_CHANGED_APPROVE, stepScenes } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
@@ -84,8 +84,8 @@ interface SceneStripProps {
   onRecompose: () => void;
   onStarted: (started: { runId: string; jobId: string }) => void;
   onFocusScene: (sceneId: number) => void;
-  /** The card's button, for the focus to land on (after «Удалить набор», for one). */
-  goRef: Ref<HTMLButtonElement>;
+  /** The card's button, for the focus to land on (after «Удалить набор», for one, or once a price asked again comes). */
+  goRef: RefObject<HTMLButtonElement | null>;
   recomposeRef: Ref<HTMLButtonElement>;
 }
 
@@ -245,6 +245,10 @@ export function SceneStrip({
   const models = modelSegments(view, set.textModel);
   const switchLabel = `${ids}-sw`;
   const reasonShown = reason !== null && !button.busy;
+  // M2: the button's own free price could not be had («Дописать», or «Отрисовать» when it can be priced): why, and «Повторить».
+  const priced = action.kind === "continue" ? more : approvable ? approve : null;
+  const priceFailed = priced?.priceError ?? null;
+  const priceFailedId = `${ids}-price`;
 
   return (
     <>
@@ -337,13 +341,9 @@ export function SceneStrip({
 
         <div className="photos-gen-side scene-strip-go">
           <ReviewSwitch on onToggle={onToggleReview} labelId={switchLabel} />
-          <StackButton
-            buttonRef={goRef}
-            state={button}
-            describedBy={reasonShown ? why : undefined}
-            onClick={onClick}
-          />
+          <StackButton buttonRef={goRef} state={button} describedBy={describedBy(reasonShown && why, priceFailed !== null && priceFailedId)} onClick={onClick} />
           {reasonShown && <Why id={why}>{reason}</Why>}
+          {priceFailed !== null && priced !== null && <PriceFailed id={priceFailedId} error={priceFailed} onRetry={priced.retryPrice} after={() => goRef.current} />}
         </div>
       </section>
       {confirm !== null && <PriceChangedNotice previousWorst={confirm.previous} estimate={confirm.estimate} />}
@@ -362,7 +362,6 @@ export function SceneStrip({
       )}
       {approve.error !== null && approve.error.code !== "SCENES_CHANGED" && <ErrorNotice error={approve.error} />}
       {more.error !== null && <ErrorNotice error={more.error} />}
-      {approve.priceError !== null && approvable && <ErrorNotice error={approve.priceError} />}
     </>
   );
 }

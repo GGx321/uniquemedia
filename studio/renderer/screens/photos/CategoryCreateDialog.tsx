@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { CATEGORY_DESCRIPTION_MAX, CATEGORY_NAME_MAX } from "../../../shared/engine";
 import { useCategoryLibrary, useEngineView } from "../../engine/react";
 import { errorText } from "../../lib/errors";
+import { afterColon } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { useNavigate } from "../../navigation";
 import { FocusEdge } from "../../ui/FocusEdge";
@@ -318,7 +319,7 @@ export function CategoryCreateDialog({
                   <span className="mono faint cat-cost-source">{priceSource(estimate, textModel)}</span>
                 ) : priceError !== null ? (
                   <span className="cat-cost-error">
-                    <span className="danger-text">Цену не узнать: {errorText(priceError)}</span>
+                    <span className="danger-text">Цену не узнать: {afterColon(errorText(priceError))}</span>
                     <button type="button" className="link-btn" onClick={() => library.refreshPrice()}>
                       Повторить
                     </button>
