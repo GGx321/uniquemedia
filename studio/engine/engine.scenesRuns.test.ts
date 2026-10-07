@@ -46,6 +46,10 @@ interface SeedOptions {
   removed?: number[];
   /** Scene ids left with no text. */
   textless?: number[];
+  /** A scene given a text of this many characters (a writer's sentence has no upper bound). */
+  longText?: { sceneId: number; length: number };
+  /** Scene 2 belongs to a custom category the library never held (it was deleted); the set keeps its own snapshot. */
+  customScene?: boolean;
   sceneSetId?: string;
   runId?: string;
 }
@@ -56,9 +60,16 @@ async function seedSet(avatarId: string, options: SeedOptions = {}): Promise<str
   const sceneSetId = options.sceneSetId ?? SET;
   const count = options.count ?? 5;
   const set = sampleSet({ sceneSetId, avatarId, runId: options.runId ?? RUN, count, written: count });
+  const long = options.longText;
   await library.sceneSets.create({
     ...set,
-    scenes: set.scenes.map((s) => ({ ...s, removed: (options.removed ?? []).includes(s.sceneId), text: (options.textless ?? []).includes(s.sceneId) ? null : s.text })),
+    ...(options.customScene === true ? { request: { ...set.request, categories: ["home" as const, "cat-paris-cafes" as const] }, categories: [{ ref: "cat-paris-cafes" as const, name: "Кофейни Парижа", label: "Paris cafes", style: "phone" as const }] } : {}),
+    scenes: set.scenes.map((s) => ({
+      ...s,
+      removed: (options.removed ?? []).includes(s.sceneId),
+      text: (options.textless ?? []).includes(s.sceneId) ? null : long?.sceneId === s.sceneId ? `${"A friend laughs while the morning light moves over the table. ".repeat(20).slice(0, long.length - 1)}.` : s.text,
+      ...(options.customScene === true && s.sceneId === 2 ? { slot: { ...s.slot, category: "cat-paris-cafes" as const, location: "a corner cafe in Paris", timeOfDay: "morning", activity: "reading a menu", outfit: "a beige trench coat and jeans" } } : {}),
+    })),
   });
   return sceneSetId;
 }
@@ -528,6 +539,33 @@ describe("runs.startFromScenes", () => {
       ok(await engine.handle(command("runs.cancel", { runId })));
       await jobEnd(events, jobId);
     });
+  });
+
+  test("a 700-char writer sentence in the set reaches plan.json and the image prompt whole", async () => {
+    const { engine, events, net, revision } = await ready({ count: 2, longText: { sceneId: 1, length: 700 } });
+    const { jobId } = startedOf(await engine.handle(startCommand(revision, 2 * 3 * IMAGE)));
+    await jobEnd(events, jobId);
+    const sentence = planOf().scenes.slots[0]?.sentence ?? "";
+    expect(sentence).toHaveLength(700);
+    expect(String(net.imageCalls()[0]?.json().prompt)).toContain(sentence.slice(0, -1));
+  });
+
+  test("a custom category the library no longer holds does not stop the run: the plan keeps the set's own snapshot, and the photo its name", async () => {
+    const { engine, events, avatarId, revision } = await ready({ count: 3, customScene: true });
+    const { jobId } = startedOf(await engine.handle(startCommand(revision, 3 * 3 * IMAGE)));
+    await jobEnd(events, jobId);
+    expect(planOf().categories).toEqual([{ ref: "cat-paris-cafes", name: "Кофейни Парижа", label: "Paris cafes", style: "phone" }]);
+    const photos = ok(await engine.handle(command("photos.list", { avatarId })));
+    if (photos.type !== "photos.list") throw new Error("expected the photos");
+    const custom = photos.result.photos.find((p) => p.category === "cat-paris-cafes");
+    expect(custom?.categoryName).toBe("Кофейни Парижа");
+  });
+
+  test("a removed scene of a custom category leaves no snapshot in the plan", async () => {
+    const { engine, events, revision } = await ready({ count: 3, customScene: true, removed: [2] });
+    const { jobId } = startedOf(await engine.handle(startCommand(revision, 2 * 3 * IMAGE)));
+    await jobEnd(events, jobId);
+    expect(planOf().categories).toBeUndefined();
   });
 
   describe("no path approves a set twice", () => {
