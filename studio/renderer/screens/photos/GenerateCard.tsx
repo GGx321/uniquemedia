@@ -446,7 +446,10 @@ export function GenerateCard({
         ? "Выберите хотя бы одну категорию."
         : runActive
           ? "Дождитесь конца текущего запуска."
-          : paidInFlight && !compose.sending
+          : scenesJob !== null
+            ? // Compose answered, its set not yet on screen: the tracked job holds the button (a second compose would be refused or paid twice).
+              "Дождитесь, пока модель допишет сцены."
+            : paidInFlight && !compose.sending
             ? "Дождитесь окончания другого платного действия."
             : null);
   const composeButton = paidButtonState(compose, composeTitle(form.count), composeBlocked !== null, form.count === 0);

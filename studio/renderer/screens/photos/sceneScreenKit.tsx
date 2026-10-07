@@ -1,6 +1,10 @@
-import { screen, within } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
+import { App } from "../../App";
+import { MockEngine, type MockEngineOptions, mockEngineClient } from "../../engine/mockEngine";
+import { ManualScheduler } from "../../engine/scheduler";
 import { flush, openSection, setup, type SetupOptions } from "../../testing";
 import { MIA } from "./categoryScreenKit";
+import { SCENE_REVIEW_KEY } from "./sceneReview";
 
 // CS.6 screen tests' kit: Mia's Photos screen with «Сцены на проверку» as the owner's default leaves it (ON), and the parts the review artboards draw.
 
@@ -70,3 +74,49 @@ export function fieldValue(el: HTMLElement): string {
 }
 
 export const isDisabled = (el: HTMLElement): boolean => el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true";
+
+/**
+ * A mock engine whose events can be held back: the real engine answers a command and announces its effect (`scenes.changed`) as two messages, and the
+ * mock sends them back to back. Holding the events makes the window between the answer and the event, where a paid button must still be shut.
+ */
+export class GatedEngine extends MockEngine {
+  #held = false;
+  readonly #queue: (() => void)[] = [];
+
+  override subscribe(listener: (event: unknown) => void): () => void {
+    return super.subscribe((event) => {
+      if (this.#held) this.#queue.push(() => listener(event));
+      else listener(event);
+    });
+  }
+
+  holdEvents(): void {
+    this.#held = true;
+  }
+
+  releaseEvents(): void {
+    this.#held = false;
+    const queued = this.#queue.splice(0);
+    act(() => {
+      for (const deliver of queued) deliver();
+    });
+  }
+}
+
+/** `openReview` on a `GatedEngine`. */
+export async function openGated(options: MockEngineOptions = {}) {
+  try {
+    localStorage.removeItem(SCENE_REVIEW_KEY);
+  } catch {
+    // No storage in this environment: the switch reads ON.
+  }
+  const scheduler = new ManualScheduler();
+  const engine = new GatedEngine({ scheduler, latencyMs: 0, avatars: [MIA], ...options });
+  const client = mockEngineClient(engine);
+  render(<App client={client} />);
+  await screen.findByRole("heading", { level: 2, name: "Mia" });
+  await openSection("Фото");
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
+  await flush();
+  return { engine, scheduler, client };
+}

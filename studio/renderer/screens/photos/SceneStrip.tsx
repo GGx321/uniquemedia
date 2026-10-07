@@ -168,7 +168,8 @@ export function SceneStrip({
     const note = scenesJob === null ? undefined : sliceView.jobs.get(scenesJob.jobId);
     button = { title: action.write.kind === "unwritten" ? "Дописываем…" : "Составляем…", price: note?.price ? ceiling(note.price.worstMicros) : null, busy: true, clickable: false };
   } else if (action.kind === "continue") {
-    const blocked = common ?? (live ? "Дождитесь, пока модель допишет сцену." : null);
+    // Between the write's answer and the set saying it writes, the tracked job holds the button as the write itself will.
+    const blocked = common ?? (live || scenesJob !== null ? "Дождитесь, пока модель допишет сцену." : null);
     const state = paidButtonState(more, continueTitle(action.scenes), blocked !== null);
     button = state;
     onClick = more.click;
