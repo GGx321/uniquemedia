@@ -57,8 +57,21 @@ export interface MockSceneSetSeed {
   categories?: readonly CategoryRef[];
   /** The text model the set was made with; the mock's default when absent. */
   textModel?: string;
-  /** The scenes themselves, instead of the mock's own plan (the parity rig seeds the real engine's store with the very same ones). A `text` is a written scene. */
-  scenes?: readonly { category: CategoryRef; shot: SceneView["shot"]; pose: SceneView["pose"]; place: ScenePlace; text?: string }[];
+  /**
+   * The scenes themselves, instead of the mock's own plan (the parity rig seeds the real engine's store with the very same ones). A `text` is a written scene;
+   * an `idea` makes an own scene (written from it, with its text).
+   */
+  scenes?: readonly (
+    | { category: CategoryRef; shot: SceneView["shot"]; pose: SceneView["pose"]; place: ScenePlace; text?: string }
+    | { idea: string; shot: SceneView["shot"]; pose: SceneView["pose"]; text: string }
+  )[];
+  /** Writes already started (a seeded review write has a number under it). */
+  writes?: number;
+  /** Review writes a closed Studio left unresolved: nothing was reserved for them yet, so each has both attempts. */
+  reviewWrites?: readonly (
+    | { kind: "rewrite"; k: number; sceneIds: number[]; redraw?: boolean; stoppedBy?: Exclude<SceneStoppedBy, "closed"> }
+    | { kind: "idea"; k: number; idea: string; count: number; shot: SceneView["shot"] | null; sceneIds: number[]; stoppedBy?: Exclude<SceneStoppedBy, "closed"> }
+  )[];
 }
 
 interface Attempt {
@@ -80,14 +93,55 @@ interface Chunk {
 
 interface Scene {
   sceneId: number;
-  category: CategoryRef;
+  /** An own scene (written from an idea) has no category and no place. */
+  category: CategoryRef | "own";
   shot: SceneView["shot"];
   pose: SceneView["pose"];
-  place: ScenePlace;
+  place: ScenePlace | null;
+  /** The idea an own scene was written from; null for a planned one. */
+  idea: string | null;
   text: string | null;
   edited: boolean;
   removed: boolean;
 }
+
+/** A rewrite or an idea write of the review (CS.4b): one request under ids of its own, kept for the money it spent and the ids it burnt. */
+interface Review {
+  k: number;
+  kind: "rewrite" | "idea";
+  closed: boolean;
+  /** A rewrite names its targets; an idea write names the scene ids it reserved. */
+  sceneIds: number[];
+  redraw: boolean;
+  /** What a redraw drew for each target, kept until its sentence is accepted. */
+  draws: Map<number, { place: ScenePlace; shot: SceneView["shot"]; pose: SceneView["pose"] }>;
+  idea?: string;
+  shot?: SceneView["shot"] | null;
+  /** The shot and pose drawn for each scene an idea write will add. */
+  own: { sceneId: number; shot: SceneView["shot"]; pose: SceneView["pose"] }[];
+  attempts: Attempt[];
+  stoppedBy?: Exclude<SceneStoppedBy, "closed">;
+  stoppedError?: EngineError;
+}
+
+/** What a review write is, once planned and found allowed: the engine's `ReviewPlan`. */
+export interface MockReviewPlan {
+  kind: "rewrite" | "idea";
+  k: number;
+  count: number;
+  sceneIds?: number[];
+  attemptsLeft: number;
+  begin: (set: MockSet) => Review;
+}
+
+type ReviewTarget =
+  | { kind: "rewrite"; sceneIds: number[]; redraw: boolean }
+  | { kind: "idea"; idea: string; count: number; shot: SceneView["shot"] | null }
+  | { kind: "resume"; write: number };
+
+/** The most scenes a set holds, and the most scenes one write covers. */
+const SET_ROOM = 200;
+const MAX_REVIEW_RECORDS = 500;
 
 interface MockSet {
   sceneSetId: string;
@@ -100,6 +154,8 @@ interface MockSet {
   scenes: Scene[];
   chunks: Chunk[];
   write: { k: number; kind: "compose" | "unwritten"; stoppedBy?: Exclude<SceneStoppedBy, "closed">; stoppedError?: EngineError } | null;
+  /** The rewrites and idea writes of the review, in the order they began. */
+  reviews: Review[];
   writes: number;
   used: boolean;
   /** The text model the set was made with (the settings may change it later; the set keeps its own). */
@@ -112,7 +168,10 @@ interface Job {
   jobId: string;
   sceneSetId: string;
   avatarId: string;
-  kind: "compose" | "unwritten";
+  kind: "compose" | "unwritten" | "rewrite" | "idea";
+  /** The write's number and its scenes, for a rewrite or an idea write. */
+  k?: number;
+  sceneIds?: number[];
   status: JobState["status"];
   done: number;
   total: number;
@@ -142,9 +201,9 @@ export interface MockSceneSetDeps {
   needReconcile: () => void;
 }
 
-/** The counters of the scenes that are not removed, as they are now. */
+/** The counters of the PLANNED scenes that are not removed, as they are now: own scenes are the owner's and are not part of what a compose wrote. */
 function tallyOf(scenes: readonly SceneView[]): SceneComposeTally {
-  const active = scenes.filter((s) => !s.removed);
+  const active = scenes.filter((s) => !s.removed && s.origin === "planned");
   return { total: active.length, written: active.filter((s) => s.text !== null).length, gaveUp: active.filter((s) => s.unwritten === "gave-up").length };
 }
 
@@ -186,6 +245,13 @@ const BUILT_IN_PLACES: Record<string, readonly PlaceTable[]> = {
 const SHOTS: SceneView["shot"][] = ["friend", "selfie", "mirror", "candid"];
 const SHOOT_SHOTS: SceneView["shot"][] = ["photographer", "candid", "photographer"];
 
+/** The places a category draws from: a built-in's own, or the custom category's pool as the library holds it. */
+function tablesOf(ref: CategoryRef, custom: CategorySummary | undefined): readonly PlaceTable[] {
+  return custom !== undefined
+    ? custom.pool.locations.map((l, i): PlaceTable => ({ place: l.name, time: l.times[0] ?? "midday", activity: l.activities[0]?.text ?? "standing", outfit: custom.pool.outfits[i % custom.pool.outfits.length] ?? "a plain dress", mirror: l.mirror }))
+    : (BUILT_IN_PLACES[ref] ?? BUILT_IN_PLACES.home ?? []);
+}
+
 function planScenes(
   count: number,
   refs: readonly CategoryRef[],
@@ -196,10 +262,7 @@ function planScenes(
   let index = 0;
   for (const { ref, count: n } of splitCount(count, refs)) {
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
-    const tables: readonly PlaceTable[] =
-      custom !== undefined
-        ? custom.pool.locations.map((l, i): PlaceTable => ({ place: l.name, time: l.times[0] ?? "midday", activity: l.activities[0]?.text ?? "standing", outfit: custom.pool.outfits[i % custom.pool.outfits.length] ?? "a plain dress", mirror: l.mirror }))
-        : (BUILT_IN_PLACES[ref] ?? BUILT_IN_PLACES.home ?? []);
+    const tables = tablesOf(ref, custom);
     const deck: SceneView["shot"][] = custom !== undefined ? [...custom.pool.shotDeck] : ref === "shoot" ? SHOOT_SHOTS : SHOTS;
     for (let k = 0; k < n; k++) {
       index += 1;
@@ -212,14 +275,34 @@ function planScenes(
       // Selfies and mirror shots face the camera whatever the run allows; the others may turn when the run says so.
       const phone = shot === "selfie" || shot === "mirror";
       const pose: SceneView["pose"] = phone || k % 5 < 3 ? (k % 2 === 0 ? "front" : "three-quarter") : poses.profile && k % 5 === 3 ? "profile" : poses.back && k % 5 === 4 ? "back" : "three-quarter";
-      scenes.push({ sceneId: index, category: ref, shot, pose, place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit: row.outfit }, text: null, edited: false, removed: false });
+      scenes.push({ sceneId: index, category: ref, shot, pose, place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit: row.outfit }, idea: null, text: null, edited: false, removed: false });
     }
   }
   return scenes;
 }
 
-function sentenceOf(scene: Scene): string {
-  return `A friend catches her ${scene.place.activity} at ${scene.place.location} in the ${scene.place.timeOfDay}, wearing ${scene.place.outfit} (${scene.sceneId}).`;
+/** The sentence the mock's writer gives a scene; a write's number makes a rewrite say something new (the compose's own sentence is take 0, as before). */
+function sentenceOf(scene: Scene, take = 0): string {
+  const mark = take === 0 ? `${scene.sceneId}` : `${scene.sceneId}, take ${take}`;
+  if (scene.place === null) return `She enjoys ${scene.idea ?? "a quiet moment"}, caught by a friend in the afternoon light (${mark}).`;
+  return `A friend catches her ${scene.place.activity} at ${scene.place.location} in the ${scene.place.timeOfDay}, wearing ${scene.place.outfit} (${mark}).`;
+}
+
+/** The poses a set allows a scene: a selfie or mirror faces the camera whatever the set allows, the others may turn when it says so. */
+function poseFor(shot: SceneView["shot"], poses: { profile: boolean; back: boolean }, n: number): SceneView["pose"] {
+  if (shot === "selfie" || shot === "mirror") return n % 2 === 0 ? "front" : "three-quarter";
+  const allowed: SceneView["pose"][] = ["front", "three-quarter", ...(poses.profile ? (["profile"] as const) : []), ...(poses.back ? (["back"] as const) : [])];
+  return allowed[n % allowed.length] ?? "front";
+}
+
+/** What «Авто» draws a shot from: never the mirror (an own scene has no place for one to sit on). */
+const AUTO_SHOTS: SceneView["shot"][] = ["friend", "selfie", "candid"];
+
+/** The attempts a review write may still use: the answered ones are at most two across all jobs, and its four ids are never reused. */
+function reviewLeft(review: Review): number {
+  if (review.closed) return 0;
+  const answered = review.attempts.filter((a) => a.paid).length;
+  return Math.max(0, Math.min(SCENE_CHUNK_ATTEMPTS - answered, IDS_PER_CHUNK - review.attempts.length));
 }
 
 function chunksOf(setId: string, scenes: readonly Scene[]): Chunk[] {
@@ -270,8 +353,13 @@ export class MockSceneSets {
     const scenes: Scene[] =
       seed.scenes === undefined
         ? planScenes(seed.count, refs, { profile: false, back: false }, this.#deps.category)
-        : seed.scenes.map((s, i) => ({ sceneId: i + 1, category: s.category, shot: s.shot, pose: s.pose, place: { ...s.place }, text: s.text ?? null, edited: false, removed: false }));
-    const chunks = chunksOf(seed.sceneSetId, scenes);
+        : seed.scenes.map(
+            (s, i): Scene =>
+              "idea" in s
+                ? { sceneId: i + 1, category: "own", shot: s.shot, pose: s.pose, place: null, idea: s.idea, text: s.text, edited: false, removed: false }
+                : { sceneId: i + 1, category: s.category, shot: s.shot, pose: s.pose, place: { ...s.place }, idea: null, text: s.text ?? null, edited: false, removed: false },
+          );
+    const chunks = chunksOf(seed.sceneSetId, scenes.filter((scene) => scene.place !== null));
     const written = seed.written ?? 0;
     if (seed.scenes === undefined) for (const scene of scenes) if (scene.sceneId <= written) scene.text = sentenceOf(scene);
     // A chunk whose scenes were written was answered once.
@@ -290,7 +378,13 @@ export class MockSceneSets {
       scenes,
       chunks,
       write: stopped === undefined ? null : { k: 1, kind: "compose", ...(stopped === "closed" ? {} : { stoppedBy: stopped, ...(stopped === "failed" ? { stoppedError: { code: "INTERNAL" as const } } : {}) }) },
-      writes: stopped === undefined ? 0 : 1,
+      reviews: (seed.reviewWrites ?? []).map((w): Review => {
+        const base = { k: w.k, closed: false, redraw: false, draws: new Map(), attempts: [], ...(w.stoppedBy === undefined ? {} : { stoppedBy: w.stoppedBy }) };
+        return w.kind === "rewrite"
+          ? { ...base, kind: "rewrite", sceneIds: [...w.sceneIds], redraw: w.redraw === true, own: [] }
+          : { ...base, kind: "idea", sceneIds: [...w.sceneIds], idea: w.idea, shot: w.shot, own: w.sceneIds.map((sceneId) => ({ sceneId, shot: w.shot ?? "friend", pose: "front" as const })) };
+      }),
+      writes: Math.max(seed.writes ?? 0, ...(seed.reviewWrites ?? []).map((w) => w.k), stopped === undefined ? 0 : 1),
       used: false,
       // A seed is built before the settings exist: the mock's default text model, as a set made at first launch has.
       textModel: seed.textModel ?? "x-ai/grok-4.3",
@@ -405,13 +499,14 @@ export class MockSceneSets {
 
   view(set: MockSet): SceneSetView {
     const live = this.#liveJob(set.sceneSetId);
+    const liveK = live?.k;
     const pending = this.#pending(set).length > 0;
     const stopped = !set.used && live === undefined && set.write !== null && pending;
     const status: SceneSetView["status"] = set.used ? "used" : live !== undefined ? "writing" : stopped ? "stopped" : "ready";
     const stoppedBy: SceneStoppedBy | null = stopped ? (set.write?.stoppedBy ?? "closed") : null;
     let spent = 0;
     let open = 0;
-    for (const attempt of set.chunks.flatMap((c) => c.attempts)) {
+    for (const attempt of [...set.chunks.flatMap((c) => c.attempts), ...set.reviews.flatMap((r) => r.attempts)]) {
       if (attempt.open && this.#deps.reserveOpen(attempt.key)) {
         spent += MOCK_SCENE_ATTEMPT_WORST;
         open += MOCK_SCENE_ATTEMPT_WORST;
@@ -422,7 +517,32 @@ export class MockSceneSets {
         spent += attempt.cost;
       }
     }
-    const scenes: SceneView[] = set.scenes.map((scene) => {
+    // The writes that can still be carried on and that no job runs now: their scenes are flagged, their ideas listed (CS.4b).
+    const interrupted = set.reviews.filter((r) => !r.closed && r.k !== liveK && reviewLeft(r) > 0);
+    const markers = new Map<number, { write: number; stoppedBy: SceneStoppedBy }>();
+    for (const review of interrupted) if (review.kind === "rewrite") for (const sceneId of review.sceneIds) markers.set(sceneId, { write: review.k, stoppedBy: review.stoppedBy ?? "closed" });
+    const scenes: SceneView[] = set.scenes.map((scene): SceneView => {
+      const marker = markers.get(scene.sceneId);
+      const mark = marker === undefined ? {} : { rewriteInterrupted: marker };
+      if (scene.place === null || scene.category === "own") {
+        return {
+          sceneId: scene.sceneId,
+          origin: "own",
+          category: "own",
+          categoryName: null,
+          shot: scene.shot,
+          pose: scene.pose,
+          place: null,
+          idea: scene.idea,
+          text: scene.text,
+          edited: scene.edited,
+          removed: scene.removed,
+          unwritten: null,
+          gaveUpBy: null,
+          chunk: null,
+          ...mark,
+        };
+      }
       const chunk = set.chunks.find((c) => c.sceneIds.includes(scene.sceneId));
       const gaveUpBy = scene.text === null && chunk !== undefined ? this.#chunkGaveUpBy(set, chunk) : null;
       return {
@@ -440,8 +560,10 @@ export class MockSceneSets {
         unwritten: scene.text !== null ? null : gaveUpBy !== null ? "gave-up" : "pending",
         gaveUpBy,
         chunk: chunk?.chunk ?? null,
+        ...mark,
       };
     });
+    const ideas = interrupted.flatMap((r) => (r.kind === "idea" ? [{ write: r.k, idea: r.idea ?? "", count: r.own.length, shot: r.shot ?? null, stoppedBy: r.stoppedBy ?? ("closed" as const) }] : []));
     return {
       sceneSetId: set.sceneSetId,
       avatarId: set.avatarId,
@@ -456,10 +578,11 @@ export class MockSceneSets {
       textModel: set.textModel,
       spentMicros: spent,
       openReserveMicros: open,
-      write: live === undefined ? null : { kind: live.kind, count: live.total },
+      write: live === undefined ? null : { kind: live.kind, count: live.total, ...(live.sceneIds === undefined ? {} : { sceneIds: [...live.sceneIds] }) },
       lastCompose: set.lastOutcome !== undefined ? { ...set.lastOutcome } : scenes.length === 0 ? null : tallyOf(scenes),
       chunks: set.chunks.map((c) => ({ chunk: c.chunk, sceneIds: [...c.sceneIds], attemptsLeft: this.#attemptsLeft(c), gaveUpBy: this.#chunkGaveUpBy(set, c) })),
       scenes,
+      ...(ideas.length === 0 ? {} : { interruptedIdeas: ideas }),
     };
   }
 
@@ -488,7 +611,22 @@ export class MockSceneSets {
       scene.text = text;
       scene.edited = true;
     } else if (op.op === "dismissInterrupted") {
-      return { error: { code: "VALIDATION", detail: "the mock has no interrupted write to dismiss yet" } };
+      // The engine's order: the write, or the scenes the set has, then the scenes that have an unresolved rewrite to let go.
+      if (op.write !== undefined) {
+        const review = set.reviews.find((r) => r.k === op.write && !r.closed);
+        if (review === undefined) return { error: { code: "VALIDATION", detail: `scene set ${sceneSetId} has no unresolved write ${op.write}` } };
+        review.closed = true;
+        delete review.stoppedBy;
+        delete review.stoppedError;
+      } else {
+        const ids = op.sceneIds ?? [];
+        const missing = ids.filter((id) => !known.has(id));
+        if (missing.length > 0) return { error: { code: "VALIDATION", detail: `the set has no scene ${missing.join(", ")}` } };
+        const open = set.reviews.filter((r) => r.kind === "rewrite" && !r.closed);
+        const unmarked = ids.filter((id) => !open.some((r) => r.sceneIds.includes(id)));
+        if (unmarked.length > 0) return { error: { code: "VALIDATION", detail: `scene ${unmarked.join(", ")} has no unresolved rewrite to dismiss` } };
+        this.#takeOver(set, new Set(ids));
+      }
     } else {
       const missing = op.sceneIds.filter((id) => !known.has(id));
       if (missing.length > 0) return { error: { code: "VALIDATION", detail: `the set has no scene ${missing.join(", ")}` } };
@@ -546,6 +684,7 @@ export class MockSceneSets {
       scenes,
       chunks: chunksOf(sceneSetId, scenes),
       write: scenes.length === 0 ? null : { k: 1, kind: "compose" },
+      reviews: [],
       writes: scenes.length === 0 ? 0 : 1,
       used: false,
       textModel: this.#deps.textModel(),
@@ -562,8 +701,277 @@ export class MockSceneSets {
   write(set: MockSet): string {
     set.writes += 1;
     set.write = { k: set.writes, kind: "unwritten" };
+    // The last job's outcome goes with the next write: a job that dies before it can record its own must not leave «Готово 25 из 35» over a complete set.
+    delete set.lastOutcome;
     set.revision += 1;
     return this.#launch(set, "unwritten");
+  }
+
+  // ---------- review writes (CS.4b) ----------
+
+  /** A target's scenes that the set lacks or has removed: refused, the engine's wording. */
+  #targetProblem(set: MockSet, sceneIds: readonly number[]): EngineError | null {
+    for (const sceneId of sceneIds) {
+      const scene = set.scenes.find((s) => s.sceneId === sceneId);
+      if (scene === undefined) return { code: "VALIDATION", detail: `the set has no scene ${sceneId}` };
+      if (scene.removed) return { code: "VALIDATION", detail: `scene ${sceneId} is removed; restore it before writing it again` };
+    }
+    return null;
+  }
+
+  /** A rewrite of scenes takes them over from any unresolved rewrite that still named them; that one keeps its other scenes, or closes when it has none. */
+  #takeOver(set: MockSet, taken: ReadonlySet<number>): void {
+    for (const review of set.reviews) {
+      if (review.kind !== "rewrite" || review.closed) continue;
+      const remaining = review.sceneIds.filter((id) => !taken.has(id));
+      if (remaining.length === review.sceneIds.length) continue;
+      if (remaining.length === 0) {
+        review.closed = true;
+        delete review.stoppedBy;
+        delete review.stoppedError;
+      } else {
+        for (const id of review.sceneIds) if (taken.has(id)) review.draws.delete(id);
+        review.sceneIds = remaining;
+      }
+    }
+  }
+
+  /**
+   * What a rewrite, an idea write or a resume is, or why it is refused (free, the engine's order and wording). Draws once, from the set's own state, and
+   * keeps the draw in the write; the write itself is made only by `begin`.
+   */
+  planReview(set: MockSet, target: ReviewTarget): { error: EngineError } | { plan: MockReviewPlan } {
+    const invalid = (detail: string): { error: EngineError } => ({ error: { code: "VALIDATION", detail } });
+    if (target.kind === "resume") {
+      const review = set.reviews.find((r) => r.k === target.write && !r.closed);
+      if (review === undefined) return invalid(`scene set ${set.sceneSetId} has no unresolved write ${target.write}`);
+      const attemptsLeft = reviewLeft(review);
+      if (attemptsLeft === 0) return invalid(`write ${target.write} has no attempt left: dismiss it, or write the scenes again`);
+      if (review.kind === "rewrite") {
+        const problem = this.#targetProblem(set, review.sceneIds);
+        if (problem !== null) return { error: problem };
+      }
+      return {
+        plan: {
+          kind: review.kind,
+          k: review.k,
+          count: review.kind === "rewrite" ? review.sceneIds.length : review.own.length,
+          ...(review.kind === "rewrite" ? { sceneIds: [...review.sceneIds] } : {}),
+          attemptsLeft,
+          begin: () => {
+            delete review.stoppedBy;
+            delete review.stoppedError;
+            return review;
+          },
+        },
+      };
+    }
+    if (set.reviews.length >= MAX_REVIEW_RECORDS) return invalid(`a set records at most ${MAX_REVIEW_RECORDS} writes of this kind`);
+    const k = set.writes + 1;
+    if (target.kind === "idea") {
+      const reserved = set.reviews.reduce((sum, r) => sum + (r.kind === "idea" && !r.closed ? r.own.length : 0), 0);
+      if (set.scenes.length + reserved + target.count > SET_ROOM) return invalid(`a set holds at most ${SET_ROOM} scenes: this one has ${set.scenes.length}`);
+      const used = [...set.scenes.map((s) => s.sceneId), ...set.reviews.flatMap((r) => (r.kind === "idea" ? r.own.map((o) => o.sceneId) : []))];
+      const first = used.length === 0 ? 1 : Math.max(...used) + 1;
+      const own = Array.from({ length: target.count }, (_, i) => {
+        const shot = target.shot ?? AUTO_SHOTS[(k + i) % AUTO_SHOTS.length] ?? "friend";
+        return { sceneId: first + i, shot, pose: poseFor(shot, set.poses, k + i) };
+      });
+      return {
+        plan: {
+          kind: "idea",
+          k,
+          count: target.count,
+          attemptsLeft: SCENE_CHUNK_ATTEMPTS,
+          begin: (current) => {
+            const review: Review = { k, kind: "idea", closed: false, sceneIds: own.map((o) => o.sceneId), redraw: false, draws: new Map(), idea: target.idea.trim(), shot: target.shot, own, attempts: [] };
+            current.reviews.push(review);
+            current.writes = k;
+            return review;
+          },
+        },
+      };
+    }
+    // A rewrite: the scenes, then (a redraw) the categories they draw from, then what one request can be written from.
+    const problem = this.#targetProblem(set, target.sceneIds);
+    if (problem !== null) return { error: problem };
+    const scenes = target.sceneIds.flatMap((id) => set.scenes.filter((s) => s.sceneId === id));
+    if (target.redraw) {
+      for (const ref of new Set(scenes.flatMap((s) => (s.category !== "own" && isCustomCategory(s.category) ? [s.category] : [])))) {
+        if (this.#deps.category(ref) === undefined) return { error: { code: "NOT_FOUND", detail: `no custom category ${ref}` } };
+      }
+    }
+    const planned = scenes.filter((s) => s.place !== null);
+    if (planned.length !== 0 && planned.length !== scenes.length) return invalid("a rewrite covers planned scenes or own scenes, not both: they are written from different prompts");
+    if (target.redraw && planned.length !== scenes.length) return invalid("only a planned scene has a place to redraw; an own scene is written again from its idea");
+    const draws = new Map<number, { place: ScenePlace; shot: SceneView["shot"]; pose: SceneView["pose"] }>();
+    if (target.redraw) {
+      const shown = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.location] : [])));
+      const shownOutfits = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.outfit] : [])));
+      for (const scene of planned) {
+        const ref = scene.category === "own" ? "home" : scene.category;
+        let tables = tablesOf(ref, isCustomCategory(ref) ? this.#deps.category(ref) : undefined);
+        let shot = scene.shot;
+        if (shot === "mirror") {
+          const mirrors = tables.filter((t) => t.mirror);
+          if (mirrors.length === 0) shot = "selfie";
+          else tables = mirrors;
+        }
+        const own = scene.place?.location ?? "";
+        const fresh = tables.filter((t) => !shown.has(t.place));
+        const other = tables.filter((t) => t.place !== own);
+        const candidates = fresh.length > 0 ? fresh : other.length > 0 ? other : tables;
+        const row = candidates[(k + scene.sceneId) % candidates.length] ?? tables[0];
+        if (row === undefined) return invalid("the mock has no place to redraw a scene into");
+        const outfits = [...new Set(tables.map((t) => t.outfit))];
+        const freshOutfits = outfits.filter((o) => !shownOutfits.has(o));
+        const otherOutfits = outfits.filter((o) => o !== scene.place?.outfit);
+        const pickFrom = freshOutfits.length > 0 ? freshOutfits : otherOutfits.length > 0 ? otherOutfits : outfits;
+        const outfit = pickFrom[(k + scene.sceneId) % pickFrom.length] ?? row.outfit;
+        shown.add(row.place);
+        shownOutfits.add(outfit);
+        draws.set(scene.sceneId, { place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit }, shot, pose: poseFor(shot, set.poses, k + scene.sceneId) });
+      }
+    }
+    return {
+      plan: {
+        kind: "rewrite",
+        k,
+        count: scenes.length,
+        sceneIds: [...target.sceneIds],
+        attemptsLeft: SCENE_CHUNK_ATTEMPTS,
+        begin: (current) => {
+          this.#takeOver(current, new Set(target.sceneIds));
+          const review: Review = { k, kind: "rewrite", closed: false, sceneIds: [...target.sceneIds], redraw: target.redraw, draws, own: [], attempts: [] };
+          current.reviews.push(review);
+          current.writes = k;
+          return review;
+        },
+      },
+    };
+  }
+
+  /** What a review write could cost: one request at the writer's typical tokens, asked at most as many times as it has attempts left. */
+  reviewPrice(plan: MockReviewPlan): { expected: number; worst: number } {
+    const worst = plan.attemptsLeft * MOCK_SCENE_ATTEMPT_WORST;
+    return { expected: Math.min(Math.round(plan.count * TYPICAL_PER_SCENE), worst), worst };
+  }
+
+  /** A review write that passed the gates: records it in the set and launches its job. */
+  writeReview(set: MockSet, plan: MockReviewPlan): string {
+    const review = plan.begin(set);
+    set.revision += 1;
+    return this.#launchReview(set, review);
+  }
+
+  #launchReview(set: MockSet, review: Review): string {
+    const job: Job = {
+      jobId: this.#deps.nextId("job"),
+      sceneSetId: set.sceneSetId,
+      avatarId: set.avatarId,
+      kind: review.kind,
+      k: review.k,
+      ...(review.kind === "rewrite" ? { sceneIds: [...review.sceneIds] } : {}),
+      status: "running",
+      done: 0,
+      total: review.kind === "rewrite" ? review.sceneIds.length : review.own.length,
+      error: null,
+      written: 0,
+      unwritten: 0,
+      timers: [],
+      queue: [],
+    };
+    this.#jobs.push(job);
+    this.#announce(set);
+    this.#progress(job);
+    job.timers.push(this.#deps.scheduler.schedule(this.#deps.stepMs, () => this.#runReview(job, set, review)));
+    return job.jobId;
+  }
+
+  /** The write's one request, asked again under the next id while it is rejected and attempts are left; an attempt that got no answer stops the job. */
+  #runReview(job: Job, set: MockSet, review: Review): void {
+    if (job.status !== "running") return;
+    for (;;) {
+      if (reviewLeft(review) === 0) {
+        review.closed = true;
+        this.#end(job, set, { status: "failed", error: { code: "INTERNAL", detail: `the scene writer's answer for write ${review.k} was rejected on every attempt` }, stoppedBy: "failed" });
+        return;
+      }
+      const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: false, cost: 0, open: false };
+      review.attempts.push(attempt);
+      const outcome = this.#scripted.shift() ?? "ok";
+      switch (outcome) {
+        case "ok": {
+          attempt.paid = true;
+          attempt.cost = Math.round(job.total * TYPICAL_PER_SCENE);
+          this.#deps.spend(attempt.cost);
+          this.#accept(set, review);
+          job.done += job.total;
+          job.written += job.total;
+          set.revision += 1;
+          this.#announce(set);
+          this.#progress(job);
+          this.#end(job, set, { status: "done" });
+          return;
+        }
+        case "rejected":
+          attempt.paid = true;
+          attempt.cost = REJECTED_COST;
+          this.#deps.spend(REJECTED_COST);
+          continue;
+        case "refused":
+          review.closed = true;
+          this.#end(job, set, { status: "failed", error: { code: "MODERATION_REFUSED" }, stoppedBy: "failed" });
+          return;
+        case "rate-limited":
+          this.#end(job, set, { status: "failed", error: { code: "RATE_LIMITED", retryAfterMs: 120_000 }, stoppedBy: "rate-limited" });
+          return;
+        case "provider-error":
+          this.#end(job, set, { status: "failed", error: { code: "NETWORK" }, stoppedBy: "provider-error" });
+          return;
+        case "network":
+        case "timeout":
+          attempt.paid = true;
+          attempt.open = true;
+          this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
+          this.#deps.needReconcile();
+          this.#end(job, set, { status: "failed", error: { code: outcome === "timeout" ? "TIMEOUT" : "NETWORK" }, stoppedBy: outcome });
+          return;
+      }
+    }
+  }
+
+  /** The accepted answer goes into the set, all of it: a rewrite's targets get their sentences (a redraw, its new place), an idea write's scenes join the set. */
+  #accept(set: MockSet, review: Review): void {
+    if (review.kind === "idea") {
+      for (const own of review.own) {
+        const scene: Scene = { sceneId: own.sceneId, category: "own", shot: own.shot, pose: own.pose, place: null, idea: review.idea ?? null, text: null, edited: false, removed: false };
+        scene.text = sentenceOf(scene, review.k);
+        set.scenes.push(scene);
+      }
+    } else {
+      for (const sceneId of review.sceneIds) {
+        const scene = set.scenes.find((s) => s.sceneId === sceneId);
+        if (scene === undefined) continue;
+        const drawn = review.draws.get(sceneId);
+        if (review.redraw && drawn !== undefined) {
+          scene.place = { ...drawn.place };
+          scene.shot = drawn.shot;
+          scene.pose = drawn.pose;
+          // A redraw refreshes the set's snapshot of the category: its name as the library holds it now.
+          if (scene.category !== "own" && isCustomCategory(scene.category)) {
+            const fresh = this.#deps.category(scene.category);
+            const entry = set.categories.find((c) => c.ref === scene.category);
+            if (fresh !== undefined && entry !== undefined) entry.name = fresh.name;
+          }
+        }
+        scene.text = sentenceOf(scene, review.k);
+        scene.edited = false;
+      }
+    }
+    review.closed = true;
+    delete review.stoppedBy;
+    delete review.stoppedError;
   }
 
   // ---------- the job ----------
@@ -665,7 +1073,21 @@ export class MockSceneSets {
     job.status = end.status;
     if (end.status === "failed") job.error = end.error;
     job.unwritten = Math.max(0, job.total - job.written);
-    if (set.write !== null) {
+    const review = job.k === undefined ? undefined : set.reviews.find((r) => r.k === job.k);
+    if (review !== undefined) {
+      // A rewrite or an idea write keeps why it stopped in its own record, and only while it can still be resumed; the compose's record and outcome are not its to touch.
+      if (end.status !== "done" && !review.closed) {
+        if (reviewLeft(review) === 0) {
+          review.closed = true;
+          delete review.stoppedBy;
+          delete review.stoppedError;
+        } else {
+          review.stoppedBy = end.status === "cancelled" ? "cancelled" : end.stoppedBy;
+          if (end.status === "failed" && end.stoppedBy === "failed") review.stoppedError = end.error;
+          else delete review.stoppedError;
+        }
+      }
+    } else if (set.write !== null) {
       if (end.status === "done") set.write = null;
       else {
         const { k, kind } = set.write;
@@ -673,7 +1095,7 @@ export class MockSceneSets {
       }
     }
     set.revision += 1;
-    set.lastOutcome = tallyOf(this.view(set).scenes);
+    if (review === undefined) set.lastOutcome = tallyOf(this.view(set).scenes);
     this.#deps.emitMoney();
     this.#announce(set);
     const { jobId, sceneSetId, avatarId } = job;
@@ -696,6 +1118,18 @@ export class MockSceneSets {
     if (job === undefined || set === undefined) return;
     for (const cancel of job.timers) cancel();
     job.timers = [];
+    const review = job.k === undefined ? undefined : set.reviews.find((r) => r.k === job.k);
+    if (review !== undefined) {
+      if (reviewLeft(review) > 0) {
+        const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: true, cost: 0, open: true };
+        review.attempts.push(attempt);
+        this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
+        this.#deps.needReconcile();
+        this.#deps.emitMoney();
+      }
+      job.timers.push(this.#deps.scheduler.schedule(CANCEL_CONFIRM_MS, () => this.#end(job, set, { status: "cancelled" })));
+      return;
+    }
     const next = this.#pending(set)[0]?.chunk;
     if (next !== undefined && this.#attemptsLeft(next) > 0) {
       const attempt: Attempt = { key: `${set.sceneSetId}:writer-${next.chunk}#${next.attempts.length + 1}`, paid: true, cost: 0, open: true };
