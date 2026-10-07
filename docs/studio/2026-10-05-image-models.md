@@ -138,8 +138,11 @@ its reference price anyway (rule 5), but the pricing rule stands on its own.
 
 - The catalogue is built from `/images/models` (names, structural pre-filter)
   and `/endpoints` (definitive parameters and prices), filtered by section 3,
-  cached in memory, and refreshed after 30 minutes (1 minute while it is a
-  fallback). A model whose endpoints record cannot be fetched or parsed is not
+  cached in memory. A live catalogue is refreshed after 30 minutes only when it
+  is `complete` (every candidate was priced); a bundled fallback list, or a live
+  one with a model left out by a transient failure (`complete: false`), is read
+  again after 60 seconds (`catalogueTtlMs`, `studio/shared/engine/imageModels.ts`).
+  A model whose endpoints record cannot be fetched or parsed is not
   listed, which is the answer to "a model whose price cannot be fetched is not
   selectable". Entries are checked one by one against the contract
   (`ImageModelEntry`): one that fails (an id that is not a model id, a name over
