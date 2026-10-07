@@ -55,6 +55,11 @@ export function waitLabel(ms: number): string {
   return rest === 0 ? `${minutes}${NBSP}мин` : `${minutes}${NBSP}мин ${rest}${NBSP}с`;
 }
 
+/** «02», «26», «120»: the artboards' scene numbers. */
+export function sceneNumber(sceneId: number): string {
+  return String(sceneId).padStart(2, "0");
+}
+
 /**
  * A sentence placed after a colon starts lowercase in Russian ("…получить: модель отказалась…").
  * A first word with a capital inside it (OpenRouter, API) is a name and is left as it is.

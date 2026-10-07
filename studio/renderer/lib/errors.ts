@@ -18,9 +18,10 @@ import {
   UNSUPPORTED_IMAGE_QUALITY_RU,
   type EngineError,
   type ErrorCode,
+  type SceneReason,
 } from "../../shared/engine";
 import type { SettingsFocus } from "../navigation";
-import { countOf, waitLabel } from "./format";
+import { countOf, sceneNumber, waitLabel } from "./format";
 
 /**
  * 3d.2 (the 3d.1a review): two INTERNAL answers of `montages.get` the owner can act on, told apart by their shared
@@ -41,6 +42,27 @@ const RENDER_TIMEOUT_RU = "Рендер не уложился во время: �
 const RENDER_NO_SPACE_RU = "Для рендера не хватает места на системном диске (там лежат его временные файлы). Освободите место и повторите. Готовый файл не создан, ничего не потрачено.";
 const RENDER_FORMS = ["рендер", "рендера", "рендеров"] as const;
 
+/**
+ * The refusals that point at one scene (`sceneId`) say which, as the artboards number it, instead of «одной из сцен». Without the number (the contract allows
+ * it for the last two) the general text of the reason stays.
+ */
+function namedScene(reason: SceneReason, sceneId: number | undefined): string | null {
+  if (sceneId === undefined) return null;
+  const n = sceneNumber(sceneId);
+  switch (reason) {
+    case "scene-text-problem":
+      return `Текст сцены ${n} не проходит нынешние правила слов (после обновления они могли ужесточиться). Измените текст или уберите сцену.`;
+    case "scene-without-text":
+      return `У сцены ${n} нет текста: напишите её, введите текст сами или уберите сцену.`;
+    case "scene-missing":
+      return `Сцены ${n} в наборе нет — возможно, набор изменили в другом окне. Обновите экран.`;
+    case "target-removed":
+      return `Сцена ${n} убрана из набора. Верните её, чтобы писать заново.`;
+    default:
+      return null;
+  }
+}
+
 function baseText(error: EngineError): string {
   if (error.code === "IN_FLIGHT" && error.detail === EXPORT_CHANGING_DETAIL) return EXPORT_CHANGING_RU;
   if (error.code === "INTERNAL" && error.detail === RENDER_NOT_QUEUED_DETAIL) return RENDER_NOT_QUEUED_RU;
@@ -59,7 +81,7 @@ function baseText(error: EngineError): string {
   // A category command the engine refused says which rule it broke (the limit, a taken name, the pool's minimum, the mirror place, a missing item).
   if (error.code === "VALIDATION" && error.categoryReason !== undefined) return CATEGORY_REASONS_RU[error.categoryReason];
   // A scene-set command the engine refused says which rule it broke; the window names the scene itself from `sceneId`.
-  if (error.code === "VALIDATION" && error.sceneReason !== undefined) return SCENE_REASONS_RU[error.sceneReason];
+  if (error.code === "VALIDATION" && error.sceneReason !== undefined) return namedScene(error.sceneReason, error.sceneId) ?? SCENE_REASONS_RU[error.sceneReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.

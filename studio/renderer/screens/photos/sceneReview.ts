@@ -66,10 +66,7 @@ export const OWN_SCENE_LABEL = "Своя сцена";
 /** A custom category whose name the set's snapshot did not keep (it always does; the contract allows null). */
 const CUSTOM_FALLBACK = "Своя категория";
 
-/** «02», «26», «120»: the artboards' scene numbers. */
-export function sceneNumber(sceneId: number): string {
-  return String(sceneId).padStart(2, "0");
-}
+export { sceneNumber } from "../../lib/format";
 
 /** A scene's category tag: a built-in by the app's own label, a custom one by the set's snapshot of its name, an own scene «Своя сцена». */
 export function sceneCategoryLabel(scene: Pick<SceneView, "category" | "categoryName">): string {
