@@ -109,6 +109,16 @@ export class SceneSetService {
     this.#deps = deps;
   }
 
+  /** Whether a job of this set runs (or is about to): what an approval (CS.5) asks, as every free edit does. */
+  isLive(sceneSetId: string): boolean {
+    return this.#live.has(sceneSetId);
+  }
+
+  /** Tells every window the set as it is now (`scenes.changed`): after an approval its run's folder exists, so it reads `used` and names its run. */
+  async announce(library: Library, set: StoredSceneSet): Promise<void> {
+    await this.#announce(library, set);
+  }
+
   // ---------- reading ----------
 
   /** The set as the windows see it: built from its file, the ledger and what is running. */

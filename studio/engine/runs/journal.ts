@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AttemptId, EngineError, Id, ModelId, type ErrorCode } from "../../shared/engine";
 import type { PhotoSidecar } from "../library";
 import type { ReleaseLine, ReserveLine, SettleLine } from "../money/ledger";
-import type { PlanSlot } from "../scenes";
+import type { RunSlot } from "../scenes";
 import type { RunPlan } from "./plan";
 
 // T6: a run's journal (runs/<runId>/journal.jsonl, one fsynced line per
@@ -87,7 +87,7 @@ export type SlotEnd = { status: "done"; photoId: string } | { status: "failed"; 
 
 /** One slot as a job continues it. */
 export interface SlotState {
-  slot: PlanSlot;
+  slot: RunSlot;
   /** The plan's pre-allocated ids, in order. */
   attemptIds: readonly string[];
   /** Ids that were (or may have been) sent: never sent again. */
@@ -164,7 +164,8 @@ export function foldRun(plan: RunPlan, sources: FoldSources): RunState {
     return found;
   };
 
-  const sentences = new Map<number, string>();
+  // A run made from a scene set holds its sentences in the plan (the writer wrote them in the set); the journal only adds a chunk's, which such a plan has none of.
+  const sentences = new Map<number, string>(plan.scenes.slots.flatMap((s) => (s.sentence === undefined ? [] : [[s.slotIndex, s.sentence] as const])));
   const writerDone = new Set<number>();
   let prompts: Map<number, string> | null = null;
   for (const event of sources.events) {

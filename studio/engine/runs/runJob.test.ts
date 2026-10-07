@@ -15,7 +15,7 @@ import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../o
 import { CAMERA_REALISM_CLAUSE, plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { RunEventSchema, type RunEvent } from "./journal";
-import { buildRunPlan, FALLBACK_IMAGE_MODEL, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
+import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
 import { createAgeGate } from "./ageGate";
@@ -323,7 +323,7 @@ async function journalHas(outcome: string): Promise<void> {
 }
 
 function slotOf(run: RunPlan, slotIndex: number): PlanSlot {
-  const slot = run.scenes.slots.find((s) => s.slotIndex === slotIndex);
+  const slot = plannedSlots(run).find((s) => s.slotIndex === slotIndex);
   if (slot === undefined) throw new Error(`no slot ${slotIndex}`);
   return slot;
 }
@@ -448,7 +448,7 @@ describe("a run from the start", () => {
     const run = await newRun(2);
     await start(run).end;
     const recent = await library.recentPairs(avatarId, 10);
-    expect(recent.map((e) => [e.location, e.outfit]).sort()).toEqual(run.scenes.slots.map((s) => [s.location, s.outfit]).sort());
+    expect(recent.map((e) => [e.location, e.outfit]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.outfit]).sort());
   });
 });
 
@@ -524,7 +524,7 @@ describe("a run with a custom category", () => {
     const run = await newCustomRun(2, "phone");
     await start(run).end;
     const recent = await library.recentPairs(avatarId, 10);
-    expect(recent.map((r) => r.location).sort()).toEqual(run.scenes.slots.map((s) => s.location).sort());
+    expect(recent.map((r) => r.location).sort()).toEqual(plannedSlots(run).map((s) => s.location).sort());
   });
 });
 

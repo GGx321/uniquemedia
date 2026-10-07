@@ -115,7 +115,8 @@ export interface RunPlanInput {
   attemptsPerSlot: number;
   /** The provider route of every slot: the primary model first, then its fallbacks (e.g. Seedream on a refusal). */
   route: readonly [ImageChoice, ...ImageChoice[]];
-  writer: WriterCall;
+  /** The scene writer; null for a run whose sentences already exist (CS.5, a run from a scene set): no writer term in either figure. */
+  writer: WriterCall | null;
   /** The age check run on every returned image; null when age checks are off. */
   ageChecks: ChatCall | null;
 }
@@ -198,16 +199,20 @@ export function estimateRun(book: PriceBook, plan: RunPlanInput): Estimate {
   if (plan.photos === 0) return { expectedMicros: 0, worstMicros: 0, priceSource: book.source };
 
   const dearestAttempt = Math.max(...plan.route.map((choice) => imageMicros(book, choice)));
-  const writerTypical = book.chatCost({
-    model: plan.writer.model,
-    images: plan.writer.images,
-    inputTokens: plan.writer.typicalPerScene.inputTokens * plan.photos,
-    outputTokens: plan.writer.typicalPerScene.outputTokens * plan.photos,
-  });
+  const { writer } = plan;
+  const writerTypical =
+    writer === null
+      ? 0
+      : book.chatCost({
+          model: writer.model,
+          images: writer.images,
+          inputTokens: writer.typicalPerScene.inputTokens * plan.photos,
+          outputTokens: writer.typicalPerScene.outputTokens * plan.photos,
+        });
   return {
     expectedMicros: safe(plan.photos * (imageMicros(book, primary) + typicalMicros(book, plan.ageChecks)) + writerTypical),
     worstMicros: safe(
-      plan.photos * plan.attemptsPerSlot * (dearestAttempt + ceilingMicros(book, plan.ageChecks)) + writerWorstMicros(book, plan.writer, plan.photos),
+      plan.photos * plan.attemptsPerSlot * (dearestAttempt + ceilingMicros(book, plan.ageChecks)) + (writer === null ? 0 : writerWorstMicros(book, writer, plan.photos)),
     ),
     priceSource: book.source,
   };

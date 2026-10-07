@@ -94,7 +94,9 @@ import { priceFetchFrom } from "./openrouter/priceFetch";
 import { ImageCatalogueCache, loadImageCatalogue } from "./imageModels/catalogue";
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
-import { buildRunPlan, RunPlanSchema, runEstimate, runPriceModels, sceneCategory, type RunPlan } from "./runs/plan";
+import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, type RunPlan } from "./runs/plan";
+import { commitApproval, loadApprovable } from "./sceneSets/approve";
+import { runSnapshots, runSources } from "./sceneSets/toRun";
 import { CpuPool, NetworkPool } from "./runs/pools";
 import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
@@ -1592,6 +1594,29 @@ export class Engine {
           }
         }
       }
+      case "runs.estimateFromScenes":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate: await this.#estimateFromScenes(command.payload) } };
+      case "runs.startFromScenes": {
+        // Counted before the first await (the set's avatar is only known once the set is found): a library switch is refused from here on.
+        this.#paidCommands++;
+        let claimed: string | null = null;
+        let launched = false;
+        try {
+          const result = await this.#startFromScenes(command.payload, (avatarId) => {
+            // Claimed as soon as the avatar is known and before the next await, like every paid job: one at a time per avatar.
+            this.#claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
+            claimed = avatarId;
+          });
+          launched = true;
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+        } finally {
+          // A launched run holds both until its job ends.
+          if (!launched) {
+            this.#paidCommands--;
+            if (claimed !== null) this.#busyAvatars.delete(claimed);
+          }
+        }
+      }
       case "runs.cancel": {
         const { runId } = command.payload;
         const jobId = this.#jobs.runningJobOf(runId);
@@ -2143,6 +2168,85 @@ export class Engine {
     await library.createRun(runId, plan, RunPlanSchema);
     this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, 0);
     return { runId, jobId };
+  }
+
+  /**
+   * What a run made from a reviewed scene set (CS.5) could cost: the set's active scenes, each with its text, priced with no writer term, at Settings'
+   * image model, quality and age-check mode. Free, and every refusal is free (sceneSets/toRun.ts's order): nothing is read from the network before them.
+   */
+  async #estimateFromScenes(payload: CommandPayload<"runs.estimateFromScenes">): Promise<Estimate> {
+    const library = this.library;
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    const { set, avatarId } = await loadApprovable({ library, isLive: (id) => this.#sceneSets.isLive(id) }, payload.sceneSetId, payload.revision);
+    this.#runnableAvatar(library, avatarId);
+    const models = this.#avatarModels();
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    return runEstimateFromScenes(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, { count: runSources(set).length }, imageAgeCheck);
+  }
+
+  /**
+   * «Отрисовать N фото»: a run made from a reviewed scene set. The set's refusals come first (free), then exactly `#startRun`'s checks — a usable key, a ledger
+   * that allows paid calls, an avatar that can get photos, the age and face gates, the worst case the owner accepted (PRICE_CHANGED), room in the month and
+   * the free master preflight — which await prices and the master without holding the set's lock. The last step runs under the set's lock (sceneSets/approve.ts):
+   * the set is read again and refused again, so an edit or a discard that landed meanwhile writes nothing, and the run folder is made under the set's
+   * pre-issued run id, plan inside. The run's cap is the accepted images-only worst case for exactly the scenes approved, for its whole life. `claim` is
+   * told the avatar as soon as the set names it.
+   */
+  async #startFromScenes(payload: CommandPayload<"runs.startFromScenes">, claim: (avatarId: string) => void): Promise<{ runId: string; jobId: string }> {
+    const { sceneSetId, revision } = payload;
+    const library = await this.#liveLibrary();
+    const approvalDeps = { library, isLive: (id: string) => this.#sceneSets.isLive(id) };
+    const approved = await loadApprovable(approvalDeps, sceneSetId, revision);
+    const { avatarId } = approved;
+    claim(avatarId);
+    const key = this.#usableKey("start a photo run");
+    const budget = this.#paidBudget();
+    const manifest = this.#runnableAvatar(library, avatarId);
+    await this.#assertAvatarOnDisk(library, avatarId);
+    if (library.referencePhoto(avatarId) === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo to use as the face reference` });
+    // Captured once, here: a mid-flight settings change must not affect this run, whose cap is fixed now.
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    const cameraRealism = this.#settings.cameraRealism;
+    this.#assertAgeGate(imageAgeCheck);
+    this.#assertFaceGate();
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck));
+    const estimate = runEstimateFromScenes(priced, models, { count: runSources(approved.set).length }, imageAgeCheck);
+    Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
+
+    const gates = this.#gatesFor(imageAgeCheck);
+    const preflight = await preflightMaster({ library, gates }, avatarId, new AbortController().signal);
+    if (!preflight.ok) {
+      if (preflight.end.status === "failed") throw new EngineFailure(preflight.end.error);
+      throw new EngineFailure({ code: "INTERNAL", detail: "the master photo could not be checked before the run" });
+    }
+
+    const jobId = this.#deps.newId();
+    const createdAt = new Date(this.#deps.clock()).toISOString();
+    const plan = await commitApproval(approvalDeps, { ...approved, revision }, (current) => {
+      const scenes = runSources(current);
+      // The same revision, so the same scenes the price was made for; a count that differs is a defect, never a run priced for other scenes.
+      if (scenes.length !== runSources(approved.set).length) throw new Error(`scene set ${sceneSetId} changed without a new revision`);
+      return buildSceneRunPlan({
+        runId: current.runId,
+        avatarId,
+        createdAt,
+        sceneSetId,
+        imageAgeCheck,
+        models,
+        capMicros: estimate.worstMicros,
+        plannedWorstMicros: estimate.worstMicros,
+        scenes,
+        // The set's own snapshot of every custom category its scenes use: a rename or a delete of the category changes nothing in this run.
+        categories: runSnapshots(current, scenes),
+        cameraRealism,
+      });
+    });
+    // The set is used from here (its run's folder exists); every window hears it before any event of the run's job.
+    await this.#sceneSets.announce(library, approved.set);
+    this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, 0);
+    return { runId: plan.runId, jobId };
   }
 
   /**

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CustomCategoryId, isCustomCategory, PoolText, TimeOfDay } from "../../shared/engine";
+import { CustomCategoryId, isCustomCategory, PoolText, SceneText, TimeOfDay } from "../../shared/engine";
 import { FacePoseSchema } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
 
@@ -71,6 +71,9 @@ export const PlanSlotSchema = z
     pose: PoseSchema,
     attemptIdBase: AttemptIdBaseSchema,
     repeatedPair: z.boolean(),
+    // Additive (CS.5): the sentence a reviewed scene set already holds for this slot. Present on every slot of a run made from a set, never otherwise
+    // (runs/plan.ts's invariant); a writer's sentence has no upper bound, so neither has this.
+    sentence: SceneText.optional(),
   })
   .refine((slot) => !isPhoneInHandShot(slot.shot) || slot.pose === "front" || slot.pose === "three-quarter", {
     message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter",
@@ -86,6 +89,34 @@ export const PlanSlotSchema = z
     if (!TimeOfDay.safeParse(slot.timeOfDay).success) ctx.addIssue({ code: "custom", message: "a custom slot's timeOfDay must be plain printable ASCII, at most the time-of-day bound", path: ["timeOfDay"] });
   });
 export type PlanSlot = z.infer<typeof PlanSlotSchema>;
+
+/**
+ * CS.5: a slot of the owner's own scene (made by idea in a scene set). It has no place, time, activity or outfit: only a shot, a pose and the sentence
+ * the model wrote from the idea, under the category `"own"`. It lives only in a run made from a scene set (runs/plan.ts's invariant), so it always
+ * carries its sentence.
+ */
+export const OwnPlanSlotSchema = z
+  .strictObject({
+    kind: z.literal("own"),
+    slotIndex: z.int().positive(),
+    category: z.literal("own"),
+    shot: ShotSchema,
+    pose: PoseSchema,
+    attemptIdBase: AttemptIdBaseSchema,
+    sentence: SceneText,
+  })
+  .refine((slot) => !isPhoneInHandShot(slot.shot) || slot.pose === "front" || slot.pose === "three-quarter", {
+    message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter",
+    path: ["pose"],
+  });
+export type OwnPlanSlot = z.infer<typeof OwnPlanSlotSchema>;
+
+/** Any slot a run's plan may hold. */
+export type RunSlot = PlanSlot | OwnPlanSlot;
+
+export function isOwnSlot(slot: RunSlot): slot is OwnPlanSlot {
+  return slot.category === "own";
+}
 
 /** The whole plan: a stable, serialisable value T6 can persist for resume and
  *  T8b can show as a review table (T5a, item 4). `slots` is already in send

@@ -1,4 +1,4 @@
-import { isCustomCategory, type CategoryRef, type CategorySnapshot, type CategoryStyle, type SceneCategory } from "../../shared/engine";
+import { isCustomCategory, OWN_CATEGORY, type PhotoCategory, type CategoryRef, type CategorySnapshot, type CategoryStyle, type SceneCategory } from "../../shared/engine";
 import type { Category, PlannerCategory } from "./types";
 
 // CS.1: the engine's two names for a category, and what a plan's snapshot
@@ -35,6 +35,11 @@ export function categoryRefOf(category: PlannerCategory): CategoryRef {
   return isCustomCategory(category) ? category : REF_OF_PLANNER[category];
 }
 
+/** What a photo carries as its category: the contract's name for a slot's category, or `"own"` for an own scene (CS.5). */
+export function photoCategoryOf(category: PlannerCategory | "own"): PhotoCategory {
+  return category === "own" ? OWN_CATEGORY : categoryRefOf(category);
+}
+
 /** The English name the writer is told each built-in category is. Byte-pinned: a built-in run's prompt never changes. */
 export const BUILT_IN_LABEL: Record<Category, string> = {
   home: "Home",
@@ -68,7 +73,9 @@ export function categoryLabelOf(snapshots: readonly CategorySnapshot[] = []): Ca
  * built-ins are phone photos, and a custom category carries its own style in
  * the plan's snapshot.
  */
-export function categoryStyleOf(category: PlannerCategory, snapshots: readonly CategorySnapshot[] = []): CategoryStyle {
+export function categoryStyleOf(category: PlannerCategory | "own", snapshots: readonly CategorySnapshot[] = []): CategoryStyle {
+  // An own scene (CS.5) has no category of its own to carry a style: it is finished like a phone photo.
+  if (category === "own") return "phone";
   if (isCustomCategory(category)) return snapshotOf(snapshots, category).style;
   return category === "photoshoot" ? "editorial" : "phone";
 }
