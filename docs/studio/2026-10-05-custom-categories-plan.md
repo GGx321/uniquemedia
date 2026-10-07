@@ -1299,6 +1299,17 @@ also shut by the tracked scenes job between a write's answer and `scenes.changed
 popover and idea form, `more.error` reset on a key change, the slice not library-keyed, the compose price cached after a recompose, the switch not synced
 across windows, and the visual LOWs.
 
+CS.7 UI fixes (whole-slice review area 3, branch `fix/studio-cs7-ui`; each behaviour test seen red for the intended reason first): (M2) a failed free price
+under each review paid button — compose, «Дописать», «Отрисовать», ⟳, «Написать N сцен», «Повторить», «Другие сцены для N» — says «Цену не узнать: … ·
+Повторить» as CS.3 does, describes the button, and hands the focus back to it once priced (`PriceFailed` in `scenePaid.tsx`); (M3) the review switch waits,
+with its reason, while a write of the set runs, and review-off says «пишется» for a set another window writes; (M1) with a set open the create dialog's
+«готово» says the category goes into the next set and «Готово» focuses the strip's «Мои категории», and the delete confirm says «Другая сцена» goes for the
+category's scenes in the open set; (M4) «Составить» focuses the job's «Отменить», «Отрисовать» the run's, and a job's end the first scene it wrote or was
+for, or the column title — never a paid button, never away from where the owner moved it (README «Keyboard and focus» rows); the slice drops a cancel-focus
+request whose job already ended; the price source drops this year's year; the shot tag wraps under the category tag; «Авто» sized to itself; mono amounts
+in the reconcile banner and «Пересоставить сцены?»; the models-line tooltip; «Дописываем сцены» on the job row; the regenerate notice's ⟳ wording; the run
+form kept by the window (`runForms.ts`); the montage bin's «Свои» group with «Своя сцена» last.
+
 ### CS.7 — Whole-slice review, E2E, docs, local build, canary
 
 - Whole-slice review (opus), areas: money/state (CS.2, CS.4a/b, CS.5), contract/mock parity, UI

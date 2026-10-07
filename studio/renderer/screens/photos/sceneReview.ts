@@ -204,8 +204,13 @@ export function setCategoryTags(set: SceneSetView): SetCategoryTag[] {
   return set.categories.map(({ ref, name }) => ({
     ref,
     label: isCustomCategory(ref) ? (name ?? CUSTOM_FALLBACK) : CATEGORY_LABEL[ref],
-    count: set.scenes.filter((s) => !s.removed && s.category === ref).length,
+    count: categorySceneCount(set, ref),
   }));
+}
+
+/** The set's scenes from one category, as its tag in the strip counts them: the ones not removed. */
+export function categorySceneCount(set: SceneSetView, ref: CategoryRef): number {
+  return set.scenes.filter((s) => !s.removed && s.category === ref).length;
 }
 
 // ---------- refusals ----------

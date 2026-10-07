@@ -237,6 +237,25 @@ export function unreadableNote(n: number): string {
     : `${countOf(n, ["файл", "файла", "файлов"])} категорий не читаются — они не удалены`;
 }
 
+/**
+ * CS.7 M1: the delete confirm (CatSheetDelete; phase 2, ReviewStates E): what stays, and — only when the open scene set draws `openSetScenes` of its
+ * scenes from it — that «Другая сцена» goes for them: a new place cannot be drawn from a deleted category.
+ */
+export function deleteConfirmText(openSetScenes: number): string {
+  const lead = "Фото этой категории останутся в галерее с её названием. Запуски, где она уже есть, не изменятся.";
+  if (openSetScenes === 0) return `${lead} Вернуть категорию нельзя.`;
+  const one = plural(openSetScenes, ["one", "few", "many"]) === "one";
+  const scenes = countOf(openSetScenes, ["сцена", "сцены", "сцен"]);
+  return `${lead} В открытом наборе сцен её ${scenes} ${one ? "останется" : "останутся"} как есть, но «Другая сцена» для ${one ? "неё" : "них"} станет недоступна — новое место из удалённой категории не взять. Вернуть категорию нельзя.`;
+}
+
+/** CS.7 M1: the create dialog's «готово» line (decision 17): in the run at once, or — a scene set already composed — in the next set. */
+export function createdLine(setOpen: boolean): string {
+  return setOpen
+    ? "Набор сцен уже составлен — категория войдёт в следующий набор. Открытый набор не меняется."
+    : "Категория уже включена в запуск. Убрать место или наряд — в «Мои категории».";
+}
+
 /** Readable categories past the 50th: the list leaves them out, the disk keeps them, a delete brings one back. */
 export function overLimitNote(n: number): string {
   const one = plural(n, ["one", "few", "many"]) === "one";

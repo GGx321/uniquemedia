@@ -5,7 +5,7 @@ import type { EngineView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { paidStop } from "../../lib/paidStop";
 import { useNavigate } from "../../navigation";
-import { about, InlinePaidButton, paidButtonState, setPriceKey } from "./scenePaid";
+import { about, describedBy, InlinePaidButton, paidButtonState, PriceFailed, setPriceKey } from "./scenePaid";
 import { sceneCategoryLabel, writeCapRefusal } from "./sceneReview";
 import { interruptedChoiceText, ownRewriteText, redrawGoneText, redrawText, WRITE_CAP_TEXT, writeCapLine } from "./sceneText";
 import { usePaidAction } from "./usePaidAction";
@@ -34,6 +34,10 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
   const ids = useId();
   const root = useRef<HTMLDivElement>(null);
   const cancel = useRef<HTMLButtonElement>(null);
+  const replaceRef = useRef<HTMLButtonElement>(null);
+  const resumeRef = useRef<HTMLButtonElement>(null);
+  /** Which button's price «Повторить» asked again: the focus goes there once it comes. */
+  const retried = useRef<"replace" | "resume">("replace");
   const own = scene.origin === "own";
   const key = setPriceKey(set, view);
   const target = { kind: "rewrite" as const, sceneIds: [scene.sceneId], redraw: !own };
@@ -128,6 +132,11 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
   const replaceState = paidButtonState(replace, own ? "Переписать" : "Заменить", stopped !== null);
   const resumeState = paidButtonState(resume, "Повторить", stopped !== null);
   const offline = stop?.kind === "offline";
+  // M2: a price that could not be had (not a deleted category's, said above): why, and «Повторить» for the one(s) it failed for.
+  const priceFailed = replace.priceError ?? resume.priceError;
+  const priceId = `${ids}-price`;
+  const replaceWhy = describedBy(stopped !== null && whyId, replace.priceError !== null && priceId);
+  const resumeWhy = describedBy(stopped !== null && whyId, resume.priceError !== null && priceId);
 
   return (
     <div ref={root} className="pop scene-pop" role="dialog" aria-modal="true" aria-labelledby={titleId} onKeyDown={onKey}>
@@ -146,13 +155,27 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
         <button ref={cancel} type="button" className="btn btn-s" disabled={sending} onClick={onClose}>
           Отмена
         </button>
-        {marker !== undefined && <InlinePaidButton state={offline ? { ...resumeState, price: null } : resumeState} primary={false} describedBy={stopped !== null ? whyId : undefined} onClick={resume.click} />}
-        <InlinePaidButton state={offline ? { ...replaceState, price: null } : replaceState} describedBy={stopped !== null ? whyId : undefined} onClick={replace.click} />
+        {marker !== undefined && (
+          <InlinePaidButton buttonRef={resumeRef} state={offline ? { ...resumeState, price: null } : resumeState} primary={false} describedBy={resumeWhy} onClick={resume.click} />
+        )}
+        <InlinePaidButton buttonRef={replaceRef} state={offline ? { ...replaceState, price: null } : replaceState} describedBy={replaceWhy} onClick={replace.click} />
       </div>
       {stopped !== null && (
         <p id={whyId} className="faint scene-pop-why">
           {stopped} {settingsLink}
         </p>
+      )}
+      {priceFailed !== null && (
+        <PriceFailed
+          id={priceId}
+          error={priceFailed}
+          onRetry={() => {
+            retried.current = replace.priceError !== null ? "replace" : "resume";
+            if (replace.priceError !== null) replace.retryPrice();
+            if (resume.priceError !== null) resume.retryPrice();
+          }}
+          after={() => (retried.current === "resume" ? resumeRef.current : replaceRef.current)}
+        />
       )}
       {refused !== null && <p className="scene-pop-error">{writeCapRefusal(refused) ? WRITE_CAP_TEXT : errorText(refused)}</p>}
     </div>

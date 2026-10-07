@@ -17,6 +17,7 @@ import {
   offNoteSet,
   otherScenesButton,
   ownRewriteText,
+  priceSourceText,
   problemText,
   progressLabel,
   progressNote,
@@ -268,12 +269,19 @@ describe("column notices", () => {
     expect(offNoteSet(sceneSet([...written(19), scene(20, { removed: true })]))).toBe(nb("Открытый набор — 19 сцен с вашими правками — сохранён. Включите проверку, чтобы вернуться к нему."));
     expect(offNoteSet(sceneSet(written(20)))).toBe(nb("Открытый набор — 20 сцен — сохранён. Включите проверку, чтобы вернуться к нему."));
   });
+
+  test("review off while a write of the set runs (another window's): the set is being written, not saved (CS.7 M3)", () => {
+    expect(offNoteSet(sceneSet(written(20), { status: "writing", write: { kind: "compose", count: 20 } }))).toBe(
+      nb("Открытый набор — 20 сцен — пишется. Включите проверку, чтобы вернуться к нему."),
+    );
+  });
 });
 
 describe("the task line of a scenes job", () => {
   test("its label", () => {
     expect(progressLabel({ kind: "compose", count: 20 }, 0, 20, [])).toBe("Составляем сцены: 0 из 20");
-    expect(progressLabel({ kind: "unwritten", count: 35 }, 25, 35, [])).toBe("Составляем сцены: 25 из 35");
+    // «Дописать» says what its button says («Дописываем…»), CS.7 L2.
+    expect(progressLabel({ kind: "unwritten", count: 35 }, 25, 35, [])).toBe("Дописываем сцены: 25 из 35");
     expect(progressLabel({ kind: "rewrite", count: 1, sceneIds: [2] }, 0, 1, [scene(2)])).toBe("Пишем другую сцену вместо 02");
     expect(progressLabel({ kind: "rewrite", count: 1, sceneIds: [21] }, 0, 1, [scene(21, { origin: "own" })])).toBe("Переписываем сцену 21");
     expect(progressLabel({ kind: "rewrite", count: 3, sceneIds: [26, 27, 28] }, 0, 3, [])).toBe("Пишем другие сцены вместо 26, 27, 28");
@@ -291,6 +299,16 @@ describe("the task line of a scenes job", () => {
   });
 });
 
+describe("the price source beside «Цены» (CS.7 V1)", () => {
+  test("the day and month; the year only when it is not this one, so the line fits at both widths", () => {
+    const now = new Date("2026-10-07T12:00:00Z");
+    expect(priceSourceText("live", "2026-09-24", now)).toBe("OpenRouter · 24 сент.");
+    expect(priceSourceText("fallback", "2026-09-24", now)).toBe("резервные · 24 сент.");
+    expect(priceSourceText("fallback", "2025-12-30", now)).toBe("резервные · 30 дек. 2025 г.");
+    expect(priceSourceText(null, null, now)).toBe("—");
+  });
+});
+
 describe("«Пересоставить сцены?»", () => {
   test("what goes with the set, and what it already cost", () => {
     const set = sceneSet([scene(1), scene(2, { edited: true }), scene(3, { removed: true }), scene(21, { origin: "own" }), scene(22, { origin: "own" })], { spentMicros: 15_000 });
@@ -300,8 +318,13 @@ describe("«Пересоставить сцены?»", () => {
       nb("1 правка текста и 1 убранная сцена."),
     ]);
     expect(recomposeLosses(sceneSet(written(3)), 0)).toEqual([]);
-    expect(recomposeSpent(set)).toBe("Набор уже стоил $0.015. Эти деньги потрачены и не вернутся.");
-    expect(recomposeSpent(sceneSet(written(3), { spentMicros: 46_500, openReserveMicros: 37_500 }))).toBe("Набор уже стоил до $0.047. Эти деньги потрачены и не вернутся.");
+    // The amount on its own, to be set in mono (CS.7 V5), the sentence around it.
+    const spent = recomposeSpent(set);
+    expect(spent === null ? null : `${spent.before}${spent.amount}${spent.after}`).toBe("Набор уже стоил $0.015. Эти деньги потрачены и не вернутся.");
+    expect(spent?.amount).toBe("$0.015");
+    const open = recomposeSpent(sceneSet(written(3), { spentMicros: 46_500, openReserveMicros: 37_500 }));
+    expect(open === null ? null : `${open.before}${open.amount}${open.after}`).toBe("Набор уже стоил до $0.047. Эти деньги потрачены и не вернутся.");
+    expect(open?.amount).toBe("$0.047");
     expect(recomposeSpent(sceneSet([], { spentMicros: 0 }))).toBe(null);
   });
 });

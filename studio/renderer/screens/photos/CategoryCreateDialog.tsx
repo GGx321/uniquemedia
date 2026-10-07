@@ -3,13 +3,14 @@ import { createPortal } from "react-dom";
 import { CATEGORY_DESCRIPTION_MAX, CATEGORY_NAME_MAX } from "../../../shared/engine";
 import { useCategoryLibrary, useEngineView } from "../../engine/react";
 import { errorText } from "../../lib/errors";
+import { afterColon } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import { useNavigate } from "../../navigation";
 import { FocusEdge } from "../../ui/FocusEdge";
 import { Icon, Spin } from "../../ui/Icon";
 import { useModalDialog } from "../../ui/useModalDialog";
 import { busyElsewhere, categoryPrice, PoolPreview, priceRange, priceSource, useSeconds, worstOf } from "./categoryParts";
-import { callFailure, createdTime, descriptionProblem, nameProblem } from "./categoryText";
+import { callFailure, createdLine, createdTime, descriptionProblem, nameProblem } from "./categoryText";
 import { paidBlockedReason } from "./runForm";
 
 // CS.3: «Новая категория» (CatCreate, CatCreateBusy, CatCreateDone, CatCreateRejected, CatCreatePrice; the CategoryStates sheet's checks,
@@ -31,11 +32,14 @@ export type CreateDialogClose = "cancel" | "hide" | "done";
 
 export function CategoryCreateDialog({
   start,
+  setOpen,
   onClose,
   onOpenSheet,
   focusAfter,
 }: {
   start: CreateDialogStart;
+  /** CS.7 M1: the avatar's scene set is open (review on): the new category goes into the next set, not into this one (decision 17). */
+  setOpen: boolean;
   onClose: (how: CreateDialogClose) => void;
   /** «Мои категории» from the limit's refusal: the dialog closes and the sheet opens. */
   onOpenSheet: () => void;
@@ -318,7 +322,7 @@ export function CategoryCreateDialog({
                   <span className="mono faint cat-cost-source">{priceSource(estimate, textModel)}</span>
                 ) : priceError !== null ? (
                   <span className="cat-cost-error">
-                    <span className="danger-text">Цену не узнать: {errorText(priceError)}</span>
+                    <span className="danger-text">Цену не узнать: {afterColon(errorText(priceError))}</span>
                     <button type="button" className="link-btn" onClick={() => library.refreshPrice()}>
                       Повторить
                     </button>
@@ -331,7 +335,7 @@ export function CategoryCreateDialog({
 
         <footer className="cat-dlg-foot">
           <span id={whyId} className="faint cat-dlg-foot-note">
-            {done !== null ? "Категория уже включена в запуск. Убрать место или наряд — в «Мои категории»." : call === null && blocked !== null ? blocked : ""}
+            {done !== null ? createdLine(setOpen) : call === null && blocked !== null ? blocked : ""}
           </span>
           {done !== null ? (
             <button ref={doneRef} type="button" className="btn btn-p btn-s" onClick={() => close("done")}>

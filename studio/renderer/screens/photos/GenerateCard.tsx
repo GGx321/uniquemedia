@@ -28,9 +28,10 @@ import {
   sameCategories,
   toggleCategory,
 } from "./runForm";
-import { about, ceiling, paidButtonState, PriceChangedNotice, StackButton, Why } from "./scenePaid";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, Why } from "./scenePaid";
+import { categorySceneCount } from "./sceneReview";
 import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
-import { composeTitle } from "./sceneText";
+import { composeTitle, priceSourceText, SWITCH_WAITS } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 
@@ -55,12 +56,9 @@ const SHOT_TYPES = [
   { label: "Фотограф", tone: "photographer" },
 ] as const;
 
-const PRICE_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
-
-/** "OpenRouter · 24 сент. 2026 г." for live prices, "резервные · 24 сент. 2026 г." for the dated fallback table (B5: the year, like the sheet's own). */
+/** «OpenRouter · 24 сент.», «резервные · …»: the strip's own words (B5's year only when it is not this one — CS.7 V1, so the line fits). */
 function priceSource(estimate: Estimate): string {
-  const date = PRICE_DATE.format(Date.parse(`${estimate.pricesAsOf}T00:00:00Z`));
-  return estimate.prices === "live" ? `OpenRouter · ${date}` : `резервные · ${date}`;
+  return priceSourceText(estimate.prices, estimate.pricesAsOf);
 }
 
 interface GenerateCardProps {
@@ -150,6 +148,8 @@ export function GenerateCard({
   const [createOpen, setCreateOpen] = useState<CreateDialogStart | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const chipsRef = useRef<HTMLDivElement>(null);
+  /** The strip's «Мои категории», while a set is open. */
+  const stripSheetRef = useRef<HTMLButtonElement>(null);
   const ownCreate = categorySlice.call?.kind === "create" ? categorySlice.call : null;
 
   const request = runRequest(avatar.avatarId, { ...form, categories });
@@ -272,6 +272,8 @@ export function GenerateCard({
       if (result.jobId !== null) {
         store.trackScenesJob(result.jobId, result.sceneSetId, avatar.avatarId, composeRequest.count);
         sceneSets.trackJob(result.jobId, { sceneSetId: result.sceneSetId, kind: "compose", price: accepted, sceneIds: null, idea: null });
+        // CS.7 M4: the card gives way to the strip, the button with the focus goes; the job's «Отменить» in the column takes it, as after «Дописать».
+        sceneSets.requestCancelFocus(result.jobId);
       }
       // An empty set has no job: it is read at once.
       sceneSets.reload(avatar.avatarId);
@@ -280,8 +282,13 @@ export function GenerateCard({
   });
   useEffect(() => onComposePrice(review ? compose.estimate : null), [review, compose.estimate, onComposePrice]);
 
+  // CS.7 M3: off while a write of the set runs (sent, tracked or announced) would hide the job and its «Отменить» — the column shows the set only with
+  // review on — so the switch waits for its end, saying why. Turning review on is never held.
+  const switchWaits = review && (compose.sending || scenesJob !== null || (openSet !== null && openSet.write !== null)) ? SWITCH_WAITS : null;
+
   /** Off at fewer than five photos: the count goes to five (a run has no empty set). */
   function toggleReview(): void {
+    if (switchWaits !== null) return;
     if (review && form.count < COUNT_MIN) onFormChange({ ...form, count: COUNT_MIN });
     onReviewChange(!review);
   }
@@ -349,8 +356,9 @@ export function GenerateCard({
     setSheetOpen(true);
   }
 
+  // With a set open the chips are not on screen: «Мои категории» of the strip stands for the row (README «Keyboard and focus»: create category).
   const rowControl = (name: "add" | "sheet"): HTMLElement | null =>
-    chipsRef.current?.querySelector<HTMLElement>(name === "add" ? "[data-add-category]" : "[data-my-categories]") ?? null;
+    chipsRef.current?.querySelector<HTMLElement>(name === "add" ? "[data-add-category]" : "[data-my-categories]") ?? stripSheetRef.current;
 
   function closeCreate(how: CreateDialogClose): void {
     setCreateOpen(null);
@@ -372,7 +380,7 @@ export function GenerateCard({
     how === "hide"
       ? (chipsRef.current?.querySelector<HTMLElement>("[data-chip-wait]") ?? null)
       : how === "done" && categoryId !== null
-        ? (chipsRef.current?.querySelector<HTMLElement>(`[data-category="${categoryId}"]`) ?? null)
+        ? (chipsRef.current?.querySelector<HTMLElement>(`[data-category="${categoryId}"]`) ?? stripSheetRef.current)
         : createOpener.current !== null
           ? rowControl(createOpener.current)
           : null;
@@ -413,6 +421,7 @@ export function GenerateCard({
   const buttonBusy = busy || estimating;
 
   const hintId = `${ids}-why`;
+  const priceFailedId = `${ids}-price`;
   const anglesLabel = `${ids}-angles`;
   const anglesHint = `${ids}-angles-hint`;
   const countLabel = `${ids}-count`;
@@ -578,12 +587,12 @@ export function GenerateCard({
             <span aria-live="polite">{current ? (review ? about(current.estimate.expectedMicros) : `≈ ${formatUsd(current.estimate.expectedMicros)}`) : "—"}</span>
           </div>
           {review && form.count > 0 && current && <div className="mono faint scene-total-sub">{`${ceiling(current.estimate.worstMicros)} без правок`}</div>}
-          <ReviewSwitch on={review} onToggle={toggleReview} labelId={`${ids}-sw`} />
+          <ReviewSwitch on={review} onToggle={toggleReview} labelId={`${ids}-sw`} waits={switchWaits} />
           {review ? (
             <StackButton
               buttonRef={goRef}
               state={composeButton}
-              describedBy={composeBlocked !== null && !composeButton.busy ? hintId : undefined}
+              describedBy={describedBy(composeBlocked !== null && !composeButton.busy && hintId, compose.priceError !== null && priceFailedId)}
               onClick={compose.click}
             />
           ) : (
@@ -615,6 +624,7 @@ export function GenerateCard({
                   {blockedReason}
                 </p>
               )}
+          {review && compose.priceError !== null && <PriceFailed id={priceFailedId} error={compose.priceError} onRetry={compose.retryPrice} after={() => goRef.current} />}
         </div>
       </section>
   );
@@ -632,6 +642,7 @@ export function GenerateCard({
           paidInFlight={paidInFlight}
           onPaidInFlightChange={onPaidInFlightChange}
           onToggleReview={toggleReview}
+          switchWaits={switchWaits}
           onOpenSheet={openSheet}
           myCategories={customs === null ? null : customs.length}
           onRecompose={() => setRecomposeSet(openSet)}
@@ -639,6 +650,7 @@ export function GenerateCard({
           onFocusScene={onFocusScene}
           goRef={goRef}
           recomposeRef={recomposeRef}
+          sheetRef={stripSheetRef}
         />
       ) : (
         fullCard
@@ -696,6 +708,7 @@ export function GenerateCard({
       {createOpen !== null && (
         <CategoryCreateDialog
           start={createOpen}
+          setOpen={review && openSet !== null}
           onClose={closeCreate}
           onOpenSheet={() => {
             closeCreate("cancel");
@@ -710,6 +723,7 @@ export function GenerateCard({
           onCreate={(start) => openCreate(start, "sheet")}
           onRetryCreate={retryInterrupted}
           returnFocus={() => rowControl("sheet")}
+          openSetScenes={(categoryId) => (openSet === null ? 0 : categorySceneCount(openSet, categoryId))}
         />
       )}
     </>

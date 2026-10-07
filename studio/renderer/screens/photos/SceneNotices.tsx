@@ -1,10 +1,10 @@
-import { type ReactNode, useId } from "react";
+import { type ReactNode, useId, useRef } from "react";
 import type { SceneInterruptedIdea, SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { Icon } from "../../ui/Icon";
-import { InlinePaidButton, paidButtonState, setPriceKey } from "./scenePaid";
+import { describedBy, InlinePaidButton, paidButtonState, PriceFailed, setPriceKey } from "./scenePaid";
 import { emptySceneIds, interruptedRewrites, otherSceneTargets, tallyScenes, writeCapRefusal } from "./sceneReview";
 import { emptyButton, gaveUpNotice, ideaNotice, otherScenesButton, type ReserveState, rewriteNotice, stoppedNotice, WRITE_CAP_TEXT } from "./sceneText";
 import { usePaidAction } from "./usePaidAction";
@@ -55,6 +55,8 @@ function WarnNotice({ title, text, role, children, onClose }: { title: string; t
 /** «Другие сцены для N»: one rewrite with a redraw for the first five given up on. */
 function OtherScenesButton({ set, view, blocked, onPaidInFlightChange, onStarted }: Common & { onStarted: () => void }) {
   const { client, store, sceneSets } = useEngine();
+  const priceId = useId();
+  const button = useRef<HTMLButtonElement>(null);
   const ids = otherSceneTargets(set);
   const target = { kind: "rewrite" as const, sceneIds: ids, redraw: true };
   const action = usePaidAction({
@@ -71,23 +73,33 @@ function OtherScenesButton({ set, view, blocked, onPaidInFlightChange, onStarted
   if (ids.length === 0) return null;
   return (
     <>
-      <InlinePaidButton state={paidButtonState(action, otherScenesButton(ids.length), blocked !== null)} primary={false} onClick={action.click} />
+      <InlinePaidButton
+        buttonRef={button}
+        state={paidButtonState(action, otherScenesButton(ids.length), blocked !== null)}
+        primary={false}
+        describedBy={describedBy(action.priceError !== null && priceId)}
+        onClick={action.click}
+      />
       {action.error !== null && <span className="scene-pop-error">{writeCapRefusal(action.error) ? WRITE_CAP_TEXT : errorText(action.error)}</span>}
+      {action.priceError !== null && <PriceFailed id={priceId} error={action.priceError} onRetry={action.retryPrice} after={() => button.current} />}
     </>
   );
 }
 
 /** «Повторить»: the interrupted write carried on, at the attempts it has left. `stuck` says why it cannot be (a removed scene). */
-function ResumeButton({ set, view, blocked, onPaidInFlightChange, write, scenes, kind, idea, stuck, onStarted, describedBy }: Common & {
+function ResumeButton({ set, view, blocked, onPaidInFlightChange, write, scenes, kind, idea, stuck, onStarted, why }: Common & {
   write: number;
   scenes: readonly number[];
   kind: "rewrite" | "idea";
   idea: SceneInterruptedIdea | null;
   stuck: boolean;
   onStarted: () => void;
-  describedBy: string | undefined;
+  /** The notice's reason line, when paid calls wait. */
+  why: string | undefined;
 }) {
   const { client, store, sceneSets } = useEngine();
+  const priceId = useId();
+  const button = useRef<HTMLButtonElement>(null);
   const target = { kind: "resume" as const, write };
   const action = usePaidAction({
     key: stuck ? null : `resume|${write}|${setPriceKey(set, view)}`,
@@ -109,8 +121,15 @@ function ResumeButton({ set, view, blocked, onPaidInFlightChange, write, scenes,
   const state = paidButtonState(action, "Повторить", stuck || blocked !== null);
   return (
     <>
-      <InlinePaidButton state={stuck ? { ...state, price: null } : state} primary={false} describedBy={describedBy} onClick={action.click} />
+      <InlinePaidButton
+        buttonRef={button}
+        state={stuck ? { ...state, price: null } : state}
+        primary={false}
+        describedBy={describedBy(why, action.priceError !== null && priceId)}
+        onClick={action.click}
+      />
       {action.error !== null && <span className="scene-pop-error">{writeCapRefusal(action.error) ? WRITE_CAP_TEXT : errorText(action.error)}</span>}
+      {action.priceError !== null && <PriceFailed id={priceId} error={action.priceError} onRetry={action.retryPrice} after={() => button.current} />}
     </>
   );
 }
@@ -180,7 +199,7 @@ export function SceneNotices(props: SceneNoticesProps) {
     notices.push(
       <WarnNotice key={`rw-${group.write}`} title={title} text={text} role={group.stoppedBy === "closed" && reserve === "reconciled" ? "status" : "alert"}>
         <div className="notice-actions">
-          <ResumeButton {...common} write={group.write} scenes={group.sceneIds} kind="rewrite" idea={null} stuck={stuck} onStarted={onStarted} describedBy={paidBlocked !== null ? why : undefined} />
+          <ResumeButton {...common} write={group.write} scenes={group.sceneIds} kind="rewrite" idea={null} stuck={stuck} onStarted={onStarted} why={paidBlocked !== null ? why : undefined} />
           <button type="button" className="btn btn-s" disabled={live} onClick={() => onDismissScenes(group.sceneIds)}>
             Оставить как есть
           </button>
@@ -201,7 +220,7 @@ export function SceneNotices(props: SceneNoticesProps) {
     notices.push(
       <WarnNotice key={`idea-${idea.write}`} title={title} text={text} role="alert">
         <div className="notice-actions">
-          <ResumeButton {...common} write={idea.write} scenes={[]} kind="idea" idea={idea} stuck={false} onStarted={onStarted} describedBy={paidBlocked !== null ? why : undefined} />
+          <ResumeButton {...common} write={idea.write} scenes={[]} kind="idea" idea={idea} stuck={false} onStarted={onStarted} why={paidBlocked !== null ? why : undefined} />
           <button type="button" className="btn btn-s" disabled={live} onClick={() => onOpenIdea(idea)}>
             Открыть идею
           </button>

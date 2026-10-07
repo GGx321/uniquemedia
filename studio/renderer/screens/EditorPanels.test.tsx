@@ -110,6 +110,24 @@ describe("the «Фото» tab: eligible photos, the chips, one photo → one vi
     expect(saved.clips.map((c) => (c.kind === "photo" && c.cell.photo?.source === "scene" ? c.cell.photo.photoId : null))).toEqual([...IDS.slice(0, 4), "photo-mia-0007"]);
   });
 
+  test("the category filter: the built-ins, then «Свои» apart — the custom ones by name and «Своя сцена» last (CS.7 L1, decision 6)", async () => {
+    const mixed: PhotoSummary[] = [
+      ...freePhotos(2),
+      scenePhoto(3, { category: "cat-mono-studio", categoryName: "Студия ч/б" }),
+      scenePhoto(4, { category: "own", categoryName: "Своя сцена" }),
+      scenePhoto(5, { category: "cat-paris-cafes", categoryName: "Кофейни Парижа" }),
+    ];
+    const { client, engine } = await studio({ photos: mixed });
+    await openDraft(engine, client);
+    await screen.findByRole("list", { name: "Фото аватара" });
+    const category = within(media()).getByRole("combobox", { name: "Категория" });
+    expect(within(category).getAllByRole("option").map((o) => o.textContent)).toEqual(["Все категории", "Дом · 2", "Кофейни Парижа · 1", "Студия ч/б · 1", "Своя сцена · 1"]);
+    const own = within(category).getByRole("group", { name: "Свои" });
+    expect(within(own).getAllByRole("option").map((o) => o.textContent)).toEqual(["Кофейни Парижа · 1", "Студия ч/б · 1", "Своя сцена · 1"]);
+    fireEvent.change(category, { target: { value: "own" } });
+    expect(within(media()).getByRole("list", { name: "Фото аватара" }).querySelectorAll("li").length).toBe(1);
+  });
+
   test("«Неиспользованные N» keeps the free photos; the category keeps its own; «Показать все фото» clears both", async () => {
     const { client, engine } = await studio({ photos });
     await openDraft(engine, client);

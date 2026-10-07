@@ -1,6 +1,6 @@
 import type { EngineError, Estimate, PoolShot, SceneSetView } from "../../shared/engine";
 import type { EngineClient } from "./client";
-import type { EngineStore, SceneSetSignal, SceneSetStoreChange } from "./store";
+import { type EngineStore, isActiveJob, type SceneSetSignal, type SceneSetStoreChange } from "./store";
 
 // CS.6: the window's scene set slice, built on the store's scene set listeners (CS.4a). One per window (the engine provider owns it), so what a Photos
 // screen started outlives the screen. It holds:
@@ -39,7 +39,10 @@ export interface SceneSetSliceView {
   readonly reconciled: ReadonlyMap<string, number>;
   /** The sets whose «Готово … не составлены» the owner closed. */
   readonly dismissed: ReadonlySet<string>;
-  /** The jobs this window started from the generate card, whose «Отменить» is to take the focus once the column shows it (README «Keyboard and focus»). */
+  /**
+   * The jobs this window started from the generate card — a compose, «Дописать», the run of «Отрисовать» — whose «Отменить» is to take the focus once the
+   * column shows it (README «Keyboard and focus»); only while the job lasts.
+   */
   readonly cancelFocus: ReadonlySet<string>;
 }
 
@@ -139,9 +142,12 @@ export class SceneSetSlice {
     this.#onStore();
   }
 
-  /** The focus is to go to the job's «Отменить» (the card's «Дописать» started it, and the cancel button lives in the column). */
+  /**
+   * The focus is to go to the job's «Отменить» (the card's «Составить», «Дописать» or «Отрисовать» started it, and the cancel button lives in the column).
+   * A job already over — its job.cancelled (or end) heard before its answer was handled — has no «Отменить» to come: nothing is kept for it (CS.7).
+   */
   requestCancelFocus(jobId: string): void {
-    if (this.#view.cancelFocus.has(jobId)) return;
+    if (this.#view.cancelFocus.has(jobId) || this.#over(jobId)) return;
     this.#update({ cancelFocus: new Set(this.#view.cancelFocus).add(jobId) });
   }
 
@@ -239,6 +245,13 @@ export class SceneSetSlice {
     const needed = view.money === null ? null : view.money.reconcileNeeded;
     if (this.#reconcileNeeded !== null && needed !== null && needed !== this.#reconcileNeeded) for (const avatarId of this.#retained.keys()) this.#read(avatarId);
     if (needed !== null) this.#reconcileNeeded = needed;
+    // CS.7: a job that ended before its «Отменить» took the focus leaves no request behind, for a later job's «Отменить» to take.
+    const over = [...this.#view.cancelFocus].filter((jobId) => this.#over(jobId));
+    if (over.length > 0) {
+      const cancelFocus = new Set(this.#view.cancelFocus);
+      for (const jobId of over) cancelFocus.delete(jobId);
+      this.#update({ cancelFocus });
+    }
     // A rewrite of this window that ended done: its scenes are «новая».
     for (const [jobId, note] of this.#view.jobs) {
       if (note.kind !== "rewrite" || note.sceneIds === null || this.#ended.has(jobId)) continue;
@@ -250,6 +263,12 @@ export class SceneSetSlice {
       for (const sceneId of note.sceneIds) fresh.add(sceneId);
       this.#update({ fresh: new Map(this.#view.fresh).set(note.sceneSetId, fresh) });
     }
+  }
+
+  /** Whether the store knows `jobId` as over (done, failed or cancelled); a job it has not heard of yet is not. */
+  #over(jobId: string): boolean {
+    const job = this.store.getView().jobs.find((j) => j.jobId === jobId);
+    return job !== undefined && !isActiveJob(job);
   }
 
   #forgetUnretained(): void {

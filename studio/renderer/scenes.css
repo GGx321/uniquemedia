@@ -110,6 +110,34 @@
   line-height: 1.35;
 }
 
+/* CS.7 M3: why the switch waits, tied to it rather than to the button below */
+.scene-switch-why {
+  margin-top: -4px;
+}
+
+/* CS.7 M2: «Цену не узнать: … · Повторить» under a paid control — CS.3's .cat-cost-error line, on its own row */
+.price-failed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+/* Under all of a notice's buttons, not between them («Повторить» sits first in its row) */
+.notice-actions .price-failed {
+  flex-basis: 100%;
+  order: 1;
+}
+
+.scene-idea-form .price-failed {
+  justify-content: flex-end;
+  margin-top: -4px;
+  text-align: right;
+}
+
 /* ── the set's strip (decision 8): the card collapsed while a set is open ── */
 
 .scene-strip {
@@ -445,9 +473,12 @@
   min-height: 28px;
 }
 
+/* CS.7 V2: when a flag and three actions leave the tags too little room (1200), the shot tag goes under the category instead of the category
+   shrinking to «К» — at the problem scenes, where its category matters most. Status and actions keep the first line (decision 9). */
 .scene-card-tags {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 4px 6px;
   min-width: 0;
 }
 
@@ -745,6 +776,11 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+/* CS.7 V3: the chip as wide as the shot it shows («Авто»), not as its widest option, so «Кадр» stays on the row at 1200 (ReviewAddIdea-1200) */
+.scene-idea-shot select {
+  field-sizing: content;
 }
 
 .scene-idea-stepper {

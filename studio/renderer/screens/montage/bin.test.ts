@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MAX_CLIPS, type PhotoSummary } from "../../../shared/engine";
 import { scenePhoto } from "../../engine/mockEngine.testkit";
-import { binFacets, type BinFilter, binTiles, isFreePhoto, tileAction } from "./bin";
+import { binFacets, type BinFilter, binTiles, isBuiltInCategory, isFreePhoto, tileAction } from "./bin";
 import { addRefusal } from "./clipOps";
 import { collageClip, draftSpec, photoClip } from "./testkit";
 
@@ -105,6 +105,13 @@ describe("the chips' counts for custom and own categories", () => {
 
   test("the built-ins come first in the contract's order, then the custom ones and the own scenes by label", () => {
     expect(binFacets(mixed, ALL).categories.map((c) => c.label)).toEqual(["Дом", "Фитнес", "Кофейни Парижа", "Ночной рынок", "Своя сцена"]);
+  });
+
+  test("«Своя сцена» is last whatever the custom ones are called, and the built-ins stand apart (CS.7 L1, decision 6)", () => {
+    const studio = [...mixed, scenePhoto(7, { category: "cat-mono-studio", categoryName: "Студия ч/б" })];
+    const facets = binFacets(studio, ALL).categories;
+    expect(facets.map((c) => c.label)).toEqual(["Дом", "Фитнес", "Кофейни Парижа", "Ночной рынок", "Студия ч/б", "Своя сцена"]);
+    expect(facets.map((c) => isBuiltInCategory(c.category))).toEqual([true, true, false, false, false, false]);
   });
 
   test("a category with no photo is not offered", () => {

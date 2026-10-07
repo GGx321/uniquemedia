@@ -1,4 +1,4 @@
-import { type RefObject, useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AvatarSummary, EngineError, SceneEditOp, SceneInterruptedIdea, SceneProblem, SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
@@ -9,6 +9,7 @@ import { paidBlockedReason } from "./runForm";
 import { SceneCard, ScenePlaceholder, type SceneWriting } from "./SceneCard";
 import { type IdeaStart, SceneIdeaForm } from "./SceneIdeaForm";
 import { SceneNotices } from "./SceneNotices";
+import { focusLost } from "./scenePaid";
 import { ScenePopover } from "./ScenePopover";
 import { placeholderIds } from "./sceneReview";
 import { CANCEL_HINT, CANCELLING_NOTE, EMPTY_SET_LINE, progressLabel, progressNote, SCENES_CHANGED_EDIT } from "./sceneText";
@@ -67,20 +68,34 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
 
   // ---------- the focus, moved after the screen shows the change ----------
 
-  // A target the focus waits for: it moves once the element is on the page (a job's «Отменить» appears with the job's first event).
-  const [focusNext, setFocusNext] = useState<{ target: () => HTMLElement | null } | null>(null);
+  // A target the focus waits for: it moves once the element is on the page (a job's «Отменить» appears with the job's first event). `ifLost` (a job's end,
+  // CS.7 M4) moves it only from where the job left it: its «Отменить» — waited for while still on show, the set not yet saying the write ended — or
+  // nowhere; a focus the owner put elsewhere meanwhile stays there.
+  const [focusNext, setFocusNext] = useState<{ target: () => HTMLElement | null; ifLost?: boolean } | null>(null);
   useEffect(() => {
     if (focusNext === null) return;
+    if (focusNext.ifLost === true) {
+      if (cancelRef.current !== null && document.activeElement === cancelRef.current) return;
+      if (!focusLost()) {
+        setFocusNext(null);
+        return;
+      }
+    }
     const el = focusNext.target();
     if (el === null) return;
     el.focus();
     setFocusNext(null);
   });
   const focusLater = (target: () => HTMLElement | null): void => setFocusNext({ target });
+  /** The set as last drawn, for a target chosen once the set says what a job made. */
+  const latestSet = useRef(set);
+  useLayoutEffect(() => {
+    latestSet.current = set;
+  });
   const sceneButton = (label: string): (() => HTMLElement | null) => () => document.querySelector<HTMLElement>(`button[aria-label="${label}"]`);
   const toCancel = (): void => focusLater(() => cancelRef.current);
 
-  // «Дописать» of the generate card started a job of this set: its «Отменить» is here, and takes the focus once it is on the page.
+  // «Составить» or «Дописать» of the generate card started a job of this set: its «Отменить» is here, and takes the focus once it is on the page.
   useEffect(() => {
     for (const jobId of sliceView.cancelFocus) {
       if (sliceView.jobs.get(jobId)?.sceneSetId !== set.sceneSetId) continue;
@@ -94,6 +109,8 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
   const seen = useRef(new Map<string, JobView["status"]>());
   /** The set's last scene id when each idea write was first seen running: its new scenes come after it. */
   const lastIdAtStart = useRef(new Map<string, number>());
+  /** The scenes waiting for their text when each «Дописать» was first seen running: the ones it writes. */
+  const waitingAtStart = useRef(new Map<string, readonly number[]>());
   useEffect(() => {
     for (const [jobId, note] of sliceView.jobs) {
       if (note.sceneSetId !== set.sceneSetId) continue;
@@ -103,17 +120,42 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
       seen.current.set(jobId, job.status);
       if (before === undefined && (job.status === "queued" || job.status === "running")) {
         lastIdAtStart.current.set(jobId, set.scenes.reduce((max, s) => Math.max(max, s.sceneId), 0));
+        waitingAtStart.current.set(jobId, set.scenes.filter((s) => !s.removed && s.unwritten === "pending").map((s) => s.sceneId));
       }
       if (before === undefined || before === job.status || (before !== "queued" && before !== "running")) continue;
       if (note.kind === "idea") {
-        if (job.status === "done") focusLater(() => firstNewScene(set, lastIdAtStart.current.get(jobId) ?? 0));
+        if (job.status === "done") focusLater(() => firstNewScene(latestSet.current, lastIdAtStart.current.get(jobId) ?? 0));
         else if (job.status === "failed" && job.error !== null && (job.error.code === "MODERATION_REFUSED" || job.error.code === "INTERNAL") && note.idea !== null) {
           onIdea({ idea: note.idea.idea, count: note.idea.count, shot: note.idea.shot, failure: { error: job.error, spentMicros: job.error.spentMicros ?? null } });
         } else if (job.status === "cancelled") focusLater(() => addRef.current);
         else focusLater(() => document.querySelector<HTMLElement>(".scene-notices button"));
-      } else if (note.kind === "rewrite" && job.status === "failed" && job.error !== null && (job.error.code === "MODERATION_REFUSED" || job.error.code === "INTERNAL")) {
+        continue;
+      }
+      if (note.kind === "rewrite" && job.status === "failed" && job.error !== null && (job.error.code === "MODERATION_REFUSED" || job.error.code === "INTERNAL")) {
         setJobFailure({ jobId, error: job.error, sceneIds: note.sceneIds ?? [] });
       }
+      // CS.7 M4: the job's «Отменить» goes with it — the focus goes to what it made (README «Keyboard and focus»), chosen once the set says the write
+      // ended: a compose or «Дописать» done → the first scene it wrote; ⟳, «Повторить», «Другие сцены для N» → the first scene they were for (its card
+      // says how it went); a compose or «Дописать» that wrote nothing → the column title, over the notice that says why.
+      const done = job.status === "done";
+      const waited = waitingAtStart.current.get(jobId) ?? [];
+      setFocusNext({
+        ifLost: true,
+        target: () => {
+          const now = latestSet.current;
+          if (now.write !== null) return null;
+          const written = (id: number): boolean => now.scenes.some((s) => s.sceneId === id && !s.removed && s.text !== null);
+          const first =
+            note.kind === "rewrite"
+              ? (note.sceneIds ?? []).find((id) => now.scenes.some((s) => s.sceneId === id && !s.removed))
+              : !done
+                ? undefined
+                : note.kind === "unwritten"
+                  ? waited.find(written)
+                  : now.scenes.find((s) => written(s.sceneId))?.sceneId;
+          return (first === undefined ? null : sceneCardElement(first)) ?? titleRef.current;
+        },
+      });
     }
   });
 
@@ -346,6 +388,11 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
 }
 
 const RUN_TIME = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+/** A scene's card in the column, by its id. */
+function sceneCardElement(sceneId: number): HTMLElement | null {
+  return document.querySelector<HTMLElement>(`[data-scene="${sceneId}"]`);
+}
 
 /** The first scene an idea write added: the lowest id above what the set held before it. */
 function firstNewScene(set: SceneSetView, before: number): HTMLElement | null {

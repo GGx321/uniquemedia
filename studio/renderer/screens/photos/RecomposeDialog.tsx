@@ -80,7 +80,13 @@ export function RecomposeDialog({ set, replaced, count, onCancel, onDiscarded }:
                 ))}
               </ul>
             )}
-            {spent !== null && <p>{spent}</p>}
+            {spent !== null && (
+              <p>
+                {spent.before}
+                <span className="mono">{spent.amount}</span>
+                {spent.after}
+              </p>
+            )}
             <p className="muted">{recomposeAfter(count)}</p>
           </div>
           {error !== null && <ErrorNotice error={error} />}

@@ -75,6 +75,15 @@ export function fieldValue(el: HTMLElement): string {
 
 export const isDisabled = (el: HTMLElement): boolean => el.hasAttribute("disabled") || el.getAttribute("aria-disabled") === "true";
 
+/** The text of everything an element is described by (`aria-describedby`), the lines joined by « | ». */
+export function describedText(el: HTMLElement): string {
+  return (el.getAttribute("aria-describedby") ?? "")
+    .split(" ")
+    .filter((id) => id !== "")
+    .map((id) => document.getElementById(id)?.textContent ?? "")
+    .join(" | ");
+}
+
 /**
  * A mock engine whose events can be held back: the real engine answers a command and announces its effect (`scenes.changed`) as two messages, and the
  * mock sends them back to back. Holding the events makes the window between the answer and the event, where a paid button must still be shut.

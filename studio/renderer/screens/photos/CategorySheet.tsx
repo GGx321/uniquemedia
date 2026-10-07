@@ -20,7 +20,7 @@ import { Icon, Spin } from "../../ui/Icon";
 import { useConfirmFocus } from "../../ui/useConfirmFocus";
 import { useBackdropClose, useModalDialog } from "../../ui/useModalDialog";
 import { busyElsewhere, categoryPrice, EditablePlace, ShotShares, useSeconds, worstOf } from "./categoryParts";
-import { categoryMeta, descriptionProblem, interruptedText, libraryHeld, nameProblem, outfitsNote, overLimitNote, placesNote, poolCounts, regenFailure, styleNote, unreadableNote } from "./categoryText";
+import { categoryMeta, deleteConfirmText, descriptionProblem, interruptedText, libraryHeld, nameProblem, outfitsNote, overLimitNote, placesNote, poolCounts, regenFailure, styleNote, unreadableNote } from "./categoryText";
 import { InterruptedNotice } from "./CategoryNotices";
 import type { CreateDialogStart } from "./CategoryCreateDialog";
 import { paidBlockedReason } from "./runForm";
@@ -42,8 +42,11 @@ export function CategorySheet({
   onCreate,
   onRetryCreate,
   returnFocus,
+  openSetScenes,
 }: {
   onClose: () => void;
+  /** CS.7 M1: how many scenes of the avatar's open scene set come from a category (0 with no open set). */
+  openSetScenes: (categoryId: CustomCategoryId) => number;
   /** Where the focus goes when the panel closes: «Мои категории», which opened it. */
   returnFocus: () => HTMLElement | null;
   /** «Новая», «Создать категорию», an interrupted create's «Изменить описание»: the panel closes and the create dialog opens. */
@@ -201,6 +204,7 @@ export function CategorySheet({
                 }}
                 focusRow={focusRow}
                 index={customs.findIndex((c) => c.categoryId === current.categoryId)}
+                openSetScenes={openSetScenes(current.categoryId)}
               />
             )}
           </div>
@@ -240,6 +244,7 @@ function CategoryDetail({
   onDeleted,
   focusRow,
   index,
+  openSetScenes,
 }: {
   category: CategorySummary;
   library: CategoryLibrary;
@@ -249,6 +254,8 @@ function CategoryDetail({
   onDeleted: (index: number) => string | null;
   focusRow: (categoryId: string | null) => void;
   index: number;
+  /** CS.7 M1: how many scenes of the avatar's open set come from this category (its delete confirm says what happens to their ⟳). */
+  openSetScenes: number;
 }) {
   const engine = useEngineView();
   const ids = useId();
@@ -547,7 +554,7 @@ function CategoryDetail({
               <p id={`${ids}-del-title`} className="notice-title cat-confirm-title">
                 Удалить «{category.name}»?
               </p>
-              <p id={`${ids}-del-text`}>Фото этой категории останутся в галерее с её названием. Запуски, где она уже есть, не изменятся. Вернуть категорию нельзя.</p>
+              <p id={`${ids}-del-text`}>{deleteConfirmText(openSetScenes)}</p>
             </div>
             <div className="cat-confirm-actions">
               <button type="button" className="btn btn-s btn-d" disabled={deleting} aria-busy={deleting} onClick={() => void remove()}>
@@ -606,7 +613,11 @@ function CategoryDetail({
               <p className="notice-title">
                 Набор пересоздан · потрачено <span className="mono">{formatUsdTiered(regenDone.spentMicros, "nearest")}</span>
               </p>
-              <div className="notice-text">Ниже — новые места, наряды и кадры. Они идут в следующие наборы и запуски. Открытый набор сцен и идущий запуск остались со старым — у них своя копия.</div>
+              {/* CS.7 L3: the open set keeps the scenes it has, but its ⟳ draws a place from the category as it is now (engine sceneSets/reviewPlan.ts). */}
+              <div className="notice-text">
+                Ниже — новые места, наряды и кадры. Они идут в следующие наборы и запуски. Идущий запуск остался со старым — у него своя копия. В открытом наборе сцен
+                готовые сцены остались как были, а «Другая сцена» возьмёт место уже из нового.
+              </div>
             </div>
           </div>
         )}

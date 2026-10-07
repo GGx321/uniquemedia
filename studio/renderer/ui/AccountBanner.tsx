@@ -37,8 +37,13 @@ export function AccountBanner({ view }: { view: EngineView }) {
         }
       >
         Платные запросы остановлены до сверки.
-        {/* CS.6: by «Деньги на экране» like every price beside it — three decimals below $0.10 («до $0.038», not «до $0.04»), a ceiling up. */}
-        {money?.ledger === "open" && money.unsettledCount > 0 && ` Незакрытые резервы считаются по худшей цене: до ${formatUsdTiered(money.unsettledMicros, "up")}.`}
+        {/* CS.6: by «Деньги на экране» like every price beside it — three decimals below $0.10 («до $0.038», not «до $0.04»), a ceiling up; CS.7 V5: in mono. */}
+        {money?.ledger === "open" && money.unsettledCount > 0 && (
+          <>
+            {" Незакрытые резервы считаются по худшей цене: до "}
+            <span className="mono">{formatUsdTiered(money.unsettledMicros, "up")}</span>.
+          </>
+        )}
       </Notice>
     );
   }

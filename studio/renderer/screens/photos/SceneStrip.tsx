@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, type Ref, useId, useMemo, useState } from "react";
+import { Fragment, type ReactNode, type Ref, type RefObject, useId, useMemo, useState } from "react";
 import type { AvatarSummary, SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
@@ -7,9 +7,9 @@ import { countOf } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { modelName, paidBlockedReason } from "./runForm";
-import { about, ceiling, paidButtonState, PriceChangedNotice, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
-import { approveReason, approveTitle, continueTitle, SCENES_CHANGED_APPROVE, stepScenes } from "./sceneText";
+import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 
@@ -19,7 +19,6 @@ import { usePaidAction } from "./usePaidAction";
 // «Дописать N сцен» while scenes wait, else «Отрисовать M фото».
 
 const SET_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
-const PRICE_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
 /** Tags the strip shows before «ещё N»: about two lines at the window's width (the design's 7 at 1440, 5 at 1200). */
 function tagsThatFit(): number {
@@ -61,13 +60,6 @@ export function modelSegments(view: EngineView, textModel: string): string[] {
   return [modelName(s.imageModel), ...quality, "9:16", "референс — мастер-портрет", ...(s.cameraRealism ? ["реализм камеры"] : []), `текст ${modelName(textModel)}`];
 }
 
-/** «OpenRouter · 5 окт. 2026 г.» for live prices, «резервные · …» for the dated fallback table (the generate card's own words). */
-export function priceSourceText(prices: "live" | "fallback" | null, asOf: string | null): string {
-  if (prices === null || asOf === null) return "—";
-  const date = PRICE_DATE.format(Date.parse(`${asOf}T00:00:00Z`));
-  return prices === "live" ? `OpenRouter · ${date}` : `резервные · ${date}`;
-}
-
 interface SceneStripProps {
   avatar: AvatarSummary;
   view: EngineView;
@@ -79,14 +71,18 @@ interface SceneStripProps {
   paidInFlight: boolean;
   onPaidInFlightChange: (inFlight: boolean) => void;
   onToggleReview: () => void;
+  /** Why the switch waits (a write of the set runs), or null. */
+  switchWaits: string | null;
   onOpenSheet: () => void;
   myCategories: number | null;
   onRecompose: () => void;
   onStarted: (started: { runId: string; jobId: string }) => void;
   onFocusScene: (sceneId: number) => void;
-  /** The card's button, for the focus to land on (after «Удалить набор», for one). */
-  goRef: Ref<HTMLButtonElement>;
+  /** The card's button, for the focus to land on (after «Удалить набор», for one, or once a price asked again comes). */
+  goRef: RefObject<HTMLButtonElement | null>;
   recomposeRef: Ref<HTMLButtonElement>;
+  /** «Мои категории»: where the focus goes after the sheet or the create dialog closes while the set is open. */
+  sheetRef: Ref<HTMLButtonElement>;
 }
 
 export function SceneStrip({
@@ -99,6 +95,7 @@ export function SceneStrip({
   paidInFlight,
   onPaidInFlightChange,
   onToggleReview,
+  switchWaits,
   onOpenSheet,
   myCategories,
   onRecompose,
@@ -106,6 +103,7 @@ export function SceneStrip({
   onFocusScene,
   goRef,
   recomposeRef,
+  sheetRef,
 }: SceneStripProps) {
   const { client, store, sceneSets } = useEngine();
   const ids = useId();
@@ -124,6 +122,8 @@ export function SceneStrip({
     send: (acceptedWorstMicros) => client.request("runs.startFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision, acceptedWorstMicros }),
     onSent: (result) => {
       store.trackRunJob(result.jobId, result.runId, avatar.avatarId, action.kind === "approve" ? action.photos : tally.withText);
+      // CS.7 M4: the strip gives way to the card, the button with the focus goes; the run's «Отменить» in the column takes it.
+      sceneSets.requestCancelFocus(result.jobId);
       onStarted(result);
     },
     onRefused: (error) => {
@@ -245,6 +245,10 @@ export function SceneStrip({
   const models = modelSegments(view, set.textModel);
   const switchLabel = `${ids}-sw`;
   const reasonShown = reason !== null && !button.busy;
+  // M2: the button's own free price could not be had («Дописать», or «Отрисовать» when it can be priced): why, and «Повторить».
+  const priced = action.kind === "continue" ? more : approvable ? approve : null;
+  const priceFailed = priced?.priceError ?? null;
+  const priceFailedId = `${ids}-price`;
 
   return (
     <>
@@ -256,7 +260,7 @@ export function SceneStrip({
               {meta.count}
               {meta.detail !== null && <span className="scene-strip-meta-detail"> · {meta.detail}</span>}
             </span>
-            <button type="button" className="lbtn scene-strip-sheet" aria-haspopup="dialog" aria-label={`Мои категории · ${myCategories ?? 0}`} onClick={onOpenSheet}>
+            <button ref={sheetRef} type="button" className="lbtn scene-strip-sheet" aria-haspopup="dialog" aria-label={`Мои категории · ${myCategories ?? 0}`} onClick={onOpenSheet}>
               <Icon name="list" size={13} strokeWidth={2.2} />
               Мои категории
               {myCategories !== null && <span className="mono lbtn-n">{myCategories}</span>}
@@ -301,7 +305,7 @@ export function SceneStrip({
               </span>
             </p>
             {models.length > 0 && (
-              <p className="faint scene-strip-models" title="Текущие Настройки — не часть набора: модель и качество можно сменить до «Отрисовать», цена пересчитается">
+              <p className="faint scene-strip-models" title={MODELS_LINE_TITLE}>
                 {models.map((segment, i) => (
                   <span key={segment}>
                     <span className="nowrap">{segment}</span>
@@ -336,14 +340,10 @@ export function SceneStrip({
         </div>
 
         <div className="photos-gen-side scene-strip-go">
-          <ReviewSwitch on onToggle={onToggleReview} labelId={switchLabel} />
-          <StackButton
-            buttonRef={goRef}
-            state={button}
-            describedBy={reasonShown ? why : undefined}
-            onClick={onClick}
-          />
+          <ReviewSwitch on onToggle={onToggleReview} labelId={switchLabel} waits={switchWaits} />
+          <StackButton buttonRef={goRef} state={button} describedBy={describedBy(reasonShown && why, priceFailed !== null && priceFailedId)} onClick={onClick} />
           {reasonShown && <Why id={why}>{reason}</Why>}
+          {priceFailed !== null && priced !== null && <PriceFailed id={priceFailedId} error={priceFailed} onRetry={priced.retryPrice} after={() => goRef.current} />}
         </div>
       </section>
       {confirm !== null && <PriceChangedNotice previousWorst={confirm.previous} estimate={confirm.estimate} />}
@@ -362,7 +362,6 @@ export function SceneStrip({
       )}
       {approve.error !== null && approve.error.code !== "SCENES_CHANGED" && <ErrorNotice error={approve.error} />}
       {more.error !== null && <ErrorNotice error={more.error} />}
-      {approve.priceError !== null && approvable && <ErrorNotice error={approve.priceError} />}
     </>
   );
 }
@@ -377,13 +376,33 @@ export function setMetaText(set: SceneSetView): { count: string; detail: string 
   return { count, detail: `составлен ${SET_DATE.format(Date.parse(set.createdAt))}` };
 }
 
-/** «Сцены на проверку»: a switch named by its visible label (README «Keyboard and focus»). */
-export function ReviewSwitch({ on, onToggle, labelId, disabled = false }: { on: boolean; onToggle: () => void; labelId: string; disabled?: boolean }) {
+/**
+ * «Сцены на проверку»: a switch named by its visible label (README «Keyboard and focus»). `waits` (CS.7 M3) keeps it as it is, saying why under it: turned
+ * off while a write of the set runs, it would hide the job and its «Отменить».
+ */
+export function ReviewSwitch({ on, onToggle, labelId, waits = null }: { on: boolean; onToggle: () => void; labelId: string; waits?: string | null }) {
+  const whyId = `${labelId}-why`;
   return (
-    <div className="scene-switch">
-      <button type="button" className={on ? "sw sw-on" : "sw"} role="switch" aria-checked={on} aria-labelledby={labelId} disabled={disabled} onClick={onToggle} />
-      <span id={labelId}>Сцены на проверку</span>
-    </div>
+    <>
+      <div className="scene-switch">
+        <button
+          type="button"
+          className={on ? "sw sw-on" : "sw"}
+          role="switch"
+          aria-checked={on}
+          aria-labelledby={labelId}
+          aria-describedby={waits !== null ? whyId : undefined}
+          disabled={waits !== null}
+          onClick={onToggle}
+        />
+        <span id={labelId}>Сцены на проверку</span>
+      </div>
+      {waits !== null && (
+        <p id={whyId} className="field-hint scene-why scene-switch-why">
+          {waits}
+        </p>
+      )}
+    </>
   );
 }
 
