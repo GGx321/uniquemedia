@@ -1,7 +1,9 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { AvatarSummary, CategoryInterrupted, EngineError, Estimate, RunRequest } from "../../../shared/engine";
+import type { AvatarSummary, CategoryInterrupted, EngineError, Estimate, RunRequest, SceneSetView } from "../../../shared/engine";
 import { useCategoryLibrary, useEngine } from "../../engine/react";
-import type { EngineView } from "../../engine/store";
+import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
+import type { EngineView, JobView } from "../../engine/store";
+import { countOf } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { useNavigate } from "../../navigation";
 import { Icon, Spin } from "../../ui/Icon";
@@ -10,9 +12,9 @@ import { CategoryCreateDialog, type CreateDialogClose, type CreateDialogStart } 
 import { CategoryCardNotices } from "./CategoryNotices";
 import { CategoryRow } from "./CategoryRow";
 import { CategorySheet } from "./CategorySheet";
+import { RecomposeDialog } from "./RecomposeDialog";
 import {
   arrangeCategories,
-  clampCount,
   COUNT_MAX,
   COUNT_MIN,
   COUNT_STEP,
@@ -26,7 +28,11 @@ import {
   sameCategories,
   toggleCategory,
 } from "./runForm";
+import { about, ceiling, paidButtonState, PriceChangedNotice, StackButton, Why } from "./scenePaid";
+import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
+import { composeTitle } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
+import { usePaidAction } from "./usePaidAction";
 
 /** A price for one exact request: the button may only ever send this request with this worst case. */
 interface Priced {
@@ -68,6 +74,18 @@ interface GenerateCardProps {
   /** A paid runs.start or runs.resume is in flight for this avatar, from this card or any resume row (L5). */
   paidInFlight: boolean;
   onPaidInFlightChange: (inFlight: boolean) => void;
+  /** CS.6: «Сцены на проверку», remembered per machine. */
+  review: boolean;
+  onReviewChange: (on: boolean) => void;
+  /** CS.6: the avatar's scene set as the slice reads it: `undefined` while it is read, null with none, else the set (open, or used and read-only). */
+  sceneSet: SceneSetView | null | undefined;
+  sliceView: SceneSetSliceView;
+  /** This avatar's scenes job, if one is queued or running. */
+  scenesJob: JobView | null;
+  /** The compose's price, for the column's «как это работает» to quote. */
+  onComposePrice: (estimate: Estimate | null) => void;
+  /** Scrolls the column to a scene and puts the focus on it (a reason's link). */
+  onFocusScene: (sceneId: number) => void;
 }
 
 /**
@@ -80,8 +98,24 @@ interface GenerateCardProps {
  * refused one, which must then be confirmed by a new click; a failed
  * re-price leaves no price at all, only a retry.
  */
-export function GenerateCard({ avatar, view, form, onFormChange, runActive, onStarted, paidInFlight, onPaidInFlightChange }: GenerateCardProps) {
-  const { client, store } = useEngine();
+export function GenerateCard({
+  avatar,
+  view,
+  form,
+  onFormChange,
+  runActive,
+  onStarted,
+  paidInFlight,
+  onPaidInFlightChange,
+  review,
+  onReviewChange,
+  sceneSet,
+  sliceView,
+  scenesJob,
+  onComposePrice,
+  onFocusScene,
+}: GenerateCardProps) {
+  const { client, store, sceneSets } = useEngine();
   const navigate = useNavigate();
   const ids = useId();
   const mounted = useMounted();
@@ -132,7 +166,8 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
     keyRef.current = key;
   }, [key]);
   const ready = view.phase === "ready";
-  const canPrice = ready && avatar.status === "active" && request.categories.length > 0;
+  // A run of 0 photos is not a run: with review on, 0 is an empty set (no run price to ask for).
+  const canPrice = ready && avatar.status === "active" && request.categories.length > 0 && form.count > 0;
 
   const current = priced !== null && priced.key === key ? priced : null;
   // LOW-5: derived from what is already known, not a separate state a step
@@ -220,6 +255,54 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
       }
     }
   }
+
+  // ---------- CS.6: «Сцены на проверку» ----------
+
+  // The open set (writing, stopped, ready) collapses the card to the set's strip; a used one leaves the card composing again.
+  const openSet = sceneSet !== undefined && sceneSet !== null && sceneSet.status !== "used" ? sceneSet : null;
+  // An empty set draws from no category (ReviewEmpty: «без категорий — только свои сцены»).
+  const composeRequest = { avatarId: avatar.avatarId, count: form.count, categories: form.count === 0 ? [] : request.categories, poses: request.poses };
+  // Composed only once the slice says the avatar has no open set (a second one would be refused), at the request and the model it is priced for.
+  const canCompose = review && ready && sceneSet !== undefined && openSet === null && avatar.status === "active" && (form.count === 0 || request.categories.length > 0);
+  const compose = usePaidAction({
+    key: canCompose ? `${requestKey(composeRequest)}|${settings?.textModel ?? ""}|${view.money?.reconcileNeeded === true ? "r" : ""}` : null,
+    price: () => client.request("scenes.estimateCompose", composeRequest),
+    send: (acceptedWorstMicros) => client.request("scenes.compose", { ...composeRequest, acceptedWorstMicros }),
+    onSent: (result, accepted) => {
+      if (result.jobId !== null) {
+        store.trackScenesJob(result.jobId, result.sceneSetId, avatar.avatarId, composeRequest.count);
+        sceneSets.trackJob(result.jobId, { sceneSetId: result.sceneSetId, kind: "compose", price: accepted, sceneIds: null, idea: null });
+      }
+      // An empty set has no job: it is read at once.
+      sceneSets.reload(avatar.avatarId);
+    },
+    onPaidInFlightChange,
+  });
+  useEffect(() => onComposePrice(review ? compose.estimate : null), [review, compose.estimate, onComposePrice]);
+
+  /** Off at fewer than five photos: the count goes to five (a run has no empty set). */
+  function toggleReview(): void {
+    if (review && form.count < COUNT_MIN) onFormChange({ ...form, count: COUNT_MIN });
+    onReviewChange(!review);
+  }
+  const countMin = review ? 0 : COUNT_MIN;
+  const stepCount = (delta: number): number => Math.min(COUNT_MAX, Math.max(countMin, form.count + delta));
+
+  // «Пересоставить…»: asked first; a discard puts the focus on the card's «Составить» once the card composes again.
+  // The set the dialog asks about, kept while it is open: the set may leave the view (its discard is announced) before the discard answers.
+  const [recomposeSet, setRecomposeSet] = useState<SceneSetView | null>(null);
+  const goRef = useRef<HTMLButtonElement>(null);
+  const recomposeRef = useRef<HTMLButtonElement>(null);
+  const [focusAfterRecompose, setFocusAfterRecompose] = useState<"go" | "link" | null>(null);
+  useEffect(() => {
+    if (focusAfterRecompose === "link") {
+      recomposeRef.current?.focus();
+      setFocusAfterRecompose(null);
+    } else if (focusAfterRecompose === "go" && openSet === null) {
+      goRef.current?.focus();
+      setFocusAfterRecompose(null);
+    }
+  }, [focusAfterRecompose, openSet]);
 
   // Another paid command (a resume row's) is in flight for this avatar (L5): this card locks too, though it is not the one sending.
   const lockedByOther = paidInFlight && !busy;
@@ -336,8 +419,36 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
   const imageQuality =
     view.settings && view.settings.imageQuality !== null && view.settings.imageModel !== SEEDREAM_FALLBACK_IMAGE_MODEL ? `${view.settings.imageQuality} · ` : "";
 
-  return (
-    <>
+  // The compose mode's price column: step 1 the scenes (the compose's own estimate), step 2 the photos (the run's estimate less its writer), and the
+  // whole run «без правок» (an own scene or another one raises its ceiling).
+  const composeSteps = [
+    {
+      n: "1",
+      state: "current" as const,
+      label: "Сцены",
+      value: form.count === 0 ? "бесплатно" : compose.estimate !== null ? about(compose.estimate.expectedMicros) : "≈ …",
+    },
+    {
+      n: "2",
+      state: "next" as const,
+      label: form.count === 0 ? "фото" : countOf(form.count, ["фото", "фото", "фото"]),
+      value: form.count === 0 ? "—" : current !== null && compose.estimate !== null ? about(Math.max(0, current.estimate.expectedMicros - compose.estimate.expectedMicros)) : "≈ …",
+    },
+  ];
+  const composeBlocked =
+    (form.count === 0 ? (view.phase === "offline" ? paidBlockedReason(view) : null) : paidBlockedReason(view)) ??
+    (avatar.status !== "active"
+      ? "Аватар в архиве — новые фото для него не создаются."
+      : form.count > 0 && request.categories.length === 0
+        ? "Выберите хотя бы одну категорию."
+        : runActive
+          ? "Дождитесь конца текущего запуска."
+          : paidInFlight && !compose.sending
+            ? "Дождитесь окончания другого платного действия."
+            : null);
+  const composeButton = paidButtonState(compose, composeTitle(form.count), composeBlocked !== null, form.count === 0);
+
+  const fullCard = (
       <section className="card photos-gen" aria-label="Генерация фото">
         {/* Locked (and, unlike the wizard's frozen draft, visibly dimmed) while a paid start is on its way. */}
         <fieldset className="lock lock-dim photos-gen-main" disabled={locked}>
@@ -352,8 +463,8 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
                   type="button"
                   className="ibtn"
                   aria-label="Меньше"
-                  disabled={form.count <= COUNT_MIN}
-                  onClick={() => onFormChange({ ...form, count: clampCount(form.count, -COUNT_STEP) })}
+                  disabled={form.count <= countMin}
+                  onClick={() => onFormChange({ ...form, count: stepCount(-COUNT_STEP) })}
                 >
                   <Icon name="minus" size={14} strokeWidth={2.4} />
                 </button>
@@ -365,7 +476,7 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
                   className="ibtn"
                   aria-label="Больше"
                   disabled={form.count >= COUNT_MAX}
-                  onClick={() => onFormChange({ ...form, count: clampCount(form.count, COUNT_STEP) })}
+                  onClick={() => onFormChange({ ...form, count: stepCount(COUNT_STEP) })}
                 >
                   <Icon name="plus" size={14} strokeWidth={2.4} />
                 </button>
@@ -447,44 +558,103 @@ export function GenerateCard({ avatar, view, form, onFormChange, runActive, onSt
           <div className="mono photos-cost-row">
             <span>Цены</span>
             {/* B5: faint like the sheet's own price-source row; warn-text stays for the dated fallback table. */}
-            <span className={current?.estimate.prices === "fallback" ? "warn-text" : "faint"}>{current ? priceSource(current.estimate) : "—"}</span>
+            <span className={(current?.estimate ?? compose.estimate)?.prices === "fallback" ? "warn-text" : "faint"}>
+              {current ? priceSource(current.estimate) : review && compose.estimate ? priceSource(compose.estimate) : "—"}
+            </span>
           </div>
+          {review && composeSteps.map((row) => <Step key={row.n} row={row} />)}
           <div className="mono photos-cost-row">
             <span>Проверка возраста</span>
             <span className={view.settings?.imageAgeCheck === "on" ? undefined : "faint"}>{view.settings?.imageAgeCheck === "on" ? "вкл." : "выкл."}</span>
           </div>
           <div className="mono photos-cost-row photos-cost-total">
-            <span>Ожидаемая</span>
-            <span aria-live="polite">{current ? `≈ ${formatUsd(current.estimate.expectedMicros)}` : "—"}</span>
+            <span>{review && form.count > 0 ? "Весь запуск" : "Ожидаемая"}</span>
+            <span aria-live="polite">{current ? (review ? about(current.estimate.expectedMicros) : `≈ ${formatUsd(current.estimate.expectedMicros)}`) : "—"}</span>
           </div>
-          <button
-            type="button"
-            className={primary ? "btn btn-p btn-stack photos-go" : "btn btn-stack photos-go"}
-            disabled={onClick === null || buttonBusy}
-            aria-busy={buttonBusy}
-            aria-describedby={blockedReason && !buttonBusy ? hintId : undefined}
-            onClick={onClick ?? undefined}
-          >
-            <span className="btn-stack-line">
-              {buttonBusy && <Spin />}
-              {title}
-            </span>
-            {offersPaidStart && (
-              <>
-                <span className="sr-only"> · </span>
-                <span className="mono">{worst ?? "до …"}</span>
-              </>
-            )}
-          </button>
-          {blockedReason && !buttonBusy && (
-            <p id={hintId} className="field-hint">
-              {blockedReason}
-            </p>
+          {review && form.count > 0 && current && <div className="mono faint scene-total-sub">{`${ceiling(current.estimate.worstMicros)} без правок`}</div>}
+          <ReviewSwitch on={review} onToggle={toggleReview} labelId={`${ids}-sw`} />
+          {review ? (
+            <StackButton
+              buttonRef={goRef}
+              state={composeButton}
+              describedBy={composeBlocked !== null && !composeButton.busy ? hintId : undefined}
+              onClick={compose.click}
+            />
+          ) : (
+            <button
+              type="button"
+              className={primary ? "btn btn-p btn-stack photos-go" : "btn btn-stack photos-go"}
+              disabled={onClick === null || buttonBusy}
+              aria-busy={buttonBusy}
+              aria-describedby={blockedReason && !buttonBusy ? hintId : undefined}
+              onClick={onClick ?? undefined}
+            >
+              <span className="btn-stack-line">
+                {buttonBusy && <Spin />}
+                {title}
+              </span>
+              {offersPaidStart && (
+                <>
+                  <span className="sr-only"> · </span>
+                  <span className="mono">{worst ?? "до …"}</span>
+                </>
+              )}
+            </button>
           )}
+          {review
+            ? composeBlocked !== null && !composeButton.busy && <Why id={hintId}>{composeBlocked}</Why>
+            : blockedReason &&
+              !buttonBusy && (
+                <p id={hintId} className="field-hint">
+                  {blockedReason}
+                </p>
+              )}
         </div>
       </section>
+  );
 
-      {previousWorst !== null && current && (
+  return (
+    <>
+      {review && openSet !== null ? (
+        <SceneStrip
+          avatar={avatar}
+          view={view}
+          set={openSet}
+          sliceView={sliceView}
+          scenesJob={scenesJob}
+          runActive={runActive}
+          paidInFlight={paidInFlight}
+          onPaidInFlightChange={onPaidInFlightChange}
+          onToggleReview={toggleReview}
+          onOpenSheet={openSheet}
+          myCategories={customs === null ? null : customs.length}
+          onRecompose={() => setRecomposeSet(openSet)}
+          onStarted={onStarted}
+          onFocusScene={onFocusScene}
+          goRef={goRef}
+          recomposeRef={recomposeRef}
+        />
+      ) : (
+        fullCard
+      )}
+      {recomposeSet !== null && (
+        <RecomposeDialog
+          set={recomposeSet}
+          replaced={sliceView.fresh.get(recomposeSet.sceneSetId)?.size ?? 0}
+          count={form.count}
+          onCancel={() => {
+            setRecomposeSet(null);
+            setFocusAfterRecompose("link");
+          }}
+          onDiscarded={() => {
+            setRecomposeSet(null);
+            setFocusAfterRecompose("go");
+          }}
+        />
+      )}
+      {review && openSet === null && compose.previousWorst !== null && compose.estimate !== null && <PriceChangedNotice previousWorst={compose.previousWorst} estimate={compose.estimate} />}
+      {review && openSet === null && compose.error !== null && <ErrorNotice error={compose.error} />}
+      {!review && previousWorst !== null && current && (
         // PRICE_CHANGED means the price at the moment of refusal was higher
         // than what was accepted — not that the fresh one, fetched
         // afterwards, still is (L4): title on what is actually shown.

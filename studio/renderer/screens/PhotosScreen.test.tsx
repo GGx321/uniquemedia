@@ -3,7 +3,11 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { ERROR_MESSAGES_RU, type AvatarSummary, type PhotoSummary, type RunRequest } from "../../shared/engine";
 import { mockDescriptor, type MockEngine } from "../engine/mockEngine";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { callsOf, flush, openSection, runAll, setup, tick, withText } from "../testing";
+import { callsOf, flush, openSection, runAll, setup as setupWith, tick, withText } from "../testing";
+
+// CS.6: «Сцены на проверку» is on by default; this file pins today's path (the run writes its own scenes), so it turns review off. The review path's own
+// tests are PhotosSceneReview*.test.tsx.
+const setup = (options: Parameters<typeof setupWith>[0] = {}) => setupWith({ sceneReview: "off", ...options });
 
 function avatar(name: string, n: number, status: AvatarSummary["status"] = "active"): AvatarSummary {
   const id = `${name.toLowerCase()}-000${n}`;
@@ -1128,25 +1132,27 @@ test("the shot caption names the chosen quality: «medium» when it is chosen, n
   expect(screen.queryByText(/· (low|medium) · 9:16/) === null).toBe(true);
 });
 
-test("what the contract cannot do yet is drawn disabled and marked «скоро»", async () => {
+test("what the contract cannot do yet is drawn disabled and marked «скоро»; the scenes column no longer is (CS.6)", async () => {
   await openPhotos();
   await priced();
   // «История сцен» is out of Stage 3 (CF18); «Видео» and the gallery's filters work since 3e.2.
   expect(isDisabled(screen.getByRole("tab", { name: "История сцен" }))).toBe(true);
   expect(isDisabled(screen.getByRole("tab", { name: "Видео" }))).toBe(false);
   expect(screen.getByRole("tab", { name: "Фото" }).getAttribute("aria-selected")).toBe("true");
-  expect(isDisabled(screen.getByRole("button", { name: "Пересоставить" }))).toBe(true);
   expect(isDisabled(screen.getByRole("button", { name: "Неиспользованные" }))).toBe(false);
   expect(isDisabled(screen.getByRole("button", { name: "Отклонённые" }))).toBe(false);
-  expect(screen.getAllByText("скоро").length).toBeGreaterThanOrEqual(2);
+  // Only «Тип кадра» waits now: the scenes column's «скоро» and its dead «Пересоставить» are gone with the review (CS.6).
+  expect(screen.getAllByText("скоро")).toHaveLength(1);
+  expect(screen.queryByRole("button", { name: "Пересоставить" }) === null).toBe(true);
+  expect(screen.queryByLabelText("Список сцен — скоро") === null).toBe(true);
 });
 
-test("the generate card has no «Сцены на проверку» switch: a real scene review is planned separately, and a dead control would only mislead", async () => {
+test("the generate card's «Сцены на проверку» switch is named by its visible label; off on this machine, today's path is unchanged (CS.6)", async () => {
   await openPhotos();
   await priced();
-  expect(screen.queryByRole("switch", { name: "Сцены на проверку" }) === null).toBe(true);
-  expect(screen.queryByText("Сцены на проверку") === null).toBe(true);
-  expect(document.querySelector(".photos-review") === null).toBe(true);
+  const sw = screen.getByRole("switch", { name: "Сцены на проверку" });
+  expect(sw.getAttribute("aria-checked")).toBe("false");
+  expect(screen.getByRole("button", { name: /^Сгенерировать 20 фото · до \$/ })).toBeDefined();
 });
 
 // ---------- navigation ----------

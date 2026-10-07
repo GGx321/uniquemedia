@@ -1,0 +1,843 @@
+/* CS.6: «Сцены на проверку» on the Photos screen (the CS.0 artboards: PhotosCS.dc.html, ReviewStates.dc.html). The switch and the price by steps on the
+   generate card, the card collapsed to the set's strip, and the «Сцены» column with the set: its cards, the ⟳ price popover, the «по описанию» form, the
+   column's notices and «Пересоставить сцены?». Sizes and colours are the artboards' own, through theme.css's tokens; the new classes are the README's
+   «Classes» (.stepn, .cnt, .tag-more, .photos-scene-off …), prefixed .scene- where they are this feature's own. */
+
+/* ── shared ── */
+
+.btn-off,
+.btn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.btn[aria-disabled="true"]:hover {
+  background: var(--panel-2);
+}
+
+.ibtn-off,
+.ibtn[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ibtn[aria-disabled="true"]:hover {
+  background: var(--panel-2);
+  color: var(--text-2);
+}
+
+/* The 18px round step number of the price column (README «Classes»: .stepn). */
+.stepn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  font-size: 10px;
+}
+
+.stepn-current {
+  background: var(--accent-18);
+  color: var(--accent-text);
+}
+
+.stepn-next {
+  background: var(--line);
+  color: var(--faint);
+}
+
+.stepn-done {
+  background: var(--ok-14);
+  color: var(--ok);
+}
+
+/* ── the price column: steps, the total's ceiling, the switch ── */
+
+.scene-step {
+  align-items: center;
+  gap: 8px;
+}
+
+.scene-step-current {
+  color: var(--text);
+}
+
+.scene-step-next {
+  color: var(--faint);
+}
+
+.scene-step-done {
+  color: var(--muted);
+}
+
+.scene-step-label {
+  flex-grow: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A stopped set's step 1: what it already spent, under «25 из 60». */
+.scene-step-spent {
+  margin-top: -5px;
+  padding-left: 26px;
+  font-size: 10.5px;
+}
+
+.scene-total-sub {
+  margin-top: -6px;
+  font-size: 10.5px;
+  text-align: right;
+}
+
+.scene-switch {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 2px;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.scene-why {
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+/* ── the set's strip (decision 8): the card collapsed while a set is open ── */
+
+.scene-strip {
+  gap: 24px;
+  padding: 16px 20px;
+}
+
+.scene-strip-main {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  gap: 10px;
+  min-width: 0;
+}
+
+.scene-strip-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+}
+
+.scene-strip-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-strip-sheet {
+  align-self: center;
+  margin-left: auto;
+}
+
+.scene-strip-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scene-strip-tag {
+  gap: 6px;
+  height: 24px;
+  max-width: 220px;
+  padding: 0 10px;
+  color: var(--text-2);
+}
+
+.scene-strip-tag-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-strip-tag-n {
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.tag-more {
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px 0 10px;
+  border: 0;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+  color: var(--muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tag-more:hover {
+  color: var(--text);
+}
+
+.scene-strip-nocats {
+  font-size: 12px;
+  line-height: 24px;
+}
+
+.scene-strip-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: auto;
+}
+
+.scene-strip-lock {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.scene-strip-lock svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.link-btn[aria-disabled="true"] {
+  color: var(--faint);
+  text-decoration: none;
+  cursor: not-allowed;
+}
+
+.scene-strip-models {
+  margin: 0 0 0 19px;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.scene-strip-go {
+  gap: 10px;
+}
+
+/* ── the «Сцены» column ── */
+
+.scene-col-head {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+}
+
+.scene-col-head .card-title:focus {
+  outline: none;
+}
+
+.scene-col-head .card-title:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.scene-col-model {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scene-col-counts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  margin: 2px 0 0;
+  line-height: 16px;
+}
+
+.scene-col-count {
+  white-space: pre;
+}
+
+/* The header's problem counter (README «Classes»: .cnt): a button down to the first scene with no text. */
+.cnt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--warn);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.cnt:hover {
+  color: #ffd28a;
+}
+
+.scene-progress .bar {
+  position: relative;
+}
+
+.scene-progress-note {
+  font-size: 10.5px;
+}
+
+.scene-progress-hint {
+  margin-top: -4px;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.scene-used-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.scene-used-note svg {
+  flex-shrink: 0;
+}
+
+/* «сцены на проверку» and «проверка выключена»: the dashed boxes of a column with no set to show. */
+.scene-box {
+  gap: 12px;
+  padding: 14px 16px;
+}
+
+.scene-box-text {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scene-box-muted {
+  margin-top: -2px;
+  color: var(--muted);
+}
+
+.scene-explain {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scene-explain li {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.scene-explain .stepn {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
+}
+
+.scene-explain b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.scene-notices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scene-notice-body {
+  flex-grow: 1;
+}
+
+.scene-notice-close {
+  flex-shrink: 0;
+  margin: -4px -6px 0 0;
+}
+
+.scene-notice-why {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.scene-empty-line {
+  margin: 0;
+  padding: 4px 2px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scene-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── a scene card (README «Classes»: the .photos-scene grid, .photos-scene-off) ── */
+
+.scene-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.scene-card:focus {
+  outline: none;
+}
+
+.scene-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.scene-card .photos-scene-main {
+  gap: 7px;
+}
+
+.scene-card .photos-scene-n {
+  padding-top: 6px;
+}
+
+.scene-card-warn {
+  border-color: var(--warn-35);
+}
+
+.scene-card-active {
+  border-color: var(--accent-ring);
+}
+
+.scene-card-editing {
+  border-color: var(--border-strong);
+}
+
+.photos-scene-off .photos-scene-n,
+.photos-scene-off .tag,
+.photos-scene-off .photos-scene-text {
+  color: var(--faint);
+}
+
+.scene-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  min-height: 28px;
+}
+
+.scene-card-tags {
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scene-tag-cat {
+  display: inline-block;
+  min-width: 0;
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 20px;
+}
+
+.scene-tag-cat svg {
+  margin-right: 4px;
+  vertical-align: -1px;
+}
+
+.scene-card-gap {
+  flex-grow: 1;
+}
+
+.scene-flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.scene-flag .spin {
+  width: 11px;
+  height: 11px;
+  border-width: 1.6px;
+}
+
+.scene-flag-faint {
+  color: var(--faint);
+}
+
+.scene-flag-accent {
+  color: var(--link);
+}
+
+.scene-flag-warn {
+  color: var(--warn);
+}
+
+.scene-flag-ok {
+  color: var(--ok);
+}
+
+.scene-card-acts {
+  display: flex;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.scene-restore {
+  height: 28px;
+  margin-left: 4px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.scene-text-dim {
+  color: var(--faint);
+}
+
+.scene-idea {
+  font-size: 11.5px;
+}
+
+.scene-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 3px 0 4px;
+}
+
+.scene-skeleton .skeleton-line {
+  position: relative;
+  overflow: hidden;
+}
+
+/* The review's text areas (the pencil's edit, the idea): the design's .ta, with the app's accent focus ring rather than the browser's own. */
+.scene-ta {
+  display: block;
+  width: 100%;
+  padding: 9px 12px;
+  line-height: 1.45;
+  resize: none;
+}
+
+.scene-ta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── the pencil's edit ── */
+
+.scene-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scene-edit-field {
+  height: 70px;
+  font-size: 12.5px;
+}
+
+.scene-edit-bad {
+  border-color: var(--danger-70);
+}
+
+.scene-edit-problem,
+.scene-edit-hint {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scene-edit-problem {
+  color: var(--danger);
+}
+
+.scene-edit-hint {
+  color: var(--info);
+}
+
+.scene-edit-problem svg,
+.scene-edit-hint svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.scene-edit-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scene-edit-count {
+  margin-right: auto;
+}
+
+/* ── the ⟳ price popover (README «Classes»: .pop / .pop-arrow), beside the column over the gallery ── */
+
+.scene-pop {
+  position: absolute;
+  top: 2px;
+  left: calc(100% + 12px);
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 300px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-2);
+  box-shadow: var(--shadow-pop);
+  cursor: default;
+}
+
+.pop-arrow {
+  position: absolute;
+  top: 20px;
+  left: -6px;
+  width: 10px;
+  height: 10px;
+  border-bottom: 1px solid var(--border-strong);
+  border-left: 1px solid var(--border-strong);
+  background: var(--panel-2);
+  transform: rotate(45deg);
+}
+
+.scene-pop-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.scene-pop-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.scene-pop-text {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scene-pop-marker {
+  color: var(--warn);
+}
+
+.scene-pop-cap {
+  margin: 0;
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+.scene-pop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.scene-pop-why {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.scene-pop-warn {
+  margin: 0;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.scene-pop-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* ── «+ Своя сцена · по описанию» ── */
+
+.scene-idea-form {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 12px;
+  padding: 14px;
+  border-color: var(--border-strong);
+}
+
+.scene-idea-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.scene-idea-head .ibtn {
+  margin-left: auto;
+}
+
+.scene-idea-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.scene-idea-title .faint {
+  font-weight: 500;
+}
+
+.scene-idea-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.scene-idea-ta {
+  height: 66px;
+}
+
+.scene-idea-invalid {
+  margin: -2px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.scene-idea-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+}
+
+.scene-idea-count,
+.scene-idea-shot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.scene-idea-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.scene-idea-n {
+  width: 26px;
+  color: var(--text);
+  font-size: 14px;
+  text-align: center;
+}
+
+.scene-idea-range {
+  font-size: 10.5px;
+}
+
+.scene-idea-hint {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.scene-idea-failure-detail {
+  margin: 0;
+  font-size: 10.5px;
+}
+
+.scene-idea-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.scene-idea-price {
+  margin-right: auto;
+}
+
+.scene-idea-why {
+  margin: -4px 0 0;
+  font-size: 11.5px;
+  text-align: right;
+}
+
+/* ── «Пересоставить сцены?» ── */
+
+.scene-recompose {
+  width: 460px;
+}
+
+.scene-recompose-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 20px 20px 16px;
+}
+
+.scene-recompose-text {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.scene-recompose-text p {
+  margin: 0;
+}
+
+.scene-recompose-text ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.scene-recompose-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* ── narrower than the mockup (1200–1439): the column is 400 px, the strip keeps the set's count only ── */
+
+@media (max-width: 1439px) {
+  .scene-strip-meta-detail {
+    display: none;
+  }
+}
