@@ -613,7 +613,11 @@ function CategoryDetail({
               <p className="notice-title">
                 Набор пересоздан · потрачено <span className="mono">{formatUsdTiered(regenDone.spentMicros, "nearest")}</span>
               </p>
-              <div className="notice-text">Ниже — новые места, наряды и кадры. Они идут в следующие наборы и запуски. Открытый набор сцен и идущий запуск остались со старым — у них своя копия.</div>
+              {/* CS.7 L3: the open set keeps the scenes it has, but its ⟳ draws a place from the category as it is now (engine sceneSets/reviewPlan.ts). */}
+              <div className="notice-text">
+                Ниже — новые места, наряды и кадры. Они идут в следующие наборы и запуски. Идущий запуск остался со старым — у него своя копия. В открытом наборе сцен
+                готовые сцены остались как были, а «Другая сцена» возьмёт место уже из нового.
+              </div>
             </div>
           </div>
         )}

@@ -14,6 +14,7 @@ import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
 import { usablePicks, useMontagePicks } from "./photos/picks";
 import { arrangeCategories, DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
+import { useRunForms } from "./photos/runForms";
 import { ScenesColumn } from "./photos/ScenesColumn";
 import { readSceneReview, viewerStorage, writeSceneReview } from "./photos/sceneReview";
 import { focusSceneCard } from "./photos/SceneSetPanel";
@@ -68,7 +69,10 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   const panelId = useId();
   const [tab, setTab] = useState<PhotosTab>(initialTab);
 
-  const [form, setForm] = useState<RunForm>(DEFAULT_RUN_FORM);
+  // CS.7 L4: kept by the window, so a look at Settings and back finds it as it was (a new category still on, the count, the poses).
+  const runForms = useRunForms();
+  const [form, setForm] = useState<RunForm>(() => runForms.get(avatarId) ?? DEFAULT_RUN_FORM);
+  useEffect(() => runForms.set(avatarId, form), [runForms, avatarId, form]);
   // CS.3 (owner decision 4): a category this window made comes into the run at once, its dialog shown or hidden; in creation order.
   const { categories: categoryLibrary } = useEngine();
   useEffect(

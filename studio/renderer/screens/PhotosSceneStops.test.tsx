@@ -64,7 +64,7 @@ describe("a compose cut off by a closed Studio", () => {
     const writes = callsOf(engine, "scenes.write");
     expect(writes).toHaveLength(1);
     expect(writes[0]?.payload).toMatchObject({ sceneSetId: SET, target: { kind: "unwritten" }, acceptedWorstMicros: ATTEMPT + 2 * ATTEMPT });
-    expect(within(column()).getByText("Составляем сцены: 0 из 35")).toBeDefined();
+    expect(within(column()).getByText("Дописываем сцены: 0 из 35")).toBeDefined();
   });
 
   test("while «Дописываем…» runs after earlier spending: the total is «Дальше», not «Весь запуск», and step 1 keeps what was spent", async () => {
@@ -74,7 +74,7 @@ describe("a compose cut off by a closed Studio", () => {
     await waitFor(() => expect(isDisabled(goButton())).toBe(false));
     fireEvent.click(goButton());
     await flush();
-    expect(within(column()).getByText("Составляем сцены: 0 из 35")).toBeDefined();
+    expect(within(column()).getByText("Дописываем сцены: 0 из 35")).toBeDefined();
     expect(priceRow("Сцены")).toContain("пишутся");
     expect(priceRow("Дальше")).toContain("≈");
     expect(card().textContent).not.toContain("Весь запуск");

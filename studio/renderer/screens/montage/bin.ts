@@ -66,14 +66,16 @@ export interface BinFacet {
   readonly count: number;
 }
 
-const isBuiltIn = (category: BinCategory): boolean => SceneCategory.safeParse(category).success;
+/** One of the five built-in categories: the filter shows them first, apart from the owner's own (decision 6). */
+export const isBuiltInCategory = (category: BinCategory): boolean => SceneCategory.safeParse(category).success;
 
 /**
  * The chips' counts: «Неиспользованные N» (the free eligible photos), and each category's photos among those the other chip
  * leaves. The categories are the ones the photos actually carry, so a custom category's or an own scene's photo is never hidden
- * from the filter: the five built-ins first in the contract's order, then the custom ones and the own scenes by label. A
- * category is shown by the label of its first photo in the list's order (the list is newest first, so a renamed category shows
- * its latest name). Only categories that have photos are offered, and the chosen one always (even at 0).
+ * from the filter: the five built-ins first in the contract's order, then the custom ones by label, then the own scenes
+ * («Своя сцена») last (CS.7 L1, decision 6). A category is shown by the label of its first photo in the list's order (the list
+ * is newest first, so a renamed category shows its latest name). Only categories that have photos are offered, and the chosen one
+ * always (even at 0).
  */
 export function binFacets(photos: readonly PhotoSummary[], filter: BinFilter): { unused: number; categories: BinFacet[] } {
   const eligible = photos.filter((photo) => photo.eligible);
@@ -83,8 +85,9 @@ export function binFacets(photos: readonly PhotoSummary[], filter: BinFilter): {
   if (filter.category !== null) carried.add(filter.category);
   const labelOf = (category: BinCategory): string => labels.get(category) ?? photoCategoryLabel({ category });
   const builtIns = SceneCategory.options.filter((category) => carried.has(category));
-  const others = [...carried].filter((category) => !isBuiltIn(category)).sort((a, b) => labelOf(a).localeCompare(labelOf(b), "ru") || a.localeCompare(b));
-  const categories = [...builtIns, ...others]
+  const customs = [...carried].filter((category) => !isBuiltInCategory(category) && category !== "own").sort((a, b) => labelOf(a).localeCompare(labelOf(b), "ru") || a.localeCompare(b));
+  const own = carried.has("own") ? ["own" as const] : [];
+  const categories = [...builtIns, ...customs, ...own]
     .map((category) => ({ category, label: labelOf(category), count: eligible.filter((photo) => passes(photo, filter, category)).length }))
     .filter((c) => c.count > 0 || c.category === filter.category);
   return { unused: eligible.filter(isFreePhoto).length, categories };

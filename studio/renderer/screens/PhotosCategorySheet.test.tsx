@@ -199,6 +199,12 @@ describe("regenerate (paid)", () => {
     runAll(scheduler);
     await flush();
     expect(within(sheet()).getByText((_, el) => el?.textContent === "Набор пересоздан · потрачено $0.005")).toBeDefined();
+    // What it changes, truly (CS.7 L3): a running run keeps its own copy; an open set keeps the scenes it has, but its ⟳ draws from the new pool.
+    expect(
+      within(sheet()).getByText(
+        "Ниже — новые места, наряды и кадры. Они идут в следующие наборы и запуски. Идущий запуск остался со старым — у него своя копия. В открытом наборе сцен готовые сцены остались как были, а «Другая сцена» возьмёт место уже из нового.",
+      ),
+    ).toBeDefined();
     expect(within(sheet()).getByText(withText(/^для модели «Mock theme [0-9a-f]{4}» · (телефон|редакционный) · пересоздана \d+ \S+ · всего потрачено \$0\.010$/))).toBeDefined();
     expect(within(sheet()).getByText(/^пересоздана \d+ \S+$/).className).toBe("nowrap");
     expect(within(sheet()).getByText("Кофейни и бистро Парижа")).toBeDefined();

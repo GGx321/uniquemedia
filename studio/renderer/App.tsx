@@ -12,6 +12,7 @@ import { EditorScreen } from "./screens/EditorScreen";
 import { DraftFlushes, DraftFlushesProvider } from "./screens/montage/flushes";
 import { DraftSessions, DraftSessionsProvider } from "./screens/montage/sessions";
 import { MontagePicks, MontagePicksProvider } from "./screens/photos/picks";
+import { RunForms, RunFormsProvider } from "./screens/photos/runForms";
 import { PhotosScreen } from "./screens/PhotosScreen";
 import { SettingsScreen } from "./screens/SettingsScreen";
 import { countOf, monthName } from "./lib/format";
@@ -256,10 +257,13 @@ export function App({ client }: { client: EngineClient }) {
   const [draftSessions] = useState(() => new DraftSessions());
   // The photos picked for a montage on each avatar's Photos screen, kept while the window runs (slice review 5-L3).
   const [montagePicks] = useState(() => new MontagePicks());
+  // The run's form on each avatar's Photos screen, kept while the window runs (CS.7 L4).
+  const [runForms] = useState(() => new RunForms());
   const forgetLibrary = useCallback(() => {
     draftSessions.clear();
     montagePicks.clear();
-  }, [draftSessions, montagePicks]);
+    runForms.clear();
+  }, [draftSessions, montagePicks, runForms]);
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -343,7 +347,9 @@ export function App({ client }: { client: EngineClient }) {
               <DraftFlushesProvider value={draftFlushes}>
                 <DraftSessionsProvider value={draftSessions}>
                   <MontagePicksProvider value={montagePicks}>
-                    <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                    <RunFormsProvider value={runForms}>
+                      <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                    </RunFormsProvider>
                   </MontagePicksProvider>
                 </DraftSessionsProvider>
               </DraftFlushesProvider>

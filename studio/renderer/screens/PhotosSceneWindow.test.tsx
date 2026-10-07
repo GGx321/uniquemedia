@@ -38,7 +38,7 @@ describe("between the write's answer and `scenes.changed`", () => {
     expect(callsOf(engine, "scenes.write")).toHaveLength(1);
     engine.releaseEvents();
     await flush();
-    expect(within(column()).getByText("Составляем сцены: 0 из 35")).toBeDefined();
+    expect(within(column()).getByText("Дописываем сцены: 0 из 35")).toBeDefined();
   });
 
   test("compose is shut and sends nothing again once it is answered, before the set is read", async () => {

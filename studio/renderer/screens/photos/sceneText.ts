@@ -423,8 +423,10 @@ export function offNoteSet(set: SceneSetView): string {
 export function progressLabel(write: SceneLiveWrite, done: number, total: number, scenes: readonly SceneView[]): string {
   switch (write.kind) {
     case "compose":
-    case "unwritten":
       return `Составляем сцены: ${done} из ${total}`;
+    case "unwritten":
+      // CS.7 L2: in the words of its button, «Дописываем…».
+      return `Дописываем сцены: ${done} из ${total}`;
     case "idea":
       return `Пишем ${countOf(write.count, ["свою сцену", "своих сцены", "своих сцен"])} по описанию`;
     case "rewrite": {

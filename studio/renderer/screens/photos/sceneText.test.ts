@@ -280,7 +280,8 @@ describe("column notices", () => {
 describe("the task line of a scenes job", () => {
   test("its label", () => {
     expect(progressLabel({ kind: "compose", count: 20 }, 0, 20, [])).toBe("Составляем сцены: 0 из 20");
-    expect(progressLabel({ kind: "unwritten", count: 35 }, 25, 35, [])).toBe("Составляем сцены: 25 из 35");
+    // «Дописать» says what its button says («Дописываем…»), CS.7 L2.
+    expect(progressLabel({ kind: "unwritten", count: 35 }, 25, 35, [])).toBe("Дописываем сцены: 25 из 35");
     expect(progressLabel({ kind: "rewrite", count: 1, sceneIds: [2] }, 0, 1, [scene(2)])).toBe("Пишем другую сцену вместо 02");
     expect(progressLabel({ kind: "rewrite", count: 1, sceneIds: [21] }, 0, 1, [scene(21, { origin: "own" })])).toBe("Переписываем сцену 21");
     expect(progressLabel({ kind: "rewrite", count: 3, sceneIds: [26, 27, 28] }, 0, 3, [])).toBe("Пишем другие сцены вместо 26, 27, 28");

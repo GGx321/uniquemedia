@@ -2,7 +2,7 @@ import { useId } from "react";
 import type { MontageDraft, PhotoSummary } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
-import { binFacets, type BinFilter, binTiles, type BinTile, tileAction } from "./bin";
+import { binFacets, type BinFilter, binTiles, type BinTile, isBuiltInCategory, tileAction } from "./bin";
 import type { AddRefusal } from "./clipOps";
 import { addBlockedLabel } from "./labels";
 import { type FillTarget, fillWords } from "./mine";
@@ -77,6 +77,8 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter,
   const eligible = all.filter((p) => p.eligible).length;
   const tiles = binTiles(all, spec, filter);
   const facets = binFacets(all, filter);
+  const builtIns = facets.categories.filter((c) => isBuiltInCategory(c.category));
+  const owners = facets.categories.filter((c) => !isBuiltInCategory(c.category));
   const filtered = filter.unusedOnly || filter.category !== null;
 
   return (
@@ -104,11 +106,21 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter,
             }}
           >
             <option value="">Все категории</option>
-            {facets.categories.map(({ category, label, count }) => (
+            {builtIns.map(({ category, label, count }) => (
               <option key={category} value={category}>
                 {`${label} · ${count}`}
               </option>
             ))}
+            {/* CS.7 L1 (decision 6): the owner's own — custom categories by name, «Своя сцена» last — apart from the built-ins, under a line. */}
+            {owners.length > 0 && (
+              <optgroup label="Свои">
+                {owners.map(({ category, label, count }) => (
+                  <option key={category} value={category}>
+                    {`${label} · ${count}`}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
           <Icon name="chevronDown" size={12} strokeWidth={2.4} />
         </span>

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CATEGORY_REASONS_RU } from "../../shared/engine";
-import { callsOf, describeElement, flush, inAct, runAll, withText } from "../testing";
+import { callsOf, describeElement, flush, inAct, openSection, runAll, withText } from "../testing";
 import { category, chipsGroup, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
 
 // CS.3 (phase 1 of custom categories): the category row of the generate card and the «Новая категория» dialog, against the mock engine.
@@ -233,6 +233,26 @@ describe("«Новая категория»", () => {
     const created = callsOf(engine, "categories.create").length;
     expect(created).toBe(1);
     await waitFor(() => expect(callsOf(engine, "runs.estimate").at(-1)?.payload.categories.at(-1)).toMatch(/^cat-/));
+  });
+
+  test("the run's form outlives a look at Settings: the new category stays on, the count and the poses as they were (CS.7 L4)", async () => {
+    await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Рынки", "Рынки и прилавки с фруктами");
+    fireEvent.click(createButton());
+    await flush();
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Рынки" })).getByRole("button", { name: "Готово" }));
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: "Больше" }));
+    fireEvent.click(screen.getByRole("button", { name: "Профиль" }));
+    await flush();
+    expect(within(chipsGroup()).getByRole("button", { name: /^Рынки: \d+ фото$/ }).getAttribute("aria-pressed")).toBe("true");
+    await openSection("Настройки");
+    await openSection("Фото");
+    await screen.findByRole("button", { name: /^Сгенерировать \d+ фото · до \$/ });
+    expect(within(chipsGroup()).getByRole("button", { name: /^Рынки: \d+ фото$/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("group", { name: "Сколько фото" }).textContent).toContain("25");
+    expect(screen.getByRole("button", { name: "Профиль" }).getAttribute("aria-pressed")).toBe("true");
   });
 
   test("«Скрыть» while composing: the chip with the spinner takes the focus and opens the dialog again; done, the chip is on and keeps the focus", async () => {
