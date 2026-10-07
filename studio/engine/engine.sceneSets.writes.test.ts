@@ -529,6 +529,55 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     expect(fileOf(avatarId).writes).toBe(1);
   });
 
+  describe("a resume when the owner removed a scene of the write meanwhile", () => {
+    async function interrupted(avatarId: string, sceneIds: number[]) {
+      const net = sceneNetwork({ writer: (call, n) => (n === 1 ? rateLimited : goodAnswer(call, n)) });
+      const harness = await engineOver(net);
+      await writeAndWait(harness.engine, harness.events, avatarId, rewrite(sceneIds));
+      return { ...harness, net };
+    }
+    async function removed(engine: Engine, avatarId: string, sceneIds: number[]): Promise<void> {
+      const view = await setOf(engine, avatarId);
+      ok(await engine.handle(edit(view.revision, { op: "remove", sceneIds })));
+    }
+
+    test("asks about the scenes still in the set alone, and the removed one keeps its text", async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const { engine, events, net } = await interrupted(avatarId, [2, 3]);
+      await removed(engine, avatarId, [3]);
+
+      const end = await writeAndWait(engine, events, avatarId, { kind: "resume", write: 1 });
+
+      expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 1 } } });
+      expect(slotsAskedFor(net.writerCalls()[1] as FetchCall)).toEqual([2]);
+      const view = await setOf(engine, avatarId);
+      expect(view.scenes.map((s) => s.text)).toEqual([OLD, `${SENTENCE} (2)`, OLD, OLD]);
+      expect(view.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
+    });
+
+    test("is still priced, for the scenes that remain", async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const { engine } = await interrupted(avatarId, [2, 3]);
+      const before = estimateOf(await engine.handle(estimateCommand({ kind: "resume", write: 1 }))).worstMicros;
+      await removed(engine, avatarId, [3]);
+      const after = estimateOf(await engine.handle(estimateCommand({ kind: "resume", write: 1 }))).worstMicros;
+      expect(after).toBeLessThanOrEqual(before);
+    });
+
+    test("with every scene of the write removed there is nothing to resume: VALIDATION, free", async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const { engine, net } = await interrupted(avatarId, [2]);
+      await removed(engine, avatarId, [2]);
+      const view = await setOf(engine, avatarId);
+
+      expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toBe("VALIDATION");
+      expect(net.writerCalls()).toHaveLength(1);
+    });
+  });
+
   test("a restart keeps the marker, and the resume of a redraw draws nothing new: it asks about the very place the first attempt was asked about", async () => {
     const avatarId = await seedAvatar();
     await seedCategory();

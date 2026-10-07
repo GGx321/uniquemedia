@@ -10,7 +10,7 @@ import { writerMessages } from "../scenes/writer";
 import { ideaSystemPrompt } from "../scenes/ideaWriter";
 import { beginIdea, beginRewrite, withReviewWriteAccepted, withReviewWriteClosed } from "./reviewMutations";
 import { runReviewWrite, type ReviewWriteEnd } from "./reviewWriteJob";
-import { reviewWriteState } from "./reviewWrites";
+import { reservedIdeaScenes, reviewWriteState } from "./reviewWrites";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -177,6 +177,19 @@ describe("a rewrite of planned scenes", () => {
     const after = await setNow();
     expect(slotOf(after, 3)).toEqual(slot);
     expect(after.categories).toEqual([FRESH_SNAPSHOT]);
+  });
+
+  test("a resumed older redraw is asked with the label of the fresher snapshot a later write put in the set", async () => {
+    const NEWER: CategorySnapshot = { ref: CAT, name: "Paris", label: "Paris cafes (newest)", style: "phone" };
+    await seed((s) => ({ ...s, categories: [NEWER], snapshotWrites: { [CAT]: 3 } }));
+    const before = await setNow();
+    const slot: PlanSlot = { ...slotOf(before, 3), location: "a rooftop garden" };
+    await recordRewrite([3], { slots: [slot], snapshots: [FRESH_SNAPSHOT] });
+    const { net, end } = run([good]);
+    await end;
+    const asked = JSON.stringify(messagesOf(net.calls[0] as FetchCall));
+    expect(asked).toContain("Paris cafes (newest)");
+    expect(asked).not.toContain("Parisian cafes (fresh)");
   });
 
   test("a rewrite without a redraw uses the label the set holds for the category", async () => {
@@ -384,6 +397,46 @@ describe("cancel and the network slot", () => {
     controller.abort();
     expect(await end).toEqual({ status: "cancelled" });
     expect(money.budget.status().openAttempts).toBe(1);
+  });
+
+  test("a cancel on the last attempt resolves the write: nothing could be resumed, so no invisible record keeps its room", async () => {
+    await seed();
+    await recordRewrite([2]);
+    await run([offline], { jobId: "job-aaaa-0002" }).end;
+    const controller = new AbortController();
+    const second = run([{ hang: true }], { jobId: "job-aaaa-0003", signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    controller.abort();
+
+    expect(await second.end).toEqual({ status: "cancelled" });
+    expect(second.closed).toEqual([2]);
+    expect((await recordOf(2)).closed).toBe(true);
+  });
+
+  test("a cancel that leaves an attempt keeps the write resumable", async () => {
+    await seed();
+    await recordRewrite([2]);
+    const controller = new AbortController();
+    const { end, closed } = run([{ hang: true }], { signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    controller.abort();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(closed).toEqual([]);
+    expect((await recordOf(2)).closed).toBe(false);
+  });
+
+  test("an idea write cancelled on its last attempt gives its reserved scene room back", async () => {
+    await seed();
+    await recordIdea("кофе на балконе", 2);
+    await run([offline], { jobId: "job-aaaa-0002" }).end;
+    const controller = new AbortController();
+    const second = run([{ hang: true }], { jobId: "job-aaaa-0003", signal: controller.signal });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    controller.abort();
+    await second.end;
+
+    expect(reservedIdeaScenes(await setNow())).toBe(0);
   });
 
   test("every call takes a network slot and gives it back", async () => {

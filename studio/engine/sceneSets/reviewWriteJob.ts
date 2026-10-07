@@ -60,7 +60,8 @@ export type ReviewWriteEnd =
 
 /** The snapshots the prompt names categories by: the set's own, with the ones a redraw refreshed put in their place. */
 function snapshotsFor(set: StoredSceneSet, record: ReviewWriteRecord): CategorySnapshot[] {
-  const fresh = record.kind === "rewrite" ? record.snapshots : [];
+  // A snapshot a LATER write already refreshed in the set is the newer view: this write's own is not put over it.
+  const fresh = record.kind === "rewrite" ? record.snapshots.filter((s) => (set.snapshotWrites?.[s.ref] ?? 0) < record.k) : [];
   return (set.categories ?? []).map((old) => fresh.find((s) => s.ref === old.ref) ?? old);
 }
 
@@ -91,7 +92,12 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
   const record = reviewWritesOf(set).find((r) => r.k === request.k);
   if (record === undefined) throw new Error(`scene set ${set.sceneSetId} has no review write ${request.k}`);
   if (record.closed) throw new Error(`review write ${request.k} of scene set ${set.sceneSetId} is resolved and is not run again`);
-  if (request.signal.aborted) return { status: "cancelled" };
+  /** A cancel with no attempt left resolves the write like a stop does: nothing could be resumed, and an unresolved record would hold its idea room unseen. */
+  const cancelled = async (): Promise<ReviewWriteEnd> => {
+    if (reviewWriteState(record, ledger).attemptsLeft === 0) await deps.giveUp(record.k);
+    return { status: "cancelled" };
+  };
+  if (request.signal.aborted) return cancelled();
 
   const asked = askedOf(set, record);
   const base = {
@@ -127,7 +133,7 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     deps.progress(asked.slots.length);
     return { status: "done", written: asked.slots.length, unwritten: 0 };
   }
-  if (result.stop === "cancelled") return { status: "cancelled" };
+  if (result.stop === "cancelled") return cancelled();
   if (result.stop === "stopped") {
     // An attempt that got no answer stops the job. When no attempt is left (the answers before it used them up), nothing could be resumed: resolve it.
     const resolved = reviewWriteState(record, ledger).attemptsLeft === 0;

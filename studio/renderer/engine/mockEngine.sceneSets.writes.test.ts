@@ -237,6 +237,29 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     expect((after.spentMicros ?? 0) - (view.spentMicros ?? 0)).toBe(0);
   });
 
+  test("a resume after the owner removed one of the write's scenes goes on with the other and drops the marker of the removed one", async () => {
+    const m = makeMock();
+    const view = await readySet(m);
+    m.engine.failNextSceneAttempt("rate-limited");
+    const stopped = await writeAndRun(m, view, rewrite([2, 3]));
+    await unwrap(edit(m, stopped, { op: "remove", sceneIds: [3] }));
+    const removed = await setOf(m);
+    const after = await writeAndRun(m, removed, { kind: "resume", write: 2 });
+
+    expect(after.scenes[1]?.text).not.toBe(view.scenes[1]?.text);
+    expect(after.scenes[2]?.text).toBe(view.scenes[2]?.text);
+    expect(after.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
+  });
+
+  test("a resume when every scene of the write was removed is VALIDATION", async () => {
+    const m = makeMock();
+    const view = await readySet(m);
+    m.engine.failNextSceneAttempt("rate-limited");
+    const stopped = await writeAndRun(m, view, rewrite([2]));
+    await unwrap(edit(m, stopped, { op: "remove", sceneIds: [2] }));
+    expect(await codeOf(write(m, await setOf(m), { kind: "resume", write: 2 }))).toBe("VALIDATION");
+  });
+
   test("a resume carries the same write on and the marker goes", async () => {
     const m = makeMock();
     const view = await readySet(m);
@@ -316,6 +339,28 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     const after = await setOf(m);
     expect(after.scenes[1]?.rewriteInterrupted).toEqual({ write: 2, stoppedBy: "cancelled" });
     expect(after.openReserveMicros).toBe(ATTEMPT);
+  });
+});
+
+describe("a cancel on the last attempt", () => {
+  test("resolves the write, like a stop does: no marker and nothing to resume", async () => {
+    const m = makeMock();
+    const view = await readySet(m);
+    m.engine.failNextSceneAttempt("network");
+    const stopped = await writeAndRun(m, view, idea("кофе на балконе", 2));
+    await unwrap(m.client.request("money.reconcile", {}));
+    const reconciled = await setOf(m);
+    expect(reconciled.interruptedIdeas).toHaveLength(1);
+
+    await unwrap(write(m, reconciled, { kind: "resume", write: 2 }, ATTEMPT));
+    await unwrap(m.client.request("scenes.cancel", { sceneSetId: view.sceneSetId }));
+    m.scheduler.runAll();
+    const after = await setOf(m);
+
+    expect(stopped.interruptedIdeas).toHaveLength(1);
+    expect(after.interruptedIdeas).toBeUndefined();
+    await unwrap(m.client.request("money.reconcile", {}));
+    expect(await codeOf(write(m, await setOf(m), { kind: "resume", write: 2 }, ATTEMPT))).toBe("VALIDATION");
   });
 });
 

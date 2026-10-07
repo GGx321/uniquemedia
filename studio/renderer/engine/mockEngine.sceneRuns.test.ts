@@ -227,6 +227,18 @@ describe("runs.startFromScenes: an own scene", () => {
     expect(made.filter((p) => p.category === "home")).toHaveLength(3);
   });
 
+  test("the run's request never names own as a category, however many own scenes the set has", async () => {
+    const m = makeMock();
+    const set = await setWithOwn(m, 3);
+    const worst = (await unwrap(estimateOf(m, set))).estimate.worstMicros;
+    const { runId } = await unwrap(start(m, set, worst));
+    // The mock's own record of the run: `runs.list` does not carry the request, and the plan's request is what a resume reads.
+    const runs = (m.engine as unknown as { runs: { runId: string; request: { categories: string[] } }[] })["runs"];
+    const request = runs.find((r) => r.runId === runId)?.request;
+    expect(request?.categories).toEqual(["home"]);
+    expect(request?.categories).not.toContain("own");
+  });
+
   test("a set of own scenes only makes photos that are all own, none with a category name", async () => {
     const m = makeMock();
     let set = await setWithOwn(m, 3);
