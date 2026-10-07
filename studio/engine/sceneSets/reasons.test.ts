@@ -147,6 +147,15 @@ describe("a review write's refusals", () => {
     expect(reasonOf(await refusalOf(set, { kind: "idea", idea: "кофе", count: 2, shot: null }))).toEqual(["VALIDATION", "idea-room", undefined]);
   });
 
+  test("an idea write left open with no attempt left holds no room: a new idea fits where it would not if that write still counted", async () => {
+    const own = Array.from({ length: MAX_SCENES_PER_SET - 4 - 2 }, (_, i) => ownScene(7 + i));
+    const set = stored({ writes: 2, scenes: [...stored().scenes, ...own], reviewWrites: [idea({ k: 2, firstId: 5 })] });
+    const spent = fakeLedger({ "set-aaaa-0001:write-2#1": { close: { type: "settle", costMicros: 4_000 } }, "set-aaaa-0001:write-2#2": {} });
+    expect((await planReviewWrite({ set, target: { kind: "idea", idea: "кофе", count: 2, shot: null }, ledger: spent, customCategories: noCustom })).count).toBe(2);
+    // The same write with its attempts still unspent keeps its room, and the new idea does not fit.
+    expect(reasonOf(await refusalOf(set, { kind: "idea", idea: "кофе", count: 2, shot: null }, fakeLedger({})))).toEqual(["VALIDATION", "idea-room", undefined]);
+  });
+
   test("a resume of a write the set does not have: no-open-write", async () => {
     expect(reasonOf(await refusalOf(stored({ writes: 2, reviewWrites: [rewrite({ k: 2 })] }), { kind: "resume", write: 9 }))).toEqual(["VALIDATION", "no-open-write", undefined]);
   });

@@ -73,10 +73,11 @@ function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: 
   };
 }
 
-function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "idea" }>): ReviewPlan {
-  if (set.scenes.length + reservedIdeaScenes(set) + target.count > MAX_SCENES_PER_SET) {
+function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "idea" }>, ledger: LedgerView | null): ReviewPlan {
+  const reserved = reservedIdeaScenes(set, ledger);
+  if (set.scenes.length + reserved + target.count > MAX_SCENES_PER_SET) {
     throw sceneRefusal(
-      `a set holds at most ${MAX_SCENES_PER_SET} scenes: this one has ${set.scenes.length}${reservedIdeaScenes(set) > 0 ? ` and an interrupted idea write holds room for ${reservedIdeaScenes(set)} more` : ""}`,
+      `a set holds at most ${MAX_SCENES_PER_SET} scenes: this one has ${set.scenes.length}${reserved > 0 ? ` and an interrupted idea write holds room for ${reserved} more` : ""}`,
       "idea-room",
     );
   }
@@ -129,7 +130,7 @@ export async function planReviewWrite(input: {
   const { set, target } = input;
   if (target.kind === "resume") return planResume(set, target, input.ledger);
   if (reviewWritesOf(set).length >= MAX_REVIEW_WRITES) throw sceneRefusal(`a set records at most ${MAX_REVIEW_WRITES} writes of this kind`, "write-record-cap");
-  if (target.kind === "idea") return planIdea(set, target);
+  if (target.kind === "idea") return planIdea(set, target, input.ledger);
   // The custom categories a redraw draws from are read once, now: a deleted one refuses the redraw before anything is priced.
   const stored = new Map<string, StoredCategory>();
   if (target.redraw) {
