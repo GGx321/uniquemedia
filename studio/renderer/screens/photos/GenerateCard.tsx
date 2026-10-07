@@ -316,9 +316,12 @@ export function GenerateCard({
         ? "Выберите хотя бы одну категорию."
         : runActive
           ? "Дождитесь конца текущего запуска."
-          : lockedByOther
-            ? "Дождитесь окончания другого платного действия."
-            : null);
+          : scenesJob !== null
+            ? // CS.6: the avatar's scenes job holds it (the engine refuses a run meanwhile, IN_FLIGHT), review on or off.
+              "Дождитесь, пока модель допишет сцены."
+            : lockedByOther
+              ? "Дождитесь окончания другого платного действия."
+              : null);
 
   function toggle(category: RunCategory): void {
     onFormChange({ ...form, categories: toggleCategory(categories, category, customOrder) });

@@ -285,8 +285,11 @@ interface ScenesColumnProps {
   onResumed: (resumed: { runId: string; jobId: string }) => void;
   /** CS.6: «Сцены на проверку». */
   review: boolean;
-  /** The avatar's scene set as the slice reads it: `undefined` while it is read, null with none. */
+  /** The avatar's scene set as the slice reads it: `undefined` while it is read (or could not be), null with none. */
   sceneSet: SceneSetView | null | undefined;
+  /** Why the set could not be read, with its retry. */
+  sceneReadError: EngineError | null;
+  onRetrySceneSet: () => void;
   sliceView: SceneSetSliceView;
   scenesJob: JobView | null;
   /** The compose's price as the card shows it, for the «как это работает» box. */
@@ -314,6 +317,8 @@ export function ScenesColumn({
   onResumed,
   review,
   sceneSet,
+  sceneReadError,
+  onRetrySceneSet,
   sliceView,
   scenesJob,
   composePrice,
@@ -437,6 +442,16 @@ export function ScenesColumn({
       )}
       {cancelError && <ErrorNotice error={cancelError} />}
       {!running && watched && runJob && <RunOutcome job={runJob} fromSet={fromSet} />}
+      {review && sceneReadError !== null && (
+        <ErrorNotice
+          error={sceneReadError}
+          actions={
+            <button type="button" className="btn btn-s" onClick={onRetrySceneSet}>
+              Повторить
+            </button>
+          }
+        />
+      )}
       {runsError && (
         <ErrorNotice
           error={runsError}

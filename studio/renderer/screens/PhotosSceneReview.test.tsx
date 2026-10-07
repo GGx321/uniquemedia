@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { callsOf, describeElement, flush, inAct, runAll } from "../testing";
+import { callsOf, describeElement, flush, inAct, openSection, runAll, setup } from "../testing";
 import { MIA } from "./photos/categoryScreenKit";
 import { SCENE_REVIEW_KEY } from "./photos/sceneReview";
 import { ATTEMPT, card, column, goButton, isDisabled, nb, openReview, priceRow, reviewSwitch, sceneCard } from "./photos/sceneScreenKit";
@@ -242,6 +242,34 @@ describe("review off with a set open", () => {
     await flush();
     await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
     expect(callsOf(engine, "scenes.discard")).toHaveLength(0);
+  });
+});
+
+describe("the set's read and the other paid paths", () => {
+  test("a set that could not be read is told with a retry, and nothing composes meanwhile (a second set would be refused)", async () => {
+    const { engine } = setup({ avatars: [MIA], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 4, written: 4 }] });
+    engine.failNext("scenes.get", { code: "LIBRARY_UNAVAILABLE" });
+    await screen.findByRole("heading", { level: 2, name: "Mia" });
+    await openSection("Фото");
+    await flush();
+    const retry = await within(column()).findByRole("button", { name: "Повторить" });
+    expect(isDisabled(goButton())).toBe(true);
+    fireEvent.click(retry);
+    await flush();
+    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 4 фото · до $0.60")));
+    expect(callsOf(engine, "scenes.compose")).toHaveLength(0);
+  });
+
+  test("today's «Сгенерировать» waits while a scenes job of the avatar runs", async () => {
+    const { engine } = await openReview();
+    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
+    await flush();
+    fireEvent.click(reviewSwitch());
+    await flush();
+    await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08"));
+    expect(isDisabled(goButton())).toBe(true);
+    expect(within(card()).getByText("Дождитесь, пока модель допишет сцены.")).toBeDefined();
+    expect(callsOf(engine, "runs.start")).toHaveLength(0);
   });
 });
 

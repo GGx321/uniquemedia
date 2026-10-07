@@ -141,8 +141,10 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
     setReview(on);
     writeSceneReview(viewerStorage(), on);
   };
-  const { entry: sceneEntry, view: sliceView } = useSceneSet(avatarId);
-  const sceneSet = sceneEntry.status === "ready" ? sceneEntry.sceneSet : sceneEntry.status === "failed" ? null : undefined;
+  const { slice: sceneSlice, entry: sceneEntry, view: sliceView } = useSceneSet(avatarId);
+  // Unknown (`undefined`) while it is read and when the read failed: nothing composes then, as a second open set would be refused.
+  const sceneSet = sceneEntry.status === "ready" ? sceneEntry.sceneSet : undefined;
+  const sceneReadError = sceneEntry.status === "failed" ? sceneEntry.error : null;
   const scenesJob = liveScenesJob(view.jobs, avatarId);
   const [composePrice, setComposePrice] = useState<Estimate | null>(null);
 
@@ -429,6 +431,8 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
                 avatar={avatar}
                 review={review}
                 sceneSet={sceneSet}
+                sceneReadError={sceneReadError}
+                onRetrySceneSet={() => sceneSlice.reload(avatarId)}
                 sliceView={sliceView}
                 scenesJob={scenesJob}
                 composePrice={composePrice}
