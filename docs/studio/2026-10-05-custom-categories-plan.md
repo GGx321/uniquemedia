@@ -1281,6 +1281,16 @@ Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio su
 1200 and 1440 against the mock (`.omc/stage3/design/custom-categories/impl-shots/review/`, untracked; detail shots for ReviewIdeaWriting and ReviewGaveUp
 further down the column), no console errors.
 
+CS.6 fix round 1 (logic review MERGEABLE, five items, each test seen red for the intended reason first): (1) while «Дописываем…» runs after earlier spending the
+total line is «Дальше» (not «Весь запуск») and step 1 keeps «потрачено …» (`stepScenes` carries the spend for a running `unwritten` write too); (2) the pencil
+keeps the revision and the scene text it was opened on and saves on those, so another window's edit or a finished rewrite is refused as SCENES_CHANGED with
+the draft left in the field; (3) `PhotosSceneBlocked.test.tsx` pins every review paid button shut and silent under paid calls stopped and under another paid
+action in flight («Отрисовать», the idea form, «Другие сцены для N», «Повторить» in ⟳, compose), each turned red by its mutant; (4) «Дописать» and compose are
+also shut by the tracked scenes job between a write's answer and `scenes.changed` (`PhotosSceneWindow.test.tsx`, a mock engine whose events can be held);
+(5) after «Дописать» the focus goes to «Отменить» (the slice carries the request from the card to the column). Backlog, not done: an own-send reason line in the
+popover and idea form, `more.error` reset on a key change, the slice not library-keyed, the compose price cached after a recompose, the switch not synced
+across windows, and the visual LOWs.
+
 ### CS.7 — Whole-slice review, E2E, docs, local build, canary
 
 - Whole-slice review (opus), areas: money/state (CS.2, CS.4a/b, CS.5), contract/mock parity, UI
