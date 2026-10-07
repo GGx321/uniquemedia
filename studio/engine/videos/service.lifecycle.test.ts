@@ -509,16 +509,29 @@ describe("the hold of a pending intent does not wait on a disk that fails or han
     );
 
   test.each([
-    ["an lstat that fails (EIO)", () => Promise.reject(errnoError("EIO")), undefined],
-    ["an lstat that never answers", () => new Promise<never>(() => undefined), 50],
-  ] as const)("%s: the job fails and the photos stay held", async (_name, intentLstat, stepDeadlineMs) => {
+    ["an lstat that fails (EIO)", false],
+    ["an lstat that never answers", true],
+  ] as const)("%s: the job fails and the photos stay held", async (_name, hangs) => {
     const w = world();
+    const timers = new FakeTimers(); // the step deadline runs on a clock the test moves: a short real one fires on a slow disk before the lstat is reached
+    const asked = latch();
+    const intentLstat = hangs
+      ? () => {
+          asked.fire();
+          return new Promise<never>(() => undefined);
+        }
+      : () => Promise.reject(errnoError("EIO"));
     const r = serviceRig(w, {
       size: 2,
-      deps: { intentLstat, renderOverrides: { fs: refusing(), ...(stepDeadlineMs === undefined ? {} : { stepDeadlineMs }), hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } } },
+      deps: { intentLstat, renderOverrides: { fs: refusing(), ...(hangs ? { stepDeadlineMs: 50, deadlineTimers: timers } : {}), hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } } },
     });
 
     const { jobId } = await r.service.render({ spec: specFor(w) });
+    if (hangs) {
+      await asked.fired;
+      expect(timers.delays).toEqual([50]); // the one bound armed is the lstat's own
+      await timers.advance(50);
+    }
     await r.queue.idle();
 
     expect(r.jobs.stateOf(jobId)?.status).toBe("failed");

@@ -183,7 +183,11 @@ export class FakeTimers {
 /** The one wait for a condition (15 s ceiling, not a cost: a satisfied wait returns at once): this file used to keep its own copy at 5 s, which missed the raise made for slow Windows runners. */
 export { until } from "../../testing/engineHarness";
 
-/** A one-shot signal a test hands to a stubbed step: `fire` says «I got here», `fired` is what the test waits on (no polling, no wall-clock budget). */
+/**
+ * A one-shot signal a test hands to a stubbed step: `fire` says «I got here», `fired` is what the test waits on (no polling, no wall-clock budget).
+ * With `FakeTimers`: after the latch, check `timers.delays` BEFORE `advance` — the latch says the step is reached, so what is armed by then is exactly what
+ * the step armed, and advancing a clock with nothing (or the wrong bound) armed passes for the wrong reason.
+ */
 export function latch(): { fired: Promise<void>; fire: () => void } {
   let fire: () => void = () => undefined;
   const fired = new Promise<void>((resolve) => {
