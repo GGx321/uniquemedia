@@ -269,6 +269,38 @@ describe("withReviewWriteAccepted: a rewrite", () => {
   });
 });
 
+describe("withReviewWriteAccepted: the same answer twice is one acceptance", () => {
+  const rewriting = () => ({ ...stored({ writes: 2 }), reviewWrites: [rewrite({ k: 2, sceneIds: [2, 3] })] }) as StoredSceneSet;
+  const ideating = () => ({ ...stored({ writes: 2 }), reviewWrites: [idea({ k: 2 })] }) as StoredSceneSet;
+
+  test("a rewrite accepted again with the same sentences returns the set as it is", () => {
+    const once = withReviewWriteAccepted(rewriting(), 2, new Map([[2, "New two."], [3, "New three."]]));
+    expect(withReviewWriteAccepted(once, 2, new Map([[2, "New two."], [3, "New three."]]))).toBe(once);
+  });
+
+  test("an idea write accepted again with the same sentences returns the set as it is, its scenes added once", () => {
+    const once = withReviewWriteAccepted(ideating(), 2, new Map([[5, "First."], [6, "Second."]]));
+    const again = withReviewWriteAccepted(once, 2, new Map([[5, "First."], [6, "Second."]]));
+    expect(again).toBe(once);
+    expect(again.scenes.filter((s) => s.origin === "own")).toHaveLength(2);
+  });
+
+  test("a closed write whose scenes carry other texts is still refused: a different answer is not the one accepted", () => {
+    const once = withReviewWriteAccepted(rewriting(), 2, new Map([[2, "New two."], [3, "New three."]]));
+    expect(() => withReviewWriteAccepted(once, 2, new Map([[2, "Another two."], [3, "New three."]]))).toThrow("is resolved");
+  });
+
+  test("a write closed by a dismissal is not an accepted one: its scenes keep the old texts, so an answer for it is refused", () => {
+    const dismissed = withReviewWriteClosed(rewriting(), 2);
+    expect(() => withReviewWriteAccepted(dismissed, 2, new Map([[2, "New two."], [3, "New three."]]))).toThrow("is resolved");
+  });
+
+  test("an unresolved write is accepted as before", () => {
+    const next = withReviewWriteAccepted(rewriting(), 2, new Map([[2, "New two."], [3, "New three."]]));
+    expect(recordsOf(next)[0]).toMatchObject({ k: 2, closed: true });
+  });
+});
+
 describe("withReviewWriteAccepted: an idea write", () => {
   const ideating = (over: Record<string, unknown> = {}) => ({ ...stored({ writes: 2 }), reviewWrites: [idea({ k: 2, ...over })] }) as StoredSceneSet;
 

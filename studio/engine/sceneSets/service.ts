@@ -505,10 +505,10 @@ export class SceneSetService {
     const { set, jobId, library, live } = job;
     const { sceneSetId, avatarId } = set;
     const scope = { avatarJobId: jobId };
-    const update = async (change: (current: StoredSceneSet) => StoredSceneSet): Promise<StoredSceneSet> => library.sceneSets.update(avatarId, sceneSetId, change);
+    const update = async (change: (current: StoredSceneSet) => StoredSceneSet | null): Promise<StoredSceneSet> => library.sceneSets.update(avatarId, sceneSetId, change);
     // An accepted chunk is paid for and its answer is kept nowhere else: a disk error while storing it is tried once more from the sentences in memory.
     // A refusal of the store itself (the record is gone or does not fit) is not transient and is not retried.
-    const store = async (change: (current: StoredSceneSet) => StoredSceneSet): Promise<StoredSceneSet> => {
+    const store = async (change: (current: StoredSceneSet) => StoredSceneSet | null): Promise<StoredSceneSet> => {
       try {
         return await update(change);
       } catch (error) {
@@ -544,7 +544,14 @@ export class SceneSetService {
               return current;
             },
             accept: async (_k, sentences) => {
-              await this.#announce(library, await store((current) => withReviewWriteAccepted(current, k, sentences)));
+              // An answer already accepted (the retry of a write whose flush failed after the rename) changes nothing: no second revision, no second file.
+              await this.#announce(
+                library,
+                await store((current) => {
+                  const next = withReviewWriteAccepted(current, k, sentences);
+                  return next === current ? null : next;
+                }),
+              );
             },
             giveUp: async () => {
               await this.#announce(library, await update((current) => withReviewWriteClosed(current, k)));

@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { EventMessage, ResponseMessage, SceneSetView } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
-import { openLibrary } from "./library";
+import { openLibrary, type LibraryDeps } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { ownScene, sampleSet } from "./library/testing/sceneSetSample";
 import type { PlanSlot } from "./scenes";
@@ -142,11 +142,12 @@ function sceneNetwork(opts: { writer?: Handler; prices?: () => Promise<Reply> } 
   return { fetch: net.fetch, calls: net.calls, imageCalls: () => [], ageCalls: () => [], descriptorCalls: () => [], paidCalls: () => net.calls.filter((c) => c.method === "POST"), writerCalls: () => net.calls.filter(isWriter) };
 }
 
-function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number } = {}) {
+function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number; testHooks?: NonNullable<Parameters<typeof startEngine>[1]>["deps"] extends infer D ? (D extends { library?: infer L } ? (L extends { testHooks?: infer H } ? H : never) : never) : never } = {}) {
   return startEngine(dir(), {
     init: { settings: engineSettings(dir(), { imageAgeCheck: "off", ...(opts.monthlyBudgetMicros === undefined ? {} : { monthlyBudgetMicros: opts.monthlyBudgetMicros }) }) },
     net,
     ...(opts.key === undefined ? {} : { key: opts.key }),
+    ...(opts.testHooks === undefined ? {} : { deps: { library: { testHooks: opts.testHooks } } }),
   });
 }
 
@@ -1093,6 +1094,61 @@ describe("a store refusal is not a transient disk error", () => {
 
     const lines = warn.mock.calls.map((call) => String(call[0]));
     expect(lines.some((line) => line.includes("trying once more"))).toBe(false);
+  });
+});
+
+describe("an accepted answer whose write hit a disk error after the rename", () => {
+  let warn: { mockRestore: () => void };
+  beforeEach(() => {
+    warn = spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  /** The folder's flush fails once, right after the rename that closes a review write's record: the new text is on disk, the writer sees an error. */
+  function failTheFlushThatClosesAWrite(avatarId: string) {
+    const state = { failed: 0 };
+    const afterRename = (path: string) => {
+      if (state.failed > 0 || !path.endsWith(`${SET}.json`)) return;
+      const records = JSON.parse(readFileSync(setPath(avatarId), "utf8")).reviewWrites ?? [];
+      if (!records.some((r: { closed: boolean }) => r.closed)) return;
+      state.failed += 1;
+      throw Object.assign(new Error("EIO: the folder could not be flushed"), { code: "EIO" });
+    };
+    return { state, afterRename };
+  }
+
+  test("a rewrite ends done, not failed: the retry finds its record closed with the very text it wrote, and takes that as done", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const disk = failTheFlushThatClosesAWrite(avatarId);
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net, { testHooks: { afterRename: disk.afterRename } });
+
+    const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
+
+    expect(disk.state.failed).toBe(1);
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(net.writerCalls()).toHaveLength(1);
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes[1]?.text).toContain(SENTENCE);
+    expect(fileOf(avatarId).reviewWrites?.[0]).toMatchObject({ k: 1, closed: true });
+  });
+
+  test("an idea write ends done, not failed, and its scene is in the set once", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const disk = failTheFlushThatClosesAWrite(avatarId);
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net, { testHooks: { afterRename: disk.afterRename } });
+
+    const end = await writeAndWait(engine, events, avatarId, idea("кофе на балконе"));
+
+    expect(disk.state.failed).toBe(1);
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes.filter((s) => s.origin === "own")).toHaveLength(1);
   });
 });
 
