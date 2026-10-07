@@ -508,6 +508,19 @@ describe("update: the category's angles (CS.8a)", () => {
     expect(await s.get("cat-paris-cafes")).toEqual(made);
   });
 
+  test.each([
+    ["an empty list", []],
+    ["a repeated pose", ["back", "back"]],
+    ["five poses", ["front", "three-quarter", "profile", "back", "front"]],
+    ["a value outside the vocabulary", ["upside-down"]],
+  ])("a poses list the contract would refuse (%s) is never stored: the store checks what it writes", async (_name, poses) => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes", pool: pool({ poses: ["back"] }) }));
+    await expect(s.update("cat-paris-cafes", { poses: poses as never })).rejects.toThrow();
+    expect(await s.get("cat-paris-cafes")).toEqual(made);
+    expect(await readRecord("cat-paris-cafes")).toMatchObject({ pool: { poses: ["back"] } });
+  });
+
   test("a record written before CS.8a (no poses) is read as it is", async () => {
     const s = store();
     await s.create(input({ categoryId: "cat-paris-cafes" }));

@@ -6,6 +6,7 @@ import {
   CategoryCallKind,
   CategoryDescription,
   CategoryName,
+  CategoryPoses,
   CategorySummary,
   CustomCategoryId,
   Id,
@@ -15,7 +16,6 @@ import {
   type CategoryPool,
   type CategorySnapshot,
   type CategoryStyle,
-  type ScenePose,
 } from "../../shared/engine";
 import { poolOf } from "../scenes/poolGen";
 import { PoolSchema } from "../scenes/pools";
@@ -307,9 +307,10 @@ export class CategoryStore {
    * A rename and/or items to remove, applied together or not at all. `below-minimum` when a removal would leave fewer than 5 places or 3
    * outfits, `mirror-needed` when it would remove the last mirror place of a deck that can draw a mirror shot, `item-not-found` for a
    * text that names nothing, `name-taken` for a name another category holds, `not-found` for a category that is not there or not readable.
-   * `poses` (CS.8a) sets the category's angles or, as null, clears them; it never refuses.
+   * `poses` (CS.8a) sets the category's angles or, as null, clears them; it never refuses a list the contract allows, and a list it does not allow (empty, repeated, past four)
+   * is a programming error that throws before anything is written: the store checks what it writes.
    */
-  async update(id: string, change: { name?: string; removeLocations?: readonly string[]; removeOutfits?: readonly string[]; poses?: readonly ScenePose[] | null }): Promise<StoredCategory> {
+  async update(id: string, change: { name?: string; removeLocations?: readonly string[]; removeOutfits?: readonly string[]; poses?: CategoryPoses | null }): Promise<StoredCategory> {
     return runExclusive(this.#lockKey, async () => {
       const current = await this.#getForWrite(id);
       if (current === null) throw new CategoryError("not-found", `no readable category ${id}`);
@@ -333,7 +334,7 @@ export class CategoryStore {
       if (current.pool.shotDeck.includes("mirror") && !locations.some((l) => l.mirror)) throw new CategoryError("mirror-needed", "the deck draws mirror shots: keep a place with a mirror");
       // CS.8a: `poses` sets the category's angles, null clears them (the key goes), absent leaves them.
       const { poses: _kept, ...poolWithoutPoses } = current.pool;
-      const poses = change.poses === undefined ? current.pool.poses : (change.poses ?? undefined);
+      const poses = change.poses === undefined ? current.pool.poses : change.poses === null ? undefined : CategoryPoses.parse(change.poses);
       const nextPool: CategoryPool = { ...poolWithoutPoses, locations, outfits, ...(poses === undefined ? {} : { poses: [...poses] }) };
       const updated: StoredCategory = { ...current, name, pool: nextPool, updatedAt: this.#nextStamp(current.updatedAt) };
       await this.#write(this.#path(id), updated);
