@@ -78,7 +78,7 @@ const compose = (h: Awaited<ReturnType<typeof started>>, count: number) =>
   h.client.request("scenes.compose", { avatarId: MIA.avatarId, count, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: Math.ceil(count / 25) * 75_000 });
 
 describe("a scenes job in the store", () => {
-  test("tracked at its launch with the scenes it writes as the total, before any event is heard, and counted with the photo-side jobs in the sidebar", async () => {
+  test("tracked at its launch with the scenes it writes as the total, before any event is heard, and counted in the sidebar's queue on a row of its own", async () => {
     const { store } = await rawHost();
     store.trackScenesJob("job-00000777", "set-00000777", MIA.avatarId, 30);
 
@@ -86,7 +86,9 @@ describe("a scenes job in the store", () => {
     expect(job).toMatchObject({ kind: "scenes", avatarId: MIA.avatarId, status: "queued", done: 0, total: 30 });
     const counts = sidebarCounts(store.getView().jobs, new Set());
     expect(counts.queue).toBe(1);
-    expect(counts.generation).toEqual({ done: 0, total: 30 });
+    // CS.6 (Sidebar.dc.html `queue`: «Сцены 0 / 20»): scenes, not photos — its own row, not «Генерация».
+    expect(counts.scenes).toEqual({ done: 0, total: 30 });
+    expect(counts.generation).toBeNull();
     expect(counts.render).toBeNull();
   });
 

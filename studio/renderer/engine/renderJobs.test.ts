@@ -261,7 +261,15 @@ describe("the sidebar's rows", () => {
   });
 
   test("nothing at all: an empty queue", () => {
-    expect(sidebarCounts([], new Set())).toEqual({ queue: 0, generation: null, render: null });
+    expect(sidebarCounts([], new Set())).toEqual({ queue: 0, generation: null, scenes: null, render: null });
+  });
+
+  test("a scenes job (compose, «Дописать», ⟳, «по описанию») has its own row «Сцены», counted in the queue but never in «Генерация»", () => {
+    const scenes: JobView = { ...run(7, { done: 2, total: 5 }), kind: "scenes", runId: null };
+    const counts = sidebarCounts([run(1, { done: 3, total: 20 }), scenes], new Set());
+    expect(counts.queue).toBe(2);
+    expect(counts.generation).toEqual({ done: 3, total: 20 });
+    expect(counts.scenes).toEqual({ done: 2, total: 5 });
   });
 });
 
