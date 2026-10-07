@@ -2762,12 +2762,20 @@ export class Engine {
     const { categories, unreadable, overLimit } = await library.categories.list();
     await this.#forgetEndedCalls(library);
     const pending = await library.categories.listPending();
+    // A call whose answer is already in the library is over, whatever its record says (the removal failed, or the process ended before it): a regenerate's
+    // category holds the job in its `bookedJobs`, and so does a create's. It is not an interruption and must not invite the owner to pay again; its record
+    // is forgotten like an ended call's.
+    const landed = pending.filter((p) => categories.some((c) => c.bookedJobs.includes(p.jobId) && (p.kind === "create" || c.categoryId === p.categoryId)));
+    if (landed.length > 0) {
+      for (const p of landed) if (this.#categoryCall?.jobId !== p.jobId) this.#endedCalls.add(p.jobId);
+      await this.#forgetEndedCalls(library);
+    }
     const running = this.#categoryCall?.jobId ?? null;
     const ledger = this.#money.ok ? this.#money.budget.ledger : null;
     // A leftover record is a call this process is not making: what it is counted at is what the ledger holds for its job, and how much of that is a
     // reserve still open at its worst case. An unreadable ledger leaves both unknown (null), which is not the same as a call killed before its reserve (0 and 0).
     const interrupted = pending
-      .filter((p) => p.jobId !== running && !this.#endedCalls.has(p.jobId))
+      .filter((p) => p.jobId !== running && !this.#endedCalls.has(p.jobId) && !landed.some((l) => l.jobId === p.jobId))
       .slice(0, MAX_CUSTOM_CATEGORIES)
       .map((p) => ({
         ...p,

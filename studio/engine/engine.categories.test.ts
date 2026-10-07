@@ -939,7 +939,7 @@ describe("a job's cost is booked into its category once", () => {
     expect((await listOf(engine)).interrupted).toEqual([]);
   });
 
-  test("after a restart, a regenerate that finished but whose record survived is dismissed without counting its cost a second time", async () => {
+  test("after a restart, a regenerate that landed whose pending record survived is not listed as interrupted: the record is removed and nothing is counted twice", async () => {
     refuse.on = true;
     refuse.times = Infinity;
     const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
@@ -948,17 +948,57 @@ describe("a job's cost is booked into its category once", () => {
     ok(await first.engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
     const jobId = String(ledgerLines(dir())[0]?.jobId);
     expect((await listOf(first.engine)).categories[0]?.spentMicros).toBe(5_000 + 5_100);
+    expect(await folder()).toEqual([`${id}.json`, `pending-${jobId}.json`]);
 
-    // The process is gone; a new one over the same library sees a pending record and no memory of the call.
+    // The process is gone; a new one over the same library sees a pending record and no memory of the call. The category's own record says the job landed
+    // (its `bookedJobs` holds the id), so the call is over: not an interruption, and not an invitation to pay again.
     refuse.on = false;
     const second = await startEngine(dir());
-    expect((await listOf(second.engine)).interrupted.map((i) => i.jobId)).toEqual([jobId]);
-    ok(await dismiss(second.engine, jobId));
-
     const listed = await listOf(second.engine);
-    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 5_100);
+
     expect(listed.interrupted).toEqual([]);
+    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 5_100);
     expect(await folder()).toEqual([`${id}.json`]);
+  });
+
+  test("the same for a create: its category holds the job in bookedJobs, so the surviving pending record is not an interrupted create", async () => {
+    refuse.on = true;
+    refuse.times = Infinity;
+    const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+    const first = await startEngine(dir(), { net, deps: disk() });
+    const created = await creating(first.engine);
+    const jobId = String(ledgerLines(dir())[0]?.jobId);
+    expect((await folder()).filter((n) => n.startsWith("pending-"))).toEqual([`pending-${jobId}.json`]);
+
+    refuse.on = false;
+    const second = await startEngine(dir());
+    const listed = await listOf(second.engine);
+
+    expect(listed.interrupted).toEqual([]);
+    expect(listed.categories.map((c) => [c.categoryId, c.spentMicros])).toEqual([[created.category.categoryId, 5_100]]);
+    expect((await folder()).filter((n) => n.startsWith("pending-"))).toEqual([]);
+  });
+
+  test("a pending record of a job that no category booked stays listed as interrupted: only a booking proves the call landed", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    await leaveRegenerate(id, "job-00000042");
+    const { engine } = await startEngine(dir());
+
+    const listed = await listOf(engine);
+
+    expect(listed.interrupted.map((i) => i.jobId)).toEqual(["job-00000042"]);
+    expect(await folder()).toEqual([`${id}.json`, "pending-job-00000042.json"]);
+  });
+
+  test("a regenerate's pending record is judged by ITS category's bookings: another category booking the same id proves nothing", async () => {
+    const other = await seedCategory({ categoryId: "cat-other-cafes", name: "Другие", spentMicros: 1_000 });
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.addSpend(other, 100, "job-00000042");
+    await leaveRegenerate(id, "job-00000042");
+    const { engine } = await startEngine(dir());
+
+    expect((await listOf(engine)).interrupted.map((i) => i.jobId)).toEqual(["job-00000042"]);
   });
 
   test("a regenerate whose record write threw after the rename is counted once, and the owner is told it worked", async () => {
