@@ -118,7 +118,7 @@ export interface VideoServiceDeps {
   readonly log: (line: string) => void;
   readonly fs?: CommitFs;
   /** Test seams of the render itself (ffmpeg, the verifier, the commit's steps, its deadlines). */
-  readonly renderOverrides?: Partial<Pick<VideoRenderDeps, "fs" | "folderFs" | "runJob" | "runDeps" | "verify" | "hooks" | "claimStartAt" | "commitDeadlineMs" | "stepDeadlineMs" | "createTemp" | "inspectStreams" | "ownVideoIo" | "numberFs">>;
+  readonly renderOverrides?: Partial<Pick<VideoRenderDeps, "fs" | "folderFs" | "runJob" | "runDeps" | "verify" | "hooks" | "claimStartAt" | "commitDeadlineMs" | "deadlineTimers" | "stepDeadlineMs" | "createTemp" | "inspectStreams" | "ownVideoIo" | "numberFs">>;
   readonly recover?: { readonly run?: typeof recoverVideos; readonly deps?: RecoverDeps };
   /** Waits before each background retry of a stale used index; `DEFAULT_STALE_RETRY_DELAYS_MS` when absent. The last delay repeats until the index is in step. */
   readonly staleRetryDelaysMs?: readonly number[];

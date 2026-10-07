@@ -170,7 +170,7 @@ export interface VideoRenderDeps {
   readonly draftRemoved?: (montageId: string) => boolean;
   /** `COMMIT_DEADLINE_MS` unless a test says otherwise. */
   readonly commitDeadlineMs?: number;
-  /** The timer behind `commitDeadlineMs`; the real one unless a test moves time itself (a short real deadline races the disk it is testing). */
+  /** The timer behind `commitDeadlineMs` and `stepDeadlineMs`; the real one unless a test moves time itself (a short real deadline races the disk it is testing). */
   readonly deadlineTimers?: { readonly set: (fn: () => void, ms: number) => unknown; readonly clear: (handle: unknown) => void };
   /** `EXPORT_STEP_DEADLINE_MS` unless a test says otherwise. */
   readonly stepDeadlineMs?: number;
@@ -198,10 +198,10 @@ export interface SettleInput {
 }
 
 /** The settle, cut at `ms`: a settle that does not answer is told to stop and counts as nothing settled (the job fails; the next open settles it). Never throws. */
-async function settleBounded(settle: NonNullable<VideoRenderDeps["settleLeftover"]>, input: SettleInput, ms: number, log: (line: string) => void): Promise<VideoRecord | null> {
+async function settleBounded(settle: NonNullable<VideoRenderDeps["settleLeftover"]>, input: SettleInput, ms: number, log: (line: string) => void, timers?: VideoRenderDeps["deadlineTimers"]): Promise<VideoRecord | null> {
   const stop = new AbortController();
   try {
-    return await guarded(new AbortController().signal, ms, () => settle(input, stop.signal));
+    return await guarded(new AbortController().signal, ms, () => settle(input, stop.signal), timers);
   } catch (error) {
     stop.abort();
     log(`render ${input.jobId}: the leftover intent could not be settled (${codeOf(error)})`);
@@ -215,12 +215,13 @@ async function settleBounded(settle: NonNullable<VideoRenderDeps["settleLeftover
  * cannot be interrupted, but it no longer holds the job or its queue slot; if it wakes up later it finds the job over
  * (whatever it then creates is a leftover the next open's recovery sweeps).
  */
-async function guarded<T>(signal: AbortSignal, ms: number, work: () => Promise<T>): Promise<T> {
+async function guarded<T>(signal: AbortSignal, ms: number, work: () => Promise<T>, timers?: VideoRenderDeps["deadlineTimers"]): Promise<T> {
   signal.throwIfAborted();
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  const clock = timers ?? realDeadlineTimer();
+  let timer: unknown;
   let onAbort: (() => void) | undefined;
   const out = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time" })), ms);
+    timer = clock.set(() => reject(new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time" })), ms);
     onAbort = () => reject(signal.reason);
     signal.addEventListener("abort", onAbort, { once: true });
   });
@@ -228,7 +229,7 @@ async function guarded<T>(signal: AbortSignal, ms: number, work: () => Promise<T
   try {
     return await Promise.race([work(), out]);
   } finally {
-    clearTimeout(timer);
+    clock.clear(timer);
     if (onAbort !== undefined) signal.removeEventListener("abort", onAbort);
   }
 }
@@ -389,7 +390,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
       // A folder this job just created is an entry in the root: make it durable before anything goes into it.
       await fs.fsyncDir(root).catch((error: unknown) => log(`render ${plan.jobId}: the export folder could not be flushed (${codeOf(error)})`));
       return { caseInsensitive: insensitive, folder: prepared };
-    });
+    }, deps.deadlineTimers);
 
     const temp = folder.fileIn(partNameOf(plan.jobId));
     deps.tracker.addJob(plan.jobId, plan.videoId);
@@ -457,7 +458,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
                 log(`render ${plan.jobId}: the render's output file could not be created (${codeOf(error)})`);
                 throw new RenderFailure({ code: "EXPORT_UNAVAILABLE", exportReason: codeOf(error) === "ENOSPC" || codeOf(error) === "EDQUOT" ? "not-enough-space" : "not-writable", detail: `the render's output file could not be created (${codeOf(error)})` });
               }
-            }),
+            }, deps.deadlineTimers),
         },
         deps.runDeps,
       ).catch((error: unknown) => {
@@ -562,7 +563,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
         const cancelled = context.signal.aborted && error === context.signal.reason;
         // A failure before the intent's write began left no intent: nothing to settle, and no photo to hold for one.
         if (deadlineFired || cancelled || deps.settleLeftover === undefined || !mayHaveLeftIntent(error)) throw error;
-        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive }, photoIds: scenePhotoIds(plan.spec.clips) }, stepMs, log);
+        const adopted = await settleBounded(deps.settleLeftover, { avatarId: plan.avatarId, videoId: plan.videoId, jobId: plan.jobId, exportRoot: { root, rootId, caseInsensitive }, photoIds: scenePhotoIds(plan.spec.clips) }, stepMs, log, deps.deadlineTimers);
         if (adopted === null) throw error;
         // The video exists: the job is done, not failed.
         try {
