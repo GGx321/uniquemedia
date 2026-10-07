@@ -1068,6 +1068,57 @@ Tests first:
 - canary: the vibe marker never appears in rewrite or idea bodies.
 Review notes (opus): money (per-job cap, ids); that a rewrite never touches a scene outside its target.
 
+#### CS.4b built (2026-10-07, branch `feat/studio-scene-sets-writes`)
+
+What shipped. Protocol v5 stays open and additive. No paid or live call anywhere (the fake OpenRouter only). The README of the design wins where the plan says «Как есть» / `addOwn`: there is no such mode.
+
+- **Contract** (`shared/engine/scenes.ts`, `commands.ts`): `SceneWriteTarget` gains `rewrite {sceneIds 1..5, redraw}`, `idea {idea, count 1..5, shot | null}` and **`resume {write}`** (a deviation, below);
+  `SceneEditOp` gains `dismissInterrupted {sceneIds 1..5 | write}` (exactly one); `SceneView.rewriteInterrupted? {write, stoppedBy}` and `SceneSetView.interruptedIdeas? [{write, idea, count, shot, stoppedBy}]`
+  are optional and omitted when empty, so no existing transcript moved; `SceneLiveWrite.kind` gains `rewrite | idea` and `sceneIds?`. `SceneIdeaInput`: 1..500 chars, not blank, and no heavier than
+  3 bytes a character once JSON-escaped (control characters and lone surrogates escape to 6 and would break the floor pin). No new error code.
+- **Store** (`library/sceneSets.ts`): `SceneRecord` is `planned | own`; an own scene has its stored idea, a shot, a pose and a sentence, no place, no chunk. `reviewWrites?` holds a record per rewrite or idea write
+  (`k`, `jobId`, the four ids `${set}:write-${k}#n`, `closed`, `stoppedBy`, and the draw: a rewrite's redrawn `slots` and refreshed `snapshots`, an idea write's reserved scene ids with their shot and pose),
+  written BEFORE the call. A record outlives its write (closed): its ids are burnt and its attempts are spend. At most 500 records per set (refused VALIDATION past that).
+- **Engine** (`engine/sceneSets/`): `reviewPlan.ts` (every free refusal and every draw, from the set as it is now), `reviewMutations.ts` (pure changes: begin, resume, accept, stop, close),
+  `reviewWrites.ts` (attempts from the ledger, `nextSceneId`, the interrupted list), `reviewWriteJob.ts` (the job: one request, the compose prompt for planned scenes, the idea prompt for own scenes and idea writes),
+  `estimate.ts` (`reviewWriteEstimate`), `view.ts`, `edit.ts`, `service.ts`. `scenes/redraw.ts` (`redrawSlot`, `drawOwnScenes`) and `scenes/ideaWriter.ts` (the idea prompt; the compose prompt is untouched and still byte-pinned).
+  `readWriterAnswer` reads a `ReadableSlot` (number, shot, pose), so one reader serves both prompts; `runWriterPhase` is generic over it (a type-only change).
+- **Mock and parity**: `mockSceneSets.ts` / `mockEngine.ts` plan, draw, price, refuse, mark and resume as the engine does (`failNextSceneAttempt` drives review writes too; seeds take own scenes and review writes);
+  `scripts/mockOpenRouter.ts` answers idea requests; one parity scenario appended (48 lines, nothing else moved) with a `reviewWrites` rig.
+
+Rules as built:
+
+| Rule | How |
+|---|---|
+| Ids and `k` | `k = set.writes + 1`, persisted with the draw before the call; `writes` only grows, so no id of a write is ever another's, across restarts too |
+| Resume | `scenes.write {resume}`: same `k`, same draw, same ids; the next unused id; a reserved id is never sent again; nothing is drawn |
+| Attempt invariant | answered attempts per write ≤ 2 across ALL jobs, from the ledger; an open reserve and a reconcile's estimated settle count as answered; a write left with none is resolved, not resumable |
+| Money | new write = `WRITER_CALL` × 2 (one request, two attempts); resume = attempts left × the ceiling; the job's cap is the estimate (`accepted ≥ estimate` is checked), as in CS.4a; `PRICE_CHANGED`, monthly room, `RECONCILE_REQUIRED` as for any paid command |
+| Redraw | deterministic per (set seed, scene, `k`), from the category's CURRENT pool; avoids the places and outfits the set shows (then the scene's own); a mirror shot stays on a mirror place (a selfie if the pool has none); selfie/mirror stay front or three-quarter; the scene shows the new place only with its accepted sentence; the set's snapshot (`label`, `style`, `name`) of the category is refreshed at acceptance |
+| Deleted category | redraw refused free (`NOT_FOUND`), plain rewrite works (with the label the set holds) |
+| Own scenes | only from `idea`; auto never draws the mirror; poses follow the set's allowance; ⟳ on an own scene is `rewrite {redraw: false}` from the STORED idea, never the current text |
+| Failure | a failed write leaves every scene exactly as it was; two rejected answers, a refusal or no attempt left resolve the write and end the job `failed` (`INTERNAL` / `MODERATION_REFUSED`); a free failure or an interruption leaves it resumable and marks its scenes (`closed` when nothing says why) |
+| Markers | per scene, never cleared by a write on another scene; a new rewrite of a marked scene takes it over (the old record keeps its other scenes); only a resume or `dismissInterrupted` clears one |
+| Canary | the avatar's vibe never appears in a rewrite or an idea body (engine test) |
+
+Floor numbers (`promptTokenFloor`, tokens; the ceiling is 14,000 and the pin keeps a 200-token margin, so ≤ 13,800): five redrawn custom slots at every bound with the worst refusal **5,266**; five own scenes with 500-char
+Cyrillic ideas **8,247** fresh, **9,257** after the worst refusal; the heaviest idea the contract lets through (500 three-byte characters) **10,747 / 11,757**. (All measured with five-digit scene ids, the widest an id can be.) The 25-slot compose pin is unchanged
+(13,712 with the ids 1..25 a compose chunk really has; a planned scene's id never passes 100). The write estimate is `2 × 37,500 µ$ = $0.075` at the fallback prices, expected ≈ $0.0005 per scene.
+
+Deviations, and why: (1) **`resume {write}` is a new target**: the plan lists only `unwritten`, `rewrite` and `idea`, and the README says «Повторить» is `scenes.write` resuming write k, which needs a way to name k;
+re-sending the same rewrite would be a new write with new ids and a new pair of attempts. (2) **A write that can never be answered ends its job `failed`** rather than `done` with `unwritten`: the owner asked for one thing and
+nothing changed, and `MODERATION_REFUSED` is the owner's text refused by the provider. (3) **Scenes of an idea write join the set when accepted**, at the end of the list, under the ids reserved before the call
+(so a later write's scenes can come before an earlier one's after a resume). (4) **`dismissInterrupted` by scenes shrinks the record** (its other scenes stay resumable) and by write closes it; a record out of attempts is not offered
+as a marker but can still be dismissed. (5) **A set records at most 500 review writes** (they are kept for their spend and ids). (6) The mock's redraw uses the mock's own tables, so its places differ from the engine's; only the rules are shared.
+
+Tests seen red first, for the intended reason (a stub that throws «not implemented yet», a schema that did not yet accept the shape, or the old behaviour): the contract (10 of 12 new), the redraw and own-scene draws (21), the idea prompt (11 of 14; the 3 reader tests
+could only change in type), the store (16 of 23), `reviewWrites` (26), `reviewMutations` (35 of 40; the 5 «throws» tests passed under the stub), the view (16 of 25), `dismissInterrupted` (13 of 16), the estimate (7 of 8), the review job (26 of 29), the engine commands
+(38 of 47: «no scene of the set is waiting to be written»), the mock (28 of 29), the fake provider (4 of 4), the `lastOutcome` reset (1) and the parity scenario («no golden transcript»). Written after the code and checked by mutation: the phase-2 floor pins,
+the engine's «a store refusal is not retried» (red when the `SceneSetError` check is removed) and a batch of 16 mutations of the money, id and marker rules (15 caught; the survivor, a cap set to the accepted price instead of the estimate, is not observable:
+no attempt can exceed the estimate).
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7143 + 6616 + 6174 = 19933 passing, 0 failing (this machine, `node_modules` linked from the main checkout; CI is the run of record).
+
 ### CS.5 — Runs from a scene set (test-engineer)
 
 Scope: the phase-2 plan fields (slot `sentence?`, the own-slot variant without place fields and with
