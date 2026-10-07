@@ -711,6 +711,47 @@ describe("runs.startFromScenes", () => {
     });
   });
 
+  describe("a text model nobody prices", () => {
+    const UNLISTED = { textModel: "acme/unlisted-text" };
+
+    test("starts and draws the images: the run never asks the text model, so it needs no text price", async () => {
+      const net = network();
+      const { engine, events, avatarId, revision } = await ready({ count: 2 }, { settings: UNLISTED }, net);
+      const { jobId } = startedOf(await engine.handle(startCommand(revision, 2 * 3 * IMAGE)));
+      const end = await jobEnd(events, jobId);
+      expect(end.type).toBe("job.done");
+      expect((await setOf(engine, avatarId)).status).toBe("used");
+      expect(net.chatCalls()).toHaveLength(0);
+    });
+
+    test("a cancelled run stays resumable: the estimate, the resume and the list all price the images alone", async () => {
+      let released = false;
+      const net = network({ image: (call, n) => (n === 1 ? goodImage(call, n) : released ? goodImage(call, n) : { hang: true }) });
+      const { engine, events, avatarId, revision } = await ready({ count: 3 }, { settings: UNLISTED }, net);
+      const { runId, jobId } = startedOf(await engine.handle(startCommand(revision, 3 * 3 * IMAGE)));
+      await until(() => net.imageCalls().length >= 2, "the second image request");
+      ok(await engine.handle(command("runs.cancel", { runId })));
+      await jobEnd(events, jobId);
+
+      const listed = ok(await engine.handle(command("runs.list", {})));
+      if (listed.type !== "runs.list") throw new Error("expected the runs");
+      const summary = listed.result.runs.find((r) => r.runId === runId);
+      expect(summary?.resumable).toBe(true);
+      expect(summary?.remainingWorstMicros).not.toBeNull();
+
+      const estimate = ok(await engine.handle(command("runs.estimateResume", { runId })));
+      if (estimate.type !== "runs.estimateResume") throw new Error("expected an estimate");
+      expect(estimate.result.estimate.worstMicros).toBeLessThanOrEqual(2 * 3 * IMAGE);
+      expect(estimate.result.estimate.worstMicros).toBe(summary?.remainingWorstMicros ?? -1);
+
+      released = true;
+      const resumed = ok(await engine.handle(command("runs.resume", { runId, acceptedWorstMicros: estimate.result.estimate.worstMicros })));
+      if (resumed.type !== "runs.resume") throw new Error("expected a resume");
+      expect((await jobEnd(events, resumed.result.jobId)).type).toBe("job.done");
+      expect((await setOf(engine, avatarId)).status).toBe("used");
+    });
+  });
+
   describe("announcing the approval", () => {
     test("every window hears the set became used, naming its run, before any event of the run's job", async () => {
       const { engine, events, revision } = await ready({ count: 2 });

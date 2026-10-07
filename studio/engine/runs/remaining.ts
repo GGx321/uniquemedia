@@ -91,7 +91,8 @@ export function remainingPlan(priced: PricedBook, plan: RunPlan, state: RunState
   // The writer phase runs first, chunk by chunk in order, and the first chunk out of attempts ends it: no later chunk is
   // asked, no image is requested. So the chunks BEFORE the blocked one are still paid for (a crash left them writable).
   const writer = { ...WRITER_CALL, model: plan.models.text };
-  const writerCeiling = book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
+  // A run with no writer chunks (made from a scene set) never asks the text model: it needs no price for it.
+  const writerCeiling = plan.writerChunks.length === 0 ? 0 : book.chatWorstCase({ model: writer.model, maxTokens: writer.maxTokens, inputTokens: writer.inputTokens, images: writer.images });
   let unwrittenSlots = 0;
   let writerPending = false;
   let writerBlocked = false;
