@@ -3,6 +3,7 @@ import {
   MAX_CUSTOM_CATEGORIES,
   POOL_OUTFITS_MIN,
   POOL_PLACES_MIN,
+  POOL_TEXT_MAX,
   type CategoriesListResult,
   type CategoryBusy,
   type CategoryCallKind,
@@ -13,6 +14,7 @@ import {
   type CategorySummary,
   type CustomCategoryId,
   type EngineError,
+  type ScenePose,
 } from "../../shared/engine";
 
 // The mock's category library (CS.2): what the engine's store and pool call do, with no disk and no model. A pool is made from the owner's
@@ -57,11 +59,42 @@ function hashOf(text: string): number {
   return hash;
 }
 
+/**
+ * CS.8a: the angles a description asks for, as the pool call's model would read them: «спереди», «сзади», «в профиль» and their English. In the vocabulary's order,
+ * none when the description says nothing about the angle.
+ */
+const ANGLE_WORDS: readonly (readonly [ScenePose, RegExp])[] = [
+  ["front", /спереди|анфас|лицом к камере|front view|facing the camera/i],
+  ["three-quarter", /три четверти|three[- ]quarter/i],
+  ["profile", /профил|сбоку|profile|side view/i],
+  ["back", /сзади|со спины|back view|from behind|from the back/i],
+];
+
+export function mockAnglesOf(description: string): ScenePose[] {
+  return ANGLE_WORDS.flatMap(([pose, words]) => (words.test(description) ? [pose] : []));
+}
+
+/** The body position a description gives, as the model would open every activity with it. */
+const BODY_POSITIONS: readonly (readonly [RegExp, string])[] = [
+  [/на животе|on her stomach|face down/i, "lying on her stomach, "],
+  [/на полу|on the floor/i, "sitting on the floor, "],
+  [/лежит|лёжа|лежа|lying/i, "lying down, "],
+];
+
+/** A place's activity in the body position: the position and the activity's first word, so it stays within the 35 characters. */
+function inBodyPosition(prefix: string, activity: string): string {
+  return `${prefix}${activity.split(" ")[0] ?? activity}`.slice(0, POOL_TEXT_MAX);
+}
+
 /** The deterministic pool of a category: from its description and name alone, so a regeneration with a new description gives a new pool. */
 export function mockCategoryPool(name: string, description: string): { label: string; style: CategoryStyle; pool: CategoryPool } {
   const hash = hashOf(`${name.trim().toLowerCase()}\n${description}`);
   const start = hash % PLACES.length;
-  const locations = Array.from({ length: POOL_PLACES_MIN }, (_, i) => PLACES[(start + i) % PLACES.length]).filter((p): p is CategoryPlace => p !== undefined);
+  const position = BODY_POSITIONS.find(([words]) => words.test(description))?.[1];
+  const locations = Array.from({ length: POOL_PLACES_MIN }, (_, i) => PLACES[(start + i) % PLACES.length])
+    .filter((p): p is CategoryPlace => p !== undefined)
+    .map((p) => (position === undefined ? p : { ...p, activities: p.activities.map((a) => ({ ...a, text: inBodyPosition(position, a.text) })) }));
+  const poses = mockAnglesOf(description);
   const outfitStart = (hash >>> 8) % OUTFITS.length;
   const outfitCount = POOL_OUTFITS_MIN + ((hash >>> 12) % 3);
   const outfits = Array.from({ length: outfitCount }, (_, i) => OUTFITS[(outfitStart + i) % OUTFITS.length]).filter((o): o is string => o !== undefined);
@@ -73,6 +106,7 @@ export function mockCategoryPool(name: string, description: string): { label: st
       locations: locations.map((p) => ({ ...p, times: [...p.times], activities: p.activities.map((a) => ({ ...a })) })),
       outfits,
       shotDeck: editorial ? ["photographer", "photographer", "photographer", "candid", "candid"] : ["friend", "friend", "selfie", "mirror", "candid"],
+      ...(poses.length === 0 ? {} : { poses }),
     },
   };
 }
@@ -227,7 +261,7 @@ export class MockCategories {
   }
 
   /** A rename and/or items to remove, together or not at all, with the store's refusals. */
-  update(categoryId: string, change: { name?: string; removeLocations?: readonly string[]; removeOutfits?: readonly string[] }): CategorySummary | EngineError {
+  update(categoryId: string, change: { name?: string; removeLocations?: readonly string[]; removeOutfits?: readonly string[]; poses?: readonly ScenePose[] | null }): CategorySummary | EngineError {
     const current = this.get(categoryId);
     if (current === undefined) return { code: "NOT_FOUND", detail: `no readable category ${categoryId}` };
     let { name } = current;
@@ -248,7 +282,10 @@ export class MockCategories {
     if (locations.length < POOL_PLACES_MIN) return { code: "VALIDATION", categoryReason: "below-minimum", detail: `a pool keeps at least ${POOL_PLACES_MIN} places` };
     if (outfits.length < POOL_OUTFITS_MIN) return { code: "VALIDATION", categoryReason: "below-minimum", detail: `a pool keeps at least ${POOL_OUTFITS_MIN} outfits` };
     if (current.pool.shotDeck.includes("mirror") && !locations.some((l) => l.mirror)) return { code: "VALIDATION", categoryReason: "mirror-needed", detail: "the deck draws mirror shots: keep a place with a mirror" };
-    return this.#put({ ...current, name, pool: { ...current.pool, locations, outfits }, updatedAt: this.#nextStamp(current.updatedAt) });
+    // CS.8a: `poses` sets the category's angles, null clears them (the key goes), absent leaves them; it never refuses.
+    const { poses: kept, ...poolWithoutPoses } = current.pool;
+    const poses = change.poses === undefined ? kept : (change.poses ?? undefined);
+    return this.#put({ ...current, name, pool: { ...poolWithoutPoses, locations, outfits, ...(poses === undefined ? {} : { poses: [...poses] }) }, updatedAt: this.#nextStamp(current.updatedAt) });
   }
 
   remove(categoryId: string): boolean {

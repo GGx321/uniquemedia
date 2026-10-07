@@ -23,6 +23,7 @@ import {
   type SceneView,
   type UnsequencedEvent,
 } from "../../shared/engine";
+import { mockAnglesOf } from "./mockCategories";
 import type { Scheduler } from "./scheduler";
 
 // The mock's scene sets (CS.4a): what the engine's store, view builder, edit rules and writer job do, with no disk, no ledger and no model. A set is
@@ -282,9 +283,13 @@ function planScenes(
     const custom = isCustomCategory(ref) ? category(ref) : undefined;
     const tables = tablesOf(ref, custom);
     const deck: SceneView["shot"][] = custom !== undefined ? [...custom.pool.shotDeck] : ref === "shoot" ? SHOOT_SHOTS : SHOTS;
+    // CS.8a: a custom category with `poses` draws every pose from them (the run's toggles are not asked); a phone-in-hand shot that turns away takes another shot.
+    const angles = custom?.pool.poses;
     for (let k = 0; k < n; k++) {
       index += 1;
       let shot = deck[k % deck.length] ?? "friend";
+      const angled = angles === undefined ? undefined : anglePick(angles, k, shot, deck);
+      if (angled !== undefined) shot = angled.shot;
       const mirrors = tables.filter((t) => t.mirror);
       // A mirror shot needs a mirror place; a deck with none draws no mirror shot.
       if (shot === "mirror" && mirrors.length === 0) shot = "friend";
@@ -292,11 +297,43 @@ function planScenes(
       if (row === undefined) throw new Error("the mock has no place to plan a scene in");
       // Selfies and mirror shots face the camera whatever the run allows; the others may turn when the run says so.
       const phone = shot === "selfie" || shot === "mirror";
-      const pose: SceneView["pose"] = phone || k % 5 < 3 ? (k % 2 === 0 ? "front" : "three-quarter") : poses.profile && k % 5 === 3 ? "profile" : poses.back && k % 5 === 4 ? "back" : "three-quarter";
+      const pose: SceneView["pose"] =
+        angled !== undefined
+          ? angled.pose
+          : phone || k % 5 < 3
+            ? k % 2 === 0
+              ? "front"
+              : "three-quarter"
+            : poses.profile && k % 5 === 3
+              ? "profile"
+              : poses.back && k % 5 === 4
+                ? "back"
+                : "three-quarter";
       scenes.push({ sceneId: index, category: ref, shot, pose, place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit: row.outfit }, idea: null, text: null, edited: false, removed: false });
     }
   }
   return scenes;
+}
+
+/** Whether a shot has the phone in hand: such a scene faces the camera. */
+function holdsPhone(shot: SceneView["shot"]): boolean {
+  return shot === "selfie" || shot === "mirror";
+}
+
+/**
+ * CS.8a: the pose and shot of the k-th scene of a category whose description named its angles: the k-th pose of the list round and round, and, when it turns the
+ * scene away (back or profile) while the shot holds a phone, the first shot of the deck nobody holds a phone for, or the photographer when the deck has none.
+ */
+function anglePick(poses: readonly SceneView["pose"][], k: number, shot: SceneView["shot"], deck: readonly SceneView["shot"][]): { pose: SceneView["pose"]; shot: SceneView["shot"] } {
+  const pose = poses[k % poses.length] ?? "front";
+  if (!holdsPhone(shot) || pose === "front" || pose === "three-quarter") return { pose, shot };
+  return { pose, shot: deck.find((candidate) => !holdsPhone(candidate)) ?? "photographer" };
+}
+
+/** The angle an idea asks for in its own words («вид сзади», «в профиль», "back view"), or undefined when it says nothing: what the model would pick for «Авто». */
+function ideaAngle(idea: string): "back" | "profile" | undefined {
+  const angles = mockAnglesOf(idea);
+  return angles.includes("back") ? "back" : angles.includes("profile") ? "profile" : undefined;
 }
 
 /** The sentence the mock's writer gives a scene; a write's number makes a rewrite say something new (the compose's own sentence is take 0, as before). */
@@ -858,9 +895,13 @@ export class MockSceneSets {
       if (set.scenes.length + reserved + target.count > SET_ROOM) return invalid(`a set holds at most ${SET_ROOM} scenes: this one has ${set.scenes.length}${reserved > 0 ? ` and an interrupted idea write holds room for ${reserved} more` : ""}`, "idea-room");
       const used = [...set.scenes.map((s) => s.sceneId), ...set.reviews.flatMap((r) => (r.kind === "idea" ? r.own.map((o) => o.sceneId) : []))];
       const first = used.length === 0 ? 1 : Math.max(...used) + 1;
+      // CS.8a: the angle is the idea's own (the run's toggles are not asked): «вид сзади» is a view from behind, on «Авто» with a shot nobody holds a phone for; a shot the
+      // owner chose stays, and a selfie or a mirror shot faces the camera whatever the idea says. An idea with no angle in it faces the camera.
+      const wanted = ideaAngle(target.idea);
       const own = Array.from({ length: target.count }, (_, i) => {
-        const shot = target.shot ?? AUTO_SHOTS[(k + i) % AUTO_SHOTS.length] ?? "friend";
-        return { sceneId: first + i, shot, pose: poseFor(shot, set.poses, k + i) };
+        const shot = target.shot ?? (wanted === undefined ? (AUTO_SHOTS[(k + i) % AUTO_SHOTS.length] ?? "friend") : "candid");
+        const pose: SceneView["pose"] = holdsPhone(shot) || wanted === undefined ? ((k + i) % 2 === 0 ? "front" : "three-quarter") : wanted;
+        return { sceneId: first + i, shot, pose };
       });
       return {
         plan: {
@@ -903,8 +944,11 @@ export class MockSceneSets {
       const shownOutfits = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.outfit] : [])));
       for (const scene of planned) {
         const ref = scene.category === "own" ? "home" : scene.category;
-        let tables = tablesOf(ref, isCustomCategory(ref) ? this.#deps.category(ref) : undefined);
-        let shot = scene.shot;
+        const custom = isCustomCategory(ref) ? this.#deps.category(ref) : undefined;
+        let tables = tablesOf(ref, custom);
+        // CS.8a: a category with `poses` redraws its pose from them, and a phone that would turn away gives way to another shot of the deck.
+        const angled = custom?.pool.poses === undefined ? undefined : anglePick(custom.pool.poses, k + scene.sceneId, scene.shot, custom.pool.shotDeck);
+        let shot = angled?.shot ?? scene.shot;
         if (shot === "mirror") {
           const mirrors = tables.filter((t) => t.mirror);
           if (mirrors.length === 0) shot = "selfie";
@@ -923,7 +967,7 @@ export class MockSceneSets {
         const outfit = pickFrom[(k + scene.sceneId) % pickFrom.length] ?? row.outfit;
         shown.add(row.place);
         shownOutfits.add(outfit);
-        draws.set(scene.sceneId, { place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit }, shot, pose: poseFor(shot, set.poses, k + scene.sceneId) });
+        draws.set(scene.sceneId, { place: { location: row.place, timeOfDay: row.time, activity: row.activity, outfit }, shot, pose: angled?.pose ?? poseFor(shot, set.poses, k + scene.sceneId) });
       }
     }
     return {
