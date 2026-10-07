@@ -778,8 +778,9 @@ export const PhotoSummary = z
     runId: Id.nullable(),
     category: PhotoCategory,
     /**
-     * The name the owner gave a custom category (or "Своя сцена" for an own scene), as the photo's sidecar kept it when the photo was made, so
-     * a category renamed or deleted later does not change it. Absent for the five built-ins: the renderer owns their names.
+     * The name the owner gave a custom category, as the photo's sidecar kept it when the photo was made, so a category renamed or deleted later does
+     * not change it. Absent for the five built-ins (the renderer owns their names) and for an own scene (`category: "own"`): the engine writes no name for
+     * it, and the window shows its own «Своя сцена».
      */
     categoryName: CategoryName.optional(),
     createdAt: IsoDateTime,

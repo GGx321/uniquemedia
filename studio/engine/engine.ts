@@ -301,13 +301,13 @@ export function defaultCpuPoolSize(): number {
 /** The avatar's recent scene history the planner steers away from (location + outfit pairs), about two runs' worth. */
 export const RECENT_PAIRS = 40;
 
-/** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
 /** The models a stored run needs priced now: a run made from a scene set never asks the text model, so it needs no text price. */
 function runPlanPriceModels(plan: RunPlan): PriceModels {
   const models = { imageModel: plan.models.image, textModel: plan.models.text };
   return plan.sceneSetId === undefined ? runPriceModels(models, plan.imageAgeCheck) : sceneRunPriceModels(models, plan.imageAgeCheck);
 }
 
+/** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
 function seedOf(runId: string): number {
   return Number.parseInt(createHash("sha256").update(runId).digest("hex").slice(0, 8), 16);
 }
