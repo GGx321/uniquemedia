@@ -940,7 +940,8 @@ describe("a regenerate whose paid pool cannot be stored", () => {
   test("still adds its cost to the category's total: the old pool stays, the call was paid, and the pool is kept in raw/", async () => {
     const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
     let failTheStore = false;
-    // The answer arms the failure for the pool's own write only; the booking of the spend that follows is a write of the same record and must go through.
+    let failuresLeft = 2;
+    // The answer arms the failure for the pool's own write and its one retry (two failures); the booking of the spend that follows is a write of the same record and must go through.
     const net = network({
       descriptors: [
         async () => {
@@ -956,7 +957,8 @@ describe("a regenerate whose paid pool cannot be stored", () => {
           testHooks: {
             beforeRename: (path) => {
               if (failTheStore && !path.includes("pending-")) {
-                failTheStore = false;
+                failuresLeft -= 1;
+                if (failuresLeft === 0) failTheStore = false;
                 throw new Error("the disk is full");
               }
             },
@@ -1569,4 +1571,125 @@ test("the free commands need no key", async () => {
 
   expect(ok(await engine.handle(command("categories.update", { categoryId: id, name: "New" }))).ok).toBe(true);
   expect(ok(await engine.handle(command("categories.delete", { categoryId: id }))).ok).toBe(true);
+});
+
+// ---------- CS.7 fix round 3: a read the OS fails AFTER the pool was paid for ----------
+
+// Injected through the library's `beforeRead`/`beforeList` seams, so these run on every platform. The pool is paid for and kept nowhere else: a write that
+// meets one OS failure is tried once more (after a short pause, so an antivirus' hold on a file can clear) before the owner is told it went to raw/.
+describe("a read the OS fails after the pool was paid for (fix round 3)", () => {
+  const osError = (name: string): Error => Object.assign(new Error(`${name}: injected`), { code: name });
+  const regenerate = (categoryId: string): unknown => command("categories.regenerate", { categoryId, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros });
+
+  /** A chat answer that marks the pool as paid for, so a hook can fail what is read after it. */
+  function paid(over: Json = {}) {
+    const state = { answered: false };
+    const step: Step = () => {
+      state.answered = true;
+      return poolReply(answer(over), 0.005) as Reply;
+    };
+    return { state, step };
+  }
+
+  test("P1: one EIO on reading the record of a REGENERATE after payment: the write is tried once more and the new pool is stored, not sent to raw/", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const call = paid({ label: "Seine cafes" });
+    let failures = 0;
+    const beforeRead = (path: string): void => {
+      if (!call.state.answered || failures > 0 || !path.endsWith(`${id}.json`)) return;
+      failures += 1;
+      throw osError("EIO");
+    };
+    const net = network({ descriptors: [call.step] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeRead } } } });
+
+    const response = ok(await engine.handle(regenerate(id)));
+
+    expect(failures).toBe(1);
+    if (response.type !== "categories.regenerate") throw new Error("wrong type");
+    expect(response.result.category).toMatchObject({ categoryId: id, label: "Seine cafes", spentMicros: 10_000 });
+    expect(chatCalls(net)).toHaveLength(1);
+  });
+
+  test("P3: one EIO on create's check of its own id after payment: the write is tried once more and the category is stored", async () => {
+    const seeded = await seedCategory({ name: "Other" });
+    const call = paid();
+    let failures = 0;
+    // The only read of a record that is not in the folder yet is the id check of the category being created.
+    const beforeRead = (path: string): void => {
+      if (!call.state.answered || failures > 0 || path.endsWith(`${seeded}.json`) || !/cat-[^/\\]+\.json$/.test(path)) return;
+      failures += 1;
+      throw osError("EIO");
+    };
+    const net = network({ descriptors: [call.step] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeRead } } } });
+
+    const created = await creating(engine);
+
+    expect(failures).toBe(1);
+    expect(created.category.name).toBe("Кофейни Парижа");
+    expect(chatCalls(net)).toHaveLength(1);
+    expect((await listOf(engine)).categories.map((c) => c.name)).toEqual(["Other", "Кофейни Парижа"]);
+  });
+
+  test("a create whose record landed but whose write threw (the flush) is retried into name-taken and reported as done, with no duplicate", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let flushed = 0;
+      const afterRename = (path: string): void => {
+        if (flushed > 0 || path.includes("pending-")) return;
+        flushed += 1;
+        throw osError("EIO");
+      };
+      const net = network({ descriptors: [poolReply()] });
+      const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { afterRename } } } });
+
+      const created = await creating(engine);
+
+      expect(flushed).toBe(1);
+      expect(created.category.name).toBe("Кофейни Парижа");
+      expect((await folder()).filter((n) => n.startsWith("cat-"))).toHaveLength(1);
+      expect(chatCalls(net)).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("P2: a persistent library-unreadable after payment is the «paid, not stored» answer (INTERNAL with the spend), never a VALIDATION that reads as free", async () => {
+    const call = paid();
+    const beforeList = (): void => {
+      if (call.state.answered) throw osError("EMFILE");
+    };
+    const net = network({ descriptors: [call.step] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeList } } } });
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(refused.error.code).toBe("INTERNAL");
+    expect(refused.error.categoryReason).toBeUndefined();
+    expect(refused.error.spentMicros).toBe(5_000);
+    expect(refused.error.detail).toContain("raw/");
+    expect(chatCalls(net)).toHaveLength(1);
+  });
+
+  test("a library-unreadable BEFORE payment stays a free VALIDATION", async () => {
+    const net = network({ descriptors: [poolReply()] });
+    const { engine } = await startEngine(dir(), {
+      net,
+      deps: {
+        library: {
+          testHooks: {
+            beforeList: () => {
+              throw osError("EMFILE");
+            },
+          },
+        },
+      },
+    });
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "library-unreadable" });
+    expect(refused.error.spentMicros).toBeUndefined();
+  });
 });

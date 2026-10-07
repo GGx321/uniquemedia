@@ -22,6 +22,7 @@ import type { OpenRouterClient } from "../openrouter/types";
 import { POOLS, type Pool } from "../scenes";
 import { poolOf } from "../scenes/poolGen";
 import { snapshotOf } from "../library/categories";
+import { pauseBeforeRetry } from "../library/durableFs";
 import type { JobRegistry, ScenesJobEnd } from "../jobs";
 import { pendingChunks } from "./chunks";
 import { planSceneSet } from "./compose";
@@ -526,6 +527,8 @@ export class SceneSetService {
       } catch (error) {
         if (error instanceof SceneSetError) throw error;
         deps.warn(`studio engine: scene set ${sceneSetId} could not be written (${detailOfError(error)}); trying once more`);
+        // A short pause first, so a file an antivirus holds for a moment (EBUSY on Windows) can be let go.
+        await pauseBeforeRetry();
         return update(change);
       }
     };

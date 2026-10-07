@@ -117,6 +117,7 @@ import { FileStateChecker } from "./videos/fileState";
 import type { MediaImporters } from "./media/imports";
 import { MediaService } from "./media/service";
 import { MediaDiskError } from "./library/mediaRecords";
+import { pauseBeforeRetry } from "./library/durableFs";
 import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
@@ -2746,6 +2747,8 @@ export class Engine {
       // `exists` (an id already used) is not a rule the owner broke and names no reason: it is INTERNAL. The ids are `cat-` + a random UUID, so it can only
       // be met by a record planted by hand under the very name the engine drew, which is why every other category VALIDATION can promise its reason.
       if (error.code === "exists") return new EngineFailure({ code: "INTERNAL", detail: detailOf(error.message), ...extra });
+      // After the money was spent «nothing was created or spent, retry» would be a lie: the answer is the paid-but-not-stored one (INTERNAL with the cost).
+      if (error.code === "library-unreadable" && spentMicros !== undefined && spentMicros > 0) return new EngineFailure({ code: "INTERNAL", detail: detailOf(error.message), ...extra });
       return new EngineFailure({ code: "VALIDATION", detail: detailOf(error.message), categoryReason: error.code, ...extra });
     }
     return new EngineFailure({ code: "INTERNAL", detail: messageOf(error, "the category could not be written"), ...extra });
@@ -2943,11 +2946,15 @@ export class Engine {
       }
       try {
         const write = (): Promise<StoredCategory> => call.write({ label: result.label, style: result.style, pool: result.pool }, result.spentMicros, jobId);
-        // The pool is paid for. A read the OS failed in the store's own checks (`library-unreadable`) wrote nothing, so it is tried once more before the
-        // owner is told the paid pool is kept in raw/.
-        const record = await write().catch((error: unknown) => {
-          if (error instanceof CategoryError && error.code === "library-unreadable") return write();
-          throw error;
+        // The pool is paid for and kept nowhere else, so a write that meets one OS failure (a read, a flush; `library-unreadable` or the OS error itself) is
+        // tried once more, after a pause, before the owner is told it is kept in raw/. Safe to repeat: a regeneration is booked once per job
+        // (`bookedJobs`), and a create whose first write did land meets its own name (`name-taken`), which the `landed` check below turns into success.
+        // A CategoryError that is a rule (limit, name-taken, ...) is not transient and is not retried.
+        const record = await write().catch(async (error: unknown) => {
+          if (error instanceof CategoryError && error.code !== "library-unreadable") throw error;
+          console.warn(`studio engine: category call ${jobId} could not be written (${messageOf(error, "unknown error")}); trying once more`);
+          await pauseBeforeRetry();
+          return write();
         });
         this.#emitCategory({ change: "upserted", category: summaryOf(record) });
         return { record, spentMicros: result.spentMicros };

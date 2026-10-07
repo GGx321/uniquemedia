@@ -175,6 +175,23 @@ describe("a failed create or regenerate", () => {
     });
   });
 
+  test("a library-unreadable refusal that comes with a spend is a pool paid for and not stored, never «nothing was spent»", () => {
+    const paid = callFailure({ code: "VALIDATION", categoryReason: "library-unreadable", spentMicros: 5_000 });
+    expect(paid).toEqual({
+      text: "Набор оплачен, но не сохранился: папка библиотеки недоступна для записи. Проверьте её в Настройках и создайте категорию снова.",
+      code: "VALIDATION · потрачено $0.005",
+      action: "settings",
+    });
+    expect(paid.text).not.toContain("не потрачено");
+    expect(hiddenFailure("Рынки", { code: "VALIDATION", categoryReason: "library-unreadable", spentMicros: 5_000 }).text).not.toContain("не потрачено");
+    expect(regenFailure({ code: "VALIDATION", categoryReason: "library-unreadable", spentMicros: 5_000 }).text).toContain("оплачен");
+  });
+
+  test("a library-unreadable refusal before any spend keeps its own text: nothing was created or spent, retry", () => {
+    expect(callFailure({ code: "VALIDATION", categoryReason: "library-unreadable" })).toEqual({ text: CATEGORY_REASONS_RU["library-unreadable"], code: null });
+    expect(callFailure({ code: "VALIDATION", categoryReason: "library-unreadable", spentMicros: 0 }).text).toBe(CATEGORY_REASONS_RU["library-unreadable"]);
+  });
+
   test("any other refusal is the error's own Russian text, with what it cost when the call had started", () => {
     expect(callFailure({ code: "VALIDATION", categoryReason: "name-taken", spentMicros: 6_000 })).toEqual({ text: CATEGORY_REASONS_RU["name-taken"], code: "VALIDATION · потрачено $0.006" });
     expect(callFailure({ code: "AUTH_INVALID" }).code).toBeNull();

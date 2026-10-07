@@ -200,6 +200,14 @@ export async function readJsonFile(path: string): Promise<Parsed<unknown>> {
   }
 }
 
+/** How long a paid write waits before its one retry, so a file an antivirus holds for a moment (EBUSY, EPERM on Windows) can be let go. */
+export const RETRY_PAUSE_MS = 200;
+
+/** The pause before a retry; a plain timer, never a busy loop. */
+export function pauseBeforeRetry(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, RETRY_PAUSE_MS));
+}
+
 /** A path no file can be read from: it is not there (ENOENT) or a part of it is not a folder (ENOTDIR). */
 export function isMissingPath(error: unknown): boolean {
   return hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR");
