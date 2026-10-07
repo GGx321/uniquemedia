@@ -43,8 +43,8 @@ const REJECTED_COST = 2_000;
 const IDS_PER_CHUNK = SCENE_CHUNK_ATTEMPTS + 2;
 const CANCEL_CONFIRM_MS = 50;
 
-/** What the next request of a writer job comes back as (`failNextSceneAttempt`); an unscripted one is a good answer. */
-export type MockSceneAttempt = "rejected" | "refused" | "rate-limited" | "provider-error" | "network" | "timeout";
+/** What the next request of a writer job comes back as (`failNextSceneAttempt`); an unscripted one is a good answer, and `ok` scripts one explicitly. */
+export type MockSceneAttempt = "ok" | "rejected" | "refused" | "rate-limited" | "provider-error" | "network" | "timeout";
 
 /** A set seeded as a compose would have left it. */
 export interface MockSceneSetSeed {
@@ -55,6 +55,11 @@ export interface MockSceneSetSeed {
   written?: number;
   /** The write that did not finish: the set reads stopped, for this reason (`closed` when no outcome was kept). Absent: the set is ready. */
   stopped?: SceneStoppedBy;
+  /**
+   * CS.6: the request a closed Studio cut off: this chunk's attempt keeps its reserve open at the worst case (an answered attempt, waiting for the
+   * reconcile), as the engine's ledger holds it after a crash mid-request.
+   */
+  cutOff?: { chunk: number };
   categories?: readonly CategoryRef[];
   /** The text model the set was made with; the mock's default when absent. */
   textModel?: string;
@@ -68,10 +73,13 @@ export interface MockSceneSetSeed {
   )[];
   /** Writes already started (a seeded review write has a number under it). */
   writes?: number;
-  /** Review writes a closed Studio left unresolved: nothing was reserved for them yet, so each has both attempts. */
+  /**
+   * Review writes a closed Studio left unresolved: nothing was reserved for them yet, so each has both attempts, unless `cutOff` says the Studio closed
+   * while its request was out (CS.6): that attempt keeps its reserve open at the worst case, as `cutOff` does for a chunk.
+   */
   reviewWrites?: readonly (
-    | { kind: "rewrite"; k: number; sceneIds: number[]; redraw?: boolean; stoppedBy?: Exclude<SceneStoppedBy, "closed"> }
-    | { kind: "idea"; k: number; idea: string; count: number; shot: SceneView["shot"] | null; sceneIds: number[]; stoppedBy?: Exclude<SceneStoppedBy, "closed"> }
+    | { kind: "rewrite"; k: number; sceneIds: number[]; redraw?: boolean; stoppedBy?: Exclude<SceneStoppedBy, "closed">; cutOff?: boolean }
+    | { kind: "idea"; k: number; idea: string; count: number; shot: SceneView["shot"] | null; sceneIds: number[]; stoppedBy?: Exclude<SceneStoppedBy, "closed">; cutOff?: boolean }
   )[];
 }
 
@@ -367,6 +375,17 @@ export class MockSceneSets {
     for (const chunk of chunks) {
       if (chunk.sceneIds.every((id) => id <= written)) chunk.attempts.push({ key: `${seed.sceneSetId}:writer-${chunk.chunk}#1`, paid: true, cost: Math.round(chunk.sceneIds.length * TYPICAL_PER_SCENE), open: false });
     }
+    // A request the closed Studio cut off: its reserve stays open at the worst case and counts as answered, until the reconcile closes it there.
+    const cutOff = (key: string): Attempt => {
+      this.#deps.openReserve(key, MOCK_SCENE_ATTEMPT_WORST);
+      this.#deps.needReconcile();
+      return { key, paid: true, cost: 0, open: true };
+    };
+    if (seed.cutOff !== undefined) {
+      const chunk = chunks.find((c) => c.chunk === seed.cutOff?.chunk);
+      if (chunk === undefined) throw new Error(`the seed has no chunk ${seed.cutOff.chunk} to cut off`);
+      chunk.attempts.push(cutOff(`${seed.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`));
+    }
     const stopped = seed.stopped;
     this.#sets.push({
       sceneSetId: seed.sceneSetId,
@@ -380,7 +399,8 @@ export class MockSceneSets {
       chunks,
       write: stopped === undefined ? null : { k: 1, kind: "compose", ...(stopped === "closed" ? {} : { stoppedBy: stopped, ...(stopped === "failed" ? { stoppedError: { code: "INTERNAL" as const } } : {}) }) },
       reviews: (seed.reviewWrites ?? []).map((w): Review => {
-        const base = { k: w.k, closed: false, redraw: false, draws: new Map(), attempts: [], ...(w.stoppedBy === undefined ? {} : { stoppedBy: w.stoppedBy }) };
+        const attempts = w.cutOff === true ? [cutOff(`${seed.sceneSetId}:write-${w.k}#1`)] : [];
+        const base = { k: w.k, closed: false, redraw: false, draws: new Map(), attempts, ...(w.stoppedBy === undefined ? {} : { stoppedBy: w.stoppedBy }) };
         return w.kind === "rewrite"
           ? { ...base, kind: "rewrite", sceneIds: [...w.sceneIds], redraw: w.redraw === true, own: [] }
           : { ...base, kind: "idea", sceneIds: [...w.sceneIds], idea: w.idea, shot: w.shot, own: w.sceneIds.map((sceneId) => ({ sceneId, shot: w.shot ?? "friend", pose: "front" as const })) };
