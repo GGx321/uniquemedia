@@ -66,7 +66,7 @@ function fnv1a(text: string): number {
  * `categorySeed` and `poseSeed` below each call this with their own
  * discriminator, so their rng streams never collide or interleave.
  */
-function subSeed(seed: number, discriminator: string): number {
+export function subSeed(seed: number, discriminator: string): number {
   let h = (seed ^ fnv1a(discriminator)) >>> 0;
   h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
   h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
