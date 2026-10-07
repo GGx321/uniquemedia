@@ -10,7 +10,7 @@ import { NODE_LIBRARY_READ_FS, recoverVideos, type LibraryReadFs, type RecoveryR
 import { videoPaths, type VideoRecord } from "./record";
 import { errnoError, faultyFs, FINAL, sampleRecord, specOf, useWorld, type World } from "./testing/kit";
 import { DEFAULT_STALE_RETRY_DELAYS_MS } from "./service";
-import { FakeTimers, serviceRig, until, withOverrides } from "./testing/serviceKit";
+import { FakeTimers, latch, serviceRig, until, withOverrides } from "./testing/serviceKit";
 useNativeGlobals();
 
 // What happens around a library opening and the engine stopping (3a.8b.2): recovery in the BACKGROUND with the very
@@ -355,12 +355,15 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
     const fs = faultyFs();
     fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
     let signal: AbortSignal | undefined;
+    const timers = new FakeTimers(); // the step deadline runs on a clock the test moves: a short real one fires on a slow disk before the settle is reached
+    const settling = latch();
     const r = serviceRig(w, {
       deps: {
-        renderOverrides: { fs, stepDeadlineMs: 50, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
+        renderOverrides: { fs, stepDeadlineMs: 50, deadlineTimers: timers, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
         recover: {
           run: (input) => {
             signal = input.signal;
+            settling.fire();
             return new Promise<RecoveryReport>(() => undefined);
           },
         },
@@ -368,6 +371,9 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
     });
 
     const { jobId } = await r.service.render({ spec: specFor(w) });
+    await settling.fired;
+    expect(timers.delays).toEqual([50]); // the one bound armed is the settle's own
+    await timers.advance(50);
     await r.queue.idle();
 
     expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
@@ -378,15 +384,25 @@ describe("a commit that fails and leaves its intent is settled INSIDE the job, w
     const w = world();
     const fs = faultyFs();
     fs.override({ unlink: () => Promise.reject(errnoError("EBUSY")) });
+    const timers = new FakeTimers();
+    const settling = latch();
     const r = serviceRig(w, {
       size: 2,
       deps: {
-        renderOverrides: { fs, stepDeadlineMs: 50, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
-        recover: { run: () => new Promise<RecoveryReport>(() => undefined) },
+        renderOverrides: { fs, stepDeadlineMs: 50, deadlineTimers: timers, hooks: { reached: (step) => void (step === "intent-written" && (() => { throw boom(); })()) } },
+        recover: {
+          run: () => {
+            settling.fire();
+            return new Promise<RecoveryReport>(() => undefined);
+          },
+        },
       },
     });
 
     const { jobId } = await r.service.render({ spec: specFor(w) });
+    await settling.fired;
+    expect(timers.delays).toEqual([50]);
+    await timers.advance(50);
     await r.queue.idle();
     expect(r.jobs.stateOf(jobId)?.status).toBe("failed");
 
@@ -516,7 +532,7 @@ describe("the hold of a pending intent does not wait on a disk that fails or han
     const r = serviceRig(w, {
       deps: {
         intentLstat: () => (looked++, new Promise<never>(() => undefined)),
-        renderOverrides: { stepDeadlineMs: 50, verify: async () => ({ result: { ok: false, reasons: [{ code: "UUID_BOX", message: "m" }] }, sha256: null, bytes: 1 }) },
+        renderOverrides: { deadlineTimers: new FakeTimers(), verify: async () => ({ result: { ok: false, reasons: [{ code: "UUID_BOX", message: "m" }] }, sha256: null, bytes: 1 }) },
       },
     });
 

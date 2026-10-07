@@ -10,7 +10,7 @@ import { RenderQueue } from "../renderQueue/queue";
 import { CommitTracker, createRenderExecute, totalFramesOf, type RenderPlan, type VideoRenderDeps } from "./execute";
 import { partNameOf, type VideoRecord } from "./record";
 import { NODE_COMMIT_FS } from "./commitFs";
-import { FakeTimers } from "./testing/serviceKit";
+import { FakeTimers, latch } from "./testing/serviceKit";
 import { acceptingVerify, exportFiles, fakeVideoBytes, FINAL, libraryVideoFiles, MARKER, specOf, unhandledRejectionsDuring, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
 
@@ -280,25 +280,35 @@ describe("errors from the export folder's own steps carry no path", () => {
 describe("the steps before pass 2 are bounded and give way to a cancel", () => {
   const never = <T,>(): Promise<T> => new Promise<T>(() => undefined);
 
+  // The step deadline runs on a clock the test moves (`FakeTimers`): the test says which step hangs (it signals when the step is reached),
+  // moves time only then, and so the deadline provably guards THAT step, not an earlier one a loaded disk made slow.
   test.each([
-    ["making the avatar's export folder", () => ({ folderFs: { mkdir: () => never<void>(), lstat: () => never<never>(), realpath: () => never<string>() } })],
-    ["the case probe", () => ({ caseProbe: { isCaseInsensitive: () => never<boolean>() } })],
+    ["making the avatar's export folder", (arrived: () => void) => ({ folderFs: { mkdir: () => (arrived(), never<void>()), lstat: () => (arrived(), never<never>()), realpath: () => (arrived(), never<string>()) } })],
+    ["the case probe", (arrived: () => void) => ({ caseProbe: { isCaseInsensitive: () => (arrived(), never<boolean>()) } })],
   ])("%s that never answers fails the job (EXPORT_UNAVAILABLE not-writable) at the step deadline, and frees the slot", async (_what, over) => {
-    const r = rig({ stepDeadlineMs: 40, ...over() });
+    const timers = new FakeTimers();
+    const stuck = latch();
+    const r = rig({ stepDeadlineMs: 40, deadlineTimers: timers, ...over(stuck.fire) });
 
     r.submit();
-    const started = Date.now();
+    await stuck.fired;
+    expect(timers.delays).toEqual([40]); // the one bound armed is the stuck step's
+    await timers.advance(40);
     await r.queue.idle();
 
     expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
-    expect(Date.now() - started).toBeLessThan(2_000);
     expect(r.queue.reservedPhotos(r.w.avatar.id).size).toBe(0);
   });
 
   test("a flush of the root that never answers fails the job too", async () => {
-    const r = rig({ stepDeadlineMs: 40, fs: { ...NODE_COMMIT_FS, fsyncDir: () => never<void>() } });
+    const timers = new FakeTimers();
+    const stuck = latch();
+    const r = rig({ stepDeadlineMs: 40, deadlineTimers: timers, fs: { ...NODE_COMMIT_FS, fsyncDir: () => (stuck.fire(), never<void>()) } });
 
     r.submit();
+    await stuck.fired;
+    expect(timers.delays).toEqual([40]);
+    await timers.advance(40);
     await r.queue.idle();
 
     expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });
@@ -307,9 +317,12 @@ describe("the steps before pass 2 are bounded and give way to a cancel", () => {
   test("the temp's creation right before pass 2 that never answers fails the job before ffmpeg writes anything", async () => {
     let pass2 = false;
     let n = 0;
+    const timers = new FakeTimers();
+    const stuck = latch();
     const r = rig({
       stepDeadlineMs: 40,
-      createTemp: () => never<void>(),
+      deadlineTimers: timers,
+      createTemp: () => (stuck.fire(), never<void>()),
       runDeps: {
         run: async (opts) => {
           if (++n === 2) pass2 = true;
@@ -319,6 +332,9 @@ describe("the steps before pass 2 are bounded and give way to a cancel", () => {
     });
 
     r.submit();
+    await stuck.fired;
+    expect(timers.delays).toEqual([40]);
+    await timers.advance(40);
     await r.queue.idle();
 
     expect(r.states()[0]).toMatchObject({ status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" } });

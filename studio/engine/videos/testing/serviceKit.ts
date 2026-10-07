@@ -182,3 +182,12 @@ export class FakeTimers {
 
 /** The one wait for a condition (15 s ceiling, not a cost: a satisfied wait returns at once): this file used to keep its own copy at 5 s, which missed the raise made for slow Windows runners. */
 export { until } from "../../testing/engineHarness";
+
+/** A one-shot signal a test hands to a stubbed step: `fire` says «I got here», `fired` is what the test waits on (no polling, no wall-clock budget). */
+export function latch(): { fired: Promise<void>; fire: () => void } {
+  let fire: () => void = () => undefined;
+  const fired = new Promise<void>((resolve) => {
+    fire = resolve;
+  });
+  return { fired, fire };
+}
