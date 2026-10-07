@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { open, readFile, rm, type FileHandle } from "node:fs/promises";
+import { open, readdir, readFile, rm, type FileHandle } from "node:fs/promises";
 import { platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { z } from "zod";
@@ -197,6 +197,27 @@ export async function readJsonFile(path: string): Promise<Parsed<unknown>> {
     return { ok: true, value };
   } catch {
     return { ok: false, detail: `${path} is not valid JSON` };
+  }
+}
+
+/**
+ * Like `readJsonFile`, for a record the caller counts instead of failing on: ANY read error (EACCES, EPERM, EISDIR, ELOOP, EIO, a cloud
+ * placeholder that cannot be fetched) is a result, never a throw. One file the OS will not give up must not stop its siblings.
+ */
+export async function readJsonFileTolerant(path: string): Promise<Parsed<unknown>> {
+  try {
+    return await readJsonFile(path);
+  } catch {
+    return { ok: false, detail: `${path} cannot be read` };
+  }
+}
+
+/** The names in a folder, or `null` when it cannot be listed at all (not a folder, no permission); a folder that is not there is empty. */
+export async function readdirTolerant(dir: string): Promise<string[] | null> {
+  try {
+    return await readdir(dir);
+  } catch (error) {
+    return isMissing(error) ? [] : null;
   }
 }
 

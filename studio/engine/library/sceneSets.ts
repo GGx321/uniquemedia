@@ -22,7 +22,7 @@ import {
   SceneText,
 } from "../../shared/engine";
 import { isPhoneInHandShot, PlanSlotSchema } from "../scenes";
-import { fsyncDir, hasErrorCode, writeJsonAtomic } from "./durableFs";
+import { fsyncDir, hasErrorCode, readdirTolerant, writeJsonAtomic } from "./durableFs";
 import { isLibraryId } from "./ids";
 import { AVATARS_DIR, isFromNewerVersion, SCENE_SET_FILE_SCHEMA_VERSION, SCENES_DIR } from "./layout";
 import { runExclusive } from "./keyedMutex";
@@ -327,7 +327,9 @@ export class SceneSetStore {
       text = await readFile(path, "utf8");
     } catch (error) {
       if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return { ok: false, reason: "missing" };
-      throw error;
+      // Any other refusal of the OS (no permission, a folder in the file's place, a cloud placeholder that cannot be fetched) makes THIS record
+      // unreadable: counted and kept, never thrown at the siblings.
+      return { ok: false, reason: "unreadable" };
     }
     let raw: unknown;
     try {
@@ -358,7 +360,7 @@ export class SceneSetStore {
     const parsed = SceneSetFile.safeParse({ schemaVersion: SCENE_SET_FILE_SCHEMA_VERSION, ...rest, revision: 1, createdAt: stamp, updatedAt: stamp });
     if (!parsed.success) throw new SceneSetError("invalid", `the scene set does not fit its schema: ${parsed.error.message}`);
     return withSceneSetLock(input.sceneSetId, async () => {
-      if ((await this.#read(path, input.sceneSetId, input.avatarId)).ok || (await this.#names(input.avatarId)).includes(`${input.sceneSetId}.json`)) {
+      if ((await this.#read(path, input.sceneSetId, input.avatarId)).ok || ((await this.#names(input.avatarId)) ?? []).includes(`${input.sceneSetId}.json`)) {
         throw new SceneSetError("exists", `scene set ${input.sceneSetId} already exists`);
       }
       await this.#write(path, parsed.data);
@@ -372,20 +374,19 @@ export class SceneSetStore {
     return read.ok ? read.set : null;
   }
 
-  async #names(avatarId: string): Promise<string[]> {
-    try {
-      return await readdir(this.dirOf(avatarId));
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return [];
-      throw error;
-    }
+  /** The names in the avatar's scenes/, or null when the folder cannot be listed at all (no permission, a file in its place). */
+  async #names(avatarId: string): Promise<string[] | null> {
+    return readdirTolerant(this.dirOf(avatarId));
   }
 
   /** The avatar's readable sets, oldest first (equal times by id), and how many files could not be read (they stay where they are). */
   async list(avatarId: string): Promise<{ sets: StoredSceneSet[]; unreadable: number }> {
     const sets: StoredSceneSet[] = [];
     let unreadable = 0;
-    for (const name of await this.#names(avatarId)) {
+    const names = await this.#names(avatarId);
+    // A folder that cannot be listed is one unreadable record: the library opens, the set screen says so, nothing throws.
+    if (names === null) return { sets, unreadable: 1 };
+    for (const name of names) {
       const match = RECORD_NAME.exec(name);
       if (match === null) continue;
       const read = await this.#read(join(this.dirOf(avatarId), name), match[1] ?? "", avatarId);

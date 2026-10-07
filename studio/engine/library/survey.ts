@@ -78,6 +78,15 @@ async function entriesOf(dir: string): Promise<Dirent[]> {
   }
 }
 
+/** The entries of a folder the library only sweeps for temp files; one that cannot be listed (no permission, a file in its place) has none to sweep. */
+async function entriesOfTolerant(dir: string): Promise<Dirent[]> {
+  try {
+    return await entriesOf(dir);
+  } catch {
+    return [];
+  }
+}
+
 async function readManifest(avatarDir: string, folderName: string): Promise<Parsed<AvatarManifest>> {
   const path = join(avatarDir, MANIFEST_FILE);
   const raw = await readJsonFile(path);
@@ -215,7 +224,7 @@ export async function surveyLibrary(root: string): Promise<Survey> {
     }
     // A scene set is written to a temp name first, like a draft; a crash mid-write leaves that temp behind (the set itself is the old one or the new one).
     const scenesDir = join(path, SCENES_DIR);
-    for (const { name } of await entriesOf(scenesDir)) {
+    for (const { name } of await entriesOfTolerant(scenesDir)) {
       if (isTempName(name)) survey.moves.push({ path: join(scenesDir, name), reason: "temp-file" });
     }
     // A torn last line is an interrupted append; the next append moves it to
@@ -242,7 +251,7 @@ export async function surveyLibrary(root: string): Promise<Survey> {
   }
   // A category record is written to a temp name first; a crash mid-write leaves that temp behind (the record itself is the old one or the new one).
   const categoriesDir = join(root, CATEGORIES_DIR);
-  for (const { name } of await entriesOf(categoriesDir)) {
+  for (const { name } of await entriesOfTolerant(categoriesDir)) {
     if (isTempName(name)) survey.moves.push({ path: join(categoriesDir, name), reason: "temp-file" });
   }
   return survey;

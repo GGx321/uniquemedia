@@ -18,7 +18,7 @@ import {
 } from "../../shared/engine";
 import { poolOf } from "../scenes/poolGen";
 import { PoolSchema } from "../scenes/pools";
-import { fsyncDir, hasErrorCode, readJsonFile, writeJsonAtomic } from "./durableFs";
+import { fsyncDir, hasErrorCode, readdirTolerant, readJsonFileTolerant, writeJsonAtomic } from "./durableFs";
 import { CATEGORIES_DIR, CATEGORY_FILE_SCHEMA_VERSION, isFromNewerVersion } from "./layout";
 import { runExclusive } from "./keyedMutex";
 import { unlinkWithRetry } from "./unlinkRetry";
@@ -174,22 +174,20 @@ export class CategoryStore {
   }
 
   async #names(): Promise<string[]> {
-    try {
-      return await readdir(this.dir);
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) return [];
-      throw error;
-    }
+    return (await readdirTolerant(this.dir)) ?? [];
   }
 
   /** Every record file read once. Called under the lock by every writer, and by the readers without it (an atomic rename means they see whole records). */
   async #readAll(): Promise<{ categories: StoredCategory[]; unreadable: number }> {
     const categories: StoredCategory[] = [];
     let unreadable = 0;
-    for (const name of await this.#names()) {
+    // A folder that cannot be listed at all (no permission, a file in its place) is one unreadable record: the feature degrades, nothing throws.
+    const names = await readdirTolerant(this.dir);
+    if (names === null) return { categories, unreadable: 1 };
+    for (const name of names) {
       const match = RECORD_NAME.exec(name);
       if (match === null) continue;
-      const read = await readJsonFile(join(this.dir, name));
+      const read = await readJsonFileTolerant(join(this.dir, name));
       const record = read.ok ? readRecord(read.value, match[1] ?? "") : null;
       if (record === null) unreadable += 1;
       else categories.push(record);
@@ -225,7 +223,7 @@ export class CategoryStore {
   /** One category; null when there is no such record or it cannot be read (a newer Studio's included). */
   async get(id: string): Promise<StoredCategory | null> {
     if (!RECORD_NAME.test(`${id}.json`)) return null;
-    const read = await readJsonFile(this.#path(id));
+    const read = await readJsonFileTolerant(this.#path(id));
     return read.ok ? readRecord(read.value, id) : null;
   }
 
@@ -238,7 +236,7 @@ export class CategoryStore {
       const { categories, unreadable } = await this.#readAll();
       const name = input.name.trim();
       this.#checkRoom(categories, unreadable, name, null);
-      const existing = await readJsonFile(this.#path(input.categoryId));
+      const existing = await readJsonFileTolerant(this.#path(input.categoryId));
       if (existing.ok || (await this.#names()).includes(`${input.categoryId}.json`)) throw new CategoryError("exists", `category ${input.categoryId} already exists`);
       const stamp = this.#now().toISOString();
       const record: StoredCategory = { schemaVersion: CATEGORY_FILE_SCHEMA_VERSION, ...input, name, bookedJobs: jobId === undefined ? [] : [jobId], createdAt: stamp, updatedAt: stamp };
@@ -352,7 +350,7 @@ export class CategoryStore {
     for (const name of await this.#names()) {
       const match = PENDING_NAME.exec(name);
       if (match === null) continue;
-      const read = await readJsonFile(join(this.dir, name));
+      const read = await readJsonFileTolerant(join(this.dir, name));
       if (!read.ok || isFromNewerVersion(read.value, CATEGORY_FILE_SCHEMA_VERSION)) continue;
       const parsed = PendingCall.safeParse(read.value);
       if (!parsed.success || parsed.data.jobId !== match[1]) continue;

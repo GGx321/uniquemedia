@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { openLibrary } from "./library";
@@ -279,6 +279,53 @@ describe("list", () => {
     expect(await readFile(join(dirOf(), "set-aaaa-0002.json"), "utf8")).toBe("{ not json");
   });
 
+  test("a record that is a folder (EISDIR, portable) is counted unreadable and does not stop the listing or a create", async () => {
+    const s = store();
+    await s.create(sampleSet());
+    await mkdir(join(dirOf(), "set-aaaa-0009.json"));
+
+    const listed = await s.list(AVATAR);
+
+    expect(listed.sets.map((x) => x.sceneSetId)).toEqual(["set-aaaa-0001"]);
+    expect(listed.unreadable).toBe(1);
+    expect(await s.get(AVATAR, "set-aaaa-0009")).toBeNull();
+    await s.create(sampleSet({ sceneSetId: "set-aaaa-0002", runId: "run-aaaa-0002" }));
+    expect((await s.list(AVATAR)).sets).toHaveLength(2);
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a record with no read permission (EACCES) is counted unreadable and kept", async () => {
+    const s = store();
+    await s.create(sampleSet());
+    const locked = join(dirOf(), "set-aaaa-0009.json");
+    await writeFile(locked, "{}");
+    await chmod(locked, 0o000);
+    try {
+      const listed = await s.list(AVATAR);
+      expect(listed.sets.map((x) => x.sceneSetId)).toEqual(["set-aaaa-0001"]);
+      expect(listed.unreadable).toBe(1);
+      expect(await codeOf(s.update(AVATAR, "set-aaaa-0009", (c) => c))).toBe("not-found");
+    } finally {
+      await chmod(locked, 0o600);
+    }
+  });
+
+  test.skipIf(process.platform === "win32")("a scenes/ that is a file (its listing fails) lists as one unreadable record and nothing else", async () => {
+    await mkdir(join(root(), "avatars", AVATAR), { recursive: true });
+    await writeFile(dirOf(), "not a folder");
+    expect(await store().list(AVATAR)).toEqual({ sets: [], unreadable: 1 });
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a scenes/ folder with no read permission lists as one unreadable record", async () => {
+    const s = store();
+    await s.create(sampleSet());
+    await chmod(dirOf(), 0o000);
+    try {
+      expect(await s.list(AVATAR)).toEqual({ sets: [], unreadable: 1 });
+    } finally {
+      await chmod(dirOf(), 0o700);
+    }
+  });
+
   test("a set a newer Studio wrote is counted, kept, and neither read, rewritten nor removed", async () => {
     const s = store();
     const made = await s.create(sampleSet({ sceneSetId: "set-aaaa-0001" }));
@@ -368,6 +415,31 @@ describe("through the library", () => {
 
     expect(reopened.report.quarantined.map((q) => q.reason)).toEqual(["temp-file"]);
     expect(await readdir(dir)).toEqual(["set-aaaa-0001.json"]);
+  });
+
+  test.skipIf(process.platform === "win32")("a library opens when an avatar's scenes/ is a file instead of a folder, and that avatar lists one unreadable record", async () => {
+    const { library } = await openLibrary(root(), { now: steppingClock("2026-10-07T12:00:00.000Z") });
+    const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: { hair: "chestnut" }, descriptor: "a 25-year-old woman with hazel eyes" });
+    await writeFile(join(root(), "avatars", avatar.id, "scenes"), "not a folder");
+
+    const reopened = await openLibrary(root(), { now: steppingClock("2026-10-07T13:00:00.000Z") });
+
+    expect(reopened.report.avatars).toBe(1);
+    expect(await reopened.library.sceneSets.list(avatar.id)).toEqual({ sets: [], unreadable: 1 });
+  });
+
+  test.skipIf(process.platform === "win32" || process.getuid?.() === 0)("a library opens when an avatar's scenes/ has no read permission", async () => {
+    const { library } = await openLibrary(root(), { now: steppingClock("2026-10-07T12:00:00.000Z") });
+    const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: { hair: "chestnut" }, descriptor: "a 25-year-old woman with hazel eyes" });
+    const dir = join(root(), "avatars", avatar.id, "scenes");
+    await mkdir(dir, { recursive: true });
+    await chmod(dir, 0o000);
+    try {
+      const reopened = await openLibrary(root(), { now: steppingClock("2026-10-07T13:00:00.000Z") });
+      expect(reopened.report.avatars).toBe(1);
+    } finally {
+      await chmod(dir, 0o700);
+    }
   });
 
   test("an avatar's folder holds its scene sets, so moving the folder to the Trash takes them along", async () => {
