@@ -2847,7 +2847,7 @@ export const GOLDEN: Record<string, string[]> = {
   "image model: the catalogue, a quality saved, a model with no quality, refusals, and camera realism": [
     "# the catalogue Settings offers",
     "> settings.imageModels {}",
-    "< ok {\"models\":[{\"id\":\"x-ai/grok-imagine-image-2.0\",\"name\":\"Grok Imagine Image 2.0\",\"qualities\":[\"low\",\"medium\"],\"prices\":[{\"quality\":\"low\",\"micros\":50000},{\"quality\":\"medium\",\"micros\":70000}],\"tested\":true},{\"id\":\"x-ai/grok-imagine-image-quality\",\"name\":\"Grok Imagine Image Quality\",\"qualities\":[],\"prices\":[{\"quality\":null,\"micros\":60000}],\"tested\":true},{\"id\":\"bytedance-seed/seedream-5-0-pro\",\"name\":\"Seedream 5.0 Pro\",\"qualities\":[],\"prices\":[{\"quality\":null,\"micros\":48000}],\"tested\":true}],\"source\":\"fallback\"}",
+    "< ok {\"models\":[{\"id\":\"x-ai/grok-imagine-image-2.0\",\"name\":\"Grok Imagine Image 2.0\",\"qualities\":[\"low\",\"medium\"],\"prices\":[{\"quality\":\"low\",\"micros\":50000},{\"quality\":\"medium\",\"micros\":70000}],\"tested\":true},{\"id\":\"x-ai/grok-imagine-image-quality\",\"name\":\"Grok Imagine Image Quality\",\"qualities\":[],\"prices\":[{\"quality\":null,\"micros\":60000}],\"tested\":true},{\"id\":\"bytedance-seed/seedream-5-0-pro\",\"name\":\"Seedream 5.0 Pro\",\"qualities\":[],\"prices\":[{\"quality\":null,\"micros\":48000}],\"tested\":true}],\"source\":\"fallback\",\"complete\":false}",
     "# the default model at medium",
     "> settings.setModels {\"imageModel\":\"x-ai/grok-imagine-image-2.0\",\"imageQuality\":\"medium\",\"textModel\":\"x-ai/grok-4.3\"}",
     "< ok {\"imageModel\":\"x-ai/grok-imagine-image-2.0\",\"imageQuality\":\"medium\",\"textModel\":\"x-ai/grok-4.3\",\"cameraRealism\":false}",
