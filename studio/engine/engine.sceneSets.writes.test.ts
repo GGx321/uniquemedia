@@ -189,6 +189,8 @@ function estimateOf(response: ResponseMessage): { expectedMicros: number; worstM
   return result.result.estimate;
 }
 const code = (response: ResponseMessage) => failed(response).error.code;
+/** The whole refusal: its code, and the scene reason (and scene) the window reads. */
+const refused = (response: ResponseMessage) => failed(response).error;
 
 /** Starts a write at the revision the set has now, at the price it shows, and waits for its job to end. */
 async function writeAndWait(engine: Engine, events: () => EventMessage[], avatarId: string, target: Target, accepted = 2 * ATTEMPT): Promise<EventMessage> {
@@ -264,12 +266,12 @@ describe("scenes.estimateWrite: rewrite, idea and resume", () => {
     const view = await setOf(engine, avatarId);
     ok(await engine.handle(edit(view.revision, { op: "remove", sceneIds: [4] })));
 
-    expect(code(await engine.handle(estimateCommand(rewrite([99]))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand(rewrite([4]))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand(rewrite([1, 5]))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand(rewrite([5], true))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand({ kind: "resume", write: 9 })))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand({ kind: "resume", write: 2 })))).toBe("VALIDATION");
+    expect(refused(await engine.handle(estimateCommand(rewrite([99]))))).toMatchObject({ code: "VALIDATION", sceneReason: "scene-missing", sceneId: 99 });
+    expect(refused(await engine.handle(estimateCommand(rewrite([4]))))).toMatchObject({ code: "VALIDATION", sceneReason: "target-removed", sceneId: 4 });
+    expect(refused(await engine.handle(estimateCommand(rewrite([1, 5]))))).toMatchObject({ code: "VALIDATION", sceneReason: "mixed-kinds" });
+    expect(refused(await engine.handle(estimateCommand(rewrite([5], true))))).toMatchObject({ code: "VALIDATION", sceneReason: "own-redraw" });
+    expect(refused(await engine.handle(estimateCommand({ kind: "resume", write: 9 })))).toMatchObject({ code: "VALIDATION", sceneReason: "no-open-write" });
+    expect(refused(await engine.handle(estimateCommand({ kind: "resume", write: 2 })))).toMatchObject({ code: "VALIDATION", sceneReason: "no-open-write" });
     expect(code(await engine.handle(estimateCommand(rewrite([1]), "set-nobody-404")))).toBe("NOT_FOUND");
     expect(net.calls).toHaveLength(0);
   });
@@ -573,7 +575,7 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
       await removed(engine, avatarId, [2]);
       const view = await setOf(engine, avatarId);
 
-      expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toBe("VALIDATION");
+      expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toMatchObject({ code: "VALIDATION", sceneReason: "target-removed" });
       expect(net.writerCalls()).toHaveLength(1);
     });
   });
@@ -637,7 +639,7 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     const net = sceneNetwork();
     const { engine } = await engineOver(net);
     const view = await setOf(engine, avatarId);
-    expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toMatchObject({ code: "VALIDATION", sceneReason: "no-attempts-left" });
     expect(net.writerCalls()).toHaveLength(0);
   });
 
@@ -899,7 +901,7 @@ describe("scenes.write: an idea", () => {
     const net = sceneNetwork();
     const { engine } = await engineOver(net);
     const view = await setOf(engine, avatarId);
-    expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, idea("кофе", 2))))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, idea("кофе", 2))))).toMatchObject({ code: "VALIDATION", sceneReason: "idea-room" });
     expect(net.writerCalls()).toHaveLength(0);
   });
 
@@ -996,7 +998,7 @@ describe("the refusals of a review write", () => {
     const { engine } = await engineOver(sceneNetwork());
     const view = await setOf(engine, avatarId);
     expect(view.status).toBe("used");
-    expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, rewrite([2]))))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, rewrite([2]))))).toMatchObject({ code: "VALIDATION", sceneReason: "set-used" });
   });
 
   test("one job at a time: a write while another runs is IN_FLIGHT and starts nothing; a free edit is refused too", async () => {
@@ -1023,7 +1025,7 @@ describe("the refusals of a review write", () => {
     const view = await setOf(engine, avatarId);
     const removed = ok(await engine.handle(edit(view.revision, { op: "remove", sceneIds: [2] })));
     if (removed.type !== "scenes.edit" || !("sceneSet" in removed.result)) throw new Error("expected the set");
-    expect(code(await engine.handle(writeCommand(removed.result.sceneSet.revision, 2 * ATTEMPT, rewrite([2]))))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(removed.result.sceneSet.revision, 2 * ATTEMPT, rewrite([2]))))).toMatchObject({ code: "VALIDATION", sceneReason: "target-removed", sceneId: 2 });
     expect(net.writerCalls()).toHaveLength(0);
   });
 });

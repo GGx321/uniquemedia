@@ -1884,7 +1884,7 @@ export class MockEngine implements EngineBridge {
           this.libraryGate() ??
           this.runnableRefusal(request.avatarId) ??
           this.categoryRefusal(request.categories) ??
-          (this.sceneSets.hasOpenSet(request.avatarId) ? { code: "VALIDATION" as const, detail: `avatar ${request.avatarId} already has an open scene set; discard it first` } : null) ??
+          (this.sceneSets.hasOpenSet(request.avatarId) ? { code: "VALIDATION" as const, sceneReason: "open-set" as const, detail: `avatar ${request.avatarId} already has an open scene set; discard it first` } : null) ??
           (free ? null : this.priceGate(acceptedWorstMicros, this.sceneSets.composePrice(request.count).worst));
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, this.sceneSets.compose(request));
@@ -1922,7 +1922,7 @@ export class MockEngine implements EngineBridge {
         const target = c.payload.target;
         const common =
           this.runnableRefusal(set.avatarId) ??
-          (set.used ? { code: "VALIDATION" as const, detail: `scene set ${set.sceneSetId} is used and read-only` } : null) ??
+          (set.used ? { code: "VALIDATION" as const, sceneReason: "set-used" as const, detail: `scene set ${set.sceneSetId} is used and read-only` } : null) ??
           (set.revision !== c.payload.revision ? { code: "SCENES_CHANGED" as const } : null);
         if (common) return this.fail(c, common);
         if (target.kind !== "unwritten") {
@@ -1934,7 +1934,7 @@ export class MockEngine implements EngineBridge {
           return this.ok(c, { jobId: this.sceneSets.writeReview(set, planned.plan) });
         }
         const refusal =
-          (this.sceneSets.writePrice(set).worst === 0 ? { code: "VALIDATION" as const, detail: "no scene of the set is waiting to be written" } : null) ??
+          (this.sceneSets.writePrice(set).worst === 0 ? { code: "VALIDATION" as const, sceneReason: "nothing-waiting" as const, detail: "no scene of the set is waiting to be written" } : null) ??
           this.priceGate(c.payload.acceptedWorstMicros, this.sceneSets.writePrice(set).worst);
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { jobId: this.sceneSets.write(set) });

@@ -219,6 +219,8 @@ function setFiles(avatarId: string): string[] {
 }
 
 const code = (response: ResponseMessage) => failed(response).error.code;
+/** The whole refusal: its code, and the scene reason (and scene) the window reads. */
+const refused = (response: ResponseMessage) => failed(response).error;
 
 // ---------- scenes.estimateCompose ----------
 
@@ -474,7 +476,7 @@ describe("one open set per avatar, and one paid job per avatar", () => {
     await jobEnd(events, first.jobId ?? "none");
     const reservesBefore = ledgerReserves().length;
 
-    expect(code(await engine.handle(composeCommand(avatarId, { count: 5 })))).toBe("VALIDATION");
+    expect(refused(await engine.handle(composeCommand(avatarId, { count: 5 })))).toMatchObject({ code: "VALIDATION", sceneReason: "open-set" });
     expect(ledgerReserves()).toHaveLength(reservesBefore);
     expect(setFiles(avatarId)).toHaveLength(1);
 
@@ -890,7 +892,7 @@ describe("scenes.write: «Дописать»", () => {
     const { engine } = await engineOver(sceneNetwork());
     const revision = (await setOf(engine, avatarId)).revision;
 
-    expect(code(await engine.handle(writeCommand(revision, 10 * ATTEMPT)))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(revision, 10 * ATTEMPT)))).toMatchObject({ code: "VALIDATION", sceneReason: "nothing-waiting" });
     expect(code(await engine.handle(writeCommand(revision + 5, 10 * ATTEMPT)))).toBe("SCENES_CHANGED");
     expect(code(await engine.handle(writeCommand(1, 10 * ATTEMPT, "set-nobody-0404")))).toBe("NOT_FOUND");
   });
@@ -901,7 +903,7 @@ describe("scenes.write: «Дописать»", () => {
     const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("u") });
     await library.createRun(RUN, { n: 1 }, RUN_SCHEMA);
     const { engine } = await engineOver(sceneNetwork());
-    expect(code(await engine.handle(writeCommand((await setOf(engine, avatarId)).revision, 10 * ATTEMPT)))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand((await setOf(engine, avatarId)).revision, 10 * ATTEMPT)))).toMatchObject({ code: "VALIDATION", sceneReason: "set-used" });
   });
 
   test("an edit that arrives while the write waits for the prices is refused IN_FLIGHT (the set is live from the claim), nothing is lost, and the write goes through on its revision", async () => {
@@ -1079,7 +1081,7 @@ describe("scenes.edit", () => {
     await seedSet(avatarId, { count: 5, written: 5 });
     const { engine } = await engineOver(sceneNetwork());
     const before = await setOf(engine, avatarId);
-    expect(code(await engine.handle(edit(before.revision, { op: "remove", sceneIds: [1, 99] })))).toBe("VALIDATION");
+    expect(refused(await engine.handle(edit(before.revision, { op: "remove", sceneIds: [1, 99] })))).toMatchObject({ code: "VALIDATION", sceneReason: "scene-missing", sceneId: 99 });
     expect(await setOf(engine, avatarId)).toEqual(before);
   });
 
@@ -1104,7 +1106,7 @@ describe("scenes.edit", () => {
     const { engine } = await engineOver(sceneNetwork());
     const before = await setOf(engine, avatarId);
 
-    expect(code(await engine.handle(edit(before.revision, { op: "remove", sceneIds: [1] })))).toBe("VALIDATION");
+    expect(refused(await engine.handle(edit(before.revision, { op: "remove", sceneIds: [1] })))).toMatchObject({ code: "VALIDATION", sceneReason: "set-used" });
     expect(await setOf(engine, avatarId)).toEqual(before);
   });
 

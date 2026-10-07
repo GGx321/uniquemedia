@@ -212,5 +212,5 @@ export function setCategoryTags(set: SceneSetView): SetCategoryTag[] {
 
 /** The engine's refusal of a write once a set recorded its 500 review writes (engine/sceneSets/reviewPlan.ts): its own Russian line, not the generic one. */
 export function writeCapRefusal(error: EngineError): boolean {
-  return error.code === "VALIDATION" && /records at most \d+ writes/.test(error.detail ?? "");
+  return error.code === "VALIDATION" && error.sceneReason === "write-record-cap";
 }

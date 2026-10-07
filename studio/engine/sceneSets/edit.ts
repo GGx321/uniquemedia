@@ -1,4 +1,4 @@
-import { SCENE_TEXT_MAX, type SceneEditOp, type SceneProblem } from "../../shared/engine";
+import { SCENE_TEXT_MAX, type SceneEditOp, type SceneProblem, type SceneReason } from "../../shared/engine";
 import type { RewriteWriteRecord, StoredSceneSet } from "../library/sceneSets";
 import { sentenceProblems } from "../scenes";
 import { withReviewWriteClosed, withoutScenes } from "./reviewMutations";
@@ -14,7 +14,7 @@ export type EditOutcome =
   /** The text does not go through: a normal result, nothing changes. */
   | { kind: "problem"; problem: SceneProblem }
   /** The edit names what the set does not have, or what may not be edited: refused, nothing changes. */
-  | { kind: "invalid"; detail: string };
+  | { kind: "invalid"; detail: string; sceneReason: SceneReason; sceneId?: number };
 
 const LINE_BREAK = new RegExp(`[\n\r${String.fromCharCode(0x2028)}${String.fromCharCode(0x2029)}]`);
 const CONTROL = /\p{Cc}/u;
@@ -34,6 +34,11 @@ export function textProblem(text: string): SceneProblem | null {
   return first === undefined ? null : { reason: first.reason, words: first.words.slice(0, 12).map((word) => word.slice(0, 64)) };
 }
 
+/** An edit the set refuses, with the closed reason the window reads (and the scene it is about, when it is about one). */
+function invalid(detail: string, sceneReason: SceneReason, sceneId?: number): EditOutcome {
+  return sceneId === undefined ? { kind: "invalid", detail, sceneReason } : { kind: "invalid", detail, sceneReason, sceneId };
+}
+
 function unknownScenes(set: StoredSceneSet, sceneIds: readonly number[]): number[] {
   const known = new Set(set.scenes.map((s) => s.sceneId));
   return sceneIds.filter((id) => !known.has(id));
@@ -44,8 +49,8 @@ export function applyEdit(set: StoredSceneSet, op: SceneEditOp): EditOutcome {
   switch (op.op) {
     case "text": {
       const scene = set.scenes.find((s) => s.sceneId === op.sceneId);
-      if (scene === undefined) return { kind: "invalid", detail: `the set has no scene ${op.sceneId}` };
-      if (scene.removed) return { kind: "invalid", detail: `scene ${op.sceneId} is removed; restore it before editing its text` };
+      if (scene === undefined) return invalid(`the set has no scene ${op.sceneId}`, "scene-missing", op.sceneId);
+      if (scene.removed) return invalid(`scene ${op.sceneId} is removed; restore it before editing its text`, "target-removed", op.sceneId);
       const problem = textProblem(op.text);
       if (problem !== null) return { kind: "problem", problem };
       const text = op.text.trim();
@@ -55,7 +60,7 @@ export function applyEdit(set: StoredSceneSet, op: SceneEditOp): EditOutcome {
     case "remove":
     case "restore": {
       const missing = unknownScenes(set, op.sceneIds);
-      if (missing.length > 0) return { kind: "invalid", detail: `the set has no scene ${missing.join(", ")}` };
+      if (missing.length > 0) return invalid(`the set has no scene ${missing.join(", ")}`, "scene-missing", missing[0]);
       const removed = op.op === "remove";
       const targets = new Set(op.sceneIds);
       if (!set.scenes.some((s) => targets.has(s.sceneId) && s.removed !== removed)) return { kind: "unchanged" };
@@ -74,15 +79,15 @@ function dismissInterrupted(set: StoredSceneSet, op: Extract<SceneEditOp, { op: 
   const records = reviewWritesOf(set);
   if (op.write !== undefined) {
     const record = records.find((r) => r.k === op.write && !r.closed);
-    if (record === undefined) return { kind: "invalid", detail: `scene set ${set.sceneSetId} has no unresolved write ${op.write}` };
+    if (record === undefined) return invalid(`scene set ${set.sceneSetId} has no unresolved write ${op.write}`, "no-open-write");
     return { kind: "changed", set: withReviewWriteClosed(set, record.k) };
   }
   const sceneIds = op.sceneIds ?? [];
   const missing = unknownScenes(set, sceneIds);
-  if (missing.length > 0) return { kind: "invalid", detail: `the set has no scene ${missing.join(", ")}` };
+  if (missing.length > 0) return invalid(`the set has no scene ${missing.join(", ")}`, "scene-missing", missing[0]);
   const open = records.filter((r): r is RewriteWriteRecord => r.kind === "rewrite" && !r.closed);
   const unmarked = sceneIds.filter((id) => !open.some((r) => r.sceneIds.includes(id)));
-  if (unmarked.length > 0) return { kind: "invalid", detail: `scene ${unmarked.join(", ")} has no unresolved rewrite to dismiss` };
+  if (unmarked.length > 0) return invalid(`scene ${unmarked.join(", ")} has no unresolved rewrite to dismiss`, "nothing-to-dismiss");
   const taken = new Set(sceneIds);
   return { kind: "changed", set: { ...set, reviewWrites: records.map((r) => (r.kind === "rewrite" && !r.closed ? withoutScenes(r, taken) : r)) } };
 }

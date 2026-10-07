@@ -264,7 +264,7 @@ function snapshotLine(result: Record<string, unknown>, norm: Normalizer): string
 /** An answer as a line. */
 export function answerLine(type: string, answer: Answer, norm: Normalizer): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason } = answer.error;
+    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     const text = code === "VALIDATION" || code.startsWith("MUSIC_") ? undefined : detail;
@@ -277,6 +277,8 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
         ...(captionIssue === undefined ? {} : { captionIssue }),
         ...(photoReason === undefined ? {} : { photoReason }),
         ...(categoryReason === undefined ? {} : { categoryReason }),
+        ...(sceneReason === undefined ? {} : { sceneReason }),
+        ...(sceneId === undefined ? {} : { sceneId }),
       }),
     )}`;
   }

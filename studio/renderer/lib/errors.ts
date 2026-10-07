@@ -8,6 +8,7 @@ import {
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   CATEGORY_REASONS_RU,
+  SCENE_REASONS_RU,
   PHOTO_UNAVAILABLE_REASONS_RU,
   RENDER_NO_SPACE_DETAIL_PREFIX,
   RENDER_TIMEOUT_DETAIL_PREFIX,
@@ -57,6 +58,8 @@ function baseText(error: EngineError): string {
   if (error.code === "VALIDATION" && (error.detail === UNKNOWN_IMAGE_MODEL_RU || error.detail === UNSUPPORTED_IMAGE_QUALITY_RU)) return error.detail;
   // A category command the engine refused says which rule it broke (the limit, a taken name, the pool's minimum, the mirror place, a missing item).
   if (error.code === "VALIDATION" && error.categoryReason !== undefined) return CATEGORY_REASONS_RU[error.categoryReason];
+  // A scene-set command the engine refused says which rule it broke; the window names the scene itself from `sceneId`.
+  if (error.code === "VALIDATION" && error.sceneReason !== undefined) return SCENE_REASONS_RU[error.sceneReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.

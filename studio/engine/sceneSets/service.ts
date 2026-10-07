@@ -30,6 +30,7 @@ import { applyEdit, type EditOutcome } from "./edit";
 import { composeEstimate, reviewWriteEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
 import { beginWrite, withChunkGivenUp, withChunkWritten, withOutcome, withWriteFinished, withWriteStopped } from "./mutations";
 import { planReviewWrite, type ReviewPlan } from "./reviewPlan";
+import { sceneRefusal } from "./refusal";
 import { withReviewWriteAccepted, withReviewWriteClosed, withReviewWriteStopped } from "./reviewMutations";
 import { runReviewWrite, type ReviewWriteEnd } from "./reviewWriteJob";
 import { reviewWritesOf } from "./reviewWrites";
@@ -212,7 +213,7 @@ export class SceneSetService {
   #guard(library: Library): SceneSetGuard {
     return async (current) => {
       if (this.#live.has(current.sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${current.sceneSetId} is being written; change it when that ends (or cancel it)` });
-      if (await library.runFolderExists(current.runId)) throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${current.sceneSetId} is used by run ${current.runId} and is read-only` });
+      if (await library.runFolderExists(current.runId)) throw sceneRefusal(`scene set ${current.sceneSetId} is used by run ${current.runId} and is read-only`, "set-used");
     };
   }
 
@@ -239,7 +240,7 @@ export class SceneSetService {
       const result = outcome as EditOutcome | null;
       if (result === null) throw new EngineFailure({ code: "INTERNAL", detail: "the edit was not applied" });
       if (result.kind === "problem") return { problem: result.problem };
-      if (result.kind === "invalid") throw new EngineFailure({ code: "VALIDATION", detail: result.detail });
+      if (result.kind === "invalid") throw sceneRefusal(result.detail, result.sceneReason, result.sceneId);
       if (result.kind === "changed") await this.#announce(library, updated);
       return { sceneSet: await this.#view(library, updated) };
     });
@@ -296,7 +297,7 @@ export class SceneSetService {
       const existing = await library.sceneSets.list(avatarId);
       for (const set of existing.sets) {
         if (!(await library.runFolderExists(set.runId))) {
-          throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${manifest.id} already has an open scene set; discard it or use its run first` });
+          throw sceneRefusal(`avatar ${manifest.id} already has an open scene set; discard it or use its run first`, "open-set");
         }
       }
       const textModel = deps.textModel();
@@ -384,12 +385,12 @@ export class SceneSetService {
       this.#live.set(sceneSetId, mine);
       deps.runnableAvatar(library, avatarId);
       await deps.assertAvatarOnDisk(library, avatarId);
-      if (await library.runFolderExists(set.runId)) throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${sceneSetId} is used by run ${set.runId} and is read-only` });
+      if (await library.runFolderExists(set.runId)) throw sceneRefusal(`scene set ${sceneSetId} is used by run ${set.runId} and is read-only`, "set-used");
       if (set.revision !== revision) throw new EngineFailure({ code: "SCENES_CHANGED", detail: `scene set ${sceneSetId} is at revision ${set.revision}, not ${revision}` });
       const ledger = budget.ledger;
       let plan: ReviewPlan | null = null;
       if (target.kind === "unwritten") {
-        if (pendingChunks(set, ledger).length === 0) throw new EngineFailure({ code: "VALIDATION", detail: "no scene of the set is waiting to be written" });
+        if (pendingChunks(set, ledger).length === 0) throw sceneRefusal("no scene of the set is waiting to be written", "nothing-waiting");
       } else {
         plan = await this.#planReview(library, set, target);
         mine.kind = plan.kind;
@@ -415,7 +416,7 @@ export class SceneSetService {
           {
             expectedRevision: revision,
             guard: async (current) => {
-              if (await library.runFolderExists(current.runId)) throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${sceneSetId} is used by run ${current.runId} and is read-only` });
+              if (await library.runFolderExists(current.runId)) throw sceneRefusal(`scene set ${sceneSetId} is used by run ${current.runId} and is read-only`, "set-used");
             },
           },
         );
