@@ -290,7 +290,7 @@ export interface MockEngineOptions {
   /** CS.4a: scene sets the library holds at the start, as a compose would have left them. */
   sceneSets?: MockSceneSetSeed[];
   /** CS.4a: scene set files the library could not read (counted in `scenes.get`, never deleted). */
-  unreadableSceneSets?: number;
+  unreadableSceneSets?: number | Readonly<Record<string, number>>;
 }
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
@@ -723,6 +723,8 @@ export class MockEngine implements EngineBridge {
   private categoryPriceValue: Pick<Estimate, "expectedMicros" | "worstMicros"> = { ...MOCK_CATEGORY_PRICE };
   /** The next paid category call fails after its checks, having cost this much (`failNextCategoryCall`). */
   private nextCategoryFailure: { error: EngineError; spentMicros: number } | null = null;
+  private sceneCancelOutcome: "in-flight" | "between" = "in-flight";
+  private cancelSceneWriteBeforeAnswer = false;
   /** Own media's records and import jobs (3f.1b). */
   private readonly ownMedia: MockOwnMedia;
   private nextRenderFailure: { error: EngineError; at: "encode" | "saving" | "late" } | null = null;
@@ -757,6 +759,8 @@ export class MockEngine implements EngineBridge {
         needReconcile: () => {
           if (!this.reconcileReasons.includes("open-reserves")) this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
         },
+        ledgerReadable: () => this.unavailable === null,
+        cancelHasRequestOut: () => this.sceneCancelOutcome === "in-flight",
       },
       options.sceneSets ?? [],
       options.unreadableSceneSets ?? 0,
@@ -1040,6 +1044,29 @@ export class MockEngine implements EngineBridge {
     this.sceneSets.failNextSceneAttempt(outcome);
   }
 
+  /**
+   * CS.7: where a `scenes.cancel` finds the set's job. `"in-flight"` (the default) is a request at the model: its attempt keeps a reserve open at the worst case
+   * and every paid command waits for a reconcile. `"between"` is a cancel between requests (or before the first): nothing is open, «Дописать» is allowed at
+   * once and costs a full pair of attempts. The engine does either; the mock plays the one a test names.
+   */
+  setSceneCancelOutcome(outcome: "in-flight" | "between"): void {
+    this.sceneCancelOutcome = outcome;
+  }
+
+  /**
+   * CS.7: the next `scenes.write` that passes every gate is cancelled before its job began, as the engine's is when a cancel arrives while the prices load: the
+   * set is announced as it is, `job.cancelled` is emitted, and only then does the command answer `{ jobId }`. One write; the refusals still come first.
+   */
+  cancelNextSceneWriteBeforeAnswer(): void {
+    this.cancelSceneWriteBeforeAnswer = true;
+  }
+
+  private takeCancelBeforeAnswer(): boolean {
+    const taken = this.cancelSceneWriteBeforeAnswer;
+    this.cancelSceneWriteBeforeAnswer = false;
+    return taken;
+  }
+
   /** CS.4a: the set's run was started, so the set is read-only. */
   markSceneSetUsed(sceneSetId: string): void {
     this.sceneSets.markUsed(sceneSetId);
@@ -1233,8 +1260,9 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
-   * A library switch is being surveyed (the engine's `#switching`): `media.list` and `media.delete` wait with IN_FLIGHT until it ends. MEDIA ONLY: the mock does not
-   * model the other writes' refusal during a switch (the engine's `#liveLibrary` gives it to every write), so a renderer test of one of those needs its own control.
+   * A library switch is being surveyed (the engine's `#switching`): every write of the library's records waits with IN_FLIGHT until it ends: `media.list` and
+   * `media.delete`, `scenes.compose/edit/write/discard`, `runs.startFromScenes` and `categories.create/regenerate/update/delete/dismissInterrupted` (CS.7).
+   * The photo-run and montage commands do not model it.
    */
   setLibrarySwitching(switching: boolean): void {
     this.librarySwitching = switching;
@@ -1601,13 +1629,13 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { mediaId: c.payload.mediaId, apngBase64: btoa(binary) });
       }
       case "media.list": {
-        const refusal = this.mediaLibraryGate();
+        const refusal = this.writeLibraryGate();
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, this.ownMedia.list(c.payload.kind, c.payload.mediaIds));
       }
       case "media.delete": {
         const { mediaId } = c.payload;
-        const refusal = this.mediaLibraryGate();
+        const refusal = this.writeLibraryGate();
         if (refusal) return this.fail(c, refusal);
         if (!this.ownMedia.has(mediaId)) return this.fail(c, { code: "NOT_FOUND", detail: `no own media ${mediaId} in the open library` });
         // The engine asks the render queue's reserved set after it knows the media is there: a queued or running render that names it refuses.
@@ -1776,14 +1804,14 @@ export class MockEngine implements EngineBridge {
       case "categories.update":
         return this.updateCategory(c, c.payload);
       case "categories.delete": {
-        const gone = this.libraryGate() ?? this.regeneratingRefusal(c.payload.categoryId);
+        const gone = this.writeLibraryGate() ?? this.regeneratingRefusal(c.payload.categoryId);
         if (gone) return this.fail(c, gone);
         if (!this.categories.remove(c.payload.categoryId)) return this.fail(c, { code: "NOT_FOUND", detail: `no readable category ${c.payload.categoryId}` });
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "category.changed", payload: { change: "removed", categoryId: c.payload.categoryId } });
         return this.ok(c, { categoryId: c.payload.categoryId });
       }
       case "categories.dismissInterrupted": {
-        const gone = this.libraryGate();
+        const gone = this.writeLibraryGate();
         if (gone) return this.fail(c, gone);
         const call = this.categories.interruptedOf(c.payload.jobId);
         if (call === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no interrupted category call ${c.payload.jobId}` });
@@ -1881,7 +1909,7 @@ export class MockEngine implements EngineBridge {
         if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
         const refusal =
           (free ? null : this.keyAndLedgerGate()) ??
-          this.libraryGate() ??
+          this.writeLibraryGate() ??
           this.runnableRefusal(request.avatarId) ??
           this.categoryRefusal(request.categories) ??
           (this.sceneSets.hasOpenSet(request.avatarId) ? { code: "VALIDATION" as const, sceneReason: "open-set" as const, detail: `avatar ${request.avatarId} already has an open scene set; discard it first` } : null) ??
@@ -1895,7 +1923,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, this.sceneSets.get(c.payload.avatarId));
       }
       case "scenes.edit": {
-        const gone = this.libraryGate();
+        const gone = this.writeLibraryGate();
         if (gone) return this.fail(c, gone);
         const outcome = this.sceneSets.edit(c.payload.sceneSetId, c.payload.revision, c.payload.op);
         if ("error" in outcome) return this.fail(c, outcome.error);
@@ -1914,7 +1942,9 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.reviewPrice(planned.plan)) });
       }
       case "scenes.write": {
-        const early = this.keyAndLedgerGate() ?? this.libraryGate();
+        // The engine's first check is its claim on the set: a set whose own job runs refuses before the key, the ledger or the library is looked at.
+        if (this.sceneSets.isLive(c.payload.sceneSetId)) return this.fail(c, { code: "IN_FLIGHT", detail: `scene set ${c.payload.sceneSetId} is being written; wait for that to end (or cancel it)` });
+        const early = this.keyAndLedgerGate() ?? this.writeLibraryGate();
         if (early) return this.fail(c, early);
         const set = this.sceneSets.find(c.payload.sceneSetId);
         if (set === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
@@ -1931,12 +1961,14 @@ export class MockEngine implements EngineBridge {
           if ("error" in planned) return this.fail(c, planned.error);
           const price = this.priceGate(c.payload.acceptedWorstMicros, this.sceneSets.reviewPrice(planned.plan).worst);
           if (price) return this.fail(c, price);
+          if (this.takeCancelBeforeAnswer()) return this.ok(c, { jobId: this.sceneSets.cancelUnstarted(set, planned.plan.kind) });
           return this.ok(c, { jobId: this.sceneSets.writeReview(set, planned.plan) });
         }
         const refusal =
           (this.sceneSets.writePrice(set).worst === 0 ? { code: "VALIDATION" as const, sceneReason: "nothing-waiting" as const, detail: "no scene of the set is waiting to be written" } : null) ??
           this.priceGate(c.payload.acceptedWorstMicros, this.sceneSets.writePrice(set).worst);
         if (refusal) return this.fail(c, refusal);
+        if (this.takeCancelBeforeAnswer()) return this.ok(c, { jobId: this.sceneSets.cancelUnstarted(set, "unwritten") });
         return this.ok(c, { jobId: this.sceneSets.write(set) });
       }
       case "scenes.cancel": {
@@ -1947,7 +1979,7 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { sceneSetId: c.payload.sceneSetId });
       }
       case "scenes.discard": {
-        const gone = this.libraryGate();
+        const gone = this.writeLibraryGate();
         if (gone) return this.fail(c, gone);
         const outcome = this.sceneSets.discard(c.payload.sceneSetId);
         if ("error" in outcome) return this.fail(c, outcome.error);
@@ -2002,7 +2034,7 @@ export class MockEngine implements EngineBridge {
       }
       case "runs.startFromScenes": {
         // The engine's order: the library, the set's refusals, the avatar claimed by another job, then `runs.start`'s own checks.
-        const gone = this.libraryGate();
+        const gone = this.writeLibraryGate();
         if (gone) return this.fail(c, gone);
         const approval = this.sceneSets.approvalOf(c.payload.sceneSetId, c.payload.revision);
         if ("error" in approval) return this.fail(c, approval.error);
@@ -2267,7 +2299,7 @@ export class MockEngine implements EngineBridge {
 
   private deleteAvatar(c: CommandMessage, avatarId: string): ResponseMessage {
     // `#liveLibrary()`: a switch under way first, then no library, then the avatar, then what runs.
-    const gone = this.mediaLibraryGate();
+    const gone = this.writeLibraryGate();
     if (gone) return this.fail(c, gone);
     if (!this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
     if (this.deleteBusy(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run, a candidate job or a video render of this avatar is running; delete the avatar when it ends" });
@@ -2970,10 +3002,10 @@ export class MockEngine implements EngineBridge {
   // ---------- photo runs (T8b) ----------
 
   /**
-   * The engine's `withLibrary` for the own-media commands (the library's records, read or written): while a library switch is being surveyed
-   * they wait with IN_FLIGHT, and with no library open they are LIBRARY_UNAVAILABLE, the switch checked first.
+   * The engine's `withLibrary` / `#liveLibrary` for a command that WRITES the library's records (own media, scene sets, categories): while a library
+   * switch is being surveyed it waits with IN_FLIGHT, and with no library open it is LIBRARY_UNAVAILABLE, the switch checked first.
    */
-  private mediaLibraryGate(): EngineError | null {
+  private writeLibraryGate(): EngineError | null {
     if (this.librarySwitching) return { code: "IN_FLIGHT", detail: "a library switch is being surveyed; write commands wait for it to finish" };
     return this.libraryGate();
   }
@@ -3059,7 +3091,7 @@ export class MockEngine implements EngineBridge {
   private createCategory(c: CommandMessage, payload: { name: string; description: string; acceptedWorstMicros: number }): ResponseMessage {
     const name = payload.name.trim();
     // The engine's order: the key and the ledger, the library, the price and the month, then the name and the limit (free).
-    const refusal = this.keyAndLedgerGate() ?? this.libraryGate() ?? this.priceGate(payload.acceptedWorstMicros, this.categoryPrice().worstMicros) ?? this.categories.roomRefusal(name, null);
+    const refusal = this.keyAndLedgerGate() ?? this.writeLibraryGate() ?? this.priceGate(payload.acceptedWorstMicros, this.categoryPrice().worstMicros) ?? this.categories.roomRefusal(name, null);
     if (refusal) return this.fail(c, refusal);
     const failed = this.categoryCallFailure(c);
     if (failed) return failed.response;
@@ -3074,7 +3106,7 @@ export class MockEngine implements EngineBridge {
     const { categoryId } = payload;
     const refusal =
       this.keyAndLedgerGate() ??
-      this.libraryGate() ??
+      this.writeLibraryGate() ??
       (this.categories.get(categoryId) === undefined ? { code: "NOT_FOUND" as const, detail: `no readable category ${categoryId}` } : null) ??
       this.priceGate(payload.acceptedWorstMicros, this.categoryPrice().worstMicros);
     if (refusal) return this.fail(c, refusal);
@@ -3095,7 +3127,7 @@ export class MockEngine implements EngineBridge {
   }
 
   private updateCategory(c: CommandMessage, payload: { categoryId: CustomCategoryId; name?: string; removeLocations?: string[]; removeOutfits?: string[] }): ResponseMessage {
-    const early = this.libraryGate() ?? this.regeneratingRefusal(payload.categoryId) ?? this.creatingRefusal(payload.name);
+    const early = this.writeLibraryGate() ?? this.regeneratingRefusal(payload.categoryId) ?? this.creatingRefusal(payload.name);
     if (early) return this.fail(c, early);
     const { categoryId, ...change } = payload;
     const result = this.categories.update(categoryId, change);

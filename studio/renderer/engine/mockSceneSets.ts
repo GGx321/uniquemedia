@@ -129,6 +129,8 @@ interface Review {
   shot?: SceneView["shot"] | null;
   /** The shot and pose drawn for each scene an idea write will add. */
   own: { sceneId: number; shot: SceneView["shot"]; pose: SceneView["pose"] }[];
+  /** What a redraw will refresh the set's snapshot of each custom category with: the name the library had when the write was PLANNED, kept until accepted. */
+  snapshots: { ref: CategoryRef; name: string | null }[];
   attempts: Attempt[];
   stoppedBy?: Exclude<SceneStoppedBy, "closed">;
   stoppedError?: EngineError;
@@ -167,6 +169,8 @@ interface MockSet {
   /** The rewrites and idea writes of the review, in the order they began. */
   reviews: Review[];
   writes: number;
+  /** The write that last refreshed each category's snapshot: an older write that finishes later does not undo a newer one's (the engine's `snapshotWrites`). */
+  snapshotWrites: Map<string, number>;
   used: boolean;
   /** The text model the set was made with (the settings may change it later; the set keeps its own). */
   textModel: string;
@@ -209,6 +213,10 @@ export interface MockSceneSetDeps {
   emitMoney: () => void;
   /** Makes the next paid call wait for a reconcile (an open reserve of a request that may have been billed). */
   needReconcile: () => void;
+  /** Whether the ledger can be read: a set's spend is known only then (null, null when it cannot). */
+  ledgerReadable: () => boolean;
+  /** Whether a cancel finds a request at the model (its reserve then stays open) or lands between requests (nothing is open). */
+  cancelHasRequestOut: () => boolean;
 }
 
 /** The counters of the PLANNED scenes that are not removed, as they are now: own scenes are the owner's and are not part of what a compose wrote. */
@@ -359,10 +367,11 @@ export class MockSceneSets {
   readonly #deps: MockSceneSetDeps;
   #sets: MockSet[] = [];
   #jobs: Job[] = [];
-  #unreadable = 0;
+  /** Set files the library could not read: one number for every avatar, or a number per avatar. */
+  #unreadable: number | Readonly<Record<string, number>> = 0;
   #scripted: MockSceneAttempt[] = [];
 
-  constructor(deps: MockSceneSetDeps, seeds: readonly MockSceneSetSeed[] = [], unreadable = 0) {
+  constructor(deps: MockSceneSetDeps, seeds: readonly MockSceneSetSeed[] = [], unreadable: number | Readonly<Record<string, number>> = 0) {
     this.#deps = deps;
     this.#unreadable = unreadable;
     for (const seed of seeds) this.#seed(seed);
@@ -411,12 +420,13 @@ export class MockSceneSets {
       write: stopped === undefined ? null : { k: 1, kind: "compose", ...(stopped === "closed" ? {} : { stoppedBy: stopped, ...(stopped === "failed" ? { stoppedError: { code: "INTERNAL" as const } } : {}) }) },
       reviews: (seed.reviewWrites ?? []).map((w): Review => {
         const attempts = w.cutOff === true ? [cutOff(`${seed.sceneSetId}:write-${w.k}#1`)] : [];
-        const base = { k: w.k, closed: false, redraw: false, draws: new Map(), attempts, ...(w.stoppedBy === undefined ? {} : { stoppedBy: w.stoppedBy }) };
+        const base = { k: w.k, closed: false, redraw: false, draws: new Map(), snapshots: [], attempts, ...(w.stoppedBy === undefined ? {} : { stoppedBy: w.stoppedBy }) };
         return w.kind === "rewrite"
           ? { ...base, kind: "rewrite", sceneIds: [...w.sceneIds], redraw: w.redraw === true, own: [] }
           : { ...base, kind: "idea", sceneIds: [...w.sceneIds], idea: w.idea, shot: w.shot, own: w.sceneIds.map((sceneId) => ({ sceneId, shot: w.shot ?? "friend", pose: "front" as const })) };
       }),
       writes: Math.max(seed.writes ?? 0, ...(seed.reviewWrites ?? []).map((w) => w.k), stopped === undefined ? 0 : 1),
+      snapshotWrites: new Map(),
       used: false,
       // A seed is built before the settings exist: the mock's default text model, as a set made at first launch has.
       textModel: seed.textModel ?? "x-ai/grok-4.3",
@@ -464,7 +474,8 @@ export class MockSceneSets {
   get(avatarId: string): { sceneSet: SceneSetView | null; unreadable: number } {
     const mine = this.#sets.filter((s) => s.avatarId === avatarId);
     const shown = [...mine].reverse().find((s) => !s.used) ?? mine.at(-1);
-    return { sceneSet: shown === undefined ? null : this.view(shown), unreadable: this.#unreadable };
+    const unreadable = typeof this.#unreadable === "number" ? this.#unreadable : (this.#unreadable[avatarId] ?? 0);
+    return { sceneSet: shown === undefined ? null : this.view(shown), unreadable };
   }
 
   hasOpenSet(avatarId: string): boolean {
@@ -608,8 +619,9 @@ export class MockSceneSets {
       poses: { ...set.poses },
       categories: set.categories.map((c) => ({ ...c })),
       textModel: set.textModel,
-      spentMicros: spent,
-      openReserveMicros: open,
+      // The engine reads the spend off the ledger: with a ledger that cannot be read it is unknown, and so is the open part of it.
+      spentMicros: this.#deps.ledgerReadable() ? spent : null,
+      openReserveMicros: this.#deps.ledgerReadable() ? open : null,
       write: live === undefined ? null : { kind: live.kind, count: live.total, ...(live.sceneIds === undefined ? {} : { sceneIds: [...live.sceneIds] }) },
       lastCompose: set.lastOutcome !== undefined ? { ...set.lastOutcome } : scenes.length === 0 ? null : tallyOf(scenes),
       chunks: set.chunks.map((c) => ({ chunk: c.chunk, sceneIds: [...c.sceneIds], attemptsLeft: this.#attemptsLeft(c), gaveUpBy: this.#chunkGaveUpBy(set, c) })),
@@ -750,6 +762,7 @@ export class MockSceneSets {
       write: scenes.length === 0 ? null : { k: 1, kind: "compose" },
       reviews: [],
       writes: scenes.length === 0 ? 0 : 1,
+      snapshotWrites: new Map(),
       used: false,
       textModel: this.#deps.textModel(),
     };
@@ -856,7 +869,7 @@ export class MockSceneSets {
           count: target.count,
           attemptsLeft: SCENE_CHUNK_ATTEMPTS,
           begin: (current) => {
-            const review: Review = { k, kind: "idea", closed: false, sceneIds: own.map((o) => o.sceneId), redraw: false, draws: new Map(), idea: target.idea.trim(), shot: target.shot, own, attempts: [] };
+            const review: Review = { k, kind: "idea", closed: false, sceneIds: own.map((o) => o.sceneId), redraw: false, draws: new Map(), idea: target.idea.trim(), shot: target.shot, own, snapshots: [], attempts: [] };
             current.reviews.push(review);
             current.writes = k;
             return review;
@@ -877,6 +890,14 @@ export class MockSceneSets {
     if (planned.length !== 0 && planned.length !== scenes.length) return invalid("a rewrite covers planned scenes or own scenes, not both: they are written from different prompts", "mixed-kinds");
     if (target.redraw && planned.length !== scenes.length) return invalid("only a planned scene has a place to redraw; an own scene is written again from its idea", "own-redraw");
     const draws = new Map<number, { place: ScenePlace; shot: SceneView["shot"]; pose: SceneView["pose"] }>();
+    // A redraw takes its snapshot of each custom category now, when the write is planned: a rename between this and the answer does not change it.
+    const snapshots: Review["snapshots"] = [];
+    if (target.redraw) {
+      for (const ref of new Set(planned.flatMap((sc) => (sc.category !== "own" && isCustomCategory(sc.category) ? [sc.category] : [])))) {
+        const fresh = this.#deps.category(ref);
+        if (fresh !== undefined) snapshots.push({ ref, name: fresh.name });
+      }
+    }
     if (target.redraw) {
       const shown = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.location] : [])));
       const shownOutfits = new Set(set.scenes.flatMap((s) => (s.place !== null && !s.removed ? [s.place.outfit] : [])));
@@ -914,7 +935,7 @@ export class MockSceneSets {
         attemptsLeft: SCENE_CHUNK_ATTEMPTS,
         begin: (current) => {
           this.#takeOver(current, new Set(target.sceneIds));
-          const review: Review = { k, kind: "rewrite", closed: false, sceneIds: [...target.sceneIds], redraw: target.redraw, draws, own: [], attempts: [] };
+          const review: Review = { k, kind: "rewrite", closed: false, sceneIds: [...target.sceneIds], redraw: target.redraw, draws, own: [], snapshots, attempts: [] };
           current.reviews.push(review);
           current.writes = k;
           return review;
@@ -927,6 +948,18 @@ export class MockSceneSets {
   reviewPrice(plan: MockReviewPlan): { expected: number; worst: number } {
     const worst = plan.attemptsLeft * MOCK_SCENE_ATTEMPT_WORST;
     return { expected: Math.min(Math.round(plan.count * TYPICAL_PER_SCENE), worst), worst };
+  }
+
+  /**
+   * A write that passed every gate and was cancelled before its job began (the engine's cancel that beats the start, while the prices load): the set's file
+   * is never touched, the set is announced as it is, then `job.cancelled`, and only after both does the command answer. Returns the job's id.
+   */
+  cancelUnstarted(set: MockSet, kind: Job["kind"]): string {
+    const job: Job = { jobId: this.#deps.nextId("job"), sceneSetId: set.sceneSetId, avatarId: set.avatarId, kind, status: "cancelled", done: 0, total: 0, error: null, written: 0, unwritten: 0, timers: [], queue: [] };
+    this.#jobs.push(job);
+    this.#announce(set);
+    this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.nextId("evt"), kind: "event", type: "job.cancelled", payload: { kind: "scenes", jobId: job.jobId, sceneSetId: set.sceneSetId, avatarId: set.avatarId } });
+    return job.jobId;
   }
 
   /** A review write that passed the gates: records it in the set and launches its job. */
@@ -1030,15 +1063,18 @@ export class MockSceneSets {
           scene.place = { ...drawn.place };
           scene.shot = drawn.shot;
           scene.pose = drawn.pose;
-          // A redraw refreshes the set's snapshot of the category: its name as the library holds it now.
-          if (scene.category !== "own" && isCustomCategory(scene.category)) {
-            const fresh = this.#deps.category(scene.category);
-            const entry = set.categories.find((c) => c.ref === scene.category);
-            if (fresh !== undefined && entry !== undefined) entry.name = fresh.name;
-          }
         }
         scene.text = sentenceOf(scene, review.k);
         scene.edited = false;
+      }
+    }
+    // A redraw refreshes the set's snapshot of the category with the name taken when it was planned, unless a LATER write already refreshed it.
+    if (review.redraw) {
+      for (const snapshot of review.snapshots) {
+        const entry = set.categories.find((c) => c.ref === snapshot.ref);
+        if (entry === undefined || (set.snapshotWrites.get(snapshot.ref) ?? 0) >= review.k) continue;
+        entry.name = snapshot.name;
+        set.snapshotWrites.set(snapshot.ref, review.k);
       }
     }
     review.closed = true;
@@ -1192,7 +1228,7 @@ export class MockSceneSets {
     job.timers = [];
     const review = job.k === undefined ? undefined : set.reviews.find((r) => r.k === job.k);
     if (review !== undefined) {
-      if (reviewLeft(review) > 0) {
+      if (reviewLeft(review) > 0 && this.#deps.cancelHasRequestOut()) {
         const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: true, cost: 0, open: true };
         review.attempts.push(attempt);
         this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
@@ -1203,7 +1239,7 @@ export class MockSceneSets {
       return;
     }
     const next = this.#pending(set)[0]?.chunk;
-    if (next !== undefined && this.#attemptsLeft(next) > 0) {
+    if (next !== undefined && this.#attemptsLeft(next) > 0 && this.#deps.cancelHasRequestOut()) {
       const attempt: Attempt = { key: `${set.sceneSetId}:writer-${next.chunk}#${next.attempts.length + 1}`, paid: true, cost: 0, open: true };
       next.attempts.push(attempt);
       this.#deps.openReserve(attempt.key, MOCK_SCENE_ATTEMPT_WORST);
