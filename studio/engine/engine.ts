@@ -542,6 +542,8 @@ interface PendingDelete {
   readonly token: string;
   library: Library | null;
   detached: DetachedAvatar | null;
+  /** The avatar's scene sets as the prepare found them: each is announced removed when the folder goes (their files go with it, so only now can they be listed). */
+  sceneSetIds: string[];
   /** The plan has been made and is on its way to main: from here a finish is the ordinary end of the delete. */
   planned: boolean;
   /** Main ended the delete (`kept`) while the prepare was still waiting: the prepare puts everything back itself when it comes to its next look. */
@@ -3374,7 +3376,7 @@ export class Engine {
   async #deletePrepare(avatarId: string, token: string): Promise<AvatarDeletePlan> {
     if (this.#pendingDelete !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: "an avatar is already being deleted; wait for it to finish" });
     // The single slot is taken HERE, before the first await: a second prepare that arrives while this one awaits the library finds it taken.
-    const slot: PendingDelete = { avatarId, token, library: null, detached: null, planned: false, abandoned: false };
+    const slot: PendingDelete = { avatarId, token, library: null, detached: null, sceneSetIds: [], planned: false, abandoned: false };
     this.#pendingDelete = slot;
     try {
       // Claimed before the first await too: nothing else (a library switch included) may change the avatar from here to the finish.
@@ -3396,6 +3398,12 @@ export class Engine {
       // No await between the last look and this: nothing can start for the avatar in between. From here a render or a pick finds no avatar.
       slot.library = library;
       slot.detached = library.detachAvatar(avatarId);
+      // Listed before the folder moves; a set that cannot be listed is simply not announced (`avatar.removed` still tells the windows).
+      slot.sceneSetIds = await library.sceneSets.list(avatarId).then(
+        (listed) => listed.sets.map((set) => set.sceneSetId),
+        () => [],
+      );
+      assertNotAbandoned();
       const found = await this.#videos.avatarFiles(library.root, avatarId);
       assertNotAbandoned();
       slot.planned = true;
@@ -3447,6 +3455,7 @@ export class Engine {
         return;
       }
       this.#jobs.forgetFinishedFor(avatarId);
+      for (const sceneSetId of pending.sceneSetIds) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId } });
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId } });
     } finally {
       this.#busyAvatars.delete(avatarId);

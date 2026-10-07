@@ -1,4 +1,4 @@
-import type { EngineError, SceneStoppedBy } from "../../shared/engine";
+import type { EngineError, SceneComposeTally, SceneStoppedBy } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
 
 // CS.4a: the changes a write makes to its set's record, as pure functions of the record. The store rewrites the file (the next revision, atomically,
@@ -33,4 +33,9 @@ export function withWriteStopped(set: StoredSceneSet, stop: { stoppedBy: Exclude
 /** The write ended with nothing left to resume. */
 export function withWriteFinished(set: StoredSceneSet): StoredSceneSet {
   return { ...set, write: null };
+}
+
+/** What the write that just ended came to, kept in the set: the owner's later edits do not rewrite what the compose said. */
+export function withOutcome(set: StoredSceneSet, outcome: SceneComposeTally): StoredSceneSet {
+  return { ...set, lastOutcome: outcome };
 }

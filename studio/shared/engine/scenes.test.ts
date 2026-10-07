@@ -183,9 +183,13 @@ describe("SceneView", () => {
     expect(SceneView.safeParse(scene({ category: "cat-paris-cafes", categoryName: "Кофейни Парижа" })).success).toBe(true);
   });
 
-  test("a text is at most the bound", () => {
+  test("a text is shown whole above the owner's own bound: it may be a writer's accepted sentence, which the run's journal accepts at any length", () => {
     expect(SceneView.safeParse(scene({ text: "a".repeat(SCENE_TEXT_MAX) })).success).toBe(true);
-    expect(SceneView.safeParse(scene({ text: "a".repeat(SCENE_TEXT_MAX + 1) })).success).toBe(false);
+    expect(SceneView.safeParse(scene({ text: "a".repeat(SCENE_TEXT_MAX + 100) })).success).toBe(true);
+  });
+
+  test("a text is never empty", () => {
+    expect(SceneView.safeParse(scene({ text: "" })).success).toBe(false);
   });
 });
 

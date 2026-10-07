@@ -115,8 +115,9 @@ function sceneNetwork(opts: { writer?: Handler; image?: Handler; prices?: (call:
   };
 }
 
-function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number; clock?: () => number; withFaceGate?: boolean } = {}) {
+function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number; clock?: () => number; withFaceGate?: boolean; beforeRename?: (path: string) => void } = {}) {
   const deps = {
+    ...(opts.beforeRename === undefined ? {} : { library: { testHooks: { beforeRename: opts.beforeRename } } }),
     ...(opts.clock === undefined ? {} : { clock: opts.clock }),
     // A photo run needs a wired face gate to start; a fake one that passes every photo is all a test of the avatar's claim needs.
     ...(opts.withFaceGate === true ? { qaGates: [{ name: "face", paid: false, check: async () => ({ verdict: "pass" as const }) }] } : {}),
@@ -1169,6 +1170,175 @@ describe("scenes.cancel", () => {
     const { engine } = await engineOver(sceneNetwork());
     expect(ok(await engine.handle(command("scenes.cancel", { sceneSetId: SET })))).toMatchObject({ result: { sceneSetId: SET } });
     expect(code(await engine.handle(command("scenes.cancel", { sceneSetId: "set-nobody-0404" })))).toBe("NOT_FOUND");
+  });
+});
+
+describe("a refused command never touches the live mark of another job (fix round 1)", () => {
+  test("a write refused IN_FLIGHT during a compose leaves the set writing: edits and discard are still IN_FLIGHT and cancel really cancels the job", async () => {
+    const avatarId = await seedAvatar();
+    const gate = held();
+    const { engine, events } = await engineOver(sceneNetwork({ writer: gate.handler }));
+    const { sceneSetId, jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 5 })));
+    await until(() => gate.arrived() === 1, "the request");
+    const { revision } = await setOf(engine, avatarId);
+
+    expect(code(await engine.handle(writeCommand(revision, 10 * ATTEMPT, sceneSetId)))).toBe("IN_FLIGHT");
+
+    const view = await setOf(engine, avatarId);
+    expect(view).toMatchObject({ status: "writing", stoppedBy: null });
+    expect(view.write).toMatchObject({ kind: "compose", count: 5 });
+    expect(code(await engine.handle(command("scenes.discard", { sceneSetId })))).toBe("IN_FLIGHT");
+    expect(code(await engine.handle(edit(revision, { op: "remove", sceneIds: [1] }, sceneSetId)))).toBe("IN_FLIGHT");
+    expect(existsSync(setFile(avatarId, sceneSetId))).toBe(true);
+
+    ok(await engine.handle(command("scenes.cancel", { sceneSetId })));
+    const end = await jobEnd(events, jobId ?? "none");
+    expect(end).toMatchObject({ type: "job.cancelled", payload: { kind: "scenes", jobId, sceneSetId, avatarId } });
+    gate.release();
+  });
+
+  test("two writes at once on one set start exactly one job: the other is IN_FLIGHT and records nothing in the file", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, write: { k: 1, kind: "compose", jobId: JOB, stoppedBy: "network" } });
+    const gate = held();
+    const { engine, events } = await engineOver(sceneNetwork({ writer: gate.handler }));
+    const { revision } = await setOf(engine, avatarId);
+
+    const answers = await Promise.all([engine.handle(writeCommand(revision, 2 * ATTEMPT)), engine.handle(writeCommand(revision, 2 * ATTEMPT))]);
+
+    const codes = answers.map((a) => (a.ok ? "ok" : failed(a).error.code));
+    expect(codes.filter((c) => c === "ok")).toHaveLength(1);
+    expect(codes.filter((c) => c === "IN_FLIGHT")).toHaveLength(1);
+    const started = answers.flatMap((a) => (a.ok ? [jobOf(a)] : []));
+    await until(() => gate.arrived() === 1, "the request");
+    expect(JSON.parse(readFileSync(setFile(avatarId), "utf8"))).toMatchObject({ writes: 2, write: { k: 2, jobId: started[0] } });
+    gate.release();
+    await jobEnd(events, started[0] ?? "none");
+    expect(events().filter((e) => e.type === "job.failed")).toHaveLength(0);
+  });
+});
+
+describe("the start of a write is announced (fix round 1)", () => {
+  test("a compose announces its set as writing with the full scene count, the same as scenes.get says at that moment", async () => {
+    const avatarId = await seedAvatar();
+    const gate = held();
+    const { engine, events } = await engineOver(sceneNetwork({ writer: gate.handler }));
+    const { jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 20 })));
+    await until(() => gate.arrived() === 1, "the request");
+
+    const [first] = changes(events);
+    expect(first).toMatchObject({ status: "writing", write: { kind: "compose", count: 20 } });
+    expect((await setOf(engine, avatarId)).write).toEqual(first?.write ?? null);
+    gate.release();
+    await jobEnd(events, jobId ?? "none");
+  });
+
+  test("«Дописать» announces the set as writing, on the revision beginWrite made, before the first chunk is answered", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, write: { k: 1, kind: "compose", jobId: JOB, stoppedBy: "network" } });
+    const gate = held();
+    const { engine, events } = await engineOver(sceneNetwork({ writer: gate.handler }));
+    const before = await setOf(engine, avatarId);
+
+    const jobId = jobOf(await engine.handle(writeCommand(before.revision, 2 * ATTEMPT)));
+    await until(() => gate.arrived() === 1, "the request");
+
+    const announced = changes(events);
+    expect(announced).toHaveLength(1);
+    expect(announced[0]).toMatchObject({ status: "writing", revision: before.revision + 1, write: { kind: "unwritten", count: 3 } });
+    gate.release();
+    await jobEnd(events, jobId);
+  });
+});
+
+describe("an accepted paid chunk is never lost to the store (fix round 1)", () => {
+  const LONG = Array.from({ length: 7 }, () => SENTENCE).join(" ");
+
+  test("an accepted sentence of 700 chars is stored as the writer wrote it, and its chunk is written on the first attempt", async () => {
+    expect(LONG.length).toBeGreaterThan(650);
+    const avatarId = await seedAvatar();
+    const long: Handler = (call) => ({ status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: LONG })) }), { cost: 0.0112 }) });
+    const net = sceneNetwork({ writer: long });
+    const { engine, events } = await engineOver(net);
+
+    const { jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 5 })));
+    const end = await jobEnd(events, jobId ?? "none");
+
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 5, unwritten: 0 } } });
+    expect(net.writerCalls()).toHaveLength(1);
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes.map((s) => s.text)).toEqual(Array.from({ length: 5 }, () => LONG));
+    expect(view.chunks[0]).toMatchObject({ attemptsLeft: 1, gaveUpBy: null });
+  });
+
+  test("the owner's own edit is still limited to 600 chars", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, written: 3 });
+    const { engine } = await engineOver(sceneNetwork());
+    const { revision } = await setOf(engine, avatarId);
+
+    const result = ok(await engine.handle(edit(revision, { op: "text", sceneId: 1, text: LONG })));
+
+    expect(result).toMatchObject({ result: { problem: { reason: "too-long" } } });
+  });
+
+  test("a transient disk error while storing an accepted chunk is retried once: the chunk is written, the job is done", async () => {
+    const avatarId = await seedAvatar();
+    let setWrites = 0;
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net, {
+      beforeRename: (path) => {
+        // The set's file is written by the compose (1st), then by the chunk's save (2nd): the 2nd fails once.
+        if (path.includes(`${join("scenes", "")}`) && ++setWrites === 2) throw new Error("the disk hiccuped");
+      },
+    });
+
+    const { jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 5 })));
+    const end = await jobEnd(events, jobId ?? "none");
+
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 5, unwritten: 0 } } });
+    expect(setWrites).toBeGreaterThanOrEqual(3);
+    expect(net.writerCalls()).toHaveLength(1);
+    expect((await setOf(engine, avatarId)).scenes.every((s) => s.text !== null)).toBe(true);
+  });
+});
+
+describe("what the view claims stays true (fix round 1)", () => {
+  test("a delete that went through announces each of the avatar's sets removed, before avatar.removed", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 5 });
+    const started = await engineOver(sceneNetwork());
+
+    await started.engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-00000001", avatarId, token: "token-00000001" });
+    await started.engine.receive({ kind: "control", type: "avatar.deleteFinish", callId: "call-00000002", avatarId, token: "token-00000001", outcome: "trashed" });
+
+    const told = started.events().flatMap((e) => (e.type === "scenes.changed" && e.payload.change === "removed" ? [`set:${e.payload.sceneSetId}`] : e.type === "avatar.removed" ? ["avatar"] : []));
+    expect(told).toEqual([`set:${SET}`, "avatar"]);
+  });
+
+  test("a delete that was kept announces no set removed", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 5 });
+    const started = await engineOver(sceneNetwork());
+
+    await started.engine.receive({ kind: "control", type: "avatar.deletePrepare", callId: "call-00000001", avatarId, token: "token-00000001" });
+    await started.engine.receive({ kind: "control", type: "avatar.deleteFinish", callId: "call-00000002", avatarId, token: "token-00000001", outcome: "kept" });
+
+    expect(started.events().filter((e) => e.type === "scenes.changed" && e.payload.change === "removed")).toEqual([]);
+  });
+
+  test("the compose outcome is the one the job ended with: removing scenes afterwards does not change it", async () => {
+    const avatarId = await seedAvatar();
+    const net = sceneNetwork({ writer: (call, n) => (n === 1 ? goodAnswer(call, n) : rejectedAnswer) });
+    const { engine, events } = await engineOver(net);
+    const { sceneSetId, jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 30 })));
+    await jobEnd(events, jobId ?? "none");
+    const ended = await setOf(engine, avatarId);
+    expect(ended.lastCompose).toEqual({ total: 30, written: 25, gaveUp: 5 });
+
+    ok(await engine.handle(edit(ended.revision, { op: "remove", sceneIds: [1, 2, 3, 26, 27] }, sceneSetId)));
+
+    expect((await setOf(engine, avatarId)).lastCompose).toEqual({ total: 30, written: 25, gaveUp: 5 });
   });
 });
 

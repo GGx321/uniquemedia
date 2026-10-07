@@ -43,7 +43,7 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `media.changed`: an own-media record was stored (`upserted`, with its summary) or is gone (`removed`).
  * - `music.changed`: the music status changed (a refresh started, progressed, ended or failed; the quota moved), whole.
  * - `scenes.changed`: a scene set was created or changed (`upserted`, with the whole set: a chunk written, an edit, a stop) or is gone (`removed`: discarded, or its
- *   avatar was deleted). Always BEFORE the `job.done`, `job.failed` or `job.cancelled` of the job that changed it. The set is read on demand (`scenes.get`).
+ *   avatar was deleted through «Удалить аватар»: one per set, before `avatar.removed`; an avatar pruned after its folder vanished is announced by `avatar.removed` alone). Always BEFORE the `job.done`, `job.failed` or `job.cancelled` of the job that changed it. The set is read on demand (`scenes.get`).
  * - `category.changed`: a custom category was stored or changed (`upserted`, with its summary: created, renamed, an item removed, regenerated, or only its
  *   spend moved after a failed regeneration) or is gone (`removed`). Categories are listed on demand (`categories.list`); the event keeps the windows in step.
  */

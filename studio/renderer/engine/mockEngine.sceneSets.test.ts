@@ -186,6 +186,42 @@ describe("scenes.compose", () => {
   });
 });
 
+describe("what the view claims stays true (fix round 1)", () => {
+  test("a deleted avatar's sets are announced removed, before avatar.removed", async () => {
+    const m = makeMock();
+    const { sceneSetId } = await composed(m, 5);
+    m.scheduler.runAll();
+    await unwrap(m.client.request("avatars.delete", { avatarId: MIA.avatarId }));
+
+    const told = m.events.flatMap((e) => (e.type === "scenes.changed" && e.payload.change === "removed" ? [`set:${e.payload.sceneSetId}`] : e.type === "avatar.removed" ? ["avatar"] : []));
+    expect(told).toEqual([`set:${sceneSetId}`, "avatar"]);
+  });
+
+  test("the set keeps the text model it was made with when the settings change it later", async () => {
+    const m = makeMock();
+    await composed(m, 5);
+    m.scheduler.runAll();
+    const snapshot = await unwrap(m.client.request("engine.snapshot", {}));
+    await unwrap(m.client.request("settings.setModels", { imageModel: snapshot.settings.imageModel, textModel: "openai/gpt-5.1" }));
+
+    expect((await setOf(m)).textModel).toBe(snapshot.settings.textModel);
+  });
+
+  test("the compose outcome is the one the job ended with: removing scenes afterwards does not change it", async () => {
+    const m = makeMock();
+    m.engine.failNextSceneAttempt("rejected");
+    m.engine.failNextSceneAttempt("rejected");
+    const { sceneSetId } = await composed(m, 30);
+    m.scheduler.runAll();
+    const ended = await setOf(m);
+    expect(ended.lastCompose).toEqual({ total: 30, written: 5, gaveUp: 25 });
+
+    await unwrap(edit(m, sceneSetId, ended.revision, { op: "remove", sceneIds: [1, 2, 3, 26, 27] }));
+
+    expect((await setOf(m)).lastCompose).toEqual({ total: 30, written: 5, gaveUp: 25 });
+  });
+});
+
 describe("a write that stops, and what stays", () => {
   test("a free failure (429) stops the job with both attempts kept: failed after scenes.changed, stopped by the rate limit", async () => {
     const m = makeMock();

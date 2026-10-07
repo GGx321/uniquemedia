@@ -226,6 +226,12 @@ describe("lastCompose", () => {
     expect(viewOf(gaveUp).lastCompose).toEqual({ total: 5, written: 3, gaveUp: 2 });
   });
 
+  test("reports the outcome stored when the job ended, not the scenes as they are now", () => {
+    const set = stored({ lastOutcome: { total: 5, written: 3, gaveUp: 2 } }, { count: 6, written: 3 });
+    const edited = { ...set, scenes: set.scenes.map((s) => ({ ...s, removed: true })) };
+    expect(viewOf(edited).lastCompose).toEqual({ total: 5, written: 3, gaveUp: 2 });
+  });
+
   test("an empty set has none", () => {
     expect(viewOf(stored({}, { count: 0, categories: [] })).lastCompose).toBeNull();
   });

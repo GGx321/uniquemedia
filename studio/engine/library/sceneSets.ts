@@ -1,7 +1,7 @@
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { AttemptId, CategoryRef, CategorySnapshot, EngineError, Id, isCustomCategory, MAX_RUN_CATEGORIES, MAX_SCENES_PER_SET, ModelId, SCENE_CHUNK_SIZE, SceneId, SceneStoppedBy, SceneText } from "../../shared/engine";
+import { AttemptId, CategoryRef, CategorySnapshot, EngineError, Id, isCustomCategory, MAX_RUN_CATEGORIES, MAX_SCENES_PER_SET, ModelId, SCENE_CHUNK_SIZE, SceneComposeTally, SceneId, SceneStoppedBy, SceneText } from "../../shared/engine";
 import { PlanSlotSchema } from "../scenes";
 import { fsyncDir, hasErrorCode, writeJsonAtomic } from "./durableFs";
 import { isLibraryId } from "./ids";
@@ -85,6 +85,8 @@ export const SceneSetFile = z
     scenes: z.array(SceneRecord).max(MAX_SCENES_PER_SET),
     chunks: z.array(ChunkRecord),
     write: WriteRecord.nullable(),
+    /** The counters of the planned scenes when the last write job ended (a compose or a «Дописать»): what «Готово 35 из 60» says, kept as it was said. Absent until a job ended. */
+    lastOutcome: SceneComposeTally.optional(),
     /** How many writes were started: the next write is number `writes + 1`. */
     writes: z.number().int().min(0),
   })

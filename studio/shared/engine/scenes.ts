@@ -13,7 +13,7 @@ export const MAX_SCENES_PER_SET = 200;
 export const MAX_COMPOSE_SCENES = 100;
 /** One edit removes or restores at most this many scenes at once. */
 export const MAX_SCENES_PER_EDIT = 100;
-/** A scene's text is 1..600 chars on one line (technical bounds; the assembler's own word rules apply on top). */
+/** The OWNER's own text is 1..600 chars on one line (technical bounds; the assembler's own word rules apply on top). The writer's sentence is not held to it. */
 export const SCENE_TEXT_MAX = 600;
 /** What an edit's text may weigh before the contract itself refuses it; between `SCENE_TEXT_MAX` and this the engine answers a `too-long` problem. */
 export const SCENE_TEXT_INPUT_MAX = 4_000;
@@ -69,7 +69,11 @@ export type ScenePlace = z.infer<typeof ScenePlace>;
 /** The idea an own scene was written from (CS.4b): any script, up to 500 chars. */
 export const SceneIdea = z.string().min(1).max(500);
 
-export const SceneText = z.string().min(1).max(SCENE_TEXT_MAX);
+/**
+ * A scene's stored and shown text. Bounded below only: it holds what the writer's answer was accepted with, and a run's journal accepts a writer sentence
+ * of any length (`z.string().min(1)`), so a paid, accepted sentence can never fail to fit here. The 600-char bound is the owner's edit (`textProblem`).
+ */
+export const SceneText = z.string().min(1);
 
 export const SceneView = z
   .strictObject({

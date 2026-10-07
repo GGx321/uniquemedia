@@ -14,6 +14,7 @@ import {
   type ScenePlace,
   type SceneEditOp,
   type SceneGaveUpBy,
+  type SceneComposeTally,
   type SceneProblem,
   type SceneSetView,
   type SceneStoppedBy,
@@ -54,6 +55,8 @@ export interface MockSceneSetSeed {
   /** The write that did not finish: the set reads stopped, for this reason (`closed` when no outcome was kept). Absent: the set is ready. */
   stopped?: SceneStoppedBy;
   categories?: readonly CategoryRef[];
+  /** The text model the set was made with; the mock's default when absent. */
+  textModel?: string;
   /** The scenes themselves, instead of the mock's own plan (the parity rig seeds the real engine's store with the very same ones). A `text` is a written scene. */
   scenes?: readonly { category: CategoryRef; shot: SceneView["shot"]; pose: SceneView["pose"]; place: ScenePlace; text?: string }[];
 }
@@ -99,6 +102,10 @@ interface MockSet {
   write: { k: number; kind: "compose" | "unwritten"; stoppedBy?: Exclude<SceneStoppedBy, "closed">; stoppedError?: EngineError } | null;
   writes: number;
   used: boolean;
+  /** The text model the set was made with (the settings may change it later; the set keeps its own). */
+  textModel: string;
+  /** The counters when the last write job ended, as the compose said them; absent until a job ended. */
+  lastOutcome?: SceneComposeTally;
 }
 
 interface Job {
@@ -133,6 +140,12 @@ export interface MockSceneSetDeps {
   emitMoney: () => void;
   /** Makes the next paid call wait for a reconcile (an open reserve of a request that may have been billed). */
   needReconcile: () => void;
+}
+
+/** The counters of the scenes that are not removed, as they are now. */
+function tallyOf(scenes: readonly SceneView[]): SceneComposeTally {
+  const active = scenes.filter((s) => !s.removed);
+  return { total: active.length, written: active.filter((s) => s.text !== null).length, gaveUp: active.filter((s) => s.unwritten === "gave-up").length };
 }
 
 // ---------- the plan: deterministic, from the request ----------
@@ -279,6 +292,8 @@ export class MockSceneSets {
       write: stopped === undefined ? null : { k: 1, kind: "compose", ...(stopped === "closed" ? {} : { stoppedBy: stopped, ...(stopped === "failed" ? { stoppedError: { code: "INTERNAL" as const } } : {}) }) },
       writes: stopped === undefined ? 0 : 1,
       used: false,
+      // A seed is built before the settings exist: the mock's default text model, as a set made at first launch has.
+      textModel: seed.textModel ?? "x-ai/grok-4.3",
     });
   }
 
@@ -427,7 +442,6 @@ export class MockSceneSets {
         chunk: chunk?.chunk ?? null,
       };
     });
-    const active = scenes.filter((s) => !s.removed);
     return {
       sceneSetId: set.sceneSetId,
       avatarId: set.avatarId,
@@ -439,11 +453,11 @@ export class MockSceneSets {
       runId: set.used ? set.runId : null,
       poses: { ...set.poses },
       categories: set.categories.map((c) => ({ ...c })),
-      textModel: this.#deps.textModel(),
+      textModel: set.textModel,
       spentMicros: spent,
       openReserveMicros: open,
       write: live === undefined ? null : { kind: live.kind, count: live.total },
-      lastCompose: scenes.length === 0 ? null : { total: active.length, written: active.filter((s) => s.text !== null).length, gaveUp: active.filter((s) => s.unwritten === "gave-up").length },
+      lastCompose: set.lastOutcome !== undefined ? { ...set.lastOutcome } : scenes.length === 0 ? null : tallyOf(scenes),
       chunks: set.chunks.map((c) => ({ chunk: c.chunk, sceneIds: [...c.sceneIds], attemptsLeft: this.#attemptsLeft(c), gaveUpBy: this.#chunkGaveUpBy(set, c) })),
       scenes,
     };
@@ -505,6 +519,9 @@ export class MockSceneSets {
 
   /** An avatar was deleted: its sets went to the Trash with its folder. */
   removeAvatar(avatarId: string): void {
+    for (const set of this.#sets) {
+      if (set.avatarId === avatarId) this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.nextId("evt"), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId: set.sceneSetId, avatarId } });
+    }
     this.#sets = this.#sets.filter((s) => s.avatarId !== avatarId);
     this.#jobs = this.#jobs.filter((j) => j.avatarId !== avatarId);
   }
@@ -529,6 +546,7 @@ export class MockSceneSets {
       write: scenes.length === 0 ? null : { k: 1, kind: "compose" },
       writes: scenes.length === 0 ? 0 : 1,
       used: false,
+      textModel: this.#deps.textModel(),
     };
     this.#sets.push(set);
     if (scenes.length === 0) {
@@ -653,6 +671,7 @@ export class MockSceneSets {
       }
     }
     set.revision += 1;
+    set.lastOutcome = tallyOf(this.view(set).scenes);
     this.#deps.emitMoney();
     this.#announce(set);
     const { jobId, sceneSetId, avatarId } = job;

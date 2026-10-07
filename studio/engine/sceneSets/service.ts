@@ -27,8 +27,8 @@ import { pendingChunks } from "./chunks";
 import { planSceneSet } from "./compose";
 import { applyEdit, type EditOutcome } from "./edit";
 import { composeEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
-import { beginWrite, withChunkGivenUp, withChunkWritten, withWriteFinished, withWriteStopped } from "./mutations";
-import { buildSceneSetView } from "./view";
+import { beginWrite, withChunkGivenUp, withChunkWritten, withOutcome, withWriteFinished, withWriteStopped } from "./mutations";
+import { buildSceneSetView, currentTally } from "./view";
 import { runSceneWrite, type SceneWriteEnd } from "./writeJob";
 
 // CS.4a: the scene sets' commands and their writer job. The engine owns the money and the library; this owns the set's life, and talks to the engine
@@ -235,8 +235,8 @@ export class SceneSetService {
   async cancel(sceneSetId: string): Promise<void> {
     const library = this.#needLibrary();
     await this.#find(library, sceneSetId);
-    const live = this.#live.get(sceneSetId);
-    if (live !== undefined) this.#deps.jobs.cancel(live.jobId);
+    const jobId = this.#deps.jobs.runningJobOfSet(sceneSetId);
+    if (jobId !== null) this.#deps.jobs.cancel(jobId);
   }
 
   // ---------- compose ----------
@@ -301,8 +301,13 @@ export class SceneSetService {
         this.#live.delete(sceneSetId);
         throw new EngineFailure({ code: "INTERNAL", detail: `nothing was sent: the scene set could not be written (${detailOfError(error)})` });
       }
+      if (jobId === null || key === null || budget === null || priced === null) {
+        await this.#announce(library, stored);
+        return { sceneSetId, jobId: null };
+      }
+      // The first announcement already tells how many scenes the job will write, as scenes.get does.
+      this.#setCount(stored, budget);
       await this.#announce(library, stored);
-      if (jobId === null || key === null || budget === null || priced === null) return { sceneSetId, jobId: null };
       this.#launch({ jobId, set: stored, kind: "compose", key, budget, library, priced, capMicros: worstMicros });
       launched = true;
       return { sceneSetId, jobId };
@@ -328,7 +333,11 @@ export class SceneSetService {
     deps.paidStart();
     let launched = false;
     let claimed: string | null = null;
+    /** The live entry THIS call made: a refused write must never delete another job's. */
+    let mine: LiveJob | null = null;
     try {
+      // A set whose job runs refuses before anything is read, claimed or written.
+      if (this.#live.has(sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${sceneSetId} is being written; wait for that to end (or cancel it)` });
       const key = deps.usableKey("write scenes");
       const budget = deps.paidBudget();
       const library = await deps.liveLibrary();
@@ -336,7 +345,8 @@ export class SceneSetService {
       deps.claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
       claimed = avatarId;
       const jobId = deps.newId();
-      this.#live.set(sceneSetId, { jobId, avatarId, kind: "unwritten", count: 0, inFlight: new Set() });
+      mine = { jobId, avatarId, kind: "unwritten", count: 0, inFlight: new Set() };
+      this.#live.set(sceneSetId, mine);
       deps.runnableAvatar(library, avatarId);
       await deps.assertAvatarOnDisk(library, avatarId);
       if (await library.runFolderExists(set.runId)) throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${sceneSetId} is used by run ${set.runId} and is read-only` });
@@ -358,12 +368,15 @@ export class SceneSetService {
       } catch (error) {
         return this.#failureOf(error);
       }
+      // The write is in the file (revision and status moved): announce it now, not at the first chunk (which can be minutes away).
+      this.#setCount(started, budget);
+      await this.#announce(library, started);
       this.#launch({ jobId, set: started, kind: "unwritten", key, budget, library, priced, capMicros: estimate.worstMicros });
       launched = true;
       return { jobId };
     } finally {
       if (!launched) {
-        this.#live.delete(sceneSetId);
+        if (mine !== null && this.#live.get(sceneSetId) === mine) this.#live.delete(sceneSetId);
         deps.paidEnd();
         if (claimed !== null) deps.releaseAvatar(claimed);
       }
@@ -372,14 +385,21 @@ export class SceneSetService {
 
   // ---------- the job ----------
 
+  /** The scenes the set's job will write (the chunks still pending), put on its live entry so the view says it from the first announcement. */
+  #setCount(set: StoredSceneSet, budget: Budget): number {
+    const total = pendingChunks(set, budget.ledger).reduce((sum, pending) => sum + pending.sceneIds.length, 0);
+    const live = this.#live.get(set.sceneSetId);
+    if (live !== undefined) live.count = total;
+    return total;
+  }
+
   /** Registers the job under its own scope, capped at the worst case it was priced at, and runs it on after the command's answer. */
   #launch(job: { jobId: string; set: StoredSceneSet; kind: "compose" | "unwritten"; key: string; budget: Budget; library: Library; priced: PricedBook; capMicros: number }): void {
     const deps = this.#deps;
     const { set, jobId } = job;
-    const total = pendingChunks(set, job.budget.ledger).reduce((sum, pending) => sum + pending.sceneIds.length, 0);
+    const total = this.#setCount(set, job.budget);
     const live = this.#live.get(set.sceneSetId);
     if (live === undefined) throw new Error(`scene set ${set.sceneSetId} has no live job to launch`);
-    live.count = total;
     const signal = deps.jobs.startScenes(jobId, { sceneSetId: set.sceneSetId, avatarId: set.avatarId, total });
     deps.setCap(scopeKey({ avatarJobId: jobId }), job.capMicros);
     try {
@@ -398,6 +418,17 @@ export class SceneSetService {
     const { sceneSetId, avatarId } = set;
     const scope = { avatarJobId: jobId };
     const update = async (change: (current: StoredSceneSet) => StoredSceneSet): Promise<StoredSceneSet> => library.sceneSets.update(avatarId, sceneSetId, change);
+    // An accepted chunk is paid for and its answer is kept nowhere else: a disk error while storing it is tried once more from the sentences in memory.
+    // A refusal of the store itself (the record is gone or does not fit) is not transient and is not retried.
+    const store = async (change: (current: StoredSceneSet) => StoredSceneSet): Promise<StoredSceneSet> => {
+      try {
+        return await update(change);
+      } catch (error) {
+        if (error instanceof SceneSetError) throw error;
+        deps.warn(`studio engine: scene set ${sceneSetId} could not be written (${detailOfError(error)}); trying once more`);
+        return update(change);
+      }
+    };
     let end: SceneWriteEnd;
     try {
       const client = deps.openRouter(job.key);
@@ -416,7 +447,7 @@ export class SceneSetService {
             return current;
           },
           saveChunk: async (_chunk, sentences) => {
-            await this.#announce(library, await update((current) => withChunkWritten(current, sentences)));
+            await this.#announce(library, await store((current) => withChunkWritten(current, sentences)));
           },
           giveUp: async (chunk, by) => {
             await this.#announce(library, await update((current) => withChunkGivenUp(current, chunk, by)));
@@ -434,11 +465,13 @@ export class SceneSetService {
     deps.clearCap(scopeKey(scope));
     // Why the write ended is kept in the set (a dying process cannot write «closed»: no outcome and no live job reads that).
     try {
-      await update((current) =>
-        end.status === "done"
-          ? withWriteFinished(current)
-          : withWriteStopped(current, end.status === "cancelled" ? { stoppedBy: "cancelled" } : { stoppedBy: end.stoppedBy, error: end.error }),
-      );
+      await update((current) => {
+        const ended =
+          end.status === "done"
+            ? withWriteFinished(current)
+            : withWriteStopped(current, end.status === "cancelled" ? { stoppedBy: "cancelled" } : { stoppedBy: end.stoppedBy, error: end.error });
+        return withOutcome(ended, currentTally(ended, deps.ledger()));
+      });
     } catch (error) {
       deps.warn(`studio engine: how scenes job ${jobId} ended could not be recorded in its set (${detailOfError(error)}); the set will read as closed`);
     }

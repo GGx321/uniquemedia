@@ -1,4 +1,4 @@
-import { isCustomCategory, type CategoryRef, type SceneLiveWrite, type SceneSetView, type SceneView } from "../../shared/engine";
+import { isCustomCategory, type CategoryRef, type SceneComposeTally, type SceneLiveWrite, type SceneSetView, type SceneView } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
 import type { LedgerView } from "../runs/journal";
 import { categoryRefOf } from "../scenes";
@@ -68,6 +68,18 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
   });
 }
 
+/** The counters of the scenes that are not removed, as they are now. */
+function tallyOf(scenes: readonly SceneView[]): SceneComposeTally {
+  const active = scenes.filter((s) => !s.removed);
+  return { total: active.length, written: active.filter((s) => s.text !== null).length, gaveUp: active.filter((s) => s.unwritten === "gave-up").length };
+}
+
+/** The counters of a set at rest, as they are now: what a job that ends records as its outcome. */
+export function currentTally(set: StoredSceneSet, ledger: LedgerView | null): SceneComposeTally {
+  const states = new Map(set.chunks.map((chunk) => [chunk.chunk, chunkState(set, chunk, ledger)] as const));
+  return tallyOf(sceneViews(set, states));
+}
+
 export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneSetView {
   const states = new Map(set.chunks.map((chunk) => [chunk.chunk, chunkState(set, chunk, ctx.ledger)] as const));
   const scenes = sceneViews(set, states);
@@ -76,7 +88,6 @@ export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneS
   const status = ctx.used ? "used" : ctx.live !== null ? "writing" : stopped ? "stopped" : "ready";
   const stoppedBy = stopped ? (set.write?.stoppedBy ?? "closed") : null;
   const spend = spendOf(set, ctx.ledger, ctx.inFlight);
-  const active = scenes.filter((s) => !s.removed);
   const categories = set.request.categories.map((ref: CategoryRef) => ({ ref, name: isCustomCategory(ref) ? ((set.categories ?? []).find((c) => c.ref === ref)?.name ?? null) : null }));
   return {
     sceneSetId: set.sceneSetId,
@@ -93,7 +104,8 @@ export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneS
     spentMicros: spend === null ? null : spend.spent,
     openReserveMicros: spend === null ? null : spend.open,
     write: ctx.live,
-    lastCompose: scenes.length === 0 ? null : { total: active.length, written: active.filter((s) => s.text !== null).length, gaveUp: active.filter((s) => s.unwritten === "gave-up").length },
+    // What the last job ended with, as it was said; a set no job has ended on (a seeded or a crashed one) reads as it is now.
+    lastCompose: set.lastOutcome !== undefined ? { ...set.lastOutcome } : scenes.length === 0 ? null : tallyOf(scenes),
     chunks: set.chunks.map((chunk) => {
       const state = states.get(chunk.chunk);
       return { chunk: chunk.chunk, sceneIds: [...chunk.sceneIds], attemptsLeft: state?.attemptsLeft ?? 0, gaveUpBy: state?.gaveUpBy ?? null };
