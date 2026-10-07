@@ -438,9 +438,8 @@ export class EngineStore {
   };
 
   /**
-   * `category.changed` as the store applies it (CS.2), the media way: in seq order, once each, and `resynced` after a snapshot taken again (any
-   * change in the gap is lost). The categories are not kept in the view: the window lists them with `categories.list` on mount and on a library
-   * switch, and follows the events here.
+   * `scenes.changed` as the store applies it (CS.4a), the media way: in seq order, once each, and `resynced` after a snapshot taken again (any change in
+   * the gap is lost). The sets are not kept in the view: the window reads one with `scenes.get` and follows the events here.
    */
   readonly subscribeSceneSets = (listener: (signal: SceneSetSignal) => void): (() => void) => {
     this.sceneSetListeners.add(listener);
@@ -449,6 +448,11 @@ export class EngineStore {
     };
   };
 
+  /**
+   * `category.changed` as the store applies it (CS.2), the media way: in seq order, once each, and `resynced` after a snapshot taken again (any
+   * change in the gap is lost). The categories are not kept in the view: the window lists them with `categories.list` on mount and on a library
+   * switch, and follows the events here.
+   */
   readonly subscribeCategories = (listener: (signal: CategorySignal) => void): (() => void) => {
     this.categoryListeners.add(listener);
     return () => {
@@ -541,14 +545,6 @@ export class EngineStore {
   }
 
   /**
-   * T8b: records a photo run's job this window just started or resumed, with
-   * its slot count as the total and, for a resume, the slots that already
-   * ended as done, until the first job.progress says otherwise (so the
-   * sidebar queue never shows a batch's "|| 4" for a run, nor a resume
-   * starting over from zero); merges with any events that beat the reply.
-   * `runId` comes straight off the same command reply.
-   */
-  /**
    * CS.4a: records a scene set's writer job this window just started (a compose or a «Дописать»), with the scenes it will write as the total until the
    * first job.progress says otherwise; merges with any events that beat the reply.
    */
@@ -556,6 +552,14 @@ export class EngineStore {
     this.patchJob({ kind: "scenes", jobId, sceneSetId, avatarId }, (job) => ({ ...job, total: job.total || total }));
   }
 
+  /**
+   * T8b: records a photo run's job this window just started or resumed, with
+   * its slot count as the total and, for a resume, the slots that already
+   * ended as done, until the first job.progress says otherwise (so the
+   * sidebar queue never shows a batch's "|| 4" for a run, nor a resume
+   * starting over from zero); merges with any events that beat the reply.
+   * `runId` comes straight off the same command reply.
+   */
   trackRunJob(jobId: string, runId: string, avatarId: string, total: number, ended = 0): void {
     this.patchJob({ kind: "run", jobId, runId, avatarId }, (job) => {
       const size = job.total || total;
