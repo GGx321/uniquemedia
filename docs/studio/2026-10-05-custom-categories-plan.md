@@ -1312,6 +1312,64 @@ across windows, and the visual LOWs.
   (≈ $0.25, worst $0.75); reconcile; record the numbers and the real token counts (input for a
   smaller review-time call shape later).
 
+#### CS.7 fixes, engine side (as built)
+
+The whole-slice review (three areas, no HIGH) left two MEDIUM and a list of LOW; this is the engine and mock half of the fix round (the UI half and the docs
+are other tasks). Each change was seen red for its intended reason first (a test that failed on a missing import or a typo was not counted).
+
+**Contract additions (additive, v5 stays open; journalled in `shared/engine/envelope.ts`):**
+
+- `EngineError.sceneReason` (VALIDATION only) and `EngineError.sceneId`. `sceneReason` is a closed set, `SCENE_REASONS` in `shared/engine/errors.ts`, one per
+  kind of VALIDATION the scene-set code raises. A revision that moved stays SCENES_CHANGED and has no reason. The reasons, with where they come from:
+  `set-used` (the set's run exists: an edit, a write, an approval, a racing start), `open-set` (compose while the avatar has an open set), `nothing-waiting`
+  («Дописать» with nothing to write), `scene-missing` (the set lacks the scene; `sceneId` = the first), `target-removed` (the scene to write or edit is removed,
+  or every scene of an interrupted rewrite is; `sceneId` when it names one), `scene-without-text` (an active scene has no text at an approval; `sceneId` = the
+  first), `no-active-scenes`, `too-many-active` (over 100), `scene-text-problem` (an active stored text breaks today's word rules at an approval; `sceneId` =
+  that scene, so the window can name it), `write-record-cap` (500 review writes recorded), `idea-room` (the new scenes do not fit in 200, with the room an
+  interrupted idea write holds), `mixed-kinds` (a rewrite names planned and own scenes), `own-redraw`, `no-open-write` (resume or dismiss of a write that is
+  not unresolved), `no-attempts-left`, `nothing-to-dismiss` (a scene with no unresolved rewrite). Sixteen in all.
+- Schema rules: `sceneReason` only on VALIDATION, never beside a `categoryReason`; `sceneId` only beside a reason that names a scene (`scene-text-problem`,
+  `scene-without-text`, `scene-missing`, `target-removed`) and always with the first two.
+- Russian texts: `SCENE_REASONS_RU` (`shared/engine/errorMessagesRu.ts`, `satisfies Record<SceneReason, string>`); `renderer/lib/errors.ts` `errorText` reads
+  it like `CATEGORY_REASONS_RU`. The texts do not carry the scene's number: the window names the scene from `sceneId`. `writeCapRefusal` in
+  `renderer/screens/photos/sceneReview.ts` is now `error.sceneReason === "write-record-cap"` (the English regex is gone).
+- The engine, the mock and the parity transcript all write the reasons; the golden gained `sceneReason` / `sceneId` on 18 lines, and nothing else changed.
+- Mock controls: `setSceneCancelOutcome("in-flight" | "between")`, `cancelNextSceneWriteBeforeAnswer()`, `unreadableSceneSets` as a number or a number per
+  avatar, and a null `spentMicros` / `openReserveMicros` for a set when `money.unavailable` is set.
+
+**Behaviour, item by item:**
+
+1. **A record or folder the OS will not read is counted, never thrown** (`library/durableFs.ts` `readJsonFileTolerant` / `readdirTolerant`,
+   `categories.ts`, `sceneSets.ts`, `survey.ts`). A record that is a folder (EISDIR, portable) or has no permission (EACCES) is `unreadable` and kept; a
+   `categories/` or `scenes/` that cannot be listed at all lists as one unreadable record, and the survey skips it, so the library opens. A command that would
+   write there fails at its own write (INTERNAL), not at a read of a sibling. Tests: both stores and the library open; `chmod 000` cases are skipped on Windows
+   and as root, and the EISDIR case runs everywhere. A file where the folder should be is posix-only (Windows reports a missing folder there).
+2. **`sceneReason`**: above.
+3. **A write refused or cancelled before it begins is announced again.** A write marks its set live at the claim, before the price wait, so a window that read
+   the set then held «writing». The service now re-announces the set (`scenes.changed`) when a write ends unlaunched, before `job.cancelled`. (The other
+   option, hiding `writing` until launch, would have let a window edit a set that refuses with IN_FLIGHT.) The mock never shows `writing` before launch; its
+   test uses two subscribers.
+4. **Accepting a review write is idempotent.** A closed record whose scenes already carry the accepted sentences is a no-op success (`isAccepted` in
+   `reviewMutations.ts`; the service writes nothing, no second revision). A record closed by a dismissal, or whose scenes carry other text, still refuses.
+   Test: the flush after the closing rename fails once (`afterRename`), the job ends `done`, one reserve, one revision.
+5. **A booked category call is finished at list time.** A pending record whose job id is in its category's `bookedJobs` (a regenerate's own category; any
+   category for a create) is forgotten like an ended call and never listed as interrupted. The test that pinned «listed, then dismissed» changed with it.
+6. **The pool call's cap is `min(accepted, estimate)`**, like every other job. Test: the cap registered for an acceptance of 10x the estimate (a `Map.set` spy),
+   red under the old cap.
+7. **An idea write with no attempts left holds no room**: `reservedIdeaScenes(set, ledger)` counts only records that can still add their scenes. The ids stay
+   burnt either way.
+8. **Mock parity**: scene-set and category writes are IN_FLIGHT during a library switch (`writeLibraryGate`, which `mediaLibraryGate` was renamed to);
+   `scenes.write` answers IN_FLIGHT for its own set first; the approval checks the word rules; a cancel opens a reserve only when a request was out
+   (control); the spend is null for an unreadable ledger; unreadable counts per avatar; a redraw takes its category-name snapshot at plan time and an older
+   write never undoes a newer one's (`snapshotWrites`); a write can be cancelled before its answer (`job.cancelled` first, then the answer).
+9. **Docs in code**: the v5 journal, `INTENTIONAL_DIFFERENCES`, three contract comments, the `seedOf` docstring.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; parity 89 pass; the full Studio suite in three shards, 7106 + 5609 + 7671 = 20386 passing, 0 failing (this machine; CI is the run of record).
+
+Not done on purpose (backlog or the owner's call): a redraw restyles every scene of the category (the snapshot's `style`), the canary's token source, frozen
+fixtures for the disk records, a category the new pool rules made unreadable cannot be deleted, used sets are never pruned, a manual removal of `runs/<runId>/`
+turns a used set back into an open one (OQ1: `used` is derived, not stored), and `runs.start` does not refuse during a library switch in the mock.
+
 Phase 1 = CS.0 (category states), CS.1, CS.2, CS.3. Phase 2 = CS.0 (review states), CS.4a, CS.4b,
 CS.5, CS.6, CS.7. Rough size: phase 1 ≈ one L and two M tasks; phase 2 ≈ two L and three M tasks
 plus the review.
