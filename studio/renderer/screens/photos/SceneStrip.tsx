@@ -6,10 +6,11 @@ import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
 import { countOf } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { MoreButton, OwnersList, useOwnersDisclosure } from "./AnglesLines";
 import { modelName, paidBlockedReason } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
-import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes } from "./sceneText";
+import { approveReason, approveTitle, continueTitle, MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, stripAngles } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 
@@ -241,7 +242,9 @@ export function SceneStrip({
   const shownTags = expanded ? tags : tags.slice(0, fit);
   const hidden = tags.length - shownTags.length;
   const meta = setMetaText(set);
-  const poses = ["анфас", "три четверти", ...(set.poses.profile ? ["профиль"] : []), ...(set.poses.back ? ["со спины"] : [])].join(", ");
+  // CS.8 (README contract note 9): the set's own angles, and who does not follow them — categories with angles of their own, own scenes.
+  const angles = stripAngles(set);
+  const owners = useOwnersDisclosure();
   const models = modelSegments(view, set.textModel);
   const switchLabel = `${ids}-sw`;
   const reasonShown = reason !== null && !button.busy;
@@ -287,7 +290,20 @@ export function SceneStrip({
             <p className="scene-strip-lock">
               <Icon name="lock" size={12} strokeWidth={2.4} />
               <span>
-                Ракурсы: {poses}. Настройки набора не меняются —{" "}
+                {angles.lead}
+                {angles.first !== null && (
+                  <>
+                    ; у «{angles.first}»
+                    {angles.more > 0 && (
+                      <>
+                        {" и "}
+                        <MoreButton label={`ещё ${angles.more}`} open={owners.open} controls={owners.listId} onToggle={owners.toggle} />
+                      </>
+                    )}{" "}
+                    — свои
+                  </>
+                )}
+                {angles.own && "; у своих сцен — по описанию"}. Настройки набора не меняются —{" "}
                 <button
                   ref={recomposeRef}
                   type="button"
@@ -304,6 +320,7 @@ export function SceneStrip({
                 начнёт заново.
               </span>
             </p>
+            {angles.more > 0 && <OwnersList id={owners.listId} open={owners.open} rows={angles.rows} />}
             {models.length > 0 && (
               <p className="faint scene-strip-models" title={MODELS_LINE_TITLE}>
                 {models.map((segment, i) => (

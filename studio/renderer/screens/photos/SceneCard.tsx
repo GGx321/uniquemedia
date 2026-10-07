@@ -2,7 +2,7 @@ import { type KeyboardEvent, type ReactNode, useEffect, useId, useRef, useState 
 import { SCENE_TEXT_MAX, type SceneProblem, type SceneView } from "../../../shared/engine";
 import { Icon, Spin } from "../../ui/Icon";
 import { hasCyrillic, OWN_SCENE_LABEL, sceneCategoryLabel, sceneNumber, SHOT_LABEL } from "./sceneReview";
-import { cyrillicHint, gaveUpText, ideaLine, problemText } from "./sceneText";
+import { cyrillicHint, gaveUpText, ideaLine, poseTag, problemText } from "./sceneText";
 
 // CS.6: one scene of the «Сцены» column (the design's .photos-scene card): its number, its category and shot tags, its status, its free and paid actions
 // (✎ edit, ⟳ another scene / rewrite, × remove; «Вернуть» when removed), its text whole — or a skeleton while it is written, or why it was given up on —
@@ -59,6 +59,8 @@ export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh,
   const pending = scene.unwritten === "pending" && !scene.removed;
   const showActions = !readOnly && !scene.removed && !pending && writing !== "rewrite" && editing === null;
   const label = sceneCategoryLabel(scene);
+  // CS.8 (ReviewStates I): profile and back only, read with the other tags as «ракурс: со спины» — a category's own angles and «Авто» ideas bring them now.
+  const pose = poseTag(scene.pose);
   const warn = !readOnly && !scene.removed && (scene.unwritten === "gave-up" || scene.rewriteInterrupted !== undefined);
   const classes = ["photos-scene", "scene-card", scene.removed ? "photos-scene-off" : "", warn ? "scene-card-warn" : "", popoverOpen ? "scene-card-active" : "", editing !== null ? "scene-card-editing" : ""].filter(Boolean).join(" ");
   const off = (handler: () => void) => () => {
@@ -76,6 +78,11 @@ export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh,
               {own ? OWN_SCENE_LABEL : label}
             </span>
             {!(own && pending) && <span className="tag tag-o">{SHOT_LABEL[scene.shot]}</span>}
+            {!(own && pending) && pose !== null && (
+              <span className="tag tag-o scene-tag-pose">
+                <span className="scene-tag-pose-key">ракурс:</span> {pose}
+              </span>
+            )}
           </span>
           <span className="scene-card-gap" />
           {flag !== null && (

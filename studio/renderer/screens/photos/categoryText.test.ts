@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test";
 import { CATEGORY_REASONS_RU, POOL_TIMES, type CategoryInterrupted, type CategoryPool, type CategorySummary } from "../../../shared/engine";
 import {
+  ANGLES_CLEAR_TITLE,
+  ANGLES_NONE_HINT,
+  anglesHint,
+  anglesLockedTitle,
+  anglesNote,
+  anglesSaveFailure,
+  DESCRIPTION_HINT,
+  impliedChipTitle,
+  ownAnglesLine,
   callFailure,
   categoryMeta,
   createdLine,
@@ -305,8 +314,105 @@ describe("phase 2: with a scene set open (CS.7 M1)", () => {
     expect(deleteConfirmText(5)).toContain(nb("её 5 сцен останутся как есть, но «Другая сцена» для них"));
   });
 
-  test("the «готово» line: in the run at once, or — a set already composed — in the next set (decision 17)", () => {
-    expect(createdLine(false)).toBe("Категория уже включена в запуск. Убрать место или наряд — в «Мои категории».");
+  test("the «готово» line: in the run at once, or — a set already composed — in the next set (decision 17); CS.8: the angles are changed there too", () => {
+    expect(createdLine(false)).toBe("Категория уже включена в запуск. Убрать место или наряд, поменять ракурсы — в «Мои категории».");
     expect(createdLine(true)).toBe("Набор сцен уже составлен — категория войдёт в следующий набор. Открытый набор не меняется.");
+  });
+});
+
+describe("CS.8: a category's angles", () => {
+  const BED_DECK = ["friend", "friend", "candid", "candid", "selfie"] as const;
+  const PHONES = ["friend", "selfie", "mirror", "candid", "candid"] as const;
+  const NO_PHONE = ["friend", "candid", "photographer", "photographer", "photographer"] as const;
+  const WHAT_MANY = "Её сцены — поровну в этих ракурсах; «Ракурсы» карточки их не касаются.";
+  const WHAT_ONE = "Все её сцены — в этом ракурсе; «Ракурсы» карточки их не касаются.";
+
+  test("the description hint names the pose and the angle (CatCreate)", () => {
+    expect(DESCRIPTION_HINT).toBe(
+      "Где она бывает, что там делает и в какой позе, во что одета, с какого ракурса снимать («вид сзади», «в профиль»). Модель составит 5–7 мест, 3–6 нарядов и набор кадров. Наряды — только неоткровенные, как во всех категориях.",
+    );
+  });
+
+  test("the first sentence: drawn evenly from the list (not the card's mix), one angle said as one", () => {
+    expect(anglesNote(["front"], PHONES)).toBe(WHAT_ONE);
+    expect(anglesNote(["front", "three-quarter"], PHONES)).toBe(WHAT_MANY);
+  });
+
+  test("the second sentence, only with profile or back: the phone shots that stay, and fewer of them (the design re-check's «селфи станет меньше»)", () => {
+    expect(anglesNote(["back", "three-quarter"], BED_DECK)).toBe(`${WHAT_MANY} Селфи станет меньше: только три четверти; со спины — без проверки сходства.`);
+    expect(anglesNote(["front", "three-quarter", "back"], PHONES)).toBe(
+      `${WHAT_MANY} Селфи и кадров в зеркале станет меньше: только анфас или три четверти; со спины — без проверки сходства.`,
+    );
+    expect(anglesNote(["three-quarter", "profile"], ["friend", "mirror", "mirror", "candid", "candid"])).toBe(
+      `${WHAT_MANY} Кадров в зеркале станет меньше: только три четверти; в профиль — без проверки сходства.`,
+    );
+    expect(anglesNote(["three-quarter", "profile", "back"], BED_DECK)).toBe(`${WHAT_MANY} Селфи станет меньше: только три четверти; в профиль и со спины — без проверки сходства.`);
+  });
+
+  test("no facing angle in the list: the phone shots go; no phone shot in the deck: only the likeness check is said", () => {
+    expect(anglesNote(["back"], PHONES)).toBe(`${WHAT_ONE} Селфи и зеркала у неё не будет; со спины — без проверки сходства.`);
+    expect(anglesNote(["back"], BED_DECK)).toBe(`${WHAT_ONE} Селфи у неё не будет; со спины — без проверки сходства.`);
+    expect(anglesNote(["profile"], NO_PHONE)).toBe(`${WHAT_ONE} В профиль — без проверки сходства.`);
+    expect(anglesNote(["profile", "back"], NO_PHONE)).toBe(`${WHAT_MANY} В профиль и со спины — без проверки сходства.`);
+  });
+
+  test("the sheet's hint: the same lines with own angles, what the card gives without; an open set holding the category's scenes adds that ⟳ there follows an edit", () => {
+    expect(ANGLES_NONE_HINT).toBe("Как в карточке генерации: анфас и три четверти всегда, профиль и со спины — если они включены там.");
+    expect(anglesHint(undefined, PHONES, 0)).toBe(ANGLES_NONE_HINT);
+    expect(anglesHint(["back", "three-quarter"], BED_DECK, 0)).toBe(anglesNote(["three-quarter", "back"], BED_DECK));
+    const opened = "Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были.";
+    expect(anglesHint(undefined, PHONES, 3)).toBe(`${ANGLES_NONE_HINT} ${opened}`);
+    expect(anglesHint(["front"], PHONES, 1)).toBe(`${WHAT_ONE} ${opened}`);
+  });
+
+  test("the sheet's chips and buttons say what they do", () => {
+    expect(impliedChipTitle("front")).toBe("Как в карточке: анфас и три четверти всегда. Нажмите — свои ракурсы без анфаса");
+    expect(impliedChipTitle("three-quarter")).toBe("Как в карточке: анфас и три четверти всегда. Нажмите — свои ракурсы без трёх четвертей");
+    expect(ANGLES_CLEAR_TITLE).toBe("Убрать свои ракурсы — сцены этой категории возьмут их из «Ракурсов» карточки генерации");
+    expect(anglesLockedTitle("regenerate")).toBe("Пока идёт пересоздание, эту категорию не изменить");
+    expect(anglesLockedTitle("delete")).toBe("Пока идёт удаление, эту категорию не изменить");
+  });
+
+  test("a save that did not go through says why after a colon, and that nothing changed", () => {
+    expect(anglesSaveFailure({ code: "INTERNAL" })).toBe("Не сохранилось: внутренняя ошибка движка — ракурсы остались прежними.");
+    expect(anglesSaveFailure({ code: "NOT_FOUND" })).toBe("Не сохранилось: запрошенный объект не найден — ракурсы остались прежними.");
+  });
+
+  test("the card's line: none when no category of the run has its own angles", () => {
+    expect(ownAnglesLine([])).toBe(null);
+  });
+
+  test("the card's line, one category: the message first, then the name, then its angles sorted", () => {
+    const line = ownAnglesLine([{ name: "Домашнее у кровати", poses: ["back", "three-quarter"] }]);
+    expect(line).toEqual({
+      name: "Домашнее у кровати",
+      list: "три четверти, со спины",
+      more: 0,
+      moreLabel: "",
+      visible: "Эти переключатели не касаются «Домашнее у кровати» — у неё свои ракурсы: три четверти, со спины.",
+      rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }],
+      full: "Эти переключатели не касаются категорий со своими ракурсами: «Домашнее у кровати» — три четверти, со спины.",
+      title: "Свои ракурсы — Домашнее у кровати: три четверти, со спины",
+    });
+  });
+
+  test("the card's line, several: «и ещё N категорий» behind a button, every category with its angles in the list it opens and for a screen reader", () => {
+    const line = ownAnglesLine([
+      { name: "Домашнее у кровати", poses: ["three-quarter", "back"] },
+      { name: "Йога дома", poses: ["profile"] },
+      { name: "Ночной город", poses: ["back"] },
+    ]);
+    expect(line?.visible).toBe(nb("Эти переключатели не касаются «Домашнее у кровати» и ещё 2 категорий — у них свои ракурсы."));
+    expect(line?.list).toBe(null);
+    expect(line?.more).toBe(2);
+    expect(line?.moreLabel).toBe(nb("ещё 2 категорий"));
+    expect(line?.rows).toEqual([
+      { name: "Домашнее у кровати", list: "три четверти, со спины" },
+      { name: "Йога дома", list: "профиль" },
+      { name: "Ночной город", list: "со спины" },
+    ]);
+    expect(line?.full).toBe("Эти переключатели не касаются категорий со своими ракурсами: «Домашнее у кровати» — три четверти, со спины; «Йога дома» — профиль; «Ночной город» — со спины.");
+    expect(line?.title).toBe("Свои ракурсы — Домашнее у кровати: три четверти, со спины; Йога дома: профиль; Ночной город: со спины");
+    expect(ownAnglesLine([{ name: "А", poses: ["back"] }, { name: "Б", poses: ["back"] }])?.moreLabel).toBe(nb("ещё 1 категории"));
   });
 });

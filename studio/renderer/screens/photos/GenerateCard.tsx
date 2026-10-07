@@ -8,7 +8,9 @@ import { formatUsd } from "../../lib/money";
 import { useNavigate } from "../../navigation";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { CardAnglesLine } from "./AnglesLines";
 import { CategoryCreateDialog, type CreateDialogClose, type CreateDialogStart } from "./CategoryCreateDialog";
+import { ownAnglesLine } from "./categoryText";
 import { CategoryCardNotices } from "./CategoryNotices";
 import { CategoryRow } from "./CategoryRow";
 import { CategorySheet } from "./CategorySheet";
@@ -424,6 +426,9 @@ export function GenerateCard({
   const priceFailedId = `${ids}-price`;
   const anglesLabel = `${ids}-angles`;
   const anglesHint = `${ids}-angles-hint`;
+  const anglesOwn = `${ids}-angles-own`;
+  // CS.8 (CatChipsAngles; README contract note 10): the run's custom categories whose pool keeps angles of its own — the toggles above do not govern them.
+  const ownAngles = ownAnglesLine((customs ?? []).flatMap((c) => (categories.includes(c.categoryId) && c.pool.poses !== undefined ? [{ name: c.name, poses: c.pool.poses }] : [])));
   const countLabel = `${ids}-count`;
   const imageModel = view.settings ? modelName(view.settings.imageModel) : null;
   // The engine's own route (runs/plan.ts's runRoute) sends the settings' image quality (null for a model with no quality knob) to the
@@ -541,7 +546,7 @@ export function GenerateCard({
             <span id={anglesLabel} className="lbl">
               Ракурсы
             </span>
-            <div className="photos-chips-row" role="group" aria-labelledby={anglesLabel} aria-describedby={anglesHint}>
+            <div className="photos-chips-row" role="group" aria-labelledby={anglesLabel} aria-describedby={ownAngles !== null ? `${anglesHint} ${anglesOwn}` : anglesHint}>
               {["Анфас", "Три четверти"].map((label) => (
                 <button key={label} type="button" className="chip chip-on photos-chip-fixed" aria-pressed="true" aria-disabled="true">
                   <Icon name="lock" size={11} strokeWidth={2.4} />
@@ -566,6 +571,7 @@ export function GenerateCard({
             <span id={anglesHint} className="faint photos-note photos-angles-hint">
               профиль и со спины — только если разрешите, без проверки сходства
             </span>
+            {ownAngles !== null && <CardAnglesLine line={ownAngles} describedId={anglesOwn} />}
           </div>
         </fieldset>
 

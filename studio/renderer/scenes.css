@@ -496,6 +496,16 @@
   vertical-align: -1px;
 }
 
+/* CS.8 (ReviewStates I): the angle tag, profile or back only — outlined like the shot tag, with a faint «ракурс:» so it never reads as another shot. It wraps
+   to a second line (then the shot tag) when the row is full; the category tag is not squeezed for it, the actions keep the first line. */
+.scene-tag-pose {
+  gap: 4px;
+}
+
+.scene-tag-pose-key {
+  color: var(--faint);
+}
+
 .scene-card-gap {
   flex-grow: 1;
 }

@@ -220,7 +220,7 @@ describe("«Новая категория»", () => {
     expect(within(done).getByText("текст уходит в промпты по-английски")).toBeDefined();
     expect(within(done).getByText(/^Наряды · [3-5]$/)).toBeDefined();
     expect(within(done).getByText("Кадры")).toBeDefined();
-    expect(within(done).getByText("Категория уже включена в запуск. Убрать место или наряд — в «Мои категории».")).toBeDefined();
+    expect(within(done).getByText("Категория уже включена в запуск. Убрать место или наряд, поменять ракурсы — в «Мои категории».")).toBeDefined();
     // Read-only: nothing to remove here.
     expect(within(done).queryByRole("button", { name: /^Убрать/ }) === null).toBe(true);
     const ok = within(done).getByRole("button", { name: "Готово" });
