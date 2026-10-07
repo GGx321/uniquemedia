@@ -40,7 +40,11 @@ export function withoutScenes(record: RewriteWriteRecord, taken: ReadonlySet<num
   const remaining = record.sceneIds.filter((id) => !taken.has(id));
   if (remaining.length === record.sceneIds.length) return record;
   if (remaining.length === 0) return { ...record, closed: true };
-  return { ...record, sceneIds: remaining, slots: record.redraw ? record.slots.filter((slot) => !taken.has(slot.slotIndex)) : [] };
+  if (!record.redraw) return { ...record, sceneIds: remaining, slots: [] };
+  const slots = record.slots.filter((slot) => !taken.has(slot.slotIndex));
+  // A snapshot is kept only for a category a remaining scene's new place still uses.
+  const used = new Set(slots.map((slot) => slot.category));
+  return { ...record, sceneIds: remaining, slots, snapshots: record.snapshots.filter((snapshot) => used.has(snapshot.ref)) };
 }
 
 /** Records a rewrite as the next write BEFORE its first call, with the draw of its redraw and the snapshots an accepted redraw will refresh. No scene changes. */
@@ -82,16 +86,25 @@ export function beginIdea(set: StoredSceneSet, write: { jobId: string; idea: str
   return { ...set, reviewWrites: [...reviewWritesOf(set), record], writes: k };
 }
 
-/** The carrying on of an unresolved write by a new job: the same number, ids and draw, no stale stop reason. */
-export function resumeReviewWrite(set: StoredSceneSet, k: number, jobId: string): StoredSceneSet {
+/**
+ * The carrying on of an unresolved write by a new job: the same number, ids and draw, no stale stop reason. `dropped` are scenes of a rewrite the owner removed
+ * meanwhile: the write goes on without them (their draw and snapshot go with them, like a take-over), and keeps its ids.
+ */
+export function resumeReviewWrite(set: StoredSceneSet, k: number, jobId: string, dropped: ReadonlySet<number> = new Set()): StoredSceneSet {
   openRecordOf(set, k);
-  return replaceRecord(set, k, (record) => ({ ...withoutStop(record), jobId }));
+  return replaceRecord(set, k, (record) => ({ ...withoutStop(record.kind === "rewrite" ? withoutScenes(record, dropped) : record), jobId }));
 }
 
-/** The set's category snapshots with the refreshed ones put in their place (a redraw: the label and the style of the category as it is now). */
-function refreshed(set: StoredSceneSet, snapshots: readonly CategorySnapshot[]): StoredSceneSet["categories"] {
-  if (set.categories === undefined || snapshots.length === 0) return set.categories;
-  return set.categories.map((old) => snapshots.find((fresh) => fresh.ref === old.ref) ?? old);
+/**
+ * The set's category snapshots with the refreshed ones put in their place (a redraw: the label and the style of the category as it is now), and the write
+ * that refreshed each. A snapshot a LATER write already refreshed stays: write `k` took its snapshot before that one was taken, so it is the older view.
+ */
+function refreshed(set: StoredSceneSet, k: number, snapshots: readonly CategorySnapshot[]): Pick<StoredSceneSet, "categories" | "snapshotWrites"> {
+  if (set.categories === undefined || snapshots.length === 0) return { categories: set.categories, snapshotWrites: set.snapshotWrites };
+  const fresher = snapshots.filter((fresh) => (set.snapshotWrites?.[fresh.ref] ?? 0) < k);
+  const categories = set.categories.map((old) => fresher.find((fresh) => fresh.ref === old.ref) ?? old);
+  const refreshedBy = fresher.filter((fresh) => set.categories?.some((old) => old.ref === fresh.ref)).map((fresh) => [fresh.ref, k] as const);
+  return { categories, snapshotWrites: refreshedBy.length === 0 ? set.snapshotWrites : { ...set.snapshotWrites, ...Object.fromEntries(refreshedBy) } };
 }
 
 function sentenceFor(sentences: ReadonlyMap<number, string>, sceneId: number, k: number): string {
@@ -120,8 +133,8 @@ export function withReviewWriteAccepted(set: StoredSceneSet, k: number, sentence
     if (scene.origin === "own") return { ...scene, text, edited: false };
     return { ...scene, slot: record.redraw ? (slots.get(scene.sceneId) ?? scene.slot) : scene.slot, text, edited: false };
   });
-  const categories = refreshed(set, record.snapshots);
-  const next: StoredSceneSet = { ...set, scenes, ...(categories === undefined ? {} : { categories }) };
+  const { categories, snapshotWrites } = refreshed(set, k, record.snapshots);
+  const next: StoredSceneSet = { ...set, scenes, ...(categories === undefined ? {} : { categories }), ...(snapshotWrites === undefined ? {} : { snapshotWrites }) };
   return replaceRecord(next, k, (r) => ({ ...withoutStop(r), closed: true }));
 }
 

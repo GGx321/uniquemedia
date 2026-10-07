@@ -3,6 +3,7 @@ import type { Scope } from "../money/ledger";
 import { SceneSetStore, type StoredSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { useTempDir } from "../library/testing/helpers";
+import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
 import { withChunkGivenUp, withChunkWritten } from "./mutations";
@@ -247,7 +248,7 @@ describe("runSceneWrite: cancel", () => {
     const first: Step = (call) => answerFor(call);
     const { saves, end } = run([first, hang], { signal: controller.signal });
     while (saves.length < 1) await new Promise((resolve) => setTimeout(resolve, 5));
-    await new Promise((resolve) => setTimeout(resolve, 20));
+    await until(() => money.budget.status().openAttempts === 1, "the second request's reserve");
     controller.abort();
 
     expect(await end).toEqual({ status: "cancelled" });

@@ -97,8 +97,12 @@ function planResume(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "
   const { attemptsLeft } = reviewWriteState(record, ledger);
   if (attemptsLeft === 0) throw invalid(`write ${target.write} has no attempt left: dismiss it, or write the scenes again`);
   if (record.kind === "rewrite") {
-    targetsOf(set, record.sceneIds);
-    return { kind: "rewrite", k: record.k, count: record.sceneIds.length, sceneIds: [...record.sceneIds], attemptsLeft, begin: (current, jobId) => resumeReviewWrite(current, record.k, jobId) };
+    // A scene the owner removed since the write was interrupted is not written (nor paid for): the write goes on with the scenes still in the set.
+    const dropped = new Set(record.sceneIds.filter((id) => set.scenes.find((s) => s.sceneId === id)?.removed === true));
+    const active = record.sceneIds.filter((id) => !dropped.has(id));
+    if (active.length === 0) throw invalid(`every scene of write ${target.write} is removed: dismiss it, or restore a scene`);
+    targetsOf(set, active);
+    return { kind: "rewrite", k: record.k, count: active.length, sceneIds: active, attemptsLeft, begin: (current, jobId) => resumeReviewWrite(current, record.k, jobId, dropped) };
   }
   return { kind: "idea", k: record.k, count: record.count, attemptsLeft, begin: (current, jobId) => resumeReviewWrite(current, record.k, jobId) };
 }

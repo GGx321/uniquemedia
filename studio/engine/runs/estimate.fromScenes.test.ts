@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { AGE_CHECK_CALL, estimateRun, WRITER_CALL } from "../money/estimate";
 import { PriceBook } from "../money/prices";
-import { runEstimate, runEstimateFromScenes, runRoute } from "./plan";
+import { runEstimate, runEstimateFromScenes, runPriceModels, runRoute, sceneRunPriceModels } from "./plan";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -71,3 +71,18 @@ describe("runEstimateFromScenes", () => {
 function whole(count: number, age: "on" | "off"): number {
   return runEstimate(PRICED, MODELS, { count }, age).worstMicros;
 }
+
+describe("sceneRunPriceModels", () => {
+  test("asks for no chat price when the age check is off: a run from a set has no writer", () => {
+    expect(sceneRunPriceModels(MODELS, "off").chatModels).toEqual([]);
+  });
+
+  test("asks for the age check's model alone when it is on, never the text model", () => {
+    expect(sceneRunPriceModels(MODELS, "on").chatModels).toEqual([AGE_CHECK_CALL.model]);
+  });
+
+  test("prices the same image models as a whole run and rechecks their endpoints", () => {
+    const whole = runPriceModels(MODELS, "off");
+    expect(sceneRunPriceModels(MODELS, "off")).toMatchObject({ imageModels: whole.imageModels, checkRequestShape: true });
+  });
+});

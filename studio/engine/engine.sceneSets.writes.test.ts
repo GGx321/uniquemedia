@@ -130,12 +130,12 @@ const rejectedAnswer: Reply = { status: 200, body: chatBody(JSON.stringify({ sce
 const refusal: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 const rateLimited: Reply = { status: 429, headers: { "retry-after": "120" }, body: { error: { message: "rate limited" } } };
 
-function sceneNetwork(opts: { writer?: Handler } = {}) {
+function sceneNetwork(opts: { writer?: Handler; prices?: () => Promise<Reply> } = {}) {
   let writes = 0;
   const route = async (call: FetchCall): Promise<Reply> => {
     if (isWriter(call)) return (opts.writer ?? goodAnswer)(call, ++writes);
     if (call.url.endsWith("/credits")) return { status: 200, body: { data: { total_credits: 25, total_usage: 1 } } };
-    if (call.url.endsWith("/models") || call.url.endsWith("/endpoints")) return OFFLINE;
+    if (call.url.endsWith("/models") || call.url.endsWith("/endpoints")) return (await opts.prices?.()) ?? OFFLINE;
     throw new Error(`unexpected request to ${call.method} ${call.url}`);
   };
   const net = fakeFetch(Array.from({ length: 512 }, () => route));
@@ -529,6 +529,55 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     expect(fileOf(avatarId).writes).toBe(1);
   });
 
+  describe("a resume when the owner removed a scene of the write meanwhile", () => {
+    async function interrupted(avatarId: string, sceneIds: number[]) {
+      const net = sceneNetwork({ writer: (call, n) => (n === 1 ? rateLimited : goodAnswer(call, n)) });
+      const harness = await engineOver(net);
+      await writeAndWait(harness.engine, harness.events, avatarId, rewrite(sceneIds));
+      return { ...harness, net };
+    }
+    async function removed(engine: Engine, avatarId: string, sceneIds: number[]): Promise<void> {
+      const view = await setOf(engine, avatarId);
+      ok(await engine.handle(edit(view.revision, { op: "remove", sceneIds })));
+    }
+
+    test("asks about the scenes still in the set alone, and the removed one keeps its text", async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const { engine, events, net } = await interrupted(avatarId, [2, 3]);
+      await removed(engine, avatarId, [3]);
+
+      const end = await writeAndWait(engine, events, avatarId, { kind: "resume", write: 1 });
+
+      expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 1 } } });
+      expect(slotsAskedFor(net.writerCalls()[1] as FetchCall)).toEqual([2]);
+      const view = await setOf(engine, avatarId);
+      expect(view.scenes.map((s) => s.text)).toEqual([OLD, `${SENTENCE} (2)`, OLD, OLD]);
+      expect(view.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
+    });
+
+    test("is still priced, for the scenes that remain", async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const { engine } = await interrupted(avatarId, [2, 3]);
+      const before = estimateOf(await engine.handle(estimateCommand({ kind: "resume", write: 1 }))).worstMicros;
+      await removed(engine, avatarId, [3]);
+      const after = estimateOf(await engine.handle(estimateCommand({ kind: "resume", write: 1 }))).worstMicros;
+      expect(after).toBeLessThanOrEqual(before);
+    });
+
+    test("with every scene of the write removed there is nothing to resume: VALIDATION, free", async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const { engine, net } = await interrupted(avatarId, [2]);
+      await removed(engine, avatarId, [2]);
+      const view = await setOf(engine, avatarId);
+
+      expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toBe("VALIDATION");
+      expect(net.writerCalls()).toHaveLength(1);
+    });
+  });
+
   test("a restart keeps the marker, and the resume of a redraw draws nothing new: it asks about the very place the first attempt was asked about", async () => {
     const avatarId = await seedAvatar();
     await seedCategory();
@@ -638,6 +687,67 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
 
     expect(ledgerReserves()).toEqual([writeId(1, 1), writeId(2, 1), writeId(3, 1)]);
     expect(new Set(ledgerReserves()).size).toBe(3);
+  });
+
+  test("a cancel while the write awaits the prices is not lost: the job ends cancelled, nothing is reserved or sent", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let asked = false;
+    const net = sceneNetwork({
+      prices: async () => {
+        asked = true;
+        await gate;
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    const view = await setOf(engine, avatarId);
+    const pending = engine.handle(writeCommand(view.revision, 2 * ATTEMPT, rewrite([2])));
+    await until(() => asked, "the price request");
+
+    ok(await engine.handle(command("scenes.cancel", { sceneSetId: SET })));
+    release();
+    const end = await jobEnd(events, jobOf(await pending));
+
+    expect(end.type).toBe("job.cancelled");
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
+    expect((await setOf(engine, avatarId)).status).toBe("ready");
+  });
+
+  test("a cancel while the write awaits the prices leaves the set's file untouched: no write number, no marker, no idea write", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let asked = false;
+    const net = sceneNetwork({
+      prices: async () => {
+        asked = true;
+        await gate;
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    const view = await setOf(engine, avatarId);
+    const before = readFileSync(setPath(avatarId), "utf8");
+    const pending = engine.handle(writeCommand(view.revision, 2 * ATTEMPT, idea("кофе", 1)));
+    await until(() => asked, "the price request");
+
+    ok(await engine.handle(command("scenes.cancel", { sceneSetId: SET })));
+    release();
+    const end = await jobEnd(events, jobOf(await pending));
+
+    expect(end.type).toBe("job.cancelled");
+    expect(readFileSync(setPath(avatarId), "utf8")).toBe(before);
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
   });
 
   test("a cancel mid-request leaves the reserve open and marks the scene as cancelled", async () => {

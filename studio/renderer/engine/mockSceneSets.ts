@@ -775,18 +775,26 @@ export class MockSceneSets {
       if (review === undefined) return invalid(`scene set ${set.sceneSetId} has no unresolved write ${target.write}`);
       const attemptsLeft = reviewLeft(review);
       if (attemptsLeft === 0) return invalid(`write ${target.write} has no attempt left: dismiss it, or write the scenes again`);
+      // A scene the owner removed since the write was interrupted is not written: the write goes on with the scenes still in the set (the engine's rule).
+      const dropped = new Set(review.kind === "rewrite" ? review.sceneIds.filter((id) => set.scenes.find((sc) => sc.sceneId === id)?.removed === true) : []);
+      const active = review.kind === "rewrite" ? review.sceneIds.filter((id) => !dropped.has(id)) : [];
       if (review.kind === "rewrite") {
-        const problem = this.#targetProblem(set, review.sceneIds);
+        if (active.length === 0) return invalid(`every scene of write ${target.write} is removed: dismiss it, or restore a scene`);
+        const problem = this.#targetProblem(set, active);
         if (problem !== null) return { error: problem };
       }
       return {
         plan: {
           kind: review.kind,
           k: review.k,
-          count: review.kind === "rewrite" ? review.sceneIds.length : review.own.length,
-          ...(review.kind === "rewrite" ? { sceneIds: [...review.sceneIds] } : {}),
+          count: review.kind === "rewrite" ? active.length : review.own.length,
+          ...(review.kind === "rewrite" ? { sceneIds: [...active] } : {}),
           attemptsLeft,
           begin: () => {
+            if (dropped.size > 0) {
+              for (const id of dropped) review.draws.delete(id);
+              review.sceneIds = active;
+            }
             delete review.stoppedBy;
             delete review.stoppedError;
             return review;

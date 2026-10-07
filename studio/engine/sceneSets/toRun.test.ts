@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SceneSetFile, type StoredSceneSet } from "../library/sceneSets";
+import { SafeText } from "../../shared/engine";
 import { ownScene, sampleSet } from "../library/testing/sceneSetSample";
 import { CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { approvalRefusal, runSnapshots, runSources } from "./toRun";
@@ -54,6 +55,44 @@ describe("approvalRefusal", () => {
 
   test("a set already used is VALIDATION", () => {
     expect(approvalRefusal(setOf(5), { ...FREE, used: true })?.code).toBe("VALIDATION");
+  });
+
+  describe("a text that breaks today's word rules", () => {
+    function withText(id: number, text: string, over: { removed?: number[] } = {}): StoredSceneSet {
+      const set = setOf(5, over);
+      return SceneSetFile.parse({ ...set, scenes: set.scenes.map((s) => (s.sceneId === id ? { ...s, text } : s)) });
+    }
+
+    test("an active scene whose stored text now breaks a rule is a free VALIDATION naming the scene", () => {
+      const refusal = approvalRefusal(withText(3, "A teenage girl in a bikini."), FREE);
+      expect(refusal?.code).toBe("VALIDATION");
+      expect(refusal?.detail).toContain("scene 3");
+    });
+
+    test("a removed scene's text is not checked", () => {
+      expect(approvalRefusal(withText(3, "A teenage girl in a bikini.", { removed: [3] }), FREE)).toBeNull();
+    });
+
+    test("is refused before a job running", () => {
+      expect(approvalRefusal(withText(3, "A teenage girl in a bikini."), { ...FREE, live: true })?.code).toBe("VALIDATION");
+    });
+
+    test("is refused before a set already used", () => {
+      const refusal = approvalRefusal(withText(3, "A teenage girl in a bikini."), { ...FREE, used: true });
+      expect(refusal?.detail).not.toContain("already used");
+    });
+  });
+
+  describe("the detail of an empty-text refusal", () => {
+    test("names the first scenes and counts the rest, so 100 empty scenes still fit SafeText", () => {
+      const refusal = approvalRefusal(setOf(100, { textless: Array.from({ length: 100 }, (_, i) => i + 1) }), FREE);
+      expect(SafeText.safeParse(refusal?.detail).success).toBe(true);
+      expect(refusal?.detail).toContain("+");
+    });
+
+    test("names every scene when there are few", () => {
+      expect(approvalRefusal(setOf(5, { textless: [2, 4] }), FREE)?.detail).toContain("2, 4");
+    });
   });
 
   describe("the order of the refusals", () => {

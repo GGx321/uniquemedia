@@ -504,6 +504,14 @@ Everything else reuses `NOT_FOUND`, `VALIDATION`, `IN_FLIGHT`, `PRICE_CHANGED`,
 slack (the descriptor's formula); estimates = price fetch + 15 s; compose/write/startFromScenes
 answer as soon as the job is launched (`runs.start`'s formula).
 
+**As-built additions (not in the original plan).**
+
+- `ImageModelCatalogue.complete: boolean` (`studio/shared/engine/imageModels.ts`, required, strict): true when every candidate of a live list was priced. A live list with a model left out by a transient
+  failure is `complete: false` and is read again soon. The shared constants `LIVE_CATALOGUE_TTL_MS` (30 min) and `FALLBACK_CATALOGUE_TTL_MS` (60 s), and `catalogueTtlMs(catalogue)` (the long time only for a live and
+  complete list), are used by both the engine's cache and a Settings card left open, so the two never disagree on when a list is stale.
+- `SceneSetFile.snapshotWrites?: Record<categoryRef, integer ≥ 1>` (`studio/engine/library/sceneSets.ts`, on disk, optional so older files still read): the number of the review write whose accepted redraw last
+  refreshed each category snapshot of the set. A write that began earlier and is resumed later must not roll back the fresher snapshot a later write put there.
+
 ## 6. Persisted data and backward compatibility
 
 | Data | Change | Compatibility |

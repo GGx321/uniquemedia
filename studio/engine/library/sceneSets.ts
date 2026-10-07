@@ -176,6 +176,11 @@ export const SceneSetFile = z
     }),
     /** A snapshot of every custom category the set uses, so a later rename, regeneration or delete changes nothing in it. */
     categories: z.array(CategorySnapshot).optional(),
+    /**
+     * The number of the review write whose accepted redraw last refreshed each snapshot above, by category ref (absent for one never refreshed): a write
+     * that began earlier and is resumed later must not roll back the fresher snapshot a later write put there.
+     */
+    snapshotWrites: z.record(z.string(), z.number().int().min(1)).optional(),
     models: z.strictObject({ text: ModelId }),
     scenes: z.array(SceneRecord).max(MAX_SCENES_PER_SET),
     chunks: z.array(ChunkRecord),

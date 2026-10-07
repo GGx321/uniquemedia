@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  catalogueTtlMs,
   checkImageChoice,
+  FALLBACK_CATALOGUE_TTL_MS,
   ImageModelCatalogue,
+  LIVE_CATALOGUE_TTL_MS,
   ImageQuality,
   UNKNOWN_IMAGE_MODEL_RU,
   UNSUPPORTED_IMAGE_QUALITY_RU,
@@ -28,12 +31,17 @@ const SEEDREAM_ENTRY: ImageModelEntry = {
   prices: [{ quality: null, micros: 48_000 }],
   tested: true,
 };
-const CATALOGUE = { models: [GROK_ENTRY, SEEDREAM_ENTRY], source: "live" } as const;
+const CATALOGUE = { models: [GROK_ENTRY, SEEDREAM_ENTRY], source: "live", complete: true } as const;
 const CURRENT = { imageModel: GROK, imageQuality: "low" } as const;
 
 describe("ImageModelCatalogue", () => {
   test("accepts a catalogue of entries with and without a quality knob", () => {
     expect(ImageModelCatalogue.safeParse(CATALOGUE).success).toBe(true);
+  });
+
+  test("refuses a catalogue that does not say whether it is complete", () => {
+    const { complete: _complete, ...bad } = CATALOGUE;
+    expect(ImageModelCatalogue.safeParse(bad).success).toBe(false);
   });
 
   test("refuses an entry that names a quality twice", () => {
@@ -106,5 +114,20 @@ describe("checkImageChoice", () => {
   test("refuses a quality for the unlisted current model when it is a change", () => {
     const current = { imageModel: "acme/old-image", imageQuality: "low" } as const;
     expect(checkImageChoice(CATALOGUE, current, { imageModel: "acme/old-image", imageQuality: "medium" })).toEqual({ ok: false, detail: UNKNOWN_IMAGE_MODEL_RU });
+  });
+});
+
+describe("catalogueTtlMs", () => {
+  test("30 minutes only for a live catalogue whose every candidate was priced", () => {
+    expect(catalogueTtlMs({ source: "live", complete: true })).toBe(LIVE_CATALOGUE_TTL_MS);
+  });
+
+  test("a minute for a bundled catalogue and for a live one with a candidate left out (the outage may be over)", () => {
+    expect(catalogueTtlMs({ source: "fallback", complete: false })).toBe(FALLBACK_CATALOGUE_TTL_MS);
+    expect(catalogueTtlMs({ source: "live", complete: false })).toBe(FALLBACK_CATALOGUE_TTL_MS);
+  });
+
+  test("the live window is longer than the retry window", () => {
+    expect(LIVE_CATALOGUE_TTL_MS).toBeGreaterThan(FALLBACK_CATALOGUE_TTL_MS);
   });
 });

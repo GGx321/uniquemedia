@@ -335,8 +335,9 @@ const ENGINE_SPECS = [
   defineCommand("runs.start", RunRequest.extend(AcceptedWorst), z.strictObject({ runId: Id, jobId: Id })),
   // CS.5: a run made from a reviewed scene set (`scenes.*`): no writer, only images. `runs.estimateFromScenes` is free: M photos (the set's active
   // scenes with text) priced with no writer term, at the settings' image model, quality and age-check mode. Refused, in this order and all free: NOT_FOUND
-  // (no such set, or its avatar cannot get photos), SCENES_CHANGED (the revision moved), VALIDATION (an active scene has no text, or none or more than 100
-  // are active, or the set is already used), IN_FLIGHT (a scenes job runs). `runs.startFromScenes` checks the same, then exactly `runs.start`'s checks,
+  // (no such set), SCENES_CHANGED (the revision moved), VALIDATION (an active scene has no text, none or more than 100 are active, or an active text breaks
+  // today's word rules), IN_FLIGHT (a scenes job runs), VALIDATION (the set is already used), then NOT_FOUND again (its avatar cannot get photos).
+  // `runs.startFromScenes` checks the same, then exactly `runs.start`'s checks,
   // then — under the set's own lock, right before the run folder is made under the set's pre-issued run id — the revision once more (an edit or a discard
   // that landed meanwhile: SCENES_CHANGED / NOT_FOUND, nothing written). The run's cap is the accepted worst case for exactly those scenes. A second start
   // of the same set is refused (the run exists); the set is read-only from the moment the run exists. Answers like `runs.start`: the job runs on.

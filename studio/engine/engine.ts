@@ -85,7 +85,7 @@ import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
 import { Ledger, type Scope } from "./money/ledger";
-import { PriceCache, type PricedBook } from "./money/priceCache";
+import { PriceCache, type PriceModels, type PricedBook } from "./money/priceCache";
 import type { PriceBook } from "./money/prices";
 import { loadPriceBook, OPENROUTER_API_BASE } from "./money/prices";
 import type { ReconcileResult as LedgerReconcileResult, ReconcileWarning as LedgerReconcileWarning } from "./money/reconcile";
@@ -94,7 +94,7 @@ import { priceFetchFrom } from "./openrouter/priceFetch";
 import { ImageCatalogueCache, loadImageCatalogue } from "./imageModels/catalogue";
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
-import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, type RunPlan } from "./runs/plan";
+import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
 import { commitApproval, loadApprovable } from "./sceneSets/approve";
 import { runSnapshots, runSources } from "./sceneSets/toRun";
 import { CpuPool, NetworkPool } from "./runs/pools";
@@ -302,6 +302,12 @@ export function defaultCpuPoolSize(): number {
 export const RECENT_PAIRS = 40;
 
 /** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
+/** The models a stored run needs priced now: a run made from a scene set never asks the text model, so it needs no text price. */
+function runPlanPriceModels(plan: RunPlan): PriceModels {
+  const models = { imageModel: plan.models.image, textModel: plan.models.text };
+  return plan.sceneSetId === undefined ? runPriceModels(models, plan.imageAgeCheck) : sceneRunPriceModels(models, plan.imageAgeCheck);
+}
+
 function seedOf(runId: string): number {
   return Number.parseInt(createHash("sha256").update(runId).digest("hex").slice(0, 8), 16);
 }
@@ -1987,7 +1993,7 @@ export class Engine {
     const ledger = this.#ledgerView(budget);
     const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
     if (state.slots.every((s) => s.end !== null)) throw new EngineFailure({ code: "VALIDATION", detail: `run ${plan.runId} has nothing left to resume: every slot already ended` });
-    const priced = await this.#prices.get(runPriceModels({ imageModel: plan.models.image, textModel: plan.models.text }, plan.imageAgeCheck));
+    const priced = await this.#prices.get(runPlanPriceModels(plan));
     const committed = scopeCommitted(budget.ledger, { runId: plan.runId });
     const { estimate, minToProgressMicros } = remainingPlan(priced, plan, state, committed, ledger);
     // A cap that cannot fund one more attempt has ended the run: refused free, before anything is claimed or accepted.
@@ -2018,7 +2024,7 @@ export class Engine {
           const plan = await library.readRun(runId, RunPlanSchema);
           const { events } = await library.readJournal(runId, RunEventSchema);
           const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
-          return { runId, plan, state, models: runPriceModels({ imageModel: plan.models.image, textModel: plan.models.text }, plan.imageAgeCheck) };
+          return { runId, plan, state, models: runPlanPriceModels(plan) };
         } catch (error) {
           console.warn(`studio engine: run ${runId} could not be read for the list (${messageOf(error, "unknown error")})`);
           return null;
@@ -2181,7 +2187,7 @@ export class Engine {
     this.#runnableAvatar(library, avatarId);
     const models = this.#avatarModels();
     const imageAgeCheck = this.#settings.imageAgeCheck;
-    return runEstimateFromScenes(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, { count: runSources(set).length }, imageAgeCheck);
+    return runEstimateFromScenes(await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck)), models, { count: runSources(set).length }, imageAgeCheck);
   }
 
   /**
@@ -2210,7 +2216,7 @@ export class Engine {
     this.#assertAgeGate(imageAgeCheck);
     this.#assertFaceGate();
     const models = this.#avatarModels();
-    const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck));
+    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
     const estimate = runEstimateFromScenes(priced, models, { count: runSources(approved.set).length }, imageAgeCheck);
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, estimate.worstMicros);

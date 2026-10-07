@@ -77,6 +77,22 @@ describe("beginRewrite", () => {
     expect(recordsOf(next)[0]).toMatchObject({ k: 2, closed: true, attemptIds: writeIdsOf(SET, 2) });
   });
 
+  test("taking over a redrawn scene drops the snapshot of a category no remaining scene uses", () => {
+    const CAT = "cat-paris-cafes" as const;
+    const OTHER = "cat-night-market" as const;
+    const base = stored({ writes: 2 });
+    const snapshots: CategorySnapshot[] = [
+      { ref: CAT, name: "Paris", label: "Paris cafes", style: "phone" },
+      { ref: OTHER, name: "Night", label: "Night market", style: "phone" },
+    ];
+    const set = {
+      ...base,
+      reviewWrites: [rewrite({ k: 2, sceneIds: [1, 2], redraw: true, slots: [{ ...redrawn(base, 1), category: CAT }, { ...redrawn(base, 2), category: OTHER }], snapshots })],
+    } as StoredSceneSet;
+    const next = beginRewrite(set, { jobId: "job-aaaa-0003", sceneIds: [2], redraw: false, slots: [], snapshots: [] });
+    expect(recordsOf(next)[0]).toMatchObject({ sceneIds: [1], snapshots: [snapshots[0]] });
+  });
+
   test("taking over a redrawn scene drops its old draw with it", () => {
     const base = stored({ writes: 2 });
     const set = { ...base, reviewWrites: [rewrite({ k: 2, sceneIds: [1, 2], redraw: true, slots: [redrawn(base, 1), redrawn(base, 2)] })] } as StoredSceneSet;
@@ -187,6 +203,36 @@ describe("withReviewWriteAccepted: a rewrite", () => {
     const set = { ...base, reviewWrites: [rewrite({ k: 2, sceneIds: [2], redraw: false, snapshots: [fresh] })] } as StoredSceneSet;
     const next = withReviewWriteAccepted(set, 2, new Map([[2, "New two."]]));
     expect(next.categories).toEqual([fresh, old[1]]);
+  });
+
+  describe("a snapshot is refreshed by the higher write number only", () => {
+    const CAT = "cat-paris-cafes" as const;
+    const v1: CategorySnapshot = { ref: CAT, name: "Paris", label: "Paris cafes v1", style: "phone" };
+    const v2: CategorySnapshot = { ref: CAT, name: "Paris", label: "Paris cafes v2", style: "phone" };
+    const v3: CategorySnapshot = { ref: CAT, name: "Paris", label: "Paris cafes v3", style: "phone" };
+    /** Write 2 began before the category was regenerated (v2), write 3 after it (v3); both are unresolved. */
+    function twoWrites(): StoredSceneSet {
+      const base = stored({ writes: 3, categories: [v1], request: { count: 4, categories: ["home", CAT], poses: { profile: false, back: false } } });
+      return { ...base, reviewWrites: [rewrite({ k: 2, sceneIds: [2], snapshots: [v2] }), rewrite({ k: 3, sceneIds: [3], snapshots: [v3] })] } as StoredSceneSet;
+    }
+
+    test("an older write accepted after a newer one does not roll the snapshot back", () => {
+      const newer = withReviewWriteAccepted(twoWrites(), 3, new Map([[3, "Three."]]));
+      const both = withReviewWriteAccepted(newer, 2, new Map([[2, "Two."]]));
+      expect(both.categories).toEqual([v3]);
+    });
+
+    test("what is recorded is a valid set file: the write that refreshed each snapshot is kept in it", () => {
+      const next = withReviewWriteAccepted(twoWrites(), 3, new Map([[3, "Three."]]));
+      expect(next.snapshotWrites).toEqual({ [CAT]: 3 });
+      expect(SceneSetFile.safeParse(JSON.parse(JSON.stringify(next))).success).toBe(true);
+    });
+
+    test("an older write accepted first is still refreshed by the newer one after it", () => {
+      const older = withReviewWriteAccepted(twoWrites(), 2, new Map([[2, "Two."]]));
+      expect(older.categories).toEqual([v2]);
+      expect(withReviewWriteAccepted(older, 3, new Map([[3, "Three."]])).categories).toEqual([v3]);
+    });
   });
 
   test("closes the record and clears why it stopped; the record stays for its ids", () => {

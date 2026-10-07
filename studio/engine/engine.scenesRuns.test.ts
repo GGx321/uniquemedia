@@ -243,6 +243,32 @@ describe("runs.estimateFromScenes", () => {
     expect(highWorst).toBeGreaterThan(lowWorst);
   });
 
+  describe("prices", () => {
+    /** Live endpoints for any image model asked about, and a /models list that holds none of the chat models Studio might use. */
+    const liveImagesOnly = (call: FetchCall): Reply => {
+      if (call.url.endsWith("/models")) return { status: 200, body: { data: [{ id: "acme/other", pricing: { prompt: "0.000001", completion: "0.000002" } }] } };
+      const id = /\/images\/models\/(.+)\/endpoints$/.exec(call.url)?.[1];
+      if (id === undefined) throw new Error(`unexpected request to ${call.url}`);
+      return { status: 200, body: { id, endpoints: [{ pricing: [{ billable: "output_image", unit: "image", cost_usd: 0.05 }, { billable: "input_image", unit: "image", cost_usd: 0.01 }] }] } };
+    };
+
+    test("a text model nobody lists does not block an images-only run: no writer, no text price", async () => {
+      const avatarId = await seedAvatar();
+      await seedSet(avatarId, { count: 5 });
+      const { engine } = await engineOver(network(), { settings: { textModel: "acme/unlisted-text" } });
+      expect(estimateOf(await engine.handle(estimateCommand((await setOf(engine, avatarId)).revision))).worstMicros).toBe(5 * 3 * IMAGE);
+    });
+
+    test("the prices are live when the images' are, whatever became of the text model's", async () => {
+      const avatarId = await seedAvatar();
+      await seedSet(avatarId, { count: 5 });
+      const { engine } = await engineOver(network({ prices: liveImagesOnly }));
+      const result = ok(await engine.handle(estimateCommand((await setOf(engine, avatarId)).revision)));
+      if (result.type !== "runs.estimateFromScenes") throw new Error("expected an estimate");
+      expect(result.result.estimate.prices).toBe("live");
+    });
+  });
+
   describe("refuses for free, in order", () => {
     async function ready(opts: SeedOptions = {}) {
       const avatarId = await seedAvatar();
@@ -681,6 +707,47 @@ describe("runs.startFromScenes", () => {
       await jobEnd(events, resumed.result.jobId);
       expect(net.writerCalls()).toHaveLength(0);
       expect(net.chatCalls()).toHaveLength(0);
+      expect((await setOf(engine, avatarId)).status).toBe("used");
+    });
+  });
+
+  describe("a text model nobody prices", () => {
+    const UNLISTED = { textModel: "acme/unlisted-text" };
+
+    test("starts and draws the images: the run never asks the text model, so it needs no text price", async () => {
+      const net = network();
+      const { engine, events, avatarId, revision } = await ready({ count: 2 }, { settings: UNLISTED }, net);
+      const { jobId } = startedOf(await engine.handle(startCommand(revision, 2 * 3 * IMAGE)));
+      const end = await jobEnd(events, jobId);
+      expect(end.type).toBe("job.done");
+      expect((await setOf(engine, avatarId)).status).toBe("used");
+      expect(net.chatCalls()).toHaveLength(0);
+    });
+
+    test("a cancelled run stays resumable: the estimate, the resume and the list all price the images alone", async () => {
+      let released = false;
+      const net = network({ image: (call, n) => (n === 1 ? goodImage(call, n) : released ? goodImage(call, n) : { hang: true }) });
+      const { engine, events, avatarId, revision } = await ready({ count: 3 }, { settings: UNLISTED }, net);
+      const { runId, jobId } = startedOf(await engine.handle(startCommand(revision, 3 * 3 * IMAGE)));
+      await until(() => net.imageCalls().length >= 2, "the second image request");
+      ok(await engine.handle(command("runs.cancel", { runId })));
+      await jobEnd(events, jobId);
+
+      const listed = ok(await engine.handle(command("runs.list", {})));
+      if (listed.type !== "runs.list") throw new Error("expected the runs");
+      const summary = listed.result.runs.find((r) => r.runId === runId);
+      expect(summary?.resumable).toBe(true);
+      expect(summary?.remainingWorstMicros).not.toBeNull();
+
+      const estimate = ok(await engine.handle(command("runs.estimateResume", { runId })));
+      if (estimate.type !== "runs.estimateResume") throw new Error("expected an estimate");
+      expect(estimate.result.estimate.worstMicros).toBeLessThanOrEqual(2 * 3 * IMAGE);
+      expect(estimate.result.estimate.worstMicros).toBe(summary?.remainingWorstMicros ?? -1);
+
+      released = true;
+      const resumed = ok(await engine.handle(command("runs.resume", { runId, acceptedWorstMicros: estimate.result.estimate.worstMicros })));
+      if (resumed.type !== "runs.resume") throw new Error("expected a resume");
+      expect((await jobEnd(events, resumed.result.jobId)).type).toBe("job.done");
       expect((await setOf(engine, avatarId)).status).toBe("used");
     });
   });

@@ -44,6 +44,7 @@ describe("settings.imageModels", () => {
     const parsed = ImageModelCatalogue.parse(response.result);
 
     expect(parsed.source).toBe("live");
+    expect(parsed.complete).toBe(true);
     expect(parsed.models.map((m) => m.id)).toContain("bytedance-seed/seedream-5-0-flash");
     expect(parsed.models.find((m) => m.id === "x-ai/grok-imagine-image-2.0")).toMatchObject({ qualities: ["low", "medium"], tested: true });
   });
@@ -60,6 +61,7 @@ describe("settings.imageModels", () => {
     const parsed = ImageModelCatalogue.parse(response.result);
 
     expect(parsed.source).toBe("fallback");
+    expect(parsed.complete).toBe(false);
     expect(parsed.models.map((m) => m.id).sort()).toEqual(["bytedance-seed/seedream-5-0-pro", "x-ai/grok-imagine-image-2.0", "x-ai/grok-imagine-image-quality"]);
   });
 

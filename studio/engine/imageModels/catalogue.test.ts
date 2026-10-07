@@ -238,9 +238,9 @@ test("a body that is not a model list gives the bundled list", async () => {
 });
 
 test("a live catalogue is complete only when every candidate's endpoints were reached", async () => {
-  expect((await loadFull(fakeFetch())).complete).toBe(true);
-  expect((await loadFull(fakeFetch({ throwEndpoints: [GROK] }))).complete).toBe(false);
-  expect((await loadFull(fakeFetch({ failList: true }))).complete).toBe(false);
+  expect((await loadFull(fakeFetch())).catalogue.complete).toBe(true);
+  expect((await loadFull(fakeFetch({ throwEndpoints: [GROK] }))).catalogue.complete).toBe(false);
+  expect((await loadFull(fakeFetch({ failList: true }))).catalogue.complete).toBe(false);
 });
 
 // ---------- the cache ----------
@@ -260,9 +260,9 @@ function cacheWith(loads: CatalogueLoad[]): { cache: ImageCatalogueCache; calls:
   return { cache, calls: () => calls, advance: (ms) => void (now += ms) };
 }
 
-const LIVE_COMPLETE: CatalogueLoad = { catalogue: { models: [], source: "live" }, complete: true };
-const LIVE_PARTIAL: CatalogueLoad = { catalogue: { models: [], source: "live" }, complete: false };
-const FALLBACK: CatalogueLoad = { catalogue: { models: [], source: "fallback" }, complete: false };
+const LIVE_COMPLETE: CatalogueLoad = { catalogue: { models: [], source: "live", complete: true } };
+const LIVE_PARTIAL: CatalogueLoad = { catalogue: { models: [], source: "live", complete: false } };
+const FALLBACK: CatalogueLoad = { catalogue: { models: [], source: "fallback", complete: false } };
 
 test("a complete live catalogue is served from the cache until its refresh time", async () => {
   const { cache, calls, advance } = cacheWith([LIVE_COMPLETE]);

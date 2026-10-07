@@ -37,16 +37,30 @@ export const ImageModelEntry = z
   });
 export type ImageModelEntry = z.infer<typeof ImageModelEntry>;
 
-/** `live` when the list came from OpenRouter just now (within the engine's refresh time), `fallback` when it is the bundled list. */
+/** A live catalogue is read again after this long (the engine's cache and a Settings card left open both use it). */
+export const LIVE_CATALOGUE_TTL_MS = 30 * 60_000;
+/** A bundled or partial catalogue retries the live read sooner: the outage may be over. */
+export const FALLBACK_CATALOGUE_TTL_MS = 60_000;
+
+/**
+ * `live` when the list came from OpenRouter just now (within the engine's refresh time), `fallback` when it is the bundled list. `complete` is true when
+ * every candidate of a live list was priced: a live list with a model left out by a transient failure is not complete, and is read again soon.
+ */
 export const ImageModelCatalogue = z
   .strictObject({
     models: z.array(ImageModelEntry).max(100),
     source: z.enum(["live", "fallback"]),
+    complete: z.boolean(),
   })
   .superRefine((catalogue, ctx) => {
     if (new Set(catalogue.models.map((m) => m.id)).size !== catalogue.models.length) ctx.addIssue({ code: "custom", message: "a model must not repeat", path: ["models"] });
   });
 export type ImageModelCatalogue = z.infer<typeof ImageModelCatalogue>;
+
+/** How long a catalogue is served before it is read again: the long time only for a live list that is complete, the short one otherwise. */
+export function catalogueTtlMs(catalogue: { readonly source: "live" | "fallback"; readonly complete: boolean }): number {
+  return catalogue.source === "live" && catalogue.complete ? LIVE_CATALOGUE_TTL_MS : FALLBACK_CATALOGUE_TTL_MS;
+}
 
 /** Said when the model is not in the catalogue. The renderer shows it as is; the engine's own detail would be English. */
 export const UNKNOWN_IMAGE_MODEL_RU = "Этой модели нет в списке доступных для фото. Обновите Настройки и выберите модель из списка.";
