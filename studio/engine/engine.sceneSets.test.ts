@@ -450,6 +450,39 @@ describe("scenes.compose", () => {
     expect(view.scenes.every((s) => s.category === "cat-paris-cafes" && s.categoryName === "Кофейни Парижа")).toBe(true);
   });
 
+  test("a category with poses [back] plans every scene from behind with a shot nobody holds a phone for, whatever the run's toggles say, and the set keeps its poses in the snapshot (CS.8a)", async () => {
+    const avatarId = await seedAvatar();
+    const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("angled") });
+    const activities = [
+      { text: "lying on her stomach, texting", twoHanded: false },
+      { text: "lying on her stomach, writing", twoHanded: true },
+    ];
+    await library.categories.create({
+      categoryId: "cat-lying-down",
+      name: "Лежит на животе",
+      description: "Лежит на животе в домашних шортиках и топике. Вид сзади",
+      label: "Lying at home",
+      style: "phone",
+      pool: {
+        locations: ["a sunny bedroom", "a living room rug", "a sofa by the window", "a quiet balcony mat", "a bedroom with a tall mirror"].map((name, i) => ({ name, times: ["morning", "midday"], activities, mirror: i === 4 })),
+        outfits: ["home shorts and a tank top", "a soft hoodie and shorts", "a cotton tee and joggers"],
+        shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+        poses: ["back"],
+      },
+      model: "x-ai/grok-4.3",
+      spentMicros: 5_000,
+    });
+    const { engine, events } = await engineOver(sceneNetwork());
+    const { jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 12, categories: ["cat-lying-down"], poses: { profile: false, back: false } })));
+    await jobEnd(events, jobId ?? "none");
+
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes).toHaveLength(12);
+    expect(view.scenes.every((s) => s.pose === "back" && s.shot !== "selfie" && s.shot !== "mirror")).toBe(true);
+    const stored = JSON.parse(readFileSync(setFile(avatarId, view.sceneSetId), "utf8"));
+    expect(stored.categories).toEqual([{ ref: "cat-lying-down", name: "Лежит на животе", label: "Lying at home", style: "phone", poses: ["back"] }]);
+  });
+
   test("the avatar's vibe never reaches the writer: no compose body carries it", async () => {
     const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("vibe") });
     const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits({ ...TRAITS, vibe: "zebra lantern marmalade" }), descriptor: GOOD });

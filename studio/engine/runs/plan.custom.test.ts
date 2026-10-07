@@ -83,6 +83,23 @@ describe("a plan naming a custom category", () => {
     expect(RunPlanSchema.parse(JSON.parse(JSON.stringify(built)))).toEqual(built);
   });
 
+  test("keeps the angles of the category in its snapshot, and they round-trip through JSON (CS.8a)", () => {
+    const angled: CategorySnapshot = { ...SNAPSHOT, poses: ["back", "profile"] };
+    const built = buildRunPlan(input({ categories: [angled] }));
+    expect(built.categories).toEqual([angled]);
+    expect(RunPlanSchema.parse(JSON.parse(JSON.stringify(built)))).toEqual(built);
+  });
+
+  test("a snapshot without poses stays without the key through the schema (every plan written before CS.8a)", () => {
+    const parsed = RunPlanSchema.parse(JSON.parse(JSON.stringify(buildRunPlan(input()))));
+    expect(parsed.categories?.every((c) => !("poses" in c))).toBe(true);
+  });
+
+  test("is refused with a snapshot whose poses are empty or repeat", () => {
+    const raw = JSON.parse(JSON.stringify(buildRunPlan(input())));
+    for (const poses of [[], ["back", "back"], ["sideways"]]) expect(RunPlanSchema.safeParse({ ...raw, categories: [{ ...SNAPSHOT, poses }] }).success).toBe(false);
+  });
+
   test("is refused without a snapshot entry for a custom ref its slots use", () => {
     expect(() => buildRunPlan(input({ categories: undefined }))).toThrow();
     expect(() => buildRunPlan(input({ categories: [] }))).toThrow();

@@ -1,6 +1,6 @@
 import { subSeed } from "./planner";
 import type { Place, Pool } from "./pools";
-import { drawPose, type PoseAllowance } from "./poses";
+import { drawFromPoses, drawPose, type PoseAllowance } from "./poses";
 import { makeRng, rngPick } from "./rngUtil";
 import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
 import type { Shot } from "./types";
@@ -42,7 +42,10 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
   const { seed, k, slot, pool, avoid } = input;
   const rng = makeRng(subSeed(seed, `redraw:${slot.slotIndex}:${k}`));
   const poseRng = makeRng(subSeed(seed, `redraw-pose:${slot.slotIndex}:${k}`));
-  let shot = slot.shot;
+  // CS.8a: a category with `poses` redraws its pose from them (the set's toggles are not asked); a selfie or mirror scene that turns away takes another shot of the
+  // deck. A pool without `poses` draws as it always did.
+  const angled = pool.poses === undefined ? null : drawFromPoses(poseRng, slot.shot, pool.poses, pool.shotDeck);
+  let shot = angled === null ? slot.shot : angled.shot;
   let places: readonly Place[] = pool.locations;
   if (shot === "mirror") {
     const mirrors = places.filter((place) => place.mirror === true);
@@ -61,7 +64,7 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
     activity: rngPick(rng, activities).text,
     outfit,
     shot,
-    pose: drawPose(poseRng, shot, input.poses),
+    pose: angled === null ? drawPose(poseRng, shot, input.poses) : angled.pose,
     attemptIdBase: slot.attemptIdBase,
     repeatedPair: false,
   };

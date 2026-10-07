@@ -67,3 +67,19 @@ function fullDeck(allowed: PoseAllowance): readonly Pose[] {
 export function drawPose(rng: Rng, shot: Shot, allowed: PoseAllowance): Pose {
   return rngPick(rng, isPhoneInHandShot(shot) ? FRONT_ONLY_DECK : fullDeck(allowed));
 }
+
+/** The shot a back or profile slot takes when the shot it drew has a phone in hand and the category's deck has no other: nobody holds a phone for a photographer. */
+export const FALLBACK_SHOT: Shot = "photographer";
+
+/**
+ * CS.8a: one slot's pose and shot for a custom category whose description named its angles. The pose is drawn uniformly from the category's own list (the run's
+ * toggles are not asked: the angle is the owner's description, not the run's setting). A selfie or a mirror shot cannot face away or sideways, so when the pose
+ * drawn is back or profile and the shot has a phone in hand, the slot takes one of the deck's other shots instead (drawn from the same stream, so nothing else
+ * moves), or the photographer when the deck holds none. A pose the phone allows leaves the shot as it was. Never returns a phone-in-hand shot with back or profile.
+ */
+export function drawFromPoses(rng: Rng, shot: Shot, poses: readonly Pose[], deck: readonly Shot[]): { pose: Pose; shot: Shot } {
+  const pose = rngPick(rng, poses);
+  if (!isPhoneInHandShot(shot) || pose === "front" || pose === "three-quarter") return { pose, shot };
+  const others = deck.filter((candidate) => !isPhoneInHandShot(candidate));
+  return { pose, shot: others.length === 0 ? FALLBACK_SHOT : rngPick(rng, others) };
+}
