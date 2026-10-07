@@ -7,11 +7,12 @@ import { formatUsdTiered } from "../../lib/money";
 import { Icon } from "../../ui/Icon";
 import { about, describedBy, InlinePaidButton, paidButtonState, PriceFailed, setPriceKey } from "./scenePaid";
 import { SHOT_LABEL, writeCapRefusal } from "./sceneReview";
-import { IDEA_HINT, ideaTitle, WRITE_CAP_TEXT } from "./sceneText";
+import { ideaHint, ideaTitle, WRITE_CAP_TEXT } from "./sceneText";
 import { usePaidAction } from "./usePaidAction";
 
 // CS.6: «+ Своя сцена» — the one mode, «по описанию» (owner decision 2, 2026-10-07; ReviewAddIdea, ReviewStates D): an idea in any language (1–500), how many
-// scenes (1–5) and a shot («Авто» never takes the mirror); the model writes the English sentences, one paid request. Opens with the focus in «Идея»; Escape
+// scenes (1–5) and a shot (CS.8: «Авто» lets the model pick the shot and the angle from the idea, the mirror only when the idea names one; the hint under the
+// row follows the shot); the model writes the English sentences, one paid request. Opens with the focus in «Идея»; Escape
 // closes it and the focus goes back to «+ Своя сцена». A write that failed for good (the provider refused the idea, or two answers were rejected) opens it
 // again with the idea, saying why.
 
@@ -154,8 +155,14 @@ export function SceneIdeaForm({ set, view, start, blocked, onPaidInFlightChange,
             Кадр
           </label>
           <span className={shot === null ? "chip ed-chip-select" : "chip chip-on ed-chip-select"}>
-            <select id={shotId} value={shot ?? ""} disabled={write.sending} onChange={(e) => setShot(POOL_SHOTS.find((s) => s === e.target.value) ?? null)}>
-              {/* CS.7 V3: «Авто» alone keeps «Кадр» in the form's row at 1200; that it never takes the mirror is said in the hint below. */}
+            <select
+              id={shotId}
+              value={shot ?? ""}
+              disabled={write.sending}
+              aria-describedby={hintId}
+              onChange={(e) => setShot(POOL_SHOTS.find((s) => s === e.target.value) ?? null)}
+            >
+              {/* CS.7 V3: «Авто» alone keeps «Кадр» in the form's row at 1200; what it picks (shot and angle, the mirror only when the idea names one) is said in the hint below. */}
               <option value="">Авто</option>
               {POOL_SHOTS.map((s) => (
                 <option key={s} value={s}>
@@ -168,7 +175,7 @@ export function SceneIdeaForm({ set, view, start, blocked, onPaidInFlightChange,
         </div>
       </div>
       <p id={hintId} className="faint scene-idea-hint">
-        {IDEA_HINT}
+        {ideaHint(shot)}
       </p>
       {failure !== null && (
         <div className="notice notice-danger scene-idea-failure" role="alert">

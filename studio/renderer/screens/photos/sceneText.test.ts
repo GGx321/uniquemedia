@@ -11,9 +11,13 @@ import {
   gaveUpNotice,
   gaveUpText,
   headerCounts,
+  ideaHint,
   ideaLine,
   ideaNotice,
   ideaTitle,
+  poseTag,
+  stripAngles,
+  stripAnglesText,
   offNoteSet,
   otherScenesButton,
   ownRewriteText,
@@ -186,6 +190,62 @@ describe("the ⟳ price popover", () => {
   test("an own scene is written again from its stored idea; a deleted category cannot give a new place", () => {
     expect(ownRewriteText("Утренний кофе на балконе с видом на море, в пижаме")).toBe("Новый текст по вашему описанию «Утренний кофе на балконе…». Кадр и ракурс те же.");
     expect(redrawGoneText("Студия ч/б")).toBe("Категории «Студия ч/б» больше нет — новое место из неё не взять. Перепишите текст карандашом или уберите сцену.");
+  });
+
+  test("CS.8: a category with its own angles redraws the angle too; a selfie or mirror scene whose list can turn away may change its shot", () => {
+    const tail = "Сцена 02 заменится, когда новая будет готова; если не выйдет — останется как есть.";
+    const lead = "Новое место, наряд, действие, время дня и ракурс из «Домашнее у кровати» и новый текст";
+    expect(redrawText("Домашнее у кровати", 2, { poses: ["three-quarter", "back"], shot: "selfie" })).toBe(`${lead}; со спины селфи не снять — тогда кадр сменится. ${tail}`);
+    expect(redrawText("Домашнее у кровати", 2, { poses: ["profile", "three-quarter"], shot: "mirror" })).toBe(`${lead}; в профиль в зеркале не снять — тогда кадр сменится. ${tail}`);
+    expect(redrawText("Домашнее у кровати", 2, { poses: ["profile", "back"], shot: "selfie" })).toBe(`${lead}; со спины селфи не снять — тогда кадр сменится. ${tail}`);
+    // Not a phone shot, or nothing in the list that turns away: no clause.
+    expect(redrawText("Домашнее у кровати", 2, { poses: ["three-quarter", "back"], shot: "friend" })).toBe(`${lead}. ${tail}`);
+    expect(redrawText("Домашнее у кровати", 2, { poses: ["front", "three-quarter"], shot: "selfie" })).toBe(`${lead}. ${tail}`);
+  });
+});
+
+describe("CS.8: angles on the review screen", () => {
+  const BED = { ref: "cat-bed-0001", name: "Домашнее у кровати", poses: ["back", "three-quarter"] } as const;
+
+  test("the strip's line names who does not follow the set's toggles: categories with their own angles (not their lists) and own scenes", () => {
+    const both = sceneSet([scene(1), scene(2, { origin: "own" })], { categories: [{ ref: "home", name: null }, { ref: BED.ref, name: BED.name, poses: [...BED.poses] }] });
+    expect(stripAnglesText(both)).toBe("Ракурсы: анфас, три четверти; у «Домашнее у кровати» — свои; у своих сцен — по описанию");
+    expect(stripAngles(both)).toEqual({ lead: "Ракурсы: анфас, три четверти", first: "Домашнее у кровати", more: 0, rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }], own: true });
+
+    const several = sceneSet(written(3), {
+      poses: { profile: false, back: true },
+      categories: [
+        { ref: BED.ref, name: BED.name, poses: [...BED.poses] },
+        { ref: "cat-yoga-0002", name: "Йога дома", poses: ["profile"] },
+        { ref: "home", name: null },
+        { ref: "cat-city-0003", name: "Ночной город", poses: ["back"] },
+        { ref: "cat-cafe-0004", name: "Кофейни Парижа" },
+      ],
+    });
+    expect(stripAnglesText(several)).toBe("Ракурсы: анфас, три четверти, со спины; у «Домашнее у кровати» и ещё 2 — свои");
+    expect(stripAngles(several).rows.map((r) => r.name)).toEqual(["Домашнее у кровати", "Йога дома", "Ночной город"]);
+
+    expect(stripAnglesText(sceneSet([scene(1), scene(21, { origin: "own" })]))).toBe("Ракурсы: анфас, три четверти; у своих сцен — по описанию");
+    expect(stripAnglesText(sceneSet(written(2)))).toBe("Ракурсы: анфас, три четверти");
+    expect(stripAnglesText(sceneSet(written(2), { poses: { profile: true, back: true } }))).toBe("Ракурсы: анфас, три четверти, профиль, со спины");
+  });
+
+  test("own scenes being written from an idea count as own scenes already", () => {
+    expect(stripAnglesText(sceneSet(written(2), { write: { kind: "idea", count: 2 } }))).toBe("Ракурсы: анфас, три четверти; у своих сцен — по описанию");
+  });
+
+  test("the idea form's hint follows the shot: «Авто» picks shot and angle (the mirror only when the idea names one), a selfie or mirror faces the camera", () => {
+    expect(ideaHint(null)).toBe("Модель выберет кадр и ракурс по идее: «вид сзади» — со спины, «сбоку» — профиль; селфи — только анфас или три четверти. Зеркало — только если оно есть в идее.");
+    for (const shot of ["friend", "candid", "photographer"] as const) expect(ideaHint(shot)).toBe("Ракурс модель выберет по идее: «вид сзади» — со спины, «сбоку» — профиль.");
+    expect(ideaHint("selfie")).toBe("Селфи — только анфас или три четверти: ракурс модель выберет из них. Нужен вид сзади или сбоку — выберите «Авто» или другой кадр.");
+    expect(ideaHint("mirror")).toBe("Зеркало — только анфас или три четверти: ракурс модель выберет из них. Нужен вид сзади или сбоку — выберите «Авто» или другой кадр.");
+  });
+
+  test("a scene card tags profile and back only", () => {
+    expect(poseTag("back")).toBe("со спины");
+    expect(poseTag("profile")).toBe("профиль");
+    expect(poseTag("front")).toBe(null);
+    expect(poseTag("three-quarter")).toBe(null);
   });
 });
 

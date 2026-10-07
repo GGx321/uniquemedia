@@ -1,6 +1,7 @@
 import { type KeyboardEvent, useEffect, useId, useRef } from "react";
-import type { SceneSetView, SceneView } from "../../../shared/engine";
-import { useEngine } from "../../engine/react";
+import { isCustomCategory, type ScenePose, type SceneSetView, type SceneView } from "../../../shared/engine";
+import type { CategoryLibraryView } from "../../engine/categoryLibrary";
+import { useCategoryLibrary, useEngine } from "../../engine/react";
 import type { EngineView } from "../../engine/store";
 import { errorText } from "../../lib/errors";
 import { paidStop } from "../../lib/paidStop";
@@ -28,8 +29,20 @@ interface ScenePopoverProps {
   onStarted: () => void;
 }
 
+/**
+ * CS.8 (README contract note 4): the angles ⟳ draws a planned scene's from — its custom category's pool as it is NOW (`redraw.ts` takes the current pool, so a
+ * free edit or a regenerate since the compose counts), the set's own snapshot only while the library is not listed. Undefined: no angles of its own.
+ */
+function anglesNow(scene: SceneView, set: SceneSetView, list: CategoryLibraryView["list"]): readonly ScenePose[] | undefined {
+  const ref = scene.category;
+  if (ref === "own" || !isCustomCategory(ref)) return undefined;
+  if (list.status === "ready") return list.categories.find((c) => c.categoryId === ref)?.pool.poses;
+  return set.categories.find((c) => c.ref === ref)?.poses;
+}
+
 export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, onClose, onStarted }: ScenePopoverProps) {
   const { client, store, sceneSets } = useEngine();
+  const { view: categories } = useCategoryLibrary();
   const navigate = useNavigate();
   const ids = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -99,6 +112,7 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
   const titleId = `${ids}-title`;
   const whyId = `${ids}-why`;
   const label = sceneCategoryLabel(scene);
+  const poses = anglesNow(scene, set, categories.list);
   const stop = paidStop(view);
   const settingsLink =
     stopped === null ? null : stop?.kind === "reconcile" ? (
@@ -147,7 +161,7 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
         </b>
         {!offline && replace.estimate !== null && <span className="mono muted">{about(replace.estimate.expectedMicros)}</span>}
       </div>
-      <p className="scene-pop-text">{own ? ownRewriteText(scene.idea ?? "") : redrawText(label, scene.sceneId)}</p>
+      <p className="scene-pop-text">{own ? ownRewriteText(scene.idea ?? "") : redrawText(label, scene.sceneId, poses === undefined ? undefined : { poses, shot: scene.shot })}</p>
       {marker !== undefined && <p className="scene-pop-text scene-pop-marker">{interruptedChoiceText(scene.origin)}</p>}
       {!offline && replace.estimate !== null && <p className="mono faint scene-pop-cap">{writeCapLine(replace.estimate.worstMicros)}</p>}
       {replace.previousWorst !== null && <p className="scene-pop-warn">Цена выросла — подтвердите новую.</p>}

@@ -1,7 +1,9 @@
 import {
   SCENE_TEXT_MAX,
   type Estimate,
+  type PoolShot,
   type SceneGaveUpBy,
+  type ScenePose,
   type SceneInterruptedIdea,
   type SceneLiveWrite,
   type SceneOrigin,
@@ -13,8 +15,9 @@ import {
 import { errorText } from "../../lib/errors";
 import { countOf, plural } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
+import { POSE_WORD, posesText } from "./angles";
 import { modelName } from "./runForm";
-import { type ApproveBlock, type InterruptedRewrite, sceneNumber, tallyScenes } from "./sceneReview";
+import { type ApproveBlock, CUSTOM_FALLBACK, type InterruptedRewrite, sceneNumber, tallyScenes } from "./sceneReview";
 
 // CS.6: what the review UI says, in the CS.0 artboards' words (PhotosCS.dc.html, ReviewStates.dc.html), built from the engine's scene set view. A sentence
 // says only what the view (or what this window saw of it) can back: where the design names something the contract does not carry — how many requests a set
@@ -213,8 +216,68 @@ export function cyrillicHint(origin: SceneOrigin): string {
 // ---------- the ⟳ price popover ----------
 
 /** ⟳ «Другая сцена» on a planned scene redraws all of it (owner decision 3): the copy names every part that changes. */
-export function redrawText(category: string, sceneId: number): string {
-  return `Новое место, наряд, действие и время дня из «${category}» и новый текст. Сцена ${sceneNumber(sceneId)} заменится, когда новая будет готова; если не выйдет — останется как есть.`;
+export function redrawText(category: string, sceneId: number, angles?: { readonly poses: readonly ScenePose[]; readonly shot: PoolShot }): string {
+  const tail = `Сцена ${sceneNumber(sceneId)} заменится, когда новая будет готова; если не выйдет — останется как есть.`;
+  if (angles === undefined) return `Новое место, наряд, действие и время дня из «${category}» и новый текст. ${tail}`;
+  // CS.8 (README contract note 4): the angle is drawn again too, from the category's list as it is now; a selfie or a mirror scene that draws an angle away
+  // from the camera takes another shot of the deck.
+  const away = (["back", "profile"] as const).find((pose) => angles.poses.includes(pose));
+  const phone = angles.shot === "selfie" ? "селфи" : angles.shot === "mirror" ? "в зеркале" : null;
+  const clause = away !== undefined && phone !== null ? `; ${away === "back" ? "со спины" : "в профиль"} ${phone} не снять — тогда кадр сменится` : "";
+  return `Новое место, наряд, действие, время дня и ракурс из «${category}» и новый текст${clause}. ${tail}`;
+}
+
+/** The strip's «Ракурсы» line, in parts: the set's own angles, the categories that keep their own, and whether own scenes take theirs from the idea. */
+export interface StripAngles {
+  /** «Ракурсы: анфас, три четверти». */
+  readonly lead: string;
+  /** The first category of the set's snapshot with angles of its own, null with none. */
+  readonly first: string | null;
+  /** How many more such categories. */
+  readonly more: number;
+  /** Each such category with its angles (the list «и ещё N» opens). */
+  readonly rows: readonly { readonly name: string; readonly list: string }[];
+  /** The set holds own scenes (their angle comes from the idea). */
+  readonly own: boolean;
+}
+
+/**
+ * README contract note 9 (required for CS.8b): the set's own angles, then who does not follow them — the categories of the set's snapshot with angles of their
+ * own (named, their lists not repeated: they are in «Мои категории») and own scenes, whose angle the model takes from the idea (an idea write running counts).
+ */
+export function stripAngles(set: SceneSetView): StripAngles {
+  const poses: ScenePose[] = ["front", "three-quarter", ...(set.poses.profile ? (["profile"] as const) : []), ...(set.poses.back ? (["back"] as const) : [])];
+  const rows = set.categories.flatMap((c) => (c.poses === undefined ? [] : [{ name: c.name ?? CUSTOM_FALLBACK, list: posesText(c.poses) }]));
+  return {
+    lead: `Ракурсы: ${posesText(poses)}`,
+    first: rows[0]?.name ?? null,
+    more: Math.max(0, rows.length - 1),
+    rows,
+    own: set.scenes.some((s) => s.origin === "own") || set.write?.kind === "idea",
+  };
+}
+
+/** The strip's line as one sentence, without «Настройки набора не меняются…» after it. */
+export function stripAnglesText(set: SceneSetView): string {
+  const parts = stripAngles(set);
+  const categories = parts.first === null ? "" : `; у «${parts.first}»${parts.more > 0 ? ` и ещё ${parts.more}` : ""} — свои`;
+  return `${parts.lead}${categories}${parts.own ? "; у своих сцен — по описанию" : ""}`;
+}
+
+/** The idea form's hint under «Сколько · Кадр», by the shot chosen (null: «Авто»; README «Copy», «Idea hint by shot»; contract notes 6-7). */
+export function ideaHint(shot: PoolShot | null): string {
+  if (shot === null) {
+    return "Модель выберет кадр и ракурс по идее: «вид сзади» — со спины, «сбоку» — профиль; селфи — только анфас или три четверти. Зеркало — только если оно есть в идее.";
+  }
+  if (shot === "selfie" || shot === "mirror") {
+    return `${shot === "selfie" ? "Селфи" : "Зеркало"} — только анфас или три четверти: ракурс модель выберет из них. Нужен вид сзади или сбоку — выберите «Авто» или другой кадр.`;
+  }
+  return "Ракурс модель выберет по идее: «вид сзади» — со спины, «сбоку» — профиль.";
+}
+
+/** A scene card's angle tag: profile and back only (front and three-quarter, most scenes, carry none). */
+export function poseTag(pose: ScenePose): string | null {
+  return pose === "back" || pose === "profile" ? POSE_WORD[pose] : null;
 }
 
 /** ⟳ «Переписать» on an own scene: from its stored idea, shot and pose kept. */
@@ -522,6 +585,5 @@ export const CANCELLING_NOTE = "отмена отправлена · ждём к
 export const SCENES_CHANGED_EDIT = "Набор изменился в другом окне — ваша правка не сохранена. Показана свежая версия; повторите правку.";
 export const SCENES_CHANGED_APPROVE = "Пока считалась цена, набор изменился — проверьте сцены и нажмите снова.";
 export const WRITE_CAP_TEXT = "Слишком много правок в этом наборе — пересоставьте его.";
-export const IDEA_HINT = "Модель напишет сцены по-английски по своим правилам: в селфи телефон в одной руке, поза совпадает с ракурсом. Ракурсы — как в карточке, «Авто» не берёт зеркало.";
 export const EMPTY_SET_LINE = "В наборе пока нет сцен. Опишите идею выше — сцены по ней напишет модель. Отрисовать можно, когда будет хотя бы одна.";
 export const OFF_NOTE = "Сцены составятся и отрисуются за один запуск, как раньше: «Сгенерировать» платит сразу за всё.";

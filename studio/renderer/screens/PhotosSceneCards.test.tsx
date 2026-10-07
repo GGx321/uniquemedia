@@ -291,9 +291,9 @@ describe("«+ Своя сцена · по описанию»", () => {
     const idea = within(form).getByRole("textbox", { name: "Идея · на любом языке" });
     expect(describeElement(document.activeElement)).toBe(describeElement(idea));
     expect(form.textContent).toContain("Опишите идею.");
-    // «Авто» on its own keeps «Кадр» in the form's one row at 1200; why it never takes the mirror is in the hint (CS.7 V3).
+    // «Авто» on its own keeps «Кадр» in the form's one row at 1200; what it picks is in the hint (CS.7 V3; CS.8: the mirror only when the idea names one).
     expect(within(form).getByRole("option", { name: "Авто" })).toBeDefined();
-    expect(form.textContent).toContain("«Авто» не берёт зеркало.");
+    expect(form.textContent).toContain("Зеркало — только если оно есть в идее.");
     expect(isDisabled(within(form).getByRole("button", { name: nb("Написать 1 сцену · до $0.075") }))).toBe(true);
     fireEvent.change(idea, { target: { value: "Утренний кофе на балконе с видом на море, в пижаме, а потом прогулка по пляжу с собакой" } });
     fireEvent.click(within(form).getByRole("button", { name: "Больше" }));

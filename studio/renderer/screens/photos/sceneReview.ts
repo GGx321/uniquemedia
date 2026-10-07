@@ -64,7 +64,7 @@ export const SHOT_LABEL: Record<PoolShot, string> = {
 
 export const OWN_SCENE_LABEL = "Своя сцена";
 /** A custom category whose name the set's snapshot did not keep (it always does; the contract allows null). */
-const CUSTOM_FALLBACK = "Своя категория";
+export const CUSTOM_FALLBACK = "Своя категория";
 
 export { sceneNumber } from "../../lib/format";
 
