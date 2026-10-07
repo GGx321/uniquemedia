@@ -80,6 +80,15 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
   const sceneButton = (label: string): (() => HTMLElement | null) => () => document.querySelector<HTMLElement>(`button[aria-label="${label}"]`);
   const toCancel = (): void => focusLater(() => cancelRef.current);
 
+  // «Дописать» of the generate card started a job of this set: its «Отменить» is here, and takes the focus once it is on the page.
+  useEffect(() => {
+    for (const jobId of sliceView.cancelFocus) {
+      if (sliceView.jobs.get(jobId)?.sceneSetId !== set.sceneSetId) continue;
+      sceneSets.cancelFocusTaken(jobId);
+      toCancel();
+    }
+  });
+
   // ---------- the ends of this window's jobs, seen while the screen shows them ----------
 
   const seen = useRef(new Map<string, JobView["status"]>());

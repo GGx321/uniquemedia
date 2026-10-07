@@ -90,6 +90,18 @@ describe("a compose cut off by a closed Studio", () => {
   });
 });
 
+describe("«Дописать» after a stop", () => {
+  test("its job's progress shows «Отменить» and the focus goes there, as after ⟳, «Повторить» and «Другие сцены для N» (README «Keyboard and focus»)", async () => {
+    const { client } = await cutOff();
+    await waitFor(() => expect(goButton().textContent).toBe(nb("Дописать 35 сцен · до $0.12")));
+    await reconcile(client);
+    await waitFor(() => expect(isDisabled(goButton())).toBe(false));
+    fireEvent.click(goButton());
+    await flush();
+    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("button", { name: "Отменить" }))));
+  });
+});
+
 describe("a compose that gave up on a request", () => {
   test("«Готово 35 из 60 · 25 не составлены», «Убрать 25 пустых» and «Другие сцены для 5»; × hides it and the focus goes to the counter (ReviewGaveUp)", async () => {
     const { engine, scheduler } = await openReview();

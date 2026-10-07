@@ -143,6 +143,8 @@ export function SceneStrip({
     onSent: (result, accepted) => {
       store.trackScenesJob(result.jobId, set.sceneSetId, avatar.avatarId, tally.pending);
       sceneSets.trackJob(result.jobId, { sceneSetId: set.sceneSetId, kind: "unwritten", price: accepted, sceneIds: null, idea: null });
+      // The column shows the job's «Отменить» once the job is on screen: the focus goes there (README «Keyboard and focus»).
+      sceneSets.requestCancelFocus(result.jobId);
     },
     onPaidInFlightChange,
   });

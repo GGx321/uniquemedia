@@ -39,9 +39,11 @@ export interface SceneSetSliceView {
   readonly reconciled: ReadonlyMap<string, number>;
   /** The sets whose «Готово … не составлены» the owner closed. */
   readonly dismissed: ReadonlySet<string>;
+  /** The jobs this window started from the generate card, whose «Отменить» is to take the focus once the column shows it (README «Keyboard and focus»). */
+  readonly cancelFocus: ReadonlySet<string>;
 }
 
-const INITIAL: SceneSetSliceView = { sets: new Map(), jobs: new Map(), fresh: new Map(), reconciled: new Map(), dismissed: new Set() };
+const INITIAL: SceneSetSliceView = { sets: new Map(), jobs: new Map(), fresh: new Map(), reconciled: new Map(), dismissed: new Set(), cancelFocus: new Set() };
 
 /** Which of two views of one avatar's set to show: a set it did not show before wins; the same set, its newer revision. */
 function newer(current: SceneSetView | null, incoming: SceneSetView): boolean {
@@ -135,6 +137,20 @@ export class SceneSetSlice {
   trackJob(jobId: string, note: SceneJobNote): void {
     this.#update({ jobs: new Map(this.#view.jobs).set(jobId, note) });
     this.#onStore();
+  }
+
+  /** The focus is to go to the job's «Отменить» (the card's «Дописать» started it, and the cancel button lives in the column). */
+  requestCancelFocus(jobId: string): void {
+    if (this.#view.cancelFocus.has(jobId)) return;
+    this.#update({ cancelFocus: new Set(this.#view.cancelFocus).add(jobId) });
+  }
+
+  /** The column took that request (it moves the focus once): asked for again only by a new job. */
+  cancelFocusTaken(jobId: string): void {
+    if (!this.#view.cancelFocus.has(jobId)) return;
+    const next = new Set(this.#view.cancelFocus);
+    next.delete(jobId);
+    this.#update({ cancelFocus: next });
   }
 
   /** «×» on «Готово … не составлены»: closed for that set (the header's counter stays). */
