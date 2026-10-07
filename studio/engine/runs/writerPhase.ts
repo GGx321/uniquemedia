@@ -4,7 +4,7 @@ import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
 import type { ChatMessage, ChatResult, OpenRouterClient } from "../openrouter/types";
-import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type ReadableSlot, type WriterRefusal } from "../scenes";
+import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type Pose, type ReadableSlot, type Shot, type WriterRefusal } from "../scenes";
 import { classifyFailure } from "./failures";
 import { attemptPaid, type LedgerView } from "./journal";
 import type { Release } from "./pools";
@@ -62,6 +62,10 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
   scope: Scope;
   /** The settings' text model, as the run was planned. */
   textModel: string;
+  /** CS.8a: the structured-output schema asked for; the compose schema (sentences only) when absent. An idea write asks for its own, with the angle the model picks. */
+  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  /** CS.8a: how an answer is read; the writer's own reader (sentences only) when absent. An idea write's reader also settles the angle of each scene it was asked to pick. */
+  read?: (content: string, slots: readonly S[]) => PhaseRead;
   /** The run job's cancel. */
   signal: AbortSignal;
   /** The plan's slots, in plan order. */
@@ -86,8 +90,17 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
  *   open by the client's own settle rule.
  */
 export type WriterPhaseResult =
-  | { ok: true; sentences: Map<number, string> }
+  | { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> }
   | { ok: false; stop: "cancelled" | "stopped" | "exhausted"; error: EngineError };
+
+/** The shot and the pose a reader settled on for one scene (an idea write's, CS.8a). */
+export interface PhaseAngle {
+  shot: Shot;
+  pose: Pose;
+}
+
+/** What a phase's reader answers: the writer's own answer, or (an idea write) that with the angle of each scene. */
+export type PhaseRead = { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } | ({ ok: false } & WriterRefusal);
 
 function cancelled(): Extract<WriterPhaseResult, { ok: false }> {
   return { ok: false, stop: "cancelled", error: { code: "INTERNAL", detail: "the run was cancelled while its scenes were being written" } };
@@ -111,7 +124,7 @@ async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterP
       priceBook: deps.priceBook,
       signal: phase.signal,
       messages: phase.messages(slots, feedback),
-      jsonSchema: WRITER_JSON_SCHEMA,
+      jsonSchema: phase.jsonSchema ?? WRITER_JSON_SCHEMA,
       maxTokens: phase.call.maxTokens,
       inputTokens: phase.call.inputTokens,
       reasoningEffort: "low",
@@ -133,7 +146,7 @@ async function writeChunk<S extends ReadableSlot>(
   phase: WriterPhase<S>,
   chunk: WriterPhase<S>["chunks"][number],
   slots: readonly S[],
-): Promise<{ ok: true; sentences: Map<number, string> } | Extract<WriterPhaseResult, { ok: false }>> {
+): Promise<{ ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } | Extract<WriterPhaseResult, { ok: false }>> {
   let feedback: WriterRefusal | undefined;
   let answered = chunk.attemptIds.filter((id) => attemptPaid(phase.ledger, id)).length;
   for (const attemptId of chunk.attemptIds) {
@@ -144,8 +157,9 @@ async function writeChunk<S extends ReadableSlot>(
     if (result === null || result.status === "aborted") return cancelled();
     if (result.status === "ok" && !result.aboveWorst) {
       answered++;
-      const read = readWriterAnswer(result.content, slots);
-      if (read.ok) return { ok: true, sentences: read.sentences };
+      const reader: (content: string, slots: readonly S[]) => PhaseRead = phase.read ?? readWriterAnswer;
+      const read = reader(result.content, slots);
+      if (read.ok) return { ok: true, sentences: read.sentences, ...(read.angles === undefined ? {} : { angles: read.angles }) };
       feedback = read;
       continue;
     }
@@ -175,6 +189,7 @@ async function writeChunk<S extends ReadableSlot>(
  */
 export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>): Promise<WriterPhaseResult> {
   const sentences = new Map(phase.sentences);
+  const angles = new Map<number, PhaseAngle>();
   const bySlot = new Map(phase.slots.map((slot) => [slot.slotIndex, slot]));
   for (const chunk of phase.chunks) {
     if (phase.writerDone.has(chunk.chunk)) continue;
@@ -187,6 +202,7 @@ export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: Wr
     if (!written.ok) return written;
     await deps.onChunk(chunk.chunk, written.sentences);
     for (const [slotIndex, sentence] of written.sentences) sentences.set(slotIndex, sentence);
+    for (const [slotIndex, angle] of written.angles ?? []) angles.set(slotIndex, angle);
   }
-  return { ok: true, sentences };
+  return { ok: true, sentences, ...(angles.size === 0 ? {} : { angles }) };
 }

@@ -558,12 +558,12 @@ export class SceneSetService {
               if (current === null) throw new Error(`scene set ${sceneSetId} is gone`);
               return current;
             },
-            accept: async (_k, sentences) => {
+            accept: async (_k, sentences, angles) => {
               // An answer already accepted (the retry of a write whose flush failed after the rename) changes nothing: no second revision, no second file.
               await this.#announce(
                 library,
                 await store((current) => {
-                  const next = withReviewWriteAccepted(current, k, sentences);
+                  const next = withReviewWriteAccepted(current, k, sentences, angles);
                   return next === current ? null : next;
                 }),
               );

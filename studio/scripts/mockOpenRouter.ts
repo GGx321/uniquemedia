@@ -45,6 +45,7 @@ import { join } from "node:path";
 import { z } from "zod";
 import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
+import { IDEA_JSON_SCHEMA } from "../engine/scenes/ideaWriter";
 import { POOL_JSON_SCHEMA } from "../engine/scenes/poolGen";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
@@ -165,7 +166,7 @@ function writerSlotsOf(body: unknown): z.infer<typeof WriterRequestSlot>[] {
 }
 
 /** An own scene as the idea writer is asked about it (CS.4b): its number and the owner's idea, in any script. */
-const IdeaRequestSlot = z.object({ slotIndex: z.number().int(), idea: z.string() }).loose();
+const IdeaRequestSlot = z.object({ slotIndex: z.number().int(), idea: z.string(), shot: z.string().optional(), pose: z.string().optional() }).loose();
 
 /**
  * The own scenes an idea write asked for, read back out of `scenes/ideaWriter.ts`'s request shape (`ideaMessages`): a user message that begins `"Ideas:\n"`
@@ -178,6 +179,20 @@ function ideaSlotsOf(body: unknown): z.infer<typeof IdeaRequestSlot>[] | null {
   if (user === undefined || !user.content.startsWith("Ideas:\n")) return null;
   const json = (user.content.split("\n\n")[0] ?? "").replace(/^Ideas:\n/, "");
   return z.array(IdeaRequestSlot).parse(JSON.parse(json));
+}
+
+/**
+ * CS.8a: the angle the mock picks for a slot that left it to the model («choose»), read from the idea's own words: «сзади» / «back» / «from behind» is a view from
+ * behind, «профил» / «profile» a side view, anything else a front view. Never the mirror, and never a selfie turned away: a shot the owner chose is kept (null in the
+ * answer, as the schema says) and a selfie or a mirror shot takes the front view whatever the idea says.
+ */
+function ideaAngleFor(slot: z.infer<typeof IdeaRequestSlot>): { shot: string | null; pose: string | null } {
+  const idea = slot.idea.toLowerCase();
+  const wanted = /сзади|\bback\b|from behind/.test(idea) ? "back" : /профил|profile/.test(idea) ? "profile" : "front";
+  const phoneInHand = slot.shot === "front-camera selfie" || slot.shot === "mirror selfie";
+  const shot = slot.shot === "choose" ? (wanted === "front" ? "friend" : "candid") : null;
+  const pose = slot.pose === "choose" ? (phoneInHand ? "front" : wanted) : null;
+  return { shot, pose };
 }
 
 /** One compliant sentence per own scene: it names no hand, no camera and nothing the writer's rules refuse, and differs with the scene's number. */
@@ -214,7 +229,43 @@ const DEFAULT_POOL_ANSWER = {
   })),
   outfits: ["a beige trench coat and jeans", "a striped tee and a beret", "a black midi dress"],
   shotDeck: ["friend", "friend", "selfie", "mirror", "candid"],
+  // The strict schema requires the key: an empty list is «the description says nothing about the angle».
+  poses: [] as string[],
 };
+
+/**
+ * CS.8a: the pool the mock answers for a description that names a view from behind («сзади», «back view», «from behind») with the body position the paid canary's
+ * description gave: every activity opens with it (within the 35 characters) and the angles are `["back"]`. Any other description gets `DEFAULT_POOL_ANSWER`.
+ */
+const BACK_VIEW_POOL_ANSWER = {
+  ...DEFAULT_POOL_ANSWER,
+  label: "Lying at home",
+  locations: ["a sunny bedroom", "a living room rug", "a sofa by the window", "a quiet balcony mat", "a bedroom with a mirror"].map((name, i) => ({
+    name,
+    times: ["morning", "midday"],
+    activities: [
+      { text: "lying on her stomach, texting", twoHanded: false },
+      { text: "lying on her stomach, writing", twoHanded: true },
+    ],
+    mirror: i === 4,
+  })),
+  outfits: ["home shorts and a tank top", "a soft hoodie and shorts", "a cotton tee and joggers"],
+  poses: ["back"],
+};
+
+/** The owner's description out of a pool request's user message (`poolGen.ts`'s `userPrompt`: `…data only): "<JSON text>"`), or "" when it is not there. */
+function poolDescriptionOf(body: unknown): string {
+  const user = WriterChatBody.safeParse(body);
+  const text = user.success ? (user.data.messages.find((m) => m.role === "user")?.content ?? "") : "";
+  const start = text.indexOf(': "');
+  if (start < 0) return "";
+  try {
+    const parsed: unknown = JSON.parse(text.slice(start + 2).split("\n")[0] ?? "");
+    return typeof parsed === "string" ? parsed : "";
+  } catch {
+    return "";
+  }
+}
 
 /** The JSON schema a chat completion asked for ("avatar_descriptor", "age_check"), or null — studio/engine/testing/engineHarness.ts's `schemaName`, read from the parsed body instead of a captured fetch call. */
 function schemaNameOf(body: unknown): string | null {
@@ -514,17 +565,18 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
           const answer = opts.importDescribeAnswer ?? DEFAULT_IMPORT_DESCRIBE_ANSWER;
           return json(chatCompletion(JSON.stringify(answer), costs.importDescribe));
         }
-        if (entry.schemaName === WRITER_JSON_SCHEMA.name) {
+        if (entry.schemaName === WRITER_JSON_SCHEMA.name || entry.schemaName === IDEA_JSON_SCHEMA.name) {
           if (writerDelayMs > 0) await Bun.sleep(writerDelayMs);
           const ideas = ideaSlotsOf(entry.body);
           const answer =
             ideas !== null
-              ? { scenes: ideas.map((s) => ({ slotIndex: s.slotIndex, sentence: ideaSentenceFor(s) })) }
+              ? { scenes: ideas.map((s) => ({ slotIndex: s.slotIndex, sentence: ideaSentenceFor(s), ...ideaAngleFor(s) })) }
               : { scenes: writerSlotsOf(entry.body).map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
           return json(chatCompletion(JSON.stringify(answer), costs.writer));
         }
         if (entry.schemaName === POOL_JSON_SCHEMA.name) {
-          return json(chatCompletion(JSON.stringify({ ...DEFAULT_POOL_ANSWER, ...opts.poolAnswer }), costs.pool));
+          const basePool = /сзади|back view|from behind/i.test(poolDescriptionOf(entry.body)) ? BACK_VIEW_POOL_ANSWER : DEFAULT_POOL_ANSWER;
+          return json(chatCompletion(JSON.stringify({ ...basePool, ...opts.poolAnswer }), costs.pool));
         }
         return loudly404(entry);
       }
@@ -552,7 +604,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     ageCheckRequests: () => requests.filter((r) => r.schemaName === "age_check"),
     descriptorRequests: () => requests.filter((r) => r.schemaName === "avatar_descriptor"),
     importDescribeRequests: () => requests.filter((r) => r.schemaName === "import_describe"),
-    sceneWriterRequests: () => requests.filter((r) => r.schemaName === WRITER_JSON_SCHEMA.name),
+    sceneWriterRequests: () => requests.filter((r) => r.schemaName === WRITER_JSON_SCHEMA.name || r.schemaName === IDEA_JSON_SCHEMA.name),
     poolRequests: () => requests.filter((r) => r.schemaName === POOL_JSON_SCHEMA.name),
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),
     creditsRequests: () => requests.filter((r) => r.path === "/api/v1/credits"),

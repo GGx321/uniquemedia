@@ -125,13 +125,18 @@ function isAccepted(set: StoredSceneSet, record: ReviewWriteRecord, sentences: R
  * category's snapshot is refreshed), an idea write adds its scenes under the ids it reserved. A sentence for a scene outside the write is ignored. The
  * record is resolved. Accepting the same answer again changes nothing. Throws when the write is not there, is resolved without this answer, or the answer lacks a sentence the write needs.
  */
-export function withReviewWriteAccepted(set: StoredSceneSet, k: number, sentences: ReadonlyMap<number, string>): StoredSceneSet {
+export function withReviewWriteAccepted(set: StoredSceneSet, k: number, sentences: ReadonlyMap<number, string>, angles: ReadonlyMap<number, { shot: Shot; pose: Pose }> = new Map()): StoredSceneSet {
   // The same answer applied twice is one acceptance: a flush that failed AFTER the rename left the new texts and the closed record on disk while the writer saw
   // an error, and its retry arrives here. The set is returned as it is (the same object), which the service reads as «nothing to write».
   if (isAccepted(set, recordOf(set, k), sentences)) return set;
   const record = openRecordOf(set, k);
   if (record.kind === "idea") {
-    const added: SceneRecord[] = record.scenes.map((s) => ({ sceneId: s.sceneId, origin: "own", idea: record.idea, shot: s.shot, pose: s.pose, text: sentenceFor(sentences, s.sceneId, k), edited: false, removed: false }));
+    // CS.8a: the angle the model settled on (the owner's idea, read by `readIdeaAnswer`) wins over the draw the write was recorded with, which is only what a scene
+    // holds when the answer gave none (a write recorded before CS.8a, resumed after it).
+    const added: SceneRecord[] = record.scenes.map((s) => {
+      const angle = angles.get(s.sceneId);
+      return { sceneId: s.sceneId, origin: "own", idea: record.idea, shot: angle?.shot ?? s.shot, pose: angle?.pose ?? s.pose, text: sentenceFor(sentences, s.sceneId, k), edited: false, removed: false };
+    });
     return replaceRecord({ ...set, scenes: [...set.scenes, ...added] }, k, (r) => ({ ...withoutStop(r), closed: true }));
   }
   const targets = new Set(record.sceneIds);

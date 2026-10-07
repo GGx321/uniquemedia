@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { SceneWriteTarget } from "../../shared/engine";
 import { WRITER_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
-import { ideaMessages, ideaSystemPrompt, type IdeaSlot } from "./ideaWriter";
-import { readWriterAnswer, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterRefusal } from "./writer";
+import { IDEA_JSON_SCHEMA, ideaMessages, ideaSystemPrompt, readIdeaAnswer, type FixedIdeaSlot, type IdeaSlot } from "./ideaWriter";
+import { readWriterAnswer, writerMessages, writerRefusalText, type WriterRefusal } from "./writer";
 import { plan } from "./planner";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -12,7 +12,7 @@ useNativeGlobals();
 // prompt is its own, so the compose prompt (scenes/writer.ts, byte-pinned by writer.custom.test.ts) is untouched. The answer is read by the writer's own
 // `readWriterAnswer`, so every rule that holds for a planned sentence (adult words, revealing words, the phone hand, the pose) holds for an own one.
 
-const slots: IdeaSlot[] = [
+const slots: FixedIdeaSlot[] = [
   { slotIndex: 7, idea: "кофе на балконе утром", shot: "friend", pose: "three-quarter" },
   { slotIndex: 8, idea: "кофе на балконе утром", shot: "selfie", pose: "front" },
 ];
@@ -82,6 +82,147 @@ describe("ideaMessages", () => {
   });
 });
 
+// ---------- CS.8a: the model picks the angle ----------
+
+const AUTO: IdeaSlot = { slotIndex: 5, idea: "лежит на животе, вид сзади", shot: null, pose: null };
+const SHOT_GIVEN: IdeaSlot = { slotIndex: 6, idea: "лежит на животе, вид сзади", shot: "friend", pose: null };
+const MIRROR_GIVEN: IdeaSlot = { slotIndex: 7, idea: "лежит на животе, вид сзади", shot: "mirror", pose: null };
+const FIXED: IdeaSlot = { slotIndex: 8, idea: "лежит на животе, вид сзади", shot: "candid", pose: "back" };
+const SENTENCE = "She lies on her stomach on a sunlit bed, one ankle crossed over the other, a paperback open beside her pillow.";
+
+function items(messages: ReturnType<typeof ideaMessages>): Record<string, unknown>[] {
+  const user = userContent(messages);
+  return JSON.parse(user.slice(user.indexOf("["), user.lastIndexOf("]") + 1));
+}
+
+describe("ideaMessages: a slot whose angle the model picks", () => {
+  test("an Auto slot asks for both: the shot and the pose are «choose»", () => {
+    expect(items(ideaMessages([AUTO]))).toEqual([{ slotIndex: 5, idea: "лежит на животе, вид сзади", shot: "choose", pose: "choose" }]);
+  });
+
+  test("a slot whose shot the owner chose names it and asks for the pose only", () => {
+    expect(items(ideaMessages([SHOT_GIVEN]))).toEqual([{ slotIndex: 6, idea: "лежит на животе, вид сзади", shot: "photo taken by a friend", pose: "choose" }]);
+  });
+
+  test("a slot that gives both (an own scene written again) is told as before", () => {
+    expect(items(ideaMessages([FIXED]))).toEqual([{ slotIndex: 8, idea: "лежит на животе, вид сзади", shot: "candid shot, not looking at the camera", pose: "from behind, her face not visible" }]);
+  });
+
+  test("the system prompt explains «choose»: from the idea, in the schema's words, back for a view from behind, null for what is given", () => {
+    const prompt = ideaSystemPrompt();
+    for (const needle of ['"choose"', "friend, selfie, candid or photographer", "front, three-quarter, profile or back", '"back"', "null"]) expect(prompt).toContain(needle);
+  });
+
+  test("the system prompt keeps the pairing rule and never offers the mirror", () => {
+    const prompt = ideaSystemPrompt();
+    expect(prompt).toContain("A selfie always faces the camera");
+    expect(prompt).toContain("Never choose the mirror");
+  });
+});
+
+describe("IDEA_JSON_SCHEMA", () => {
+  type Node = { type?: string | string[]; additionalProperties?: boolean; required?: string[]; properties?: Record<string, Node>; items?: Node; enum?: (string | null)[] };
+  const scene = ((IDEA_JSON_SCHEMA.schema as Node).properties?.scenes?.items ?? {}) as Node;
+
+  test("is the strict schema named scene_ideas", () => {
+    expect(IDEA_JSON_SCHEMA.name).toBe("scene_ideas");
+    expect(scene.additionalProperties).toBe(false);
+  });
+
+  test("asks for the number, the sentence, and the shot and the pose (null when the slot gave them), all required", () => {
+    expect([...(scene.required ?? [])].sort()).toEqual(["pose", "sentence", "shot", "slotIndex"]);
+    expect(Object.keys(scene.properties ?? {}).sort()).toEqual(["pose", "sentence", "shot", "slotIndex"]);
+  });
+
+  test("the shot may be any but the mirror, the pose any of the four, and both may be null", () => {
+    expect(scene.properties?.shot?.enum).toEqual(["friend", "selfie", "candid", "photographer", null]);
+    expect(scene.properties?.pose?.enum).toEqual(["front", "three-quarter", "profile", "back", null]);
+  });
+});
+
+describe("readIdeaAnswer", () => {
+  const answer = (...scenes: Record<string, unknown>[]) => JSON.stringify({ scenes });
+
+  test("an Auto slot's shot and pose are the model's", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: SENTENCE, shot: "candid", pose: "back" }), [AUTO]);
+    expect(read.ok && read.angles.get(5)).toEqual({ shot: "candid", pose: "back" });
+    expect(read.ok && read.sentences.get(5)).toBe(SENTENCE);
+  });
+
+  test("a slot whose shot the owner chose keeps the shot and takes the model's pose", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 6, sentence: SENTENCE, shot: null, pose: "back" }), [SHOT_GIVEN]);
+    expect(read.ok && read.angles.get(6)).toEqual({ shot: "friend", pose: "back" });
+  });
+
+  test("a slot whose shot the owner chose ignores another shot in the answer", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 6, sentence: SENTENCE, shot: "photographer", pose: "profile" }), [SHOT_GIVEN]);
+    expect(read.ok && read.angles.get(6)).toEqual({ shot: "friend", pose: "profile" });
+  });
+
+  test("a slot that gave both keeps both, whatever the answer says", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 8, sentence: SENTENCE, shot: "selfie", pose: "front" }), [FIXED]);
+    expect(read.ok && read.angles.get(8)).toEqual({ shot: "candid", pose: "back" });
+  });
+
+  test("a slot that gave both needs no shot or pose key at all", () => {
+    expect(readIdeaAnswer(answer({ slotIndex: 8, sentence: SENTENCE }), [FIXED]).ok).toBe(true);
+  });
+
+  test.each([
+    ["a mirror the owner did not choose", { shot: "mirror", pose: "front" }],
+    ["a selfie facing away", { shot: "selfie", pose: "back" }],
+    ["a selfie in profile", { shot: "selfie", pose: "profile" }],
+    ["a shot outside the vocabulary", { shot: "drone", pose: "front" }],
+    ["a pose outside the vocabulary", { shot: "friend", pose: "upside-down" }],
+    ["no pose", { shot: "friend", pose: null }],
+    ["no shot", { shot: null, pose: "back" }],
+    ["neither key", {}],
+  ])("an Auto slot with %s is refused as a bad angle, naming the slot", (_name, angle) => {
+    expect(readIdeaAnswer(answer({ slotIndex: 5, sentence: SENTENCE, ...angle }), [AUTO])).toMatchObject({ ok: false, problems: ["bad-angle"], angleSlots: [5] });
+  });
+
+  test.each([
+    ["a mirror shot facing away", "back"],
+    ["a mirror shot in profile", "profile"],
+    ["no pose", null],
+  ])("a slot whose shot is the mirror, with %s, is refused", (_name, pose) => {
+    expect(readIdeaAnswer(answer({ slotIndex: 7, sentence: SENTENCE, shot: null, pose }), [MIRROR_GIVEN])).toMatchObject({ ok: false, problems: ["bad-angle"], angleSlots: [7] });
+  });
+
+  test("a mirror the owner chose is kept, with a pose that faces the camera", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 7, sentence: "She admires her outfit in a tall mirror, one hand on the phone.", shot: null, pose: "three-quarter" }), [MIRROR_GIVEN]);
+    expect(read.ok && read.angles.get(7)).toEqual({ shot: "mirror", pose: "three-quarter" });
+  });
+
+  test("the sentence is read against the angle the model chose: a back pose looking at the camera is refused", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: "She lies on her stomach, looking at the camera.", shot: "candid", pose: "back" }), [AUTO]);
+    expect(read).toMatchObject({ ok: false, problems: ["pose-contradiction"], poseSlots: [5] });
+  });
+
+  test("the sentence is read against the shot the model chose: a two-handed selfie is refused", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: "She holds the cup with both hands.", shot: "selfie", pose: "front" }), [AUTO]);
+    expect(read).toMatchObject({ ok: false, problems: ["two-handed"], twoHandedSlots: [5] });
+  });
+
+  test("a missing scene and a youth word are refused as in every writer answer", () => {
+    expect(readIdeaAnswer(answer({ slotIndex: 5, sentence: SENTENCE, shot: "candid", pose: "back" }), [AUTO, SHOT_GIVEN])).toMatchObject({ ok: false, problems: ["missing-slots"], missingSlots: [6] });
+    expect(readIdeaAnswer(answer({ slotIndex: 5, sentence: "A teenage girl lies on a bed.", shot: "candid", pose: "back" }), [AUTO])).toMatchObject({ ok: false, problems: ["youth-word"] });
+  });
+
+  test("not JSON and an unknown key are refused", () => {
+    expect(readIdeaAnswer("nope", [AUTO])).toMatchObject({ ok: false, problems: ["not-json"] });
+    expect(readIdeaAnswer(answer({ slotIndex: 5, sentence: SENTENCE, shot: "candid", pose: "back", mood: "x" }), [AUTO])).toMatchObject({ ok: false, problems: ["not-json"] });
+  });
+
+  test("a refusal for an angle is told in fixed words with the slot numbers", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: SENTENCE, shot: "mirror", pose: "front" }), [AUTO]);
+    if (read.ok) throw new Error("expected a refusal");
+    const text = writerRefusalText(read);
+    expect(text).toContain("slot(s) 5");
+    expect(text).toContain("front or three-quarter");
+  });
+});
+
 describe("readWriterAnswer reads an idea's answer by the same rules", () => {
   const answer = (...scenes: { slotIndex: number; sentence: string }[]) => JSON.stringify({ scenes });
   const GOOD = "She sits on a small balcony in the morning light, her other hand resting on the railing as steam rises from the cup.";
@@ -101,7 +242,7 @@ describe("readWriterAnswer reads an idea's answer by the same rules", () => {
     expect(readWriterAnswer(answer({ slotIndex: 7, sentence: "A teenage girl smiles." }, { slotIndex: 8, sentence: GOOD }), slots)).toMatchObject({ ok: false, problems: ["youth-word"] });
     expect(readWriterAnswer(answer({ slotIndex: 7, sentence: GOOD }, { slotIndex: 8, sentence: "She wears a bikini." }), slots)).toMatchObject({ ok: false, problems: ["revealing-word"] });
     expect(readWriterAnswer(answer({ slotIndex: 7, sentence: GOOD }, { slotIndex: 8, sentence: "She holds the cup with both hands." }), slots)).toMatchObject({ ok: false, problems: ["two-handed"], twoHandedSlots: [8] });
-    const back: IdeaSlot[] = [{ slotIndex: 3, idea: "walk", shot: "friend", pose: "back" }];
+    const back: FixedIdeaSlot[] = [{ slotIndex: 3, idea: "walk", shot: "friend", pose: "back" }];
     expect(readWriterAnswer(answer({ slotIndex: 3, sentence: "She walks away, looking at the camera." }), back)).toMatchObject({ ok: false, problems: ["pose-contradiction"] });
   });
 });
@@ -115,30 +256,31 @@ describe("the idea prompt's floor", () => {
     return [`${"W".repeat(12)}${n}`, `${"Я".repeat(6)}${n}`, `${"😀".repeat(3)}${n}`, `${"é".repeat(6)}${n}`];
   }).flat();
   const worstRefusal = (indices: readonly number[]): WriterRefusal => ({
-    problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction"],
+    problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "bad-angle"],
     missingSlots: indices.slice(-1),
     twoHandedSlots: indices.slice(0, -1),
     wordSlots: indices.slice(0, -1),
     poseSlots: indices.slice(0, -1),
+    angleSlots: indices.slice(0, -1),
     words: hostileWords,
   });
 
   test("five own scenes with 500-char Cyrillic ideas, asked again after the worst refusal, stay at least 200 tokens under the 14K ceiling", () => {
     const worst: IdeaSlot[] = Array.from({ length: 5 }, (_, i) => ({ slotIndex: 10_000 - i, idea: "я".repeat(500), shot: "mirror", pose: "three-quarter" }));
     const messages = ideaMessages(worst, worstRefusal(worst.map((s) => s.slotIndex)));
-    expect(promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 })).toBeLessThanOrEqual(CEILING - MARGIN);
+    expect(promptTokenFloor({ messages, jsonSchema: IDEA_JSON_SCHEMA, images: 0 })).toBeLessThanOrEqual(CEILING - MARGIN);
   });
 
   test("the heaviest idea the contract lets through (500 three-byte characters, the bound of SCENE_IDEA_BYTES_PER_CHAR) is still under the ceiling with the worst refusal", () => {
     expect(SceneWriteTarget.safeParse({ kind: "idea", idea: "中".repeat(500), count: 5, shot: null }).success).toBe(true);
     const worst: IdeaSlot[] = Array.from({ length: 5 }, (_, i) => ({ slotIndex: 10_000 - i, idea: "中".repeat(500), shot: "mirror", pose: "three-quarter" }));
     const messages = ideaMessages(worst, worstRefusal(worst.map((s) => s.slotIndex)));
-    expect(promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 })).toBeLessThanOrEqual(CEILING - MARGIN);
+    expect(promptTokenFloor({ messages, jsonSchema: IDEA_JSON_SCHEMA, images: 0 })).toBeLessThanOrEqual(CEILING - MARGIN);
   });
 
   test("an idea of control characters, which would JSON-escape to six bytes each and break the pin, never reaches the prompt: the contract refuses it", () => {
     const heavy: IdeaSlot[] = Array.from({ length: 5 }, (_, i) => ({ slotIndex: 10_000 - i, idea: "\u0001".repeat(500), shot: "mirror", pose: "three-quarter" }));
-    const floor = promptTokenFloor({ messages: ideaMessages(heavy, worstRefusal(heavy.map((s) => s.slotIndex))), jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
+    const floor = promptTokenFloor({ messages: ideaMessages(heavy, worstRefusal(heavy.map((s) => s.slotIndex))), jsonSchema: IDEA_JSON_SCHEMA, images: 0 });
     expect(floor).toBeGreaterThan(CEILING - MARGIN);
     expect(SceneWriteTarget.safeParse({ kind: "idea", idea: "\u0001".repeat(500), count: 5, shot: null }).success).toBe(false);
   });

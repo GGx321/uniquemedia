@@ -146,7 +146,9 @@ export type WriterProblem =
   | "two-handed"
   | "youth-word"
   | "revealing-word"
-  | "pose-contradiction";
+  | "pose-contradiction"
+  /** CS.8a: an idea write's shot or pose the model had to pick is missing, outside the vocabulary or an impossible pair (ideaWriter.ts). */
+  | "bad-angle";
 
 /** Why an answer was refused, as the next attempt is told: fixed reasons and
  *  slot numbers, never the model's own rejected wording (the youth/revealing
@@ -159,6 +161,8 @@ export interface WriterRefusal {
   words: string[];
   /** T5c: slots whose sentence contradicts their own pose (e.g. a back pose "looking at the camera"). */
   poseSlots: number[];
+  /** CS.8a: idea-write slots whose picked shot or pose was refused (`bad-angle`). Absent in every other refusal. */
+  angleSlots?: number[];
 }
 
 export const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
@@ -218,6 +222,7 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "youth-word": (r) => `slot(s) ${slotList(r.wordSlots)} used words we do not allow: ${quotedList(r.words)}; call her a woman and use none of them`,
   "revealing-word": (r) => `slot(s) ${slotList(r.wordSlots)} used a revealing word we do not allow: ${quotedList(r.words)}`,
   "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their own pose (a back or profile pose looking toward the camera); match each slot's given pose instead`,
+  "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing or not allowed: pick the shot from friend, selfie, candid or photographer (never the mirror) and the pose from front, three-quarter, profile or back, and a selfie faces the camera, front or three-quarter only`,
 };
 
 /** Every reason a refusal happened, as fixed sentences; never the model's own rejected text. */
@@ -372,12 +377,19 @@ function refused(problems: WriterProblem[], extra: Partial<WriterRefusal> = {}):
 export function readWriterAnswer(content: string, slots: readonly ReadableSlot[]): WriterAnswer {
   const parsed = WriterOutputSchema.safeParse(parseJson(content));
   if (!parsed.success) return refused(["not-json"]);
+  return readWriterScenes(parsed.data.scenes, slots);
+}
 
+/**
+ * The answer's scenes (already parsed) against the slots: the number rules, the words, the phone hand and the pose. Shared by `readWriterAnswer` and the idea
+ * write's reader (ideaWriter.ts), which parses a wider scene (the shot and pose the model picked) and hands the sentences here with the angles it settled on.
+ */
+export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly ReadableSlot[]): WriterAnswer {
   const known = new Map(slots.map((s) => [s.slotIndex, s]));
   const bySlot = new Map<number, string>();
   const problems = new Set<WriterProblem>();
 
-  for (const scene of parsed.data.scenes) {
+  for (const scene of scenes) {
     if (!known.has(scene.slotIndex)) {
       problems.add("unknown-slot");
       continue;

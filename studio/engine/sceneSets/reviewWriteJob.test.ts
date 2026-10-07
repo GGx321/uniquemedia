@@ -67,6 +67,19 @@ function listAsked(call: FetchCall): { slotIndex: number; [key: string]: unknown
 const slotsAskedFor = (call: FetchCall): number[] => listAsked(call).map((s) => s.slotIndex);
 
 const good: Step = (call) => ({ status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${NEW} (${slotIndex})` })) }), { cost: 0.0042 }) });
+/** An idea write's answer: a sentence per scene and, for what the slot left to the model («choose»), `pick` (a view from behind by default); null for what it gave. */
+function ideaAnswer(pick: { shot: string; pose: string } = { shot: "candid", pose: "back" }): Step {
+  return (call) => ({
+    status: 200,
+    body: chatBody(
+      JSON.stringify({
+        scenes: listAsked(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${NEW} (${s.slotIndex})`, shot: s.shot === "choose" ? pick.shot : null, pose: s.pose === "choose" ? pick.pose : null })),
+      }),
+      { cost: 0.0042 },
+    ),
+  });
+}
+const goodIdea = ideaAnswer();
 const rejected: Step = { status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) };
 const refusal: Step = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 const rateLimited: Step = { status: 429, headers: { "retry-after": "120" }, body: { error: { message: "rate limited" } } };
@@ -87,7 +100,7 @@ const recordOf = async (k: number): Promise<ReviewWriteRecord> => {
 async function recordRewrite(sceneIds: number[], redraw: { slots: PlanSlot[]; snapshots?: CategorySnapshot[] } | null = null): Promise<void> {
   await store.update(AVATAR, SET, (s) => beginRewrite(s, { jobId: "job-aaaa-0002", sceneIds, redraw: redraw !== null, slots: redraw?.slots ?? [], snapshots: redraw?.snapshots ?? [] }));
 }
-async function recordIdea(idea: string, count: number, shot: "friend" | null = null): Promise<void> {
+async function recordIdea(idea: string, count: number, shot: "friend" | "selfie" | null = null): Promise<void> {
   await store.update(AVATAR, SET, (s) =>
     beginIdea(s, { jobId: "job-aaaa-0002", idea, count, shot, scenes: Array.from({ length: count }, (_, i) => ({ sceneId: 6 + i, shot: shot ?? "friend", pose: "front" as const })) }),
   );
@@ -108,8 +121,8 @@ function run(steps: Step[], opts: { k?: number; jobId?: string; signal?: AbortSi
       priceBook: money.priceBook,
       acquire: (signal) => pool.acquire(signal),
       load: async () => setNow(),
-      accept: async (_k, sentences) => {
-        await store.update(AVATAR, SET, (s) => withReviewWriteAccepted(s, k, sentences));
+      accept: async (_k, sentences, angles) => {
+        await store.update(AVATAR, SET, (s) => withReviewWriteAccepted(s, k, sentences, angles));
       },
       giveUp: async (given) => {
         closed.push(given);
@@ -228,7 +241,7 @@ describe("an idea write", () => {
   test("asks about the scene ids it reserved, with the idea verbatim, and adds the scenes with the accepted sentences", async () => {
     await seed();
     await recordIdea("прогулка по набережной на закате", 2);
-    const { net, end, progress } = run([good]);
+    const { net, end, progress } = run([goodIdea]);
 
     expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
     expect(reserveIds()).toEqual([id(2, 1)]);
@@ -244,8 +257,66 @@ describe("an idea write", () => {
     await seed();
     const before = await setNow();
     await recordIdea("прогулка", 1);
-    await run([good]).end;
+    await run([goodIdea]).end;
     expect((await setNow()).scenes.slice(0, 5)).toEqual(before.scenes);
+  });
+
+  describe("the angle the model picks (CS.8a)", () => {
+    test("on «Авто» it is asked for the shot and the pose, under the idea schema, and the scenes take what it picked", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 2, null);
+      const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
+
+      expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["choose", "choose"], ["choose", "choose"]]);
+      expect(JSON.stringify((net.calls[0] as FetchCall).json().response_format)).toContain("scene_ideas");
+      const own = (await setNow()).scenes.slice(5);
+      expect(own.map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["candid", "back"], ["candid", "back"]]);
+    });
+
+    test("with the owner's shot it is asked for the pose alone, and the shot stays the owner's", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 1, "friend");
+      const { net, end } = run([ideaAnswer({ shot: "photographer", pose: "profile" })]);
+
+      expect(await end).toMatchObject({ status: "done" });
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["photo taken by a friend", "choose"]]);
+      expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["friend", "profile"]]);
+    });
+
+    test("an impossible pick (a selfie from behind) is refused, the next attempt is told why, and the second answer is the one stored", async () => {
+      await seed();
+      await recordIdea("вид сзади", 1, null);
+      const { net, end } = run([ideaAnswer({ shot: "selfie", pose: "back" }), ideaAnswer({ shot: "candid", pose: "back" })]);
+
+      expect(await end).toMatchObject({ status: "done" });
+      expect(net.calls).toHaveLength(2);
+      expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
+      expect(JSON.stringify(net.calls[1]?.json())).toContain("gave a shot or a pose that is missing or not allowed");
+      expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["candid", "back"]]);
+    });
+
+    test("two answers with no pick resolve the write: no scene is added with a value we made up", async () => {
+      await seed();
+      const before = await setNow();
+      await recordIdea("вид сзади", 1, null);
+      const { end, closed } = run([good, good]);
+
+      expect(await end).toMatchObject({ status: "failed", resolved: true });
+      expect(closed).toEqual([2]);
+      expect((await setNow()).scenes).toEqual(before.scenes);
+    });
+
+    test("a rewrite of an own scene asks for neither and keeps its shot and pose, whatever the answer says", async () => {
+      await seed();
+      await recordRewrite([5]);
+      const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
+
+      expect(await end).toMatchObject({ status: "done" });
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["front-camera selfie", "facing the camera"]]);
+      const scene = (await setNow()).scenes.find((s) => s.sceneId === 5);
+      expect(scene?.origin === "own" && [scene.shot, scene.pose]).toEqual(["selfie", "front"]);
+    });
   });
 });
 
