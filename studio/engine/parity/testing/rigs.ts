@@ -289,6 +289,12 @@ export interface RigOptions {
    * nothing can read. The real rig writes them through the library's own store before the engine opens it; the mock is seeded with the same.
    */
   readonly sceneSets?: boolean;
+  /**
+   * CS.4b: instead of `sceneSets`, Mia holds one open set of three written planned scenes and an own scene written from an idea, with the records of two
+   * review writes a closed Studio left (a rewrite of scene 2, an idea write for two more scenes), and one set file nothing can read. Nothing was reserved for
+   * either write, so each has both attempts. The real rig writes them through the library's own store; the mock is seeded with the same.
+   */
+  readonly reviewWrites?: boolean;
   /** CS.2: with `categories`, a second readable category (`PARITY_SECOND_CATEGORY`), so a rename can meet a name another category holds. */
   readonly secondCategory?: boolean;
 }
@@ -340,6 +346,13 @@ export const PARITY_SCENES = [
 ] as const;
 
 export const PARITY_SCENE_SET_ID = "set-parity-0001";
+
+/** The scenes of a rig with `reviewWrites`: three planned and written, and an own scene written from an idea and typed over by hand. */
+export const PARITY_REVIEW_PLANNED = PARITY_SCENES.map((scene, i) => ({ ...scene, text: "text" in scene ? scene.text : `A friend catches her in the scene ${i + 1} light.` }));
+export const PARITY_REVIEW_OWN = { idea: "кофе на балконе утром", shot: "selfie", pose: "front", text: "She sips coffee on a balcony, one hand free." } as const;
+/** The records of the writes a closed Studio left: a rewrite of scene 2 (a dropped connection) and an idea write of two scenes (a rate limit), under write numbers 2 and 3. */
+export const PARITY_REVIEW_REWRITE = { kind: "rewrite", k: 2, sceneIds: [2], stoppedBy: "network" } as const;
+export const PARITY_REVIEW_IDEA = { kind: "idea", k: 3, idea: "прогулка по набережной", count: 2, shot: null, sceneIds: [5, 6], stoppedBy: "rate-limited" } as const;
 
 export interface ParityRig extends Recorded {
   readonly name: "mock" | "real";
@@ -425,6 +438,22 @@ export function mockRig(options: RigOptions = {}): ParityRig {
       : {}),
     ...(options.sceneSets === true
       ? { sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: PARITY_SCENE_SET_ID, count: PARITY_SCENES.length, written: 1, stopped: "closed" as const, scenes: PARITY_SCENES }], unreadableSceneSets: 1 }
+      : {}),
+    ...(options.reviewWrites === true
+      ? {
+          sceneSets: [
+            {
+              avatarId: MIA.avatarId,
+              sceneSetId: PARITY_SCENE_SET_ID,
+              count: PARITY_REVIEW_PLANNED.length,
+              written: 0,
+              scenes: [...PARITY_REVIEW_PLANNED, { ...PARITY_REVIEW_OWN }],
+              writes: 3,
+              reviewWrites: [{ ...PARITY_REVIEW_REWRITE, sceneIds: [...PARITY_REVIEW_REWRITE.sceneIds] }, { ...PARITY_REVIEW_IDEA, sceneIds: [...PARITY_REVIEW_IDEA.sceneIds] }],
+            },
+          ],
+          unreadableSceneSets: 1,
+        }
       : {}),
   });
   const events: EventMessage[] = [];
@@ -693,6 +722,47 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       chunks: [{ chunk: 1, sceneIds: PARITY_SCENES.map((_, i) => i + 1), attemptIds: [1, 2, 3, 4].map((n) => `${PARITY_SCENE_SET_ID}:writer-1#${n}`) }],
       write: { k: 1, kind: "compose", jobId: "job-parity-0001" },
       writes: 1,
+    });
+    await writeFile(join(dir, "library", "avatars", avatarId, "scenes", "set-parity-broken.json"), "{not json");
+  }
+
+  if (options.reviewWrites === true) {
+    const ids = (k: number) => [1, 2, 3, 4].map((n) => `${PARITY_SCENE_SET_ID}:write-${k}#${n}`);
+    await library.sceneSets.create({
+      sceneSetId: PARITY_SCENE_SET_ID,
+      avatarId,
+      runId: "run-parity-0001",
+      request: { count: PARITY_REVIEW_PLANNED.length, categories: ["home"], poses: { profile: false, back: false } },
+      models: { text: "x-ai/grok-4.3" },
+      scenes: [
+        ...PARITY_REVIEW_PLANNED.map((scene, i) => ({
+          sceneId: i + 1,
+          origin: "planned" as const,
+          slot: { slotIndex: i + 1, category: scene.category, ...scene.place, shot: scene.shot, pose: scene.pose, attemptIdBase: `slot-${i + 1}`, repeatedPair: false },
+          text: scene.text,
+          edited: false,
+          removed: false,
+        })),
+        { sceneId: PARITY_REVIEW_PLANNED.length + 1, origin: "own" as const, idea: PARITY_REVIEW_OWN.idea, shot: PARITY_REVIEW_OWN.shot, pose: PARITY_REVIEW_OWN.pose, text: PARITY_REVIEW_OWN.text, edited: false, removed: false },
+      ],
+      chunks: [{ chunk: 1, sceneIds: PARITY_REVIEW_PLANNED.map((_, i) => i + 1), attemptIds: [1, 2, 3, 4].map((n) => `${PARITY_SCENE_SET_ID}:writer-1#${n}`) }],
+      write: null,
+      reviewWrites: [
+        { kind: "rewrite", k: PARITY_REVIEW_REWRITE.k, jobId: "job-parity-0002", attemptIds: ids(PARITY_REVIEW_REWRITE.k), closed: false, sceneIds: [...PARITY_REVIEW_REWRITE.sceneIds], redraw: false, slots: [], snapshots: [], stoppedBy: PARITY_REVIEW_REWRITE.stoppedBy },
+        {
+          kind: "idea",
+          k: PARITY_REVIEW_IDEA.k,
+          jobId: "job-parity-0003",
+          attemptIds: ids(PARITY_REVIEW_IDEA.k),
+          closed: false,
+          idea: PARITY_REVIEW_IDEA.idea,
+          count: PARITY_REVIEW_IDEA.count,
+          shot: PARITY_REVIEW_IDEA.shot,
+          scenes: PARITY_REVIEW_IDEA.sceneIds.map((sceneId) => ({ sceneId, shot: "friend" as const, pose: "front" as const })),
+          stoppedBy: PARITY_REVIEW_IDEA.stoppedBy,
+        },
+      ],
+      writes: 3,
     });
     await writeFile(join(dir, "library", "avatars", avatarId, "scenes", "set-parity-broken.json"), "{not json");
   }
