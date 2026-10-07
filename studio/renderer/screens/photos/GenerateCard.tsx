@@ -275,6 +275,8 @@ export function GenerateCard({
       if (result.jobId !== null) {
         store.trackScenesJob(result.jobId, result.sceneSetId, avatar.avatarId, composeRequest.count);
         sceneSets.trackJob(result.jobId, { sceneSetId: result.sceneSetId, kind: "compose", price: accepted, sceneIds: null, idea: null });
+        // CS.7 M4: the card gives way to the strip, the button with the focus goes; the job's «Отменить» in the column takes it, as after «Дописать».
+        sceneSets.requestCancelFocus(result.jobId);
       }
       // An empty set has no job: it is read at once.
       sceneSets.reload(avatar.avatarId);

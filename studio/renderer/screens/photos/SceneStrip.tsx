@@ -130,6 +130,8 @@ export function SceneStrip({
     send: (acceptedWorstMicros) => client.request("runs.startFromScenes", { sceneSetId: set.sceneSetId, revision: set.revision, acceptedWorstMicros }),
     onSent: (result) => {
       store.trackRunJob(result.jobId, result.runId, avatar.avatarId, action.kind === "approve" ? action.photos : tally.withText);
+      // CS.7 M4: the strip gives way to the card, the button with the focus goes; the run's «Отменить» in the column takes it.
+      sceneSets.requestCancelFocus(result.jobId);
       onStarted(result);
     },
     onRefused: (error) => {

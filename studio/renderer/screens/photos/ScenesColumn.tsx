@@ -9,7 +9,7 @@ import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { modelName } from "./runForm";
 import { EMPTY_IDEA, type IdeaStart } from "./SceneIdeaForm";
-import { about } from "./scenePaid";
+import { about, focusLost } from "./scenePaid";
 import { focusSceneCard, SceneSetPanel } from "./SceneSetPanel";
 import { headerCounts, OFF_NOTE, offNoteSet, runDoneText } from "./sceneText";
 import { PHOTO_FORMS, useMounted } from "./shared";
@@ -323,7 +323,7 @@ export function ScenesColumn({
   scenesJob,
   composePrice,
 }: ScenesColumnProps) {
-  const { client, store } = useEngine();
+  const { client, store, sceneSets } = useEngine();
   const mounted = useMounted();
   const cancelSending = useRef(false);
   const progressId = useId();
@@ -336,6 +336,22 @@ export function ScenesColumn({
   const counterRef = useRef<HTMLButtonElement>(null);
 
   const running = runJob !== null && isActiveJob(runJob);
+
+  // CS.7 M4: «Отрисовать» started this run, and the strip with its button is gone: the run's «Отменить» takes the focus. When the run ends and the
+  // focus is where it left it (its «Отменить», gone with it), the column title takes it, over the run's outcome — never the card's paid button.
+  const runCancelRef = useRef<HTMLButtonElement>(null);
+  const runFocused = useRef<string | null>(null);
+  useEffect(() => {
+    if (runJob === null) return;
+    if (running && sliceView.cancelFocus.has(runJob.jobId) && runCancelRef.current !== null) {
+      sceneSets.cancelFocusTaken(runJob.jobId);
+      runCancelRef.current.focus();
+      runFocused.current = runJob.jobId;
+    } else if (!running && runFocused.current === runJob.jobId) {
+      runFocused.current = null;
+      if (focusLost()) titleRef.current?.focus();
+    }
+  });
   // "Отменяем…" while runs.cancel is in flight and for as long after as the job has no real end yet (store.markCancelling).
   const cancelling = cancelBusy || (runJob !== null && view.cancellingJobs.has(runJob.jobId));
   const total = runJob?.total ?? 0;
@@ -430,7 +446,7 @@ export function ScenesColumn({
             <span id={progressId} className="job-progress-label">
               Рисуем фото: {runJob.done} из {total}
             </span>
-            <button type="button" className="btn btn-s" onClick={() => void cancel()} disabled={cancelling || activeRunId === null}>
+            <button ref={runCancelRef} type="button" className="btn btn-s" onClick={() => void cancel()} disabled={cancelling || activeRunId === null}>
               {cancelling ? "Отменяем…" : "Отменить"}
             </button>
           </div>
