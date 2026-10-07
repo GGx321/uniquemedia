@@ -437,7 +437,7 @@ describe("cancel and the network slot", () => {
     controller.abort();
     await second.end;
 
-    expect(reservedIdeaScenes(await setNow())).toBe(0);
+    expect(reservedIdeaScenes(await setNow(), null)).toBe(0);
   });
 
   test("every call takes a network slot and gives it back", async () => {

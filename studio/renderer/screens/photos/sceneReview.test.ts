@@ -201,8 +201,10 @@ describe("setCategoryTags", () => {
 
 describe("writeCapRefusal", () => {
   test("the engine's refusal of a set that recorded its 500 writes, and nothing else", () => {
-    expect(writeCapRefusal({ code: "VALIDATION", detail: "a set records at most 500 writes of this kind" })).toBe(true);
-    expect(writeCapRefusal({ code: "VALIDATION", detail: "the set has no scene 4" })).toBe(false);
+    expect(writeCapRefusal({ code: "VALIDATION", sceneReason: "write-record-cap" })).toBe(true);
+    expect(writeCapRefusal({ code: "VALIDATION", sceneReason: "scene-missing", detail: "the set has no scene 4" })).toBe(false);
+    // The English phrase is no longer read: only the reason says it.
+    expect(writeCapRefusal({ code: "VALIDATION", detail: "a set records at most 500 writes of this kind" })).toBe(false);
     expect(writeCapRefusal({ code: "VALIDATION" })).toBe(false);
     expect(writeCapRefusal({ code: "INTERNAL", detail: "a set records at most 500 writes of this kind" })).toBe(false);
   });

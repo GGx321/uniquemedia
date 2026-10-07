@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { EventMessage, ResponseMessage, SceneSetView } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
-import { openLibrary } from "./library";
+import { openLibrary, type LibraryDeps } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { ownScene, sampleSet } from "./library/testing/sceneSetSample";
 import type { PlanSlot } from "./scenes";
@@ -142,11 +142,12 @@ function sceneNetwork(opts: { writer?: Handler; prices?: () => Promise<Reply> } 
   return { fetch: net.fetch, calls: net.calls, imageCalls: () => [], ageCalls: () => [], descriptorCalls: () => [], paidCalls: () => net.calls.filter((c) => c.method === "POST"), writerCalls: () => net.calls.filter(isWriter) };
 }
 
-function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number } = {}) {
+function engineOver(net: ReturnType<typeof sceneNetwork>, opts: { key?: string | null; monthlyBudgetMicros?: number; testHooks?: NonNullable<Parameters<typeof startEngine>[1]>["deps"] extends infer D ? (D extends { library?: infer L } ? (L extends { testHooks?: infer H } ? H : never) : never) : never } = {}) {
   return startEngine(dir(), {
     init: { settings: engineSettings(dir(), { imageAgeCheck: "off", ...(opts.monthlyBudgetMicros === undefined ? {} : { monthlyBudgetMicros: opts.monthlyBudgetMicros }) }) },
     net,
     ...(opts.key === undefined ? {} : { key: opts.key }),
+    ...(opts.testHooks === undefined ? {} : { deps: { library: { testHooks: opts.testHooks } } }),
   });
 }
 
@@ -189,6 +190,8 @@ function estimateOf(response: ResponseMessage): { expectedMicros: number; worstM
   return result.result.estimate;
 }
 const code = (response: ResponseMessage) => failed(response).error.code;
+/** The whole refusal: its code, and the scene reason (and scene) the window reads. */
+const refused = (response: ResponseMessage) => failed(response).error;
 
 /** Starts a write at the revision the set has now, at the price it shows, and waits for its job to end. */
 async function writeAndWait(engine: Engine, events: () => EventMessage[], avatarId: string, target: Target, accepted = 2 * ATTEMPT): Promise<EventMessage> {
@@ -264,12 +267,12 @@ describe("scenes.estimateWrite: rewrite, idea and resume", () => {
     const view = await setOf(engine, avatarId);
     ok(await engine.handle(edit(view.revision, { op: "remove", sceneIds: [4] })));
 
-    expect(code(await engine.handle(estimateCommand(rewrite([99]))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand(rewrite([4]))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand(rewrite([1, 5]))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand(rewrite([5], true))))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand({ kind: "resume", write: 9 })))).toBe("VALIDATION");
-    expect(code(await engine.handle(estimateCommand({ kind: "resume", write: 2 })))).toBe("VALIDATION");
+    expect(refused(await engine.handle(estimateCommand(rewrite([99]))))).toMatchObject({ code: "VALIDATION", sceneReason: "scene-missing", sceneId: 99 });
+    expect(refused(await engine.handle(estimateCommand(rewrite([4]))))).toMatchObject({ code: "VALIDATION", sceneReason: "target-removed", sceneId: 4 });
+    expect(refused(await engine.handle(estimateCommand(rewrite([1, 5]))))).toMatchObject({ code: "VALIDATION", sceneReason: "mixed-kinds" });
+    expect(refused(await engine.handle(estimateCommand(rewrite([5], true))))).toMatchObject({ code: "VALIDATION", sceneReason: "own-redraw" });
+    expect(refused(await engine.handle(estimateCommand({ kind: "resume", write: 9 })))).toMatchObject({ code: "VALIDATION", sceneReason: "no-open-write" });
+    expect(refused(await engine.handle(estimateCommand({ kind: "resume", write: 2 })))).toMatchObject({ code: "VALIDATION", sceneReason: "no-open-write" });
     expect(code(await engine.handle(estimateCommand(rewrite([1]), "set-nobody-404")))).toBe("NOT_FOUND");
     expect(net.calls).toHaveLength(0);
   });
@@ -573,7 +576,7 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
       await removed(engine, avatarId, [2]);
       const view = await setOf(engine, avatarId);
 
-      expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toBe("VALIDATION");
+      expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toMatchObject({ code: "VALIDATION", sceneReason: "target-removed" });
       expect(net.writerCalls()).toHaveLength(1);
     });
   });
@@ -637,7 +640,7 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     const net = sceneNetwork();
     const { engine } = await engineOver(net);
     const view = await setOf(engine, avatarId);
-    expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, { kind: "resume", write: 1 })))).toMatchObject({ code: "VALIDATION", sceneReason: "no-attempts-left" });
     expect(net.writerCalls()).toHaveLength(0);
   });
 
@@ -899,7 +902,7 @@ describe("scenes.write: an idea", () => {
     const net = sceneNetwork();
     const { engine } = await engineOver(net);
     const view = await setOf(engine, avatarId);
-    expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, idea("кофе", 2))))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, idea("кофе", 2))))).toMatchObject({ code: "VALIDATION", sceneReason: "idea-room" });
     expect(net.writerCalls()).toHaveLength(0);
   });
 
@@ -996,7 +999,7 @@ describe("the refusals of a review write", () => {
     const { engine } = await engineOver(sceneNetwork());
     const view = await setOf(engine, avatarId);
     expect(view.status).toBe("used");
-    expect(code(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, rewrite([2]))))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(view.revision, 2 * ATTEMPT, rewrite([2]))))).toMatchObject({ code: "VALIDATION", sceneReason: "set-used" });
   });
 
   test("one job at a time: a write while another runs is IN_FLIGHT and starts nothing; a free edit is refused too", async () => {
@@ -1023,7 +1026,7 @@ describe("the refusals of a review write", () => {
     const view = await setOf(engine, avatarId);
     const removed = ok(await engine.handle(edit(view.revision, { op: "remove", sceneIds: [2] })));
     if (removed.type !== "scenes.edit" || !("sceneSet" in removed.result)) throw new Error("expected the set");
-    expect(code(await engine.handle(writeCommand(removed.result.sceneSet.revision, 2 * ATTEMPT, rewrite([2]))))).toBe("VALIDATION");
+    expect(refused(await engine.handle(writeCommand(removed.result.sceneSet.revision, 2 * ATTEMPT, rewrite([2]))))).toMatchObject({ code: "VALIDATION", sceneReason: "target-removed", sceneId: 2 });
     expect(net.writerCalls()).toHaveLength(0);
   });
 });
@@ -1091,6 +1094,136 @@ describe("a store refusal is not a transient disk error", () => {
 
     const lines = warn.mock.calls.map((call) => String(call[0]));
     expect(lines.some((line) => line.includes("trying once more"))).toBe(false);
+  });
+});
+
+describe("an accepted answer whose write hit a disk error after the rename", () => {
+  let warn: { mockRestore: () => void };
+  beforeEach(() => {
+    warn = spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  /** The folder's flush fails once, right after the rename that closes a review write's record: the new text is on disk, the writer sees an error. */
+  function failTheFlushThatClosesAWrite(avatarId: string) {
+    const state = { failed: 0 };
+    const afterRename = (path: string) => {
+      if (state.failed > 0 || !path.endsWith(`${SET}.json`)) return;
+      const records = JSON.parse(readFileSync(setPath(avatarId), "utf8")).reviewWrites ?? [];
+      if (!records.some((r: { closed: boolean }) => r.closed)) return;
+      state.failed += 1;
+      throw Object.assign(new Error("EIO: the folder could not be flushed"), { code: "EIO" });
+    };
+    return { state, afterRename };
+  }
+
+  test("a rewrite ends done, not failed: the retry finds its record closed with the very text it wrote, and takes that as done", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const disk = failTheFlushThatClosesAWrite(avatarId);
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net, { testHooks: { afterRename: disk.afterRename } });
+
+    const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
+
+    expect(disk.state.failed).toBe(1);
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(net.writerCalls()).toHaveLength(1);
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes[1]?.text).toContain(SENTENCE);
+    expect(fileOf(avatarId).reviewWrites?.[0]).toMatchObject({ k: 1, closed: true });
+  });
+
+  test("an idea write ends done, not failed, and its scene is in the set once", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const disk = failTheFlushThatClosesAWrite(avatarId);
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net, { testHooks: { afterRename: disk.afterRename } });
+
+    const end = await writeAndWait(engine, events, avatarId, idea("кофе на балконе"));
+
+    expect(disk.state.failed).toBe(1);
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes.filter((s) => s.origin === "own")).toHaveLength(1);
+  });
+});
+
+// CS.7 fix round 2: a read the OS fails (EIO, EMFILE, EBUSY under an antivirus, EPERM) is injected through the library's `beforeRead` seam, so these run on
+// every platform. A paid, accepted answer whose save meets one is stored on the retry; it is not «the set is gone».
+describe("an accepted answer whose save meets a read the OS fails (fix round 2)", () => {
+  let warn: { mockRestore: () => void };
+  beforeEach(() => {
+    warn = spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  /** Fails the set file's reads once the writer's answer has arrived: `times` of them (Infinity: for good). */
+  function failAfterTheAnswer(name: string, times: number) {
+    const state = { answered: false, failed: 0 };
+    const writer: Handler = (call, n) => {
+      state.answered = true;
+      return goodAnswer(call, n);
+    };
+    const beforeRead = (path: string): void => {
+      if (!state.answered || state.failed >= times || !path.endsWith(`${SET}.json`)) return;
+      state.failed += 1;
+      throw Object.assign(new Error(`${name}: injected`), { code: name });
+    };
+    return { state, writer, beforeRead };
+  }
+
+  for (const name of ["EIO", "EBUSY", "EPERM"]) {
+    test(`${name} once: a rewrite ends done, its text is in the set, and exactly one attempt was reserved`, async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const fail = failAfterTheAnswer(name, 1);
+      const net = sceneNetwork({ writer: fail.writer });
+      const { engine, events } = await engineOver(net, { testHooks: { beforeRead: fail.beforeRead } });
+
+      const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
+
+      expect(fail.state.failed).toBe(1);
+      expect(end).toMatchObject({ type: "job.done" });
+      expect(net.writerCalls()).toHaveLength(1);
+      expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+      expect(fileOf(avatarId).scenes[1]?.text).toContain(SENTENCE);
+    });
+  }
+
+  test("EMFILE once: an idea write ends done and its scene is in the set once", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const fail = failAfterTheAnswer("EMFILE", 1);
+    const net = sceneNetwork({ writer: fail.writer });
+    const { engine, events } = await engineOver(net, { testHooks: { beforeRead: fail.beforeRead } });
+
+    const end = await writeAndWait(engine, events, avatarId, idea("кофе на балконе"));
+
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    expect(fileOf(avatarId).scenes.filter((s) => s.origin === "own")).toHaveLength(1);
+  });
+
+  test("a read that keeps failing ends the job with the real cause and no second reserve; the old text stays", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const fail = failAfterTheAnswer("EIO", Number.POSITIVE_INFINITY);
+    const net = sceneNetwork({ writer: fail.writer });
+    const { engine, events } = await engineOver(net, { testHooks: { beforeRead: fail.beforeRead } });
+
+    const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
+
+    expect(end).toMatchObject({ type: "job.failed" });
+    const detail = end.type === "job.failed" ? (end.payload.error.detail ?? "") : "";
+    expect(detail).toContain("EIO");
+    expect(detail).not.toContain("no readable scene set");
+    expect(net.writerCalls()).toHaveLength(1);
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    expect(fileOf(avatarId).scenes[1]?.text).toBe(OLD);
   });
 });
 

@@ -78,6 +78,10 @@ export interface LibraryDeps {
     beforeReadVideoRecord?: (path: string) => void | Promise<void>;
     /** Called before each category record or pending record is unlinked; what it throws is what the unlink threw. */
     beforeUnlink?: (path: string) => void | Promise<void>;
+    /** Called before each category record or scene set record is read; what it throws is what the read threw (an OS error such as EIO or EBUSY, on any platform). */
+    beforeRead?: (path: string) => void | Promise<void>;
+    /** Called before the categories/ folder or an avatar's scenes/ folder is listed; what it throws is what the listing threw. */
+    beforeList?: (dir: string) => void | Promise<void>;
   };
   /**
    * Downscales a face reference's raw bytes to the JPEG `ImageParams.references`
@@ -257,8 +261,8 @@ export class Library {
   private constructor(root: string, deps: LibraryDeps, createdAt: string) {
     this.root = root;
     this.createdAt = createdAt;
-    this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink });
-    this.sceneSets = new SceneSetStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink });
+    this.categories = new CategoryStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink, beforeRead: deps.testHooks?.beforeRead, beforeList: deps.testHooks?.beforeList });
+    this.sceneSets = new SceneSetStore(root, { now: deps.now ?? (() => new Date()), beforeRename: deps.testHooks?.beforeRename, afterRename: deps.testHooks?.afterRename, beforeUnlink: deps.testHooks?.beforeUnlink, beforeRead: deps.testHooks?.beforeRead, beforeList: deps.testHooks?.beforeList });
     this.#now = deps.now ?? (() => new Date());
     this.#newId = deps.newId ?? randomUUID;
     this.#beforeRename = deps.testHooks?.beforeRename;

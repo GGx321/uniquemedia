@@ -22,6 +22,7 @@ import type { OpenRouterClient } from "../openrouter/types";
 import { POOLS, type Pool } from "../scenes";
 import { poolOf } from "../scenes/poolGen";
 import { snapshotOf } from "../library/categories";
+import { pauseBeforeRetry } from "../library/durableFs";
 import type { JobRegistry, ScenesJobEnd } from "../jobs";
 import { pendingChunks } from "./chunks";
 import { planSceneSet } from "./compose";
@@ -30,6 +31,7 @@ import { applyEdit, type EditOutcome } from "./edit";
 import { composeEstimate, reviewWriteEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
 import { beginWrite, withChunkGivenUp, withChunkWritten, withOutcome, withWriteFinished, withWriteStopped } from "./mutations";
 import { planReviewWrite, type ReviewPlan } from "./reviewPlan";
+import { sceneRefusal } from "./refusal";
 import { withReviewWriteAccepted, withReviewWriteClosed, withReviewWriteStopped } from "./reviewMutations";
 import { runReviewWrite, type ReviewWriteEnd } from "./reviewWriteJob";
 import { reviewWritesOf } from "./reviewWrites";
@@ -145,6 +147,17 @@ export class SceneSetService {
     }
   }
 
+  /** Announces the set as its file and the live jobs say it now; nothing when it is gone, and never a throw (it runs where a refusal is already on its way). */
+  async #reannounce(library: Library, avatarId: string | null, sceneSetId: string): Promise<void> {
+    if (avatarId === null) return;
+    try {
+      const current = await library.sceneSets.get(avatarId, sceneSetId);
+      if (current !== null) await this.#announce(library, current);
+    } catch (error) {
+      this.#deps.warn(`studio engine: scene set ${sceneSetId} could not be announced after a write that did not begin (${detailOfError(error)})`);
+    }
+  }
+
   /** The set with this id, in whichever avatar's folder it lies; NOT_FOUND when none of them has it. */
   #find(library: Library, sceneSetId: string): Promise<{ set: StoredSceneSet; avatarId: string }> {
     return findSceneSet(library, sceneSetId);
@@ -208,11 +221,21 @@ export class SceneSetService {
     throw error;
   }
 
+  /** The avatar's readable sets for the one-open-set check; a read the OS failed is a clean refusal (VALIDATION `library-unreadable`), never a guess. */
+  async #openSetCheck(library: Library, avatarId: string): Promise<StoredSceneSet[]> {
+    try {
+      return await library.sceneSets.listForWrite(avatarId);
+    } catch (error) {
+      if (error instanceof SceneSetError && error.code === "library-unreadable") throw sceneRefusal(error.message, "library-unreadable");
+      throw error;
+    }
+  }
+
   /** Under the set's lock: the set's job runs (IN_FLIGHT), or its run's folder exists (the set is used: VALIDATION). */
   #guard(library: Library): SceneSetGuard {
     return async (current) => {
       if (this.#live.has(current.sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${current.sceneSetId} is being written; change it when that ends (or cancel it)` });
-      if (await library.runFolderExists(current.runId)) throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${current.sceneSetId} is used by run ${current.runId} and is read-only` });
+      if (await library.runFolderExists(current.runId)) throw sceneRefusal(`scene set ${current.sceneSetId} is used by run ${current.runId} and is read-only`, "set-used");
     };
   }
 
@@ -239,7 +262,7 @@ export class SceneSetService {
       const result = outcome as EditOutcome | null;
       if (result === null) throw new EngineFailure({ code: "INTERNAL", detail: "the edit was not applied" });
       if (result.kind === "problem") return { problem: result.problem };
-      if (result.kind === "invalid") throw new EngineFailure({ code: "VALIDATION", detail: result.detail });
+      if (result.kind === "invalid") throw sceneRefusal(result.detail, result.sceneReason, result.sceneId);
       if (result.kind === "changed") await this.#announce(library, updated);
       return { sceneSet: await this.#view(library, updated) };
     });
@@ -293,10 +316,11 @@ export class SceneSetService {
       await deps.assertAvatarOnDisk(library, avatarId);
       const custom = await deps.customCategories(library, categories);
       // One open set per avatar: a set is open until its run starts (its folder exists) or it is discarded.
-      const existing = await library.sceneSets.list(avatarId);
-      for (const set of existing.sets) {
+      // A record or a folder the OS fails to read may be the open set: the check refuses (nothing written, nothing reserved) instead of counting it unreadable.
+      const existing = await this.#openSetCheck(library, avatarId);
+      for (const set of existing) {
         if (!(await library.runFolderExists(set.runId))) {
-          throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${manifest.id} already has an open scene set; discard it or use its run first` });
+          throw sceneRefusal(`avatar ${manifest.id} already has an open scene set; discard it or use its run first`, "open-set");
         }
       }
       const textModel = deps.textModel();
@@ -330,6 +354,7 @@ export class SceneSetService {
         stored = await library.sceneSets.create(planned);
       } catch (error) {
         this.#live.delete(sceneSetId);
+        if (error instanceof SceneSetError && error.code === "library-unreadable") throw sceneRefusal(error.message, "library-unreadable");
         throw new EngineFailure({ code: "INTERNAL", detail: `nothing was sent: the scene set could not be written (${detailOfError(error)})` });
       }
       if (jobId === null || key === null || budget === null || priced === null) {
@@ -370,6 +395,8 @@ export class SceneSetService {
     let mine: LiveJob | null = null;
     /** Set when a cancel beat the job's start: it is registered and ended cancelled once the call has let go of the set. */
     let cancelledJob: { jobId: string; avatarId: string } | null = null;
+    /** The library whose set this call made live: a window may have read the set as writing from then on, so a call that ends without a job says it is not. */
+    let shownIn: Library | null = null;
     try {
       // A set whose job runs refuses before anything is read, claimed or written.
       if (this.#live.has(sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${sceneSetId} is being written; wait for that to end (or cancel it)` });
@@ -379,17 +406,18 @@ export class SceneSetService {
       const { set, avatarId } = await this.#find(library, sceneSetId);
       deps.claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
       claimed = avatarId;
+      shownIn = library;
       const jobId = deps.newId();
       mine = { jobId, avatarId, kind: target.kind === "unwritten" ? "unwritten" : "rewrite", count: 0, inFlight: new Set() };
       this.#live.set(sceneSetId, mine);
       deps.runnableAvatar(library, avatarId);
       await deps.assertAvatarOnDisk(library, avatarId);
-      if (await library.runFolderExists(set.runId)) throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${sceneSetId} is used by run ${set.runId} and is read-only` });
+      if (await library.runFolderExists(set.runId)) throw sceneRefusal(`scene set ${sceneSetId} is used by run ${set.runId} and is read-only`, "set-used");
       if (set.revision !== revision) throw new EngineFailure({ code: "SCENES_CHANGED", detail: `scene set ${sceneSetId} is at revision ${set.revision}, not ${revision}` });
       const ledger = budget.ledger;
       let plan: ReviewPlan | null = null;
       if (target.kind === "unwritten") {
-        if (pendingChunks(set, ledger).length === 0) throw new EngineFailure({ code: "VALIDATION", detail: "no scene of the set is waiting to be written" });
+        if (pendingChunks(set, ledger).length === 0) throw sceneRefusal("no scene of the set is waiting to be written", "nothing-waiting");
       } else {
         plan = await this.#planReview(library, set, target);
         mine.kind = plan.kind;
@@ -415,7 +443,7 @@ export class SceneSetService {
           {
             expectedRevision: revision,
             guard: async (current) => {
-              if (await library.runFolderExists(current.runId)) throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${sceneSetId} is used by run ${current.runId} and is read-only` });
+              if (await library.runFolderExists(current.runId)) throw sceneRefusal(`scene set ${sceneSetId} is used by run ${current.runId} and is read-only`, "set-used");
             },
           },
         );
@@ -430,9 +458,13 @@ export class SceneSetService {
       return { jobId };
     } finally {
       if (!launched) {
-        if (mine !== null && this.#live.get(sceneSetId) === mine) this.#live.delete(sceneSetId);
+        const wasLive = mine !== null && this.#live.get(sceneSetId) === mine;
+        if (wasLive) this.#live.delete(sceneSetId);
         deps.paidEnd();
         if (claimed !== null) deps.releaseAvatar(claimed);
+        // The set was live from the claim, before the prices: a window that read it then holds «writing» for a write that is refused (price, budget, revision)
+        // or cancelled before it began. Nothing else would clear it, so the set is announced as it is now, before the job's own end.
+        if (wasLive && shownIn !== null) await this.#reannounce(shownIn, claimed, sceneSetId);
         if (cancelledJob !== null) this.#endCancelledUnstarted(sceneSetId, cancelledJob);
       }
     }
@@ -486,15 +518,17 @@ export class SceneSetService {
     const { set, jobId, library, live } = job;
     const { sceneSetId, avatarId } = set;
     const scope = { avatarJobId: jobId };
-    const update = async (change: (current: StoredSceneSet) => StoredSceneSet): Promise<StoredSceneSet> => library.sceneSets.update(avatarId, sceneSetId, change);
+    const update = async (change: (current: StoredSceneSet) => StoredSceneSet | null): Promise<StoredSceneSet> => library.sceneSets.update(avatarId, sceneSetId, change);
     // An accepted chunk is paid for and its answer is kept nowhere else: a disk error while storing it is tried once more from the sentences in memory.
-    // A refusal of the store itself (the record is gone or does not fit) is not transient and is not retried.
-    const store = async (change: (current: StoredSceneSet) => StoredSceneSet): Promise<StoredSceneSet> => {
+    // A refusal of the store itself (the record is gone or does not fit) is not transient and is not retried; a read the OS failed reaches here as the OS error itself, so it is.
+    const store = async (change: (current: StoredSceneSet) => StoredSceneSet | null): Promise<StoredSceneSet> => {
       try {
         return await update(change);
       } catch (error) {
         if (error instanceof SceneSetError) throw error;
         deps.warn(`studio engine: scene set ${sceneSetId} could not be written (${detailOfError(error)}); trying once more`);
+        // A short pause first, so a file an antivirus holds for a moment (EBUSY on Windows) can be let go.
+        await pauseBeforeRetry();
         return update(change);
       }
     };
@@ -520,12 +554,19 @@ export class SceneSetService {
             priceBook: job.priced.book,
             acquire: (signal): Promise<Release> => deps.networkPool.acquire(signal),
             load: async () => {
-              const current = await library.sceneSets.get(avatarId, sceneSetId);
+              const current = await library.sceneSets.load(avatarId, sceneSetId);
               if (current === null) throw new Error(`scene set ${sceneSetId} is gone`);
               return current;
             },
             accept: async (_k, sentences) => {
-              await this.#announce(library, await store((current) => withReviewWriteAccepted(current, k, sentences)));
+              // An answer already accepted (the retry of a write whose flush failed after the rename) changes nothing: no second revision, no second file.
+              await this.#announce(
+                library,
+                await store((current) => {
+                  const next = withReviewWriteAccepted(current, k, sentences);
+                  return next === current ? null : next;
+                }),
+              );
             },
             giveUp: async () => {
               await this.#announce(library, await update((current) => withReviewWriteClosed(current, k)));
@@ -549,7 +590,7 @@ export class SceneSetService {
             priceBook: job.priced.book,
             acquire: (signal): Promise<Release> => deps.networkPool.acquire(signal),
             load: async () => {
-              const current = await library.sceneSets.get(avatarId, sceneSetId);
+              const current = await library.sceneSets.load(avatarId, sceneSetId);
               if (current === null) throw new Error(`scene set ${sceneSetId} is gone`);
               return current;
             },

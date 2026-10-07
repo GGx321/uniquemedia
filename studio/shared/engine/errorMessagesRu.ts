@@ -1,4 +1,4 @@
-import type { CaptionIssue, CategoryReason, ErrorCode, ExportUnavailableReason, MusicUnavailableReason, PhotoUnavailableReason } from "./errors";
+import type { CaptionIssue, CategoryReason, ErrorCode, ExportUnavailableReason, MusicUnavailableReason, PhotoUnavailableReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -182,7 +182,29 @@ export const CATEGORY_REASONS_RU = {
   "below-minimum": "Набор не может стать меньше: в категории остаются не меньше 5 мест и 3 образов. Уберите другое или пересоздайте набор.",
   "mirror-needed": "Колода кадров включает съёмку в зеркале, поэтому в наборе должно остаться место с зеркалом. Уберите другое место.",
   "item-not-found": "Этого места или образа в категории уже нет — возможно, его убрали. Обновите список.",
+  "library-unreadable": "Диск не отдал часть записей библиотеки (так бывает, когда файл занят антивирусом или диск не отвечает), поэтому Studio не может проверить имя и число категорий. Ничего не создано и не потрачено — повторите через секунду.",
 } as const satisfies Record<CategoryReason, string>;
+
+/** Why a scene-set command was refused, for VALIDATION's `sceneReason`: each text names the cause and the way out; the window names the scene itself from `sceneId`. */
+export const SCENE_REASONS_RU = {
+  "set-used": "Этот набор уже ушёл в запуск, поэтому его нельзя менять. Составьте новый набор.",
+  "open-set": "У этого аватара уже есть открытый набор сцен. Отрисуйте его или удалите, потом составьте новый.",
+  "nothing-waiting": "Дописывать нечего: все сцены набора уже написаны. Обновите экран.",
+  "scene-missing": "Такой сцены в наборе нет — возможно, набор изменили в другом окне. Обновите экран.",
+  "target-removed": "Эта сцена убрана из набора. Верните её, чтобы писать заново.",
+  "scene-without-text": "У одной из сцен нет текста: напишите её, введите текст сами или уберите сцену.",
+  "no-active-scenes": "В наборе не осталось сцен для отрисовки: все убраны. Верните хотя бы одну.",
+  "too-many-active": "Сцен больше, чем можно отрисовать за один запуск (не больше 100). Уберите лишние.",
+  "scene-text-problem": "Текст одной из сцен не проходит нынешние правила слов (после обновления они могли ужесточиться). Измените текст или уберите сцену.",
+  "write-record-cap": "Слишком много правок в этом наборе — пересоставьте его.",
+  "idea-room": "В наборе не хватит места для новых сцен (не больше 200, с учётом незавершённой записи по идее). Уберите ненужные или завершите ту запись.",
+  "mixed-kinds": "Свои сцены и сцены из плана пишутся по-разному: выберите сцены одного вида.",
+  "own-redraw": "У своей сцены нет места, которое можно перерисовать: напишите её заново по той же идее.",
+  "no-open-write": "Такой незавершённой записи уже нет — возможно, её закрыли в другом окне. Обновите экран.",
+  "no-attempts-left": "У этой записи не осталось попыток. Закройте её или напишите сцены заново.",
+  "nothing-to-dismiss": "У этой сцены нет незавершённой записи, которую можно закрыть. Обновите экран.",
+  "library-unreadable": "Диск не отдал часть наборов сцен этого аватара (так бывает, когда файл занят антивирусом или диск не отвечает), поэтому Studio не может проверить, нет ли уже открытого набора. Ничего не записано и не потрачено — повторите через секунду.",
+} as const satisfies Record<SceneReason, string>;
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {

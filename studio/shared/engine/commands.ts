@@ -562,7 +562,9 @@ const ENGINE_SPECS = [
   // answers. A failure carries `spentMicros` in its error, and a failed regenerate keeps the old pool. The answer's `spentMicros` is what
   // THIS call cost; the category's own `spentMicros` is its total.
   // `categories.update`: free; a new name, and places / outfits to remove by their text (refused with VALIDATION below the pool's minimums).
-  // IN_FLIGHT for a category whose regeneration is under way. `categories.delete`: free. Photos and plans already made keep their snapshot.
+  // IN_FLIGHT for a category whose regeneration is under way or that is being deleted, and VALIDATION `name-taken` for a rename to the name a create in flight is about to
+  // take (its pool is paid for and must stay storable). `categories.delete`: free; IN_FLIGHT while its regeneration runs. Photos and plans already made keep their snapshot.
+  // CS.7: every write of the library's records (this, `scenes.compose/edit/write/discard`, `runs.startFromScenes`) is IN_FLIGHT while a library switch is being surveyed.
   // `categories.dismissInterrupted`: free; forgets an interrupted call's record (NOT_FOUND for one that is not listed).
   defineCommand("categories.list", Empty, CategoriesListResult),
   defineCommand("categories.estimate", Empty, Estimate),
@@ -603,6 +605,11 @@ const ENGINE_SPECS = [
   // `scenes.get`: free; the avatar's newest set (open, or used and read-only) and how many set files could not be read (kept as they are).
   // `scenes.edit`: free, on the revision the window shows (SCENES_CHANGED when it moved; two edits on one revision: the second is refused and
   // nothing is lost). `{ problem }` is a normal result: the text does not go through and nothing changed. IN_FLIGHT while the set's job runs, VALIDATION once used.
+  // `scenes.write` answers IN_FLIGHT for a set whose own job runs BEFORE anything else (before the key, the ledger or the library are looked at: its claim on the set
+  // comes first); the set is live from that claim, so a write refused later (price, budget, revision) or cancelled before its job began is announced again
+  // (`scenes.changed`, before `job.cancelled`), and its answer may come after `job.cancelled`.
+  // CS.7: every VALIDATION of the scene commands carries `EngineError.sceneReason` (`SCENE_REASONS`, Russian text `SCENE_REASONS_RU`) and, for a refusal about one scene
+  // (a text that breaks today's word rules, an active scene with no text, a scene the set lacks or has removed), its `sceneId`.
   // `scenes.estimateWrite` / `scenes.write`: «Дописать» — writes only the scenes still waiting, chunk by chunk, with the attempts each chunk has left
   // (never a fresh pair after an interruption), priced as `min(2 − answered, unused ids) × the writer's ceiling` per chunk; the same refusals as compose
   // and VALIDATION when nothing is waiting. `scenes.cancel`: ok for a set whose job is not running; the reserve of a request in flight stays open

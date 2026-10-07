@@ -283,10 +283,61 @@ export function commonPhotoReason(reasons: readonly (PhotoUnavailableReason | un
  * - below-minimum: the removal would leave fewer places or outfits than a pool keeps.
  * - mirror-needed: the removal would take the last place with a mirror from a deck that can draw a mirror shot.
  * - item-not-found: the place or outfit to remove is not in the category (it may have been removed already).
+ * - library-unreadable: the disk failed a read (a record or the folder) that the check for a new name or the limit needs, so the engine could not tell and wrote nothing (additive, CS.7 fix round 2).
  */
-export const CATEGORY_REASONS = ["limit", "name-taken", "below-minimum", "mirror-needed", "item-not-found"] as const;
+export const CATEGORY_REASONS = ["limit", "name-taken", "below-minimum", "mirror-needed", "item-not-found", "library-unreadable"] as const;
 export const CategoryReason = z.enum(CATEGORY_REASONS);
 export type CategoryReason = z.infer<typeof CategoryReason>;
+
+/** A scene's number in its set (the same bounds as `SceneId` in scenes.ts, which imports this file). */
+const SceneIdNumber = z.number().int().min(1).max(10_000);
+
+/**
+ * Why a scene-set command was refused (VALIDATION's `sceneReason`, additive in v5): the window's text depends on it, so it is a closed code and not a
+ * phrase of the engine's English `detail`. Absent on a VALIDATION that is no scene set's own. The revision that moved is not here: it is SCENES_CHANGED.
+ *
+ * - set-used: the set's run has started; a used set is read-only (a change, a write, an approval).
+ * - open-set: the avatar already has an open set (compose).
+ * - nothing-waiting: no scene of the set is waiting to be written («Дописать»).
+ * - scene-missing: the set has no such scene (`sceneId` names the first).
+ * - target-removed: the scene to write is removed, or every scene of an interrupted write is (`sceneId` names the first, when there is one).
+ * - scene-without-text: an active scene has no text, at an approval (`sceneId` names the first).
+ * - no-active-scenes: every scene is removed, at an approval.
+ * - too-many-active: more active scenes than a run draws (100), at an approval.
+ * - scene-text-problem: an active scene's stored text breaks today's word rules, at an approval (`sceneId` names it).
+ * - write-record-cap: the set already records the most review writes (500).
+ * - idea-room: the new scenes of an idea write would not fit in the set (200 with the room an interrupted idea holds).
+ * - mixed-kinds: a rewrite names planned and own scenes together; they are written from different prompts.
+ * - own-redraw: a redraw names an own scene; it has no place to redraw.
+ * - no-open-write: the set has no unresolved write with that number (resume, dismiss).
+ * - no-attempts-left: the unresolved write has no attempt left (resume).
+ * - nothing-to-dismiss: a scene named in a dismissal has no unresolved rewrite.
+ * - library-unreadable: the disk failed a read of the avatar's scene sets (a record or the folder) in the check that lets a new set in, so the engine could not tell whether one is open and wrote nothing (additive, CS.7 fix round 2).
+ */
+export const SCENE_REASONS = [
+  "set-used",
+  "open-set",
+  "nothing-waiting",
+  "scene-missing",
+  "target-removed",
+  "scene-without-text",
+  "no-active-scenes",
+  "too-many-active",
+  "scene-text-problem",
+  "write-record-cap",
+  "idea-room",
+  "mixed-kinds",
+  "own-redraw",
+  "no-open-write",
+  "no-attempts-left",
+  "nothing-to-dismiss",
+  "library-unreadable",
+] as const;
+export const SceneReason = z.enum(SCENE_REASONS);
+export type SceneReason = z.infer<typeof SceneReason>;
+
+/** The reasons that point at one scene: `sceneId` may travel with these only, and must with the first two. */
+export const SCENE_REASONS_NAMING_A_SCENE = ["scene-text-problem", "scene-without-text", "scene-missing", "target-removed"] as const;
 
 /**
  * An error as it travels between processes: a code plus optional diagnostics,
@@ -314,6 +365,13 @@ export const EngineError = z
      */
     categoryReason: CategoryReason.optional(),
     /**
+     * Additive (CS.7): which rule a scene-set command broke (`SCENE_REASONS`); only on VALIDATION, and on every VALIDATION of `scenes.*` and
+     * `runs.estimateFromScenes` / `runs.startFromScenes` that is the set's own (a payload the contract refuses has none). The window's text for it is `SCENE_REASONS_RU`.
+     */
+    sceneReason: SceneReason.optional(),
+    /** Additive (CS.7): the scene a `sceneReason` points at, when it names one (`SCENE_REASONS_NAMING_A_SCENE`); always with `scene-text-problem` and `scene-without-text`. */
+    sceneId: SceneIdNumber.optional(),
+    /**
      * Additive (CS.2): what a failed paid category call cost, in micro-dollars as the ledger booked it (a settled attempt at its cost, an
      * open reserve at its worst case). Present on every failure of `categories.create` / `categories.regenerate` from the moment its call
      * was started — a provider's refusal (0), two rejected pools, a dropped connection, a pool paid for and not storable — and absent on
@@ -337,6 +395,22 @@ export const EngineError = z
   .refine((e) => e.categoryReason === undefined || e.code === "VALIDATION", {
     message: "categoryReason may only be present on VALIDATION",
     path: ["categoryReason"],
+  })
+  .refine((e) => e.sceneReason === undefined || e.code === "VALIDATION", {
+    message: "sceneReason may only be present on VALIDATION",
+    path: ["sceneReason"],
+  })
+  .refine((e) => e.sceneReason === undefined || e.categoryReason === undefined, {
+    message: "a refusal has a sceneReason or a categoryReason, not both",
+    path: ["sceneReason"],
+  })
+  .refine((e) => e.sceneId === undefined || (e.sceneReason !== undefined && (SCENE_REASONS_NAMING_A_SCENE as readonly string[]).includes(e.sceneReason)), {
+    message: "sceneId may only accompany a sceneReason that names a scene",
+    path: ["sceneId"],
+  })
+  .refine((e) => (e.sceneReason !== "scene-text-problem" && e.sceneReason !== "scene-without-text") || e.sceneId !== undefined, {
+    message: "scene-text-problem and scene-without-text name their scene",
+    path: ["sceneId"],
   })
   .refine((e) => (e.code === "EXPORT_UNAVAILABLE") === (e.exportReason !== undefined), {
     message: "exportReason must be present exactly on EXPORT_UNAVAILABLE",

@@ -395,6 +395,56 @@ describe("categories.create", () => {
     expect((await listOf(engine)).categories).toEqual([category]);
   });
 
+  describe("the cap of the pool call is the worst case of its estimate, however much more the owner accepted", () => {
+    /** The caps the engine registers for avatar-job scopes (a pool call's own), read from the Map the engine keeps them in. */
+    function recordCaps(): { caps: number[]; stop: () => void } {
+      const caps: number[] = [];
+      const real = Map.prototype.set;
+      const spy = spyOn(Map.prototype, "set").mockImplementation(function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+        if (typeof key === "string" && key.startsWith("avatar:") && typeof value === "number") caps.push(value);
+        return real.call(this, key, value);
+      });
+      return { caps, stop: () => spy.mockRestore() };
+    }
+
+    test("a create accepted at ten times its estimate still runs under the estimate's cap", async () => {
+      const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net });
+      const seen = recordCaps();
+      try {
+        await creating(engine, { acceptedWorstMicros: 10 * ESTIMATE.worstMicros });
+      } finally {
+        seen.stop();
+      }
+      expect(seen.caps).toEqual([ESTIMATE.worstMicros]);
+    });
+
+    test("a regenerate accepted at ten times its estimate still runs under the estimate's cap", async () => {
+      const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+      const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net });
+      const seen = recordCaps();
+      try {
+        ok(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: 10 * ESTIMATE.worstMicros })));
+      } finally {
+        seen.stop();
+      }
+      expect(seen.caps).toEqual([ESTIMATE.worstMicros]);
+    });
+
+    test("an acceptance equal to the estimate gives the same cap: nothing else moved", async () => {
+      const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net });
+      const seen = recordCaps();
+      try {
+        await creating(engine);
+      } finally {
+        seen.stop();
+      }
+      expect(seen.caps).toEqual([ESTIMATE.worstMicros]);
+    });
+  });
+
   test("the request: the settings' text model, reasoning low, the strict scene_pool schema, the description, and nothing of the name", async () => {
     const net = network({ descriptors: [poolReply()] });
     const { engine } = await startEngine(dir(), { net });
@@ -542,6 +592,68 @@ describe("categories.create", () => {
     expect(refused.error.categoryReason).toBe("name-taken");
     expect(chatCalls(net)).toHaveLength(0);
     expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  // CS.7 fix round 2: a read the OS fails (EMFILE on the folder, EIO on a record) is injected through the library's `beforeList`/`beforeRead` seams, so these
+  // run on every platform. The check for a new name and for the limit cannot tell what the library holds, so it refuses; it never lets a duplicate in.
+  test("one EMFILE on the folder's listing: the create is refused as library-unreadable before anything is sent, and no duplicate is written", async () => {
+    await seedCategory({ categoryId: "cat-paris-cafes", name: "Кофейни Парижа" });
+    const net = network({ descriptors: [poolReply()] });
+    let failures = 0;
+    const beforeList = (): void => {
+      if (failures > 0) return;
+      failures += 1;
+      throw Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+    };
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeList } } } });
+
+    const refused = failed(await engine.handle(createCommand({ name: "Кофейни Парижа" })));
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "library-unreadable" });
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+    expect(await folder()).toEqual(["cat-paris-cafes.json"]);
+  });
+
+  test("one EIO on a record: the create is refused as library-unreadable, since that file may hold the same name", async () => {
+    await seedCategory({ categoryId: "cat-paris-cafes", name: "Кофейни Парижа" });
+    const net = network({ descriptors: [poolReply()] });
+    let failures = 0;
+    const beforeRead = (path: string): void => {
+      if (failures > 0 || !path.endsWith("cat-paris-cafes.json")) return;
+      failures += 1;
+      throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+    };
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeRead } } } });
+
+    const refused = failed(await engine.handle(createCommand({ name: "Кофейни Парижа" })));
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "library-unreadable" });
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(await folder()).toEqual(["cat-paris-cafes.json"]);
+  });
+
+  test("one EMFILE on the listing AFTER the pool was paid for: the write is tried once more, the category is stored, and the pool is paid for once", async () => {
+    let answered = false;
+    const reply: Step = () => {
+      answered = true;
+      return poolReply() as Reply;
+    };
+    const net = network({ descriptors: [reply] });
+    let failures = 0;
+    const beforeList = (): void => {
+      if (!answered || failures > 0) return;
+      failures += 1;
+      throw Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+    };
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeList } } } });
+
+    const created = await creating(engine);
+
+    expect(failures).toBe(1);
+    expect(created.category.name).toBe("Кофейни Парижа");
+    expect(chatCalls(net)).toHaveLength(1);
+    expect((await listOf(engine)).categories.map((c) => c.name)).toEqual(["Кофейни Парижа"]);
   });
 
   test("the 51st category is VALIDATION: nothing sent, nothing booked", async () => {
@@ -828,7 +940,8 @@ describe("a regenerate whose paid pool cannot be stored", () => {
   test("still adds its cost to the category's total: the old pool stays, the call was paid, and the pool is kept in raw/", async () => {
     const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
     let failTheStore = false;
-    // The answer arms the failure for the pool's own write only; the booking of the spend that follows is a write of the same record and must go through.
+    let failuresLeft = 2;
+    // The answer arms the failure for the pool's own write and its one retry (two failures); the booking of the spend that follows is a write of the same record and must go through.
     const net = network({
       descriptors: [
         async () => {
@@ -844,7 +957,8 @@ describe("a regenerate whose paid pool cannot be stored", () => {
           testHooks: {
             beforeRename: (path) => {
               if (failTheStore && !path.includes("pending-")) {
-                failTheStore = false;
+                failuresLeft -= 1;
+                if (failuresLeft === 0) failTheStore = false;
                 throw new Error("the disk is full");
               }
             },
@@ -939,7 +1053,7 @@ describe("a job's cost is booked into its category once", () => {
     expect((await listOf(engine)).interrupted).toEqual([]);
   });
 
-  test("after a restart, a regenerate that finished but whose record survived is dismissed without counting its cost a second time", async () => {
+  test("after a restart, a regenerate that landed whose pending record survived is not listed as interrupted: the record is removed and nothing is counted twice", async () => {
     refuse.on = true;
     refuse.times = Infinity;
     const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
@@ -948,17 +1062,57 @@ describe("a job's cost is booked into its category once", () => {
     ok(await first.engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros })));
     const jobId = String(ledgerLines(dir())[0]?.jobId);
     expect((await listOf(first.engine)).categories[0]?.spentMicros).toBe(5_000 + 5_100);
+    expect(await folder()).toEqual([`${id}.json`, `pending-${jobId}.json`]);
 
-    // The process is gone; a new one over the same library sees a pending record and no memory of the call.
+    // The process is gone; a new one over the same library sees a pending record and no memory of the call. The category's own record says the job landed
+    // (its `bookedJobs` holds the id), so the call is over: not an interruption, and not an invitation to pay again.
     refuse.on = false;
     const second = await startEngine(dir());
-    expect((await listOf(second.engine)).interrupted.map((i) => i.jobId)).toEqual([jobId]);
-    ok(await dismiss(second.engine, jobId));
-
     const listed = await listOf(second.engine);
-    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 5_100);
+
     expect(listed.interrupted).toEqual([]);
+    expect(listed.categories[0]?.spentMicros).toBe(5_000 + 5_100);
     expect(await folder()).toEqual([`${id}.json`]);
+  });
+
+  test("the same for a create: its category holds the job in bookedJobs, so the surviving pending record is not an interrupted create", async () => {
+    refuse.on = true;
+    refuse.times = Infinity;
+    const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+    const first = await startEngine(dir(), { net, deps: disk() });
+    const created = await creating(first.engine);
+    const jobId = String(ledgerLines(dir())[0]?.jobId);
+    expect((await folder()).filter((n) => n.startsWith("pending-"))).toEqual([`pending-${jobId}.json`]);
+
+    refuse.on = false;
+    const second = await startEngine(dir());
+    const listed = await listOf(second.engine);
+
+    expect(listed.interrupted).toEqual([]);
+    expect(listed.categories.map((c) => [c.categoryId, c.spentMicros])).toEqual([[created.category.categoryId, 5_100]]);
+    expect((await folder()).filter((n) => n.startsWith("pending-"))).toEqual([]);
+  });
+
+  test("a pending record of a job that no category booked stays listed as interrupted: only a booking proves the call landed", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    await leaveRegenerate(id, "job-00000042");
+    const { engine } = await startEngine(dir());
+
+    const listed = await listOf(engine);
+
+    expect(listed.interrupted.map((i) => i.jobId)).toEqual(["job-00000042"]);
+    expect(await folder()).toEqual([`${id}.json`, "pending-job-00000042.json"]);
+  });
+
+  test("a regenerate's pending record is judged by ITS category's bookings: another category booking the same id proves nothing", async () => {
+    const other = await seedCategory({ categoryId: "cat-other-cafes", name: "Другие", spentMicros: 1_000 });
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock("2026-10-05T12:00:00.000Z") });
+    await library.categories.addSpend(other, 100, "job-00000042");
+    await leaveRegenerate(id, "job-00000042");
+    const { engine } = await startEngine(dir());
+
+    expect((await listOf(engine)).interrupted.map((i) => i.jobId)).toEqual(["job-00000042"]);
   });
 
   test("a regenerate whose record write threw after the rename is counted once, and the owner is told it worked", async () => {
@@ -1417,4 +1571,125 @@ test("the free commands need no key", async () => {
 
   expect(ok(await engine.handle(command("categories.update", { categoryId: id, name: "New" }))).ok).toBe(true);
   expect(ok(await engine.handle(command("categories.delete", { categoryId: id }))).ok).toBe(true);
+});
+
+// ---------- CS.7 fix round 3: a read the OS fails AFTER the pool was paid for ----------
+
+// Injected through the library's `beforeRead`/`beforeList` seams, so these run on every platform. The pool is paid for and kept nowhere else: a write that
+// meets one OS failure is tried once more (after a short pause, so an antivirus' hold on a file can clear) before the owner is told it went to raw/.
+describe("a read the OS fails after the pool was paid for (fix round 3)", () => {
+  const osError = (name: string): Error => Object.assign(new Error(`${name}: injected`), { code: name });
+  const regenerate = (categoryId: string): unknown => command("categories.regenerate", { categoryId, description: "кофейни у Сены", acceptedWorstMicros: ESTIMATE.worstMicros });
+
+  /** A chat answer that marks the pool as paid for, so a hook can fail what is read after it. */
+  function paid(over: Json = {}) {
+    const state = { answered: false };
+    const step: Step = () => {
+      state.answered = true;
+      return poolReply(answer(over), 0.005) as Reply;
+    };
+    return { state, step };
+  }
+
+  test("P1: one EIO on reading the record of a REGENERATE after payment: the write is tried once more and the new pool is stored, not sent to raw/", async () => {
+    const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+    const call = paid({ label: "Seine cafes" });
+    let failures = 0;
+    const beforeRead = (path: string): void => {
+      if (!call.state.answered || failures > 0 || !path.endsWith(`${id}.json`)) return;
+      failures += 1;
+      throw osError("EIO");
+    };
+    const net = network({ descriptors: [call.step] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeRead } } } });
+
+    const response = ok(await engine.handle(regenerate(id)));
+
+    expect(failures).toBe(1);
+    if (response.type !== "categories.regenerate") throw new Error("wrong type");
+    expect(response.result.category).toMatchObject({ categoryId: id, label: "Seine cafes", spentMicros: 10_000 });
+    expect(chatCalls(net)).toHaveLength(1);
+  });
+
+  test("P3: one EIO on create's check of its own id after payment: the write is tried once more and the category is stored", async () => {
+    const seeded = await seedCategory({ name: "Other" });
+    const call = paid();
+    let failures = 0;
+    // The only read of a record that is not in the folder yet is the id check of the category being created.
+    const beforeRead = (path: string): void => {
+      if (!call.state.answered || failures > 0 || path.endsWith(`${seeded}.json`) || !/cat-[^/\\]+\.json$/.test(path)) return;
+      failures += 1;
+      throw osError("EIO");
+    };
+    const net = network({ descriptors: [call.step] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeRead } } } });
+
+    const created = await creating(engine);
+
+    expect(failures).toBe(1);
+    expect(created.category.name).toBe("Кофейни Парижа");
+    expect(chatCalls(net)).toHaveLength(1);
+    expect((await listOf(engine)).categories.map((c) => c.name)).toEqual(["Other", "Кофейни Парижа"]);
+  });
+
+  test("a create whose record landed but whose write threw (the flush) is retried into name-taken and reported as done, with no duplicate", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      let flushed = 0;
+      const afterRename = (path: string): void => {
+        if (flushed > 0 || path.includes("pending-")) return;
+        flushed += 1;
+        throw osError("EIO");
+      };
+      const net = network({ descriptors: [poolReply()] });
+      const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { afterRename } } } });
+
+      const created = await creating(engine);
+
+      expect(flushed).toBe(1);
+      expect(created.category.name).toBe("Кофейни Парижа");
+      expect((await folder()).filter((n) => n.startsWith("cat-"))).toHaveLength(1);
+      expect(chatCalls(net)).toHaveLength(1);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  test("P2: a persistent library-unreadable after payment is the «paid, not stored» answer (INTERNAL with the spend), never a VALIDATION that reads as free", async () => {
+    const call = paid();
+    const beforeList = (): void => {
+      if (call.state.answered) throw osError("EMFILE");
+    };
+    const net = network({ descriptors: [call.step] });
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeList } } } });
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(refused.error.code).toBe("INTERNAL");
+    expect(refused.error.categoryReason).toBeUndefined();
+    expect(refused.error.spentMicros).toBe(5_000);
+    expect(refused.error.detail).toContain("raw/");
+    expect(chatCalls(net)).toHaveLength(1);
+  });
+
+  test("a library-unreadable BEFORE payment stays a free VALIDATION", async () => {
+    const net = network({ descriptors: [poolReply()] });
+    const { engine } = await startEngine(dir(), {
+      net,
+      deps: {
+        library: {
+          testHooks: {
+            beforeList: () => {
+              throw osError("EMFILE");
+            },
+          },
+        },
+      },
+    });
+
+    const refused = failed(await engine.handle(createCommand()));
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "library-unreadable" });
+    expect(refused.error.spentMicros).toBeUndefined();
+  });
 });

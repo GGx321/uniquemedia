@@ -2,6 +2,7 @@ import { EngineFailure } from "../engineFailure";
 import { LibraryError, type Library } from "../library";
 import { withSceneSetLock, type StoredSceneSet } from "../library/sceneSets";
 import { RunPlanSchema, type RunPlan } from "../runs/plan";
+import { sceneRefusal } from "./refusal";
 import { approvalRefusal } from "./toRun";
 
 // CS.5: the approval of a scene set, the two library steps of «Отрисовать N фото». The engine owns the money and the checks between them; this owns what must
@@ -58,7 +59,7 @@ export async function commitApproval(deps: ApprovalDeps, approved: Approvable & 
       await library.createRun(current.runId, plan, RunPlanSchema);
     } catch (error) {
       if (error instanceof LibraryError && error.code === "run-exists") {
-        throw new EngineFailure({ code: "VALIDATION", detail: `scene set ${sceneSetId} is already used by run ${current.runId}` });
+        throw sceneRefusal(`scene set ${sceneSetId} is already used by run ${current.runId}`, "set-used");
       }
       throw error;
     }

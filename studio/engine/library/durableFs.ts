@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { open, readFile, rm, type FileHandle } from "node:fs/promises";
+import { open, readdir, readFile, rm, type FileHandle } from "node:fs/promises";
 import { platform } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { z } from "zod";
@@ -197,6 +197,60 @@ export async function readJsonFile(path: string): Promise<Parsed<unknown>> {
     return { ok: true, value };
   } catch {
     return { ok: false, detail: `${path} is not valid JSON` };
+  }
+}
+
+/** How long a paid write waits before its one retry, so a file an antivirus holds for a moment (EBUSY, EPERM on Windows) can be let go. */
+export const RETRY_PAUSE_MS = 200;
+
+/** The pause before a retry; a plain timer, never a busy loop. */
+export function pauseBeforeRetry(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, RETRY_PAUSE_MS));
+}
+
+/** A path no file can be read from: it is not there (ENOENT) or a part of it is not a folder (ENOTDIR). */
+export function isMissingPath(error: unknown): boolean {
+  return hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR");
+}
+
+/** A record's place held by a folder: nothing a read could ever return, so it is a record that is not usable, not an OS failure that may pass. */
+export function isFolderInPlace(error: unknown): boolean {
+  return hasErrorCode(error, "EISDIR");
+}
+
+/**
+ * How a record read ended, told apart because the callers act differently. `missing`: no such file. `invalid`: the file cannot be a record (not JSON, a
+ * folder in its place). `io`: the OS refused the read (EIO, EMFILE, EBUSY under an antivirus, EACCES, EPERM, a cloud placeholder that cannot be
+ * fetched): nothing is known of the record, `error` is what the OS said. A listing counts `io` as unreadable; a change rethrows `error`; a check that
+ * decides whether a new write may go ahead refuses.
+ */
+export type RecordRead = { ok: true; value: unknown } | { ok: false; reason: "missing" | "invalid" } | { ok: false; reason: "io"; error: unknown };
+
+/** Reads and parses a record file; never throws. `beforeRead` is a test seam: what it throws is what the read threw. */
+export async function readRecordFile(path: string, beforeRead?: (path: string) => void | Promise<void>): Promise<RecordRead> {
+  let text: string;
+  try {
+    await beforeRead?.(path);
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (isMissingPath(error)) return { ok: false, reason: "missing" };
+    if (isFolderInPlace(error)) return { ok: false, reason: "invalid" };
+    return { ok: false, reason: "io", error };
+  }
+  try {
+    return { ok: true, value: JSON.parse(text) };
+  } catch {
+    return { ok: false, reason: "invalid" };
+  }
+}
+
+/** The names in a folder, or the OS's error when it cannot be listed (not a folder, no permission, EMFILE); a folder that is not there is empty. `beforeList` is a test seam. */
+export async function readFolderNames(dir: string, beforeList?: (dir: string) => void | Promise<void>): Promise<{ ok: true; names: string[] } | { ok: false; error: unknown }> {
+  try {
+    await beforeList?.(dir);
+    return { ok: true, names: await readdir(dir) };
+  } catch (error) {
+    return hasErrorCode(error, "ENOENT") ? { ok: true, names: [] } : { ok: false, error };
   }
 }
 

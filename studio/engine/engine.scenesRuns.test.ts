@@ -124,6 +124,8 @@ const estimateCommand = (revision: number, sceneSetId = SET) => command("runs.es
 const startCommand = (revision: number, acceptedWorstMicros: number, sceneSetId = SET) => command("runs.startFromScenes", { sceneSetId, revision, acceptedWorstMicros });
 const edit = (revision: number, op: unknown, sceneSetId = SET) => command("scenes.edit", { sceneSetId, revision, op });
 const code = (response: ResponseMessage) => failed(response).error.code;
+/** The whole refusal: its code, and the scene reason (and scene) the window reads. */
+const refused = (response: ResponseMessage) => failed(response).error;
 
 function estimateOf(response: ResponseMessage): { expectedMicros: number; worstMicros: number } {
   const result = ok(response);
@@ -284,9 +286,9 @@ describe("runs.estimateFromScenes", () => {
       expectNothingHappened(net);
     });
 
-    test("an active scene with no text is VALIDATION", async () => {
+    test("an active scene with no text is VALIDATION, naming the scene", async () => {
       const { engine, net, revision } = await ready({ textless: [3] });
-      expect(code(await engine.handle(estimateCommand(revision)))).toBe("VALIDATION");
+      expect(refused(await engine.handle(estimateCommand(revision)))).toMatchObject({ code: "VALIDATION", sceneReason: "scene-without-text", sceneId: 3 });
       expectNothingHappened(net);
     });
 
@@ -297,13 +299,13 @@ describe("runs.estimateFromScenes", () => {
 
     test("no active scene at all is VALIDATION", async () => {
       const { engine, net, revision } = await ready({ count: 3, removed: [1, 2, 3] });
-      expect(code(await engine.handle(estimateCommand(revision)))).toBe("VALIDATION");
+      expect(refused(await engine.handle(estimateCommand(revision)))).toMatchObject({ code: "VALIDATION", sceneReason: "no-active-scenes" });
       expectNothingHappened(net);
     });
 
     test("more than 100 active scenes is VALIDATION", async () => {
       const { engine, net, revision } = await ready({ count: 101 });
-      expect(code(await engine.handle(estimateCommand(revision)))).toBe("VALIDATION");
+      expect(refused(await engine.handle(estimateCommand(revision)))).toMatchObject({ code: "VALIDATION", sceneReason: "too-many-active" });
       expectNothingHappened(net);
     });
 
@@ -316,7 +318,7 @@ describe("runs.estimateFromScenes", () => {
       const { engine, net, revision } = await ready();
       const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("u") });
       await library.createRun(RUN, { n: 1 }, (await import("zod")).z.object({ n: (await import("zod")).z.number() }));
-      expect(code(await engine.handle(estimateCommand(revision)))).toBe("VALIDATION");
+      expect(refused(await engine.handle(estimateCommand(revision)))).toMatchObject({ code: "VALIDATION", sceneReason: "set-used" });
       expect(net.paidCalls()).toHaveLength(0);
     });
 
@@ -428,7 +430,7 @@ describe("runs.startFromScenes", () => {
 
     test("an active scene with no text: VALIDATION", async () => {
       const { engine, net, revision } = await ready({ count: 3, textless: [2] });
-      expect(code(await engine.handle(startCommand(revision, 10_000_000)))).toBe("VALIDATION");
+      expect(refused(await engine.handle(startCommand(revision, 10_000_000)))).toMatchObject({ code: "VALIDATION", sceneReason: "scene-without-text", sceneId: 2 });
       expectNothingHappened(net);
     });
 
@@ -464,7 +466,7 @@ describe("runs.startFromScenes", () => {
       const { jobId } = startedOf(await engine.handle(startCommand(revision, 2 * 3 * IMAGE)));
       await jobEnd(events, jobId);
       const folders = runFolders();
-      expect(code(await engine.handle(startCommand(revision, 2 * 3 * IMAGE)))).toBe("VALIDATION");
+      expect(refused(await engine.handle(startCommand(revision, 2 * 3 * IMAGE)))).toMatchObject({ code: "VALIDATION", sceneReason: "set-used" });
       expect(runFolders()).toEqual(folders);
     });
 
@@ -554,7 +556,7 @@ describe("runs.startFromScenes", () => {
       const { z } = await import("zod");
       await library.createRun(RUN, { n: 7 }, z.object({ n: z.number() }));
       held.release();
-      expect(code(await starting)).toBe("VALIDATION");
+      expect(refused(await starting)).toMatchObject({ code: "VALIDATION", sceneReason: "set-used" });
       expect(JSON.parse(readFileSync(planFile(), "utf8"))).toEqual({ n: 7 });
       expect(net.paidCalls()).toHaveLength(0);
     });

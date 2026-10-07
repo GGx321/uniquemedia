@@ -1,4 +1,5 @@
 import { isCustomCategory, MAX_COMPOSE_SCENES, type CategorySnapshot, type EngineError } from "../../shared/engine";
+import { reasonFields } from "./refusal";
 import type { SceneRecord, StoredSceneSet } from "../library/sceneSets";
 import type { SceneRunSource } from "../runs/plan";
 import { sentenceProblems } from "../scenes";
@@ -15,7 +16,7 @@ export interface ApprovalContext {
   used: boolean;
 }
 
-export type ApprovalRefusal = Pick<EngineError, "code" | "detail"> & { code: "SCENES_CHANGED" | "VALIDATION" | "IN_FLIGHT"; detail: string };
+export type ApprovalRefusal = Pick<EngineError, "code" | "detail" | "sceneReason" | "sceneId"> & { code: "SCENES_CHANGED" | "VALIDATION" | "IN_FLIGHT"; detail: string };
 
 /** The scenes a run would draw: not removed, in the set's order. */
 function activeScenes(set: StoredSceneSet): SceneRecord[] {
@@ -39,13 +40,14 @@ export function approvalRefusal(set: StoredSceneSet, ctx: ApprovalContext): Appr
   if (set.revision !== ctx.revision) return { code: "SCENES_CHANGED", detail: `scene set ${set.sceneSetId} is at revision ${set.revision}, not ${ctx.revision}` };
   const active = activeScenes(set);
   const empty = active.filter((scene) => scene.text === null).map((scene) => scene.sceneId);
-  if (empty.length > 0) return { code: "VALIDATION", detail: `scene(s) ${namedScenes(empty)} of set ${set.sceneSetId} have no text: write, type or remove them first` };
-  if (active.length === 0) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has no scene to draw: every scene is removed` };
-  if (active.length > MAX_COMPOSE_SCENES) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has ${active.length} active scenes; a run draws at most ${MAX_COMPOSE_SCENES}` };
+  const [firstEmpty] = empty;
+  if (firstEmpty !== undefined) return { code: "VALIDATION", detail: `scene(s) ${namedScenes(empty)} of set ${set.sceneSetId} have no text: write, type or remove them first`, ...reasonFields("scene-without-text", firstEmpty) };
+  if (active.length === 0) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has no scene to draw: every scene is removed`, ...reasonFields("no-active-scenes") };
+  if (active.length > MAX_COMPOSE_SCENES) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} has ${active.length} active scenes; a run draws at most ${MAX_COMPOSE_SCENES}`, ...reasonFields("too-many-active") };
   const unfit = active.find((scene) => scene.text !== null && sentenceProblems(scene.text).length > 0);
-  if (unfit !== undefined) return { code: "VALIDATION", detail: `the text of scene ${unfit.sceneId} of set ${set.sceneSetId} breaks today's word rules: edit or remove it first` };
+  if (unfit !== undefined) return { code: "VALIDATION", detail: `the text of scene ${unfit.sceneId} of set ${set.sceneSetId} breaks today's word rules: edit or remove it first`, ...reasonFields("scene-text-problem", unfit.sceneId) };
   if (ctx.live) return { code: "IN_FLIGHT", detail: `scene set ${set.sceneSetId} is being written; wait for that to end (or cancel it)` };
-  if (ctx.used) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} is already used by run ${set.runId}` };
+  if (ctx.used) return { code: "VALIDATION", detail: `scene set ${set.sceneSetId} is already used by run ${set.runId}`, ...reasonFields("set-used") };
   return null;
 }
 

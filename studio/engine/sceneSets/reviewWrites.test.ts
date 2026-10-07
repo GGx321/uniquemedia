@@ -120,7 +120,25 @@ describe("nextSceneId", () => {
 describe("reservedIdeaScenes", () => {
   test("counts the scenes unresolved idea writes will add, and none of a resolved one's", () => {
     const set = stored({ reviewWrites: [idea({ k: 2, firstId: 5 }), idea({ k: 3, firstId: 7, closed: true })] });
-    expect(reservedIdeaScenes(set)).toBe(2);
+    expect(reservedIdeaScenes(set, fakeLedger({}))).toBe(2);
+  });
+
+  test("an unresolved write still has its attempts: it holds its room, whether or not a request was sent", () => {
+    const set = stored({ reviewWrites: [idea({ k: 2, firstId: 5 })] });
+    expect(reservedIdeaScenes(set, fakeLedger({ [id(2, 1)]: {} }))).toBe(2);
+    expect(reservedIdeaScenes(set, null)).toBe(2);
+  });
+
+  test("an unresolved write with no attempt left can never add its scenes, so it holds no room (its close was lost to a disk error)", () => {
+    const set = stored({ reviewWrites: [idea({ k: 2, firstId: 5 })] });
+    const spent = fakeLedger({ [id(2, 1)]: { close: { type: "settle", costMicros: 1_000 } }, [id(2, 2)]: {} });
+    expect(reservedIdeaScenes(set, spent)).toBe(0);
+  });
+
+  test("one write's lost close does not free another's room", () => {
+    const set = stored({ reviewWrites: [idea({ k: 2, firstId: 5 }), idea({ k: 3, firstId: 7 })] });
+    const spent = fakeLedger({ [id(2, 1)]: { close: { type: "settle", costMicros: 1_000 } }, [id(2, 2)]: {} });
+    expect(reservedIdeaScenes(set, spent)).toBe(2);
   });
 });
 

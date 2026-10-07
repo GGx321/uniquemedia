@@ -117,6 +117,7 @@ import { FileStateChecker } from "./videos/fileState";
 import type { MediaImporters } from "./media/imports";
 import { MediaService } from "./media/service";
 import { MediaDiskError } from "./library/mediaRecords";
+import { pauseBeforeRetry } from "./library/durableFs";
 import type { MediaStagingOptions } from "./media/staging";
 import { countRecordsByRoot, libraryHasVideoRecords } from "./videos/rootCounts";
 import { ownPhotoSourceOf, readVerifiedOwnPhoto } from "./videos/ownPhotos";
@@ -301,13 +302,13 @@ export function defaultCpuPoolSize(): number {
 /** The avatar's recent scene history the planner steers away from (location + outfit pairs), about two runs' worth. */
 export const RECENT_PAIRS = 40;
 
-/** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
 /** The models a stored run needs priced now: a run made from a scene set never asks the text model, so it needs no text price. */
 function runPlanPriceModels(plan: RunPlan): PriceModels {
   const models = { imageModel: plan.models.image, textModel: plan.models.text };
   return plan.sceneSetId === undefined ? runPriceModels(models, plan.imageAgeCheck) : sceneRunPriceModels(models, plan.imageAgeCheck);
 }
 
+/** A run's planner seed: fixed by its id, so the plan is reproducible from the run alone. */
 function seedOf(runId: string): number {
   return Number.parseInt(createHash("sha256").update(runId).digest("hex").slice(0, 8), 16);
 }
@@ -2746,6 +2747,8 @@ export class Engine {
       // `exists` (an id already used) is not a rule the owner broke and names no reason: it is INTERNAL. The ids are `cat-` + a random UUID, so it can only
       // be met by a record planted by hand under the very name the engine drew, which is why every other category VALIDATION can promise its reason.
       if (error.code === "exists") return new EngineFailure({ code: "INTERNAL", detail: detailOf(error.message), ...extra });
+      // After the money was spent «nothing was created or spent, retry» would be a lie: the answer is the paid-but-not-stored one (INTERNAL with the cost).
+      if (error.code === "library-unreadable" && spentMicros !== undefined && spentMicros > 0) return new EngineFailure({ code: "INTERNAL", detail: detailOf(error.message), ...extra });
       return new EngineFailure({ code: "VALIDATION", detail: detailOf(error.message), categoryReason: error.code, ...extra });
     }
     return new EngineFailure({ code: "INTERNAL", detail: messageOf(error, "the category could not be written"), ...extra });
@@ -2762,12 +2765,20 @@ export class Engine {
     const { categories, unreadable, overLimit } = await library.categories.list();
     await this.#forgetEndedCalls(library);
     const pending = await library.categories.listPending();
+    // A call whose answer is already in the library is over, whatever its record says (the removal failed, or the process ended before it): a regenerate's
+    // category holds the job in its `bookedJobs`, and so does a create's. It is not an interruption and must not invite the owner to pay again; its record
+    // is forgotten like an ended call's.
+    const landed = pending.filter((p) => categories.some((c) => c.bookedJobs.includes(p.jobId) && (p.kind === "create" || c.categoryId === p.categoryId)));
+    if (landed.length > 0) {
+      for (const p of landed) if (this.#categoryCall?.jobId !== p.jobId) this.#endedCalls.add(p.jobId);
+      await this.#forgetEndedCalls(library);
+    }
     const running = this.#categoryCall?.jobId ?? null;
     const ledger = this.#money.ok ? this.#money.budget.ledger : null;
     // A leftover record is a call this process is not making: what it is counted at is what the ledger holds for its job, and how much of that is a
     // reserve still open at its worst case. An unreadable ledger leaves both unknown (null), which is not the same as a call killed before its reserve (0 and 0).
     const interrupted = pending
-      .filter((p) => p.jobId !== running && !this.#endedCalls.has(p.jobId))
+      .filter((p) => p.jobId !== running && !this.#endedCalls.has(p.jobId) && !landed.some((l) => l.jobId === p.jobId))
       .slice(0, MAX_CUSTOM_CATEGORIES)
       .map((p) => ({
         ...p,
@@ -2832,6 +2843,7 @@ export class Engine {
       priced,
       textModel: models.textModel,
       acceptedWorstMicros: payload.acceptedWorstMicros,
+      worstMicros: job.worstMicros,
       kind: "create",
       name,
       description: payload.description,
@@ -2868,6 +2880,7 @@ export class Engine {
       priced,
       textModel: models.textModel,
       acceptedWorstMicros: payload.acceptedWorstMicros,
+      worstMicros: job.worstMicros,
       kind: "regenerate",
       name: current.name,
       description: payload.description,
@@ -2881,7 +2894,7 @@ export class Engine {
 
   /**
    * The paid part of a create or a regenerate, after its free checks. The call's own scope is `{ avatarJobId }` (the ledger's existing shape),
-   * capped at the worst case the owner accepted. A record of the call is written to the library BEFORE anything is sent and removed on any outcome:
+   * capped at the worst case of its estimate. A record of the call is written to the library BEFORE anything is sent and removed on any outcome:
    * a Studio that closes in between leaves it, and the next listing shows the call as interrupted. A paid pool whose write failed is kept in raw/.
    */
   async #runCategoryCall(call: {
@@ -2891,6 +2904,8 @@ export class Engine {
     priced: PricedBook;
     textModel: string;
     acceptedWorstMicros: number;
+    /** The worst case of the call's own estimate: what the cap is, as for every other paid job (an acceptance above it does not raise the cap). */
+    worstMicros: number;
     kind: CategoryCallKind;
     name: string;
     description: CategoryDescription;
@@ -2904,8 +2919,9 @@ export class Engine {
     const jobId = this.#deps.newId();
     const scope: Scope = { avatarJobId: jobId };
     if (this.#categoryCall !== null) this.#categoryCall.jobId = jobId;
-    // The scope only ever sends pool attempts: its cap is the worst case the owner accepted (the Budget checks each attempt against it).
-    this.#caps.set(scopeKey(scope), call.acceptedWorstMicros);
+    // The scope only ever sends pool attempts: its cap is the worst case of the estimate, never above what the owner accepted (the Budget checks each
+    // attempt against it). An acceptance higher than the estimate is allowed (the price may have fallen) and does not raise the cap, as at every other job.
+    this.#caps.set(scopeKey(scope), Math.min(call.acceptedWorstMicros, call.worstMicros));
     try {
       await library.categories.writePending({ jobId, kind: call.kind, name: call.name, description: call.description, categoryId: call.categoryId, startedAt: new Date(this.#deps.clock()).toISOString() });
     } catch (error) {
@@ -2929,7 +2945,17 @@ export class Engine {
         throw new EngineFailure(result.error);
       }
       try {
-        const record = await call.write({ label: result.label, style: result.style, pool: result.pool }, result.spentMicros, jobId);
+        const write = (): Promise<StoredCategory> => call.write({ label: result.label, style: result.style, pool: result.pool }, result.spentMicros, jobId);
+        // The pool is paid for and kept nowhere else, so a write that meets one OS failure (a read, a flush; `library-unreadable` or the OS error itself) is
+        // tried once more, after a pause, before the owner is told it is kept in raw/. Safe to repeat: a regeneration is booked once per job
+        // (`bookedJobs`), and a create whose first write did land meets its own name (`name-taken`), which the `landed` check below turns into success.
+        // A CategoryError that is a rule (limit, name-taken, ...) is not transient and is not retried.
+        const record = await write().catch(async (error: unknown) => {
+          if (error instanceof CategoryError && error.code !== "library-unreadable") throw error;
+          console.warn(`studio engine: category call ${jobId} could not be written (${messageOf(error, "unknown error")}); trying once more`);
+          await pauseBeforeRetry();
+          return write();
+        });
         this.#emitCategory({ change: "upserted", category: summaryOf(record) });
         return { record, spentMicros: result.spentMicros };
       } catch (error) {

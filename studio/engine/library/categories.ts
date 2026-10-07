@@ -18,7 +18,7 @@ import {
 } from "../../shared/engine";
 import { poolOf } from "../scenes/poolGen";
 import { PoolSchema } from "../scenes/pools";
-import { fsyncDir, hasErrorCode, readJsonFile, writeJsonAtomic } from "./durableFs";
+import { fsyncDir, hasErrorCode, readFolderNames, readRecordFile, writeJsonAtomic } from "./durableFs";
 import { CATEGORIES_DIR, CATEGORY_FILE_SCHEMA_VERSION, isFromNewerVersion } from "./layout";
 import { runExclusive } from "./keyedMutex";
 import { unlinkWithRetry } from "./unlinkRetry";
@@ -37,7 +37,12 @@ import { unlinkWithRetry } from "./unlinkRetry";
 // `pending-<jobId>.json` is the record of a paid create or regenerate that has not ended: written before the call, removed on any
 // outcome. A leftover after a restart is the call a closed Studio left (`categories.list`'s `interrupted`).
 
-export type CategoryErrorCode = "limit" | "name-taken" | "not-found" | "exists" | "item-not-found" | "below-minimum" | "mirror-needed";
+/**
+ * `library-unreadable`: the OS failed a read (EIO, EMFILE, EBUSY, a folder that cannot be listed) that a check before a NEW category or a rename needs. The
+ * check cannot tell whether the name is taken or the limit is reached, so it refuses and writes nothing. A change of an existing record never raises it: it
+ * rethrows the OS error itself, so its caller can retry.
+ */
+export type CategoryErrorCode = "limit" | "name-taken" | "not-found" | "exists" | "item-not-found" | "below-minimum" | "mirror-needed" | "library-unreadable";
 
 export class CategoryError extends Error {
   readonly code: CategoryErrorCode;
@@ -99,6 +104,10 @@ export interface CategoryStoreDeps {
   afterRename?: ((finalPath: string) => void | Promise<void>) | undefined;
   /** Test seam: called before each record is unlinked. Throwing simulates a disk that refuses the delete. */
   beforeUnlink?: ((path: string) => void | Promise<void>) | undefined;
+  /** Test seam: called before each record is read. What it throws is what the read threw (an OS error, on any platform). */
+  beforeRead?: ((path: string) => void | Promise<void>) | undefined;
+  /** Test seam: called before the categories/ folder is listed. What it throws is what the listing threw. */
+  beforeList?: ((dir: string) => void | Promise<void>) | undefined;
   /** Test seam: the flush of the folder after an unlink; defaults to the library's own. */
   fsyncDir?: ((dir: string) => Promise<void>) | undefined;
 }
@@ -143,6 +152,8 @@ export class CategoryStore {
   readonly #afterRename: ((finalPath: string) => void | Promise<void>) | undefined;
   readonly #beforeUnlink: ((path: string) => void | Promise<void>) | undefined;
   readonly #fsyncDir: (dir: string) => Promise<void>;
+  readonly #beforeRead: ((path: string) => void | Promise<void>) | undefined;
+  readonly #beforeList: ((dir: string) => void | Promise<void>) | undefined;
 
   constructor(root: string, deps: CategoryStoreDeps = {}) {
     this.dir = join(root, CATEGORIES_DIR);
@@ -152,6 +163,8 @@ export class CategoryStore {
     this.#afterRename = deps.afterRename;
     this.#beforeUnlink = deps.beforeUnlink;
     this.#fsyncDir = deps.fsyncDir ?? fsyncDir;
+    this.#beforeRead = deps.beforeRead;
+    this.#beforeList = deps.beforeList;
   }
 
   /** Unlinks a record and flushes the folder, so the deletion is as durable as a write; a flush that fails does not undo it (the record is gone). */
@@ -173,28 +186,70 @@ export class CategoryStore {
     });
   }
 
-  async #names(): Promise<string[]> {
-    try {
-      return await readdir(this.dir);
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT")) return [];
-      throw error;
-    }
+  /** The names in categories/, or the OS's error when it cannot be listed; a folder that is not there is empty. */
+  #list(): ReturnType<typeof readFolderNames> {
+    return readFolderNames(this.dir, this.#beforeList);
   }
 
-  /** Every record file read once. Called under the lock by every writer, and by the readers without it (an atomic rename means they see whole records). */
-  async #readAll(): Promise<{ categories: StoredCategory[]; unreadable: number }> {
+  /** The names, for a reader that degrades: a folder that cannot be listed has none. */
+  async #names(): Promise<string[]> {
+    const listed = await this.#list();
+    return listed.ok ? listed.names : [];
+  }
+
+  /** The names, for a writer: a folder that cannot be listed throws the OS's own error (the caller may retry), never reads as empty. */
+  async #namesOrThrow(): Promise<string[]> {
+    const listed = await this.#list();
+    if (!listed.ok) throw listed.error;
+    return listed.names;
+  }
+
+  /** One record for a writer that goes on to change it: null when it is not there or cannot be used, the OS's own error when the OS failed the read. */
+  async #getForWrite(id: string): Promise<StoredCategory | null> {
+    if (!RECORD_NAME.test(`${id}.json`)) return null;
+    const read = await readRecordFile(this.#path(id), this.#beforeRead);
+    if (!read.ok) {
+      if (read.reason === "io") throw read.error;
+      return null;
+    }
+    return readRecord(read.value, id);
+  }
+
+  /**
+   * Every record file read once. Called under the lock by every writer, and by the readers without it (an atomic rename means they see whole records).
+   * `failed` is the first OS error met (a folder that cannot be listed, a record the OS refused): such a file is COUNTED unreadable, so a listing degrades,
+   * and a writer that must know the whole library (`readAllOrRefuse`) refuses on it.
+   */
+  async #readAll(): Promise<{ categories: StoredCategory[]; unreadable: number; failed: Error | null }> {
     const categories: StoredCategory[] = [];
     let unreadable = 0;
-    for (const name of await this.#names()) {
+    let failed: Error | null = null;
+    const note = (error: unknown): void => {
+      failed ??= error instanceof Error ? error : new Error(String(error));
+    };
+    // A folder that cannot be listed at all (no permission, a file in its place) is one unreadable record: the feature degrades, nothing throws.
+    const listed = await this.#list();
+    if (!listed.ok) {
+      note(listed.error);
+      return { categories, unreadable: 1, failed };
+    }
+    for (const name of listed.names) {
       const match = RECORD_NAME.exec(name);
       if (match === null) continue;
-      const read = await readJsonFile(join(this.dir, name));
+      const read = await readRecordFile(join(this.dir, name), this.#beforeRead);
+      if (!read.ok && read.reason === "io") note(read.error);
       const record = read.ok ? readRecord(read.value, match[1] ?? "") : null;
       if (record === null) unreadable += 1;
       else categories.push(record);
     }
     categories.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.categoryId < b.categoryId ? -1 : a.categoryId > b.categoryId ? 1 : 0));
+    return { categories, unreadable, failed };
+  }
+
+  /** Like `#readAll`, for a check before a NEW category or a rename: a read the OS failed refuses (`library-unreadable`), since the file may be the one in the way. */
+  async #readAllOrRefuse(): Promise<{ categories: StoredCategory[]; unreadable: number }> {
+    const { categories, unreadable, failed } = await this.#readAll();
+    if (failed !== null) throw new CategoryError("library-unreadable", `the categories could not all be read (${failed.message})`);
     return { categories, unreadable };
   }
 
@@ -212,7 +267,7 @@ export class CategoryStore {
    * ones a listing leaves out included) has the name. `exceptId` is the category being renamed: it is not in its own way, and a rename has no limit.
    */
   async assertRoom(name: string, exceptId: string | null): Promise<void> {
-    const { categories, unreadable } = await this.#readAll();
+    const { categories, unreadable } = await this.#readAllOrRefuse();
     this.#checkRoom(categories, unreadable, name, exceptId);
   }
 
@@ -225,7 +280,7 @@ export class CategoryStore {
   /** One category; null when there is no such record or it cannot be read (a newer Studio's included). */
   async get(id: string): Promise<StoredCategory | null> {
     if (!RECORD_NAME.test(`${id}.json`)) return null;
-    const read = await readJsonFile(this.#path(id));
+    const read = await readRecordFile(this.#path(id), this.#beforeRead);
     return read.ok ? readRecord(read.value, id) : null;
   }
 
@@ -235,11 +290,11 @@ export class CategoryStore {
    */
   async create(input: NewCategory, jobId?: string): Promise<StoredCategory> {
     return runExclusive(this.#lockKey, async () => {
-      const { categories, unreadable } = await this.#readAll();
+      const { categories, unreadable } = await this.#readAllOrRefuse();
       const name = input.name.trim();
       this.#checkRoom(categories, unreadable, name, null);
-      const existing = await readJsonFile(this.#path(input.categoryId));
-      if (existing.ok || (await this.#names()).includes(`${input.categoryId}.json`)) throw new CategoryError("exists", `category ${input.categoryId} already exists`);
+      // Every record was read just above without an OS failure, so the id's own file is known: taken, or not there.
+      if ((await this.#getForWrite(input.categoryId)) !== null || (await this.#namesOrThrow()).includes(`${input.categoryId}.json`)) throw new CategoryError("exists", `category ${input.categoryId} already exists`);
       const stamp = this.#now().toISOString();
       const record: StoredCategory = { schemaVersion: CATEGORY_FILE_SCHEMA_VERSION, ...input, name, bookedJobs: jobId === undefined ? [] : [jobId], createdAt: stamp, updatedAt: stamp };
       await this.#write(this.#path(input.categoryId), record);
@@ -254,12 +309,12 @@ export class CategoryStore {
    */
   async update(id: string, change: { name?: string; removeLocations?: readonly string[]; removeOutfits?: readonly string[] }): Promise<StoredCategory> {
     return runExclusive(this.#lockKey, async () => {
-      const current = await this.get(id);
+      const current = await this.#getForWrite(id);
       if (current === null) throw new CategoryError("not-found", `no readable category ${id}`);
       let { name } = current;
       if (change.name !== undefined) {
         name = change.name.trim();
-        const all = await this.#readAll();
+        const all = await this.#readAllOrRefuse();
         if (all.categories.some((c) => c.categoryId !== id && categoryNameKey(c.name) === categoryNameKey(name))) throw new CategoryError("name-taken", "another category already has this name");
       }
       let { locations, outfits } = current.pool;
@@ -289,7 +344,7 @@ export class CategoryStore {
     input: { description: string; label: string; style: CategoryStyle; pool: CategoryPool; model: string; spentMicros: number; jobId: string },
   ): Promise<StoredCategory> {
     return runExclusive(this.#lockKey, async () => {
-      const current = await this.get(id);
+      const current = await this.#getForWrite(id);
       if (current === null) throw new CategoryError("not-found", `no readable category ${id}`);
       if (current.bookedJobs.includes(input.jobId)) return current;
       const { spentMicros, jobId, ...fresh } = input;
@@ -305,7 +360,7 @@ export class CategoryStore {
    */
   async addSpend(id: string, micros: number, jobId: string): Promise<StoredCategory | null> {
     return runExclusive(this.#lockKey, async () => {
-      const current = await this.get(id);
+      const current = await this.#getForWrite(id);
       if (current === null) return null;
       if (current.bookedJobs.includes(jobId)) return current;
       const updated: StoredCategory = { ...current, spentMicros: current.spentMicros + micros, bookedJobs: booked(current, jobId, await this.#pendingIds()), updatedAt: this.#nextStamp(current.updatedAt) };
@@ -317,7 +372,7 @@ export class CategoryStore {
   /** Deletes a category's record; `not-found` when it is not there or cannot be read (a newer Studio's record is never removed). */
   async remove(id: string): Promise<void> {
     await runExclusive(this.#lockKey, async () => {
-      if ((await this.get(id)) === null) throw new CategoryError("not-found", `no readable category ${id}`);
+      if ((await this.#getForWrite(id)) === null) throw new CategoryError("not-found", `no readable category ${id}`);
       await this.#unlink(this.#path(id));
     });
   }
@@ -325,7 +380,7 @@ export class CategoryStore {
   /** The ids of the paid calls whose pending record is in the folder now. Read inside the store's lock, which writes and removes them. */
   async #pendingIds(): Promise<Set<string>> {
     const ids = new Set<string>();
-    for (const name of await this.#names()) {
+    for (const name of await this.#namesOrThrow()) {
       const match = PENDING_NAME.exec(name);
       if (match?.[1] !== undefined) ids.add(match[1]);
     }
@@ -352,7 +407,7 @@ export class CategoryStore {
     for (const name of await this.#names()) {
       const match = PENDING_NAME.exec(name);
       if (match === null) continue;
-      const read = await readJsonFile(join(this.dir, name));
+      const read = await readRecordFile(join(this.dir, name), this.#beforeRead);
       if (!read.ok || isFromNewerVersion(read.value, CATEGORY_FILE_SCHEMA_VERSION)) continue;
       const parsed = PendingCall.safeParse(read.value);
       if (!parsed.success || parsed.data.jobId !== match[1]) continue;

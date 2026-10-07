@@ -46,9 +46,12 @@ export function nextSceneId(set: StoredSceneSet): number {
   return used.length === 0 ? 1 : Math.max(...used) + 1;
 }
 
-/** How many scenes the unresolved idea writes will add: they count against the set's room. */
-export function reservedIdeaScenes(set: StoredSceneSet): number {
-  return reviewWritesOf(set).reduce((sum, w) => sum + (w.kind === "idea" && !w.closed ? w.scenes.length : 0), 0);
+/**
+ * How many scenes the unresolved idea writes will add: they count against the set's room. A write with no attempt left (by the ledger) can never add its
+ * scenes: if its close was lost to a disk error it stays open in the file, and it must not hold room nobody can see or release. Its ids stay burnt either way.
+ */
+export function reservedIdeaScenes(set: StoredSceneSet, ledger: LedgerView | null): number {
+  return reviewWritesOf(set).reduce((sum, w) => sum + (w.kind === "idea" && !w.closed && reviewWriteState(w, ledger).attemptsLeft > 0 ? w.scenes.length : 0), 0);
 }
 
 /**

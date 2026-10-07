@@ -113,12 +113,22 @@ function sentenceFor(sentences: ReadonlyMap<number, string>, sceneId: number, k:
   return sentence;
 }
 
+/** Whether this closed write's scenes already carry exactly these sentences: its answer was accepted before. A record closed by a dismissal does not qualify. */
+function isAccepted(set: StoredSceneSet, record: ReviewWriteRecord, sentences: ReadonlyMap<number, string>): boolean {
+  if (!record.closed) return false;
+  const ids = record.kind === "idea" ? record.scenes.map((s) => s.sceneId) : record.sceneIds;
+  return ids.length > 0 && ids.every((id) => sentences.has(id) && set.scenes.find((scene) => scene.sceneId === id)?.text === sentences.get(id));
+}
+
 /**
  * The accepted answer of a write goes into the set, all of it or none: a rewrite gives each TARGET scene its sentence (and, with a redraw, its new place; the
  * category's snapshot is refreshed), an idea write adds its scenes under the ids it reserved. A sentence for a scene outside the write is ignored. The
- * record is resolved. Throws when the write is not there, is already resolved, or the answer lacks a sentence the write needs.
+ * record is resolved. Accepting the same answer again changes nothing. Throws when the write is not there, is resolved without this answer, or the answer lacks a sentence the write needs.
  */
 export function withReviewWriteAccepted(set: StoredSceneSet, k: number, sentences: ReadonlyMap<number, string>): StoredSceneSet {
+  // The same answer applied twice is one acceptance: a flush that failed AFTER the rename left the new texts and the closed record on disk while the writer saw
+  // an error, and its retry arrives here. The set is returned as it is (the same object), which the service reads as «nothing to write».
+  if (isAccepted(set, recordOf(set, k), sentences)) return set;
   const record = openRecordOf(set, k);
   if (record.kind === "idea") {
     const added: SceneRecord[] = record.scenes.map((s) => ({ sceneId: s.sceneId, origin: "own", idea: record.idea, shot: s.shot, pose: s.pose, text: sentenceFor(sentences, s.sceneId, k), edited: false, removed: false }));

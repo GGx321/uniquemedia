@@ -159,8 +159,12 @@ const MODERATION_TEXT = "Модель отказалась составлять 
 const LIMIT_TEXT = `В библиотеке уже ${MAX_CUSTOM_CATEGORIES} категорий — это предел. Удалите ненужную, потом создайте новую.`;
 const NOT_STORED_TEXT = "Набор оплачен, но не сохранился: папка библиотеки недоступна для записи. Проверьте её в Настройках и создайте категорию снова.";
 
-/** A paid pool that cost money and was not stored: the engine answers INTERNAL with the call's cost (the pool is kept in raw/). */
-const paidNotStored = (error: EngineError): boolean => error.code === "INTERNAL" && error.spentMicros !== undefined && error.spentMicros > 0;
+/**
+ * A paid pool that cost money and was not stored: the engine answers INTERNAL with the call's cost (the pool is kept in raw/). A `library-unreadable`
+ * refusal that carries a spend is the same case (its own text says nothing was spent, which would be false).
+ */
+const paidNotStored = (error: EngineError): boolean =>
+  (error.code === "INTERNAL" || (error.code === "VALIDATION" && error.categoryReason === "library-unreadable")) && error.spentMicros !== undefined && error.spentMicros > 0;
 
 const spentLine = (error: EngineError, spent: number): string => `${error.code} · потрачено ${formatUsdTiered(spent, "nearest")}`;
 

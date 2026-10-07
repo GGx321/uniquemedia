@@ -271,7 +271,7 @@ describe("⟳ and its price popover", () => {
   test("the 500-write cap: the engine's refusal is told in plain words", async () => {
     const { engine } = await ready(3);
     await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
-    engine.failNext("scenes.write", { code: "VALIDATION", detail: "a set records at most 500 writes of this kind" });
+    engine.failNext("scenes.write", { code: "VALIDATION", sceneReason: "write-record-cap", detail: "a set records at most 500 writes of this kind" });
     fireEvent.click(within(sceneCard(1)).getByRole("button", { name: "Другая сцена вместо 01" }));
     await flush();
     fireEvent.click(await within(sceneCard(1)).findByRole("button", { name: "Заменить · до $0.075" }));

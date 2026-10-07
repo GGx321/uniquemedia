@@ -26,6 +26,21 @@ import { z } from "zod";
 // log-needs-repair); `montages.list`'s `notListedTotal` (draft files not read, absent when 0).
 // Removed within it (owner decision 2026-10-05, personal-use app; no bump, for the same reason): the `confirmedAiPersona` field of
 // `avatars.importAvatar` and the error code AGE_CHECK_FAILED (with its «already refused» detail). The parity golden never held either.
+// Own scene categories and the review of scenes (CS.2 to CS.7, additive, one bundle with the window):
+//  - categories: `categories.list`, `.estimate`, `.create`, `.regenerate`, `.update`, `.delete` and `.dismissInterrupted`; the `category.changed` event; `CategoryRef` in
+//    `RunRequest.categories` (at most 20), `PhotoCategory` and `PhotoSummary.categoryName`; the error code POOL_REJECTED, `EngineError.categoryReason` (a closed
+//    code on every category VALIDATION) and `EngineError.spentMicros` (what a failed paid category call cost).
+//  - scene sets: `scenes.estimateCompose`, `.compose`, `.get`, `.edit`, `.estimateWrite`, `.write` (targets unwritten, rewrite, idea, resume), `.cancel` and `.discard`;
+//    the `scenes.changed` event; the `scenes` job kind in the job events; the error code SCENES_CHANGED; `runs.estimateFromScenes` and `runs.startFromScenes`.
+//    CS.7: `EngineError.sceneReason` (a closed code on every VALIDATION of those commands, see `SCENE_REASONS`) and `EngineError.sceneId` (the scene a reason
+//    points at). CS.7 round 2: the reason `library-unreadable` in both `SCENE_REASONS` and `CATEGORY_REASONS` (the disk failed a read a check before a new set or
+//    category needs; nothing was written or spent).
+//  - settings: `settings.imageModels` (its catalogue carries the flag `complete`: every candidate of a live list was priced) and `settings.setCameraRealism`; the
+//    REQUIRED new fields `Settings.imageQuality` (nullable) and `Settings.cameraRealism`. Required fields in schemas that already existed are safe here only because
+//    both ship in ONE bundle: the producers (main's settings store, which fills an older settings file in; the engine; the mock) and the consumers (the window,
+//    `EngineSettings`, `EngineInit`) are built together, and the literal version stays 5. A change like it after a release needs a version bump.
+//  - avatars: `avatars.deletePreview` and `avatars.delete`, the `avatar.removed` event, the error code TRASH_UNAVAILABLE.
+//  - montage: `MIN_CLIP_MS` is 100 ms (the shortest clip).
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

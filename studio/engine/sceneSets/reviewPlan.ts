@@ -8,6 +8,7 @@ import { poolOf } from "../scenes/poolGen";
 import { drawOwnScenes, redrawSlot } from "../scenes/redraw";
 import { seedOfSet } from "./compose";
 import { beginIdea, beginRewrite, resumeReviewWrite } from "./reviewMutations";
+import { sceneRefusal } from "./refusal";
 import { nextSceneId, reservedIdeaScenes, reviewWriteState, reviewWritesOf } from "./reviewWrites";
 
 // CS.4b: what a rewrite, an idea write or the resume of one is, decided from the set as it is NOW and nothing else: every refusal (all free, all before a
@@ -30,13 +31,11 @@ export interface ReviewPlan {
   begin: (current: StoredSceneSet, jobId: string) => StoredSceneSet;
 }
 
-const invalid = (detail: string): EngineFailure => new EngineFailure({ code: "VALIDATION", detail });
-
 function targetsOf(set: StoredSceneSet, sceneIds: readonly number[]): StoredSceneSet["scenes"] {
   return sceneIds.map((sceneId) => {
     const scene = set.scenes.find((s) => s.sceneId === sceneId);
-    if (scene === undefined) throw invalid(`the set has no scene ${sceneId}`);
-    if (scene.removed) throw invalid(`scene ${sceneId} is removed; restore it before writing it again`);
+    if (scene === undefined) throw sceneRefusal(`the set has no scene ${sceneId}`, "scene-missing", sceneId);
+    if (scene.removed) throw sceneRefusal(`scene ${sceneId} is removed; restore it before writing it again`, "target-removed", sceneId);
     return scene;
   });
 }
@@ -44,12 +43,12 @@ function targetsOf(set: StoredSceneSet, sceneIds: readonly number[]): StoredScen
 function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>, pools: PoolsOf): ReviewPlan {
   const scenes = targetsOf(set, target.sceneIds);
   const planned = scenes.flatMap((s) => (s.origin === "planned" ? [s] : []));
-  if (planned.length !== 0 && planned.length !== scenes.length) throw invalid("a rewrite covers planned scenes or own scenes, not both: they are written from different prompts");
+  if (planned.length !== 0 && planned.length !== scenes.length) throw sceneRefusal("a rewrite covers planned scenes or own scenes, not both: they are written from different prompts", "mixed-kinds");
   const k = set.writes + 1;
   const draws: PlanSlot[] = [];
   const snapshots: CategorySnapshot[] = [];
   if (target.redraw) {
-    if (planned.length !== scenes.length) throw invalid("only a planned scene has a place to redraw; an own scene is written again from its idea");
+    if (planned.length !== scenes.length) throw sceneRefusal("only a planned scene has a place to redraw; an own scene is written again from its idea", "own-redraw");
     const avoid = {
       locations: new Set(set.scenes.flatMap((s) => (s.origin === "planned" && !s.removed ? [s.slot.location] : []))),
       outfits: new Set(set.scenes.flatMap((s) => (s.origin === "planned" && !s.removed ? [s.slot.outfit] : []))),
@@ -74,9 +73,13 @@ function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: 
   };
 }
 
-function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "idea" }>): ReviewPlan {
-  if (set.scenes.length + reservedIdeaScenes(set) + target.count > MAX_SCENES_PER_SET) {
-    throw invalid(`a set holds at most ${MAX_SCENES_PER_SET} scenes: this one has ${set.scenes.length}${reservedIdeaScenes(set) > 0 ? ` and an interrupted idea write holds room for ${reservedIdeaScenes(set)} more` : ""}`);
+function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "idea" }>, ledger: LedgerView | null): ReviewPlan {
+  const reserved = reservedIdeaScenes(set, ledger);
+  if (set.scenes.length + reserved + target.count > MAX_SCENES_PER_SET) {
+    throw sceneRefusal(
+      `a set holds at most ${MAX_SCENES_PER_SET} scenes: this one has ${set.scenes.length}${reserved > 0 ? ` and an interrupted idea write holds room for ${reserved} more` : ""}`,
+      "idea-room",
+    );
   }
   const k = set.writes + 1;
   const first = nextSceneId(set);
@@ -93,14 +96,14 @@ function planIdea(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "id
 
 function planResume(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "resume" }>, ledger: LedgerView | null): ReviewPlan {
   const record = reviewWritesOf(set).find((r) => r.k === target.write && !r.closed);
-  if (record === undefined) throw invalid(`scene set ${set.sceneSetId} has no unresolved write ${target.write}`);
+  if (record === undefined) throw sceneRefusal(`scene set ${set.sceneSetId} has no unresolved write ${target.write}`, "no-open-write");
   const { attemptsLeft } = reviewWriteState(record, ledger);
-  if (attemptsLeft === 0) throw invalid(`write ${target.write} has no attempt left: dismiss it, or write the scenes again`);
+  if (attemptsLeft === 0) throw sceneRefusal(`write ${target.write} has no attempt left: dismiss it, or write the scenes again`, "no-attempts-left");
   if (record.kind === "rewrite") {
     // A scene the owner removed since the write was interrupted is not written (nor paid for): the write goes on with the scenes still in the set.
     const dropped = new Set(record.sceneIds.filter((id) => set.scenes.find((s) => s.sceneId === id)?.removed === true));
     const active = record.sceneIds.filter((id) => !dropped.has(id));
-    if (active.length === 0) throw invalid(`every scene of write ${target.write} is removed: dismiss it, or restore a scene`);
+    if (active.length === 0) throw sceneRefusal(`every scene of write ${target.write} is removed: dismiss it, or restore a scene`, "target-removed");
     targetsOf(set, active);
     return { kind: "rewrite", k: record.k, count: active.length, sceneIds: active, attemptsLeft, begin: (current, jobId) => resumeReviewWrite(current, record.k, jobId, dropped) };
   }
@@ -126,8 +129,8 @@ export async function planReviewWrite(input: {
 }): Promise<ReviewPlan> {
   const { set, target } = input;
   if (target.kind === "resume") return planResume(set, target, input.ledger);
-  if (reviewWritesOf(set).length >= MAX_REVIEW_WRITES) throw invalid(`a set records at most ${MAX_REVIEW_WRITES} writes of this kind`);
-  if (target.kind === "idea") return planIdea(set, target);
+  if (reviewWritesOf(set).length >= MAX_REVIEW_WRITES) throw sceneRefusal(`a set records at most ${MAX_REVIEW_WRITES} writes of this kind`, "write-record-cap");
+  if (target.kind === "idea") return planIdea(set, target, input.ledger);
   // The custom categories a redraw draws from are read once, now: a deleted one refuses the redraw before anything is priced.
   const stored = new Map<string, StoredCategory>();
   if (target.redraw) {
