@@ -1048,6 +1048,56 @@ Verification of the round: `tsc` clean for `studio/` and `studio/shared/`; the s
 (this machine lacks the resvg wasm, fonts, native decoders and caption renderer) had 6929 + 6417 + 6680 passing and no failure in any scenes test; the red ones are the text, decode, media and
 caption-preview files only. CI is the full run of record.
 
+#### CS.5 built (2026-10-07, branch `feat/studio-runs-from-scenes`)
+
+What shipped. Protocol v5 stays open and additive. No paid or live call anywhere (the fake OpenRouter only).
+
+- **Contract**: `runs.estimateFromScenes {sceneSetId, revision}` → `{estimate}` (free) and `runs.startFromScenes {sceneSetId, revision, acceptedWorstMicros}` → `{runId, jobId}`.
+  Deadlines: the estimate = price fetch + 15 s; the start = `runs.start`'s own (price fetch + 2 × `REFERENCE_TIMEOUT_MS` + slack). No new error code. The start also announces
+  `scenes.changed` (upserted, status `used`, `runId` named) right after the run folder exists and before any event of the run's job, so every window sees the lock.
+- **Plan** (`runs/plan.ts`, `scenes/schema.ts`): `RunPlanSchema` gains `sceneSetId?`, `sceneIds?` (the set's scene id of each slot, in slot order) and `request` becomes optional; the slot gains
+  `sentence?: SceneText` (min 1, no upper bound) and a second slot variant, the own scene (`kind: "own"`, category `"own"`, shot, pose, sentence; no place fields; a selfie or mirror still faces
+  the camera). The planner's `ScenePlanSchema` is unchanged: only the run's plan knows the own variant. Invariant, in the schema: `sceneSetId` ⇔ every slot has its sentence ⇔ `writerChunks: []`
+  ⇔ no `request` ⇔ `sceneIds` (one distinct id per slot); a mixed plan is refused. Slots are renumbered 1..M in the set's order (a set with scene ids [1,3,4,5] becomes slots 1..4), which is what
+  `RunPlanSchema` requires. A plan written by main still parses unchanged, key for key (`runs/fixtures/plan-main-3a9cd498.json`).
+- **Engine**: `sceneSets/toRun.ts` (pure: the refusals in their order, the run's scenes, the category snapshots the active scenes use), `sceneSets/approve.ts` (`loadApprovable`, and `commitApproval`
+  under the set's own lock), `engine.ts` (`#estimateFromScenes`, `#startFromScenes`), `money/estimate.ts` (`writer: null` takes the writer term out of both figures), `runs/plan.ts`
+  (`runEstimateFromScenes`, `buildSceneRunPlan`), `runs/journal.ts` (`foldRun` seeds the sentences from the plan), `runs/runJob.ts` (an own slot commits as category `own` and leaves no history line;
+  the writer phase is handed only the planner's slots), `scenes/assembler.ts` and `scenes/categories.ts` (accept the own slot; an own scene is finished like a phone photo).
+  `SceneSetService` gained two small methods, `isLive` and `announce`.
+- **Mock and parity**: `mockEngine.ts` / `mockSceneSets.ts` (`approvalOf`, `approve`, `runPriceFromScenes`; the set's pre-issued run id is the run's). One scenario appended to the golden (31 lines,
+  nothing else moved): the free refusals in order. Success estimates differ by design and the rig's two engines differ on the age gate, so the priced path is pinned by each side's own suite.
+
+The estimate: `runEstimate` with M photos (the active scenes with text) and **no writer term**, plus an age check per attempt when the check is on; at Settings' image model, quality and age-check mode
+(the README's CS.5-2: `cameraRealism` is not in it). Refusals, all free and nothing written, in this order: `NOT_FOUND`, `SCENES_CHANGED` (the revision moved), `VALIDATION` (an active scene has no
+text, or none or more than 100 are active), `IN_FLIGHT` (a job of the set runs), `VALIDATION` (already used). The start then makes exactly `#startRun`'s checks (key, ledger, avatar, master, age and face
+gates, `PRICE_CHANGED`, monthly room, the master preflight) and, **last, under the set's lock**, reads the set again, refuses again on what is there now, and makes the run folder under the set's pre-issued
+run id with the plan built from that very record. The cap is the accepted images-only worst case for exactly those scenes, fixed for the run's life (`min(accepted, estimate)`, as CS.4a's jobs: an inflated
+acceptance cannot raise it).
+
+Money (fallback prices, one image attempt $0.05, age check off): 5 photos worst $0.75 / expected $0.25; 4 photos worst $0.60 / expected $0.20; 18 photos worst $2.70 / expected $0.90 (the doc's reviewed
+run: 20 composed, 2 removed); the whole run for the same photos is dearer by exactly its writer, `ceil(M / 25) × 2 × $0.0375`. Each removed scene lowers the worst case by exactly its three attempts ($0.15).
+With the age check on, 4 photos: worst 4 × 3 × ($0.05 + $0.00525) = $0.663. Nothing reserves a writer id: a run's ledger holds `<runId>:slot-N#k` ids only.
+
+The race, each with a test: an edit, a removal and a discard that land while the start awaits the prices → `SCENES_CHANGED` / `NOT_FOUND`, no run folder, no reserve, no paid call, the avatar's claim released;
+a run folder that appears meanwhile is refused and left as it was; an edit or a discard after the run exists → `VALIDATION` (used); a second start (after the run ended, and while it still draws) → refused,
+one run folder; a kill after `createRun` (a fresh engine over the same folders) reads the set `used`, and `runs.list` lists the run resumable. The re-check under the lock was mutated away: the edit and
+removal races turn red.
+
+Tests seen red first, for the intended reason (a stub that throws «not implemented yet», or a permissive stub that accepts what the contract must refuse): the plan (25 of 29 on the throwing stub,
+then 9 on the permissive schema: the invariant's refusals, the empty set, `foldRun`'s seed), the estimate (8 of 8), the contract (the command set, the fixtures, 6 round trips) and the deadlines (2),
+`toRun` (17 of 18), the engine commands (INTERNAL «not implemented yet» on every success and every refusal that needs the set; the count was not kept), the announcement (1), the mock (13 of 13), the
+own-slot job tests (1: category `own`). Green on arrival, honestly: most of the run-job tests (the job already skips the writer once `foldRun` seeds the plan's sentences, which was red first), and the
+history test, which a mutation (the skip removed) turns red; the 700-char pins are red under a 600 bound on the plan's sentence.
+
+Deviations, and why: (1) **a set's plan has no `request`** (rather than a synthetic one): nothing reads it, and an own-only set has no category to name. (2) **`sceneIds` in the plan** keeps the scene id ↔ slot
+mapping the UI and the history will need. (3) **`scenes.changed` at the approval** (additive): the file does not change, but the view does (`used`). (4) **No `#assertCategoriesExist` at the approval**:
+the set holds its own snapshot of every custom category it uses, so a category deleted since does not stop a run (a test pins it, and that the photo keeps the owner's name). (5) **`IN_FLIGHT` is only
+reachable through a set's own job when every active scene already has text**, which on this base needs CS.4b's rewrite; here the order is pinned by the unit test, and the engine's `IN_FLIGHT` by the avatar's claim.
+(6) The own-scene mapping from the set's record is **not written**: `runSources` switches exhaustively on `scene.origin`, so merging CS.4b's own `SceneRecord` fails to compile exactly there; the plan side
+(own slot, no history line, category `own`) is built and tested. (7) The E2E smoke's own-scene-by-idea step is a TODO (the `idea` target is not on this base); the scenario composes five, edits one, removes one,
+restarts the engine during the review, approves, and checks the writer was asked for nothing.
+
 ### CS.4b — Scene sets, writes (test-engineer)
 
 Scope: `scenes.write` targets `rewrite` (1..5, `redraw`) and `idea` (1..5); the idea prompt

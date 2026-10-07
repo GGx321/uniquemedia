@@ -7,7 +7,7 @@ import { PriceBook } from "../money/prices";
 import { plan, planWithPools, POOLS, writerMessages } from "../scenes";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { foldRun } from "./journal";
-import { buildRunPlan, contractCategory, runWriterConfig, RunPlanSchema, sceneCategory, type NewRunPlan } from "./plan";
+import { buildRunPlan, contractCategory, plannedSlots, runWriterConfig, RunPlanSchema, sceneCategory, type NewRunPlan } from "./plan";
 import { remainingEstimate } from "./remaining";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -147,7 +147,7 @@ describe("runWriterConfig: what a run passes its writer phase", () => {
   test("a custom run's messages name the snapshot's label", () => {
     const built = buildRunPlan(input());
     const { messages } = runWriterConfig(built.categories);
-    const body = messages(built.scenes.slots, undefined)[1]?.content ?? "";
+    const body = messages(plannedSlots(built), undefined)[1]?.content ?? "";
     expect(body).toContain('"category": "Paris cafes"');
     expect(body).toContain('"category": "Home"');
   });

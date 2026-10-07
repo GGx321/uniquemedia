@@ -15,7 +15,7 @@ import { samplePhotoMeta, SAMPLE_IMPORTED_SOURCE, sequentialIds, steppingClock }
 import { ffmpegPath } from "../node/ffmpegBinary";
 import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
-import { RunPlanSchema, type RunPlan } from "./runs/plan";
+import { plannedSlots, RunPlanSchema, type RunPlan } from "./runs/plan";
 import { CAMERA_REALISM_CLAUSE, plan as planScenes } from "./scenes";
 import { faceModelPaths } from "../scripts/faceModelCache";
 import { createAgeGate } from "./runs/ageGate";
@@ -451,7 +451,7 @@ describe("a custom category in a run request that the library holds", () => {
     const plan = planOf(runId);
     expect(plan.request?.categories).toEqual(["home", id]);
     expect(plan.categories).toEqual([{ ref: id, name: "Кофейни Парижа", label: "Paris cafes", style: "phone" }]);
-    const customSlots = plan.scenes.slots.filter((s) => s.category === id);
+    const customSlots = plannedSlots(plan).filter((s) => s.category === id);
     expect(customSlots).toHaveLength(2);
     for (const slot of customSlots) {
       expect(PLACES).toContain(slot.location);
@@ -598,7 +598,7 @@ describe("runs.start", () => {
     const { runId, jobId } = started(await engine.handle(command("runs.start", { avatarId, count: 20, categories: ["home", "travel"], poses, acceptedWorstMicros: twenty })));
     const stored = planOf(runId);
 
-    expect(stored.request.poses).toEqual(poses);
+    expect(stored.request?.poses).toEqual(poses);
     expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"], poses }));
     expect(stored.scenes.slots.some((s) => s.pose === "profile" || s.pose === "back")).toBe(true);
 

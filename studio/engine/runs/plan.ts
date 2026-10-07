@@ -1,8 +1,8 @@
 import { z } from "zod";
-import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, type CategoryRef, type Estimate } from "../../shared/engine";
+import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, SceneId, type CategoryRef, type Estimate } from "../../shared/engine";
 import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
-import { categoryLabelOf, categoryRefOf, plannerCategoryOf, ScenePlanSchema, writerMessages, type PlannerCategory, type ScenePlan } from "../scenes";
+import { categoryLabelOf, categoryRefOf, OwnPlanSlotSchema, plannerCategoryOf, PlanSlotSchema, writerMessages, type PlannerCategory, type PlanSlot, type ScenePlan } from "../scenes";
 import { chunkSlots } from "../scenes/writer";
 import type { WriterPhase } from "./writerPhase";
 
@@ -128,6 +128,21 @@ export function runEstimate(priced: PricedBook, models: RunModels, request: Pick
   return { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.priceSource, pricesAsOf: priced.asOf };
 }
 
+/**
+ * A run made from a reviewed scene set (CS.5): `runEstimate` with no writer, because every sentence already exists. `count` is the active scenes with text.
+ * The route, the attempts per slot and the age checks are the whole run's own, so removing a scene lowers the worst case by exactly its attempts.
+ */
+export function runEstimateFromScenes(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count">, imageAgeCheck: ImageAgeCheck): Estimate {
+  const estimate = estimateRun(priced.book, {
+    photos: request.count,
+    attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
+    route: runRoute(models.imageModel, models.imageQuality),
+    writer: null,
+    ageChecks: imageAgeCheck === "on" ? AGE_CHECK_CALL : null,
+  });
+  return { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.priceSource, pricesAsOf: priced.asOf };
+}
+
 /** A slot's pre-allocated attempt ids: `${runId}:${attemptIdBase}#N`, N = 1..ids (its three paid attempts plus the spares by default). */
 export function slotAttemptIds(runId: string, attemptIdBase: string, ids: number = SLOT_ATTEMPT_IDS): string[] {
   if (!Number.isSafeInteger(ids) || ids < 1 || ids > SLOT_ATTEMPT_IDS) {
@@ -175,13 +190,28 @@ function dropLegacyResolution(request: unknown): unknown {
  * it is checked like any other input from disk (review L4): the slots number
  * exactly the request's count, belong to the plan's avatar, and never repeat.
  */
+/**
+ * The plan's scenes: the planner's own `ScenePlan` (its slots validated by its own `PlanSlotSchema`), or — in a run made from a scene set — slots that
+ * carry their sentence, some of them the owner's own scenes (`OwnPlanSlotSchema`). Only the run's plan knows the second kind; the planner never draws one.
+ */
+const RunScenesSchema = z.strictObject({
+  version: z.literal(1),
+  seed: z.int(),
+  slots: z.array(z.union([PlanSlotSchema, OwnPlanSlotSchema])),
+});
+
 export const RunPlanSchema = z
   .strictObject({
     schemaVersion: z.literal(1),
     runId: Id,
     avatarId: Id,
     createdAt: z.iso.datetime(),
-    request: z.preprocess(dropLegacyResolution, RunRequest),
+    // Absent exactly when the run was made from a scene set (`sceneSetId`): its slots, not a request, say what is drawn.
+    request: z.preprocess(dropLegacyResolution, RunRequest).optional(),
+    /** CS.5: the scene set this run was made from. Present <=> every slot has its sentence <=> no writer chunks. */
+    sceneSetId: Id.optional(),
+    /** CS.5: the set's scene id of each slot, in slot order (the slots are renumbered 1..M; a removed scene leaves a gap in the ids). */
+    sceneIds: z.array(SceneId).optional(),
     /** A snapshot of every custom category the run uses, so a resume never reads the category library. Absent for a built-in-only run. */
     categories: z.array(CategorySnapshot).optional(),
     imageAgeCheck: ImageAgeCheck,
@@ -191,17 +221,21 @@ export const RunPlanSchema = z
     models: z.strictObject({ image: ModelId, imageQuality: ImageQuality.nullable().optional(), fallback: ModelId.nullable(), text: ModelId }),
     capMicros: Micros,
     plannedWorstMicros: Micros,
-    scenes: ScenePlanSchema,
+    scenes: RunScenesSchema,
     slotAttempts: z.array(SlotAttemptsSchema),
     writerChunks: z.array(WriterChunkSchema),
   })
   .superRefine((run, ctx) => {
     const slots = run.scenes.slots;
-    if (slots.length !== run.request.count) ctx.addIssue({ code: "custom", message: `the plan has ${slots.length} slots for a request of ${run.request.count}`, path: ["scenes", "slots"] });
-    if (run.request.avatarId !== run.avatarId) ctx.addIssue({ code: "custom", message: "the request must name the plan's own avatar", path: ["request", "avatarId"] });
+    // A run made from a scene set has no request: its count is its slots.
+    const count = run.request?.count ?? slots.length;
+    if (run.request !== undefined) {
+      if (slots.length !== count) ctx.addIssue({ code: "custom", message: `the plan has ${slots.length} slots for a request of ${count}`, path: ["scenes", "slots"] });
+      if (run.request.avatarId !== run.avatarId) ctx.addIssue({ code: "custom", message: "the request must name the plan's own avatar", path: ["request", "avatarId"] });
+    }
     if (new Set(slots.map((s) => s.slotIndex)).size !== slots.length) ctx.addIssue({ code: "custom", message: "a slot index must never repeat", path: ["scenes", "slots"] });
     // The planner numbers the slots 1..count, and everything downstream (the writer's chunks, the attempt ids) is keyed by that number.
-    if (slots.some((s) => s.slotIndex > run.request.count)) ctx.addIssue({ code: "custom", message: `a slot index must be between 1 and the request's count (${run.request.count})`, path: ["scenes", "slots"] });
+    if (slots.some((s) => s.slotIndex > count)) ctx.addIssue({ code: "custom", message: `a slot index must be between 1 and the request's count (${count})`, path: ["scenes", "slots"] });
     if (run.capMicros > run.plannedWorstMicros) ctx.addIssue({ code: "custom", message: "the cap must not exceed the worst case estimated when the run was planned", path: ["capMicros"] });
     const sameSlots = run.slotAttempts.length === slots.length && slots.every((s, i) => run.slotAttempts[i]?.slotIndex === s.slotIndex);
     if (!sameSlots) ctx.addIssue({ code: "custom", message: "every planned slot needs its own pre-allocated attempts, in plan order", path: ["slotAttempts"] });
@@ -213,18 +247,38 @@ export const RunPlanSchema = z
     }
     const snapshotRefs = (run.categories ?? []).map((c) => c.ref);
     if (new Set(snapshotRefs).size !== snapshotRefs.length) ctx.addIssue({ code: "custom", message: "a custom category must have one snapshot entry at most", path: ["categories"] });
-    const used = new Set([...run.request.categories, ...slots.map((s) => s.category)].filter(isCustomCategory));
+    const used = new Set([...(run.request?.categories ?? []), ...slots.map((s) => s.category)].filter(isCustomCategory));
     for (const ref of used) {
       if (!snapshotRefs.includes(ref)) ctx.addIssue({ code: "custom", message: `the plan names custom category ${ref} without a snapshot of it`, path: ["categories"] });
     }
+    // `sceneSetId` <=> every slot has its sentence <=> no writer chunks <=> no request. Never a mixed plan: a slot with a sentence the writer would also be asked
+    // for, or one with neither, is a document no start writes and no resume trusts.
+    const written = slots.filter((s) => s.sentence !== undefined).length;
+    if (run.sceneSetId === undefined) {
+      if (written > 0) ctx.addIssue({ code: "custom", message: "only a run made from a scene set has sentences in its slots", path: ["scenes", "slots"] });
+      if (run.request === undefined) ctx.addIssue({ code: "custom", message: "a run that names no scene set needs its request", path: ["request"] });
+      if (run.sceneIds !== undefined) ctx.addIssue({ code: "custom", message: "only a run made from a scene set has scene ids", path: ["sceneIds"] });
+    } else {
+      if (written !== slots.length) ctx.addIssue({ code: "custom", message: "every slot of a run made from a scene set needs its sentence", path: ["scenes", "slots"] });
+      if (slots.length === 0) ctx.addIssue({ code: "custom", message: "a run made from a scene set needs at least one scene", path: ["scenes", "slots"] });
+      if (run.writerChunks.length > 0) ctx.addIssue({ code: "custom", message: "a run made from a scene set has no writer chunks: every sentence is already written", path: ["writerChunks"] });
+      if (run.request !== undefined) ctx.addIssue({ code: "custom", message: "a run made from a scene set has no request", path: ["request"] });
+      const sceneIds = run.sceneIds ?? [];
+      if (sceneIds.length !== slots.length || new Set(sceneIds).size !== sceneIds.length) ctx.addIssue({ code: "custom", message: "a scene set's run names one distinct scene for every slot", path: ["sceneIds"] });
+    }
     const covered = run.writerChunks.flatMap((c) => c.slotIndexes);
-    if (covered.length !== slots.length || slots.some((s, i) => covered[i] !== s.slotIndex)) {
+    if (run.sceneSetId === undefined && (covered.length !== slots.length || slots.some((s, i) => covered[i] !== s.slotIndex))) {
       ctx.addIssue({ code: "custom", message: "the writer's chunks must cover every slot once, in plan order", path: ["writerChunks"] });
     }
     const ids = [...run.slotAttempts.flatMap((s) => s.attemptIds), ...run.writerChunks.flatMap((c) => c.attemptIds)];
     if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "an attempt id must never repeat within a run", path: ["slotAttempts"] });
   });
 export type RunPlan = z.infer<typeof RunPlanSchema>;
+
+/** The slots the planner drew, without the owner's own scenes (a run made from a scene set may hold both): the ones that have a place, an outfit and a writer. */
+export function plannedSlots(plan: Pick<RunPlan, "scenes">): PlanSlot[] {
+  return plan.scenes.slots.filter((s): s is PlanSlot => s.category !== "own");
+}
 
 export interface NewRunPlan {
   runId: string;
@@ -268,5 +322,57 @@ export function buildRunPlan(input: NewRunPlan): RunPlan {
       slotIndexes: chunk.map((slot) => slot.slotIndex),
       attemptIds: writerAttemptIds(input.runId, i + 1),
     })),
+  });
+}
+
+/** What a scene of a reviewed set hands the run: its text, and either the slot the planner drew or the shot and pose of an own scene (made by idea). */
+export type SceneRunSource = { sceneId: number; text: string; slot: PlanSlot | { kind: "own"; shot: PlanSlot["shot"]; pose: PlanSlot["pose"] } };
+
+export interface NewSceneRunPlan {
+  runId: string;
+  avatarId: string;
+  createdAt: string;
+  sceneSetId: string;
+  imageAgeCheck: ImageAgeCheck;
+  models: RunModels;
+  /** The accepted images-only worst case, for the run's whole life. */
+  capMicros: number;
+  plannedWorstMicros: number;
+  /** The set's active scenes with text, in the set's order. */
+  scenes: readonly SceneRunSource[];
+  /** A snapshot of every custom category the active scenes use (none for built-in and own scenes only). */
+  categories?: readonly CategorySnapshot[] | undefined;
+  cameraRealism?: boolean;
+}
+
+/**
+ * The plan of a run made from a reviewed scene set (CS.5): the active scenes renumbered into slots 1..M in the set's order (the set's scene ids stay in
+ * `sceneIds`), each with the sentence the set already holds, and no writer chunks: nothing is asked of the writer, so only images are paid.
+ */
+export function buildSceneRunPlan(input: NewSceneRunPlan): RunPlan {
+  const slots = input.scenes.map(({ slot, text }, i) => {
+    const slotIndex = i + 1;
+    const attemptIdBase = `slot-${slotIndex}`;
+    if ("kind" in slot) return { kind: "own" as const, slotIndex, category: "own" as const, shot: slot.shot, pose: slot.pose, attemptIdBase, sentence: text };
+    const { slotIndex: _drawn, attemptIdBase: _base, sentence: _written, ...place } = slot;
+    return { ...place, slotIndex, attemptIdBase, sentence: text };
+  });
+  const route = runRoute(input.models.imageModel, input.models.imageQuality);
+  return RunPlanSchema.parse({
+    schemaVersion: 1,
+    runId: input.runId,
+    avatarId: input.avatarId,
+    createdAt: input.createdAt,
+    sceneSetId: input.sceneSetId,
+    sceneIds: input.scenes.map((s) => s.sceneId),
+    ...(input.categories === undefined || input.categories.length === 0 ? {} : { categories: input.categories }),
+    imageAgeCheck: input.imageAgeCheck,
+    ...(input.cameraRealism === true ? { cameraRealism: true } : {}),
+    models: { image: route[0].model, ...(route[0].quality === "low" || route[0].model === FALLBACK_IMAGE_MODEL ? {} : { imageQuality: route[0].quality }), fallback: route[1]?.model ?? null, text: input.models.textModel },
+    capMicros: input.capMicros,
+    plannedWorstMicros: input.plannedWorstMicros,
+    scenes: { version: 1, seed: 0, slots },
+    slotAttempts: slots.map((slot) => ({ slotIndex: slot.slotIndex, attemptIds: slotAttemptIds(input.runId, slot.attemptIdBase) })),
+    writerChunks: [],
   });
 }

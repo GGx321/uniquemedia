@@ -6,7 +6,7 @@ import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, withoutAt, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { plan, planWithPools, POOLS, type PlanSlot } from "../scenes";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
-import { buildRunPlan, runWriterConfig } from "./plan";
+import { buildRunPlan, plannedSlots, runWriterConfig } from "./plan";
 import { NetworkPool } from "./pools";
 import { runWriterPhase, type WriterPhase } from "./writerPhase";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -68,7 +68,7 @@ function phaseOf(count: number, overrides: Partial<WriterPhase> = {}): WriterPha
     scope: SCOPE,
     textModel: "x-ai/grok-4.3",
     signal: new AbortController().signal,
-    slots: run.scenes.slots,
+    slots: plannedSlots(run),
     chunks: run.writerChunks,
     sentences: new Map(),
     writerDone: new Set(),
@@ -238,7 +238,7 @@ describe("runWriterPhase: a built-in run's requests are byte-identical to main 3
       plannedWorstMicros: 10_000_000,
       scenes: plan({ seed: 3, count: 30, categories: ["home", "travel", "photoshoot", "glamour", "fitness"], poses: { profile: true, back: true } }),
     });
-    const phase = { ...phaseOf(30), slots: run.scenes.slots, chunks: run.writerChunks, ...runWriterConfig(run.categories) };
+    const phase = { ...phaseOf(30), slots: plannedSlots(run), chunks: run.writerChunks, ...runWriterConfig(run.categories) };
     const { net, result } = start([refusedAnswer, good, good], phase);
 
     expect((await result).ok).toBe(true);
@@ -302,7 +302,7 @@ describe("runWriterPhase: the call shape and the messages are the caller's", () 
       plannedWorstMicros: 10_000_000,
       scenes: planWithPools({ seed: 4, count: 3, categories: [custom] }, { ...POOLS, [custom]: CUSTOM_POOL }),
     });
-    const { net, result } = start([good], { ...phaseOf(3), slots: run.scenes.slots, chunks: run.writerChunks, ...runWriterConfig(run.categories) });
+    const { net, result } = start([good], { ...phaseOf(3), slots: plannedSlots(run), chunks: run.writerChunks, ...runWriterConfig(run.categories) });
 
     expect((await result).ok).toBe(true);
     const text = JSON.stringify(net.calls[0]?.json());

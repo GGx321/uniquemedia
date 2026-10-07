@@ -1973,6 +1973,54 @@ export class MockEngine implements EngineBridge {
         this.runs = [...this.runs, run];
         return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
       }
+      case "runs.estimateFromScenes": {
+        // The engine's order: the library, the set's own refusals, then the avatar.
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        const approval = this.sceneSets.approvalOf(c.payload.sceneSetId, c.payload.revision);
+        if ("error" in approval) return this.fail(c, approval.error);
+        const refusal = this.runnableRefusal(approval.set.avatarId);
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, { estimate: this.runPriceFromScenes(approval.active.length) });
+      }
+      case "runs.startFromScenes": {
+        // The engine's order: the library, the set's refusals, the avatar claimed by another job, then `runs.start`'s own checks.
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        const approval = this.sceneSets.approvalOf(c.payload.sceneSetId, c.payload.revision);
+        if ("error" in approval) return this.fail(c, approval.error);
+        const { set, active } = approval;
+        if (this.jobRunningFor(set.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
+        const price = this.runPriceFromScenes(active.length);
+        const refusal =
+          this.keyAndLedgerGate() ??
+          this.runnableRefusal(set.avatarId) ??
+          this.masterRefusal(set.avatarId) ??
+          this.gateRefusal(this.settings.imageAgeCheck === "on") ??
+          this.priceGate(c.payload.acceptedWorstMicros, price.worstMicros) ??
+          (this.masterPreflight.get(set.avatarId) ?? null);
+        if (refusal) return this.fail(c, refusal);
+        const categories = [...new Set(active.map((s) => s.category))];
+        const run: MockRun = {
+          // The set's pre-issued run id, as the engine's: a set can only ever become this one run.
+          runId: set.runId,
+          avatarId: set.avatarId,
+          createdAt: this.nowIso(),
+          request: { avatarId: set.avatarId, count: active.length, categories, poses: set.poses },
+          capMicros: price.worstMicros,
+          settledMicros: 0,
+          ageCheck: this.settings.imageAgeCheck === "on",
+          slots: active.map((s) => ({ category: s.category, end: null })),
+          photoIds: [],
+          categoryNames: Object.fromEntries(set.categories.flatMap((entry) => (entry.name === null ? [] : [[entry.ref, entry.name]]))),
+          // Every sentence exists: no writer phase, and so none in what a resume could still spend.
+          writerDone: true,
+        };
+        this.runs = [...this.runs, run];
+        // The set is used from here, and every window hears it before the run's job is announced.
+        this.sceneSets.approve(set);
+        return this.ok(c, { runId: run.runId, jobId: this.startRunJob(run) });
+      }
       case "runs.cancel": {
         const run = this.runs.find((r) => r.runId === c.payload.runId);
         if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
@@ -3056,6 +3104,19 @@ export class MockEngine implements EngineBridge {
     return {
       expectedMicros: count * image + count * MOCK_RUN_WRITER.expectedPerPhoto + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
       worstMicros: attempts * image + chunks * MOCK_RUN_WRITER.worstPerChunk + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      prices: this.price.prices,
+      pricesAsOf: this.price.pricesAsOf,
+    };
+  }
+
+  /** A run made from a reviewed scene set (CS.5): `runPrice` with no writer term, every sentence being written already. */
+  private runPriceFromScenes(count: number): Estimate {
+    const image = this.runImagePrice;
+    const attempts = count * MOCK_RUN_ATTEMPTS_PER_SLOT;
+    const ageOn = this.settings.imageAgeCheck === "on";
+    return {
+      expectedMicros: count * image + (ageOn ? count * MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      worstMicros: attempts * image + (ageOn ? attempts * MOCK_AGE_CHECK_PER_SLOT.worst : 0),
       prices: this.price.prices,
       pricesAsOf: this.price.pricesAsOf,
     };

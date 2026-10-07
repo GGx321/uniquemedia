@@ -4,7 +4,7 @@ import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import type { OpenRouterClient } from "../openrouter/types";
-import type { PlanSlot } from "../scenes";
+import type { RunSlot } from "../scenes";
 
 // T6 declares the QA gate; T7a (PDQ near-duplicates, the optional per-photo
 // age check) and T7b (the face gate, studio/engine/face) implement it. The
@@ -99,7 +99,7 @@ export interface QaInput {
   /** The prices the run was started or resumed at. */
   priceBook: PriceBook;
   /** The plan's slot, carried whole (T5c adds `pose`, which the face gate reads). */
-  slot: PlanSlot;
+  slot: RunSlot;
   image: { bytes: Uint8Array; mediaType: ImageMediaType; width: number; height: number };
   /** Aborts on the run's cancel or the gate's own timeout: a gate stops, and the image is dropped. */
   signal: AbortSignal;

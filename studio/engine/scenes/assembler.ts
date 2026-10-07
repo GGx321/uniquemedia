@@ -3,8 +3,7 @@ import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
 import { categoryStyleOf } from "./categories";
 import { revealingWordsIn } from "./words";
-import type { Pose, ScenePlan } from "./schema";
-import type { PlanSlot } from "./schema";
+import type { Pose, RunSlot, ScenePlan } from "./schema";
 import type { Shot } from "./types";
 
 // T5b: the assembler. Pure, no I/O, deterministic: the same descriptor, slot,
@@ -154,7 +153,7 @@ function phoneInHand(shot: Shot): boolean {
   return shot === "selfie" || shot === "mirror";
 }
 
-function constraintsFor(slot: PlanSlot): string {
+function constraintsFor(slot: RunSlot): string {
   return BASE_CONSTRAINTS + (phoneInHand(slot.shot) ? PHONE_HAND_CONSTRAINT : "");
 }
 
@@ -182,7 +181,7 @@ export interface AssembledScene {
  * (runs/writerPhase.ts / readWriterAnswer): a defense-in-depth last resort, since
  * this is the last engine code to see the text before an image is paid for.
  */
-export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sentence: string, master: LibraryReference, options: AssembleOptions = {}): AssembledScene {
+export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, sentence: string, master: LibraryReference, options: AssembleOptions = {}): AssembledScene {
   const snapshots = options.categories ?? [];
   const [problem] = sentenceProblems(sentence);
   if (problem !== undefined) {
@@ -206,7 +205,7 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: PlanSlot, sente
 }
 
 /** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. `options.categories` are the plan's own snapshots. */
-export function assembleRun(descriptor: AvatarDescriptor, scenePlan: ScenePlan, sentences: ReadonlyMap<number, string>, master: LibraryReference, options: AssembleOptions = {}): AssembledScene[] {
+export function assembleRun(descriptor: AvatarDescriptor, scenePlan: { readonly slots: readonly RunSlot[] } & Partial<Omit<ScenePlan, "slots">>, sentences: ReadonlyMap<number, string>, master: LibraryReference, options: AssembleOptions = {}): AssembledScene[] {
   return scenePlan.slots.map((slot) => {
     const sentence = sentences.get(slot.slotIndex);
     if (sentence === undefined) throw new RangeError(`no writer sentence for slot ${slot.slotIndex}`);

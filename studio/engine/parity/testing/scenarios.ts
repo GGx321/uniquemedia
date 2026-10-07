@@ -1842,7 +1842,35 @@ const SCENE_SET_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS];
+// CS.5: a run from a scene set. Only the refusals are played (the estimates differ by design, and a start that goes through draws images, which this rig does not
+// script): the order of the checks, every refusal's code, the price refusal that follows them, and the events a refused start must not send.
+const SCENE_RUN_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "scene set runs: every refusal comes free and in order, and no run is made",
+    rig: { sceneSets: true },
+    async run(t, w) {
+      t.note("an unknown set, and a revision that moved, are refused before anything else is looked at");
+      await t.call("runs.estimateFromScenes", { sceneSetId: "set-nobody-0404", revision: 1 });
+      await t.call("runs.estimateFromScenes", { sceneSetId: "set-parity-0001", revision: 9 });
+      await t.call("runs.startFromScenes", { sceneSetId: "set-nobody-0404", revision: 1, acceptedWorstMicros: 10_000_000 });
+      await t.call("runs.startFromScenes", { sceneSetId: "set-parity-0001", revision: 9, acceptedWorstMicros: 10_000_000 });
+      t.note("two of the three scenes still wait for their sentence: an active scene with no text is refused, however much the owner accepted");
+      await t.call("runs.estimateFromScenes", { sceneSetId: "set-parity-0001", revision: 1 });
+      await t.call("runs.startFromScenes", { sceneSetId: "set-parity-0001", revision: 1, acceptedWorstMicros: 10_000_000 });
+      t.note("removing the waiting scenes is one free edit; the scene with text left is what a start would draw (its price and gates are played by the engine's and the mock's own suites)");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "remove", sceneIds: [2, 3] } });
+      t.note("with every scene removed there is nothing to draw");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 2, op: { op: "remove", sceneIds: [1] } });
+      await t.call("runs.estimateFromScenes", { sceneSetId: "set-parity-0001", revision: 3 });
+      await t.call("runs.startFromScenes", { sceneSetId: "set-parity-0001", revision: 3, acceptedWorstMicros: 10_000_000 });
+      t.note("none of it made a run or used the set");
+      await t.call("runs.list", {});
+      await t.call("scenes.get", { avatarId: w.avatarId });
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS, ...SCENE_RUN_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

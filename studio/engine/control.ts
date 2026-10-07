@@ -326,6 +326,9 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // slack instead would refuse a slow but healthy master; the deadline is sized to the awaited path, as createDraft's is.
   "runs.start": PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + COMMAND_SLACK_MS,
   "runs.resume": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  // CS.5: a run from a scene set is priced and started like any run (the start also waits for the master's preflight).
+  "runs.estimateFromScenes": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "runs.startFromScenes": PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + COMMAND_SLACK_MS,
   "runs.list": PRICE_FETCH_TIMEOUT_MS + 15_000,
   // CS.4a: a set's compose and «Дописать» answer once their checks and a price load are done (the writer's job runs on and reports by events); the
   // estimates wait for a price load that times out, so the fallback estimate is not lost. The other scenes commands are local and keep the default.
