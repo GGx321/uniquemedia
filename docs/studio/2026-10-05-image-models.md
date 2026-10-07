@@ -67,10 +67,18 @@ per-endpoint record (every endpoint, not the union):
    `output_image` price of 0 is refused too: it would reserve nothing;
 6. the avatar portrait and candidate requests are valid too: `aspect_ratio`
    lists `3:4` and `input_references.min` is stated and is `0` (a portrait
-   sends no reference at all). A run rechecks rules 2, 3 and 6 on the live
-   endpoints when it loads its price, and refuses with `PRICE_UNAVAILABLE`
-   before any reserve when they no longer hold. The "7 models" count below
-   was made before rule 6.
+   sends no reference at all). The CATALOGUE checks rules 2, 3 and 6 (photo
+   plus portrait) and offers a model only on a known yes. A RUN checks only
+   the photo request, on the live endpoints when it loads its price (start and
+   resume): `resolution` lists 1K, `aspect_ratio` lists 9:16 and
+   `input_references.max >= 1`. It never checks 3:4 or a zero-reference
+   minimum, because a photo run sends neither. A run refuses with
+   `PRICE_UNAVAILABLE` before any reserve only on an EXPLICIT exclusion (the
+   field is present and readable and lacks the value); a missing or
+   unreadable field is unknown and is accepted, so schema drift during an
+   OpenRouter incident cannot block a paid run, and drift in the fixed
+   fallback model's portrait shape cannot block a run on another model. The
+   "7 models" count below was made before rule 6.
 
 Result on 2026-10-05, 7 models selectable (10 met rules 1 to 4; 3 of them fail
 rule 5 and are excluded until a paid check confirms how a reference is billed). Prices are USD per image at 1K; "ref" is the

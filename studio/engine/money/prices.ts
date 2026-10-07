@@ -86,18 +86,12 @@ export const EndpointParams = z.object({
 export const EndpointsParams = z.object({ endpoints: z.array(EndpointParams).min(1) });
 
 /**
- * True when EVERY endpoint accepts both requests Studio sends: a photo (1K,
- * 9:16, one reference) and an avatar portrait (3:4, no reference at all, so
- * `input_references.min` must be stated and be 0). The catalogue offers a
- * model only then, and a run rechecks it when it loads the price. A body that
- * does not parse is refused.
+ * The CATALOGUE's check (`entryFromEndpoints`): an endpoint is offered only
+ * when it is KNOWN to accept both requests Studio sends, a photo (1K, 9:16,
+ * one reference) and an avatar portrait (3:4, no reference at all, so
+ * `input_references.min` must be stated and be 0). Offering fewer models costs
+ * nothing; offering one that cannot serve a request costs a failed job.
  */
-export function endpointsAcceptRequests(body: unknown): boolean {
-  const params = EndpointsParams.safeParse(body);
-  if (!params.success) return false;
-  return params.data.endpoints.every(({ supported_parameters: p }) => acceptsRequests(p));
-}
-
 export function acceptsRequests(p: z.infer<typeof EndpointParams>["supported_parameters"]): boolean {
   return (
     p.resolution?.values.includes(WANTED_RESOLUTION) === true &&
@@ -106,6 +100,37 @@ export function acceptsRequests(p: z.infer<typeof EndpointParams>["supported_par
     p.input_references?.min === 0 &&
     p.input_references.max >= PHOTO_REFERENCES
   );
+}
+
+const ReadableValues = z.object({ values: z.array(z.string()) });
+const ReadableMax = z.object({ max: z.number() });
+const Endpoints = z.object({ endpoints: z.array(z.unknown()) });
+const ParamsOf = z.object({ supported_parameters: z.record(z.string(), z.unknown()) });
+
+/**
+ * A RUN's check: true unless some endpoint EXPLICITLY excludes the one request
+ * a photo run sends (1K, 9:16, one reference). A photo run never sends 3:4 and
+ * never sends zero references, so neither is checked. A field that is missing
+ * or unreadable is "unknown", and unknown is accepted: schema drift during an
+ * OpenRouter incident must not stop a paid run that already holds a priced
+ * reserve (a wrong guess costs one free 400, a false refusal blocks the run).
+ */
+export function endpointsAcceptPhotoRequest(body: unknown): boolean {
+  const listed = Endpoints.safeParse(body);
+  if (!listed.success) return true;
+  return listed.data.endpoints.every((endpoint) => {
+    const params = ParamsOf.safeParse(endpoint);
+    return !params.success || acceptsPhotoRequest(params.data.supported_parameters);
+  });
+}
+
+export function acceptsPhotoRequest(p: Record<string, unknown>): boolean {
+  const lacks = (field: unknown, needed: string): boolean => {
+    const read = ReadableValues.safeParse(field);
+    return read.success && !read.data.values.includes(needed);
+  };
+  const refs = ReadableMax.safeParse(p.input_references);
+  return !lacks(p.resolution, WANTED_RESOLUTION) && !lacks(p.aspect_ratio, PHOTO_ASPECT_RATIO) && !(refs.success && refs.data.max < PHOTO_REFERENCES);
 }
 
 const PricingEntry = z.object({
@@ -499,7 +524,7 @@ export async function loadPriceBook(opts: {
   imageModels: readonly string[];
   chatModels: readonly string[];
   /**
-   * A run's load: every image model's LIVE endpoints must still accept the requests Studio sends (`endpointsAcceptRequests`),
+   * A run's load: every image model's LIVE endpoints must still accept the requests Studio sends (`endpointsAcceptPhotoRequest`),
    * else PRICE_UNAVAILABLE (never the dated table, which only stands in for a fetch that failed). Without it every attempt of a
    * run on a model that dropped 9:16 would get its own free 400, slot by slot.
    */
@@ -514,8 +539,8 @@ export async function loadPriceBook(opts: {
       const entry = await liveOrFallback(model, FALLBACK_IMAGE, async () => {
         const body = await getJson(opts.fetch, `${base}/images/models/${model}/endpoints`, timeoutMs);
         const price = parseImageEndpoints(body, model);
-        if (opts.checkRequestShape === true && !endpointsAcceptRequests(body)) {
-          throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept Studio's request (1K, 9:16 and one reference for a photo; 3:4 and none for a portrait)`);
+        if (opts.checkRequestShape === true && !endpointsAcceptPhotoRequest(body)) {
+          throw new MoneyError("PRICE_UNAVAILABLE", `${model}'s endpoints no longer accept a photo run's request (1K, 9:16 and one reference)`);
         }
         return price;
       });

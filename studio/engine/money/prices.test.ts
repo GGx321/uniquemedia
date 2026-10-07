@@ -647,10 +647,99 @@ test("a run's price load refuses a model whose live endpoints no longer list 9:1
   expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
 });
 
-test("a run's price load refuses a model whose live endpoints no longer allow zero references", async () => {
+test("a run's price load still prices a model that now requires a reference: a photo run always sends one", async () => {
   const body = grokEndpointsWith((p) => ({ ...p, input_references: { type: "range", min: 1, max: 3 } }));
 
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load still prices a model that states no minimum for references", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, input_references: { type: "range", max: 3 } }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load refuses a model whose live endpoints accept no reference at all (max 0)", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, input_references: { type: "range", min: 0, max: 0 } }));
+
   const err = await loadChecked({ [GROK_URL]: body }, true).catch((e: unknown) => e);
+
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a run's price load still prices a model that lost 3:4: a photo run never sends it", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "9:16"] } }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load refuses a model whose live endpoints no longer list 1K", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, resolution: { type: "enum", values: ["2K"] } }));
+
+  const err = await loadChecked({ [GROK_URL]: body }, true).catch((e: unknown) => e);
+
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a run's price load prices a model whose endpoints carry no supported_parameters: unknown is not a refusal", async () => {
+  const body = fixture("endpoints-grok-imagine-image-2.0.json") as { endpoints: Record<string, unknown>[] };
+  const stripped = { ...body, endpoints: body.endpoints.map(({ supported_parameters: _drop, ...rest }) => rest) };
+
+  const book = await loadChecked({ [GROK_URL]: stripped }, true);
+
+  expect(book.source).toBe("live");
+});
+
+test("a run's price load prices a model whose supported_parameters has no readable values (schema drift)", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum" }, resolution: "1K" }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+// The fixed fallback model rides in EVERY run's imageModels, so its drift must not block a run on another main model.
+function seedreamWith(edit: (p: Record<string, unknown>) => Record<string, unknown>): unknown {
+  const body = fixture("endpoints-seedream-5-0-pro.json") as { endpoints: { supported_parameters: Record<string, unknown> }[] };
+  return { ...body, endpoints: body.endpoints.map((e) => ({ ...e, supported_parameters: edit(e.supported_parameters) })) };
+}
+async function loadRunWith(overrides: Record<string, unknown>) {
+  return loadPriceBook({
+    fetch: fakeFetch({ ...LIVE, ...overrides }),
+    baseUrl: BASE,
+    imageModels: [GROK_2, SEEDREAM],
+    chatModels: [],
+    checkRequestShape: true,
+  });
+}
+const SEEDREAM_URL = `${BASE}/images/models/${SEEDREAM}/endpoints`;
+
+test("a run is still priced when the fallback model lost 3:4", async () => {
+  const book = await loadRunWith({ [SEEDREAM_URL]: seedreamWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "9:16"] } })) });
+
+  expect(book.source).toBe("live");
+});
+
+test("a run is still priced when the fallback model now requires a reference (min 1)", async () => {
+  const book = await loadRunWith({ [SEEDREAM_URL]: seedreamWith((p) => ({ ...p, input_references: { type: "range", min: 1, max: 14 } })) });
+
+  expect(book.source).toBe("live");
+});
+
+test("a run is refused when the fallback model lost 9:16: PRICE_UNAVAILABLE", async () => {
+  const err = await loadRunWith({ [SEEDREAM_URL]: seedreamWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } })) }).catch((e: unknown) => e);
+
+  expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
+});
+
+test("a run is refused when a run model lost 9:16 even though the fallback is intact", async () => {
+  const err = await loadRunWith({ [GROK_URL]: grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "3:4"] } })) }).catch((e: unknown) => e);
 
   expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
 });
