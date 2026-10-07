@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoryRef, PhotoCategory, PoolShot, MAX_RUN_CATEGORIES } from "./categories";
+import { CategoryRef, PhotoCategory, PoolShot, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
 import { EngineError } from "./errors";
 import { Count, Id, Micros, ModelId } from "./primitives";
 
@@ -55,10 +55,6 @@ export type SceneGaveUpBy = z.infer<typeof SceneGaveUpBy>;
 /** A scene with no text: still waiting for its write («ждёт»), or given up. */
 export const SceneUnwritten = z.enum(["pending", "gave-up"]);
 export type SceneUnwritten = z.infer<typeof SceneUnwritten>;
-
-/** The poses a scene can have (the face gate's own vocabulary). */
-export const ScenePose = z.enum(["front", "three-quarter", "profile", "back"]);
-export type ScenePose = z.infer<typeof ScenePose>;
 
 const PlaceText = z.string().min(1).max(120);
 

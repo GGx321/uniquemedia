@@ -27,6 +27,21 @@ export type CustomCategoryId = z.infer<typeof CustomCategoryId>;
 export const CategoryRef = z.union([SceneCategory, CustomCategoryId]);
 export type CategoryRef = z.infer<typeof CategoryRef>;
 
+/**
+ * The poses a scene can have (the face gate's own vocabulary). Defined here, not in scenes.ts: a custom category's pool and its snapshot carry the angles its
+ * description asks for (CS.8a), and scenes.ts imports this module.
+ */
+export const ScenePose = z.enum(["front", "three-quarter", "profile", "back"]);
+export type ScenePose = z.infer<typeof ScenePose>;
+
+/** A category's angles: one to four distinct poses of the shared vocabulary. Absent on a pool or a snapshot means «no preference» (what the run's toggles say). */
+export const CategoryPoses = z
+  .array(ScenePose)
+  .min(1)
+  .max(ScenePose.options.length)
+  .refine((poses) => new Set(poses).size === poses.length, "a pose must not repeat");
+export type CategoryPoses = z.infer<typeof CategoryPoses>;
+
 /** A photo of the owner's own scene (scene review): no pool category behind it. */
 export const OWN_CATEGORY = "own";
 
@@ -90,6 +105,8 @@ export const CategorySnapshot = z.strictObject({
   name: CategoryName,
   label: CategoryLabel,
   style: CategoryStyle,
+  /** The angles the category's description asked for (CS.8a); absent for a category without a preference and in every plan written before it. */
+  poses: CategoryPoses.optional(),
 });
 export type CategorySnapshot = z.infer<typeof CategorySnapshot>;
 
@@ -195,6 +212,8 @@ export const CategoryPool = z
     locations: z.array(CategoryPlace).min(POOL_PLACES_MIN).max(POOL_PLACES_MAX),
     outfits: z.array(PoolText).min(POOL_OUTFITS_MIN).max(POOL_OUTFITS_MAX),
     shotDeck: z.array(PoolShot).length(POOL_DECK_SIZE),
+    /** CS.8a: the angles the description asks for («вид сзади» is back), 1..4 of the shared vocabulary. Absent = no preference: the run's «Ракурсы» toggles decide. */
+    poses: CategoryPoses.optional(),
   })
   .refine((pool) => !pool.shotDeck.includes("mirror") || pool.locations.some((l) => l.mirror), {
     message: "a deck that can draw a mirror shot needs a place with a mirror",
