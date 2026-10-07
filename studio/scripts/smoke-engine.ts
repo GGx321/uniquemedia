@@ -2602,14 +2602,16 @@ async function runCategoryScenario(target: Target): Promise<void> {
 
 const SCENE_SET_SCENES = 5;
 const SCENE_EDIT_TEXT = "She laughs at a friend's joke while stirring a coffee by the big window.";
+const SCENE_OWN_IDEA = "кофе на балконе утром";
+/** Five composed, one removed, one own scene added by idea: the five a run draws. */
+const SCENE_SET_ACTIVE = SCENE_SET_SCENES;
 
 /**
- * CS.5: a run made from a reviewed scene set, in the packaged app. Compose five scenes (the writer is paid once, here), edit one, remove one, restart the
- * engine in the middle of the review (the set is on disk, nothing is lost and nothing is spent), then approve: the run draws the four that are left from the
- * sentences already written, asks the writer for nothing, and the set reads used, naming its run. A second start of the same set is refused.
- *
- * TODO(CS.4b): the plan's smoke also adds an own scene BY IDEA (`scenes.write` target `idea`, a mocked writer answer) before the approval; the `idea` target is
- * not on this branch's base. When CS.4b is merged, add that step here: one more scene, five photos, and the own slot's photo categorised `own`.
+ * CS.5 x CS.4b: a run made from a reviewed scene set, in the packaged app. Compose five scenes (the writer is paid once, here), edit one, remove one, add one
+ * own scene BY IDEA (`scenes.write` target `idea`: one more writer request, answered by the mock), restart the engine in the middle of the review (the set is on
+ * disk, nothing is lost and nothing is spent), then approve: the run draws the five that are left from the sentences already written, asks the writer for
+ * nothing, the own scene's photo is categorised `own` and leaves no line in the avatar's history, and the set reads used, naming its run. A second start of the
+ * same set is refused.
  */
 async function runSceneSetRunScenario(target: Target): Promise<void> {
   const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true });
@@ -2649,6 +2651,31 @@ async function runSceneSetRunScenario(target: Target): Promise<void> {
     check("scene-set run scenario: scenes.edit removes one scene", field(removed, "ok") === true, removed);
     revision = Number(field(removed, "result", "sceneSet", "revision"));
 
+    // 2b. «+ Своя сцена»: one own scene written from the owner's idea, one more paid writer request, under the ids of its own write.
+    const ideaTarget = { kind: "idea", idea: SCENE_OWN_IDEA, count: 1, shot: null };
+    const ideaEstimate = await req(cdp, "scenes.estimateWrite", { sceneSetId, target: ideaTarget });
+    check("scene-set run scenario: scenes.estimateWrite prices an idea write", field(ideaEstimate, "ok") === true && Number(field(ideaEstimate, "result", "estimate", "worstMicros")) > 0, ideaEstimate);
+    const ideaWritten = await req(cdp, "scenes.write", { sceneSetId, revision, target: ideaTarget, acceptedWorstMicros: field(ideaEstimate, "result", "estimate", "worstMicros") });
+    check("scene-set run scenario: scenes.write launches the idea write", field(ideaWritten, "ok") === true, ideaWritten);
+    const ideaEnd = await waitFor("the idea write's job to end", () => endEventOf(cdp, field(ideaWritten, "result", "jobId")), 60_000);
+    check("scene-set run scenario: the idea write finished as job.done with one scene written", field(ideaEnd, "type") === "job.done" && field(ideaEnd, "payload", "result", "written") === 1, ideaEnd);
+    const writerRequestsAfterIdea = mock.sceneWriterRequests().length;
+    check("scene-set run scenario: the idea write was exactly one more writer request", writerRequestsAfterIdea === writerRequestsAfterCompose + 1, writerRequestsAfterIdea - writerRequestsAfterCompose);
+    const withOwn = await req(cdp, "scenes.get", { avatarId });
+    revision = Number(field(withOwn, "result", "sceneSet", "revision"));
+    const ownScene = (field(withOwn, "result", "sceneSet", "scenes") as unknown[])[SCENE_SET_SCENES];
+    check(
+      "scene-set run scenario: the set holds the own scene as scene 6, written from the idea, with no category and no place",
+      (field(withOwn, "result", "sceneSet", "scenes") as unknown[]).length === SCENE_SET_SCENES + 1 &&
+        field(ownScene, "sceneId") === SCENE_SET_SCENES + 1 &&
+        field(ownScene, "origin") === "own" &&
+        field(ownScene, "category") === "own" &&
+        field(ownScene, "idea") === SCENE_OWN_IDEA &&
+        field(ownScene, "place") === null &&
+        typeof field(ownScene, "text") === "string",
+      ownScene,
+    );
+
     // 3. The engine restarts in the middle of the review: the set is on disk, so it keeps everything, and nothing was spent.
     const spentBefore = field(await req(cdp, "money.status"), "result", "spentMicros");
     const enginePidBeforeKill = await waitFor("the engine process", async () => enginePid(mainPid), 5_000);
@@ -2672,22 +2699,23 @@ async function runSceneSetRunScenario(target: Target): Promise<void> {
     check("scene-set run scenario: the restarted engine answers with a fresh bootId", typeof field(afterKill, "result", "bootId") === "string", afterKill);
     const kept = await req(cdp, "scenes.get", { avatarId });
     check(
-      "scene-set run scenario: the set survived the restart as it was (same revision, the edit, the removal, five scenes, ready)",
+      "scene-set run scenario: the set survived the restart as it was (same revision, the edit, the removal, the own scene, six scenes, ready)",
       field(kept, "result", "sceneSet", "revision") === revision &&
         field(kept, "result", "sceneSet", "status") === "ready" &&
         field(kept, "result", "sceneSet", "scenes", "0", "text") === SCENE_EDIT_TEXT &&
         field(kept, "result", "sceneSet", "scenes", "1", "removed") === true &&
-        (field(kept, "result", "sceneSet", "scenes") as unknown[]).length === SCENE_SET_SCENES,
+        field(kept, "result", "sceneSet", "scenes", String(SCENE_SET_SCENES), "origin") === "own" &&
+        (field(kept, "result", "sceneSet", "scenes") as unknown[]).length === SCENE_SET_SCENES + 1,
       kept,
     );
     check("scene-set run scenario: the review spent nothing", field(await req(cdp, "money.status"), "result", "spentMicros") === spentBefore, spentBefore);
 
-    // 4. The approval's price: four photos, images only.
+    // 4. The approval's price: five photos, images only.
     const estimate = await req(cdp, "runs.estimateFromScenes", { sceneSetId, revision });
     const worst = Number(field(estimate, "result", "estimate", "worstMicros"));
-    const whole = await req(cdp, "runs.estimate", { avatarId, count: SCENE_SET_SCENES - 1, categories: ["home"], poses: RUN_POSES });
+    const whole = await req(cdp, "runs.estimate", { avatarId, count: SCENE_SET_ACTIVE, categories: ["home"], poses: RUN_POSES });
     check(
-      "scene-set run scenario: runs.estimateFromScenes prices four photos with no writer term (below the whole run's estimate for four)",
+      "scene-set run scenario: runs.estimateFromScenes prices five photos with no writer term (below the whole run's estimate for five)",
       field(estimate, "ok") === true && worst > 0 && worst < Number(field(whole, "result", "estimate", "worstMicros")),
       { estimate, whole },
     );
@@ -2695,18 +2723,28 @@ async function runSceneSetRunScenario(target: Target): Promise<void> {
     check("scene-set run scenario: a start on a revision that moved is refused SCENES_CHANGED, free", field(stale, "ok") === false && field(stale, "error", "code") === "SCENES_CHANGED", stale);
     check("scene-set run scenario: that refusal made no run folder", (await namesIn(join(libraryRoot, "runs"))).length === 0, await namesIn(join(libraryRoot, "runs")));
 
-    // 5. Approve: four photos, no writer, the set used.
+    // 5. Approve: five photos, no writer, the set used.
     const started = await req(cdp, "runs.startFromScenes", { sceneSetId, revision, acceptedWorstMicros: worst });
     check("scene-set run scenario: runs.startFromScenes launches the run", field(started, "ok") === true, started);
     const runId = String(field(started, "result", "runId"));
     const end = await waitFor("the scene-set run's job to end", () => endEventOf(cdp, field(started, "result", "jobId")), 90_000);
-    check("scene-set run scenario: the run finished as job.done with the four photos drawn", field(end, "type") === "job.done" && Array.isArray(field(end, "payload", "result", "photoIds")) && (field(end, "payload", "result", "photoIds") as unknown[]).length === SCENE_SET_SCENES - 1 && Number(field(end, "payload", "result", "failedSlots")) === 0, end);
-    check("scene-set run scenario: the run asked the writer for nothing", mock.sceneWriterRequests().length === writerRequestsAfterCompose, mock.sceneWriterRequests().length - writerRequestsAfterCompose);
+    check("scene-set run scenario: the run finished as job.done with the five photos drawn", field(end, "type") === "job.done" && Array.isArray(field(end, "payload", "result", "photoIds")) && (field(end, "payload", "result", "photoIds") as unknown[]).length === SCENE_SET_ACTIVE && Number(field(end, "payload", "result", "failedSlots")) === 0, end);
+    check("scene-set run scenario: the run asked the writer for nothing", mock.sceneWriterRequests().length === writerRequestsAfterIdea, mock.sceneWriterRequests().length - writerRequestsAfterIdea);
 
     const plan: unknown = JSON.parse(await readFile(join(libraryRoot, "runs", runId, "plan.json"), "utf8"));
     const slots = field(plan, "scenes", "slots") as unknown[];
-    check("scene-set run scenario: plan.json names the set, has four slots numbered 1..4 and no writer chunks", field(plan, "sceneSetId") === sceneSetId && slots.length === 4 && slots.every((s, i) => field(s, "slotIndex") === i + 1) && JSON.stringify(field(plan, "writerChunks")) === "[]", plan);
-    check("scene-set run scenario: the scene ids are the set's, without the removed one, and the edited text is slot 1's sentence", JSON.stringify(field(plan, "sceneIds")) === JSON.stringify([1, 3, 4, 5]) && field(slots[0], "sentence") === SCENE_EDIT_TEXT, field(plan, "sceneIds"));
+    check("scene-set run scenario: plan.json names the set, has five slots numbered 1..5 and no writer chunks", field(plan, "sceneSetId") === sceneSetId && slots.length === SCENE_SET_ACTIVE && slots.every((s, i) => field(s, "slotIndex") === i + 1) && JSON.stringify(field(plan, "writerChunks")) === "[]", plan);
+    check("scene-set run scenario: the scene ids are the set's, without the removed one, and the edited text is slot 1's sentence", JSON.stringify(field(plan, "sceneIds")) === JSON.stringify([1, 3, 4, 5, 6]) && field(slots[0], "sentence") === SCENE_EDIT_TEXT, field(plan, "sceneIds"));
+    check(
+      "scene-set run scenario: the own scene is the last slot of the plan, an own slot with its shot, its pose and the sentence the idea write made",
+      field(slots[4], "kind") === "own" && field(slots[4], "category") === "own" && typeof field(slots[4], "shot") === "string" && typeof field(slots[4], "pose") === "string" && typeof field(slots[4], "sentence") === "string" && field(slots[4], "sentence") === field(ownScene, "text"),
+      slots[4],
+    );
+    const runPhotos = await req(cdp, "photos.list", { avatarId });
+    const drawn = (field(runPhotos, "result", "photos") as unknown[]).filter((p) => field(p, "runId") === runId);
+    check("scene-set run scenario: photos.list shows five photos of the run, one of them of the category own and four of home", drawn.length === SCENE_SET_ACTIVE && drawn.filter((p) => field(p, "category") === "own").length === 1 && drawn.filter((p) => field(p, "category") === "home").length === SCENE_SET_ACTIVE - 1, drawn);
+    const history = (await readFile(join(libraryRoot, "avatars", avatarId, "history.jsonl"), "utf8")).split("\n").filter(Boolean);
+    check("scene-set run scenario: the avatar's history remembers the four planned scenes and not the own one", history.length === SCENE_SET_ACTIVE - 1, history.length);
     check("scene-set run scenario: the cap is the accepted worst case, fixed", field(plan, "capMicros") === worst, field(plan, "capMicros"));
     const reserved = await reservedAttemptIds(userData, "");
     check("scene-set run scenario: no writer attempt of the run was reserved, only images", reserved.filter((id) => id.startsWith(`${runId}:`)).every((id) => id.includes(":slot-")), reserved);

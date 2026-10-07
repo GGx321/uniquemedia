@@ -198,3 +198,45 @@ describe("runs.startFromScenes", () => {
     expect(estimate.worstMicros % 3).toBe(0);
   });
 });
+
+// CS.4b x CS.5: an own scene (written from an idea) is a run slot of no category. The engine's `photoCategoryOf` makes its photo `"own"`, and its run
+// request never names "own" as a category (that is the type's own rule: `RunRequest.categories` holds only categories).
+describe("runs.startFromScenes: an own scene", () => {
+  /** A ready set of `count` planned scenes plus one own scene written from an idea. */
+  async function setWithOwn(m: Mock, count = 3): Promise<SceneSetView> {
+    const set = await readySet(m, count);
+    const target = { kind: "idea", idea: "кофе на балконе утром", count: 1, shot: null };
+    await unwrap(m.client.request("scenes.write", { sceneSetId: set.sceneSetId, revision: set.revision, target, acceptedWorstMicros: 2 * ATTEMPT } as never));
+    m.scheduler.runAll();
+    const after = await setOf(m);
+    expect(after.scenes.filter((s) => s.origin === "own")).toHaveLength(1);
+    return after;
+  }
+
+  test("is drawn like any scene: the run counts it, and its photo carries the category own", async () => {
+    const m = makeMock();
+    const set = await setWithOwn(m, 3);
+    const worst = (await unwrap(estimateOf(m, set))).estimate.worstMicros;
+    const { runId } = await unwrap(start(m, set, worst));
+    m.scheduler.runAll();
+    const { runs } = await unwrap(m.client.request("runs.list", {}));
+    expect(runs.find((r) => r.runId === runId)).toMatchObject({ total: 4, done: 4, open: 0 });
+    const { photos } = await unwrap(m.client.request("photos.list", { avatarId: MIA.avatarId }));
+    const made = photos.filter((p) => p.runId === runId);
+    expect(made.filter((p) => p.category === "own")).toHaveLength(1);
+    expect(made.filter((p) => p.category === "home")).toHaveLength(3);
+  });
+
+  test("a set of own scenes only makes photos that are all own, none with a category name", async () => {
+    const m = makeMock();
+    let set = await setWithOwn(m, 3);
+    set = await edited(m, set, { op: "remove", sceneIds: set.scenes.filter((s) => s.origin === "planned").map((s) => s.sceneId) });
+    const worst = (await unwrap(estimateOf(m, set))).estimate.worstMicros;
+    const { runId } = await unwrap(start(m, set, worst));
+    m.scheduler.runAll();
+    const { photos } = await unwrap(m.client.request("photos.list", { avatarId: MIA.avatarId }));
+    const made = photos.filter((p) => p.runId === runId);
+    expect(made.map((p) => p.category)).toEqual(["own"]);
+    expect(made.some((p) => "categoryName" in p)).toBe(false);
+  });
+});

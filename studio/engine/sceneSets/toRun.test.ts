@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SceneSetFile, type StoredSceneSet } from "../library/sceneSets";
-import { sampleSet } from "../library/testing/sceneSetSample";
+import { ownScene, sampleSet } from "../library/testing/sceneSetSample";
 import { CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { approvalRefusal, runSnapshots, runSources } from "./toRun";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -84,7 +84,23 @@ describe("runSources", () => {
     const sources = runSources(set);
     expect(sources.map((s) => s.sceneId)).toEqual([1, 3, 4, 5]);
     expect<unknown>(sources.map((s) => s.text)).toEqual([1, 3, 4, 5].map((id) => set.scenes.find((s) => s.sceneId === id)?.text));
-    expect(sources[1]?.slot).toBe(set.scenes[2]?.slot);
+    const third = set.scenes[2];
+    if (third?.origin !== "planned") throw new Error("the sample set is planned scenes only");
+    expect(sources[1]?.slot).toBe(third.slot);
+  });
+
+  test("an own scene is a source with its shot, its pose and its text, in the set's order", () => {
+    const base = setOf(3);
+    const set = SceneSetFile.parse({ ...base, scenes: [...base.scenes, ownScene(4, { shot: "selfie", pose: "three-quarter", text: "She waves from the balcony." })] });
+    const own = runSources(set).find((s) => s.sceneId === 4);
+    expect(own).toEqual({ sceneId: 4, text: "She waves from the balcony.", slot: { kind: "own", shot: "selfie", pose: "three-quarter" } });
+    expect(runSources(set).map((s) => s.sceneId)).toEqual([1, 2, 3, 4]);
+  });
+
+  test("a removed own scene is not a source", () => {
+    const base = setOf(3);
+    const set = SceneSetFile.parse({ ...base, scenes: [...base.scenes, ownScene(4, { removed: true })] });
+    expect(runSources(set).map((s) => s.sceneId)).toEqual([1, 2, 3]);
   });
 
   test("an edited text is what the run gets", () => {
@@ -105,7 +121,7 @@ describe("runSnapshots", () => {
       ...base,
       request: { ...base.request, categories: ["home", CUSTOM_REF] },
       categories: [customSnapshot()],
-      scenes: base.scenes.map((s) => (s.sceneId === 2 ? { ...s, slot: { ...s.slot, category: CUSTOM_REF, location: "a corner cafe", timeOfDay: "morning", activity: "reading a menu", outfit: "a beige trench coat" } } : s)),
+      scenes: base.scenes.map((s) => (s.sceneId === 2 && s.origin === "planned" ? { ...s, slot: { ...s.slot, category: CUSTOM_REF, location: "a corner cafe", timeOfDay: "morning", activity: "reading a menu", outfit: "a beige trench coat" } } : s)),
     });
   }
 
@@ -117,6 +133,12 @@ describe("runSnapshots", () => {
   test("drops it when the only scene that used it was removed", () => {
     const set = customSet([2]);
     expect(runSnapshots(set, runSources(set))).toEqual([]);
+  });
+
+  test("an own scene adds no snapshot and does not break the ones of the planned scenes", () => {
+    const base = customSet();
+    const set = SceneSetFile.parse({ ...base, scenes: [...base.scenes, ownScene(4)] });
+    expect(runSnapshots(set, runSources(set))).toEqual([customSnapshot()]);
   });
 
   test("is empty for built-in scenes only", () => {

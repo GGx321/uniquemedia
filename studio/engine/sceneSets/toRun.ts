@@ -41,11 +41,12 @@ export function approvalRefusal(set: StoredSceneSet, ctx: ApprovalContext): Appr
 export function runSources(set: StoredSceneSet): SceneRunSource[] {
   return activeScenes(set).map((scene): SceneRunSource => {
     if (scene.text === null) throw new RangeError(`scene ${scene.sceneId} of set ${set.sceneSetId} has no text`);
-    // CS.4b adds the own scenes to `SceneRecord`: the switch on `origin` is exhaustive on purpose, so the compiler names the case to map there
-    // (an own scene's slot is `{ kind: "own", shot, pose }`, which the plan already holds).
+    // The switch on `origin` is exhaustive on purpose: a new kind of scene must name its slot here (an own scene's slot is `{ kind: "own", shot, pose }`).
     switch (scene.origin) {
       case "planned":
         return { sceneId: scene.sceneId, text: scene.text, slot: scene.slot };
+      case "own":
+        return { sceneId: scene.sceneId, text: scene.text, slot: { kind: "own", shot: scene.shot, pose: scene.pose } };
     }
   });
 }

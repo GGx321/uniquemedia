@@ -1,4 +1,4 @@
-import type { Estimate } from "../../shared/engine";
+import { MAX_SCENES_PER_WRITE, type Estimate } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
 import { WRITER_CALL, writerWorstMicros, type WriterCall } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
@@ -42,6 +42,20 @@ export function composeEstimate(priced: PricedBook, textModel: string, count: nu
   const call = writerCall(textModel);
   const worstMicros = writerWorstMicros(priced.book, call, count);
   return { expectedMicros: Math.min(typicalOf(priced.book, call, count), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
+}
+
+/**
+ * A rewrite or an idea write (CS.4b): ONE writer request for one to five scenes, asked at most `attemptsLeft` times (2 for a fresh write; after an open or
+ * reconciled reserve one, after a free 429/5xx two again), each at the writer's ceiling, so the worst case is exactly what the job's cap is set to. Expected
+ * at the writer's typical tokens for the scenes. A write with none left costs nothing.
+ */
+export function reviewWriteEstimate(priced: PricedBook, textModel: string, scenes: number, attemptsLeft: number): Estimate {
+  if (!Number.isInteger(scenes) || scenes < 1 || scenes > MAX_SCENES_PER_WRITE) throw new RangeError(`a write covers 1..${MAX_SCENES_PER_WRITE} scenes, got ${scenes}`);
+  if (!Number.isInteger(attemptsLeft) || attemptsLeft < 0 || attemptsLeft > WRITER_CALL.maxAttempts) throw new RangeError(`a write has 0..${WRITER_CALL.maxAttempts} attempts left, got ${attemptsLeft}`);
+  if (attemptsLeft === 0) return { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
+  const call = writerCall(textModel);
+  const worstMicros = attemptsLeft * ceilingOf(priced.book, call);
+  return { expectedMicros: Math.min(typicalOf(priced.book, call, scenes), worstMicros), worstMicros, prices: priced.book.source, pricesAsOf: priced.asOf };
 }
 
 /**

@@ -12,6 +12,7 @@ import {
   SceneProblem,
   SceneSetView,
   SceneView,
+  SceneWriteTarget,
   ScenesResult,
 } from "./scenes";
 import { JobFailed, JobProgress, JobResult, JobState } from "./state";
@@ -338,5 +339,120 @@ describe("SCENES_CHANGED", () => {
     expect(ERROR_CODES).toContain("SCENES_CHANGED");
     expect(ErrorCode.safeParse("SCENES_CHANGED").success).toBe(true);
     expect((ERROR_MESSAGES_RU as Record<string, string>).SCENES_CHANGED).toContain("изменён");
+  });
+});
+
+// CS.4b: the review-time writes on the contract — the rewrite and idea targets, the resume of an interrupted write, the dismiss op and the per-scene markers.
+
+describe("SceneWriteTarget, CS.4b", () => {
+  const ok = (target: unknown) => SceneWriteTarget.safeParse(target).success;
+
+  test("a rewrite names one to five scenes and whether to redraw them", () => {
+    expect(ok({ kind: "rewrite", sceneIds: [4], redraw: true })).toBe(true);
+    expect(ok({ kind: "rewrite", sceneIds: [1, 2, 3, 4, 5], redraw: false })).toBe(true);
+  });
+
+  test("a rewrite of none, of six, of one scene twice, or with no redraw flag is refused", () => {
+    expect(ok({ kind: "rewrite", sceneIds: [], redraw: true })).toBe(false);
+    expect(ok({ kind: "rewrite", sceneIds: [1, 2, 3, 4, 5, 6], redraw: true })).toBe(false);
+    expect(ok({ kind: "rewrite", sceneIds: [2, 2], redraw: true })).toBe(false);
+    expect(ok({ kind: "rewrite", sceneIds: [2] })).toBe(false);
+  });
+
+  test("an idea is 1..500 chars of any script, for one to five scenes, in a shot or on auto", () => {
+    expect(ok({ kind: "idea", idea: "кофе на балконе утром", count: 3, shot: null })).toBe(true);
+    expect(ok({ kind: "idea", idea: "я".repeat(500), count: 5, shot: "mirror" })).toBe(true);
+  });
+
+  test("an idea that is empty, blank, over 500 chars, for 0 or 6 scenes, or in an unknown shot is refused", () => {
+    expect(ok({ kind: "idea", idea: "", count: 1, shot: null })).toBe(false);
+    expect(ok({ kind: "idea", idea: "   ", count: 1, shot: null })).toBe(false);
+    expect(ok({ kind: "idea", idea: "я".repeat(501), count: 1, shot: null })).toBe(false);
+    expect(ok({ kind: "idea", idea: "a walk", count: 0, shot: null })).toBe(false);
+    expect(ok({ kind: "idea", idea: "a walk", count: 6, shot: null })).toBe(false);
+    expect(ok({ kind: "idea", idea: "a walk", count: 1, shot: "drone" })).toBe(false);
+    expect(ok({ kind: "idea", idea: "a walk", count: 1 })).toBe(false);
+  });
+
+  test("an idea whose JSON form would weigh more than three bytes a character is refused: it would push the writer's prompt past the ceiling its price was set at", () => {
+    // Control characters and lone surrogates JSON-escape to six bytes each; a quote, a newline and a CJK character to at most three.
+    expect(ok({ kind: "idea", idea: "\u0001".repeat(500), count: 5, shot: null })).toBe(false);
+    expect(ok({ kind: "idea", idea: "\ud800".repeat(500), count: 5, shot: null })).toBe(false);
+    expect(ok({ kind: "idea", idea: "中".repeat(500), count: 5, shot: null })).toBe(true);
+    expect(ok({ kind: "idea", idea: '"'.repeat(500), count: 5, shot: null })).toBe(true);
+    expect(ok({ kind: "idea", idea: "a balcony\nwith coffee\tat dawn", count: 1, shot: null })).toBe(true);
+  });
+
+  test("a resume names the write it carries on", () => {
+    expect(ok({ kind: "resume", write: 3 })).toBe(true);
+    expect(ok({ kind: "resume", write: 0 })).toBe(false);
+    expect(ok({ kind: "resume" })).toBe(false);
+  });
+
+  test("the scenes still waiting stay a target of their own", () => {
+    expect(ok({ kind: "unwritten" })).toBe(true);
+  });
+});
+
+describe("SceneEditOp dismissInterrupted, CS.4b", () => {
+  const ok = (op: unknown) => SceneEditOp.safeParse(op).success;
+
+  test("dismisses by scenes or by write, one of the two", () => {
+    expect(ok({ op: "dismissInterrupted", sceneIds: [2, 3] })).toBe(true);
+    expect(ok({ op: "dismissInterrupted", write: 4 })).toBe(true);
+  });
+
+  test("names neither, both, no scenes, or six scenes: refused", () => {
+    expect(ok({ op: "dismissInterrupted" })).toBe(false);
+    expect(ok({ op: "dismissInterrupted", sceneIds: [1], write: 4 })).toBe(false);
+    expect(ok({ op: "dismissInterrupted", sceneIds: [] })).toBe(false);
+    expect(ok({ op: "dismissInterrupted", sceneIds: [1, 2, 3, 4, 5, 6] })).toBe(false);
+  });
+
+  test("there is still no op that adds an own scene for free", () => {
+    expect(ok({ op: "addOwn", text: "x", shot: "friend", pose: "front" })).toBe(false);
+  });
+});
+
+describe("the markers of an interrupted write, CS.4b", () => {
+  test("a scene carries the write that was interrupted and why", () => {
+    expect(SceneView.safeParse(scene({ rewriteInterrupted: { write: 2, stoppedBy: "network" } })).success).toBe(true);
+  });
+
+  test("a scene with no marker parses as it did (the field is optional)", () => {
+    expect(SceneView.safeParse(scene()).success).toBe(true);
+  });
+
+  test("a marker never says 'failed' without being one of the known reasons", () => {
+    expect(SceneView.safeParse(scene({ rewriteInterrupted: { write: 2, stoppedBy: "sulking" } })).success).toBe(false);
+  });
+
+  test("the set lists an idea write that was interrupted, with what it was asked", () => {
+    const idea = { write: 3, idea: "кофе на балконе", count: 2, shot: null, stoppedBy: "closed" };
+    expect(SceneSetView.safeParse(view({ interruptedIdeas: [idea] })).success).toBe(true);
+    expect(SceneSetView.safeParse(view({ interruptedIdeas: [{ ...idea, count: 6 }] })).success).toBe(false);
+  });
+
+  test("an own scene has an idea and no place; a planned scene has a place", () => {
+    expect(SceneView.safeParse(scene({ origin: "own", category: "own", categoryName: null, place: null, idea: "кофе на балконе", chunk: null })).success).toBe(true);
+  });
+
+  test("a live rewrite names its scenes, and a live idea its count", () => {
+    expect(SceneSetView.safeParse(view({ status: "writing", write: { kind: "rewrite", count: 2, sceneIds: [1, 2] } })).success).toBe(true);
+    expect(SceneSetView.safeParse(view({ status: "writing", write: { kind: "idea", count: 3 } })).success).toBe(true);
+  });
+});
+
+describe("scenes.write and scenes.estimateWrite carry the new targets, CS.4b", () => {
+  const command = (type: string, payload: unknown) => CommandMessage.safeParse({ v: 5, id: "msg-000001", kind: "command", type, payload }).success;
+  const worst = { acceptedWorstMicros: 75_000 };
+
+  test.each([
+    { kind: "rewrite", sceneIds: [2], redraw: true },
+    { kind: "idea", idea: "кофе на балконе", count: 2, shot: null },
+    { kind: "resume", write: 2 },
+  ])("scenes.write takes a $kind target", (target) => {
+    expect(command("scenes.write", { sceneSetId: SET, revision: 2, target, ...worst })).toBe(true);
+    expect(command("scenes.estimateWrite", { sceneSetId: SET, target })).toBe(true);
   });
 });

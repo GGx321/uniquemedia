@@ -4,10 +4,14 @@ import type { StoredSceneSet } from "../library/sceneSets";
 // CS.4a: the changes a write makes to its set's record, as pure functions of the record. The store rewrites the file (the next revision, atomically,
 // under the set's lock); these say what changes in it.
 
-/** Records the next write under its job BEFORE its first call. An earlier write's outcome goes with it: this one has none yet. */
+/**
+ * Records the next write under its job BEFORE its first call. An earlier write's outcome goes with it: this one has none yet, and a job that dies before it
+ * can record its own must not leave the last one's «Готово 25 из 35» standing over a set that is complete by then (the view reads the scenes as they are).
+ */
 export function beginWrite(set: StoredSceneSet, write: { kind: "compose" | "unwritten"; jobId: string }): StoredSceneSet {
   const k = set.writes + 1;
-  return { ...set, write: { k, kind: write.kind, jobId: write.jobId }, writes: k };
+  const { lastOutcome: _forgotten, ...rest } = set;
+  return { ...rest, write: { k, kind: write.kind, jobId: write.jobId }, writes: k };
 }
 
 /**
@@ -15,7 +19,8 @@ export function beginWrite(set: StoredSceneSet, write: { kind: "compose" | "unwr
  * his text (a free edit is refused while the job runs, so this is a guard, not a path), and a scene the set does not have is ignored.
  */
 export function withChunkWritten(set: StoredSceneSet, sentences: ReadonlyMap<number, string>): StoredSceneSet {
-  return { ...set, scenes: set.scenes.map((s) => (s.text === null && sentences.has(s.sceneId) ? { ...s, text: sentences.get(s.sceneId) ?? null } : s)) };
+  // Only a planned scene can wait for its sentence: an own scene enters the set with one.
+  return { ...set, scenes: set.scenes.map((s) => (s.origin === "planned" && s.text === null && sentences.has(s.sceneId) ? { ...s, text: sentences.get(s.sceneId) ?? null } : s)) };
 }
 
 /** A job's verdict against a whole chunk: two rejected answers, or a provider's refusal. No job asks this chunk again. */

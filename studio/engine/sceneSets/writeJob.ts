@@ -56,7 +56,7 @@ export type SceneWriteEnd =
  * Why a failure stopped the job, as the notice words it. A 5xx that outlasted the transport retries and a dropped connection are both the code
  * NETWORK, but money tells them apart: the 5xx settled at nothing (a free settle, no reconcile), the dropped connection left its reserve open.
  */
-function stoppedByOf(error: EngineError, freeSettle: boolean): Exclude<SceneStoppedBy, "closed"> {
+export function stoppedByOf(error: EngineError, freeSettle: boolean): Exclude<SceneStoppedBy, "closed"> {
   switch (error.code) {
     case "RATE_LIMITED":
       return "rate-limited";
@@ -70,7 +70,7 @@ function stoppedByOf(error: EngineError, freeSettle: boolean): Exclude<SceneStop
 }
 
 /** Whether the chunk's newest attempt was closed by a free settle (a final non-2xx), not left open or paid. */
-function lastAttemptWasFree(budget: Budget, attemptIds: readonly string[]): boolean {
+export function lastAttemptWasFree(budget: Budget, attemptIds: readonly string[]): boolean {
   const last = [...attemptIds].reverse().find((attemptId) => budget.ledger.reserveOf(attemptId) !== undefined);
   if (last === undefined) return false;
   const close = budget.ledger.closeOf(last);
@@ -95,6 +95,7 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
     const slots = next.sceneIds.map((sceneId) => {
       const scene = set.scenes.find((s) => s.sceneId === sceneId);
       if (scene === undefined) throw new Error(`the writer's chunk ${next.chunk.chunk} names scene ${sceneId}, which the set does not have`);
+      if (scene.origin !== "planned") throw new Error(`the writer's chunk ${next.chunk.chunk} names scene ${sceneId}, which is not a planned scene`);
       return scene.slot;
     });
     const phase: WriterPhase = {

@@ -67,13 +67,44 @@ export const ScenePlace = z.strictObject({ location: PlaceText, timeOfDay: Place
 export type ScenePlace = z.infer<typeof ScenePlace>;
 
 /** The idea an own scene was written from (CS.4b): any script, up to 500 chars. */
-export const SceneIdea = z.string().min(1).max(500);
+export const SCENE_IDEA_MAX = 500;
+export const SceneIdea = z.string().min(1).max(SCENE_IDEA_MAX);
+/**
+ * The most bytes a character of an idea may weigh once it is JSON-escaped into the writer's prompt (a CJK character is 3; a quote, a newline and a tab are 2).
+ * Control characters and lone surrogates escape to 6, which would carry five 500-char ideas past the 14K input ceiling the writer's price was set at (the
+ * phase-2 floor pin, `ideaWriter.test.ts`), so an idea is held to this per character.
+ */
+export const SCENE_IDEA_BYTES_PER_CHAR = 3;
+/** The UTF-8 weight of a string with no lone surrogates (which is what JSON.stringify returns), counted by hand: this package has no Node or DOM types. */
+function utf8Bytes(text: string): number {
+  let bytes = 0;
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+function ideaBytesFit(idea: string): boolean {
+  return utf8Bytes(JSON.stringify(idea)) - 2 <= SCENE_IDEA_MAX * SCENE_IDEA_BYTES_PER_CHAR;
+}
+/** An idea as the owner sends it: not blank, and no heavier in the prompt than the price allows (the engine stores it trimmed). */
+export const SceneIdeaInput = z
+  .string()
+  .max(SCENE_IDEA_MAX)
+  .refine((idea) => idea.trim().length > 0, "an idea must not be blank")
+  .refine(ideaBytesFit, "an idea must not hold control characters or broken surrogates");
+/** One rewrite, and one idea write, covers at most this many scenes (one writer request). */
+export const MAX_SCENES_PER_WRITE = 5;
 
 /**
  * A scene's stored and shown text. Bounded below only: it holds what the writer's answer was accepted with, and a run's journal accepts a writer sentence
  * of any length (`z.string().min(1)`), so a paid, accepted sentence can never fail to fit here. The 600-char bound is the owner's edit (`textProblem`).
  */
 export const SceneText = z.string().min(1);
+
+/** A write of one scene that was interrupted: which write (`k`, its ids `${set}:write-${k}#n`) and why it stopped (never stored as `closed`: derived). */
+export const SceneRewriteInterrupted = z.strictObject({ write: z.number().int().min(1), stoppedBy: SceneStoppedBy });
+export type SceneRewriteInterrupted = z.infer<typeof SceneRewriteInterrupted>;
 
 export const SceneView = z
   .strictObject({
@@ -97,6 +128,8 @@ export const SceneView = z
     gaveUpBy: SceneGaveUpBy.nullable(),
     /** The writer chunk the scene belongs to (1-based); null for an own scene. */
     chunk: z.number().int().min(1).nullable(),
+    /** CS.4b: a rewrite of this scene was interrupted; the scene keeps its old text and place. Absent when there is none. */
+    rewriteInterrupted: SceneRewriteInterrupted.optional(),
   })
   .refine((s) => (s.text === null) === (s.unwritten !== null), { message: "a scene is unwritten exactly when it has no text", path: ["unwritten"] })
   .refine((s) => (s.unwritten === "gave-up") === (s.gaveUpBy !== null), { message: "a gave-up scene says by what, and only a gave-up scene does", path: ["gaveUpBy"] })
@@ -117,13 +150,27 @@ export type SceneChunkView = z.infer<typeof SceneChunkView>;
 export const SceneSetCategory = z.strictObject({ ref: CategoryRef, name: z.string().min(1).max(40).nullable() });
 export type SceneSetCategory = z.infer<typeof SceneSetCategory>;
 
-/** The write that runs now: placeholders and the task line read it. */
-export const SceneLiveWrite = z.strictObject({ kind: z.enum(["compose", "unwritten"]), count: Count });
+/** The write that runs now: placeholders and the task line read it. `sceneIds` names the scenes of a rewrite (CS.4b); an idea write says only how many. */
+export const SceneLiveWrite = z.strictObject({
+  kind: z.enum(["compose", "unwritten", "rewrite", "idea"]),
+  count: Count,
+  sceneIds: z.array(SceneId).min(1).max(MAX_SCENES_PER_WRITE).optional(),
+});
 export type SceneLiveWrite = z.infer<typeof SceneLiveWrite>;
 
 /** Counters of the planned scenes that are not removed: how many, how many have a text, how many are «не составлена». */
 export const SceneComposeTally = z.strictObject({ total: Count, written: Count, gaveUp: Count });
 export type SceneComposeTally = z.infer<typeof SceneComposeTally>;
+
+/** An idea write that was interrupted (CS.4b): it added no scene; «Повторить» carries it on as write `write`, «Не нужно» dismisses it. */
+export const SceneInterruptedIdea = z.strictObject({
+  write: z.number().int().min(1),
+  idea: SceneIdea,
+  count: z.number().int().min(1).max(MAX_SCENES_PER_WRITE),
+  shot: PoolShot.nullable(),
+  stoppedBy: SceneStoppedBy,
+});
+export type SceneInterruptedIdea = z.infer<typeof SceneInterruptedIdea>;
 
 export const SceneSetView = z
   .strictObject({
@@ -152,6 +199,8 @@ export const SceneSetView = z
     lastCompose: SceneComposeTally.nullable(),
     chunks: z.array(SceneChunkView).max(Math.ceil(MAX_SCENES_PER_SET / SCENE_CHUNK_SIZE)),
     scenes: z.array(SceneView).max(MAX_SCENES_PER_SET),
+    /** CS.4b: idea writes that were interrupted; absent when there are none. */
+    interruptedIdeas: z.array(SceneInterruptedIdea).max(MAX_SCENES_PER_SET).optional(),
   })
   .refine((v) => (v.status === "stopped") === (v.stoppedBy !== null), { message: "a stopped set says why, and only a stopped set does", path: ["stoppedBy"] })
   .refine((v) => (v.stoppedError !== null) === (v.stoppedBy === "failed"), { message: "the error belongs to a set that stopped by a failure", path: ["stoppedError"] })
@@ -188,6 +237,17 @@ export const SceneEditOp = z.discriminatedUnion("op", [
   /** One or many scenes in one revision (works on written, pending and gave-up scenes). */
   z.strictObject({ op: z.literal("remove"), sceneIds: z.array(SceneId).min(1).max(MAX_SCENES_PER_EDIT).refine(unique, "a scene must not repeat") }),
   z.strictObject({ op: z.literal("restore"), sceneIds: z.array(SceneId).min(1).max(MAX_SCENES_PER_EDIT).refine(unique, "a scene must not repeat") }),
+  /**
+   * CS.4b, free: «Оставить как есть» / «Не нужно». Drops the marker of an interrupted write, by its scenes (a rewrite) or by its write number (a rewrite or an
+   * idea). The ids of that write stay burnt. Exactly one of the two.
+   */
+  z
+    .strictObject({
+      op: z.literal("dismissInterrupted"),
+      sceneIds: z.array(SceneId).min(1).max(MAX_SCENES_PER_WRITE).refine(unique, "a scene must not repeat").optional(),
+      write: z.number().int().min(1).optional(),
+    })
+    .refine((op) => (op.sceneIds === undefined) !== (op.write === undefined), { message: "name the scenes or the write, not both and not neither", path: ["sceneIds"] }),
 ]);
 export type SceneEditOp = z.infer<typeof SceneEditOp>;
 
@@ -199,8 +259,17 @@ export const SceneProblem = z.strictObject({
 });
 export type SceneProblem = z.infer<typeof SceneProblem>;
 
-/** What a paid write targets. CS.4a writes the scenes still waiting; later tasks add a rewrite and an idea. */
-export const SceneWriteTarget = z.discriminatedUnion("kind", [z.strictObject({ kind: z.literal("unwritten") })]);
+/**
+ * What a paid write targets: the scenes still waiting (CS.4a), a new sentence for one to five scenes (`redraw` draws a new place, outfit, activity, time
+ * of day and pose for a planned scene first; an own scene is written again from its stored idea, `redraw: false`), own scenes written from an idea
+ * (any script, count 1..5, a shot or `null` for auto, which never draws the mirror), or the carrying on of an interrupted rewrite or idea write.
+ */
+export const SceneWriteTarget = z.discriminatedUnion("kind", [
+  z.strictObject({ kind: z.literal("unwritten") }),
+  z.strictObject({ kind: z.literal("rewrite"), sceneIds: z.array(SceneId).min(1).max(MAX_SCENES_PER_WRITE).refine(unique, "a scene must not repeat"), redraw: z.boolean() }),
+  z.strictObject({ kind: z.literal("idea"), idea: SceneIdeaInput, count: z.number().int().min(1).max(MAX_SCENES_PER_WRITE), shot: PoolShot.nullable() }),
+  z.strictObject({ kind: z.literal("resume"), write: z.number().int().min(1) }),
+]);
 export type SceneWriteTarget = z.infer<typeof SceneWriteTarget>;
 
 /** `scenes.get`'s answer: the avatar's newest set (open, or used and read-only), and how many set files could not be read (kept as they are). */

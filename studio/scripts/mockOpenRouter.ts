@@ -164,6 +164,27 @@ function writerSlotsOf(body: unknown): z.infer<typeof WriterRequestSlot>[] {
   return z.array(WriterRequestSlot).parse(JSON.parse(json));
 }
 
+/** An own scene as the idea writer is asked about it (CS.4b): its number and the owner's idea, in any script. */
+const IdeaRequestSlot = z.object({ slotIndex: z.number().int(), idea: z.string() }).loose();
+
+/**
+ * The own scenes an idea write asked for, read back out of `scenes/ideaWriter.ts`'s request shape (`ideaMessages`): a user message that begins `"Ideas:\n"`
+ * and then the same indented JSON, optionally followed by a re-ask paragraph. Null for a request that is not an idea write's (a compose or a rewrite of a planned
+ * scene sends `"Slots:\n"`).
+ */
+function ideaSlotsOf(body: unknown): z.infer<typeof IdeaRequestSlot>[] | null {
+  const parsed = WriterChatBody.parse(body);
+  const user = parsed.messages.find((m) => m.role === "user");
+  if (user === undefined || !user.content.startsWith("Ideas:\n")) return null;
+  const json = (user.content.split("\n\n")[0] ?? "").replace(/^Ideas:\n/, "");
+  return z.array(IdeaRequestSlot).parse(JSON.parse(json));
+}
+
+/** One compliant sentence per own scene: it names no hand, no camera and nothing the writer's rules refuse, and differs with the scene's number. */
+function ideaSentenceFor(slot: z.infer<typeof IdeaRequestSlot>): string {
+  return `She spends a quiet moment by a sunny window in the afternoon light, wearing a long cardigan, calm and unhurried (scene ${slot.slotIndex}).`;
+}
+
 /**
  * One compliant scene sentence per slot: no youth or revealing word, no
  * two-handed phrasing, and no mention of the camera at all (so it can never
@@ -495,8 +516,11 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         }
         if (entry.schemaName === WRITER_JSON_SCHEMA.name) {
           if (writerDelayMs > 0) await Bun.sleep(writerDelayMs);
-          const slots = writerSlotsOf(entry.body);
-          const answer = { scenes: slots.map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
+          const ideas = ideaSlotsOf(entry.body);
+          const answer =
+            ideas !== null
+              ? { scenes: ideas.map((s) => ({ slotIndex: s.slotIndex, sentence: ideaSentenceFor(s) })) }
+              : { scenes: writerSlotsOf(entry.body).map((s) => ({ slotIndex: s.slotIndex, sentence: writerSentenceFor(s) })) };
           return json(chatCompletion(JSON.stringify(answer), costs.writer));
         }
         if (entry.schemaName === POOL_JSON_SCHEMA.name) {

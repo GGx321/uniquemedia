@@ -26,6 +26,7 @@ const POSES = { profile: false, back: false };
 /** One image attempt at the fallback prices (the low 1K price plus one reference). */
 const IMAGE = 50_000;
 /** What the owner's own words say, so a test can tell the set's sentence from the planner's. */
+const OWN_TEXT = "She sips coffee on a balcony, one hand free.";
 const TYPED = "She laughs at a friend's joke while stirring a coffee by the big window.";
 
 type Handler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
@@ -50,6 +51,8 @@ interface SeedOptions {
   longText?: { sceneId: number; length: number };
   /** Scene 2 belongs to a custom category the library never held (it was deleted); the set keeps its own snapshot. */
   customScene?: boolean;
+  /** One own scene (written from an idea, CS.4b) after the planned ones, with the id `count + 1`. */
+  own?: boolean;
   sceneSetId?: string;
   runId?: string;
 }
@@ -64,12 +67,15 @@ async function seedSet(avatarId: string, options: SeedOptions = {}): Promise<str
   await library.sceneSets.create({
     ...set,
     ...(options.customScene === true ? { request: { ...set.request, categories: ["home" as const, "cat-paris-cafes" as const] }, categories: [{ ref: "cat-paris-cafes" as const, name: "Кофейни Парижа", label: "Paris cafes", style: "phone" as const }] } : {}),
-    scenes: set.scenes.map((s) => ({
-      ...s,
-      removed: (options.removed ?? []).includes(s.sceneId),
-      text: (options.textless ?? []).includes(s.sceneId) ? null : long?.sceneId === s.sceneId ? `${"A friend laughs while the morning light moves over the table. ".repeat(20).slice(0, long.length - 1)}.` : s.text,
-      ...(options.customScene === true && s.sceneId === 2 ? { slot: { ...s.slot, category: "cat-paris-cafes" as const, location: "a corner cafe in Paris", timeOfDay: "morning", activity: "reading a menu", outfit: "a beige trench coat and jeans" } } : {}),
-    })),
+    scenes: [
+      ...set.scenes.map((s) => ({
+        ...s,
+        removed: (options.removed ?? []).includes(s.sceneId),
+        text: (options.textless ?? []).includes(s.sceneId) ? null : long?.sceneId === s.sceneId ? `${"A friend laughs while the morning light moves over the table. ".repeat(20).slice(0, long.length - 1)}.` : s.text,
+        ...(options.customScene === true && s.sceneId === 2 ? { slot: { ...s.slot, category: "cat-paris-cafes" as const, location: "a corner cafe in Paris", timeOfDay: "morning", activity: "reading a menu", outfit: "a beige trench coat and jeans" } } : {}),
+      })),
+      ...(options.own === true ? [{ sceneId: count + 1, origin: "own" as const, idea: "кофе на балконе утром", shot: "selfie" as const, pose: "three-quarter" as const, text: OWN_TEXT, edited: false, removed: false }] : []),
+    ],
   });
   return sceneSetId;
 }
@@ -559,6 +565,50 @@ describe("runs.startFromScenes", () => {
     if (photos.type !== "photos.list") throw new Error("expected the photos");
     const custom = photos.result.photos.find((p) => p.category === "cat-paris-cafes");
     expect(custom?.categoryName).toBe("Кофейни Парижа");
+  });
+
+  describe("an own scene", () => {
+    const historyFile = (avatarId: string) => join(libraryDir(), "avatars", avatarId, "history.jsonl");
+    const historyLines = (avatarId: string): string[] => (existsSync(historyFile(avatarId)) ? readFileSync(historyFile(avatarId), "utf8").split("\n").filter(Boolean) : []);
+
+    test("is a slot of the plan with its shot, its pose and its sentence, after the planned ones", async () => {
+      const { engine, events, revision } = await ready({ count: 3, own: true });
+      const { jobId } = startedOf(await engine.handle(startCommand(revision, 4 * 3 * IMAGE)));
+      await jobEnd(events, jobId);
+      const plan = planOf();
+      expect(plan.sceneIds).toEqual([1, 2, 3, 4]);
+      expect(plan.scenes.slots[3]).toMatchObject({ kind: "own", slotIndex: 4, category: "own", shot: "selfie", pose: "three-quarter", sentence: OWN_TEXT });
+      expect(plan.writerChunks).toEqual([]);
+    });
+
+    test("is drawn as a photo of the category own, with no writer request", async () => {
+      const { engine, events, net, avatarId, revision } = await ready({ count: 3, own: true });
+      const { jobId } = startedOf(await engine.handle(startCommand(revision, 4 * 3 * IMAGE)));
+      expect((await jobEnd(events, jobId)).type).toBe("job.done");
+      expect(net.imageCalls()).toHaveLength(4);
+      expect(net.writerCalls()).toHaveLength(0);
+      expect(net.chatCalls()).toHaveLength(0);
+      const photos = ok(await engine.handle(command("photos.list", { avatarId })));
+      if (photos.type !== "photos.list") throw new Error("expected the photos");
+      expect(photos.result.photos.filter((p) => p.category === "own")).toHaveLength(1);
+      expect(photos.result.photos.filter((p) => p.category === "home")).toHaveLength(3);
+    });
+
+    test("leaves no line in the avatar's history, which remembers the planned scenes only", async () => {
+      const { engine, events, avatarId, revision } = await ready({ count: 3, own: true });
+      const { jobId } = startedOf(await engine.handle(startCommand(revision, 4 * 3 * IMAGE)));
+      await jobEnd(events, jobId);
+      expect(historyLines(avatarId)).toHaveLength(3);
+    });
+
+    test("a set of one own scene is a run of one photo and no history", async () => {
+      const { engine, events, net, avatarId, revision } = await ready({ count: 1, own: true, removed: [1] });
+      const { jobId } = startedOf(await engine.handle(startCommand(revision, 3 * IMAGE)));
+      await jobEnd(events, jobId);
+      expect(planOf().sceneIds).toEqual([2]);
+      expect(net.imageCalls()).toHaveLength(1);
+      expect(historyLines(avatarId)).toEqual([]);
+    });
   });
 
   test("a removed scene of a custom category leaves no snapshot in the plan", async () => {

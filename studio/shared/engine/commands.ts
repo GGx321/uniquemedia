@@ -606,6 +606,15 @@ const ENGINE_SPECS = [
   // (never a fresh pair after an interruption), priced as `min(2 − answered, unused ids) × the writer's ceiling` per chunk; the same refusals as compose
   // and VALIDATION when nothing is waiting. `scenes.cancel`: ok for a set whose job is not running; the reserve of a request in flight stays open
   // until reconciled. `scenes.discard`: free; IN_FLIGHT while a job runs, VALIDATION for a used set.
+  // CS.4b: `scenes.write` and `scenes.estimateWrite` also take `rewrite { sceneIds 1..5, redraw }` (a new sentence for planned scenes, with `redraw` a new place,
+  // outfit, activity, time of day and pose first; for own scenes, `redraw: false`, written again from the stored idea), `idea { idea, count 1..5, shot | null }`
+  // (own scenes written from the owner's idea in any script; `null` is «Авто» and never draws the mirror) and `resume { write }` (carries an interrupted
+  // rewrite or idea write on). Each is ONE writer request under ids of its own, `${sceneSetId}:write-${k}#n`, recorded in the set with its draw BEFORE the call;
+  // a new write is priced at two attempts, a resume at the attempts its write has left. The refusals are free and come before any price: VALIDATION for a
+  // scene the set lacks or has removed, mixed kinds, an own scene redrawn, a set with no room for the scenes, or a write that is not unresolved or has no
+  // attempt left; NOT_FOUND for a redraw of a scene whose custom category was deleted. A write that did not finish leaves its scenes as they were and marks
+  // each (`SceneView.rewriteInterrupted`), or is listed on the set (`interruptedIdeas`), while the set stays `ready`; `scenes.edit` `dismissInterrupted`
+  // lets one go, free. A write that can never be answered (two rejected answers, a provider's refusal, no attempt left) ends its job `failed` and leaves nothing.
   defineCommand("scenes.estimateCompose", ComposeRequest, z.strictObject({ estimate: Estimate })),
   defineCommand("scenes.compose", z.strictObject({ ...COMPOSE_REQUEST_FIELDS, ...AcceptedWorst }).refine(composeNeedsCategory, COMPOSE_NEEDS_CATEGORY), z.strictObject({ sceneSetId: Id, jobId: Id.nullable() })),
   defineCommand("scenes.get", z.strictObject({ avatarId: Id }), ScenesGetResult),

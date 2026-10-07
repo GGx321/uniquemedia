@@ -1,6 +1,8 @@
 import { SCENE_TEXT_MAX, type SceneEditOp, type SceneProblem } from "../../shared/engine";
-import type { StoredSceneSet } from "../library/sceneSets";
+import type { RewriteWriteRecord, StoredSceneSet } from "../library/sceneSets";
 import { sentenceProblems } from "../scenes";
+import { withReviewWriteClosed, withoutScenes } from "./reviewMutations";
+import { reviewWritesOf } from "./reviewWrites";
 
 // CS.4a: the owner's free edits of a set, as pure changes of its record. Nothing here reads the disk, the ledger or a job: the engine checks that the
 // set may be edited at all (no job runs, it is not used, the revision is the one the window shows) and writes the result under the set's lock.
@@ -59,5 +61,28 @@ export function applyEdit(set: StoredSceneSet, op: SceneEditOp): EditOutcome {
       if (!set.scenes.some((s) => targets.has(s.sceneId) && s.removed !== removed)) return { kind: "unchanged" };
       return { kind: "changed", set: { ...set, scenes: set.scenes.map((s) => (targets.has(s.sceneId) ? { ...s, removed } : s)) } };
     }
+    case "dismissInterrupted":
+      return dismissInterrupted(set, op);
   }
+}
+
+/**
+ * «Оставить как есть» / «Не нужно»: an unresolved write is let go. By write: its record is resolved (an idea write adds no scene). By scenes: those scenes
+ * leave the unresolved rewrites that named them, and a rewrite left with none is resolved. Free; no scene changes; the ids of the write stay burnt.
+ */
+function dismissInterrupted(set: StoredSceneSet, op: Extract<SceneEditOp, { op: "dismissInterrupted" }>): EditOutcome {
+  const records = reviewWritesOf(set);
+  if (op.write !== undefined) {
+    const record = records.find((r) => r.k === op.write && !r.closed);
+    if (record === undefined) return { kind: "invalid", detail: `scene set ${set.sceneSetId} has no unresolved write ${op.write}` };
+    return { kind: "changed", set: withReviewWriteClosed(set, record.k) };
+  }
+  const sceneIds = op.sceneIds ?? [];
+  const missing = unknownScenes(set, sceneIds);
+  if (missing.length > 0) return { kind: "invalid", detail: `the set has no scene ${missing.join(", ")}` };
+  const open = records.filter((r): r is RewriteWriteRecord => r.kind === "rewrite" && !r.closed);
+  const unmarked = sceneIds.filter((id) => !open.some((r) => r.sceneIds.includes(id)));
+  if (unmarked.length > 0) return { kind: "invalid", detail: `scene ${unmarked.join(", ")} has no unresolved rewrite to dismiss` };
+  const taken = new Set(sceneIds);
+  return { kind: "changed", set: { ...set, reviewWrites: records.map((r) => (r.kind === "rewrite" && !r.closed ? withoutScenes(r, taken) : r)) } };
 }

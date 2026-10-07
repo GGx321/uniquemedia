@@ -161,7 +161,7 @@ export interface WriterRefusal {
   poseSlots: number[];
 }
 
-const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
+export const NO_REFUSAL: WriterRefusal = { problems: [], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] };
 
 /** The refusal a paid answer without content gets: the next attempt is told it was empty. Fresh on every call. */
 export function emptyAnswerRefusal(): WriterRefusal {
@@ -295,7 +295,13 @@ export function isTwoHanded(sentence: string): boolean {
   return TWO_HANDED.test(sentence);
 }
 
-function phoneInHand(slot: PlanSlot): boolean {
+/**
+ * What the answer reader needs of a slot: its number, its shot (the phone hand) and its pose. A plan's slot has more; an own scene (CS.4b) has only these,
+ * so the same rules read both.
+ */
+export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose">;
+
+function phoneInHand(slot: ReadableSlot): boolean {
   return slot.shot === "selfie" || slot.shot === "mirror";
 }
 
@@ -363,7 +369,7 @@ function refused(problems: WriterProblem[], extra: Partial<WriterRefusal> = {}):
 }
 
 /** The model's answer against the plan's slots, or every reason it cannot be used. */
-export function readWriterAnswer(content: string, slots: readonly PlanSlot[]): WriterAnswer {
+export function readWriterAnswer(content: string, slots: readonly ReadableSlot[]): WriterAnswer {
   const parsed = WriterOutputSchema.safeParse(parseJson(content));
   if (!parsed.success) return refused(["not-json"]);
 

@@ -2,6 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test
 import { authorizationLabel, markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
 import { failureDetail } from "./failureDetail";
 import { readPoolAnswer } from "../engine/scenes/poolGen";
+import { ideaMessages, type IdeaSlot } from "../engine/scenes/ideaWriter";
+import { readWriterAnswer, WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -130,6 +132,56 @@ describe("the pool call", () => {
     const read = readPoolAnswer(reply.choices[0]?.message.content ?? "");
     expect(read.ok && read.label).toBe("Seine bakeries");
     expect(mock.totalUsageUsd()).toBeCloseTo(0.006, 6);
+  });
+});
+
+// CS.4b: the idea variant of the scene writer. «+ Своя сцена» sends the owner's idea (any script) under the same "scene_sentences" schema; the mock answers one
+// sentence per own scene, in a shape the engine's own reader accepts for those scenes, and lists the request with the other scene-writer calls.
+describe("the idea writer call", () => {
+  const slots: IdeaSlot[] = [
+    { slotIndex: 6, idea: "кофе на балконе утром", shot: "friend", pose: "front" },
+    { slotIndex: 7, idea: "кофе на балконе утром", shot: "selfie", pose: "three-quarter" },
+    { slotIndex: 8, idea: "прогулка по набережной", shot: "mirror", pose: "front" },
+  ];
+  const post = (m: MockOpenRouter, asked: readonly IdeaSlot[] = slots) =>
+    nativeFetch(`${m.url}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "x-ai/grok-4.3", messages: ideaMessages(asked), response_format: { type: "json_schema", json_schema: WRITER_JSON_SCHEMA } }),
+    });
+
+  test("answers a sentence for every own scene that the writer's own reader accepts, whatever the shot", async () => {
+    const m = await started();
+    const reply = (await (await post(m)).json()) as { choices: { message: { content: string } }[] };
+    const read = readWriterAnswer(reply.choices[0]?.message.content ?? "", slots);
+    expect(read.ok && [...read.sentences.keys()]).toEqual([6, 7, 8]);
+  });
+
+  test("the sentences differ from scene to scene", async () => {
+    const m = await started();
+    const reply = (await (await post(m)).json()) as { choices: { message: { content: string } }[] };
+    const read = readWriterAnswer(reply.choices[0]?.message.content ?? "", slots);
+    expect(read.ok && new Set(read.sentences.values()).size).toBe(3);
+  });
+
+  test("is listed with the scene writer's requests and books the writer's cost against /credits", async () => {
+    const m = await started();
+    await post(m);
+    expect(m.sceneWriterRequests()).toHaveLength(1);
+    expect(m.poolRequests()).toHaveLength(0);
+    expect(m.unexpected).toEqual([]);
+    expect(m.totalUsageUsd()).toBeCloseTo(0.011, 6);
+  });
+
+  test("a follow-up after a refusal (the re-ask paragraph) is read the same way", async () => {
+    const m = await started();
+    const messages = ideaMessages(slots, { problems: ["empty"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] });
+    const reply = await nativeFetch(`${m.url}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "x-ai/grok-4.3", messages, response_format: { type: "json_schema", json_schema: WRITER_JSON_SCHEMA } }),
+    });
+    expect(reply.status).toBe(200);
   });
 });
 

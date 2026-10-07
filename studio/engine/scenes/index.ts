@@ -30,6 +30,7 @@ export {
   isTwoHanded,
   readWriterAnswer,
   revealingWordsIn,
+  type ReadableSlot,
   writerMessages,
   writerRefusalText,
   writerRunPrice,

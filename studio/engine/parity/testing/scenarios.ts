@@ -1840,6 +1840,41 @@ const SCENE_SET_SCENARIOS: readonly Scenario[] = [
       await t.call("scenes.get", { avatarId: w.avatarId });
     },
   },
+  // CS.4b: the review writes. A rewrite, an idea write and their resume are paid and have their own tests (the parity rig scripts no chat, and the estimates
+  // differ by design); what is pinned here is what a closed Studio left of them: the markers on the scenes and the list of interrupted idea writes, every
+  // free refusal of a write's target in the engine's order, and the dismissal of a marker, by scene and by write.
+  {
+    name: "scene sets, review writes: what a closed Studio left, the refusals of a write's target, and letting an interrupted write go",
+    rig: { reviewWrites: true },
+    async run(t, w) {
+      t.note("a set of three planned scenes and an own one: scene 2 carries a rewrite a dropped connection interrupted, and an idea write for two more scenes waits");
+      await t.call("scenes.get", { avatarId: w.avatarId });
+      t.note("a rewrite names scenes the set has, not removed, of one kind; a redraw is for planned scenes; a resume names an unresolved write");
+      await t.call("scenes.estimateWrite", { sceneSetId: "set-parity-0001", target: { kind: "rewrite", sceneIds: [99], redraw: false } });
+      await t.call("scenes.estimateWrite", { sceneSetId: "set-parity-0001", target: { kind: "rewrite", sceneIds: [1, 4], redraw: false } });
+      await t.call("scenes.estimateWrite", { sceneSetId: "set-parity-0001", target: { kind: "rewrite", sceneIds: [4], redraw: true } });
+      await t.call("scenes.estimateWrite", { sceneSetId: "set-parity-0001", target: { kind: "resume", write: 9 } });
+      await t.call("scenes.estimateWrite", { sceneSetId: "set-nobody-0404", target: { kind: "rewrite", sceneIds: [1], redraw: false } });
+      t.note("a removed scene is not rewritten");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 1, op: { op: "remove", sceneIds: [3] } });
+      await t.call("scenes.estimateWrite", { sceneSetId: "set-parity-0001", target: { kind: "rewrite", sceneIds: [3], redraw: false } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 2, op: { op: "restore", sceneIds: [3] } });
+      t.note("a hand edit works on an own scene as on any, and the same word rule turns it away");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 3, op: { op: "text", sceneId: 4, text: "She walks the balcony in a bikini." } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 3, op: { op: "text", sceneId: 4, text: "She waves from the balcony." } });
+      t.note("«Оставить как есть»: a scene without an interrupted write, a scene the set lacks and a write nobody has are refused; the right ones go, one by one");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 4, op: { op: "dismissInterrupted", sceneIds: [1] } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 4, op: { op: "dismissInterrupted", sceneIds: [99] } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 4, op: { op: "dismissInterrupted", write: 9 } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 4, op: { op: "dismissInterrupted", sceneIds: [2] } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 5, op: { op: "dismissInterrupted", sceneIds: [2] } });
+      t.note("«Не нужно»: an idea write is dismissed by its number, and a dismissed write is no longer there to dismiss or resume");
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 5, op: { op: "dismissInterrupted", write: 3 } });
+      await t.call("scenes.edit", { sceneSetId: "set-parity-0001", revision: 6, op: { op: "dismissInterrupted", write: 3 } });
+      await t.call("scenes.estimateWrite", { sceneSetId: "set-parity-0001", target: { kind: "resume", write: 3 } });
+      await t.call("scenes.get", { avatarId: w.avatarId });
+    },
+  },
 ];
 
 // CS.5: a run from a scene set. Only the refusals are played (the estimates differ by design, and a start that goes through draws images, which this rig does not

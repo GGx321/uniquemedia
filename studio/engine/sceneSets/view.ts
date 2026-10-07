@@ -1,8 +1,9 @@
-import { isCustomCategory, type CategoryRef, type SceneComposeTally, type SceneLiveWrite, type SceneSetView, type SceneView } from "../../shared/engine";
+import { isCustomCategory, type CategoryRef, type SceneComposeTally, type SceneInterruptedIdea, type SceneLiveWrite, type SceneRewriteInterrupted, type SceneSetView, type SceneView } from "../../shared/engine";
 import type { StoredSceneSet } from "../library/sceneSets";
 import type { LedgerView } from "../runs/journal";
 import { categoryRefOf } from "../scenes";
 import { chunkState, pendingChunks, type ChunkState } from "./chunks";
+import { interruptedWrites, reviewWritesOf } from "./reviewWrites";
 
 // CS.4a: what a window is shown of a scene set, built from the set's file, the ledger and what the engine knows is running. Nothing here is stored:
 // the status and why a write stopped are DERIVED (a dying process cannot write «closed»), and so is every chunk's attempts left.
@@ -14,6 +15,8 @@ export interface ViewContext {
   inFlight: ReadonlySet<string>;
   /** The write a job of this set runs now, or null. */
   live: SceneLiveWrite | null;
+  /** The number of the rewrite or idea write the live job runs (CS.4b), when it is one: that write is running, not interrupted. */
+  liveK?: number | null;
   /** The set's pre-issued run's folder exists: the set is used. */
   used: boolean;
 }
@@ -26,7 +29,7 @@ function spendOf(set: StoredSceneSet, ledger: LedgerView | null, inFlight: Reado
   if (ledger === null) return null;
   let spent = 0;
   let open = 0;
-  for (const attemptId of set.chunks.flatMap((c) => c.attemptIds)) {
+  for (const attemptId of [...set.chunks.flatMap((c) => c.attemptIds), ...reviewWritesOf(set).flatMap((w) => w.attemptIds)]) {
     const reserve = ledger.reserveOf(attemptId);
     if (reserve === undefined) continue;
     const close = ledger.closeOf(attemptId);
@@ -41,17 +44,38 @@ function spendOf(set: StoredSceneSet, ledger: LedgerView | null, inFlight: Reado
   return { spent, open };
 }
 
-function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>): SceneView[] {
+function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>, interrupted: ReadonlyMap<number, SceneRewriteInterrupted> = new Map()): SceneView[] {
   const chunkOf = new Map<number, ChunkState>();
   for (const state of states.values()) for (const sceneId of state.sceneIds) chunkOf.set(sceneId, state);
   const names = new Map((set.categories ?? []).map((c) => [c.ref, c.name]));
   return set.scenes.map((scene): SceneView => {
+    const marker = interrupted.get(scene.sceneId);
+    const mark = marker === undefined ? {} : { rewriteInterrupted: marker };
+    if (scene.origin === "own") {
+      return {
+        sceneId: scene.sceneId,
+        origin: "own",
+        category: "own",
+        categoryName: null,
+        shot: scene.shot,
+        pose: scene.pose,
+        place: null,
+        idea: scene.idea,
+        text: scene.text,
+        edited: scene.edited,
+        removed: scene.removed,
+        unwritten: null,
+        gaveUpBy: null,
+        chunk: null,
+        ...mark,
+      };
+    }
     const { slot } = scene;
     const chunk = chunkOf.get(scene.sceneId);
     const gaveUpBy = scene.text === null ? (chunk?.gaveUpBy ?? null) : null;
     return {
       sceneId: scene.sceneId,
-      origin: scene.origin,
+      origin: "planned",
       category: categoryRefOf(slot.category),
       categoryName: isCustomCategory(slot.category) ? (names.get(slot.category) ?? null) : null,
       shot: slot.shot,
@@ -64,13 +88,29 @@ function sceneViews(set: StoredSceneSet, states: ReadonlyMap<number, ChunkState>
       unwritten: scene.text !== null ? null : gaveUpBy !== null ? "gave-up" : "pending",
       gaveUpBy,
       chunk: chunk?.chunk ?? null,
+      ...mark,
     };
   });
 }
 
-/** The counters of the scenes that are not removed, as they are now. */
+/** The marker of each scene a write named that was interrupted: what the card flags «замена прервана». Absent for every other scene. */
+function markersOf(set: StoredSceneSet, ctx: ViewContext): Map<number, SceneRewriteInterrupted> {
+  const markers = new Map<number, SceneRewriteInterrupted>();
+  for (const record of interruptedWrites(set, ctx.ledger, ctx.liveK ?? null)) {
+    if (record.kind !== "rewrite") continue;
+    for (const sceneId of record.sceneIds) markers.set(sceneId, { write: record.k, stoppedBy: record.stoppedBy ?? "closed" });
+  }
+  return markers;
+}
+
+/** The idea writes that were interrupted: they added no scene, so the set lists them. Absent when there are none. */
+function interruptedIdeasOf(set: StoredSceneSet, ctx: ViewContext): SceneInterruptedIdea[] {
+  return interruptedWrites(set, ctx.ledger, ctx.liveK ?? null).flatMap((record) => (record.kind === "idea" ? [{ write: record.k, idea: record.idea, count: record.count, shot: record.shot, stoppedBy: record.stoppedBy ?? "closed" }] : []));
+}
+
+/** The counters of the PLANNED scenes that are not removed, as they are now: own scenes are the owner's and are not part of what a compose wrote. */
 function tallyOf(scenes: readonly SceneView[]): SceneComposeTally {
-  const active = scenes.filter((s) => !s.removed);
+  const active = scenes.filter((s) => !s.removed && s.origin === "planned");
   return { total: active.length, written: active.filter((s) => s.text !== null).length, gaveUp: active.filter((s) => s.unwritten === "gave-up").length };
 }
 
@@ -82,7 +122,8 @@ export function currentTally(set: StoredSceneSet, ledger: LedgerView | null): Sc
 
 export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneSetView {
   const states = new Map(set.chunks.map((chunk) => [chunk.chunk, chunkState(set, chunk, ctx.ledger)] as const));
-  const scenes = sceneViews(set, states);
+  const scenes = sceneViews(set, states, markersOf(set, ctx));
+  const ideas = interruptedIdeasOf(set, ctx);
   // Stopped only while something is left for «Дописать» to write: a recorded write with nothing waiting (every scene written, removed or out of attempts) is ready.
   const stopped = !ctx.used && ctx.live === null && set.write !== null && pendingChunks(set, ctx.ledger).length > 0;
   const status = ctx.used ? "used" : ctx.live !== null ? "writing" : stopped ? "stopped" : "ready";
@@ -111,5 +152,6 @@ export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneS
       return { chunk: chunk.chunk, sceneIds: [...chunk.sceneIds], attemptsLeft: state?.attemptsLeft ?? 0, gaveUpBy: state?.gaveUpBy ?? null };
     }),
     scenes,
+    ...(ideas.length === 0 ? {} : { interruptedIdeas: ideas }),
   };
 }

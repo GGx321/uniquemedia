@@ -25,6 +25,11 @@ describe("beginWrite", () => {
     expect(next.write).not.toHaveProperty("stoppedError");
   });
 
+  test("forgets the last job's outcome: a write that crashes must not leave «Готово 25 из 35» standing after the set is complete", () => {
+    const next = beginWrite(stored({ lastOutcome: { total: 35, written: 25, gaveUp: 0 } }), { kind: "unwritten", jobId: "job-aaaa-0002" });
+    expect(next).not.toHaveProperty("lastOutcome");
+  });
+
   test("changes nothing else", () => {
     const set = stored();
     const next = beginWrite(set, { kind: "unwritten", jobId: "job-aaaa-0002" });

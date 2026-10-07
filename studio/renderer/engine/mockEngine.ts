@@ -295,7 +295,8 @@ export interface MockEngineOptions {
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
 interface MockRunSlot {
-  category: RunCategory;
+  /** The plan's category, or `"own"` for an own scene of a scene set (the photo then carries `"own"`, as the engine's `photoCategoryOf` makes it). */
+  category: RunCategory | "own";
   end: "done" | "failed" | null;
 }
 
@@ -1905,7 +1906,12 @@ export class MockEngine implements EngineBridge {
         if (gone) return this.fail(c, gone);
         const set = this.sceneSets.find(c.payload.sceneSetId);
         if (set === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
-        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.writePrice(set)) });
+        const target = c.payload.target;
+        if (target.kind === "unwritten") return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.writePrice(set)) });
+        // A rewrite, an idea write or a resume: its refusals are free and come before any price (CS.4b).
+        const planned = this.sceneSets.planReview(set, target);
+        if ("error" in planned) return this.fail(c, planned.error);
+        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.reviewPrice(planned.plan)) });
       }
       case "scenes.write": {
         const early = this.keyAndLedgerGate() ?? this.libraryGate();
@@ -1913,10 +1919,21 @@ export class MockEngine implements EngineBridge {
         const set = this.sceneSets.find(c.payload.sceneSetId);
         if (set === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
         if (this.jobRunningFor(set.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
-        const refusal =
+        const target = c.payload.target;
+        const common =
           this.runnableRefusal(set.avatarId) ??
           (set.used ? { code: "VALIDATION" as const, detail: `scene set ${set.sceneSetId} is used and read-only` } : null) ??
-          (set.revision !== c.payload.revision ? { code: "SCENES_CHANGED" as const } : null) ??
+          (set.revision !== c.payload.revision ? { code: "SCENES_CHANGED" as const } : null);
+        if (common) return this.fail(c, common);
+        if (target.kind !== "unwritten") {
+          // A rewrite, an idea write or a resume: the plan's refusals (free), then the price, then the write is recorded and its job launched.
+          const planned = this.sceneSets.planReview(set, target);
+          if ("error" in planned) return this.fail(c, planned.error);
+          const price = this.priceGate(c.payload.acceptedWorstMicros, this.sceneSets.reviewPrice(planned.plan).worst);
+          if (price) return this.fail(c, price);
+          return this.ok(c, { jobId: this.sceneSets.writeReview(set, planned.plan) });
+        }
+        const refusal =
           (this.sceneSets.writePrice(set).worst === 0 ? { code: "VALIDATION" as const, detail: "no scene of the set is waiting to be written" } : null) ??
           this.priceGate(c.payload.acceptedWorstMicros, this.sceneSets.writePrice(set).worst);
         if (refusal) return this.fail(c, refusal);
@@ -2000,7 +2017,8 @@ export class MockEngine implements EngineBridge {
           this.priceGate(c.payload.acceptedWorstMicros, price.worstMicros) ??
           (this.masterPreflight.get(set.avatarId) ?? null);
         if (refusal) return this.fail(c, refusal);
-        const categories = [...new Set(active.map((s) => s.category))];
+        // Own scenes belong to no category: a run request names only the categories the planned scenes drew from.
+        const categories = [...new Set(active.flatMap((s) => (s.category === "own" ? [] : [s.category])))];
         const run: MockRun = {
           // The set's pre-issued run id, as the engine's: a set can only ever become this one run.
           runId: set.runId,
@@ -2999,8 +3017,8 @@ export class MockEngine implements EngineBridge {
   }
 
   /** The `categoryName` a custom photo carries (the name at the run's start), nothing for a built-in one. */
-  private categoryNameOf(run: MockRun, category: RunCategory): { categoryName: string } | Record<string, never> {
-    return isCustomCategory(category) ? { categoryName: run.categoryNames[category] ?? category } : {};
+  private categoryNameOf(run: MockRun, category: RunCategory | "own"): { categoryName: string } | Record<string, never> {
+    return category !== "own" && isCustomCategory(category) ? { categoryName: run.categoryNames[category] ?? category } : {};
   }
 
   /** A scene set's price in the contract's shape: the mock's usual prices source, the writer's own figures. */
