@@ -130,12 +130,12 @@ const rejectedAnswer: Reply = { status: 200, body: chatBody(JSON.stringify({ sce
 const refusal: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 const rateLimited: Reply = { status: 429, headers: { "retry-after": "120" }, body: { error: { message: "rate limited" } } };
 
-function sceneNetwork(opts: { writer?: Handler } = {}) {
+function sceneNetwork(opts: { writer?: Handler; prices?: () => Promise<Reply> } = {}) {
   let writes = 0;
   const route = async (call: FetchCall): Promise<Reply> => {
     if (isWriter(call)) return (opts.writer ?? goodAnswer)(call, ++writes);
     if (call.url.endsWith("/credits")) return { status: 200, body: { data: { total_credits: 25, total_usage: 1 } } };
-    if (call.url.endsWith("/models") || call.url.endsWith("/endpoints")) return OFFLINE;
+    if (call.url.endsWith("/models") || call.url.endsWith("/endpoints")) return (await opts.prices?.()) ?? OFFLINE;
     throw new Error(`unexpected request to ${call.method} ${call.url}`);
   };
   const net = fakeFetch(Array.from({ length: 512 }, () => route));
@@ -687,6 +687,36 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
 
     expect(ledgerReserves()).toEqual([writeId(1, 1), writeId(2, 1), writeId(3, 1)]);
     expect(new Set(ledgerReserves()).size).toBe(3);
+  });
+
+  test("a cancel while the write awaits the prices is not lost: the job ends cancelled, nothing is reserved or sent", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let asked = false;
+    const net = sceneNetwork({
+      prices: async () => {
+        asked = true;
+        await gate;
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    const view = await setOf(engine, avatarId);
+    const pending = engine.handle(writeCommand(view.revision, 2 * ATTEMPT, rewrite([2])));
+    await until(() => asked, "the price request");
+
+    ok(await engine.handle(command("scenes.cancel", { sceneSetId: SET })));
+    release();
+    const end = await jobEnd(events, jobOf(await pending));
+
+    expect(end.type).toBe("job.cancelled");
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
+    expect((await setOf(engine, avatarId)).status).toBe("ready");
   });
 
   test("a cancel mid-request leaves the reserve open and marks the scene as cancelled", async () => {

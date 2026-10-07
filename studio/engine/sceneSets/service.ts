@@ -96,6 +96,8 @@ interface LiveJob {
   k?: number;
   /** The attempt ids of requests at the model right now. */
   readonly inFlight: Set<string>;
+  /** A cancel arrived before the job was registered (the prices were still loading): the job is cancelled the moment it is, before any reserve. */
+  cancelled?: boolean;
 }
 
 function detailOfError(error: unknown): string {
@@ -261,6 +263,11 @@ export class SceneSetService {
     await this.#find(library, sceneSetId);
     const jobId = this.#deps.jobs.runningJobOfSet(sceneSetId);
     if (jobId !== null) this.#deps.jobs.cancel(jobId);
+    else {
+      // The set is live but its job is not registered yet (the prices load): remember the cancel instead of dropping it.
+      const live = this.#live.get(sceneSetId);
+      if (live !== undefined) live.cancelled = true;
+    }
   }
 
   // ---------- compose ----------
@@ -441,6 +448,8 @@ export class SceneSetService {
     // A compose or «Дописать» writes the chunks still pending; a review write says how many scenes it covers when it is planned.
     const total = live.k === undefined ? this.#setCount(set, job.budget) : live.count;
     const signal = deps.jobs.startScenes(jobId, { sceneSetId: set.sceneSetId, avatarId: set.avatarId, total });
+    // A cancel that came before the job existed aborts it now: its runner sees an aborted signal and reserves nothing.
+    if (live.cancelled === true) deps.jobs.cancel(jobId);
     deps.setCap(scopeKey({ avatarJobId: jobId }), job.capMicros);
     try {
       const progress = deps.jobs.progress(jobId, 0);
