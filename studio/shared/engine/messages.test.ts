@@ -410,6 +410,8 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     payload: { ...runRequest, acceptedWorstMicros: 3_330_000 },
     result: { runId: "run-00000001", jobId: "job-00000002" },
   },
+  "runs.estimateFromScenes": { payload: { sceneSetId: "set-00000001", revision: 4 }, result: { estimate: { ...estimate, expectedMicros: 900_000, worstMicros: 2_700_000 } } },
+  "runs.startFromScenes": { payload: { sceneSetId: "set-00000001", revision: 4, acceptedWorstMicros: 2_700_000 }, result: { runId: "run-00000001", jobId: "job-00000002" } },
   "runs.cancel": { payload: { runId: "run-00000001" }, result: { runId: "run-00000001" } },
   "runs.estimateResume": { payload: { runId: "run-00000001" }, result: { estimate: { ...estimate, expectedMicros: 500_000, worstMicros: 1_650_000 } } },
   "runs.resume": { payload: { runId: "run-00000001", acceptedWorstMicros: 1_650_000 }, result: { runId: "run-00000001", jobId: "job-00000003" } },
@@ -616,6 +618,8 @@ describe("contract surface", () => {
         "avatars.importAvatar",
         "runs.estimate",
         "runs.start",
+        "runs.estimateFromScenes",
+        "runs.startFromScenes",
         "runs.cancel",
         "runs.estimateResume",
         "runs.resume",
@@ -1254,6 +1258,19 @@ describe("estimate before spend", () => {
 
   test("runs.start is refused without the worst case the user accepted", () => {
     expect(reasonOf(command("runs.start", runRequest))).toContain("payload.acceptedWorstMicros");
+  });
+
+  test("runs.startFromScenes is refused without the worst case the user accepted", () => {
+    expect(reasonOf(command("runs.startFromScenes", { sceneSetId: "set-00000001", revision: 4 }))).toContain("payload.acceptedWorstMicros");
+  });
+
+  test.each([0, -1, 1.5])("the scene-set run commands refuse a revision of %p", (revision) => {
+    expect(reasonOf(command("runs.estimateFromScenes", { sceneSetId: "set-00000001", revision }))).toContain("payload.revision");
+    expect(reasonOf(command("runs.startFromScenes", { sceneSetId: "set-00000001", revision, acceptedWorstMicros: 1 }))).toContain("payload.revision");
+  });
+
+  test("the scene-set run commands take no photo count of their own: the set decides it", () => {
+    expect(reasonOf(command("runs.estimateFromScenes", { sceneSetId: "set-00000001", revision: 4, count: 5 }))).not.toBe("");
   });
 
   test("runs.resume is refused without the remaining worst case the user accepted", () => {

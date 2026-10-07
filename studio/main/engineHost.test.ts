@@ -528,6 +528,15 @@ describe("request deadline", () => {
     expect(COMMAND_DEADLINE_MS["runs.start"]).toBe(PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + 30_000);
   });
 
+  // CS.5: the estimate of a run from a scene set waits for a price load like any estimate; its start waits for the master's preflight like a start.
+  test("runs.estimateFromScenes waits as long as an estimate", () => {
+    expect(COMMAND_DEADLINE_MS["runs.estimateFromScenes"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
+  });
+
+  test("runs.startFromScenes waits for the master's preflight exactly as runs.start does", () => {
+    expect(COMMAND_DEADLINE_MS["runs.startFromScenes"]).toBe(COMMAND_DEADLINE_MS["runs.start"]);
+  });
+
   test.each(["runs.estimate", "runs.estimateResume", "runs.resume", "runs.list"] as const)(
     "%s answers once its checks and a price load are done (a run's job runs on), so it waits as long as an estimate",
     (type) => {

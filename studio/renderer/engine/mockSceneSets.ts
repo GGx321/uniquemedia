@@ -1,5 +1,6 @@
 import {
   isCustomCategory,
+  MAX_COMPOSE_SCENES,
   orderCategories,
   PROTOCOL_VERSION,
   SCENE_CHUNK_ATTEMPTS,
@@ -515,6 +516,33 @@ export class MockSceneSets {
     this.#sets = this.#sets.filter((s) => s !== set);
     this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.nextId("evt"), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId: set.avatarId } });
     return { avatarId: set.avatarId };
+  }
+
+  // ---------- the approval (CS.5) ----------
+
+  /**
+   * The engine's approval refusals (engine/sceneSets/toRun.ts), in its order, all free: no such set (NOT_FOUND), the revision moved (SCENES_CHANGED), an
+   * active scene with no text, none or more than a run draws active (VALIDATION), a job of the set running (IN_FLIGHT), the set already used (VALIDATION).
+   * Otherwise the set and the scenes a run would draw, in the set's order.
+   */
+  approvalOf(sceneSetId: string, revision: number): { error: EngineError } | { set: MockSet; active: readonly Scene[] } {
+    const set = this.find(sceneSetId);
+    if (set === undefined) return { error: { code: "NOT_FOUND", detail: `no scene set ${sceneSetId} in the open library` } };
+    if (set.revision !== revision) return { error: { code: "SCENES_CHANGED", detail: `scene set ${sceneSetId} is at revision ${set.revision}, not ${revision}` } };
+    const active = set.scenes.filter((s) => !s.removed);
+    const empty = active.filter((s) => s.text === null).map((s) => s.sceneId);
+    if (empty.length > 0) return { error: { code: "VALIDATION", detail: `scene(s) ${empty.join(", ")} of set ${sceneSetId} have no text: write, type or remove them first` } };
+    if (active.length === 0) return { error: { code: "VALIDATION", detail: `scene set ${sceneSetId} has no scene to draw: every scene is removed` } };
+    if (active.length > MAX_COMPOSE_SCENES) return { error: { code: "VALIDATION", detail: `scene set ${sceneSetId} has ${active.length} active scenes; a run draws at most ${MAX_COMPOSE_SCENES}` } };
+    if (this.isLive(sceneSetId)) return { error: { code: "IN_FLIGHT", detail: `scene set ${sceneSetId} is being written; wait for that to end (or cancel it)` } };
+    if (set.used) return { error: { code: "VALIDATION", detail: `scene set ${sceneSetId} is already used by run ${set.runId}` } };
+    return { set, active };
+  }
+
+  /** The set's run was made (the engine's folder exists under the set's pre-issued run id): the set is used, and every window hears it. */
+  approve(set: MockSet): void {
+    set.used = true;
+    this.#announce(set);
   }
 
   /** An avatar was deleted: its sets went to the Trash with its folder. */
