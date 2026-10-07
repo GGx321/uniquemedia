@@ -65,6 +65,20 @@ describe("a compose cut off by a closed Studio", () => {
     expect(within(column()).getByText("Составляем сцены: 0 из 35")).toBeDefined();
   });
 
+  test("while «Дописываем…» runs after earlier spending: the total is «Дальше», not «Весь запуск», and step 1 keeps what was spent", async () => {
+    const { client } = await cutOff();
+    await waitFor(() => expect(goButton().textContent).toBe(nb("Дописать 35 сцен · до $0.12")));
+    await reconcile(client);
+    await waitFor(() => expect(isDisabled(goButton())).toBe(false));
+    fireEvent.click(goButton());
+    await flush();
+    expect(within(column()).getByText("Составляем сцены: 0 из 35")).toBeDefined();
+    expect(priceRow("Сцены")).toContain("пишутся");
+    expect(priceRow("Дальше")).toContain("≈");
+    expect(card().textContent).not.toContain("Весь запуск");
+    expect(card().textContent).toMatch(/потрачено \$0\.049/);
+  });
+
   test("«Убрать 35 пустых» is one free edit of every scene still empty; the focus goes to the column's title", async () => {
     const { engine } = await cutOff();
     const remove = await within(column()).findByRole("button", { name: nb("Убрать 35 пустых") });

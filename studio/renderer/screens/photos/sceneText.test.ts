@@ -81,9 +81,16 @@ describe("step 1 of the price column: «Сцены»", () => {
   });
 
   test("while a compose writes: «пишутся»; stopped: how many are written, and under it what it spent (README decision 20: «потраченное видно на шаге 1»)", () => {
-    expect(stepScenes(sceneSet([pending(1)], { status: "writing", write: { kind: "compose", count: 20 } }))).toEqual({ label: "Сцены", value: "пишутся", done: false, spent: null });
+    expect(stepScenes(sceneSet([pending(1)], { status: "writing", write: { kind: "compose", count: 20 }, spentMicros: 0, openReserveMicros: 0 }))).toEqual({ label: "Сцены", value: "пишутся", done: false, spent: null });
     expect(stepScenes(stopped())).toEqual({ label: "Сцены", value: "25 из 60", done: false, spent: "потрачено до $0.049" });
     expect(stepScenes(stopped({ openReserveMicros: 0 }))).toEqual({ label: "Сцены", value: "25 из 60", done: false, spent: "потрачено $0.049" });
+  });
+
+  test("«Дописываем…» after earlier spending keeps the spend on step 1; a fresh compose that spent nothing shows none", () => {
+    const writing = { status: "writing", write: { kind: "unwritten" } } as const;
+    expect(stepScenes(stopped({ ...writing, openReserveMicros: 0 }))).toEqual({ label: "Сцены", value: "пишутся", done: false, spent: "потрачено $0.049" });
+    expect(stepScenes(stopped({ ...writing }))).toEqual({ label: "Сцены", value: "пишутся", done: false, spent: "потрачено до $0.049" });
+    expect(stepScenes(stopped({ ...writing, spentMicros: 0, openReserveMicros: 0 })).spent).toBeNull();
   });
 });
 

@@ -212,10 +212,12 @@ export function SceneStrip({
   if (action.kind === "writing") {
     steps.push({ n: "1", state: "current", label: step1.label, value: step1.value }, { n: "2", state: "next", label: photosLabel, value: images === null ? "≈ …" : about(images.expectedMicros) });
     const note = scenesJob === null ? undefined : sliceView.jobs.get(scenesJob.jobId);
+    // «Весь запуск» only while nothing is spent; once something was (step 1 shows it) the line is «Дальше».
+    const label = step1.spent === null ? "Весь запуск" : "Дальше";
     total =
       images !== null && note?.price
-        ? { label: "Весь запуск", value: about(images.expectedMicros + note.price.expectedMicros), sub: `${ceiling(images.worstMicros + note.price.worstMicros)} без правок` }
-        : { label: "Весь запуск", value: images === null ? "—" : about(images.expectedMicros), sub: null };
+        ? { label, value: about(images.expectedMicros + note.price.expectedMicros), sub: `${ceiling(images.worstMicros + note.price.worstMicros)} без правок` }
+        : { label, value: images === null ? "—" : about(images.expectedMicros), sub: null };
   } else if (action.kind === "continue") {
     steps.push({ n: "1", state: "current", label: step1.label, value: step1.value }, { n: "2", state: "next", label: photosLabel, value: images === null ? "≈ …" : about(images.expectedMicros) });
     const write = more.estimate;

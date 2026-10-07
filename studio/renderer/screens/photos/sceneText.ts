@@ -65,13 +65,21 @@ function spentText(set: Pick<SceneSetView, "spentMicros" | "openReserveMicros">)
   return set.spentMicros === 0 ? "бесплатно" : usd(set.spentMicros, "nearest");
 }
 
+/** Anything spent or reserved so far: the total line is «Весь запуск» only for a set that cost nothing yet, then it is «Дальше». */
+function hasSpent(set: Pick<SceneSetView, "spentMicros" | "openReserveMicros">): boolean {
+  return (set.spentMicros ?? 0) > 0 || (set.openReserveMicros ?? 0) > 0;
+}
+
 /**
  * Step 1 («Сцены»): done once the set is written (ticked, with what it cost); while a compose writes, «пишутся»; a stopped set, how many are written
  * («25 из 60», the board's own) and, on a line under it, what it cost so far (README decision 20: the money already spent shows on step 1, stopped too).
  */
 export function stepScenes(set: SceneSetView): { label: string; value: string; done: boolean; spent: string | null } {
   const write = set.write;
-  if (write !== null && (write.kind === "compose" || write.kind === "unwritten")) return { label: "Сцены", value: "пишутся", done: false, spent: null };
+  // A write of the set running: its own request is not spent yet, but what the earlier ones cost is (README «Деньги на экране»).
+  if (write !== null && (write.kind === "compose" || write.kind === "unwritten")) {
+    return { label: "Сцены", value: "пишутся", done: false, spent: hasSpent(set) ? `потрачено ${spentText(set)}` : null };
+  }
   const tally = tallyScenes(set.scenes);
   if (tally.pending > 0) return { label: "Сцены", value: `${tally.withText} из ${tally.active}`, done: false, spent: `потрачено ${spentText(set)}` };
   return { label: "Сцены", value: spentText(set), done: true, spent: null };
