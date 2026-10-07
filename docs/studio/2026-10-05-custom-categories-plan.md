@@ -1527,6 +1527,8 @@ by the owner.
    reads `view.categories[].poses`). `CategoryStore.update` takes `CategoryPoses | null` and parses it before writing. Tests: a resumed «Авто» write keeps the same ids and the stored `mirrorAllowed`; an old
    record without the flag whose idea names a mirror stays not allowed.
 
+Verification of the round: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7436 + 6672 + 6578 = 20686 passing, 34 skipped, 0 failing (this machine; CI is the run of record).
+
 Phase 1 = CS.0 (category states), CS.1, CS.2, CS.3. Phase 2 = CS.0 (review states), CS.4a, CS.4b,
 CS.5, CS.6, CS.7. Rough size: phase 1 ≈ one L and two M tasks; phase 2 ≈ two L and three M tasks
 plus the review.
