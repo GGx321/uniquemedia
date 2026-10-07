@@ -225,6 +225,24 @@ describe("the idea writer call", () => {
       expect(plain.ok && plain.angles.get(6)?.shot).toBe("friend");
     });
 
+    test("the raw answer carries a key only for what was asked, and no null (the engine's schema has no nullable key)", async () => {
+      const m = await started();
+      const asked: IdeaSlot[] = [
+        { slotIndex: 6, idea: "вид сзади", shot: null, pose: null },
+        { slotIndex: 7, idea: "вид сзади", shot: "friend", pose: null },
+        { slotIndex: 8, idea: "вид сзади", shot: "candid", pose: "back" },
+      ];
+      const reply = (await (await post(m, asked)).json()) as { choices: { message: { content: string } }[] };
+      const content = reply.choices[0]?.message.content ?? "";
+      const scenes = (JSON.parse(content) as { scenes: Record<string, unknown>[] }).scenes;
+      expect(scenes.map((s) => Object.keys(s).sort())).toEqual([
+        ["pose", "sentence", "shot", "slotIndex"],
+        ["pose", "sentence", "slotIndex"],
+        ["sentence", "slotIndex"],
+      ]);
+      expect(content).not.toContain("null");
+    });
+
     test("a shot the owner chose stays, and a mirror or selfie is never turned away", async () => {
       const read = await pick([
         { slotIndex: 6, idea: "вид сзади", shot: "friend", pose: null },

@@ -9,7 +9,7 @@ useNativeGlobals();
 
 // CS.8a: a custom category whose pool carries `poses` draws every slot's pose from that list, whatever the run's «Ракурсы» toggles say; the toggles keep
 // governing the built-ins and a custom category without `poses`. A selfie or a mirror shot faces the camera, so a slot that draws back or profile takes a
-// shot nobody holds a phone for: another shot of the category's deck, or the photographer when the deck has none.
+// shot nobody holds a phone for: another shot of the category's deck, or a friend when the deck has none.
 
 const ANGLED = "cat-lying-down";
 const PLAIN = "cat-paris-cafes";
@@ -63,9 +63,9 @@ describe("a category with poses [back]", () => {
     expect([...shots].sort()).toEqual(["candid", "friend"]);
   });
 
-  test("a deck of selfies and mirrors only falls back to the photographer", () => {
+  test("a deck of selfies and mirrors only falls back to a friend (the category is finished as a phone photo, so never the photographer)", () => {
     const pool = poolWith({ poses: ["back"], shotDeck: ["selfie", "mirror", "selfie", "mirror", "selfie"] });
-    for (const seed of seeds.slice(0, 30)) for (const slot of planOf(pool, { seed })) expect(slot.shot).toBe("photographer");
+    for (const seed of seeds.slice(0, 30)) for (const slot of planOf(pool, { seed })) expect(slot.shot).toBe("friend");
   });
 
   test("a deck of photographers keeps them", () => {

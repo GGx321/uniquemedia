@@ -152,9 +152,9 @@ describe("redrawSlot", () => {
       }
     });
 
-    test("a deck with no other shot falls back to the photographer", () => {
+    test("a deck with no other shot falls back to a friend, never the photographer", () => {
       const selfiesOnly: Pool = { ...BACK, shotDeck: ["selfie", "mirror", "selfie", "mirror", "selfie"] };
-      expect(draw(slotOf("selfie"), 1, { pool: selfiesOnly }).shot).toBe("photographer");
+      expect(draw(slotOf("selfie"), 1, { pool: selfiesOnly }).shot).toBe("friend");
     });
 
     test("a scene that stays facing the camera keeps its shot", () => {

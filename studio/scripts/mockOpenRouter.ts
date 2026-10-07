@@ -184,18 +184,19 @@ function ideaSlotsOf(body: unknown): z.infer<typeof IdeaRequestSlot>[] | null {
 
 /**
  * CS.8a: the angle the mock picks for a slot that left it to the model («choose»), read from the idea's own words: «сзади» / «back» / «from behind» is a view from
- * behind, «профил» / «profile» a side view, anything else a front view. Never the mirror, and never a selfie turned away: a shot the owner chose is kept (null in the
- * answer, as the schema says) and a selfie or a mirror shot takes the front view whatever the idea says.
+ * behind, «профил» / «profile» a side view, anything else a front view. Never the mirror, and never a selfie turned away: a shot the owner chose is kept (left out of the
+ * answer: the schema has no key for it) and a selfie or a mirror shot takes the front view whatever the idea says.
  */
-function ideaAngleFor(slot: z.infer<typeof IdeaRequestSlot>): { shot: string | null; pose: string | null } {
+function ideaAngleFor(slot: z.infer<typeof IdeaRequestSlot>): { shot?: string; pose?: string } {
   const idea = slot.idea.toLowerCase();
   const wanted = /сзади|\bback\b|from behind/.test(idea) ? "back" : /профил|profile/.test(idea) ? "profile" : "front";
   const phoneInHand = slot.shot === "front-camera selfie" || slot.shot === "mirror selfie";
   // The mirror, only for an idea that names one (the engine offers it then and not otherwise), facing the camera.
   const mirror = slot.shot === "choose" && ideaNamesMirror(slot.idea);
-  const shot = slot.shot === "choose" ? (mirror ? "mirror" : wanted === "front" ? "friend" : "candid") : null;
-  const pose = slot.pose === "choose" ? (phoneInHand || mirror ? "front" : wanted) : null;
-  return { shot, pose };
+  const shot = mirror ? "mirror" : wanted === "front" ? "friend" : "candid";
+  const pose = phoneInHand || mirror ? "front" : wanted;
+  // The engine's schema has a key only for what is asked, and no null: a key the slot gave is left out.
+  return { ...(slot.shot === "choose" ? { shot } : {}), ...(slot.pose === "choose" ? { pose } : {}) };
 }
 
 /** One compliant sentence per own scene: it names no hand, no camera and nothing the writer's rules refuse, and differs with the scene's number. */

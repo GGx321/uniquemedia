@@ -14,15 +14,33 @@ import { NO_REFUSAL, POSE_LABEL, readWriterScenes, SHOT_LABEL, writerRefusalText
 // is the owner's idea: «вид сзади» is a view from behind, whatever the run's «Ракурсы» toggles say); a rewrite of an own scene gives both and keeps them.
 // The model returns what was asked of it, and `readIdeaAnswer` holds it to the vocabulary and the pairing rule: a selfie or a mirror shot faces the camera,
 // «Авто» never picks the mirror. A wrong or missing pick is a refusal (`bad-angle`) the next attempt is told, never a value we invent.
+// The structured-output schema is built per write (`ideaJsonSchema`): a key only for what is asked, plain enums, no nulls.
 
-/** The shots the model may pick for an «Авто» slot: «Авто» never draws the mirror (an own scene has no place for a mirror to sit on). */
-export const PICKABLE_SHOTS = ["friend", "selfie", "candid", "photographer"] as const satisfies readonly Shot[];
+/**
+ * The shots the model may pick for an «Авто» slot: «Авто» never draws the mirror (an own scene has no place for a mirror to sit on) and never the photographer
+ * (own scenes are finished as phone photos, `categoryStyleOf("own")`, and a photographer shot would contradict that finish; before CS.8a «Авто» never picked it
+ * either). A photographer the owner chose himself is kept as is: it is a given shot, not a pick.
+ */
+export const PICKABLE_SHOTS = ["friend", "selfie", "candid"] as const satisfies readonly Shot[];
 
 /** With the mirror, which only an idea that names a mirror (`ideaNamesMirror`, tested before the call) may be written with on «Авто». */
-const PICKABLE_SHOTS_WITH_MIRROR = ["friend", "selfie", "mirror", "candid", "photographer"] as const satisfies readonly Shot[];
+const PICKABLE_SHOTS_WITH_MIRROR = ["friend", "selfie", "mirror", "candid"] as const satisfies readonly Shot[];
 
 function pickable(mirrorAllowed: boolean): readonly Shot[] {
   return mirrorAllowed ? PICKABLE_SHOTS_WITH_MIRROR : PICKABLE_SHOTS;
+}
+
+/** Which of the two the model is asked to pick in one write: the schema carries a key only for what is asked. */
+export interface IdeaAsks {
+  shot: boolean;
+  pose: boolean;
+}
+
+const ASKS_BOTH: IdeaAsks = { shot: true, pose: true };
+
+/** What a write asks of the model: a key is asked when any of its slots leaves it to the model (in practice all slots of one write ask alike). */
+export function ideaAsksOf(slots: readonly { askShot: boolean; askPose: boolean }[]): IdeaAsks {
+  return { shot: slots.some((s) => s.askShot), pose: slots.some((s) => s.askPose) };
 }
 
 /**
@@ -71,13 +89,13 @@ export function ideaSystemPrompt(mirrorAllowed = false): string {
     "- When several slots share an idea, make each one a different moment of it: vary the place, her outfit, the time of day and what she does.",
     '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
     '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the camera, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the camera. For any other pose she may face or glance toward the camera as the shot allows.',
-    `- When a slot's "shot" or "pose" is "choose", pick it from the idea and return it in that slot's "shot" or "pose": the shot is ${mirrorAllowed ? "friend, selfie, mirror, candid or photographer" : "friend, selfie, candid or photographer"}; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend, candid or photographer. ${mirrorAllowed ? "The idea names a mirror, so you may pick the mirror shot, only for a mirror selfie." : "Never choose the mirror shot."} Then write the scene for what you picked. For a shot or a pose the slot gives, return null.`,
+    `- When a slot's "shot" or "pose" is "choose", pick it from the idea and return it in that slot's "shot" or "pose": the shot is ${mirrorAllowed ? "friend, selfie, mirror or candid" : "friend, selfie or candid"}; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend or candid. ${mirrorAllowed ? "The idea names a mirror, so you may pick the mirror shot, only for a mirror selfie." : "Never choose the mirror shot."} Then write the scene for what you picked. A shot or a pose the slot gives is kept as given: never return it.`,
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
     "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says, describe her clothing as covering and non-revealing.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
     '- Never use "stunning", "beautiful", "perfect" or "flawless".',
     "",
-    'Return JSON matching the schema: {"scenes": [{"slotIndex", "sentence", "shot", "pose"}, ...]}, exactly one object per slot, in the given order.',
+    'Return JSON matching the schema: {"scenes": [...]}, exactly one object per slot, in the given order, each with "slotIndex", "sentence" and, only where the schema has them, "shot" and "pose".',
   ].join("\n");
 }
 
@@ -102,35 +120,35 @@ export function ideaMessages(slots: readonly IdeaSlot[], refusal: WriterRefusal 
   ];
 }
 
-/** Structured output: {slotIndex, sentence, shot, pose} per scene; the shot and the pose are null for a slot that gave them. */
-export function ideaJsonSchema(mirrorAllowed: boolean): { name: string; schema: Record<string, unknown> } {
+/**
+ * Structured output, built per write from what the model is asked: {slotIndex, sentence} per scene, plus `shot` and/or `pose` as plain required string enums, and
+ * only when the write leaves them to the model. No key is nullable and no enum holds null: a nullable enum is the shape a provider may refuse, and a refusal here
+ * would fail every idea write. A key that is not asked is simply not in the schema.
+ */
+export function ideaJsonSchema(mirrorAllowed: boolean, asks: IdeaAsks = ASKS_BOTH): { name: string; schema: Record<string, unknown> } {
+  const properties: Record<string, unknown> = {
+    slotIndex: { type: "integer" },
+    sentence: { type: "string" },
+    ...(asks.shot ? { shot: { type: "string", enum: [...pickable(mirrorAllowed)] } } : {}),
+    ...(asks.pose ? { pose: { type: "string", enum: [...ScenePose.options] } } : {}),
+  };
   return {
-  name: "scene_ideas",
-  schema: {
-    type: "object",
-    additionalProperties: false,
-    required: ["scenes"],
-    properties: {
-      scenes: {
-        type: "array",
-        items: {
-          type: "object",
-          additionalProperties: false,
-          required: ["slotIndex", "sentence", "shot", "pose"],
-          properties: {
-            slotIndex: { type: "integer" },
-            sentence: { type: "string" },
-            shot: { type: ["string", "null"], enum: [...pickable(mirrorAllowed), null] },
-            pose: { type: ["string", "null"], enum: [...ScenePose.options, null] },
-          },
+    name: "scene_ideas",
+    schema: {
+      type: "object",
+      additionalProperties: false,
+      required: ["scenes"],
+      properties: {
+        scenes: {
+          type: "array",
+          items: { type: "object", additionalProperties: false, required: Object.keys(properties), properties },
         },
       },
     },
-  },
   };
 }
 
-/** The schema of an idea whose text names no mirror: the shots without it. */
+/** The schema of an idea whose text names no mirror, with the shot and the pose both asked: the shots without the mirror. */
 export const IDEA_JSON_SCHEMA = ideaJsonSchema(false);
 
 // ---------- reading the answer ----------

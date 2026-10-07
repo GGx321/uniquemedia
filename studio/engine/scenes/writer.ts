@@ -222,7 +222,7 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "youth-word": (r) => `slot(s) ${slotList(r.wordSlots)} used words we do not allow: ${quotedList(r.words)}; call her a woman and use none of them`,
   "revealing-word": (r) => `slot(s) ${slotList(r.wordSlots)} used a revealing word we do not allow: ${quotedList(r.words)}`,
   "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their own pose (a back or profile pose looking toward the camera); match each slot's given pose instead`,
-  "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing or not allowed: pick the shot from friend, selfie, candid or photographer (never the mirror) and the pose from front, three-quarter, profile or back, and a selfie faces the camera, front or three-quarter only`,
+  "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing, outside the lists the rules give, or a selfie or mirror shot not facing the camera (front or three-quarter only)`,
 };
 
 /** Every reason a refusal happened, as fixed sentences; never the model's own rejected text. */

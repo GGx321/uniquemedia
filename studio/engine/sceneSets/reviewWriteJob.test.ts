@@ -73,7 +73,7 @@ function ideaAnswer(pick: { shot: string; pose: string } = { shot: "candid", pos
     status: 200,
     body: chatBody(
       JSON.stringify({
-        scenes: listAsked(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${NEW} (${s.slotIndex})`, shot: s.shot === "choose" ? pick.shot : null, pose: s.pose === "choose" ? pick.pose : null })),
+        scenes: listAsked(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${NEW} (${s.slotIndex})`, ...(s.shot === "choose" ? { shot: pick.shot } : {}), ...(s.pose === "choose" ? { pose: pick.pose } : {}) })),
       }),
       { cost: 0.0042 },
     ),
@@ -298,6 +298,43 @@ describe("an idea write", () => {
       expect((await setNow()).scenes).toEqual(before.scenes);
     });
 
+    /** The keys of one scene in the response schema the call carried. */
+    function schemaKeys(call: FetchCall): { keys: string[]; text: string } {
+      const format = JSON.stringify(call.json().response_format);
+      const props = (call.json() as { response_format: { json_schema: { schema: { properties: { scenes: { items: { properties: Record<string, unknown> } } } } } } }).response_format.json_schema.schema.properties.scenes.items.properties;
+      return { keys: Object.keys(props).sort(), text: format };
+    }
+
+    test("on «Авто» the schema asks for the shot and the pose, as plain string enums with no null", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 1, null);
+      const { net, end } = run([ideaAnswer()]);
+      await end;
+      const { keys, text } = schemaKeys(net.calls[0] as FetchCall);
+      expect(keys).toEqual(["pose", "sentence", "shot", "slotIndex"]);
+      expect(text).not.toContain("null");
+    });
+
+    test("with the owner's shot the schema has no shot key at all, and no null", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 1, "friend");
+      const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
+      await end;
+      const { keys, text } = schemaKeys(net.calls[0] as FetchCall);
+      expect(keys).toEqual(["pose", "sentence", "slotIndex"]);
+      expect(text).not.toContain("null");
+    });
+
+    test("a rewrite of an own scene asks for neither: the schema holds the number and the sentence only", async () => {
+      await seed();
+      await recordRewrite([5]);
+      const { net, end } = run([good]);
+      await end;
+      const { keys, text } = schemaKeys(net.calls[0] as FetchCall);
+      expect(keys).toEqual(["sentence", "slotIndex"]);
+      expect(text).not.toContain("null");
+    });
+
     test("with the owner's shot it is asked for the pose alone, and the shot stays the owner's", async () => {
       await seed();
       await recordIdea("лежит на животе, вид сзади", 1, "friend");
@@ -308,6 +345,35 @@ describe("an idea write", () => {
       expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["friend", "profile"]]);
     });
 
+    test("a resumed «Авто» write asks the same slots under the same ids and keeps the stored mirror permission", async () => {
+      await seed();
+      await recordIdea("селфи в зеркале лифта", 2, null, true);
+      const first = run([offline], { jobId: "job-aaaa-0002" });
+      await first.end;
+      const second = run([ideaAnswer({ shot: "mirror", pose: "three-quarter" })], { jobId: "job-aaaa-0003" });
+
+      expect(await second.end).toEqual({ status: "done", written: 2, unwritten: 0 });
+      expect(listAsked(second.net.calls[0] as FetchCall)).toEqual(listAsked(first.net.calls[0] as FetchCall));
+      expect(listAsked(second.net.calls[0] as FetchCall).map((s) => [s.slotIndex, s.shot, s.pose])).toEqual([[6, "choose", "choose"], [7, "choose", "choose"]]);
+      expect(messagesOf(second.net.calls[0] as FetchCall)[0]?.content).toBe(ideaSystemPrompt(true));
+      expect(JSON.stringify((second.net.calls[0] as FetchCall).json().response_format)).toContain('"mirror"');
+      expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
+      expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.sceneId, s.shot, s.pose] : null))).toEqual([[6, "mirror", "three-quarter"], [7, "mirror", "three-quarter"]]);
+    });
+
+    test("a record written without the flag, whose idea names a mirror, stays not allowed: the mirror is neither offered nor accepted", async () => {
+      await seed();
+      const before = await setNow();
+      await recordIdea("селфи в зеркале лифта", 1, null);
+      expect((await recordOf(2)) as { mirrorAllowed?: boolean }).not.toHaveProperty("mirrorAllowed");
+      const { net, end } = run([ideaAnswer({ shot: "mirror", pose: "front" }), ideaAnswer({ shot: "mirror", pose: "front" })]);
+
+      expect(await end).toMatchObject({ status: "failed", resolved: true });
+      expect(messagesOf(net.calls[0] as FetchCall)[0]?.content).toBe(ideaSystemPrompt(false));
+      expect(JSON.stringify((net.calls[0] as FetchCall).json().response_format)).not.toContain('"mirror"');
+      expect((await setNow()).scenes).toEqual(before.scenes);
+    });
+
     test("an impossible pick (a selfie from behind) is refused, the next attempt is told why, and the second answer is the one stored", async () => {
       await seed();
       await recordIdea("вид сзади", 1, null);
@@ -316,7 +382,7 @@ describe("an idea write", () => {
       expect(await end).toMatchObject({ status: "done" });
       expect(net.calls).toHaveLength(2);
       expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
-      expect(JSON.stringify(net.calls[1]?.json())).toContain("gave a shot or a pose that is missing or not allowed");
+      expect(JSON.stringify(net.calls[1]?.json())).toContain("gave a shot or a pose that is missing, outside the lists the rules give");
       expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["candid", "back"]]);
     });
 

@@ -6,7 +6,7 @@ import type { PriceBook } from "../money/prices";
 import { runWriterConfig } from "../runs/plan";
 import { runWriterPhase, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
 import type { PlanSlot } from "../scenes";
-import { ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
+import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
 import { writerMessages } from "../scenes/writer";
 import { categoryLabelOf } from "../scenes/categories";
 import { reviewWriteState, reviewWritesOf } from "./reviewWrites";
@@ -130,7 +130,7 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
       ...base,
       call,
       slots: asked.slots,
-      jsonSchema: ideaJsonSchema(asked.mirrorAllowed),
+      jsonSchema: ideaJsonSchema(asked.mirrorAllowed, ideaAsksOf(asked.slots)),
       read: (content, slots) => readIdeaAnswer(content, slots.map(toIdeaSlot), asked.mirrorAllowed),
       messages: (slots, feedback) => ideaMessages(slots.map(toIdeaSlot), feedback, asked.mirrorAllowed),
     };

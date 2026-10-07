@@ -915,7 +915,7 @@ describe("scenes.write: an idea", () => {
     await writeAndWait(engine, events, avatarId, idea("селфи в зеркале лифта", 2, null));
 
     expect(onArrival[0]?.reviewWrites?.[0]).toMatchObject({ kind: "idea", mirrorAllowed: true });
-    expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("friend, selfie, mirror, candid or photographer");
+    expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("friend, selfie, mirror or candid");
     const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
     expect(own.every((s) => s.shot === "mirror" && (s.pose === "front" || s.pose === "three-quarter"))).toBe(true);
   });
@@ -954,7 +954,7 @@ describe("scenes.write: an idea", () => {
 
     expect(end).toMatchObject({ type: "job.done" });
     expect(net.writerCalls()).toHaveLength(2);
-    expect(JSON.stringify(net.writerCalls()[1]?.json())).toContain("An earlier answer was rejected: slot(s) 5, 6 gave a shot or a pose that is missing or not allowed");
+    expect(JSON.stringify(net.writerCalls()[1]?.json())).toContain("An earlier answer was rejected: slot(s) 5, 6 gave a shot or a pose that is missing, outside the lists the rules give");
     const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
     expect(own.every((s) => s.pose === "back" && s.shot === "candid")).toBe(true);
   });
