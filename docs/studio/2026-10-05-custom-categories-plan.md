@@ -1498,6 +1498,48 @@ pose no longer follows the set's «Ракурсы» (the model picks it), and th
 Not done on purpose: the UI (the sheet's angles, the create preview, the «Ракурсы» hint, the idea form) is CS.8b/CS.8d; no paid call was made; the canary is repeated
 by the owner.
 
+### CS.8b built — angles from descriptions, the UI (branch `feat/studio-category-angles-ui`, on the CS.8a contract)
+
+Renderer only, against the approved CS.8 design (README «CS.8 — angles from descriptions» and «CS.8d round 1 fixes»; CatCreateDone, CatCreateDoneAngles, CatSheet*,
+CatSheetAngles, CatChipsAngles, ReviewAngles, ReviewAddIdea, ReviewEmpty, ReviewIdeaWriting, ReviewRecompose; CategoryStates F, ReviewStates I). No contract, engine
+or mock change; the shots' seeds live in the shooting rig.
+
+- **Words** (`screens/photos/angles.ts`, `categoryText.ts`, `sceneText.ts`): the app's vocabulary («Со спины», never «сзади»), lists shown and sent sorted front →
+  back; one consequences sentence for the dialog and the sheet («поровну» / «в этом ракурсе», then — only with profile or back — what the deck's phone shots keep and
+  that the face gate skips those angles); `redrawText` gained the own-angles variant; `ideaHint(shot)` replaced `IDEA_HINT`.
+- **«Новая категория»**: the description hint names the pose and the angle; «готово» shows a «Ракурсы» row after «Кадры» (tags in a `role=list`, «из описания» and the
+  note; or «как в карточке генерации» · «в описании не названы»), and the footer says angles are changed in «Мои категории».
+- **«Мои категории»**: a «Ракурсы» block between «Описание» and «Места» (dimmed with the pool while it regenerates): four toggle chips in a group, «бесплатно,
+  сохраняется сразу», `categories.update { poses }` on every press (from «как в карточке» the first press keeps front and three-quarter, the last chip off sends
+  `null`), «× Как в карточке» (the focus then goes to «Анфас»), one save at a time («сохраняем…», `aria-busy`, presses wait), a refusal flips the chip back and
+  the hint becomes the reason (`role=alert`), the hint is `aria-live=polite`; chips and «Как в карточке» wait, with a title, while the category regenerates or is
+  deleted. The regenerate box and its «готово» notice name the angles and what ⟳ takes.
+- **Generate card**: under «Ракурсы», one line when a category of the run keeps its own angles (the message first, the name capped at 180 px); with several,
+  «ещё N категорий» is a disclosure that opens every category with its angles; the visible words are `aria-hidden`, the «Ракурсы» group is described by a hidden
+  full text naming each category.
+- **Review**: the strip's line «Ракурсы: …; у «{имя}»[ и ещё N] — свои; у своих сцен — по описанию» from the set's snapshot (an idea write running counts as own
+  scenes); a scene card tags profile and back «ракурс: …» after the shot tag (faint key, wraps with the tags); ⟳ «Другая сцена» of a category with its own angles
+  names the angle and, for a selfie or mirror scene whose list turns away, that the shot may change — from the category's pool as it is now (the set's snapshot only
+  while the library is not listed), README contract note 4; the idea form's hint follows the shot and both «Идея» and «Кадр» point to it.
+
+Deviations from the boards, and why: (1) the design re-check's LOW 1 — the phone-shot clause reads «Селфи станет меньше: только три четверти; …» («Кадров в зеркале…»,
+«Селфи и кадров в зеркале…») where the boards draw «Селфи — только три четверти; …»: a list that mixes back or profile with a facing angle turns some selfie slots
+into other shots; (2) LOW 2 — the sheet's hint adds «Правка меняет и «Другую сцену» в открытом наборе; уже составленные сцены остаются как были.» when the open set
+holds the category's scenes (the hint is then three lines); (3) the strip's «и ещё N» is a disclosure listing those categories with their angles (the board draws
+plain text; the names would otherwise be out of a keyboard's reach); (4) the locked chips' title is «Пока идёт пересоздание (удаление), эту категорию не изменить»
+(the board names no wording); (5) the shot picker keeps «Авто» (a native select shows the option's label; CS.7 V3), the hint says what it picks; (6) the impl shot of
+CatCreateDoneAngles shows the mock's pool (its places and a deck with a mirror, «в три четверти» since the mock does not read «вполоборота»); (7) a dimmed-on chip's
+focus ring is dimmed with it; (8) the mock's per-scene price still rounds to «≈ $0.000» (CS.6 deviation 19).
+
+Tests, written first and seen red for the intended reason: the words on a throwing stub (`angles.test.ts` 6 of 7 — the vocabulary constants are data;
+`categoryText.test.ts` 11; `sceneText.test.ts` 5); `PhotosCategoryAngles.test.tsx` 14 of 14 before the UI; `PhotosSceneAngles.test.tsx` 5 of 7 (the strip without
+own angles is today's behaviour; «⟳ reads the angles as they are now» passed on today's popover and was turned red by a mutant that reads the set's snapshot only).
+Changed on purpose: the pinned «готово» footer, the regenerate texts and the idea hint (««Авто» не берёт зеркало» is no longer true). Impl shots of every new or
+changed state at 1200 and 1440: `.omc/stage3/design/custom-categories/impl-shots/angles/` (untracked), no console errors.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; `bun test studio/renderer` 3343 passing; the full Studio suite in three shards, 7539 + 6554 + 6609 =
+20702 passing, 22 skipped, 0 failing (this machine, `node_modules` and `.cache` linked from the main checkout; CI is the run of record).
+
 Phase 1 = CS.0 (category states), CS.1, CS.2, CS.3. Phase 2 = CS.0 (review states), CS.4a, CS.4b,
 CS.5, CS.6, CS.7. Rough size: phase 1 ≈ one L and two M tasks; phase 2 ≈ two L and three M tasks
 plus the review.
