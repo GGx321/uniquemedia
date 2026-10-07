@@ -233,3 +233,49 @@ describe("what only this window knows", () => {
     expect(h.slice.getView().dismissed.has("set-seed-0001")).toBe(true);
   });
 });
+
+describe("the focus asked for a job's «Отменить» (CS.7)", () => {
+  const PRICE = { expectedMicros: 2_000, worstMicros: 2 * ATTEMPT, prices: "fallback" as const, pricesAsOf: "2026-10-01" };
+
+  /** A rewrite of scene 2 sent; its answer is in hand, but the screen has not handled it yet. */
+  async function rewriteSent(h: Harness): Promise<string> {
+    h.slice.retain(MIA.avatarId);
+    await settle();
+    const reply = await h.client.request("scenes.write", { sceneSetId: "set-seed-0001", revision: 1, target: { kind: "rewrite", sceneIds: [2], redraw: true }, acceptedWorstMicros: 2 * ATTEMPT });
+    if (!reply.ok) throw new Error(reply.error.code);
+    return reply.result.jobId;
+  }
+
+  /** What the screen does with the answer (usePaidAction's onSent): the store and the slice learn of the job, and the focus is asked for. */
+  function handleAnswer(h: Harness, jobId: string): void {
+    h.store.trackScenesJob(jobId, "set-seed-0001", MIA.avatarId, 1);
+    h.slice.trackJob(jobId, { sceneSetId: "set-seed-0001", kind: "rewrite", price: PRICE, sceneIds: [2], idea: null });
+    h.slice.requestCancelFocus(jobId);
+  }
+
+  test("a job.cancelled heard before the write's answer is handled: no request is kept for it, so no later «Отменить» takes the focus", async () => {
+    const h = await started({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3 }] });
+    const jobId = await rewriteSent(h);
+    // The order the window hears them in: the cancel (another window's, say) and its job.cancelled first, the answer's handling after.
+    const cancel = await h.client.request("scenes.cancel", { sceneSetId: "set-seed-0001" });
+    if (!cancel.ok) throw new Error(cancel.error.code);
+    h.scheduler.runAll();
+    await settle();
+    expect(h.store.getView().jobs.find((j) => j.jobId === jobId)?.status).toBe("cancelled");
+    handleAnswer(h, jobId);
+    expect(h.slice.getView().cancelFocus.has(jobId)).toBe(false);
+  });
+
+  test("a request still waiting when its job ends is dropped with it", async () => {
+    const h = await started({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3 }] });
+    const jobId = await rewriteSent(h);
+    handleAnswer(h, jobId);
+    expect(h.slice.getView().cancelFocus.has(jobId)).toBe(true);
+    const cancel = await h.client.request("scenes.cancel", { sceneSetId: "set-seed-0001" });
+    if (!cancel.ok) throw new Error(cancel.error.code);
+    h.scheduler.runAll();
+    await settle();
+    expect(h.store.getView().jobs.find((j) => j.jobId === jobId)?.status).toBe("cancelled");
+    expect(h.slice.getView().cancelFocus.has(jobId)).toBe(false);
+  });
+});
