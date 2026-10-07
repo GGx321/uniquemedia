@@ -671,6 +671,26 @@ test("a run's price load refuses a model whose live endpoints accept no referenc
   expect((err as MoneyError).code).toBe("PRICE_UNAVAILABLE");
 });
 
+test("a run's price load prices a model that accepts exactly one reference (max 1): the one a photo run sends", async () => {
+  const body = grokEndpointsWith((p) => ({ ...p, input_references: { type: "range", min: 0, max: 1 } }));
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
+// An ABSENT key is unknown, and unknown is accepted (schema drift in an incident must not stop a run that holds a priced reserve).
+test.each(["resolution", "aspect_ratio", "input_references"])("a run's price load prices a model whose endpoints omit %s: unknown is accepted", async (key) => {
+  const body = grokEndpointsWith((p) => {
+    const { [key]: _omitted, ...rest } = p;
+    return rest;
+  });
+
+  const book = await loadChecked({ [GROK_URL]: body }, true);
+
+  expect(book.source).toBe("live");
+});
+
 test("a run's price load still prices a model that lost 3:4: a photo run never sends it", async () => {
   const body = grokEndpointsWith((p) => ({ ...p, aspect_ratio: { type: "enum", values: ["1:1", "9:16"] } }));
 
