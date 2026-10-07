@@ -4,7 +4,7 @@ import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
 import type { ChatMessage, ChatResult, OpenRouterClient } from "../openrouter/types";
-import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type WriterRefusal } from "../scenes";
+import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type ReadableSlot, type WriterRefusal } from "../scenes";
 import { classifyFailure } from "./failures";
 import { attemptPaid, type LedgerView } from "./journal";
 import type { Release } from "./pools";
@@ -50,11 +50,12 @@ export interface WriterCallShape {
   maxAttempts: number;
 }
 
-export interface WriterPhase {
+/** A run's phase asks about its plan's slots; a scene set's review write (CS.4b) may ask about own scenes, which carry only what the answer reader needs. */
+export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
   /** The call's ceilings and the answered attempts a chunk may use. */
   call: WriterCallShape;
   /** The messages of one attempt; `feedback` is why the chunk's previous answer was rejected. */
-  messages: (slots: readonly PlanSlot[], feedback: WriterRefusal | undefined) => ChatMessage[];
+  messages: (slots: readonly S[], feedback: WriterRefusal | undefined) => ChatMessage[];
   /** The ledger's jobId for these calls. */
   jobId: string;
   /** The run's cap scope. */
@@ -64,7 +65,7 @@ export interface WriterPhase {
   /** The run job's cancel. */
   signal: AbortSignal;
   /** The plan's slots, in plan order. */
-  slots: readonly PlanSlot[];
+  slots: readonly S[];
   /** The plan's writer chunks, with their pre-allocated ids. */
   chunks: readonly { chunk: number; slotIndexes: readonly number[]; attemptIds: readonly string[] }[];
   /** Sentences already in the journal (a resume). */
@@ -93,7 +94,7 @@ function cancelled(): Extract<WriterPhaseResult, { ok: false }> {
 }
 
 /** One call under `attemptId`, inside a network slot; null when the cancel came first. */
-async function ask(deps: WriterPhaseDeps, phase: WriterPhase, attemptId: string, slots: readonly PlanSlot[], feedback: WriterRefusal | undefined): Promise<ChatResult | null> {
+async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>, attemptId: string, slots: readonly S[], feedback: WriterRefusal | undefined): Promise<ChatResult | null> {
   let release: Release;
   try {
     release = await deps.acquire(phase.signal);
@@ -127,11 +128,11 @@ async function ask(deps: WriterPhaseDeps, phase: WriterPhase, attemptId: string,
  * anything else that is not an answer, stops the phase. A chunk with no
  * unused id, or no answered attempt left, fails without sending anything.
  */
-async function writeChunk(
+async function writeChunk<S extends ReadableSlot>(
   deps: WriterPhaseDeps,
-  phase: WriterPhase,
-  chunk: WriterPhase["chunks"][number],
-  slots: readonly PlanSlot[],
+  phase: WriterPhase<S>,
+  chunk: WriterPhase<S>["chunks"][number],
+  slots: readonly S[],
 ): Promise<{ ok: true; sentences: Map<number, string> } | Extract<WriterPhaseResult, { ok: false }>> {
   let feedback: WriterRefusal | undefined;
   let answered = chunk.attemptIds.filter((id) => attemptPaid(phase.ledger, id)).length;
@@ -172,7 +173,7 @@ async function writeChunk(
  * Every chunk not yet in the journal, in order, one at a time. The first
  * chunk that cannot be written ends the phase: a later chunk is never asked.
  */
-export async function runWriterPhase(deps: WriterPhaseDeps, phase: WriterPhase): Promise<WriterPhaseResult> {
+export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>): Promise<WriterPhaseResult> {
   const sentences = new Map(phase.sentences);
   const bySlot = new Map(phase.slots.map((slot) => [slot.slotIndex, slot]));
   for (const chunk of phase.chunks) {
