@@ -90,3 +90,32 @@ describe("the writer prompt floor pin, for a scene set", () => {
     expect(promptTokenFloor({ messages: runWriterConfig([snapshot]).messages(worstSet(POOL_TEXT_MAX).scenes.map((s) => s.slot), undefined), jsonSchema: WRITER_JSON_SCHEMA, images: 0 })).toBeLessThan(CEILING);
   });
 });
+
+// CS.4b: THE PHASE-2 FLOOR PIN. The worst review-time write is ONE request for at most five scenes: five redrawn custom slots (every text at its bound, the
+// category's freshest 24-char label), or five own scenes with 500-char ideas (ideaWriter.test.ts pins those), asked again after the worst refusal. Neither can
+// come near the 25-slot chunk of the pin above, so the ceiling the owner accepted covers every write — as long as the file holds a write to five scenes and a
+// redrawn slot to the bounds a plan's slot is held to, which is pinned here.
+describe("the phase-2 floor pin: the worst review-time write", () => {
+  const redrawnSet = (textLength: number, scenes: number) => {
+    const base = worstSet(textLength);
+    const slots = base.scenes.slice(0, scenes).map((s) => s.slot);
+    return { ...base, writes: 2, reviewWrites: [{ kind: "rewrite", k: 2, jobId: "job-aaaa-0002", attemptIds: [1, 2, 3, 4].map((n) => `${base.sceneSetId}:write-2#${n}`), closed: false, sceneIds: slots.map((s) => s.slotIndex), redraw: true, slots, snapshots: [snapshot] }] };
+  };
+
+  test("five redrawn custom slots at the bounds, asked again after the worst refusal, stay at least 200 tokens under the 14K ceiling", () => {
+    const parsed = SceneSetFile.parse(stamped(redrawnSet(POOL_TEXT_MAX, 5) as never));
+    const record = parsed.reviewWrites?.[0];
+    if (record === undefined || record.kind !== "rewrite") throw new Error("no rewrite record");
+    const messages = runWriterConfig(record.snapshots).messages(record.slots, worstRefusal(record.slots));
+    expect(promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 })).toBeLessThanOrEqual(CEILING - MARGIN);
+  });
+
+  test("a redrawn slot in a write's record is held to the pool bound: one character over is refused by the file", () => {
+    expect(SceneSetFile.safeParse(stamped(redrawnSet(POOL_TEXT_MAX, 5) as never)).success).toBe(true);
+    expect(SceneSetFile.safeParse(stamped(redrawnSet(POOL_TEXT_MAX + 1, 5) as never)).success).toBe(false);
+  });
+
+  test("a write holds at most the five scenes the pin was measured at: a record of six is refused by the file", () => {
+    expect(SceneSetFile.safeParse(stamped(redrawnSet(POOL_TEXT_MAX, 6) as never)).success).toBe(false);
+  });
+});
