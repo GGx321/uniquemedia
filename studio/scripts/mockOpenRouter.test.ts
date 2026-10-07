@@ -1,9 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { authorizationLabel, markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
 import { failureDetail } from "./failureDetail";
-import { readPoolAnswer } from "../engine/scenes/poolGen";
-import { ideaMessages, type IdeaSlot } from "../engine/scenes/ideaWriter";
-import { readWriterAnswer, WRITER_JSON_SCHEMA } from "../engine/scenes";
+import { poolMessages, readPoolAnswer } from "../engine/scenes/poolGen";
+import { IDEA_JSON_SCHEMA, ideaMessages, readIdeaAnswer, type IdeaSlot } from "../engine/scenes/ideaWriter";
+import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -117,6 +117,23 @@ describe("the pool call", () => {
     expect(read.ok && read.label).toBe("Mock theme");
   });
 
+  test("a description with no angle gets a pool with no poses", async () => {
+    const m = await started();
+    const reply = (await (await post(m, poolMessages("кофейни и булочные")[1]?.content)).json()) as { choices: { message: { content: string } }[] };
+    const read = readPoolAnswer(reply.choices[0]?.message.content ?? "");
+    expect(read.ok && "poses" in read.pool).toBe(false);
+  });
+
+  test("the paid canary's description («Лежит на животе… Вид сзади») gets back and activities in that body position (CS.8a)", async () => {
+    const m = await started();
+    const description = "Лежит на животе в домашних шортиках и топике. Вид сзади";
+    const reply = (await (await post(m, poolMessages(description)[1]?.content)).json()) as { choices: { message: { content: string } }[] };
+    const read = readPoolAnswer(reply.choices[0]?.message.content ?? "");
+    expect(read.ok && read.dropped).toBe(0);
+    expect(read.ok && read.pool.poses).toEqual(["back"]);
+    expect(read.ok && read.pool.locations.every((l) => l.activities.every((a) => a.text.startsWith("lying on her stomach")))).toBe(true);
+  });
+
   test("lists the request apart from the other chat calls, and books its cost against /credits", async () => {
     const m = await started();
     await post(m);
@@ -147,20 +164,20 @@ describe("the idea writer call", () => {
     nativeFetch(`${m.url}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "x-ai/grok-4.3", messages: ideaMessages(asked), response_format: { type: "json_schema", json_schema: WRITER_JSON_SCHEMA } }),
+      body: JSON.stringify({ model: "x-ai/grok-4.3", messages: ideaMessages(asked), response_format: { type: "json_schema", json_schema: IDEA_JSON_SCHEMA } }),
     });
 
   test("answers a sentence for every own scene that the writer's own reader accepts, whatever the shot", async () => {
     const m = await started();
     const reply = (await (await post(m)).json()) as { choices: { message: { content: string } }[] };
-    const read = readWriterAnswer(reply.choices[0]?.message.content ?? "", slots);
+    const read = readIdeaAnswer(reply.choices[0]?.message.content ?? "", slots);
     expect(read.ok && [...read.sentences.keys()]).toEqual([6, 7, 8]);
   });
 
   test("the sentences differ from scene to scene", async () => {
     const m = await started();
     const reply = (await (await post(m)).json()) as { choices: { message: { content: string } }[] };
-    const read = readWriterAnswer(reply.choices[0]?.message.content ?? "", slots);
+    const read = readIdeaAnswer(reply.choices[0]?.message.content ?? "", slots);
     expect(read.ok && new Set(read.sentences.values()).size).toBe(3);
   });
 
@@ -173,13 +190,80 @@ describe("the idea writer call", () => {
     expect(m.totalUsageUsd()).toBeCloseTo(0.011, 6);
   });
 
+  describe("a slot whose angle the model picks (CS.8a)", () => {
+    const pickWith = async (asked: readonly IdeaSlot[], mirrorAllowed: boolean) => {
+      const m = await started();
+      const reply = (await (await post(m, asked)).json()) as { choices: { message: { content: string } }[] };
+      return readIdeaAnswer(reply.choices[0]?.message.content ?? "", asked, mirrorAllowed);
+    };
+    const pick = (asked: readonly IdeaSlot[]) => pickWith(asked, false);
+
+    test("an idea that asks for a view from behind, in Russian, gets back and a shot nobody holds a phone for", async () => {
+      const read = await pick([{ slotIndex: 6, idea: "лежит на животе, вид сзади", shot: null, pose: null }]);
+      expect(read.ok && read.angles.get(6)).toEqual({ shot: "candid", pose: "back" });
+    });
+
+    test("so does an idea that says «back» in English", async () => {
+      const read = await pick([{ slotIndex: 6, idea: "lying on her stomach, back view", shot: null, pose: null }]);
+      expect(read.ok && read.angles.get(6)?.pose).toBe("back");
+    });
+
+    test("an idea that asks for a profile gets profile", async () => {
+      const read = await pick([{ slotIndex: 6, idea: "в профиль у окна", shot: null, pose: null }]);
+      expect(read.ok && read.angles.get(6)).toEqual({ shot: "candid", pose: "profile" });
+    });
+
+    test("an idea that says nothing of the angle gets a friend's photo facing the camera", async () => {
+      const read = await pick([{ slotIndex: 6, idea: "кофе на балконе утром", shot: null, pose: null }]);
+      expect(read.ok && read.angles.get(6)).toEqual({ shot: "friend", pose: "front" });
+    });
+
+    test("an idea that names a mirror gets the mirror on «Авто», facing the camera; one that names none never does", async () => {
+      const named = await pickWith([{ slotIndex: 6, idea: "селфи в зеркале лифта", shot: null, pose: null }], true);
+      expect(named.ok && named.angles.get(6)).toEqual({ shot: "mirror", pose: "front" });
+      const plain = await pickWith([{ slotIndex: 6, idea: "кофе на балконе", shot: null, pose: null }], false);
+      expect(plain.ok && plain.angles.get(6)?.shot).toBe("friend");
+    });
+
+    test("the raw answer carries a key only for what was asked, and no null (the engine's schema has no nullable key)", async () => {
+      const m = await started();
+      const asked: IdeaSlot[] = [
+        { slotIndex: 6, idea: "вид сзади", shot: null, pose: null },
+        { slotIndex: 7, idea: "вид сзади", shot: "friend", pose: null },
+        { slotIndex: 8, idea: "вид сзади", shot: "candid", pose: "back" },
+      ];
+      const reply = (await (await post(m, asked)).json()) as { choices: { message: { content: string } }[] };
+      const content = reply.choices[0]?.message.content ?? "";
+      const scenes = (JSON.parse(content) as { scenes: Record<string, unknown>[] }).scenes;
+      expect(scenes.map((s) => Object.keys(s).sort())).toEqual([
+        ["pose", "sentence", "shot", "slotIndex"],
+        ["pose", "sentence", "slotIndex"],
+        ["sentence", "slotIndex"],
+      ]);
+      expect(content).not.toContain("null");
+    });
+
+    test("a shot the owner chose stays, and a mirror or selfie is never turned away", async () => {
+      const read = await pick([
+        { slotIndex: 6, idea: "вид сзади", shot: "friend", pose: null },
+        { slotIndex: 7, idea: "вид сзади", shot: "selfie", pose: null },
+        { slotIndex: 8, idea: "вид сзади", shot: "mirror", pose: null },
+      ]);
+      expect(read.ok && [...read.angles.values()]).toEqual([
+        { shot: "friend", pose: "back" },
+        { shot: "selfie", pose: "front" },
+        { shot: "mirror", pose: "front" },
+      ]);
+    });
+  });
+
   test("a follow-up after a refusal (the re-ask paragraph) is read the same way", async () => {
     const m = await started();
     const messages = ideaMessages(slots, { problems: ["empty"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] });
     const reply = await nativeFetch(`${m.url}/chat/completions`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ model: "x-ai/grok-4.3", messages, response_format: { type: "json_schema", json_schema: WRITER_JSON_SCHEMA } }),
+      body: JSON.stringify({ model: "x-ai/grok-4.3", messages, response_format: { type: "json_schema", json_schema: IDEA_JSON_SCHEMA } }),
     });
     expect(reply.status).toBe(200);
   });

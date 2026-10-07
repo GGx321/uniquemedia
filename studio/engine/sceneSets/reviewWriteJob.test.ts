@@ -67,6 +67,19 @@ function listAsked(call: FetchCall): { slotIndex: number; [key: string]: unknown
 const slotsAskedFor = (call: FetchCall): number[] => listAsked(call).map((s) => s.slotIndex);
 
 const good: Step = (call) => ({ status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${NEW} (${slotIndex})` })) }), { cost: 0.0042 }) });
+/** An idea write's answer: a sentence per scene and, for what the slot left to the model («choose»), `pick` (a view from behind by default); null for what it gave. */
+function ideaAnswer(pick: { shot: string; pose: string } = { shot: "candid", pose: "back" }): Step {
+  return (call) => ({
+    status: 200,
+    body: chatBody(
+      JSON.stringify({
+        scenes: listAsked(call).map((s) => ({ slotIndex: s.slotIndex, sentence: `${NEW} (${s.slotIndex})`, ...(s.shot === "choose" ? { shot: pick.shot } : {}), ...(s.pose === "choose" ? { pose: pick.pose } : {}) })),
+      }),
+      { cost: 0.0042 },
+    ),
+  });
+}
+const goodIdea = ideaAnswer();
 const rejected: Step = { status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) };
 const refusal: Step = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 const rateLimited: Step = { status: 429, headers: { "retry-after": "120" }, body: { error: { message: "rate limited" } } };
@@ -87,9 +100,9 @@ const recordOf = async (k: number): Promise<ReviewWriteRecord> => {
 async function recordRewrite(sceneIds: number[], redraw: { slots: PlanSlot[]; snapshots?: CategorySnapshot[] } | null = null): Promise<void> {
   await store.update(AVATAR, SET, (s) => beginRewrite(s, { jobId: "job-aaaa-0002", sceneIds, redraw: redraw !== null, slots: redraw?.slots ?? [], snapshots: redraw?.snapshots ?? [] }));
 }
-async function recordIdea(idea: string, count: number, shot: "friend" | null = null): Promise<void> {
+async function recordIdea(idea: string, count: number, shot: "friend" | "selfie" | null = null, mirrorAllowed = false): Promise<void> {
   await store.update(AVATAR, SET, (s) =>
-    beginIdea(s, { jobId: "job-aaaa-0002", idea, count, shot, scenes: Array.from({ length: count }, (_, i) => ({ sceneId: 6 + i, shot: shot ?? "friend", pose: "front" as const })) }),
+    beginIdea(s, { jobId: "job-aaaa-0002", idea, count, shot, mirrorAllowed, scenes: Array.from({ length: count }, (_, i) => ({ sceneId: 6 + i, shot: shot ?? "friend", pose: "front" as const })) }),
   );
 }
 
@@ -108,8 +121,8 @@ function run(steps: Step[], opts: { k?: number; jobId?: string; signal?: AbortSi
       priceBook: money.priceBook,
       acquire: (signal) => pool.acquire(signal),
       load: async () => setNow(),
-      accept: async (_k, sentences) => {
-        await store.update(AVATAR, SET, (s) => withReviewWriteAccepted(s, k, sentences));
+      accept: async (_k, sentences, angles) => {
+        await store.update(AVATAR, SET, (s) => withReviewWriteAccepted(s, k, sentences, angles));
       },
       giveUp: async (given) => {
         closed.push(given);
@@ -228,7 +241,7 @@ describe("an idea write", () => {
   test("asks about the scene ids it reserved, with the idea verbatim, and adds the scenes with the accepted sentences", async () => {
     await seed();
     await recordIdea("прогулка по набережной на закате", 2);
-    const { net, end, progress } = run([good]);
+    const { net, end, progress } = run([goodIdea]);
 
     expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
     expect(reserveIds()).toEqual([id(2, 1)]);
@@ -244,8 +257,156 @@ describe("an idea write", () => {
     await seed();
     const before = await setNow();
     await recordIdea("прогулка", 1);
-    await run([good]).end;
+    await run([goodIdea]).end;
     expect((await setNow()).scenes.slice(0, 5)).toEqual(before.scenes);
+  });
+
+  describe("the angle the model picks (CS.8a)", () => {
+    test("on «Авто» it is asked for the shot and the pose, under the idea schema, and the scenes take what it picked", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 2, null);
+      const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
+
+      expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["choose", "choose"], ["choose", "choose"]]);
+      expect(JSON.stringify((net.calls[0] as FetchCall).json().response_format)).toContain("scene_ideas");
+      const own = (await setNow()).scenes.slice(5);
+      expect(own.map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["candid", "back"], ["candid", "back"]]);
+    });
+
+    test("an idea that names a mirror, on «Авто»: the mirror is offered and taken, with a pose facing the camera", async () => {
+      await seed();
+      await recordIdea("селфи в зеркале лифта", 1, null, true);
+      const { net, end } = run([ideaAnswer({ shot: "mirror", pose: "three-quarter" })]);
+
+      expect(await end).toMatchObject({ status: "done" });
+      const call = net.calls[0] as FetchCall;
+      expect(JSON.stringify(call.json().response_format)).toContain('"mirror"');
+      expect(messagesOf(call)[0]?.content).toBe(ideaSystemPrompt(true));
+      expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["mirror", "three-quarter"]]);
+    });
+
+    test("an idea that names none: the mirror is not offered, and an answer that picks it is refused, twice, and nothing is added", async () => {
+      await seed();
+      const before = await setNow();
+      await recordIdea("кофе на балконе", 1, null);
+      const { net, end } = run([ideaAnswer({ shot: "mirror", pose: "front" }), ideaAnswer({ shot: "mirror", pose: "front" })]);
+
+      expect(await end).toMatchObject({ status: "failed", resolved: true });
+      expect(JSON.stringify((net.calls[0] as FetchCall).json().response_format)).not.toContain('"mirror"');
+      expect(messagesOf(net.calls[0] as FetchCall)[0]?.content).toBe(ideaSystemPrompt(false));
+      expect((await setNow()).scenes).toEqual(before.scenes);
+    });
+
+    /** The keys of one scene in the response schema the call carried. */
+    function schemaKeys(call: FetchCall): { keys: string[]; text: string } {
+      const format = JSON.stringify(call.json().response_format);
+      const props = (call.json() as { response_format: { json_schema: { schema: { properties: { scenes: { items: { properties: Record<string, unknown> } } } } } } }).response_format.json_schema.schema.properties.scenes.items.properties;
+      return { keys: Object.keys(props).sort(), text: format };
+    }
+
+    test("on «Авто» the schema asks for the shot and the pose, as plain string enums with no null", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 1, null);
+      const { net, end } = run([ideaAnswer()]);
+      await end;
+      const { keys, text } = schemaKeys(net.calls[0] as FetchCall);
+      expect(keys).toEqual(["pose", "sentence", "shot", "slotIndex"]);
+      expect(text).not.toContain("null");
+    });
+
+    test("with the owner's shot the schema has no shot key at all, and no null", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 1, "friend");
+      const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
+      await end;
+      const { keys, text } = schemaKeys(net.calls[0] as FetchCall);
+      expect(keys).toEqual(["pose", "sentence", "slotIndex"]);
+      expect(text).not.toContain("null");
+    });
+
+    test("a rewrite of an own scene asks for neither: the schema holds the number and the sentence only", async () => {
+      await seed();
+      await recordRewrite([5]);
+      const { net, end } = run([good]);
+      await end;
+      const { keys, text } = schemaKeys(net.calls[0] as FetchCall);
+      expect(keys).toEqual(["sentence", "slotIndex"]);
+      expect(text).not.toContain("null");
+    });
+
+    test("with the owner's shot it is asked for the pose alone, and the shot stays the owner's", async () => {
+      await seed();
+      await recordIdea("лежит на животе, вид сзади", 1, "friend");
+      const { net, end } = run([ideaAnswer({ shot: "photographer", pose: "profile" })]);
+
+      expect(await end).toMatchObject({ status: "done" });
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["photo taken by a friend", "choose"]]);
+      expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["friend", "profile"]]);
+    });
+
+    test("a resumed «Авто» write asks the same slots under the same ids and keeps the stored mirror permission", async () => {
+      await seed();
+      await recordIdea("селфи в зеркале лифта", 2, null, true);
+      const first = run([offline], { jobId: "job-aaaa-0002" });
+      await first.end;
+      const second = run([ideaAnswer({ shot: "mirror", pose: "three-quarter" })], { jobId: "job-aaaa-0003" });
+
+      expect(await second.end).toEqual({ status: "done", written: 2, unwritten: 0 });
+      expect(listAsked(second.net.calls[0] as FetchCall)).toEqual(listAsked(first.net.calls[0] as FetchCall));
+      expect(listAsked(second.net.calls[0] as FetchCall).map((s) => [s.slotIndex, s.shot, s.pose])).toEqual([[6, "choose", "choose"], [7, "choose", "choose"]]);
+      expect(messagesOf(second.net.calls[0] as FetchCall)[0]?.content).toBe(ideaSystemPrompt(true));
+      expect(JSON.stringify((second.net.calls[0] as FetchCall).json().response_format)).toContain('"mirror"');
+      expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
+      expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.sceneId, s.shot, s.pose] : null))).toEqual([[6, "mirror", "three-quarter"], [7, "mirror", "three-quarter"]]);
+    });
+
+    test("a record written without the flag, whose idea names a mirror, stays not allowed: the mirror is neither offered nor accepted", async () => {
+      await seed();
+      const before = await setNow();
+      await recordIdea("селфи в зеркале лифта", 1, null);
+      expect((await recordOf(2)) as { mirrorAllowed?: boolean }).not.toHaveProperty("mirrorAllowed");
+      const { net, end } = run([ideaAnswer({ shot: "mirror", pose: "front" }), ideaAnswer({ shot: "mirror", pose: "front" })]);
+
+      expect(await end).toMatchObject({ status: "failed", resolved: true });
+      expect(messagesOf(net.calls[0] as FetchCall)[0]?.content).toBe(ideaSystemPrompt(false));
+      expect(JSON.stringify((net.calls[0] as FetchCall).json().response_format)).not.toContain('"mirror"');
+      expect((await setNow()).scenes).toEqual(before.scenes);
+    });
+
+    test("an impossible pick (a selfie from behind) is refused, the next attempt is told why, and the second answer is the one stored", async () => {
+      await seed();
+      await recordIdea("вид сзади", 1, null);
+      const { net, end } = run([ideaAnswer({ shot: "selfie", pose: "back" }), ideaAnswer({ shot: "candid", pose: "back" })]);
+
+      expect(await end).toMatchObject({ status: "done" });
+      expect(net.calls).toHaveLength(2);
+      expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
+      expect(JSON.stringify(net.calls[1]?.json())).toContain("gave a shot or a pose that is missing, outside the lists the rules give");
+      expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["candid", "back"]]);
+    });
+
+    test("two answers with no pick resolve the write: no scene is added with a value we made up", async () => {
+      await seed();
+      const before = await setNow();
+      await recordIdea("вид сзади", 1, null);
+      const { end, closed } = run([good, good]);
+
+      expect(await end).toMatchObject({ status: "failed", resolved: true });
+      expect(closed).toEqual([2]);
+      expect((await setNow()).scenes).toEqual(before.scenes);
+    });
+
+    test("a rewrite of an own scene asks for neither and keeps its shot and pose, whatever the answer says", async () => {
+      await seed();
+      await recordRewrite([5]);
+      const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
+
+      expect(await end).toMatchObject({ status: "done" });
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["front-camera selfie", "facing the camera"]]);
+      const scene = (await setNow()).scenes.find((s) => s.sceneId === 5);
+      expect(scene?.origin === "own" && [scene.shot, scene.pose]).toEqual(["selfie", "front"]);
+    });
   });
 });
 

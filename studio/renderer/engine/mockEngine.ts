@@ -57,6 +57,7 @@ import {
   type RunRequest,
   type RunSummary,
   splitCount,
+  type ScenePose,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
@@ -3126,7 +3127,7 @@ export class MockEngine implements EngineBridge {
     return this.ok(c, { category, spentMicros: expectedMicros });
   }
 
-  private updateCategory(c: CommandMessage, payload: { categoryId: CustomCategoryId; name?: string; removeLocations?: string[]; removeOutfits?: string[] }): ResponseMessage {
+  private updateCategory(c: CommandMessage, payload: { categoryId: CustomCategoryId; name?: string; removeLocations?: string[]; removeOutfits?: string[]; poses?: ScenePose[] | null }): ResponseMessage {
     const early = this.writeLibraryGate() ?? this.regeneratingRefusal(payload.categoryId) ?? this.creatingRefusal(payload.name);
     if (early) return this.fail(c, early);
     const { categoryId, ...change } = payload;

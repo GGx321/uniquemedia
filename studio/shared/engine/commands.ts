@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { AvatarName, AvatarTraits } from "./avatar";
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
-import { CategoriesListResult, CategoryDescription, CategoryName, CategorySummary, CustomCategoryId, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
+import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategorySummary, CustomCategoryId, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
 import { EventMessage } from "./events";
@@ -561,7 +561,8 @@ const ENGINE_SPECS = [
   // above the accepted worst case; MODERATION_REFUSED (free) when the provider refuses the description; POOL_REJECTED after two unusable
   // answers. A failure carries `spentMicros` in its error, and a failed regenerate keeps the old pool. The answer's `spentMicros` is what
   // THIS call cost; the category's own `spentMicros` is its total.
-  // `categories.update`: free; a new name, and places / outfits to remove by their text (refused with VALIDATION below the pool's minimums).
+  // `categories.update`: free; a new name, and places / outfits to remove by their text (refused with VALIDATION below the pool's minimums), and (CS.8a, additive)
+  // `poses`: the category's angles (1..4 distinct of front / three-quarter / profile / back) or null to clear them; any list is storable, so it has no refusal of its own.
   // IN_FLIGHT for a category whose regeneration is under way or that is being deleted, and VALIDATION `name-taken` for a rename to the name a create in flight is about to
   // take (its pool is paid for and must stay storable). `categories.delete`: free; IN_FLIGHT while its regeneration runs. Photos and plans already made keep their snapshot.
   // CS.7: every write of the library's records (this, `scenes.compose/edit/write/discard`, `runs.startFromScenes`) is IN_FLIGHT while a library switch is being surveyed.
@@ -586,9 +587,11 @@ const ENGINE_SPECS = [
         name: CategoryName.optional(),
         removeLocations: z.array(PoolText).min(1).max(POOL_PLACES_MAX).optional(),
         removeOutfits: z.array(PoolText).min(1).max(POOL_OUTFITS_MAX).optional(),
+        /** CS.8a: sets the category's angles, or clears them (null: no preference, the run's toggles decide again). */
+        poses: CategoryPoses.nullable().optional(),
       })
-      .refine((p) => p.name !== undefined || p.removeLocations !== undefined || p.removeOutfits !== undefined, {
-        message: "name a change: a new name, places to remove or outfits to remove",
+      .refine((p) => p.name !== undefined || p.removeLocations !== undefined || p.removeOutfits !== undefined || p.poses !== undefined, {
+        message: "name a change: a new name, places to remove, outfits to remove or the angles",
         path: ["name"],
       }),
     z.strictObject({ category: CategorySummary }),

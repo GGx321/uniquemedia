@@ -2,9 +2,9 @@ import { splitCount } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
 import { POOLS, type Place, type Pool } from "./pools";
-import { drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
+import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
 import { Bag, makeRng, rngPick, type Rng } from "./rngUtil";
-import { ScenePlanSchema, type PlanSlot, type ScenePlan } from "./schema";
+import { ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
 
 // The seeded scene planner (T5a, item 2). Each category draws from its own
 // rng sub-stream (see categorySeed below), so the same (seed, count,
@@ -160,7 +160,11 @@ function planCategory(
 
   const places: Place[] = Array.from({ length: n }, () => locationBag.next());
   const drawnShots: Shot[] = Array.from({ length: n }, () => shotBag.next());
-  const shots = placeMirrorShots(drawnShots, places);
+  const placedShots = placeMirrorShots(drawnShots, places);
+  // CS.8a: a category whose description named its angles draws each slot's pose from them (the run's toggles are not asked), on the pose stream, and a back
+  // or profile slot that drew a phone-in-hand shot takes another shot of the deck. Without `poses` this is the code path that always was: nothing is drawn here.
+  const angled = pool.poses === undefined ? null : placedShots.map((shot) => drawFromPoses(poseRng, shot, pool.poses ?? [], pool.shotDeck));
+  const shots = angled === null ? placedShots : angled.map((a) => a.shot);
 
   const maxOutfitAttempts = pool.outfits.length - 1;
   return places.map((place, i) => {
@@ -183,7 +187,7 @@ function planCategory(
       activity: rngPick(rng, activities).text,
       outfit,
       shot,
-      pose: drawPose(poseRng, shot, poses),
+      pose: angled === null ? drawPose(poseRng, shot, poses) : (angled[i] as { pose: Pose }).pose,
       attemptIdBase: `slot-${slotIndex}`,
       repeatedPair,
     };

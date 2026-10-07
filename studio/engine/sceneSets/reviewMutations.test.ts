@@ -119,6 +119,14 @@ describe("beginIdea", () => {
     expect(next.writes).toBe(2);
   });
 
+  test("records that the idea names a mirror (CS.8a), before any call; a record of an idea that names none carries no such key", () => {
+    const named = beginIdea(stored({ writes: 1 }), { jobId: "job-aaaa-0002", idea: "селфи в зеркале лифта", count: 2, shot: null, scenes: drawn, mirrorAllowed: true });
+    expect(recordsOf(named)[0]).toMatchObject({ kind: "idea", mirrorAllowed: true });
+    const plain = beginIdea(stored({ writes: 1 }), { jobId: "job-aaaa-0002", idea: "кофе", count: 2, shot: null, scenes: drawn, mirrorAllowed: false });
+    expect(recordsOf(plain)[0]).not.toHaveProperty("mirrorAllowed");
+    expect(SceneSetFile.safeParse({ ...named, revision: 4 }).success).toBe(true);
+  });
+
   test("adds no scene yet: the scenes join the set with their accepted sentences", () => {
     const set = stored({ writes: 1 });
     expect(beginIdea(set, { jobId: "job-aaaa-0002", idea: "кофе", count: 2, shot: null, scenes: drawn }).scenes).toEqual(set.scenes);
@@ -310,6 +318,42 @@ describe("withReviewWriteAccepted: an idea write", () => {
       { sceneId: 5, origin: "own", idea: "кофе на балконе утром", shot: "friend", pose: "front", text: "First.", edited: false, removed: false },
       { sceneId: 6, origin: "own", idea: "кофе на балконе утром", shot: "selfie", pose: "three-quarter", text: "Second.", edited: false, removed: false },
     ]);
+  });
+
+  test("takes the shot and the pose the model settled on over the draw it was recorded with (CS.8a)", () => {
+    const angles = new Map([
+      [5, { shot: "candid" as const, pose: "back" as const }],
+      [6, { shot: "photographer" as const, pose: "profile" as const }],
+    ]);
+    const next = withReviewWriteAccepted(ideating(), 2, new Map([[5, "First."], [6, "Second."]]), angles);
+    expect(next.scenes.slice(4).map((s) => (s.origin === "own" ? [s.sceneId, s.shot, s.pose] : null))).toEqual([
+      [5, "candid", "back"],
+      [6, "photographer", "profile"],
+    ]);
+  });
+
+  test("a scene the angles do not name keeps the draw", () => {
+    const next = withReviewWriteAccepted(ideating(), 2, new Map([[5, "First."], [6, "Second."]]), new Map([[5, { shot: "candid" as const, pose: "back" as const }]]));
+    expect(next.scenes.slice(4).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([
+      ["candid", "back"],
+      ["selfie", "three-quarter"],
+    ]);
+  });
+
+  test("a result with the model's angles is a set the schema accepts", () => {
+    const angles = new Map([
+      [5, { shot: "candid" as const, pose: "back" as const }],
+      [6, { shot: "friend" as const, pose: "profile" as const }],
+    ]);
+    const next = withReviewWriteAccepted(ideating(), 2, new Map([[5, "a"], [6, "b"]]), angles);
+    expect(SceneSetFile.safeParse({ ...next, revision: 4 }).success).toBe(true);
+  });
+
+  test("angles do not touch a rewrite: a planned scene keeps its draw", () => {
+    const set = stored({ writes: 1 });
+    const writing = beginRewrite(set, { jobId: "job-aaaa-0002", sceneIds: [2], redraw: false, slots: [], snapshots: [] });
+    const next = withReviewWriteAccepted(writing, 2, new Map([[2, "New two."]]), new Map([[2, { shot: "candid" as const, pose: "back" as const }]]));
+    expect(slotOf(next, 2)).toEqual(slotOf(set, 2));
   });
 
   test("leaves the planned scenes exactly as they were", () => {

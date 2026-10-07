@@ -129,6 +129,51 @@ describe("redrawSlot", () => {
     const noMirror: Pool = { ...POOL, locations: POOL.locations.filter((l) => l.mirror !== true) };
     expect(draw(slotOf("mirror"), 1, { pool: noMirror }).shot).toBe("selfie");
   });
+
+  describe("a category with poses (CS.8a)", () => {
+    const BACK: Pool = { ...POOL, poses: ["back"] };
+
+    test("draws the pose from the category's list, the run's toggles unasked", () => {
+      for (let k = 1; k <= 20; k++) for (const poses of [NONE, ALL]) expect(draw(slotOf("friend"), k, { pool: BACK, poses }).pose).toBe("back");
+    });
+
+    test("a selfie scene turned away takes a shot nobody holds a phone for, from the deck", () => {
+      for (let k = 1; k <= 20; k++) {
+        const out = draw(slotOf("selfie"), k, { pool: BACK });
+        expect(out.pose).toBe("back");
+        expect(["friend", "candid"]).toContain(out.shot);
+      }
+    });
+
+    test("a mirror scene turned away does the same, and may then stand anywhere in the pool", () => {
+      for (let k = 1; k <= 20; k++) {
+        const out = draw(slotOf("mirror"), k, { pool: BACK });
+        expect(out.shot === "mirror" || out.shot === "selfie").toBe(false);
+      }
+    });
+
+    test("a deck with no other shot falls back to a friend, never the photographer", () => {
+      const selfiesOnly: Pool = { ...BACK, shotDeck: ["selfie", "mirror", "selfie", "mirror", "selfie"] };
+      expect(draw(slotOf("selfie"), 1, { pool: selfiesOnly }).shot).toBe("friend");
+    });
+
+    test("a scene that stays facing the camera keeps its shot", () => {
+      const front: Pool = { ...POOL, poses: ["front"] };
+      expect(draw(slotOf("selfie"), 1, { pool: front })).toMatchObject({ shot: "selfie", pose: "front" });
+    });
+
+    test("never leaves a selfie or a mirror shot facing away, whatever the seed", () => {
+      const pool: Pool = { ...POOL, poses: ["front", "profile", "back"] };
+      for (const shot of ["selfie", "mirror", "friend"] as const) {
+        for (let k = 1; k <= 60; k++) expect(PlanSlotSchema.safeParse(draw(slotOf(shot), k, { pool })).success).toBe(true);
+      }
+    });
+
+    test("a pool without poses draws exactly what it drew before", () => {
+      const slot = slotOf("friend");
+      expect(draw(slot, 3, { pool: { ...POOL } })).toEqual(draw(slot, 3));
+    });
+  });
 });
 
 describe("drawOwnScenes", () => {

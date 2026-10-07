@@ -113,7 +113,7 @@ const writeId = (k: number, n: number) => `${SET}:write-${k}#${n}`;
 function isWriter(call: FetchCall): boolean {
   if (!call.url.endsWith("/chat/completions")) return false;
   const format = call.json().response_format;
-  return typeof format === "object" && format !== null && "json_schema" in format && JSON.stringify(format.json_schema).includes("scene_sentences");
+  return typeof format === "object" && format !== null && "json_schema" in format && /scene_sentences|scene_ideas/.test(JSON.stringify(format.json_schema));
 }
 
 function listAsked(call: FetchCall): { slotIndex: number; [key: string]: unknown }[] {
@@ -125,7 +125,23 @@ function listAsked(call: FetchCall): { slotIndex: number; [key: string]: unknown
 }
 const slotsAskedFor = (call: FetchCall): number[] => listAsked(call).map((s) => s.slotIndex);
 
-const goodAnswer: Handler = (call) => ({ status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${SENTENCE} (${slotIndex})` })) }), { cost: 0.0112 }) });
+/**
+ * CS.8a: what a model that reads the idea picks for the slots that left the shot or the pose to it («choose»): «сзади» is a view from behind (a friend's candid photo
+ * when the shot was left too), anything else faces the camera; a shot the owner chose is kept (null in the answer), and a selfie or a mirror never turns away.
+ * Only an idea write's request has these fields; a compose or a rewrite of a planned scene is asked for the sentence alone.
+ */
+function pickedAngle(slot: { [key: string]: unknown; idea?: unknown; shot?: unknown; pose?: unknown }): Record<string, unknown> {
+  if (typeof slot.idea !== "string") return {};
+  const behind = /сзади/i.test(slot.idea);
+  const phone = slot.shot === "front-camera selfie" || slot.shot === "mirror selfie";
+  const mirror = /зеркал/i.test(slot.idea);
+  return { shot: slot.shot === "choose" ? (mirror ? "mirror" : behind ? "candid" : "friend") : null, pose: slot.pose === "choose" ? (behind && !phone ? "back" : "front") : null };
+}
+
+const goodAnswer: Handler = (call) => ({
+  status: 200,
+  body: chatBody(JSON.stringify({ scenes: listAsked(call).map((slot) => ({ slotIndex: slot.slotIndex, sentence: `${SENTENCE} (${slot.slotIndex})`, ...pickedAngle(slot) })) }), { cost: 0.0112 }),
+});
 const rejectedAnswer: Reply = { status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) };
 const refusal: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 const rateLimited: Reply = { status: 429, headers: { "retry-after": "120" }, body: { error: { message: "rate limited" } } };
@@ -836,7 +852,33 @@ describe("scenes.write: an idea", () => {
     expect(net.writerCalls().at(-1)?.body).toContain("прогулка по набережной на закате");
   });
 
-  test("auto shots never pick the mirror, and the poses follow the set's allowance: front or three-quarter when it allows no more", async () => {
+  test("«Авто» asks the model for the shot and the pose, an explicit shot only for the pose (CS.8a)", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net);
+    await writeAndWait(engine, events, avatarId, idea("кофе", 2, null));
+    await writeAndWait(engine, events, avatarId, idea("кофе", 2, "friend"));
+
+    const [auto, chosen] = net.writerCalls().map((call) => listAsked(call));
+    expect(auto?.map((s) => [s.shot, s.pose])).toEqual([["choose", "choose"], ["choose", "choose"]]);
+    expect(chosen?.map((s) => [s.shot, s.pose])).toEqual([["photo taken by a friend", "choose"], ["photo taken by a friend", "choose"]]);
+    expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("scene_ideas");
+  });
+
+  test("«Авто» with «вид сзади» gives scenes from behind with a shot nobody holds a phone for, although the set's «Ракурсы» allow no more than front and three-quarter", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId, { poses: { profile: false, back: false } });
+    const { engine, events } = await engineOver(sceneNetwork());
+    const end = await writeAndWait(engine, events, avatarId, idea("Лежит на животе в домашних шортиках и топике. Вид сзади", 3, null));
+
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 3 } } });
+    const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
+    expect(own).toHaveLength(3);
+    expect(own.every((s) => s.pose === "back" && s.shot === "candid")).toBe(true);
+  });
+
+  test("an idea with no angle in it, written on «Авто», gives scenes that face the camera and never the mirror", async () => {
     const avatarId = await seedAvatar();
     await seedReview(avatarId);
     const { engine, events } = await engineOver(sceneNetwork());
@@ -846,6 +888,90 @@ describe("scenes.write: an idea", () => {
     expect(own).toHaveLength(30);
     expect(own.some((s) => s.shot === "mirror")).toBe(false);
     expect(own.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
+  });
+
+  test("a shot the owner chose stays whatever the idea says, and a selfie is not turned away", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const { engine, events } = await engineOver(sceneNetwork());
+    await writeAndWait(engine, events, avatarId, idea("вид сзади", 2, "selfie"));
+    await writeAndWait(engine, events, avatarId, idea("вид сзади", 2, "friend"));
+
+    const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
+    expect(own.map((s) => [s.shot, s.pose])).toEqual([["selfie", "front"], ["selfie", "front"], ["friend", "back"], ["friend", "back"]]);
+  });
+
+  test("«Авто» with an idea that names a mirror may pick the mirror, facing the camera; the record keeps that it was allowed (CS.8a)", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const onArrival: ReturnType<typeof fileOf>[] = [];
+    const net = sceneNetwork({
+      writer: (call, n) => {
+        onArrival.push(fileOf(avatarId));
+        return goodAnswer(call, n);
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    await writeAndWait(engine, events, avatarId, idea("селфи в зеркале лифта", 2, null));
+
+    expect(onArrival[0]?.reviewWrites?.[0]).toMatchObject({ kind: "idea", mirrorAllowed: true });
+    expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("friend, selfie, mirror or candid");
+    const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
+    expect(own.every((s) => s.shot === "mirror" && (s.pose === "front" || s.pose === "three-quarter"))).toBe(true);
+  });
+
+  test("an idea that names no mirror never gets one: the record does not allow it, the prompt does not offer it, and a model that answers it is refused", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const onArrival: ReturnType<typeof fileOf>[] = [];
+    const net = sceneNetwork({
+      writer: (call) => {
+        onArrival.push(fileOf(avatarId));
+        return {
+          status: 200,
+          body: chatBody(JSON.stringify({ scenes: listAsked(call).map((slot) => ({ slotIndex: slot.slotIndex, sentence: `${SENTENCE} (${slot.slotIndex})`, shot: "mirror", pose: "front" })) }), { cost: 0.0112 }),
+        };
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    await writeAndWait(engine, events, avatarId, idea("кофе на балконе", 1, null));
+
+    expect(onArrival[0]?.reviewWrites?.[0]).not.toHaveProperty("mirrorAllowed");
+    expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("Never choose the mirror");
+    expect((await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own")).toHaveLength(0);
+  });
+
+  test("an answer that picks a selfie from behind is refused and asked again, told why; the second answer is stored", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const impossible: Handler = (call) => ({
+      status: 200,
+      body: chatBody(JSON.stringify({ scenes: listAsked(call).map((slot) => ({ slotIndex: slot.slotIndex, sentence: `${SENTENCE} (${slot.slotIndex})`, shot: "selfie", pose: "back" })) }), { cost: 0.0112 }),
+    });
+    const net = sceneNetwork({ writer: (call, n) => (n === 1 ? impossible(call, n) : goodAnswer(call, n)) });
+    const { engine, events } = await engineOver(net);
+    const end = await writeAndWait(engine, events, avatarId, idea("вид сзади", 2, null));
+
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(net.writerCalls()).toHaveLength(2);
+    expect(JSON.stringify(net.writerCalls()[1]?.json())).toContain("An earlier answer was rejected: slot(s) 5, 6 gave a shot or a pose that is missing, outside the lists the rules give");
+    const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
+    expect(own.every((s) => s.pose === "back" && s.shot === "candid")).toBe(true);
+  });
+
+  test("an answer that picks the mirror on «Авто» twice adds no scene: nothing is stored that the rules refuse", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const mirror: Handler = (call) => ({
+      status: 200,
+      body: chatBody(JSON.stringify({ scenes: listAsked(call).map((slot) => ({ slotIndex: slot.slotIndex, sentence: `${SENTENCE} (${slot.slotIndex})`, shot: "mirror", pose: "front" })) }), { cost: 0.0112 }),
+    });
+    const { engine, events } = await engineOver(sceneNetwork({ writer: mirror }));
+    await writeAndWait(engine, events, avatarId, idea("кофе", 2, null));
+
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes.filter((s) => s.origin === "own")).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([writeId(1, 1), writeId(1, 2)]);
   });
 
   test("an explicit mirror or selfie shot gives a scene that faces the camera, even when the set allows every pose", async () => {

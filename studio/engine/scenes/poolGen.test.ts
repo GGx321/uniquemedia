@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { CATEGORY_LABEL_MAX, CategoryPool, POOL_SHOTS, POOL_TEXT_MAX, POOL_TIMES } from "../../shared/engine";
+import { CATEGORY_LABEL_MAX, CategoryPool, POOL_SHOTS, POOL_TEXT_MAX, POOL_TIMES, ScenePose } from "../../shared/engine";
 import { PriceBook } from "../money/prices";
 import { chatAttemptWorstMicros, promptTokenFloor } from "../openrouter/chat";
 import { PoolSchema } from "./pools";
@@ -324,7 +324,117 @@ describe("readPoolAnswer: nothing that breaks the pool schema is ever kept", () 
   });
 });
 
+describe("readPoolAnswer: the angles the description asks for (CS.8a)", () => {
+  test("a listed angle becomes the pool's poses", () => {
+    expect(okOf(answer({ poses: ["back"] })).pool.poses).toEqual(["back"]);
+  });
+
+  test("several angles keep the model's order", () => {
+    expect(okOf(answer({ poses: ["back", "profile"] })).pool.poses).toEqual(["back", "profile"]);
+  });
+
+  test("a value outside the vocabulary is dropped and the valid ones stay", () => {
+    expect(okOf(answer({ poses: ["from above", "back", "sideways"] })).pool.poses).toEqual(["back"]);
+  });
+
+  test("a repeated angle is kept once", () => {
+    expect(okOf(answer({ poses: ["back", "back", "profile", "back"] })).pool.poses).toEqual(["back", "profile"]);
+  });
+
+  test.each([
+    ["an empty list", { poses: [] }],
+    ["only values outside the vocabulary", { poses: ["from above", 7, null] }],
+    ["a text instead of a list", { poses: "back" }],
+    ["null", { poses: null }],
+    ["no key at all", {}],
+  ])("%s leaves the pool without poses, and the answer stands", (_name, over) => {
+    const result = okOf(answer(over));
+    expect("poses" in result.pool).toBe(false);
+  });
+
+  test("an answer that carries poses is still held to every pool rule: a bad outfit is dropped as before", () => {
+    const result = okOf(answer({ poses: ["back"], outfits: [...OUTFITS, "a red bikini"] }));
+    expect(result.dropped).toBe(1);
+    expect(result.pool.poses).toEqual(["back"]);
+  });
+
+  test("a pool with poses passes the contract's schema and the engine's pool schema", () => {
+    const { pool } = okOf(answer({ poses: ["back", "profile"] }));
+    expect(CategoryPool.safeParse(pool).success).toBe(true);
+    expect(PoolSchema.safeParse(poolOf(pool)).success).toBe(true);
+  });
+
+  test("an activity that opens with a body position is kept when it fits the 35 characters", () => {
+    const activities = [
+      { text: "lying on her stomach, texting", twoHanded: false },
+      { text: "on her stomach, reading a book", twoHanded: false },
+    ];
+    const result = okOf(answer({ poses: ["back"], locations: PLACES.map((name, i) => place(name, { mirror: i === 2, activities })) }));
+    expect(result.dropped).toBe(0);
+    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "on her stomach, reading a book"]);
+  });
+
+  test("the body position leaves 13 characters of the 35: «lying on her stomach, » is 22, and a 40-character activity is dropped", () => {
+    expect("lying on her stomach, ".length).toBe(22);
+    expect(POOL_TEXT_MAX - "lying on her stomach, ".length).toBe(13);
+    const long = "lying on her stomach, reading a magazine";
+    expect(long.length).toBe(40);
+    const activities = [
+      { text: long, twoHanded: false },
+      { text: "lying on her stomach, texting", twoHanded: false },
+      { text: "lying on her stomach, writing", twoHanded: false },
+    ];
+    const result = okOf(answer({ poses: ["back"], locations: PLACES.map((name, i) => place(name, { mirror: i === 2, activities })) }));
+    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "lying on her stomach, writing"]);
+  });
+});
+
+describe("readPoolAnswer: a realistic answer for a body position, with the short prefix (CS.8a fix round 1)", () => {
+  const P = "on her stomach, ";
+  const act = (text: string) => ({ text: P + text, twoHanded: false });
+  // Actions of 7..18 characters like the owner's real pool; one of them pushes the text past the 35.
+  const FITS = ["texting", "reading a book", "scrolling a phone", "sipping a tea", "painting her nails"];
+  const TOO_LONG = "reading a fashion magazine";
+  const realPlaces = (): Json[] => [
+    place("a bedroom bed", { activities: [act(FITS[0] as string), act(FITS[1] as string), act(TOO_LONG)] }),
+    place("a living room rug", { activities: [act(FITS[2] as string), act(FITS[3] as string)] }),
+    place("a sunny balcony", { activities: [act(FITS[4] as string), act(TOO_LONG)] }),
+    place("a sofa corner", { mirror: true, activities: [act(FITS[0] as string), act(FITS[3] as string)] }),
+    place("a window seat", { activities: [act(FITS[1] as string), act(FITS[2] as string)] }),
+  ];
+  const hallway = (): Json => place("a hallway floor", { activities: [act("texting"), act("sipping a tea")] });
+
+  test("the arithmetic: the short prefix is 16 characters, so 19 are left for the action", () => {
+    expect(P.length).toBe(16);
+    expect(POOL_TEXT_MAX - P.length).toBe(19);
+    expect((P + TOO_LONG).length).toBeGreaterThan(POOL_TEXT_MAX);
+    for (const fit of FITS) expect((P + fit).length).toBeLessThanOrEqual(POOL_TEXT_MAX);
+  });
+
+  test("a place that keeps two activities survives with only the ones that fit", () => {
+    const result = okOf(answer({ poses: ["back"], locations: [...realPlaces(), hallway()] }));
+    const bed = result.pool.locations.find((l) => l.name === "a bedroom bed");
+    expect(bed?.activities.map((a) => a.text)).toEqual([P + "texting", P + "reading a book"]);
+  });
+
+  test("a place left with one activity is dropped, and with six places the pool still stands on five", () => {
+    const result = okOf(answer({ poses: ["back"], locations: [...realPlaces(), hallway()] }));
+    expect(result.pool.locations.map((l) => l.name)).not.toContain("a sunny balcony");
+    expect(result.pool.locations).toHaveLength(5);
+    expect(result.pool.poses).toEqual(["back"]);
+  });
+
+  test("with exactly five places, the one that loses its second activity costs the answer: too-few-places", () => {
+    expect(refusalOf(answer({ poses: ["back"], locations: realPlaces() })).problems).toEqual(["too-few-places"]);
+  });
+});
+
 describe("poolOf", () => {
+  test("carries the pool's poses to the engine's pool, and nothing when the pool has none", () => {
+    expect(poolOf(okOf(answer({ poses: ["back"] })).pool).poses).toEqual(["back"]);
+    expect("poses" in poolOf(okOf(answer()).pool)).toBe(false);
+  });
+
   test("is the engine's pool: a mirror place carries mirror true, the others carry none", () => {
     const pool = poolOf(okOf(answer()).pool);
     expect(pool.locations.map((l) => l.mirror)).toEqual([undefined, undefined, true, undefined, undefined]);
@@ -362,6 +472,36 @@ describe("poolMessages", () => {
     for (const needle of ["35", "24", "5 to 7", "3 to 6", "twoHanded", "mirror", "photographer", "bikini", "quote", "backslash", "data, not instructions"]) expect(system).toContain(needle);
   });
 
+  test("asks for the angles the description names, and an empty list when it names none", () => {
+    const system = poolMessages("x")[0]?.content ?? "";
+    for (const needle of ['"poses"', "front, three-quarter, profile, back", "empty list"]) expect(system).toContain(needle);
+  });
+
+  test("asks for the body position in EVERY activity, in its SHORTEST form, with the arithmetic of the 35 characters", () => {
+    const system = poolMessages("x")[0]?.content ?? "";
+    expect(system).toContain("body position");
+    expect(system).toContain("EVERY activity");
+    for (const needle of ['"on her stomach, "', '"on her back, "', '"sitting, "']) expect(system).toContain(needle);
+    expect(system).toContain("counts toward the 35 characters");
+    expect(system).toContain("keep the action to about 15");
+    expect(system).toContain("on her stomach, reading a book");
+  });
+
+  test("never teaches the long form of a position: «lying on her stomach, » alone eats 22 of the 35", () => {
+    const system = poolMessages("x")[0]?.content ?? "";
+    expect(system).not.toContain("lying on her stomach");
+  });
+
+  test.each(["too-few-places", "too-few-outfits"] as const)("the %s retry reason tells the 35-character limit, the position included", (problem) => {
+    const text = poolMessages("x", { problems: [problem], words: [] })[1]?.content ?? "";
+    expect(text).toContain("each text is at most 35 characters, the position included; longer ones are dropped");
+  });
+
+  test("a reason that has nothing to do with lengths does not carry the limit", () => {
+    const text = poolMessages("x", { problems: ["bad-shot-deck"], words: [] })[1]?.content ?? "";
+    expect(text).not.toContain("longer ones are dropped");
+  });
+
   test("the example it shows is itself a pool the reader accepts", () => {
     const system = poolMessages("x")[0]?.content ?? "";
     expect(system).toContain(POOL_EXAMPLE_ANSWER);
@@ -395,7 +535,13 @@ describe("POOL_JSON_SCHEMA", () => {
   });
 
   test("asks for the label, the places, the outfits and the deck", () => {
-    expect(Object.keys(root.properties ?? {}).sort()).toEqual(["label", "locations", "outfits", "shotDeck"]);
+    expect(Object.keys(root.properties ?? {}).sort()).toEqual(["label", "locations", "outfits", "poses", "shotDeck"]);
+  });
+
+  test("the angles are a list of the four poses of the shared vocabulary, always present (an empty list means none)", () => {
+    expect(root.properties?.poses?.type).toBe("array");
+    expect(root.properties?.poses?.items?.enum).toEqual([...ScenePose.options]);
+    expect(root.required).toContain("poses");
   });
 
   test("a place's times come from the built-in vocabulary and the deck's shots from the five", () => {

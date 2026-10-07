@@ -1,4 +1,4 @@
-import type { CategoriesListResult, CategorySummary, CustomCategoryId, EngineError, Estimate } from "../../shared/engine";
+import type { CategoriesListResult, CategorySummary, CustomCategoryId, EngineError, Estimate, ScenePose } from "../../shared/engine";
 import type { EngineClient } from "./client";
 import type { CategoryStoreChange, EngineStore } from "./store";
 
@@ -240,7 +240,7 @@ export class CategoryLibrary {
   // ---------- the free commands ----------
 
   /** A rename and/or places or outfits to remove (free); the answer is shown at once. */
-  async update(categoryId: CustomCategoryId, change: { name?: string; removeLocations?: string[]; removeOutfits?: string[] }): Promise<FreeReply<CategorySummary>> {
+  async update(categoryId: CustomCategoryId, change: { name?: string; removeLocations?: string[]; removeOutfits?: string[]; poses?: ScenePose[] | null }): Promise<FreeReply<CategorySummary>> {
     const reply = await this.client.request("categories.update", { categoryId, ...change });
     if (!reply.ok) return reply;
     this.#apply({ change: "upserted", category: reply.result.category });

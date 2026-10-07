@@ -1293,6 +1293,19 @@ describe("categories.regenerate", () => {
     expect(await folder()).toEqual([`${id}.json`]);
   });
 
+  test("re-derives the angles: the new answer's poses replace the old ones, and an answer without them clears them", async () => {
+    const id = await seedCategory({ name: "Кофейни" });
+    const { engine } = await startEngine(dir(), { net: network({ descriptors: [poolReply(answer({ poses: ["back"] })), poolReply(answer({ poses: [] }))] }) });
+
+    const first = ok(await engine.handle(regenerate(id)));
+    if (first.type !== "categories.regenerate") throw new Error("wrong type");
+    expect(first.result.category.pool.poses).toEqual(["back"]);
+
+    const second = ok(await engine.handle(regenerate(id)));
+    if (second.type !== "categories.regenerate") throw new Error("wrong type");
+    expect("poses" in second.result.category.pool).toBe(false);
+  });
+
   test("a failed regeneration keeps the old pool, tells what it cost and adds that to the category's total", async () => {
     const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
     const net = network({ descriptors: [poolReply({ pool: "cafes" }, 0.0051), poolReply(answer({ label: "" }), 0.0062)] });
@@ -1477,6 +1490,33 @@ describe("categories.update", () => {
   test("without a library: LIBRARY_UNAVAILABLE", async () => {
     const { engine } = await startEngine(dir(), { init: { settings: engineSettings(dir(), { libraryPath: join(dir(), "missing") }) } });
     expect(failed(await engine.handle(command("categories.update", { categoryId: "cat-nobody-here", name: "x" }))).error.code).toBe("LIBRARY_UNAVAILABLE");
+  });
+});
+
+describe("categories.update: the category's angles (CS.8a)", () => {
+  test("sets the poses for free, stores them and announces the change", async () => {
+    const id = await seedCategory();
+    const { engine, events, net } = await startEngine(dir());
+
+    const response = ok(await engine.handle(command("categories.update", { categoryId: id, poses: ["back"] })));
+    if (response.type !== "categories.update") throw new Error("wrong type");
+
+    expect(response.result.category.pool.poses).toEqual(["back"]);
+    expect((await listOf(engine)).categories[0]?.pool.poses).toEqual(["back"]);
+    expect(events().filter((e) => e.type === "category.changed")).toHaveLength(1);
+    expect(net.calls).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+  });
+
+  test("null clears them", async () => {
+    const id = await seedCategory();
+    const { engine } = await startEngine(dir());
+    ok(await engine.handle(command("categories.update", { categoryId: id, poses: ["back", "profile"] })));
+
+    const response = ok(await engine.handle(command("categories.update", { categoryId: id, poses: null })));
+    if (response.type !== "categories.update") throw new Error("wrong type");
+
+    expect("poses" in response.result.category.pool).toBe(false);
   });
 });
 

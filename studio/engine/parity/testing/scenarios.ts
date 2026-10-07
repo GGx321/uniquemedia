@@ -1783,6 +1783,27 @@ const CATEGORY_SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: "custom categories: the angles of a category are set, replaced and cleared by a free update, together with a rename, and a refused removal leaves them as they were",
+    rig: { categories: true },
+    async run(t) {
+      t.note("a category made before the angles existed has none; setting them is free and announced");
+      await t.call("categories.update", { categoryId: "cat-parity-0001", poses: ["back"] });
+      await t.call("categories.list", {});
+      t.note("they are replaced as a whole, together with a rename in one write");
+      await t.call("categories.update", { categoryId: "cat-parity-0001", name: "Вид сзади", poses: ["profile", "back"] });
+      t.note("a removal the pool cannot take refuses the whole update: the angles stay as they were");
+      await t.call("categories.update", { categoryId: "cat-parity-0001", poses: ["front"], removeLocations: ["a flower stall"] });
+      await t.call("categories.list", {});
+      t.note("null clears them; the contract turns away an empty list, a repeat and a word outside the vocabulary; an unknown category is not found");
+      await t.call("categories.update", { categoryId: "cat-parity-0001", poses: null });
+      await t.call("categories.update", { categoryId: "cat-parity-0001", poses: [] });
+      await t.call("categories.update", { categoryId: "cat-parity-0001", poses: ["back", "back"] });
+      await t.call("categories.update", { categoryId: "cat-parity-0001", poses: ["sideways"] });
+      await t.call("categories.update", { categoryId: "cat-nobody-here", poses: ["back"] });
+      await t.call("categories.list", {});
+    },
+  },
+  {
     name: "custom categories: a run names a category the library does not hold, and is refused before any price",
     rig: { categories: true },
     async run(t, w) {
