@@ -23,7 +23,8 @@ interface SceneCardProps {
   /** Replaced just now by this window's «Другая сцена». */
   fresh: boolean;
   popoverOpen: boolean;
-  editing: { readonly problem: SceneProblem | null; readonly problemFor: string | null; readonly busy: boolean } | null;
+  /** `text` is the scene's text when the pencil opened: the draft starts from it and «unchanged» is measured against it, whatever the scene says now. */
+  editing: { readonly text: string | null; readonly problem: SceneProblem | null; readonly problemFor: string | null; readonly busy: boolean } | null;
   onEdit: () => void;
   onRedo: () => void;
   onRemove: () => void;
@@ -181,13 +182,13 @@ function SceneEditForm({
 }: {
   scene: SceneView;
   number: string;
-  editing: { readonly problem: SceneProblem | null; readonly problemFor: string | null; readonly busy: boolean };
+  editing: { readonly text: string | null; readonly problem: SceneProblem | null; readonly problemFor: string | null; readonly busy: boolean };
   onSave: (text: string) => void;
   onCancel: () => void;
 }) {
   const ids = useId();
   const field = useRef<HTMLTextAreaElement>(null);
-  const [draft, setDraft] = useState(scene.text ?? "");
+  const [draft, setDraft] = useState(editing.text ?? "");
   useEffect(() => {
     field.current?.focus();
     const end = field.current?.value.length ?? 0;
@@ -196,7 +197,7 @@ function SceneEditForm({
   const problem = editing.problem !== null && editing.problemFor === draft ? editing.problem : null;
   const trimmed = draft.trim();
   const tooLong = draft.length > SCENE_TEXT_MAX;
-  const unchanged = trimmed === (scene.text ?? "") && scene.text !== null;
+  const unchanged = trimmed === (editing.text ?? "") && editing.text !== null;
   const canSave = trimmed.length > 0 && !tooLong && !unchanged && problem === null && !editing.busy;
   const hint = hasCyrillic(draft) ? cyrillicHint(scene.origin) : null;
   const problemId = `${ids}-problem`;

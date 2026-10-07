@@ -47,7 +47,8 @@ interface SceneSetPanelProps {
   counterRef: RefObject<HTMLButtonElement | null>;
 }
 
-type Edit = { readonly sceneId: number; readonly problem: SceneProblem | null; readonly problemFor: string | null; readonly busy: boolean };
+/** The pencil's edit: the revision and the scene's text it was opened on — the save is made on those, never on what the set is by then. */
+type Edit = { readonly sceneId: number; readonly revision: number; readonly text: string | null; readonly problem: SceneProblem | null; readonly problemFor: string | null; readonly busy: boolean };
 
 export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActive, runCreatedAt, paidInFlight, onPaidInFlightChange, idea, onIdea, titleRef, addRef, counterRef }: SceneSetPanelProps) {
   const { client, store, sceneSets } = useEngine();
@@ -109,12 +110,12 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
 
   // ---------- free edits ----------
 
-  async function edit(op: SceneEditOp, after?: () => void): Promise<"ok" | SceneProblem | null> {
+  async function edit(op: SceneEditOp, after?: () => void, revision: number = set.revision): Promise<"ok" | SceneProblem | null> {
     if (editSending.current) return null;
     editSending.current = true;
     setEditError(null);
     try {
-      const reply = await client.request("scenes.edit", { sceneSetId: set.sceneSetId, revision: set.revision, op });
+      const reply = await client.request("scenes.edit", { sceneSetId: set.sceneSetId, revision, op });
       if (!reply.ok) {
         if (reply.error.code === "SCENES_CHANGED") {
           sceneSets.reload(avatar.avatarId);
@@ -132,14 +133,16 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
   }
 
   async function saveText(sceneId: number, text: string): Promise<void> {
+    if (editing === null || editing.sceneId !== sceneId) return;
+    const opened = editing;
     setEditing((e) => (e === null ? e : { ...e, busy: true }));
-    const outcome = await edit({ op: "text", sceneId, text });
+    const outcome = await edit({ op: "text", sceneId, text }, undefined, opened.revision);
     if (!mounted.current) return;
     if (outcome === "ok") {
       setEditing(null);
       focusLater(sceneButton(`Изменить текст сцены ${String(sceneId).padStart(2, "0")}`));
     } else if (outcome === null) setEditing((e) => (e === null ? e : { ...e, busy: false }));
-    else setEditing({ sceneId, problem: outcome, problemFor: text, busy: false });
+    else setEditing({ ...opened, problem: outcome, problemFor: text, busy: false });
   }
 
   // ---------- what blocks a paid write ----------
@@ -289,7 +292,7 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
                 editing={editing !== null && editing.sceneId === scene.sceneId ? editing : null}
                 onEdit={() => {
                   setPopover(null);
-                  setEditing({ sceneId: scene.sceneId, problem: null, problemFor: null, busy: false });
+                  setEditing({ sceneId: scene.sceneId, revision: set.revision, text: scene.text, problem: null, problemFor: null, busy: false });
                 }}
                 onRedo={() => {
                   setEditing(null);

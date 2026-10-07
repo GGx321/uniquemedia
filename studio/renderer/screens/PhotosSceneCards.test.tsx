@@ -89,6 +89,59 @@ describe("the pencil", () => {
   });
 });
 
+describe("the pencil keeps the revision it was opened on", () => {
+  const DRAFT = "Sunny beach in Nice at midday, white linen dress, holding a paper cup of iced coffee.";
+
+  async function openPencil(count: number) {
+    const harness = await ready(count);
+    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
+    fireEvent.click(within(sceneCard(3)).getByRole("button", { name: "Изменить текст сцены 03" }));
+    await flush();
+    fireEvent.change(within(sceneCard(3)).getByRole("textbox", { name: "Текст сцены 03" }), { target: { value: DRAFT } });
+    return harness;
+  }
+
+  async function sceneText(client: Awaited<ReturnType<typeof ready>>["client"], sceneId: number): Promise<string | null> {
+    const reply = await client.request("scenes.get", { avatarId: MIA.avatarId });
+    if (!reply.ok || reply.result.sceneSet === null) throw new Error("no set");
+    return reply.result.sceneSet.scenes.find((s) => s.sceneId === sceneId)?.text ?? null;
+  }
+
+  test("another window edited the set after the pencil opened: the save goes with the opened revision, is refused, nothing is overwritten and the draft stays", async () => {
+    const { engine, client } = await openPencil(4);
+    const before = await sceneText(client, 3);
+    // Another window's edit: the revision moves to 2 and this window hears it.
+    await act(async () => {
+      await client.request("scenes.edit", { sceneSetId: SET, revision: 1, op: { op: "remove", sceneIds: [4] } });
+    });
+    await flush();
+    fireEvent.click(within(sceneCard(3)).getByRole("button", { name: "Сохранить" }));
+    await flush();
+    expect(callsOf(engine, "scenes.edit").at(-1)?.payload).toEqual({ sceneSetId: SET, revision: 1, op: { op: "text", sceneId: 3, text: DRAFT } });
+    expect(within(column()).getByText(/^Набор изменился в другом окне — ваша правка не сохранена\./)).toBeDefined();
+    expect(await sceneText(client, 3)).toBe(before);
+    expect(fieldValue(within(sceneCard(3)).getByRole("textbox", { name: "Текст сцены 03" }))).toBe(DRAFT);
+  });
+
+  test("a rewrite of the scene finished while the pencil was open: the save is refused and the model's new text stays", async () => {
+    const { engine, client, scheduler } = await openPencil(4);
+    await act(async () => {
+      const reply = await client.request("scenes.write", { sceneSetId: SET, revision: 1, target: { kind: "rewrite", sceneIds: [3], redraw: true }, acceptedWorstMicros: 2 * ATTEMPT });
+      if (!reply.ok) throw new Error(reply.error.code);
+    });
+    runAll(scheduler);
+    await flush();
+    const rewritten = await sceneText(client, 3);
+    expect(rewritten).not.toBe(DRAFT);
+    fireEvent.click(within(sceneCard(3)).getByRole("button", { name: "Сохранить" }));
+    await flush();
+    expect(callsOf(engine, "scenes.edit").at(-1)?.payload).toMatchObject({ sceneSetId: SET, revision: 1, op: { op: "text", sceneId: 3, text: DRAFT } });
+    expect(within(column()).getByText(/^Набор изменился в другом окне — ваша правка не сохранена\./)).toBeDefined();
+    expect(await sceneText(client, 3)).toBe(rewritten);
+    expect(fieldValue(within(sceneCard(3)).getByRole("textbox", { name: "Текст сцены 03" }))).toBe(DRAFT);
+  });
+});
+
 describe("a scene given up on", () => {
   test("its own text, the header's counter and the reason under «Отрисовать» link to it (ReviewEdit, ReviewGaveUp)", async () => {
     const { engine, scheduler } = await openReview();
