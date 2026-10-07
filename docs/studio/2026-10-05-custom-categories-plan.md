@@ -1380,8 +1380,9 @@ sentences in memory were lost and the attempt was already counted, so «Допи
   a record whose CONTENT cannot be used (not JSON, schema, a newer version, another set's file; a folder in its place, EISDIR, is this too, since nothing can
   be read from it), and `io` with the OS's own error (everything else: EIO, EMFILE, EBUSY, EPERM, EACCES, a cloud placeholder).
 - **Listings count, writers rethrow.** `list`, `get` and the survey count an `io` file as unreadable and go on (what 4b07e0e6 wanted). `SceneSetStore.update`/`remove`
-  and the category `update`/`replacePool`/`addSpend`/`remove` (and the pending-id scan they use) throw the OS error itself, so `store()`'s one retry applies and a
-  persistent error ends the job with the real cause, not `not-found`. A job's `load` uses the new `SceneSetStore.load`, which throws an `io` error instead of
+  and the category `update`/`replacePool`/`addSpend`/`remove` (and the pending-id scan they use) throw the OS error itself, so the caller can retry it: for a scene
+  set that is `store()` in the service (scene sets only), for a category it is the one retry of the paid write in `#runCategoryCall` (round 3). A persistent
+  error ends the job with the real cause, not `not-found`. A job's `load` uses the new `SceneSetStore.load`, which throws an `io` error instead of
   reading it as «gone».
 - **Checks before a new write fail closed.** `SceneSetStore.listForWrite` (compose's «one open set per avatar») and `create`'s id check, and the category store's
   `assertRoom` / `create` / rename name check refuse with `library-unreadable` when a record or the folder listing hits an OS error: nothing written, nothing
@@ -1396,6 +1397,26 @@ sentences in memory were lost and the attempt was already counted, so «Допи
   without the number the reason's general text stays. `sceneNumber` moved to `renderer/lib/format.ts` (re-exported by `sceneReview.ts`).
 
 Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7117 + 5628 + 7679 = 20424 passing, 0 failing (this machine; CI is the run of record, and Windows is where the antivirus case lives).
+
+#### CS.7 fixes, round 3 (the paid category write)
+
+Round 2 left the category write path short (verifier probes P1-P3), each seen red first:
+
+- **P1/P3, one retry for any transient error.** The post-payment retry in `#runCategoryCall` fired only on `CategoryError` `library-unreadable`, so the raw OS
+  errors round 2 now rethrows (`replacePool`'s read of its record, create's id check) sent the paid pool to raw/. It now retries `write()` once, after a 200 ms pause
+  (`pauseBeforeRetry` in `durableFs.ts`, also used by the scene sets' `store()` so a Windows antivirus' EBUSY can clear), on every error except a `CategoryError`
+  that is a rule (limit, name-taken, ...). Repeating is safe: a regeneration is booked once per job (`bookedJobs`), and a create whose first write did land (the
+  flush threw) meets its own name on the retry, `name-taken`, and the existing `landed` check turns that into success with no duplicate. The retry is logged with the
+  job id and the first error.
+- **P2, no money lie.** A `library-unreadable` that survives the retry AFTER the pool was paid for (`spentMicros > 0`) is answered INTERNAL with the spend (the
+  «paid, not stored» path, the pool kept in raw/), not VALIDATION, whose text says nothing was spent. Before payment it stays a free VALIDATION. The renderer's
+  `paidNotStored` also takes a `library-unreadable` carrying a spend, so `callFailure`, `hiddenFailure` and `regenFailure` never say «не потрачено» beside a cost.
+- **Wording:** `store()` exists only for scene sets; the round 2 note above now says what retries for categories.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 7122 + 5630 + 7679 = 20431 passing, 0 failing (this machine; CI is the run of record).
+
+Not done on purpose (backlog): `#regenerateCategory`'s pre-payment `get` is tolerant, so a transient EIO there reads as NOT_FOUND; `#bookCategorySpend` and the
+`landed` check treat an OS failure as «missing».
 
 Phase 1 = CS.0 (category states), CS.1, CS.2, CS.3. Phase 2 = CS.0 (review states), CS.4a, CS.4b,
 CS.5, CS.6, CS.7. Rough size: phase 1 ≈ one L and two M tasks; phase 2 ≈ two L and three M tasks
