@@ -1216,6 +1216,89 @@ Accept: CS.0's artboards at 1200/1440; paid buttons follow the app's rules; mock
 for every state; nothing paid fires without a click after a restart.
 Review notes: sonnet logic review, opus conformance pass.
 
+#### CS.6 built (2026-10-07, branch `feat/studio-scene-review-ui`)
+
+What shipped. Renderer only: no contract, engine or golden change. The mock gained two test seeds (below); nothing it answers moved.
+
+- **The switch** «Сцены на проверку» (`role=switch`, named by its visible label): on unless turned off on this machine (`localStorage`
+  `studio.photos.sceneReview`, read and written in try/catch; ON when unreadable). With it on, «Сколько фото» goes down to 0 — «Начать пустой набор ·
+  бесплатно» (`scenes.compose` count 0, no category); turned off below 5, the count goes to 5. `setup()` in `renderer/testing.tsx` resets it per test;
+  the tests of today's path ask for `sceneReview: "off"`.
+- **Window slice** `renderer/engine/sceneSetSlice.ts` (`useSceneSet(avatarId)`, owned by `EngineProvider`): `scenes.get` when a screen first shows the
+  avatar, again after the store's `resynced`, after a removal (a used set may be what is left) and after a reconcile flips (a reconcile changes what a set
+  spent with no `scenes.changed`); changes heard while a read is on its way are applied to its answer; a free edit's answer is shown unless a newer revision
+  already is. It keeps what only the window knows: the price a click accepted for each scenes job it started (the task line, «Составляем… · до $X»), the
+  scenes its own rewrites replaced («новая»), an open reserve it saw a reconcile close («закрыт при сверке — $0.038 —»), and the closed «Готово … не
+  составлены» notices.
+- **The card** (`GenerateCard.tsx`). Compose mode: step 1 = `scenes.estimateCompose`, step 2 = the run's estimate less its writer, «Весь запуск ≈ … · до …
+  без правок», «Составить N сцен · до $X»; nothing composes while the set is still being read or could not be read. While a set is open the card is the
+  **strip** (`SceneStrip.tsx`): the set's meta, its own category snapshot as tags (7 at 1440, 5 below, then «ещё N»), «Мои категории», the poses with
+  «Пересоставить…», the current Settings' model line; steps; and one button — «Составляем… / Дописываем…» (busy, at the accepted price), «Дописать N сцен»
+  (`scenes.estimateWrite {unwritten}`), or «Отрисовать M фото» (M = active scenes with text; `runs.estimateFromScenes` keyed by the set, its revision, the
+  image settings and the reconcile flag, so every `scenes.changed` asks again; `runs.startFromScenes {sceneSetId, revision, acceptedWorstMicros}`).
+  Disabled reasons, in order: `paidBlockedReason`, archive, a run, another paid send, then the set's own — the model writing (a link to the scene),
+  «Сцена 26 и ещё 24 без текста — …» (a link), «Добавьте хотя бы одну сцену.», more than 100. SCENES_CHANGED on approval is told and the set read again.
+  Today's «Сгенерировать» also waits while a scenes job of the avatar runs.
+- **The column** (`ScenesColumn.tsx`, `SceneSetPanel.tsx`): title row (the set's own text model, «+ Своя сцена»), the counts row (active · removed · «N не
+  составлены ↓», a button to the first), the job's progress with «Отменить» and the cancel hint, the used set's note and read-only list (slots 1..M),
+  the notices (`SceneNotices.tsx`: stopped by `stoppedBy`, «Готово … не составлены» with «Убрать N пустых» / «Другие сцены для N» / ×, a rewrite cut short
+  per write with «Повторить · до …» at its attempts left and «Оставить как есть», an idea write cut short with «Повторить», «Открыть идею», «Не нужно»),
+  the «по описанию» form (`SceneIdeaForm.tsx`: idea 1–500, count 1–5, shot as a chip select «Авто · без зеркала»), the cards (`SceneCard.tsx`: flags
+  «убрана», «пишется…», «пишется», «ждёт», «замена прервана», «не составлена» by `gaveUpBy`, «изменена», «новая»; ✎ edit with the engine's `{problem}`
+  in red and the Cyrillic hint by origin; ⟳; × / «Вернуть»), the ⟳ price popover (`ScenePopover.tsx`), the idea write's placeholders, and
+  «Пересоставить сцены?» (`RecomposeDialog.tsx`, destructive first, focus on «Отмена»). Every free edit sends the revision it was made on.
+- **Paid buttons**: one hook, `usePaidAction.ts` — a price for one key only, a click sends that price once (a second click in the same batch sends
+  nothing), PRICE_CHANGED keeps the button busy until the fresh price and asks for a new click, the avatar's paid lock while it sends. Compose, «Дописать»,
+  «Отрисовать», ⟳ (and its «Повторить»), «Написать N сцен», «Повторить», «Другие сцены для N» all go through it. The 500-record refusal reads «Слишком много
+  правок в этом наборе — пересоставьте его.»
+- **Sidebar**: a scenes job has its own row «Сцены a / b» (CS.4a counted it in «Генерация»; the boards draw «Сцены 0 / 20»).
+- **`AccountBanner`**: the open reserves are told by «Деньги на экране» — «до $0.038», not «до $0.04» (README «Отступления» left it to CS.6).
+- **Mock seeds** (`mockSceneSets.ts`): `cutOff: {chunk}` and `reviewWrites[].cutOff` — a request a closed Studio cut off keeps its reserve open at the
+  worst case and counts as answered; an explicit `ok` can be scripted with `failNextSceneAttempt`.
+
+Deviations from the artboards, and why: (1) ⟳ «Другая сцена» names the time of day too — «Новое место, наряд, действие и время дня из «…»» (owner decision
+3); (2) «Пересоставить сцены?» says what the set cost without «составление и N запросов» (the view counts no requests) and lists the scenes the model
+replaced only when this window saw them replaced; «новая» likewise; (3) «закрыт при сверке — $0.038 —» and the per-write «закрыт при сверке» are said only
+when this window saw the reserve open (a window opened after the reconcile says neither); (4) a stopped set's step 1 reads «25 из 60» with «потрачено до
+$0.049» under it (README decision 20, carry-over); (5) a blocked «Отрисовать», «Дальше» and «Весь запуск» while composing show the images as the run's
+estimate less the compose's for the same count — both free, priced by the count and Settings alone (`runs/plan.ts runEstimate`); shown, never sent; (6) an
+idea write is priced with the idea typed when it is valid, else a neutral one (the price is its count and text model, `reviewWriteEstimate`); (7) the
+Cyrillic hints leave out «(≈ $0.002)»; (8) «не составлена» after «попытки кончились» says only that (the view does not say which attempt was rejected and
+which cut off); (9) the header's text model is the set's own (its writes run on it), Settings' when no set is shown; (10) a removed scene shows «убрана»,
+never «замена прервана»; a rewrite whose scenes are all removed is not told, one with some removed says «Сцена 05 убрана — верните её, чтобы повторить»
+and «Повторить» waits; (11) a rewrite that failed for good is told in a danger notice; an idea write that failed for good opens the form again with the
+idea and the refusal (ReviewStates D); (12) the idea write's placeholders are numbered after the set's last scene (the ids reserved are not in the view);
+(13) «OpenRouter не отвечает.» has no status code (the view keeps none); (14) the price source keeps the app's «OpenRouter · 24 сент. 2026 г.» (CS.3's
+B5); (15) `scenes.get`'s `unreadable` count is not shown (no board); (16) the ReviewEdit shot has no «не составлена» scene beside the edit: the mock gives
+up whole requests of 25, so a single gave-up scene is drawn in ReviewGaveUp's shots instead; (17) a set's run ending reads «В галерее N фото этого набора…»;
+(18) a busy paid button («Составляем…») keeps its full colour with the spinner, the app's own rule for `aria-busy` buttons (as in CS.3), where the boards
+dim it; (19) the shots' gallery, header counts and sidebar spend are the demo mock's, and the mock's typical price for one scene rounds to «≈ $0.000»
+(the engine's is «≈ $0.002»).
+
+Tests, written first and seen red for the intended reason: the mock seeds (4 of 5 red; the scripted `ok` already ran, it was only typed), the model
+(`sceneReview.test.ts`, 20 of 20 on a throwing stub), the words (`sceneText.test.ts`, 24 of 24), the slice (`sceneSetSlice.test.ts`, 12 of 12), the sidebar
+row (3), the switch / compose / approve / recompose / restart screen tests (`PhotosSceneReview.test.tsx`, 14 of 14 before the UI existed; later the batched
+double click and the read failure / run-while-writing pair). Written alongside the UI and checked by mutation (each turned red): `PhotosSceneCards.test.tsx`
+(edits not sending the shown revision; the popover's focus; the approve price not keyed by the revision) and `PhotosSceneStops.test.tsx` (the bulk removal's
+ids; «Повторить» ignoring paid calls stopped). The banner's three decimals were red first. Two existing tests changed on purpose: the store's scenes-job
+sidebar count (now its own row) and PhotosScreen's «скоро» / no-switch pins (the column's «скоро» is gone, the switch exists); PhotosScreen's and CS.3's
+tests run with review off.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 6954 + 6945 + 6283 = 20182 passing, 0 failing
+(34 skipped; this machine, `node_modules` linked from the main checkout; CI is the run of record); impl shots of every phase-2 board at
+1200 and 1440 against the mock (`.omc/stage3/design/custom-categories/impl-shots/review/`, untracked; detail shots for ReviewIdeaWriting and ReviewGaveUp
+further down the column), no console errors.
+
+CS.6 fix round 1 (logic review MERGEABLE, five items, each test seen red for the intended reason first): (1) while «Дописываем…» runs after earlier spending the
+total line is «Дальше» (not «Весь запуск») and step 1 keeps «потрачено …» (`stepScenes` carries the spend for a running `unwritten` write too); (2) the pencil
+keeps the revision and the scene text it was opened on and saves on those, so another window's edit or a finished rewrite is refused as SCENES_CHANGED with
+the draft left in the field; (3) `PhotosSceneBlocked.test.tsx` pins every review paid button shut and silent under paid calls stopped and under another paid
+action in flight («Отрисовать», the idea form, «Другие сцены для N», «Повторить» in ⟳, compose), each turned red by its mutant; (4) «Дописать» and compose are
+also shut by the tracked scenes job between a write's answer and `scenes.changed` (`PhotosSceneWindow.test.tsx`, a mock engine whose events can be held);
+(5) after «Дописать» the focus goes to «Отменить» (the slice carries the request from the card to the column). Backlog, not done: an own-send reason line in the
+popover and idea form, `more.error` reset on a key change, the slice not library-keyed, the compose price cached after a recompose, the switch not synced
+across windows, and the visual LOWs.
+
 ### CS.7 — Whole-slice review, E2E, docs, local build, canary
 
 - Whole-slice review (opus), areas: money/state (CS.2, CS.4a/b, CS.5), contract/mock parity, UI

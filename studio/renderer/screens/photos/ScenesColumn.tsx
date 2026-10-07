@@ -1,12 +1,17 @@
 import { useEffect, useId, useRef, useState } from "react";
-import type { EngineError, Estimate, RunSummary } from "../../../shared/engine";
+import type { AvatarSummary, EngineError, Estimate, RunSummary, SceneSetView } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
+import type { SceneSetSliceView } from "../../engine/sceneSetSlice";
 import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
 import { countOf } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { modelName } from "./runForm";
+import { EMPTY_IDEA, type IdeaStart } from "./SceneIdeaForm";
+import { about } from "./scenePaid";
+import { focusSceneCard, SceneSetPanel } from "./SceneSetPanel";
+import { headerCounts, OFF_NOTE, offNoteSet, runDoneText } from "./sceneText";
 import { PHOTO_FORMS, useMounted } from "./shared";
 
 const RUN_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
@@ -234,8 +239,9 @@ function EndedRunRow({ run }: { run: RunSummary }) {
   );
 }
 
-/** How the run this screen watched ended: the gallery shows its photos, this says what else happened. */
-function RunOutcome({ job }: { job: JobView }) {
+
+/** How the run this screen watched ended: the gallery shows its photos, this says what else happened. A run made from a set says so (ReviewStates F). */
+function RunOutcome({ job, fromSet }: { job: JobView; fromSet: boolean }) {
   if (job.status === "failed" && job.error) return <ErrorNotice error={job.error} />;
   if (job.status === "cancelled") {
     return (
@@ -248,7 +254,7 @@ function RunOutcome({ job }: { job: JobView }) {
     const { photoIds, failedSlots } = job.result;
     return (
       <Notice tone={failedSlots > 0 ? "warn" : "ok"} title="Запуск завершён">
-        В галерее {countOf(photoIds.length, PHOTO_FORMS)} этого запуска.
+        {fromSet ? runDoneText(photoIds.length) : `В галерее ${countOf(photoIds.length, PHOTO_FORMS)} этого запуска.`}
         {failedSlots > 0 && ` Не получилось: ${failedSlots} — стоимость попыток учтена.`}
       </Notice>
     );
@@ -257,6 +263,7 @@ function RunOutcome({ job }: { job: JobView }) {
 }
 
 interface ScenesColumnProps {
+  avatar: AvatarSummary;
   view: EngineView;
   count: number;
   /** This avatar's latest run job, if the window knows one. */
@@ -276,16 +283,26 @@ interface ScenesColumnProps {
   paidInFlight: boolean;
   onPaidInFlightChange: (inFlight: boolean) => void;
   onResumed: (resumed: { runId: string; jobId: string }) => void;
+  /** CS.6: «Сцены на проверку». */
+  review: boolean;
+  /** The avatar's scene set as the slice reads it: `undefined` while it is read (or could not be), null with none. */
+  sceneSet: SceneSetView | null | undefined;
+  /** Why the set could not be read, with its retry. */
+  sceneReadError: EngineError | null;
+  onRetrySceneSet: () => void;
+  sliceView: SceneSetSliceView;
+  scenesJob: JobView | null;
+  /** The compose's price as the card shows it, for the «как это работает» box. */
+  composePrice: Estimate | null;
 }
 
 /**
- * The mockup's «Сцены» column. The contract has no scene plan to show before
- * or while a run draws (no per-scene text, shot, status, edit or re-roll), so
- * the column carries what it does have — the running job with its cancel,
- * how the watched run ended, and the stopped runs a resume can continue —
- * and marks the scene list itself as coming.
+ * The mockup's «Сцены» column. With «Сцены на проверку» on (CS.6) it holds the scene set: its job with the cancel, its notices, the «по описанию» form and
+ * every scene; before a set exists, how review works; with review off, today's word and the set kept aside. Whatever the mode, the running photo run with
+ * its cancel, how the watched run ended, and the stopped runs a resume can continue.
  */
 export function ScenesColumn({
+  avatar,
   view,
   count,
   runJob,
@@ -298,6 +315,13 @@ export function ScenesColumn({
   paidInFlight,
   onPaidInFlightChange,
   onResumed,
+  review,
+  sceneSet,
+  sceneReadError,
+  onRetrySceneSet,
+  sliceView,
+  scenesJob,
+  composePrice,
 }: ScenesColumnProps) {
   const { client, store } = useEngine();
   const mounted = useMounted();
@@ -306,6 +330,10 @@ export function ScenesColumn({
   const titleId = useId(); // L12: was the hardcoded "scenes-title", which duplicate-broke aria-labelledby if this column ever rendered twice
   const [cancelBusy, setCancelBusy] = useState(false);
   const [cancelError, setCancelError] = useState<EngineError | null>(null);
+  const [idea, setIdea] = useState<IdeaStart | null>(null);
+  const titleRef = useRef<HTMLHeadingElement>(null);
+  const addRef = useRef<HTMLButtonElement>(null);
+  const counterRef = useRef<HTMLButtonElement>(null);
 
   const running = runJob !== null && isActiveJob(runJob);
   // "Отменяем…" while runs.cancel is in flight and for as long after as the job has no real end yet (store.markCancelling).
@@ -327,22 +355,73 @@ export function ScenesColumn({
     if (!reply.ok) setCancelError(reply.error);
   }
 
-  const textModel = view.settings ? modelName(view.settings.textModel) : null;
+  // The set the column shows: with review on, the open set or the newest used one; with review off, none (it is kept aside, said below).
+  const shownSet = review && sceneSet !== undefined && sceneSet !== null ? sceneSet : null;
+  const openSet = sceneSet !== undefined && sceneSet !== null && sceneSet.status !== "used" ? sceneSet : null;
+  const used = shownSet !== null && shownSet.status === "used";
+  const fromSet = used && runJob !== null && runJob.runId === shownSet.runId;
+  const live = shownSet !== null && shownSet.write !== null;
+  const textModel = shownSet !== null ? modelName(shownSet.textModel) : view.settings ? modelName(view.settings.textModel) : null;
+  const counts = shownSet === null ? null : headerCounts(shownSet, used ? (running && fromSet ? "active" : "ended") : null);
+  const runCreatedAt = used ? (runs.find((r) => r.runId === shownSet.runId)?.createdAt ?? null) : null;
+  // «+ Своя сцена» only for an open set; it waits while a write of the set runs or the form is open. An empty set opens with the form (ReviewEmpty).
+  const canAdd = shownSet !== null && !used;
+  const addOff = live || idea !== null;
+  const emptySetId = openSet !== null && openSet.scenes.length === 0 && openSet.write === null ? openSet.sceneSetId : null;
+  useEffect(() => {
+    if (emptySetId !== null) setIdea((now) => now ?? EMPTY_IDEA);
+  }, [emptySetId]);
 
   return (
     <section className="photos-scenes" aria-labelledby={titleId}>
-      <div className="photos-sec-head">
-        <h2 id={titleId} className="card-title">
-          Сцены
-        </h2>
-        <span className="mono muted">
-          {count}
-          {textModel && ` · ${textModel}`}
-        </span>
-        <button type="button" className="btn btn-s photos-sec-action" disabled title="Скоро: сцены пересоставляются до отрисовки">
-          <Icon name="reload" size={14} />
-          Пересоставить
-        </button>
+      <div className="scene-col-head">
+        <div className="photos-sec-head">
+          <h2 id={titleId} ref={titleRef} className="card-title" tabIndex={-1}>
+            Сцены
+          </h2>
+          <span className="mono muted scene-col-model">
+            {shownSet === null && `${count} · `}
+            {textModel}
+          </span>
+          {canAdd && (
+            <button
+              ref={addRef}
+              type="button"
+              className={addOff ? "btn btn-s photos-sec-action btn-off" : "btn btn-s photos-sec-action"}
+              aria-expanded={idea !== null}
+              aria-disabled={addOff}
+              onClick={() => {
+                if (!addOff) setIdea(EMPTY_IDEA);
+              }}
+            >
+              <Icon name="plus" size={14} strokeWidth={2.4} />
+              Своя сцена
+            </button>
+          )}
+        </div>
+        {counts !== null && (
+          <p className="mono muted scene-col-counts">
+            {counts.map((part, i) => (
+              <span key={part.text} className="scene-col-count">
+                {part.problem === undefined ? (
+                  <span>{part.text}</span>
+                ) : (
+                  <button
+                    ref={counterRef}
+                    type="button"
+                    className="cnt"
+                    aria-label={part.problem.aria}
+                    onClick={() => focusSceneCard(part.problem?.first ?? 0)}
+                  >
+                    {part.text}
+                    <Icon name="arrowDown" size={10} strokeWidth={2.6} />
+                  </button>
+                )}
+                {i < counts.length - 1 && " · "}
+              </span>
+            ))}
+          </p>
+        )}
       </div>
 
       {running && runJob && (
@@ -358,10 +437,21 @@ export function ScenesColumn({
           <div className="bar" role="progressbar" aria-labelledby={progressId} aria-valuemin={0} aria-valuemax={total} aria-valuenow={runJob.done}>
             <span style={{ width: `${total > 0 ? (runJob.done / total) * 100 : 0}%` }} />
           </div>
+          {fromSet && runCreatedAt !== null && <span className="mono faint scene-progress-note">запуск из набора сцен · {RUN_DATE.format(Date.parse(runCreatedAt))}</span>}
         </div>
       )}
       {cancelError && <ErrorNotice error={cancelError} />}
-      {!running && watched && runJob && <RunOutcome job={runJob} />}
+      {!running && watched && runJob && <RunOutcome job={runJob} fromSet={fromSet} />}
+      {review && sceneReadError !== null && (
+        <ErrorNotice
+          error={sceneReadError}
+          actions={
+            <button type="button" className="btn btn-s" onClick={onRetrySceneSet}>
+              Повторить
+            </button>
+          }
+        />
+      )}
       {runsError && (
         <ErrorNotice
           error={runsError}
@@ -389,14 +479,69 @@ export function ScenesColumn({
         />
       ))}
 
-      <article className="photos-soon" aria-label="Список сцен — скоро">
-        <div className="photos-scene-tags">
-          <span className="tag">скоро</span>
-        </div>
-        <p className="photos-scene-text">
-          Сцены по одной — с текстом, типом кадра и статусом, с правкой и перегенерацией до отрисовки. Пока движок составляет и рисует их за один запуск.
-        </p>
-      </article>
+      {!review && (
+        <article className="photos-soon scene-box" aria-label="Проверка выключена">
+          <div className="photos-scene-tags">
+            <span className="tag">проверка выключена</span>
+          </div>
+          <p className="scene-box-text">{OFF_NOTE}</p>
+          {openSet !== null && <p className="scene-box-text scene-box-muted">{offNoteSet(openSet)}</p>}
+        </article>
+      )}
+      {review && sceneSet === null && (
+        <article className="photos-soon scene-box" aria-label="Как работает проверка сцен">
+          <div className="photos-scene-tags">
+            <span className="tag">сцены на проверку</span>
+          </div>
+          <ol className="scene-explain">
+            <li>
+              <span className="stepn stepn-current mono">1</span>
+              <span>
+                <b>Составить.</b> Модель пишет {count > 0 ? countOf(count, ["сцену", "сцены", "сцен"]) : "сцены"} по настройкам карточки
+                {composePrice !== null && count > 0 && (
+                  <>
+                    {" "}
+                    — <span className="mono">{about(composePrice.expectedMicros)}</span>
+                  </>
+                )}
+                , фото пока не рисуются.
+              </span>
+            </li>
+            <li>
+              <span className="stepn stepn-next mono">2</span>
+              <span>
+                <b>Проверить.</b> Поправьте текст, уберите лишние, попросите другую сцену или добавьте свою. Правки бесплатны; платно только то, что пишет
+                модель, — с ценой на кнопке.
+              </span>
+            </li>
+            <li>
+              <span className="stepn stepn-next mono">3</span>
+              <span>
+                <b>Отрисовать.</b> Платите только за оставшиеся сцены. Набор живёт на диске — переживёт закрытие Studio.
+              </span>
+            </li>
+          </ol>
+        </article>
+      )}
+
+      {shownSet !== null && (
+        <SceneSetPanel
+          avatar={avatar}
+          view={view}
+          set={shownSet}
+          sliceView={sliceView}
+          scenesJob={scenesJob}
+          runActive={running}
+          runCreatedAt={runCreatedAt}
+          paidInFlight={paidInFlight}
+          onPaidInFlightChange={onPaidInFlightChange}
+          idea={canAdd ? idea : null}
+          onIdea={setIdea}
+          titleRef={titleRef}
+          addRef={addRef}
+          counterRef={counterRef}
+        />
+      )}
     </section>
   );
 }

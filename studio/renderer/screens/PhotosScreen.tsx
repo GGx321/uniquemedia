@@ -1,6 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { MAX_CLIPS, type AvatarSummary, type EngineError, type PhotoSummary, type RunSummary } from "../../shared/engine";
-import { useEngine, useEngineView } from "../engine/react";
+import { MAX_CLIPS, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary } from "../../shared/engine";
+import { useEngine, useEngineView, useSceneSet } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { useNavigate, type PhotosTab } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
@@ -15,6 +15,9 @@ import type { MarkControl, MarkFailure } from "./photos/photoState";
 import { usablePicks, useMontagePicks } from "./photos/picks";
 import { arrangeCategories, DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { ScenesColumn } from "./photos/ScenesColumn";
+import { readSceneReview, viewerStorage, writeSceneReview } from "./photos/sceneReview";
+import { focusSceneCard } from "./photos/SceneSetPanel";
+import { liveScenesJob } from "./photos/SceneStrip";
 import { useMounted } from "./photos/shared";
 import { UsageNotice } from "./photos/UsageNotice";
 import { VideosTab } from "./photos/VideosTab";
@@ -131,6 +134,19 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   const runJob = latestRunJob(view.jobs, avatarId);
   const runActive = runJob !== null && isActiveJob(runJob);
   const runJobId = runJob?.jobId ?? null;
+
+  // CS.6: «Сцены на проверку» (on unless turned off on this machine) and the avatar's scene set, read by the window's slice.
+  const [review, setReview] = useState(() => readSceneReview(viewerStorage()));
+  const changeReview = (on: boolean): void => {
+    setReview(on);
+    writeSceneReview(viewerStorage(), on);
+  };
+  const { slice: sceneSlice, entry: sceneEntry, view: sliceView } = useSceneSet(avatarId);
+  // Unknown (`undefined`) while it is read and when the read failed: nothing composes then, as a second open set would be refused.
+  const sceneSet = sceneEntry.status === "ready" ? sceneEntry.sceneSet : undefined;
+  const sceneReadError = sceneEntry.status === "failed" ? sceneEntry.error : null;
+  const scenesJob = liveScenesJob(view.jobs, avatarId);
+  const [composePrice, setComposePrice] = useState<Estimate | null>(null);
 
   // The gallery: on open, and again whenever this avatar's run reports a
   // slot done or ends — each photo lands in the library before its progress
@@ -401,10 +417,25 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
               onStarted={launched}
               paidInFlight={paidInFlight}
               onPaidInFlightChange={setPaidInFlight}
+              review={review}
+              onReviewChange={changeReview}
+              sceneSet={sceneSet}
+              sliceView={sliceView}
+              scenesJob={scenesJob}
+              onComposePrice={setComposePrice}
+              onFocusScene={focusSceneCard}
             />
 
             <div className="photos-body">
               <ScenesColumn
+                avatar={avatar}
+                review={review}
+                sceneSet={sceneSet}
+                sceneReadError={sceneReadError}
+                onRetrySceneSet={() => sceneSlice.reload(avatarId)}
+                sliceView={sliceView}
+                scenesJob={scenesJob}
+                composePrice={composePrice}
                 view={view}
                 count={form.count}
                 runJob={runJob}

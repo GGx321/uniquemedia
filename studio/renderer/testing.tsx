@@ -4,8 +4,23 @@ import type { CommandMessage, CommandType } from "../shared/engine";
 import { App } from "./App";
 import { MockEngine, type MockEngineOptions, mockEngineClient } from "./engine/mockEngine";
 import { ManualScheduler } from "./engine/scheduler";
+import { SCENE_REVIEW_KEY } from "./screens/photos/sceneReview";
 
-export function setup(options: MockEngineOptions = {}) {
+/**
+ * CS.6: the «Сцены на проверку» switch is remembered in localStorage, which every test of a run shares: each setup starts from the owner's default (ON,
+ * nothing stored) unless it asks for a position. A test of today's path (the run writes its own scenes) asks for `sceneReview: "off"`.
+ */
+export interface SetupOptions extends MockEngineOptions {
+  sceneReview?: "on" | "off";
+}
+
+export function setup({ sceneReview, ...options }: SetupOptions = {}) {
+  try {
+    if (sceneReview === undefined) localStorage.removeItem(SCENE_REVIEW_KEY);
+    else localStorage.setItem(SCENE_REVIEW_KEY, sceneReview);
+  } catch {
+    // No storage in this environment: the switch reads ON.
+  }
   const scheduler = new ManualScheduler();
   const engine = new MockEngine({ scheduler, latencyMs: 0, ...options });
   const client = mockEngineClient(engine);

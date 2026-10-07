@@ -111,6 +111,8 @@ const PATHS = {
   sparkle: <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" />,
   text: <path d="M5 6h14M12 6v13" />,
   chevronDown: <path d="M6 9l6 6 6-6" />,
+  /** CS.6: the scenes column's «N не составлены ↓», a link down to the first such scene. */
+  arrowDown: <path d="M12 5v14M6 13l6 6 6-6" />,
   scissors: (
     <>
       <circle cx="6" cy="6" r="3" />

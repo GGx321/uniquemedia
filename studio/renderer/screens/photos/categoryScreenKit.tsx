@@ -92,9 +92,9 @@ export function interruptedRegenerate(categoryId: CustomCategoryId, patch: Parti
   return interruptedCreate({ jobId: "job-left-0002", kind: "regenerate", categoryId, name: "Кофейни Парижа", description: "Кофейни и бистро", ...patch });
 }
 
-/** Opens Mia's Photos screen from the sidebar and waits for the run's first price. */
+/** Opens Mia's Photos screen from the sidebar and waits for the run's first price (today's path: «Сцены на проверку» off unless asked). */
 export async function openPhotos(options: Parameters<typeof setup>[0] = {}) {
-  const harness = setup({ avatars: [MIA], ...options });
+  const harness = setup({ avatars: [MIA], sceneReview: "off", ...options });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });

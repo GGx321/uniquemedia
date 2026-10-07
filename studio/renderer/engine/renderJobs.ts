@@ -79,18 +79,22 @@ export interface SidebarCounts {
   readonly queue: number;
   /** «Генерация»: the photo runs and candidate batches only. A job with no total yet counts its 4 slots. */
   readonly generation: { readonly done: number; readonly total: number } | null;
+  /** «Сцены» (CS.6, Sidebar.dc.html): the scene sets' writer jobs — compose, «Дописать», ⟳, «по описанию» — scenes written of scenes asked. */
+  readonly scenes: { readonly done: number; readonly total: number } | null;
   /** «Рендер a / b»: `ended` of `size`, and the bar's `fraction` (running renders by their frames). Null while none is queued or running. */
   readonly render: { readonly ended: number; readonly size: number; readonly fraction: number } | null;
 }
 
 export function sidebarCounts(jobs: readonly JobView[], batch: ReadonlySet<string>): SidebarCounts {
   const active = jobs.filter(isActive);
-  const photo = active.filter((job) => !isRender(job));
+  const photo = active.filter((job) => !isRender(job) && job.kind !== "scenes");
+  const scenes = active.filter((job) => job.kind === "scenes");
   const batchJobs = jobs.filter((job) => isRender(job) && batch.has(job.jobId));
   const running = batchJobs.filter(isActive);
   return {
     queue: active.length,
     generation: photo.length === 0 ? null : { done: photo.reduce((sum, j) => sum + j.done, 0), total: photo.reduce((sum, j) => sum + (j.total || 4), 0) },
+    scenes: scenes.length === 0 ? null : { done: scenes.reduce((sum, j) => sum + j.done, 0), total: scenes.reduce((sum, j) => sum + j.total, 0) },
     render:
       running.length === 0
         ? null

@@ -207,6 +207,19 @@ function SidebarStatus() {
             </div>
           </div>
         )}
+        {counts.scenes !== null && (
+          <div className="side-meter">
+            <div className="side-meter-row">
+              <span>Сцены</span>
+              <span className="mono link-text">
+                {counts.scenes.done} / {counts.scenes.total}
+              </span>
+            </div>
+            <div className="bar" aria-hidden="true">
+              <span style={{ width: `${counts.scenes.total > 0 ? (counts.scenes.done / counts.scenes.total) * 100 : 0}%` }} />
+            </div>
+          </div>
+        )}
         {counts.render !== null && (
           <div className="side-meter">
             <div className="side-meter-row">
