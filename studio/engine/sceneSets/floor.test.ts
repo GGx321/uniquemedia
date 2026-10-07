@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CATEGORY_LABEL_MAX, POOL_TEXT_MAX, TIME_OF_DAY_MAX, type CategorySnapshot } from "../../shared/engine";
-import { SceneSetFile, type StoredSceneSet } from "../library/sceneSets";
+import { SceneSetFile, type PlannedSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { WRITER_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
@@ -21,7 +21,7 @@ const CEILING = WRITER_CALL.inputTokens;
 const snapshot: CategorySnapshot = { ref: CUSTOM, name: "я".repeat(40), label: "L".repeat(CATEGORY_LABEL_MAX), style: "editorial" };
 
 /** A set of one full chunk of custom scenes, every text at `textLength`, built by hand so no draw can be luckier. */
-function worstSet(textLength: number): Omit<StoredSceneSet, "schemaVersion" | "revision" | "createdAt" | "updatedAt"> {
+function worstSet(textLength: number): Omit<PlannedSceneSet, "schemaVersion" | "revision" | "createdAt" | "updatedAt"> {
   const base = sampleSet({ count: WRITER_CALL.slotsPerCall });
   return {
     ...base,
@@ -69,7 +69,7 @@ function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
 describe("the writer prompt floor pin, for a scene set", () => {
   test("a full chunk of custom scenes at the bounds, asked again after the worst refusal, stays at least 200 tokens under the 14K ceiling", () => {
     const parsed = SceneSetFile.parse(stamped(worstSet(POOL_TEXT_MAX)));
-    const slots = parsed.scenes.map((s) => s.slot);
+    const slots = parsed.scenes.flatMap((s) => (s.origin === "planned" ? [s.slot] : []));
     const messages = runWriterConfig(parsed.categories).messages(slots, worstRefusal(slots));
     expect(promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 })).toBeLessThanOrEqual(CEILING - MARGIN);
   });

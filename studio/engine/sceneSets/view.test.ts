@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { SceneSetView } from "../../shared/engine";
-import type { StoredSceneSet } from "../library/sceneSets";
+import type { PlannedSceneSet, StoredSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { fakeLedger, WRITER_ATTEMPT_WORST } from "./testing/fakeLedger";
 import { buildSceneSetView, type ViewContext } from "./view";
@@ -14,8 +14,8 @@ const SET = "set-aaaa-0001";
 const id = (chunk: number, n: number) => `${SET}:writer-${chunk}#${n}`;
 const CUSTOM = "cat-paris-cafes" as const;
 
-function stored(over: Partial<StoredSceneSet> = {}, options: Parameters<typeof sampleSet>[0] = { count: 35 }): StoredSceneSet {
-  return { schemaVersion: 1, revision: 4, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:30:00.000Z", ...sampleSet(options), ...over };
+function stored(over: Partial<StoredSceneSet> = {}, options: Parameters<typeof sampleSet>[0] = { count: 35 }): PlannedSceneSet {
+  return { schemaVersion: 1, revision: 4, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:30:00.000Z", ...sampleSet(options), ...over } as PlannedSceneSet;
 }
 
 function context(over: Partial<ViewContext> = {}): ViewContext {

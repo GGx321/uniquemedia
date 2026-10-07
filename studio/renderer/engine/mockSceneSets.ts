@@ -487,6 +487,8 @@ export class MockSceneSets {
       if (scene.text === text && scene.edited) return { view: this.view(set) };
       scene.text = text;
       scene.edited = true;
+    } else if (op.op === "dismissInterrupted") {
+      return { error: { code: "VALIDATION", detail: "the mock has no interrupted write to dismiss yet" } };
     } else {
       const missing = op.sceneIds.filter((id) => !known.has(id));
       if (missing.length > 0) return { error: { code: "VALIDATION", detail: `the set has no scene ${missing.join(", ")}` } };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { StoredSceneSet } from "../library/sceneSets";
+import type { PlannedSceneRecord, SceneRecord, StoredSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { chunkState, pendingChunks, requestSceneIds } from "./chunks";
 import { fakeLedger } from "./testing/fakeLedger";
@@ -17,8 +17,8 @@ function stored(over: Partial<StoredSceneSet> = {}): StoredSceneSet {
   return { schemaVersion: 1, revision: 1, createdAt: "2026-10-07T10:00:00.000Z", updatedAt: "2026-10-07T10:00:00.000Z", ...sampleSet({ count: 35 }), ...over };
 }
 
-function withScenes(set: StoredSceneSet, change: (sceneId: number) => Partial<StoredSceneSet["scenes"][number]>): StoredSceneSet {
-  return { ...set, scenes: set.scenes.map((s) => ({ ...s, ...change(s.sceneId) })) };
+function withScenes(set: StoredSceneSet, change: (sceneId: number) => Partial<PlannedSceneRecord>): StoredSceneSet {
+  return { ...set, scenes: set.scenes.map((s) => ({ ...s, ...change(s.sceneId) }) as SceneRecord) };
 }
 
 const chunkOf = (set: StoredSceneSet, n: number) => {

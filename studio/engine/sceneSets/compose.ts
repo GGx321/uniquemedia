@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { CategoryRef, CategorySnapshot } from "../../shared/engine";
-import type { NewSceneSet } from "../library/sceneSets";
+import type { PlannedNewSceneSet } from "../library/sceneSets";
 import { writerAttemptIds } from "../runs/plan";
 import { planWithPools, plannerCategoryOf, type Pool } from "../scenes";
 import { chunkSlots } from "../scenes/writer";
@@ -33,7 +33,7 @@ export function seedOfSet(sceneSetId: string): number {
 }
 
 /** The set a compose writes before its first call. Count 0 is an empty set: no scene, no chunk, no write, nothing to pay. */
-export function planSceneSet(input: ComposeInput): NewSceneSet {
+export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
   const slots =
     input.count === 0
       ? []

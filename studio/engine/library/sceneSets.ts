@@ -1,8 +1,27 @@
 import { mkdir, readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
-import { AttemptId, CategoryRef, CategorySnapshot, EngineError, Id, isCustomCategory, MAX_RUN_CATEGORIES, MAX_SCENES_PER_SET, ModelId, SCENE_CHUNK_SIZE, SceneComposeTally, SceneId, SceneStoppedBy, SceneText } from "../../shared/engine";
-import { PlanSlotSchema } from "../scenes";
+import {
+  AttemptId,
+  CategoryRef,
+  CategorySnapshot,
+  EngineError,
+  Id,
+  isCustomCategory,
+  MAX_RUN_CATEGORIES,
+  MAX_SCENES_PER_SET,
+  MAX_SCENES_PER_WRITE,
+  ModelId,
+  PoolShot,
+  SCENE_CHUNK_SIZE,
+  SceneComposeTally,
+  SceneId,
+  SceneIdeaInput,
+  ScenePose,
+  SceneStoppedBy,
+  SceneText,
+} from "../../shared/engine";
+import { isPhoneInHandShot, PlanSlotSchema } from "../scenes";
 import { fsyncDir, hasErrorCode, writeJsonAtomic } from "./durableFs";
 import { isLibraryId } from "./ids";
 import { AVATARS_DIR, isFromNewerVersion, SCENE_SET_FILE_SCHEMA_VERSION, SCENES_DIR } from "./layout";
@@ -27,8 +46,8 @@ export class SceneSetError extends Error {
 /** What the file keeps of a stopped write: why, never `closed` (a dying process cannot write it). */
 const StoredStoppedBy = SceneStoppedBy.exclude(["closed"]);
 
-/** A scene as the planner drew it, with its sentence (null until written) and the owner's marks. Own scenes (CS.4b) join this union. */
-export const SceneRecord = z.strictObject({
+/** A scene as the planner drew it, with its sentence (null until written) and the owner's marks. */
+export const PlannedSceneRecord = z.strictObject({
   sceneId: SceneId,
   origin: z.literal("planned"),
   slot: PlanSlotSchema,
@@ -36,6 +55,31 @@ export const SceneRecord = z.strictObject({
   edited: z.boolean(),
   removed: z.boolean(),
 });
+export type PlannedSceneRecord = z.infer<typeof PlannedSceneRecord>;
+
+/** A selfie or mirror shot always faces the camera: the same rule a plan's slot is held to. */
+const facesCamera = (own: { shot: z.infer<typeof PoolShot>; pose: z.infer<typeof ScenePose> }): boolean => !isPhoneInHandShot(own.shot) || own.pose === "front" || own.pose === "three-quarter";
+const FACES_CAMERA = { message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter", path: ["pose"] };
+
+/**
+ * An own scene (CS.4b): written by the model from the owner's idea, never placed. It always has its sentence (it enters the set only with an accepted one),
+ * its stored idea (what ⟳ writes from again; the idea is the input, never the text) and a shot and a pose. No place, no category, no chunk.
+ */
+export const OwnSceneRecord = z
+  .strictObject({
+    sceneId: SceneId,
+    origin: z.literal("own"),
+    idea: SceneIdeaInput,
+    shot: PoolShot,
+    pose: ScenePose,
+    text: SceneText,
+    edited: z.boolean(),
+    removed: z.boolean(),
+  })
+  .refine(facesCamera, FACES_CAMERA);
+export type OwnSceneRecord = z.infer<typeof OwnSceneRecord>;
+
+export const SceneRecord = z.discriminatedUnion("origin", [PlannedSceneRecord, OwnSceneRecord]);
 export type SceneRecord = z.infer<typeof SceneRecord>;
 
 /**
@@ -63,6 +107,57 @@ export const WriteRecord = z
   .refine((w) => (w.stoppedError !== undefined) === (w.stoppedBy === "failed"), { message: "the error belongs to a write that stopped by a failure", path: ["stoppedError"] });
 export type WriteRecord = z.infer<typeof WriteRecord>;
 
+/** The most review-time writes (rewrite and idea) a set records: each is kept for the money it spent and the ids it burnt, so the file must not grow without end. */
+export const MAX_REVIEW_WRITES = 500;
+/** A review write's ids: its answered attempts plus two for attempts that got no answer, `${sceneSetId}:write-${k}#n`. */
+export const REVIEW_WRITE_IDS = 4;
+
+const ReviewWriteBase = {
+  /** The write's number, from the set's own counter: the ids of a write are derived from it and are never reused. */
+  k: z.number().int().min(1),
+  /** The job that ran it last (a resume has a new one). */
+  jobId: Id,
+  attemptIds: z.array(AttemptId).min(1).max(REVIEW_WRITE_IDS),
+  /** Resolved: accepted, dismissed, or out of attempts. A closed record is kept only for what it spent and the ids it burnt. */
+  closed: z.boolean(),
+  stoppedBy: StoredStoppedBy.optional(),
+  stoppedError: EngineError.optional(),
+};
+
+/**
+ * A rewrite, recorded before its first call. With `redraw`, `slots` holds the new place, outfit, activity, time and pose of each target scene, drawn once and
+ * kept here (a resume sends the same ones); the scene itself changes only when the sentence is accepted, and `snapshots` are the category snapshots that
+ * accepted write refreshes.
+ */
+export const RewriteWriteRecord = z.strictObject({
+  ...ReviewWriteBase,
+  kind: z.literal("rewrite"),
+  sceneIds: z.array(SceneId).min(1).max(MAX_SCENES_PER_WRITE),
+  redraw: z.boolean(),
+  slots: z.array(PlanSlotSchema).max(MAX_SCENES_PER_WRITE),
+  snapshots: z.array(CategorySnapshot).max(MAX_SCENES_PER_WRITE),
+});
+export type RewriteWriteRecord = z.infer<typeof RewriteWriteRecord>;
+
+/**
+ * An idea write, recorded before its first call: the idea, how many scenes and the shot asked for, and for each of the scenes it will add the id it reserved
+ * and the shot and pose drawn. The scenes join the set only with the accepted sentences.
+ */
+export const IdeaWriteRecord = z.strictObject({
+  ...ReviewWriteBase,
+  kind: z.literal("idea"),
+  idea: SceneIdeaInput,
+  count: z.number().int().min(1).max(MAX_SCENES_PER_WRITE),
+  shot: PoolShot.nullable(),
+  scenes: z.array(z.strictObject({ sceneId: SceneId, shot: PoolShot, pose: ScenePose }).refine(facesCamera, FACES_CAMERA)).min(1).max(MAX_SCENES_PER_WRITE),
+});
+export type IdeaWriteRecord = z.infer<typeof IdeaWriteRecord>;
+
+export const ReviewWriteRecord = z
+  .discriminatedUnion("kind", [RewriteWriteRecord, IdeaWriteRecord])
+  .refine((w) => (w.stoppedError !== undefined) === (w.stoppedBy === "failed"), { message: "the error belongs to a write that stopped by a failure", path: ["stoppedError"] });
+export type ReviewWriteRecord = z.infer<typeof ReviewWriteRecord>;
+
 export const SceneSetFile = z
   .strictObject({
     schemaVersion: z.literal(SCENE_SET_FILE_SCHEMA_VERSION),
@@ -85,6 +180,8 @@ export const SceneSetFile = z
     scenes: z.array(SceneRecord).max(MAX_SCENES_PER_SET),
     chunks: z.array(ChunkRecord),
     write: WriteRecord.nullable(),
+    /** Every rewrite and idea write of the review (CS.4b), in the order they began; absent in a set that has none. */
+    reviewWrites: z.array(ReviewWriteRecord).max(MAX_REVIEW_WRITES).optional(),
     /** The counters of the planned scenes when the last write job ended (a compose or a «Дописать»): what «Готово 35 из 60» says, kept as it was said. Absent until a job ended. */
     lastOutcome: SceneComposeTally.optional(),
     /** How many writes were started: the next write is number `writes + 1`. */
@@ -94,7 +191,7 @@ export const SceneSetFile = z
     const ids = set.scenes.map((s) => s.sceneId);
     if (new Set(ids).size !== ids.length) ctx.addIssue({ code: "custom", message: "a scene id must not repeat", path: ["scenes"] });
     for (const [i, scene] of set.scenes.entries()) {
-      if (scene.slot.slotIndex !== scene.sceneId) ctx.addIssue({ code: "custom", message: "a planned scene's slot is numbered like the scene", path: ["scenes", i] });
+      if (scene.origin === "planned" && scene.slot.slotIndex !== scene.sceneId) ctx.addIssue({ code: "custom", message: "a planned scene's slot is numbered like the scene", path: ["scenes", i] });
     }
     const inChunk = set.chunks.flatMap((c) => c.sceneIds);
     if (new Set(inChunk).size !== inChunk.length || inChunk.some((id) => !ids.includes(id))) {
@@ -108,16 +205,64 @@ export const SceneSetFile = z
     }
     const snapshotRefs = (set.categories ?? []).map((c) => c.ref);
     if (new Set(snapshotRefs).size !== snapshotRefs.length) ctx.addIssue({ code: "custom", message: "a custom category must have one snapshot entry at most", path: ["categories"] });
-    const used = new Set([...set.request.categories, ...set.scenes.map((s) => s.slot.category)].filter(isCustomCategory));
+    const plannedCategories = set.scenes.flatMap((s) => (s.origin === "planned" ? [s.slot.category] : []));
+    const used = new Set([...set.request.categories, ...plannedCategories].filter(isCustomCategory));
     for (const ref of used) {
       if (!snapshotRefs.includes(ref)) ctx.addIssue({ code: "custom", message: `the set names custom category ${ref} without a snapshot of it`, path: ["categories"] });
     }
     if (set.write !== null && set.write.k > set.writes) ctx.addIssue({ code: "custom", message: "the recorded write is one of the writes started", path: ["write"] });
+    checkReviewWrites(set, snapshotRefs, ctx);
   });
+
+/** What the records of the review writes must be, as a whole, for the engine to rely on them without looking again. */
+function checkReviewWrites(
+  set: { sceneSetId: string; writes: number; write: WriteRecord | null; scenes: readonly SceneRecord[]; reviewWrites?: readonly ReviewWriteRecord[] | undefined },
+  snapshotRefs: readonly string[],
+  ctx: z.RefinementCtx,
+): void {
+  const records = set.reviewWrites ?? [];
+  const bad = (message: string, index: number): void => ctx.addIssue({ code: "custom", message, path: ["reviewWrites", index] });
+  const byId = new Map(set.scenes.map((s) => [s.sceneId, s]));
+  const numbers = new Set<number>(set.write === null ? [] : [set.write.k]);
+  const reserved = new Set<number>();
+  for (const [i, record] of records.entries()) {
+    if (record.k > set.writes) bad("a recorded write is one of the writes started", i);
+    if (numbers.has(record.k)) bad("a write number belongs to one write", i);
+    numbers.add(record.k);
+    const wanted = new Set(Array.from({ length: REVIEW_WRITE_IDS }, (_, n) => `${set.sceneSetId}:write-${record.k}#${n + 1}`));
+    if (new Set(record.attemptIds).size !== record.attemptIds.length || record.attemptIds.some((id) => !wanted.has(id))) {
+      bad("a write's attempt ids are its own, `${sceneSetId}:write-${k}#n`, and never repeat", i);
+    }
+    if (record.kind === "rewrite") {
+      if (new Set(record.sceneIds).size !== record.sceneIds.length || record.sceneIds.some((id) => !byId.has(id))) bad("a rewrite names scenes of the set, each once", i);
+      if (record.redraw) {
+        const fits = record.slots.length === record.sceneIds.length && record.slots.every((slot, n) => slot.slotIndex === record.sceneIds[n]);
+        if (!fits) bad("a redraw holds one new slot for each scene it rewrites, in order, numbered like the scene", i);
+        const planned = record.sceneIds.every((id) => byId.get(id)?.origin === "planned");
+        if (!planned) bad("only a planned scene has a place to redraw", i);
+        else if (!record.slots.every((slot, n) => (byId.get(record.sceneIds[n] ?? -1) as PlannedSceneRecord | undefined)?.slot.category === slot.category)) bad("a redraw keeps the scene's category", i);
+      } else if (record.slots.length > 0) bad("a rewrite without a redraw holds no new slot", i);
+      const refs = record.snapshots.map((s) => s.ref);
+      if (new Set(refs).size !== refs.length || refs.some((ref) => !snapshotRefs.includes(ref))) bad("a redraw refreshes snapshots of categories the set already has, each once", i);
+    } else {
+      const ids = record.scenes.map((s) => s.sceneId);
+      if (ids.length !== record.count || new Set(ids).size !== ids.length) bad("an idea write reserves one scene id for each scene it adds", i);
+      for (const id of ids) {
+        if (reserved.has(id)) bad("two idea writes never reserve the same scene id", i);
+        reserved.add(id);
+        if (!record.closed && byId.has(id)) bad("an unresolved idea write's ids are not the ids of scenes the set already has", i);
+      }
+    }
+  }
+}
 export type StoredSceneSet = z.infer<typeof SceneSetFile>;
 
 /** What a new set is made of; the store stamps the schema version, the revision (1) and the times. */
 export type NewSceneSet = Omit<StoredSceneSet, "schemaVersion" | "revision" | "createdAt" | "updatedAt"> & { createdAt?: string };
+
+/** A set known to hold planned scenes only, as a compose makes it and the planner-side code reads it: its scenes all have a slot. */
+export type PlannedNewSceneSet = Omit<NewSceneSet, "scenes"> & { scenes: PlannedSceneRecord[] };
+export type PlannedSceneSet = Omit<StoredSceneSet, "scenes"> & { scenes: PlannedSceneRecord[] };
 
 export interface SceneSetStoreDeps {
   now?: () => Date;
