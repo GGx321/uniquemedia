@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { ImageModelCatalogue, ImageModelEntry, ImageQuality, ModelId } from "../../shared/engine";
+import { catalogueTtlMs, FALLBACK_CATALOGUE_TTL_MS, ImageModelCatalogue, ImageModelEntry, ImageQuality, LIVE_CATALOGUE_TTL_MS, ModelId } from "../../shared/engine";
 import type { Clock } from "../money/ledger";
 import {
   acceptsRequests,
@@ -32,10 +32,8 @@ import {
 /** The contract's cap on the catalogue (`ImageModelCatalogue`): a longer live list is cut to it, never refused whole. */
 export const MAX_CATALOGUE_MODELS = 100;
 
-/** A live catalogue is read again after this long. */
-export const LIVE_CATALOGUE_TTL_MS = 30 * 60_000;
-/** A bundled or partial catalogue retries the live read sooner: the outage may be over. */
-export const FALLBACK_CATALOGUE_TTL_MS = 60_000;
+// The refresh times are the contract's (shared/engine/imageModels.ts), so a Settings card left open asks again on the engine's own schedule.
+export { FALLBACK_CATALOGUE_TTL_MS, LIVE_CATALOGUE_TTL_MS };
 
 const Modalities = z.array(z.string());
 const ListedModel = z.object({
@@ -164,13 +162,12 @@ export function fallbackImageCatalogue(): ImageModelCatalogue {
     const qualities: ImageQuality[] = price.outputs.some((o) => o.variant?.startsWith("low_") === true) ? ["low", "medium"] : [];
     return entryOf({ id, name: FALLBACK_NAMES.get(id) ?? id }, qualities, price);
   });
-  return { models: ordered(models), source: "fallback" };
+  return { models: ordered(models), source: "fallback", complete: false };
 }
 
-/** A built catalogue, and whether every candidate was priced (a transient failure leaves it partial, so it is tried again soon). */
+/** A built catalogue; its `complete` says whether every candidate was priced (a transient failure leaves it partial, so it is tried again soon). */
 export interface CatalogueLoad {
   catalogue: ImageModelCatalogue;
-  complete: boolean;
 }
 
 /**
@@ -183,7 +180,7 @@ export interface CatalogueLoad {
 export async function loadImageCatalogue(opts: { fetch: FetchLike; baseUrl: string; timeoutMs?: number }): Promise<CatalogueLoad> {
   const base = opts.baseUrl.replace(/\/+$/, "");
   const timeoutMs = opts.timeoutMs ?? PRICE_FETCH_TIMEOUT_MS;
-  const bundled: CatalogueLoad = { catalogue: fallbackImageCatalogue(), complete: false };
+  const bundled: CatalogueLoad = { catalogue: fallbackImageCatalogue() };
   let candidates: ListedImageModel[] | null;
   try {
     candidates = listedCandidates(await getJson(opts.fetch, `${base}/images/models`, timeoutMs));
@@ -205,7 +202,7 @@ export async function loadImageCatalogue(opts: { fetch: FetchLike; baseUrl: stri
   // reject the catalogue, and a full live one would be cached for 30 minutes. The list is cut to the contract's cap, tested first.
   const models = ordered(answers.flatMap((a) => (a.entry === null || !ImageModelEntry.safeParse(a.entry).success ? [] : [a.entry]))).slice(0, MAX_CATALOGUE_MODELS);
   if (models.length === 0) return bundled;
-  return { catalogue: { models, source: "live" }, complete: answers.every((a) => a.reached) };
+  return { catalogue: { models, source: "live", complete: answers.every((a) => a.reached) } };
 }
 
 /** The catalogue for the engine's life: served from memory until its refresh time; requests during a load share it; a failed load is not cached. */
@@ -223,8 +220,7 @@ export class ImageCatalogueCache {
   get(): Promise<ImageModelCatalogue> {
     const entry = this.#entry;
     if (entry !== null) {
-      const ttl = entry.load.catalogue.source === "live" && entry.load.complete ? LIVE_CATALOGUE_TTL_MS : FALLBACK_CATALOGUE_TTL_MS;
-      if (this.#monotonic() - entry.at < ttl) return Promise.resolve(entry.load.catalogue);
+      if (this.#monotonic() - entry.at < catalogueTtlMs(entry.load.catalogue)) return Promise.resolve(entry.load.catalogue);
     }
     if (this.#loading !== null) return this.#loading;
     const loading = this.#load().then((load) => {

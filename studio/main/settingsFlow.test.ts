@@ -18,6 +18,7 @@ const SEEDREAM = "bytedance-seed/seedream-5-0-pro";
 /** What the engine's `settings.imageModels` answers in these tests: a model with a quality knob and one without. */
 const CATALOGUE: ImageModelCatalogue = {
   source: "live",
+  complete: true,
   models: [
     { id: GROK, name: "Grok Imagine Image 2.0", qualities: ["low", "medium"], prices: [{ quality: "low", micros: 50_000 }, { quality: "medium", micros: 70_000 }], tested: true },
     { id: SEEDREAM, name: "Seedream 5.0 Pro", qualities: [], prices: [{ quality: null, micros: 48_000 }], tested: true },

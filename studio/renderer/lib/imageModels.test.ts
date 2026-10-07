@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ImageModelEntry } from "../../shared/engine";
+import { FALLBACK_CATALOGUE_TTL_MS, LIVE_CATALOGUE_TTL_MS, type ImageModelEntry } from "../../shared/engine";
 import { catalogueFreshMs, modelOptionLabel, photoPriceMicros, qualityOptionLabel, QUALITY_LABEL_RU } from "./imageModels";
 
 const GROK: ImageModelEntry = {
@@ -52,8 +52,12 @@ describe("qualityOptionLabel", () => {
 });
 
 describe("catalogueFreshMs", () => {
-  test("is the engine's cache window: 30 minutes for OpenRouter's list, a minute for the bundled one (the outage may be over)", () => {
-    expect(catalogueFreshMs({ models: [GROK], source: "live" })).toBe(30 * 60_000);
-    expect(catalogueFreshMs({ models: [GROK], source: "fallback" })).toBe(60_000);
+  test("is the engine's cache window: the shared constant for a complete live list, a minute for the bundled one (the outage may be over)", () => {
+    expect(catalogueFreshMs({ models: [GROK], source: "live", complete: true })).toBe(LIVE_CATALOGUE_TTL_MS);
+    expect(catalogueFreshMs({ models: [GROK], source: "fallback", complete: false })).toBe(FALLBACK_CATALOGUE_TTL_MS);
+  });
+
+  test("a live list with a model left out is read again after the short time, as the engine does", () => {
+    expect(catalogueFreshMs({ models: [GROK], source: "live", complete: false })).toBe(FALLBACK_CATALOGUE_TTL_MS);
   });
 });

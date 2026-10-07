@@ -8,6 +8,7 @@ import type { ImageModelCatalogue } from "../../shared/engine";
  */
 export const MOCK_IMAGE_CATALOGUE: ImageModelCatalogue = {
   source: "fallback",
+  complete: false,
   models: [
     {
       id: "x-ai/grok-imagine-image-2.0",

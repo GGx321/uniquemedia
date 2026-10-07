@@ -334,6 +334,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: {
       models: [{ id: "x-ai/grok-imagine-image-2.0", name: "Grok Imagine Image 2.0", qualities: ["low", "medium"], prices: [{ quality: "low", micros: 50_000 }, { quality: "medium", micros: 70_000 }], tested: true }],
       source: "live",
+      complete: true,
     },
   },
   "settings.setCameraRealism": { payload: { cameraRealism: true }, result: settings },
