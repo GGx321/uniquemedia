@@ -246,7 +246,7 @@ describe("buildRunPlan", () => {
       const onDisk = JSON.parse(JSON.stringify({ ...run, request: { ...run.request, resolution: legacy } }));
       const parsed = RunPlanSchema.parse(onDisk);
       expect(parsed).toEqual(run);
-      expect("resolution" in parsed.request).toBe(false);
+      expect("resolution" in (parsed.request ?? {})).toBe(false);
     }
   });
 

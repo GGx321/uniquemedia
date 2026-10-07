@@ -10,10 +10,10 @@ import type { PriceBook } from "../money/prices";
 import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
 import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
-import { assembleRun } from "../scenes";
+import { assembleRun, isOwnSlot, photoCategoryOf } from "../scenes";
 import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
-import { contractCategory, RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, planRoute, runWriterConfig, type RunPlan } from "./plan";
+import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
@@ -402,7 +402,8 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       scope: ctx.scope,
       textModel: plan.models.text,
       signal: job.signal,
-      slots: plan.scenes.slots,
+      // The writer only ever describes the planner's own slots; an own scene's sentence is already in the plan (and its plan has no chunks).
+      slots: plannedSlots(plan),
       chunks: plan.writerChunks,
       sentences: state.sentences,
       writerDone: state.writerDone,
@@ -643,7 +644,7 @@ function photoMeta(ctx: Context, slot: SlotState, attemptId: string, model: stri
       promptSha: sha256(prompt),
       prompt,
       slot: slot.slot.attemptIdBase,
-      category: contractCategory(slot.slot.category),
+      category: photoCategoryOf(slot.slot.category),
       ...(categoryName === undefined ? {} : { categoryName }),
       costMicros: image.costMicros,
     },
@@ -716,10 +717,13 @@ async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model
     const photo = await deps.library.addPhoto(plan.avatarId, image.bytes, photoMeta(ctx, slot, attemptId, model, prompt, image, size, gates.qa));
     await attemptEvent(ctx, slot, attemptId, model, "passed", { photoId: photo.id });
     await endSlot(ctx, slot, { status: "done", photoId: photo.id });
-    // The planner's hint for the next run (recentPairs); a failure here must not undo a stored photo.
-    await deps.library.appendHistory(plan.avatarId, { location: slot.slot.location, outfit: slot.slot.outfit, at: at(ctx) }).catch((error: unknown) => {
-      deps.warn?.(`studio engine: run ${plan.runId} could not record slot ${slot.slot.slotIndex}'s scene in the avatar's history (${messageOf(error)})`);
-    });
+    // The planner's hint for the next run (recentPairs); a failure here must not undo a stored photo. An own scene has no (location, outfit) pair to remember.
+    if (!isOwnSlot(slot.slot)) {
+      const { location, outfit } = slot.slot;
+      await deps.library.appendHistory(plan.avatarId, { location, outfit, at: at(ctx) }).catch((error: unknown) => {
+        deps.warn?.(`studio engine: run ${plan.runId} could not record slot ${slot.slot.slotIndex}'s scene in the avatar's history (${messageOf(error)})`);
+      });
+    }
     return { next: "done" };
   } finally {
     releaseClaims(deps.gates, plan.avatarId, attemptId);

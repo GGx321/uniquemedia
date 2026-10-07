@@ -3,19 +3,23 @@
 // plan.json (Library.createRun) and turns each slot's `attemptIdBase` into
 // real ledger attempt ids.
 export { CATEGORIES, SHOTS, type Category, type PlannerCategory, type Shot } from "./types";
-export { BUILT_IN_LABEL, categoryLabelOf, categoryRefOf, categoryStyleOf, plannerCategoryOf, type CategoryLabelOf } from "./categories";
+export { BUILT_IN_LABEL, categoryLabelOf, categoryRefOf, categoryStyleOf, photoCategoryOf, plannerCategoryOf, type CategoryLabelOf } from "./categories";
 export { POOLS, PoolSchema, validatePools, type Activity, type Place, type Pool } from "./pools";
 export {
   AttemptIdBaseSchema,
   CategorySchema,
+  isOwnSlot,
   isPhoneInHandShot,
+  OwnPlanSlotSchema,
   PlanSlotSchema,
   PlannerCategorySchema,
   PoseSchema,
   ScenePlanSchema,
   ShotSchema,
+  type OwnPlanSlot,
   type PlanSlot,
   type Pose,
+  type RunSlot,
   type ScenePlan,
 } from "./schema";
 export { plan, placeMirrorShots, planWithPools, type ExcludedPair, type PlanInput } from "./planner";

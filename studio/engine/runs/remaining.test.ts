@@ -170,7 +170,7 @@ describe("remainingPlan's minToProgressMicros", () => {
 describe("remainingEstimate", () => {
   test("a run nothing happened to yet: its whole estimate, which is its cap", () => {
     const run = runPlan(4);
-    const whole = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, run.request, "off");
+    const whole = runEstimate(PRICED, { imageModel: PRIMARY, textModel: "x-ai/grok-4.3" }, { count: run.scenes.slots.length }, "off");
     expect(estimateFor(run)).toEqual({ expectedMicros: whole.expectedMicros, worstMicros: run.capMicros, prices: "fallback", pricesAsOf: "2026-09-24" });
   });
 
