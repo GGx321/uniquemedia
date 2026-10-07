@@ -3,6 +3,7 @@ import type { CategorySnapshot } from "../../shared/engine";
 import { SceneSetStore, type ReviewWriteRecord, type StoredSceneSet } from "../library/sceneSets";
 import { ownScene, sampleSet } from "../library/testing/sceneSetSample";
 import { useTempDir } from "../library/testing/helpers";
+import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
 import type { PlanSlot } from "../scenes";
@@ -393,7 +394,7 @@ describe("cancel and the network slot", () => {
     await recordRewrite([2]);
     const controller = new AbortController();
     const { end } = run([{ hang: true }], { signal: controller.signal });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await until(() => money.budget.status().openAttempts === 1, "the request's reserve");
     controller.abort();
     expect(await end).toEqual({ status: "cancelled" });
     expect(money.budget.status().openAttempts).toBe(1);
@@ -405,7 +406,7 @@ describe("cancel and the network slot", () => {
     await run([offline], { jobId: "job-aaaa-0002" }).end;
     const controller = new AbortController();
     const second = run([{ hang: true }], { jobId: "job-aaaa-0003", signal: controller.signal });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await until(() => money.budget.status().openAttempts === 2, "the second attempt's reserve");
     controller.abort();
 
     expect(await second.end).toEqual({ status: "cancelled" });
@@ -418,7 +419,7 @@ describe("cancel and the network slot", () => {
     await recordRewrite([2]);
     const controller = new AbortController();
     const { end, closed } = run([{ hang: true }], { signal: controller.signal });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await until(() => money.budget.status().openAttempts === 1, "the request's reserve");
     controller.abort();
 
     expect(await end).toEqual({ status: "cancelled" });
@@ -432,7 +433,7 @@ describe("cancel and the network slot", () => {
     await run([offline], { jobId: "job-aaaa-0002" }).end;
     const controller = new AbortController();
     const second = run([{ hang: true }], { jobId: "job-aaaa-0003", signal: controller.signal });
-    await new Promise((resolve) => setTimeout(resolve, 30));
+    await until(() => money.budget.status().openAttempts === 2, "the second attempt's reserve");
     controller.abort();
     await second.end;
 
