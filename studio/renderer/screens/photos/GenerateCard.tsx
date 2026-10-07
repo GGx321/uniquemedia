@@ -29,6 +29,7 @@ import {
   toggleCategory,
 } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, Why } from "./scenePaid";
+import { categorySceneCount } from "./sceneReview";
 import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
 import { composeTitle, SWITCH_WAITS } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
@@ -150,6 +151,8 @@ export function GenerateCard({
   const [createOpen, setCreateOpen] = useState<CreateDialogStart | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const chipsRef = useRef<HTMLDivElement>(null);
+  /** The strip's «Мои категории», while a set is open. */
+  const stripSheetRef = useRef<HTMLButtonElement>(null);
   const ownCreate = categorySlice.call?.kind === "create" ? categorySlice.call : null;
 
   const request = runRequest(avatar.avatarId, { ...form, categories });
@@ -354,8 +357,9 @@ export function GenerateCard({
     setSheetOpen(true);
   }
 
+  // With a set open the chips are not on screen: «Мои категории» of the strip stands for the row (README «Keyboard and focus»: create category).
   const rowControl = (name: "add" | "sheet"): HTMLElement | null =>
-    chipsRef.current?.querySelector<HTMLElement>(name === "add" ? "[data-add-category]" : "[data-my-categories]") ?? null;
+    chipsRef.current?.querySelector<HTMLElement>(name === "add" ? "[data-add-category]" : "[data-my-categories]") ?? stripSheetRef.current;
 
   function closeCreate(how: CreateDialogClose): void {
     setCreateOpen(null);
@@ -377,7 +381,7 @@ export function GenerateCard({
     how === "hide"
       ? (chipsRef.current?.querySelector<HTMLElement>("[data-chip-wait]") ?? null)
       : how === "done" && categoryId !== null
-        ? (chipsRef.current?.querySelector<HTMLElement>(`[data-category="${categoryId}"]`) ?? null)
+        ? (chipsRef.current?.querySelector<HTMLElement>(`[data-category="${categoryId}"]`) ?? stripSheetRef.current)
         : createOpener.current !== null
           ? rowControl(createOpener.current)
           : null;
@@ -647,6 +651,7 @@ export function GenerateCard({
           onFocusScene={onFocusScene}
           goRef={goRef}
           recomposeRef={recomposeRef}
+          sheetRef={stripSheetRef}
         />
       ) : (
         fullCard
@@ -704,6 +709,7 @@ export function GenerateCard({
       {createOpen !== null && (
         <CategoryCreateDialog
           start={createOpen}
+          setOpen={review && openSet !== null}
           onClose={closeCreate}
           onOpenSheet={() => {
             closeCreate("cancel");
@@ -718,6 +724,7 @@ export function GenerateCard({
           onCreate={(start) => openCreate(start, "sheet")}
           onRetryCreate={retryInterrupted}
           returnFocus={() => rowControl("sheet")}
+          openSetScenes={(categoryId) => (openSet === null ? 0 : categorySceneCount(openSet, categoryId))}
         />
       )}
     </>

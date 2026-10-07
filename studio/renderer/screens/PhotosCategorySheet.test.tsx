@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { CATEGORY_REASONS_RU, ERROR_MESSAGES_RU } from "../../shared/engine";
 import { callsOf, describeElement, flush, inAct, runAll, withText } from "../testing";
-import { chipsGroup, interruptedCreate, interruptedRegenerate, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
+import { chipsGroup, interruptedCreate, interruptedRegenerate, MIA, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
+import { card, goButton, nb, openReview } from "./photos/sceneScreenKit";
 
 // CS.3: «Мои категории» (CatSheet, CatSheetRename, CatSheetRegen, CatSheetRegenBusy, CatSheetRegenFailed, CatSheetRegenDone,
 // CatSheetDelete; the CategoryStates sheet: empty, limits, unreadable, regenerate failures, interrupted calls) against the mock engine.
@@ -401,5 +402,52 @@ describe("calls a closed Studio left", () => {
     expect(callsOf(engine, "categories.dismissInterrupted")).toHaveLength(1);
     expect(within(sheet()).getByText("Пересоздание прервано")).toBeDefined();
     expect(within(sheet()).getByText(ERROR_MESSAGES_RU.LEDGER_UNREADABLE)).toBeDefined();
+  });
+});
+
+describe("phase 2: «Мои категории» with a scene set open (CS.7 M1)", () => {
+  /** Mia's open set of three scenes, all from «Кофейни Парижа»; the strip's «Мои категории» is the way in. */
+  async function withOpenSet() {
+    const harness = await openReview({ categories: [PARIS, WINTER], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-paris-0001", count: 3, written: 3, categories: [PARIS.categoryId] }] });
+    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
+    fireEvent.click(within(card()).getByRole("button", { name: /^Мои категории/ }));
+    await flush();
+    return harness;
+  }
+
+  test("deleting a category the open set draws from says that «Другая сцена» goes for its scenes there (ReviewStates E)", async () => {
+    await withOpenSet();
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Удалить" }));
+    await flush();
+    const confirm = within(sheet()).getByRole("alertdialog", { name: "Удалить «Кофейни Парижа»?" });
+    expect(confirm.textContent).toContain(
+      nb("Запуски, где она уже есть, не изменятся. В открытом наборе сцен её 3 сцены останутся как есть, но «Другая сцена» для них станет недоступна — новое место из удалённой категории не взять. Вернуть категорию нельзя."),
+    );
+    // A category the set does not draw from is deleted with the phase-1 words.
+    fireEvent.click(within(confirm).getByRole("button", { name: "Отмена" }));
+    await flush();
+    fireEvent.click(row("Горы зимой"));
+    await flush();
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Удалить" }));
+    await flush();
+    expect(within(sheet()).getByRole("alertdialog", { name: "Удалить «Горы зимой»?" }).textContent).not.toContain("В открытом наборе");
+  });
+
+  test("a category made while the set is open goes into the next set; «Готово» hands the focus to the strip's «Мои категории» (decision 17)", async () => {
+    await withOpenSet();
+    fireEvent.click(within(sheet()).getByRole("button", { name: "Новая" }));
+    await flush();
+    const dialog = screen.getByRole("dialog", { name: "Новая категория" });
+    fireEvent.change(within(dialog).getByLabelText(/^Название/), { target: { value: "Рынки" } });
+    fireEvent.change(within(dialog).getByLabelText(/^Описание/), { target: { value: "Рынки и прилавки с фруктами" } });
+    await flush();
+    fireEvent.click(await within(dialog).findByRole("button", { name: /^Создать · до \$/ }));
+    await flush();
+    const done = screen.getByRole("dialog", { name: "Рынки" });
+    expect(within(done).getByText("Набор сцен уже составлен — категория войдёт в следующий набор. Открытый набор не меняется.")).toBeDefined();
+    expect(within(done).queryByText(/уже включена в запуск/) === null).toBe(true);
+    fireEvent.click(within(done).getByRole("button", { name: "Готово" }));
+    await flush();
+    expect(describeElement(document.activeElement)).toBe(describeElement(within(card()).getByRole("button", { name: /^Мои категории/ })));
   });
 });

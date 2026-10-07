@@ -3,7 +3,9 @@ import { CATEGORY_REASONS_RU, POOL_TIMES, type CategoryInterrupted, type Categor
 import {
   callFailure,
   categoryMeta,
+  createdLine,
   createdTime,
+  deleteConfirmText,
   descriptionProblem,
   hiddenFailure,
   interruptedText,
@@ -269,5 +271,25 @@ describe("the sheet's counts and notes", () => {
   test("categories past the 50th are kept on disk and come back as others are deleted", () => {
     expect(overLimitNote(1)).toBe("Ещё 1 категория сверх 50 здесь не показана — она появится, когда вы удалите ненужную.");
     expect(overLimitNote(4)).toBe("Ещё 4 категории сверх 50 здесь не показаны — они появятся, когда вы удалите ненужные.");
+  });
+});
+
+describe("phase 2: with a scene set open (CS.7 M1)", () => {
+  test("the delete confirm says that ⟳ goes for the category's scenes in the open set, only when the set holds them (ReviewStates E)", () => {
+    const lead = "Фото этой категории останутся в галерее с её названием. Запуски, где она уже есть, не изменятся.";
+    expect(deleteConfirmText(0)).toBe(`${lead} Вернуть категорию нельзя.`);
+    expect(deleteConfirmText(3)).toBe(
+      nb(`${lead} В открытом наборе сцен её 3 сцены останутся как есть, но «Другая сцена» для них станет недоступна — новое место из удалённой категории не взять. Вернуть категорию нельзя.`),
+    );
+    expect(deleteConfirmText(1)).toBe(
+      nb(`${lead} В открытом наборе сцен её 1 сцена останется как есть, но «Другая сцена» для неё станет недоступна — новое место из удалённой категории не взять. Вернуть категорию нельзя.`),
+    );
+    expect(deleteConfirmText(21)).toContain(nb("её 21 сцена останется как есть, но «Другая сцена» для неё"));
+    expect(deleteConfirmText(5)).toContain(nb("её 5 сцен останутся как есть, но «Другая сцена» для них"));
+  });
+
+  test("the «готово» line: in the run at once, or — a set already composed — in the next set (decision 17)", () => {
+    expect(createdLine(false)).toBe("Категория уже включена в запуск. Убрать место или наряд — в «Мои категории».");
+    expect(createdLine(true)).toBe("Набор сцен уже составлен — категория войдёт в следующий набор. Открытый набор не меняется.");
   });
 });

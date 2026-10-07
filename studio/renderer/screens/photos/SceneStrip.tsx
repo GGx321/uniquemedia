@@ -89,6 +89,8 @@ interface SceneStripProps {
   /** The card's button, for the focus to land on (after «Удалить набор», for one, or once a price asked again comes). */
   goRef: RefObject<HTMLButtonElement | null>;
   recomposeRef: Ref<HTMLButtonElement>;
+  /** «Мои категории»: where the focus goes after the sheet or the create dialog closes while the set is open. */
+  sheetRef: Ref<HTMLButtonElement>;
 }
 
 export function SceneStrip({
@@ -109,6 +111,7 @@ export function SceneStrip({
   onFocusScene,
   goRef,
   recomposeRef,
+  sheetRef,
 }: SceneStripProps) {
   const { client, store, sceneSets } = useEngine();
   const ids = useId();
@@ -263,7 +266,7 @@ export function SceneStrip({
               {meta.count}
               {meta.detail !== null && <span className="scene-strip-meta-detail"> · {meta.detail}</span>}
             </span>
-            <button type="button" className="lbtn scene-strip-sheet" aria-haspopup="dialog" aria-label={`Мои категории · ${myCategories ?? 0}`} onClick={onOpenSheet}>
+            <button ref={sheetRef} type="button" className="lbtn scene-strip-sheet" aria-haspopup="dialog" aria-label={`Мои категории · ${myCategories ?? 0}`} onClick={onOpenSheet}>
               <Icon name="list" size={13} strokeWidth={2.2} />
               Мои категории
               {myCategories !== null && <span className="mono lbtn-n">{myCategories}</span>}
