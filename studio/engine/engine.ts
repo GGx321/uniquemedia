@@ -2942,7 +2942,13 @@ export class Engine {
         throw new EngineFailure(result.error);
       }
       try {
-        const record = await call.write({ label: result.label, style: result.style, pool: result.pool }, result.spentMicros, jobId);
+        const write = (): Promise<StoredCategory> => call.write({ label: result.label, style: result.style, pool: result.pool }, result.spentMicros, jobId);
+        // The pool is paid for. A read the OS failed in the store's own checks (`library-unreadable`) wrote nothing, so it is tried once more before the
+        // owner is told the paid pool is kept in raw/.
+        const record = await write().catch((error: unknown) => {
+          if (error instanceof CategoryError && error.code === "library-unreadable") return write();
+          throw error;
+        });
         this.#emitCategory({ change: "upserted", category: summaryOf(record) });
         return { record, spentMicros: result.spentMicros };
       } catch (error) {

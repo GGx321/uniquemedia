@@ -1152,6 +1152,81 @@ describe("an accepted answer whose write hit a disk error after the rename", () 
   });
 });
 
+// CS.7 fix round 2: a read the OS fails (EIO, EMFILE, EBUSY under an antivirus, EPERM) is injected through the library's `beforeRead` seam, so these run on
+// every platform. A paid, accepted answer whose save meets one is stored on the retry; it is not «the set is gone».
+describe("an accepted answer whose save meets a read the OS fails (fix round 2)", () => {
+  let warn: { mockRestore: () => void };
+  beforeEach(() => {
+    warn = spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => warn.mockRestore());
+
+  /** Fails the set file's reads once the writer's answer has arrived: `times` of them (Infinity: for good). */
+  function failAfterTheAnswer(name: string, times: number) {
+    const state = { answered: false, failed: 0 };
+    const writer: Handler = (call, n) => {
+      state.answered = true;
+      return goodAnswer(call, n);
+    };
+    const beforeRead = (path: string): void => {
+      if (!state.answered || state.failed >= times || !path.endsWith(`${SET}.json`)) return;
+      state.failed += 1;
+      throw Object.assign(new Error(`${name}: injected`), { code: name });
+    };
+    return { state, writer, beforeRead };
+  }
+
+  for (const name of ["EIO", "EBUSY", "EPERM"]) {
+    test(`${name} once: a rewrite ends done, its text is in the set, and exactly one attempt was reserved`, async () => {
+      const avatarId = await seedAvatar();
+      await seedReview(avatarId);
+      const fail = failAfterTheAnswer(name, 1);
+      const net = sceneNetwork({ writer: fail.writer });
+      const { engine, events } = await engineOver(net, { testHooks: { beforeRead: fail.beforeRead } });
+
+      const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
+
+      expect(fail.state.failed).toBe(1);
+      expect(end).toMatchObject({ type: "job.done" });
+      expect(net.writerCalls()).toHaveLength(1);
+      expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+      expect(fileOf(avatarId).scenes[1]?.text).toContain(SENTENCE);
+    });
+  }
+
+  test("EMFILE once: an idea write ends done and its scene is in the set once", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const fail = failAfterTheAnswer("EMFILE", 1);
+    const net = sceneNetwork({ writer: fail.writer });
+    const { engine, events } = await engineOver(net, { testHooks: { beforeRead: fail.beforeRead } });
+
+    const end = await writeAndWait(engine, events, avatarId, idea("кофе на балконе"));
+
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    expect(fileOf(avatarId).scenes.filter((s) => s.origin === "own")).toHaveLength(1);
+  });
+
+  test("a read that keeps failing ends the job with the real cause and no second reserve; the old text stays", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const fail = failAfterTheAnswer("EIO", Number.POSITIVE_INFINITY);
+    const net = sceneNetwork({ writer: fail.writer });
+    const { engine, events } = await engineOver(net, { testHooks: { beforeRead: fail.beforeRead } });
+
+    const end = await writeAndWait(engine, events, avatarId, rewrite([2]));
+
+    expect(end).toMatchObject({ type: "job.failed" });
+    const detail = end.type === "job.failed" ? (end.payload.error.detail ?? "") : "";
+    expect(detail).toContain("EIO");
+    expect(detail).not.toContain("no readable scene set");
+    expect(net.writerCalls()).toHaveLength(1);
+    expect(ledgerReserves()).toEqual([writeId(1, 1)]);
+    expect(fileOf(avatarId).scenes[1]?.text).toBe(OLD);
+  });
+});
+
 describe("the files of the set", () => {
   test("a review write rewrites only the set's own file: no other file appears next to it", async () => {
     const avatarId = await seedAvatar();

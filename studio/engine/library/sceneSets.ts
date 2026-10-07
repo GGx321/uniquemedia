@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { z } from "zod";
 import {
@@ -22,7 +22,7 @@ import {
   SceneText,
 } from "../../shared/engine";
 import { isPhoneInHandShot, PlanSlotSchema } from "../scenes";
-import { fsyncDir, hasErrorCode, readdirTolerant, writeJsonAtomic } from "./durableFs";
+import { fsyncDir, readFolderNames, readRecordFile, writeJsonAtomic } from "./durableFs";
 import { isLibraryId } from "./ids";
 import { AVATARS_DIR, isFromNewerVersion, SCENE_SET_FILE_SCHEMA_VERSION, SCENES_DIR } from "./layout";
 import { runExclusive } from "./keyedMutex";
@@ -32,7 +32,11 @@ import { unlinkWithRetry } from "./unlinkRetry";
 // scenes of one avatar, the sentence the scene writer wrote for each and the owner's free edits, held before any image is paid for. Every change is
 // a read-modify-write under the set's own lock with the `revision` the change was made on, so two edits can never lose one another.
 
-export type SceneSetErrorCode = "not-found" | "stale" | "exists" | "invalid";
+/**
+ * `library-unreadable`: a read the OS failed (EIO, EMFILE, EBUSY, a folder that cannot be listed), raised only by the checks that decide whether a NEW set may
+ * be written: they refuse, and write nothing, rather than guess. A change of an existing record never raises it: it rethrows the OS error itself.
+ */
+export type SceneSetErrorCode = "not-found" | "stale" | "exists" | "invalid" | "library-unreadable";
 
 export class SceneSetError extends Error {
   readonly code: SceneSetErrorCode;
@@ -277,6 +281,10 @@ export interface SceneSetStoreDeps {
   afterRename?: ((finalPath: string) => void | Promise<void>) | undefined;
   /** Test seam: called before a record is unlinked. Throwing simulates a disk that refuses the delete. */
   beforeUnlink?: ((path: string) => void | Promise<void>) | undefined;
+  /** Test seam: called before each record is read. What it throws is what the read threw (an OS error, on any platform). */
+  beforeRead?: ((path: string) => void | Promise<void>) | undefined;
+  /** Test seam: called before an avatar's scenes/ folder is listed. What it throws is what the listing threw. */
+  beforeList?: ((dir: string) => void | Promise<void>) | undefined;
 }
 
 const RECORD_NAME = /^([a-z0-9-]{8,64})\.json$/;
@@ -289,8 +297,21 @@ export function withSceneSetLock<T>(sceneSetId: string, work: () => Promise<T>):
 /** A check the caller makes on the record under the set's lock, before it changes or removes it; it refuses by throwing. */
 export type SceneSetGuard = (current: StoredSceneSet) => void | Promise<void>;
 
-/** A record as read: the set, or why not. A newer Studio's record, a damaged one and one in another set's file are all `unreadable` and are never touched. */
-type Read = { ok: true; set: StoredSceneSet } | { ok: false; reason: "missing" | "unreadable" };
+/**
+ * A record as read: the set, or why not. `missing`: no such file. `unreadable`: its CONTENT cannot be used (a newer Studio's record, a damaged one, one in
+ * another set's file); it is never touched. `io`: the OS refused the read (EIO, EMFILE, EBUSY, EACCES...), which says nothing about the record: a listing
+ * counts it as unreadable, a change rethrows `error` so the caller's retry applies, and a check before a new write refuses.
+ */
+type Read = { ok: true; set: StoredSceneSet } | { ok: false; reason: "missing" | "unreadable" } | { ok: false; reason: "io"; error: unknown };
+
+function unreadableLibrary(message: string, cause?: unknown): SceneSetError {
+  return new SceneSetError("library-unreadable", `${message}${cause instanceof Error ? ` (${cause.message})` : ""}`);
+}
+
+/** What a change of a record that could not be read throws: `not-found` for one that is not there or whose content cannot be used, the OS's own error for a failed read. */
+function notReadable(read: Exclude<Read, { ok: true }>, sceneSetId: string): unknown {
+  return read.reason === "io" ? read.error : new SceneSetError("not-found", `no readable scene set ${sceneSetId}`);
+}
 
 export class SceneSetStore {
   readonly #now: () => Date;
@@ -322,21 +343,10 @@ export class SceneSetStore {
   }
 
   async #read(path: string, sceneSetId: string, avatarId: string): Promise<Read> {
-    let text: string;
-    try {
-      text = await readFile(path, "utf8");
-    } catch (error) {
-      if (hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR")) return { ok: false, reason: "missing" };
-      // Any other refusal of the OS (no permission, a folder in the file's place, a cloud placeholder that cannot be fetched) makes THIS record
-      // unreadable: counted and kept, never thrown at the siblings.
-      return { ok: false, reason: "unreadable" };
-    }
-    let raw: unknown;
-    try {
-      raw = JSON.parse(text);
-    } catch {
-      return { ok: false, reason: "unreadable" };
-    }
+    // The OS refusing the read (a transient EIO, EMFILE, EBUSY, no permission, a cloud placeholder) says nothing about the record: `io`, for the caller to act on.
+    const file = await readRecordFile(path, this.deps.beforeRead);
+    if (!file.ok) return file.reason === "io" ? { ok: false, reason: "io", error: file.error } : { ok: false, reason: file.reason === "missing" ? "missing" : "unreadable" };
+    const raw = file.value;
     if (isFromNewerVersion(raw, SCENE_SET_FILE_SCHEMA_VERSION)) return { ok: false, reason: "unreadable" };
     const parsed = SceneSetFile.safeParse(raw);
     if (!parsed.success || parsed.data.sceneSetId !== sceneSetId || parsed.data.avatarId !== avatarId) return { ok: false, reason: "unreadable" };
@@ -360,15 +370,29 @@ export class SceneSetStore {
     const parsed = SceneSetFile.safeParse({ schemaVersion: SCENE_SET_FILE_SCHEMA_VERSION, ...rest, revision: 1, createdAt: stamp, updatedAt: stamp });
     if (!parsed.success) throw new SceneSetError("invalid", `the scene set does not fit its schema: ${parsed.error.message}`);
     return withSceneSetLock(input.sceneSetId, async () => {
-      if ((await this.#read(path, input.sceneSetId, input.avatarId)).ok || ((await this.#names(input.avatarId)) ?? []).includes(`${input.sceneSetId}.json`)) {
-        throw new SceneSetError("exists", `scene set ${input.sceneSetId} already exists`);
-      }
+      const taken = await this.#read(path, input.sceneSetId, input.avatarId);
+      // Whether the id is free cannot be told when the OS fails the read or the listing: refuse, write nothing.
+      if (!taken.ok && taken.reason === "io") throw unreadableLibrary(`scene set ${input.sceneSetId} could not be checked`, taken.error);
+      const names = await this.#names(input.avatarId);
+      if (names === null) throw unreadableLibrary(`the scenes of avatar ${input.avatarId} could not be listed`);
+      if (taken.ok || names.includes(`${input.sceneSetId}.json`)) throw new SceneSetError("exists", `scene set ${input.sceneSetId} already exists`);
       await this.#write(path, parsed.data);
       return parsed.data;
     });
   }
 
-  /** One set; null when there is no such record or it cannot be read (a newer Studio's included). */
+  /**
+   * One set for a caller that goes on to act on it (a job's load): null when there is no such record or its content cannot be used, but a read the OS
+   * failed is THROWN as it was, never read as «gone».
+   */
+  async load(avatarId: string, sceneSetId: string): Promise<StoredSceneSet | null> {
+    const read = await this.#read(this.#path(avatarId, sceneSetId), sceneSetId, avatarId);
+    if (read.ok) return read.set;
+    if (read.reason === "io") throw read.error;
+    return null;
+  }
+
+  /** One set; null when there is no such record or it cannot be read (a newer Studio's included, a read the OS failed). */
   async get(avatarId: string, sceneSetId: string): Promise<StoredSceneSet | null> {
     const read = await this.#read(this.#path(avatarId, sceneSetId), sceneSetId, avatarId);
     return read.ok ? read.set : null;
@@ -376,7 +400,27 @@ export class SceneSetStore {
 
   /** The names in the avatar's scenes/, or null when the folder cannot be listed at all (no permission, a file in its place). */
   async #names(avatarId: string): Promise<string[] | null> {
-    return readdirTolerant(this.dirOf(avatarId));
+    const listed = await readFolderNames(this.dirOf(avatarId), this.deps.beforeList);
+    return listed.ok ? listed.names : null;
+  }
+
+  /**
+   * The avatar's readable sets for a check that decides whether a new write may go ahead (one open set per avatar). Where `list` counts a record or a folder
+   * the OS failed as unreadable, this refuses (`library-unreadable`): a set it could not read may be the open one. A damaged or newer record is not an OS
+   * failure and is skipped, as `list` skips it.
+   */
+  async listForWrite(avatarId: string): Promise<StoredSceneSet[]> {
+    const names = await this.#names(avatarId);
+    if (names === null) throw unreadableLibrary(`the scenes of avatar ${avatarId} could not be listed`);
+    const sets: StoredSceneSet[] = [];
+    for (const name of names) {
+      const match = RECORD_NAME.exec(name);
+      if (match === null) continue;
+      const read = await this.#read(join(this.dirOf(avatarId), name), match[1] ?? "", avatarId);
+      if (read.ok) sets.push(read.set);
+      else if (read.reason === "io") throw unreadableLibrary(`scene set record ${match[1] ?? ""} could not be read`, read.error);
+    }
+    return sets;
   }
 
   /** The avatar's readable sets, oldest first (equal times by id), and how many files could not be read (they stay where they are). */
@@ -391,7 +435,7 @@ export class SceneSetStore {
       if (match === null) continue;
       const read = await this.#read(join(this.dirOf(avatarId), name), match[1] ?? "", avatarId);
       if (read.ok) sets.push(read.set);
-      else if (read.reason === "unreadable") unreadable += 1;
+      else if (read.reason !== "missing") unreadable += 1;
     }
     sets.sort((a, b) => (a.createdAt < b.createdAt ? -1 : a.createdAt > b.createdAt ? 1 : a.sceneSetId < b.sceneSetId ? -1 : a.sceneSetId > b.sceneSetId ? 1 : 0));
     return { sets, unreadable };
@@ -407,7 +451,7 @@ export class SceneSetStore {
     const path = this.#path(avatarId, sceneSetId);
     return withSceneSetLock(sceneSetId, async () => {
       const read = await this.#read(path, sceneSetId, avatarId);
-      if (!read.ok) throw new SceneSetError("not-found", `no readable scene set ${sceneSetId}`);
+      if (!read.ok) throw notReadable(read, sceneSetId);
       const current = read.set;
       // The caller's own check, under the lock and before the revision is compared (a set that is used is refused whatever revision the window shows).
       await opts.guard?.(current);
@@ -432,7 +476,7 @@ export class SceneSetStore {
     const path = this.#path(avatarId, sceneSetId);
     await withSceneSetLock(sceneSetId, async () => {
       const read = await this.#read(path, sceneSetId, avatarId);
-      if (!read.ok) throw new SceneSetError("not-found", `no readable scene set ${sceneSetId}`);
+      if (!read.ok) throw notReadable(read, sceneSetId);
       await opts.guard?.(read.set);
       await this.deps.beforeUnlink?.(path);
       await unlinkWithRetry(path);

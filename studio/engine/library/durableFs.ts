@@ -200,24 +200,49 @@ export async function readJsonFile(path: string): Promise<Parsed<unknown>> {
   }
 }
 
+/** A path no file can be read from: it is not there (ENOENT) or a part of it is not a folder (ENOTDIR). */
+export function isMissingPath(error: unknown): boolean {
+  return hasErrorCode(error, "ENOENT") || hasErrorCode(error, "ENOTDIR");
+}
+
+/** A record's place held by a folder: nothing a read could ever return, so it is a record that is not usable, not an OS failure that may pass. */
+export function isFolderInPlace(error: unknown): boolean {
+  return hasErrorCode(error, "EISDIR");
+}
+
 /**
- * Like `readJsonFile`, for a record the caller counts instead of failing on: ANY read error (EACCES, EPERM, EISDIR, ELOOP, EIO, a cloud
- * placeholder that cannot be fetched) is a result, never a throw. One file the OS will not give up must not stop its siblings.
+ * How a record read ended, told apart because the callers act differently. `missing`: no such file. `invalid`: the file cannot be a record (not JSON, a
+ * folder in its place). `io`: the OS refused the read (EIO, EMFILE, EBUSY under an antivirus, EACCES, EPERM, a cloud placeholder that cannot be
+ * fetched): nothing is known of the record, `error` is what the OS said. A listing counts `io` as unreadable; a change rethrows `error`; a check that
+ * decides whether a new write may go ahead refuses.
  */
-export async function readJsonFileTolerant(path: string): Promise<Parsed<unknown>> {
+export type RecordRead = { ok: true; value: unknown } | { ok: false; reason: "missing" | "invalid" } | { ok: false; reason: "io"; error: unknown };
+
+/** Reads and parses a record file; never throws. `beforeRead` is a test seam: what it throws is what the read threw. */
+export async function readRecordFile(path: string, beforeRead?: (path: string) => void | Promise<void>): Promise<RecordRead> {
+  let text: string;
   try {
-    return await readJsonFile(path);
+    await beforeRead?.(path);
+    text = await readFile(path, "utf8");
+  } catch (error) {
+    if (isMissingPath(error)) return { ok: false, reason: "missing" };
+    if (isFolderInPlace(error)) return { ok: false, reason: "invalid" };
+    return { ok: false, reason: "io", error };
+  }
+  try {
+    return { ok: true, value: JSON.parse(text) };
   } catch {
-    return { ok: false, detail: `${path} cannot be read` };
+    return { ok: false, reason: "invalid" };
   }
 }
 
-/** The names in a folder, or `null` when it cannot be listed at all (not a folder, no permission); a folder that is not there is empty. */
-export async function readdirTolerant(dir: string): Promise<string[] | null> {
+/** The names in a folder, or the OS's error when it cannot be listed (not a folder, no permission, EMFILE); a folder that is not there is empty. `beforeList` is a test seam. */
+export async function readFolderNames(dir: string, beforeList?: (dir: string) => void | Promise<void>): Promise<{ ok: true; names: string[] } | { ok: false; error: unknown }> {
   try {
-    return await readdir(dir);
+    await beforeList?.(dir);
+    return { ok: true, names: await readdir(dir) };
   } catch (error) {
-    return isMissing(error) ? [] : null;
+    return hasErrorCode(error, "ENOENT") ? { ok: true, names: [] } : { ok: false, error };
   }
 }
 

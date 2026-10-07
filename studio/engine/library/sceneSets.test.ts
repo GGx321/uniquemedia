@@ -303,7 +303,8 @@ describe("list", () => {
       const listed = await s.list(AVATAR);
       expect(listed.sets.map((x) => x.sceneSetId)).toEqual(["set-aaaa-0001"]);
       expect(listed.unreadable).toBe(1);
-      expect(await codeOf(s.update(AVATAR, "set-aaaa-0009", (c) => c))).toBe("not-found");
+      // A change of a record the OS refuses is the OS's own error (the caller may retry it), not «not found».
+      expect(((await rejectionOf(s.update(AVATAR, "set-aaaa-0009", (c) => c))) as { code?: string }).code).toBe("EACCES");
     } finally {
       await chmod(locked, 0o600);
     }
@@ -454,5 +455,125 @@ describe("through the library", () => {
     expect(await library.runFolderExists("run-aaaa-0001")).toBe(false);
     await library.createRun("run-aaaa-0001", { n: 1 }, z.object({ n: z.number() }));
     expect(await library.runFolderExists("run-aaaa-0001")).toBe(true);
+  });
+});
+
+// A read the OS fails (EIO, EMFILE, EBUSY under an antivirus, EPERM) is injected through the store's `beforeRead`/`beforeList` seams, so these run on every
+// platform. It is NOT «the record is not there»: a listing counts the file as unreadable, but a write that must change the record rethrows the OS error so
+// its caller can retry, and a check that decides whether a write may go ahead refuses.
+describe("a read the OS fails", () => {
+  const OS_ERRORS = ["EIO", "EMFILE", "EBUSY", "EPERM"] as const;
+  const osError = (code: string): Error => Object.assign(new Error(`${code}: injected`), { code });
+  /** Fails the first `times` reads of the set file with `code`; later reads go through. */
+  function failReads(code: string, times = 1) {
+    const state = { left: times, failed: 0 };
+    return {
+      state,
+      beforeRead: (path: string) => {
+        if (state.left <= 0 || !path.endsWith("set-aaaa-0001.json")) return;
+        state.left -= 1;
+        state.failed += 1;
+        throw osError(code);
+      },
+    };
+  }
+
+  for (const code of OS_ERRORS) {
+    test(`${code} on the record's read: update rethrows the raw error, not not-found, and the record is untouched`, async () => {
+      const made = await store().create(sampleSet());
+      const fail = failReads(code);
+
+      const error = await rejectionOf(store({ beforeRead: fail.beforeRead }).update(AVATAR, "set-aaaa-0001", (c) => written(c, "Lost?")));
+
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(SceneSetError);
+      expect((error as { code?: string }).code).toBe(code);
+      expect(await readRecord("set-aaaa-0001")).toEqual(JSON.parse(JSON.stringify(made)));
+    });
+  }
+
+  test("a retry of the same update after one failed read saves the text", async () => {
+    await store().create(sampleSet());
+    const fail = failReads("EIO");
+    const s = store({ beforeRead: fail.beforeRead });
+    await rejectionOf(s.update(AVATAR, "set-aaaa-0001", (c) => written(c, "Kept.")));
+
+    const saved = await s.update(AVATAR, "set-aaaa-0001", (c) => written(c, "Kept."));
+
+    expect(saved.revision).toBe(2);
+    expect(saved.scenes[0]?.text).toBe("Kept.");
+  });
+
+  test("remove rethrows the raw error and keeps the record", async () => {
+    await store().create(sampleSet());
+    const error = await rejectionOf(store({ beforeRead: failReads("EBUSY").beforeRead }).remove(AVATAR, "set-aaaa-0001"));
+
+    expect((error as { code?: string }).code).toBe("EBUSY");
+    expect(await files()).toEqual(["set-aaaa-0001.json"]);
+  });
+
+  test("get answers null and list counts the file as unreadable: a listing never throws", async () => {
+    await store().create(sampleSet());
+    const s = store({ beforeRead: failReads("EIO", 2).beforeRead });
+
+    expect(await s.get(AVATAR, "set-aaaa-0001")).toBeNull();
+    expect(await s.list(AVATAR)).toEqual({ sets: [], unreadable: 1 });
+  });
+
+  test("load rethrows the raw error, answers null for a record that is not there", async () => {
+    await store().create(sampleSet());
+    const error = await rejectionOf(store({ beforeRead: failReads("EIO").beforeRead }).load(AVATAR, "set-aaaa-0001"));
+
+    expect((error as { code?: string }).code).toBe("EIO");
+    expect(await store().load(AVATAR, "set-aaaa-0777")).toBeNull();
+  });
+
+  test("create refuses with library-unreadable when it cannot tell whether the id is taken, and writes nothing", async () => {
+    await store().create(sampleSet());
+    const fail = { beforeRead: (path: string) => { if (path.endsWith("set-aaaa-0002.json")) throw osError("EIO"); } };
+
+    expect(await codeOf(store(fail).create(sampleSet({ sceneSetId: "set-aaaa-0002", runId: "run-aaaa-0002" })))).toBe("library-unreadable");
+    expect(await files()).toEqual(["set-aaaa-0001.json"]);
+  });
+
+  test("create refuses with library-unreadable when the folder cannot be listed, and writes nothing", async () => {
+    const beforeList = () => {
+      throw osError("EMFILE");
+    };
+
+    expect(await codeOf(store({ beforeList }).create(sampleSet()))).toBe("library-unreadable");
+    expect(await readdir(join(root(), "avatars")).catch(() => [])).toEqual([]);
+  });
+
+  describe("listForWrite (the list a check before a write relies on)", () => {
+    test("answers the readable sets, and none for an avatar without a scenes/ folder", async () => {
+      await store().create(sampleSet());
+
+      expect((await store().listForWrite(AVATAR)).map((s) => s.sceneSetId)).toEqual(["set-aaaa-0001"]);
+      expect(await store().listForWrite("avatar-aaaa-0777")).toEqual([]);
+    });
+
+    test("refuses with library-unreadable when the folder cannot be listed", async () => {
+      await store().create(sampleSet());
+      const beforeList = () => {
+        throw osError("EMFILE");
+      };
+
+      expect(await codeOf(store({ beforeList }).listForWrite(AVATAR))).toBe("library-unreadable");
+    });
+
+    test("refuses with library-unreadable when one record hits an OS error, even though a listing would only count it", async () => {
+      await store().create(sampleSet());
+      const s = store({ beforeRead: failReads("EIO").beforeRead });
+
+      expect(await codeOf(s.listForWrite(AVATAR))).toBe("library-unreadable");
+    });
+
+    test("a damaged record is not an OS error: it is counted by list and skipped here", async () => {
+      await store().create(sampleSet());
+      await writeFile(join(dirOf(), "set-aaaa-0009.json"), "{ not json");
+
+      expect((await store().listForWrite(AVATAR)).map((s) => s.sceneSetId)).toEqual(["set-aaaa-0001"]);
+    });
   });
 });

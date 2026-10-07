@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { chmod, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { MAX_CUSTOM_CATEGORIES, type CategoryPool } from "../../shared/engine";
 import { BOOKED_JOBS_CAP, CategoryError, CategoryStore, StoredCategory, type CategoryErrorCode, type NewCategory } from "./categories";
@@ -759,5 +759,120 @@ describe("through the library", () => {
 
     expect(report.quarantined.map((q) => q.reason)).toEqual(["temp-file"]);
     expect(await readdir(dirOf())).toEqual(["pending-job-00000001.json"]);
+  });
+});
+
+// A read the OS fails (EIO, EMFILE, EBUSY under an antivirus, EPERM) is injected through the store's `beforeRead`/`beforeList` seams, so these run on every
+// platform. A listing counts the file as unreadable; a check that lets a NEW category in (the name, the 50 limit) refuses, because the file it could not read
+// may be the one with the same name; a change of an existing record rethrows the OS error so its caller can retry, never «not found».
+describe("a read the OS fails", () => {
+  const osError = (code: string): Error => Object.assign(new Error(`${code}: injected`), { code });
+  const failing = (code: string, match: (path: string) => boolean, times = 1) => {
+    const state = { left: times, failed: 0 };
+    return {
+      state,
+      beforeRead: (path: string) => {
+        if (state.left <= 0 || !match(path)) return;
+        state.left -= 1;
+        state.failed += 1;
+        throw osError(code);
+      },
+    };
+  };
+  const thisRecord = (id: string) => (path: string) => path.endsWith(`${id}.json`);
+  const anyRecord = (path: string) => /cat-[a-z0-9-]+\.json$/.test(path);
+  const codeOfRaw = async (promise: Promise<unknown>): Promise<string | undefined> => ((await rejectionOf(promise)) as { code?: string }).code;
+
+  test("list counts the file as unreadable and keeps the others, whatever the OS error", async () => {
+    for (const code of ["EIO", "EMFILE", "EBUSY", "EPERM"]) {
+      const s = store();
+      const good = await s.create(input({ categoryId: `cat-good-record-${code.toLowerCase()}` }));
+      await s.create(input({ categoryId: `cat-bad-record-${code.toLowerCase()}` }));
+      const listed = await store({ beforeRead: failing(code, thisRecord(`cat-bad-record-${code.toLowerCase()}`)).beforeRead }).list();
+      expect(listed.categories.map((c) => c.categoryId)).toContain(good.categoryId);
+      expect(listed.unreadable).toBe(1);
+      await rm(dirOf(), { recursive: true });
+    }
+  });
+
+  test("create refuses with library-unreadable when one record hits an OS error, and writes nothing: the file may hold the same name", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", name: "Кофейни" }));
+    const fail = failing("EIO", thisRecord("cat-paris-cafes"));
+
+    expect(await codeOf(store({ beforeRead: fail.beforeRead }).create(input({ categoryId: "cat-night-market", name: "Кофейни" })))).toBe("library-unreadable");
+    expect(await files()).toEqual(["cat-paris-cafes.json"]);
+  });
+
+  test("create refuses with library-unreadable on one EMFILE from the folder's listing, and writes nothing", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", name: "Кофейни" }));
+    const beforeList = () => {
+      throw osError("EMFILE");
+    };
+
+    expect(await codeOf(store({ beforeList }).create(input({ categoryId: "cat-night-market", name: "Кофейни" })))).toBe("library-unreadable");
+    expect(await files()).toEqual(["cat-paris-cafes.json"]);
+  });
+
+  test("the room check (assertRoom) refuses with library-unreadable on an OS error from a record or from the listing", async () => {
+    await store().create(input({ categoryId: "cat-paris-cafes" }));
+    const beforeList = () => {
+      throw osError("EMFILE");
+    };
+
+    expect(await codeOf(store({ beforeRead: failing("EIO", anyRecord).beforeRead }).assertRoom("Another name", null))).toBe("library-unreadable");
+    expect(await codeOf(store({ beforeList }).assertRoom("Another name", null))).toBe("library-unreadable");
+  });
+
+  test("a rename's name check refuses with library-unreadable when a record hits an OS error", async () => {
+    const s = store();
+    await s.create(input({ categoryId: "cat-paris-cafes", name: "Кофейни" }));
+    await s.create(input({ categoryId: "cat-night-market", name: "Ночной рынок" }));
+    // The renamed record reads fine (its first read is let through); the sibling the name is compared with fails.
+    const fail = failing("EIO", thisRecord("cat-night-market"));
+
+    expect(await codeOf(store({ beforeRead: fail.beforeRead }).update("cat-paris-cafes", { name: "Кофейни 2" }))).toBe("library-unreadable");
+    expect((await s.get("cat-paris-cafes"))?.name).toBe("Кофейни");
+  });
+
+  test("create, with the same record failing once and then reading, goes through on the retry", async () => {
+    const s = store({ beforeRead: failing("EIO", anyRecord).beforeRead });
+    await store().create(input({ categoryId: "cat-paris-cafes", name: "Кофейни" }));
+    await rejectionOf(s.create(input({ categoryId: "cat-night-market", name: "Ночной рынок" })));
+
+    const made = await s.create(input({ categoryId: "cat-night-market", name: "Ночной рынок" }));
+
+    expect(made.categoryId).toBe("cat-night-market");
+  });
+
+  test("replacePool rethrows the raw OS error, not not-found, and the record keeps its pool and spend", async () => {
+    const made = await store().create(input({ categoryId: "cat-paris-cafes" }));
+    const fail = failing("EIO", thisRecord("cat-paris-cafes"));
+    const change = { description: "new", label: "New label", style: "phone" as const, pool: pool(), model: "x-ai/grok-4.3", spentMicros: 1_000, jobId: "job-0001" };
+
+    expect(await codeOfRaw(store({ beforeRead: fail.beforeRead }).replacePool("cat-paris-cafes", change))).toBe("EIO");
+    expect(await store().get("cat-paris-cafes")).toEqual(made);
+  });
+
+  test("addSpend rethrows the raw OS error instead of answering null (which reads as «no such category»)", async () => {
+    await store().create(input({ categoryId: "cat-paris-cafes" }));
+    const fail = failing("EBUSY", thisRecord("cat-paris-cafes"));
+
+    expect(await codeOfRaw(store({ beforeRead: fail.beforeRead }).addSpend("cat-paris-cafes", 500, "job-0001"))).toBe("EBUSY");
+  });
+
+  test("update and remove rethrow the raw OS error and leave the record", async () => {
+    const made = await store().create(input({ categoryId: "cat-paris-cafes" }));
+
+    expect(await codeOfRaw(store({ beforeRead: failing("EIO", thisRecord("cat-paris-cafes")).beforeRead }).update("cat-paris-cafes", { removeOutfits: ["a black midi dress"] }))).toBe("EIO");
+    expect(await codeOfRaw(store({ beforeRead: failing("EPERM", thisRecord("cat-paris-cafes")).beforeRead }).remove("cat-paris-cafes"))).toBe("EPERM");
+    expect(await store().get("cat-paris-cafes")).toEqual(made);
+  });
+
+  test("get answers null for a read the OS failed: a read-only caller never throws", async () => {
+    await store().create(input({ categoryId: "cat-paris-cafes" }));
+
+    expect(await store({ beforeRead: failing("EIO", thisRecord("cat-paris-cafes")).beforeRead }).get("cat-paris-cafes")).toBeNull();
   });
 });

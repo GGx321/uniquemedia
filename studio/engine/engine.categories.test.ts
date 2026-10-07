@@ -594,6 +594,68 @@ describe("categories.create", () => {
     expect(ledgerLines(dir())).toEqual([]);
   });
 
+  // CS.7 fix round 2: a read the OS fails (EMFILE on the folder, EIO on a record) is injected through the library's `beforeList`/`beforeRead` seams, so these
+  // run on every platform. The check for a new name and for the limit cannot tell what the library holds, so it refuses; it never lets a duplicate in.
+  test("one EMFILE on the folder's listing: the create is refused as library-unreadable before anything is sent, and no duplicate is written", async () => {
+    await seedCategory({ categoryId: "cat-paris-cafes", name: "Кофейни Парижа" });
+    const net = network({ descriptors: [poolReply()] });
+    let failures = 0;
+    const beforeList = (): void => {
+      if (failures > 0) return;
+      failures += 1;
+      throw Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+    };
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeList } } } });
+
+    const refused = failed(await engine.handle(createCommand({ name: "Кофейни Парижа" })));
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "library-unreadable" });
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(ledgerLines(dir())).toEqual([]);
+    expect(await folder()).toEqual(["cat-paris-cafes.json"]);
+  });
+
+  test("one EIO on a record: the create is refused as library-unreadable, since that file may hold the same name", async () => {
+    await seedCategory({ categoryId: "cat-paris-cafes", name: "Кофейни Парижа" });
+    const net = network({ descriptors: [poolReply()] });
+    let failures = 0;
+    const beforeRead = (path: string): void => {
+      if (failures > 0 || !path.endsWith("cat-paris-cafes.json")) return;
+      failures += 1;
+      throw Object.assign(new Error("EIO: i/o error"), { code: "EIO" });
+    };
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeRead } } } });
+
+    const refused = failed(await engine.handle(createCommand({ name: "Кофейни Парижа" })));
+
+    expect(refused.error).toMatchObject({ code: "VALIDATION", categoryReason: "library-unreadable" });
+    expect(chatCalls(net)).toHaveLength(0);
+    expect(await folder()).toEqual(["cat-paris-cafes.json"]);
+  });
+
+  test("one EMFILE on the listing AFTER the pool was paid for: the write is tried once more, the category is stored, and the pool is paid for once", async () => {
+    let answered = false;
+    const reply: Step = () => {
+      answered = true;
+      return poolReply() as Reply;
+    };
+    const net = network({ descriptors: [reply] });
+    let failures = 0;
+    const beforeList = (): void => {
+      if (!answered || failures > 0) return;
+      failures += 1;
+      throw Object.assign(new Error("EMFILE: too many open files"), { code: "EMFILE" });
+    };
+    const { engine } = await startEngine(dir(), { net, deps: { library: { testHooks: { beforeList } } } });
+
+    const created = await creating(engine);
+
+    expect(failures).toBe(1);
+    expect(created.category.name).toBe("Кофейни Парижа");
+    expect(chatCalls(net)).toHaveLength(1);
+    expect((await listOf(engine)).categories.map((c) => c.name)).toEqual(["Кофейни Парижа"]);
+  });
+
   test("the 51st category is VALIDATION: nothing sent, nothing booked", async () => {
     await seedCategory({ categoryId: "cat-fifty-0000", name: "Fifty 0" });
     const stored = JSON.parse(await readFile(join(categoriesDir(), "cat-fifty-0000.json"), "utf8"));

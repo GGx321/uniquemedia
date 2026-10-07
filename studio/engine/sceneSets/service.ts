@@ -220,6 +220,16 @@ export class SceneSetService {
     throw error;
   }
 
+  /** The avatar's readable sets for the one-open-set check; a read the OS failed is a clean refusal (VALIDATION `library-unreadable`), never a guess. */
+  async #openSetCheck(library: Library, avatarId: string): Promise<StoredSceneSet[]> {
+    try {
+      return await library.sceneSets.listForWrite(avatarId);
+    } catch (error) {
+      if (error instanceof SceneSetError && error.code === "library-unreadable") throw sceneRefusal(error.message, "library-unreadable");
+      throw error;
+    }
+  }
+
   /** Under the set's lock: the set's job runs (IN_FLIGHT), or its run's folder exists (the set is used: VALIDATION). */
   #guard(library: Library): SceneSetGuard {
     return async (current) => {
@@ -305,8 +315,9 @@ export class SceneSetService {
       await deps.assertAvatarOnDisk(library, avatarId);
       const custom = await deps.customCategories(library, categories);
       // One open set per avatar: a set is open until its run starts (its folder exists) or it is discarded.
-      const existing = await library.sceneSets.list(avatarId);
-      for (const set of existing.sets) {
+      // A record or a folder the OS fails to read may be the open set: the check refuses (nothing written, nothing reserved) instead of counting it unreadable.
+      const existing = await this.#openSetCheck(library, avatarId);
+      for (const set of existing) {
         if (!(await library.runFolderExists(set.runId))) {
           throw sceneRefusal(`avatar ${manifest.id} already has an open scene set; discard it or use its run first`, "open-set");
         }
@@ -342,6 +353,7 @@ export class SceneSetService {
         stored = await library.sceneSets.create(planned);
       } catch (error) {
         this.#live.delete(sceneSetId);
+        if (error instanceof SceneSetError && error.code === "library-unreadable") throw sceneRefusal(error.message, "library-unreadable");
         throw new EngineFailure({ code: "INTERNAL", detail: `nothing was sent: the scene set could not be written (${detailOfError(error)})` });
       }
       if (jobId === null || key === null || budget === null || priced === null) {
@@ -507,7 +519,7 @@ export class SceneSetService {
     const scope = { avatarJobId: jobId };
     const update = async (change: (current: StoredSceneSet) => StoredSceneSet | null): Promise<StoredSceneSet> => library.sceneSets.update(avatarId, sceneSetId, change);
     // An accepted chunk is paid for and its answer is kept nowhere else: a disk error while storing it is tried once more from the sentences in memory.
-    // A refusal of the store itself (the record is gone or does not fit) is not transient and is not retried.
+    // A refusal of the store itself (the record is gone or does not fit) is not transient and is not retried; a read the OS failed reaches here as the OS error itself, so it is.
     const store = async (change: (current: StoredSceneSet) => StoredSceneSet | null): Promise<StoredSceneSet> => {
       try {
         return await update(change);
@@ -539,7 +551,7 @@ export class SceneSetService {
             priceBook: job.priced.book,
             acquire: (signal): Promise<Release> => deps.networkPool.acquire(signal),
             load: async () => {
-              const current = await library.sceneSets.get(avatarId, sceneSetId);
+              const current = await library.sceneSets.load(avatarId, sceneSetId);
               if (current === null) throw new Error(`scene set ${sceneSetId} is gone`);
               return current;
             },
@@ -575,7 +587,7 @@ export class SceneSetService {
             priceBook: job.priced.book,
             acquire: (signal): Promise<Release> => deps.networkPool.acquire(signal),
             load: async () => {
-              const current = await library.sceneSets.get(avatarId, sceneSetId);
+              const current = await library.sceneSets.load(avatarId, sceneSetId);
               if (current === null) throw new Error(`scene set ${sceneSetId} is gone`);
               return current;
             },
