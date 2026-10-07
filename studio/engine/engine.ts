@@ -2840,6 +2840,7 @@ export class Engine {
       priced,
       textModel: models.textModel,
       acceptedWorstMicros: payload.acceptedWorstMicros,
+      worstMicros: job.worstMicros,
       kind: "create",
       name,
       description: payload.description,
@@ -2876,6 +2877,7 @@ export class Engine {
       priced,
       textModel: models.textModel,
       acceptedWorstMicros: payload.acceptedWorstMicros,
+      worstMicros: job.worstMicros,
       kind: "regenerate",
       name: current.name,
       description: payload.description,
@@ -2889,7 +2891,7 @@ export class Engine {
 
   /**
    * The paid part of a create or a regenerate, after its free checks. The call's own scope is `{ avatarJobId }` (the ledger's existing shape),
-   * capped at the worst case the owner accepted. A record of the call is written to the library BEFORE anything is sent and removed on any outcome:
+   * capped at the worst case of its estimate. A record of the call is written to the library BEFORE anything is sent and removed on any outcome:
    * a Studio that closes in between leaves it, and the next listing shows the call as interrupted. A paid pool whose write failed is kept in raw/.
    */
   async #runCategoryCall(call: {
@@ -2899,6 +2901,8 @@ export class Engine {
     priced: PricedBook;
     textModel: string;
     acceptedWorstMicros: number;
+    /** The worst case of the call's own estimate: what the cap is, as for every other paid job (an acceptance above it does not raise the cap). */
+    worstMicros: number;
     kind: CategoryCallKind;
     name: string;
     description: CategoryDescription;
@@ -2912,8 +2916,9 @@ export class Engine {
     const jobId = this.#deps.newId();
     const scope: Scope = { avatarJobId: jobId };
     if (this.#categoryCall !== null) this.#categoryCall.jobId = jobId;
-    // The scope only ever sends pool attempts: its cap is the worst case the owner accepted (the Budget checks each attempt against it).
-    this.#caps.set(scopeKey(scope), call.acceptedWorstMicros);
+    // The scope only ever sends pool attempts: its cap is the worst case of the estimate, never above what the owner accepted (the Budget checks each
+    // attempt against it). An acceptance higher than the estimate is allowed (the price may have fallen) and does not raise the cap, as at every other job.
+    this.#caps.set(scopeKey(scope), Math.min(call.acceptedWorstMicros, call.worstMicros));
     try {
       await library.categories.writePending({ jobId, kind: call.kind, name: call.name, description: call.description, categoryId: call.categoryId, startedAt: new Date(this.#deps.clock()).toISOString() });
     } catch (error) {

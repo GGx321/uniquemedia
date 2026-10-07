@@ -395,6 +395,56 @@ describe("categories.create", () => {
     expect((await listOf(engine)).categories).toEqual([category]);
   });
 
+  describe("the cap of the pool call is the worst case of its estimate, however much more the owner accepted", () => {
+    /** The caps the engine registers for avatar-job scopes (a pool call's own), read from the Map the engine keeps them in. */
+    function recordCaps(): { caps: number[]; stop: () => void } {
+      const caps: number[] = [];
+      const real = Map.prototype.set;
+      const spy = spyOn(Map.prototype, "set").mockImplementation(function (this: Map<unknown, unknown>, key: unknown, value: unknown) {
+        if (typeof key === "string" && key.startsWith("avatar:") && typeof value === "number") caps.push(value);
+        return real.call(this, key, value);
+      });
+      return { caps, stop: () => spy.mockRestore() };
+    }
+
+    test("a create accepted at ten times its estimate still runs under the estimate's cap", async () => {
+      const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net });
+      const seen = recordCaps();
+      try {
+        await creating(engine, { acceptedWorstMicros: 10 * ESTIMATE.worstMicros });
+      } finally {
+        seen.stop();
+      }
+      expect(seen.caps).toEqual([ESTIMATE.worstMicros]);
+    });
+
+    test("a regenerate accepted at ten times its estimate still runs under the estimate's cap", async () => {
+      const id = await seedCategory({ name: "Кофейни", spentMicros: 5_000 });
+      const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net });
+      const seen = recordCaps();
+      try {
+        ok(await engine.handle(command("categories.regenerate", { categoryId: id, description: "кофейни у Сены", acceptedWorstMicros: 10 * ESTIMATE.worstMicros })));
+      } finally {
+        seen.stop();
+      }
+      expect(seen.caps).toEqual([ESTIMATE.worstMicros]);
+    });
+
+    test("an acceptance equal to the estimate gives the same cap: nothing else moved", async () => {
+      const net = network({ descriptors: [poolReply(answer(), 0.0051)] });
+      const { engine } = await startEngine(dir(), { net });
+      const seen = recordCaps();
+      try {
+        await creating(engine);
+      } finally {
+        seen.stop();
+      }
+      expect(seen.caps).toEqual([ESTIMATE.worstMicros]);
+    });
+  });
+
   test("the request: the settings' text model, reasoning low, the strict scene_pool schema, the description, and nothing of the name", async () => {
     const net = network({ descriptors: [poolReply()] });
     const { engine } = await startEngine(dir(), { net });
