@@ -8,6 +8,7 @@ import { EventMessage } from "./events";
 import { ImageModelCatalogue, ImageQuality } from "./imageModels";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
+import { COMPOSE_NEEDS_CATEGORY, COMPOSE_REQUEST_FIELDS, ComposeRequest, composeNeedsCategory, SceneEditOp, SceneWriteTarget, ScenesEditResult, ScenesGetResult } from "./scenes";
 import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult } from "./media";
 import { OwnStickerBytes, OwnStickerBytesPayload, StickerBytes, StickerBytesPayload } from "./stickerBytes";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
@@ -582,6 +583,28 @@ const ENGINE_SPECS = [
   ),
   defineCommand("categories.delete", z.strictObject({ categoryId: CustomCategoryId }), z.strictObject({ categoryId: CustomCategoryId })),
   defineCommand("categories.dismissInterrupted", z.strictObject({ jobId: Id }), z.strictObject({ jobId: Id })),
+  // CS.4a: scene sets — an avatar's planned run held before any image is paid for (plan §4.2). Every one needs an open library (LIBRARY_UNAVAILABLE).
+  // `scenes.estimateCompose`: free; what composing `count` scenes could cost (the writer's worst case for them: chunks of 25, two attempts each).
+  // NOT_FOUND for an avatar that cannot get photos or a custom category the library does not hold, before any price is fetched.
+  // `scenes.compose`: paid, a job (`job.progress` ... `job.done`). Plans the scenes, issues the set's run id and every chunk's attempt ids, and writes
+  // the set BEFORE the first call; answers once the job is launched (`jobId: null` for count 0, an empty set, which costs nothing). PRICE_CHANGED above
+  // the accepted worst case, BUDGET_EXCEEDED when the month has no room, VALIDATION when the avatar already has an open set (discard it first),
+  // IN_FLIGHT while the avatar runs a photo run or another scenes job.
+  // `scenes.get`: free; the avatar's newest set (open, or used and read-only) and how many set files could not be read (kept as they are).
+  // `scenes.edit`: free, on the revision the window shows (SCENES_CHANGED when it moved; two edits on one revision: the second is refused and
+  // nothing is lost). `{ problem }` is a normal result: the text does not go through and nothing changed. IN_FLIGHT while the set's job runs, VALIDATION once used.
+  // `scenes.estimateWrite` / `scenes.write`: «Дописать» — writes only the scenes still waiting, chunk by chunk, with the attempts each chunk has left
+  // (never a fresh pair after an interruption), priced as `min(2 − answered, unused ids) × the writer's ceiling` per chunk; the same refusals as compose
+  // and VALIDATION when nothing is waiting. `scenes.cancel`: ok for a set whose job is not running; the reserve of a request in flight stays open
+  // until reconciled. `scenes.discard`: free; IN_FLIGHT while a job runs, VALIDATION for a used set.
+  defineCommand("scenes.estimateCompose", ComposeRequest, z.strictObject({ estimate: Estimate })),
+  defineCommand("scenes.compose", z.strictObject({ ...COMPOSE_REQUEST_FIELDS, ...AcceptedWorst }).refine(composeNeedsCategory, COMPOSE_NEEDS_CATEGORY), z.strictObject({ sceneSetId: Id, jobId: Id.nullable() })),
+  defineCommand("scenes.get", z.strictObject({ avatarId: Id }), ScenesGetResult),
+  defineCommand("scenes.edit", z.strictObject({ sceneSetId: Id, revision: z.number().int().min(1), op: SceneEditOp }), ScenesEditResult),
+  defineCommand("scenes.estimateWrite", z.strictObject({ sceneSetId: Id, target: SceneWriteTarget }), z.strictObject({ estimate: Estimate })),
+  defineCommand("scenes.write", z.strictObject({ sceneSetId: Id, revision: z.number().int().min(1), target: SceneWriteTarget, ...AcceptedWorst }), z.strictObject({ jobId: Id })),
+  defineCommand("scenes.cancel", z.strictObject({ sceneSetId: Id }), z.strictObject({ sceneSetId: Id })),
+  defineCommand("scenes.discard", z.strictObject({ sceneSetId: Id }), z.strictObject({ sceneSetId: Id })),
   // A fresh look at the export folder (3e.3, K9): the same check a render attempt makes, without a render. Free. The answer is the
   // status as the check found it, and `export.status` follows when it CHANGED, so a window that asks on focus shows an
   // unplugged drive, and a plugged one, without a render attempt.

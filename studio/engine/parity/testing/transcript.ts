@@ -81,6 +81,7 @@ const ID_KINDS: Readonly<Record<string, string>> = {
   montageId: "montage",
   videoId: "video",
   jobId: "job",
+  sceneSetId: "set",
   previewId: "preview",
   clipId: "clip",
   layerId: "layer",

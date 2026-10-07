@@ -48,13 +48,14 @@ const EXPECTED_CODES = [
   "MEDIA_UNSUPPORTED",
   "TRASH_UNAVAILABLE",
   "POOL_REJECTED",
+  "SCENES_CHANGED",
 ];
 
 /** The codes that must say more than their code: what is wrong with the montage, which cells, why the folder is unusable, which caption rule broke, why music could not be fetched. */
 const CODES_WITH_A_REQUIRED_FIELD = ["MONTAGE_INVALID", "PHOTO_UNAVAILABLE", "EXPORT_UNAVAILABLE", "TEXT_INVALID", "MUSIC_UNAVAILABLE", "MEDIA_UNSUPPORTED"];
 
 describe("ErrorCode", () => {
-  test("is exactly the closed set of forty-two codes", () => {
+  test("is exactly the closed set of forty-three codes", () => {
     const actual: string[] = [...ERROR_CODES].sort();
     expect(actual).toEqual([...EXPECTED_CODES].sort());
   });

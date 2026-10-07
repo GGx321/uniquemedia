@@ -277,6 +277,43 @@ const customCategory = {
   updatedAt: "2026-10-05T12:00:00.000Z",
 };
 
+const sceneSet = {
+  sceneSetId: "set-00000001",
+  avatarId: "avatar-0001",
+  createdAt: "2026-10-07T10:00:00.000Z",
+  revision: 3,
+  status: "ready" as const,
+  stoppedBy: null,
+  stoppedError: null,
+  runId: null,
+  poses: { profile: false, back: false },
+  categories: [{ ref: "home" as const, name: null }],
+  textModel: "x-ai/grok-4.3",
+  spentMicros: 11_000,
+  openReserveMicros: 0,
+  write: null,
+  lastCompose: { total: 1, written: 1, gaveUp: 0 },
+  chunks: [{ chunk: 1, sceneIds: [1], attemptsLeft: 1, gaveUpBy: null }],
+  scenes: [
+    {
+      sceneId: 1,
+      origin: "planned" as const,
+      category: "home" as const,
+      categoryName: null,
+      shot: "friend" as const,
+      pose: "front" as const,
+      place: { location: "a kitchen", timeOfDay: "morning", activity: "pouring coffee", outfit: "a linen shirt" },
+      idea: null,
+      text: "A friend catches her laughing at the counter.",
+      edited: false,
+      removed: false,
+      unwritten: null,
+      gaveUpBy: null,
+      chunk: 1,
+    },
+  ],
+};
+
 const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "settings.get": { payload: {}, result: settings },
   "settings.setApiKey": { payload: { key: API_KEY }, result: keyStatus },
@@ -355,6 +392,14 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "categories.update": { payload: { categoryId: "cat-paris-cafes", name: "Кофейни", removeLocations: ["a bookshop"] }, result: { category: customCategory } },
   "categories.delete": { payload: { categoryId: "cat-paris-cafes" }, result: { categoryId: "cat-paris-cafes" } },
   "categories.dismissInterrupted": { payload: { jobId: "job-00000002" }, result: { jobId: "job-00000002" } },
+  "scenes.estimateCompose": { payload: { avatarId: "avatar-0001", count: 20, categories: ["home", "cat-paris-cafes"], poses: { profile: false, back: false } }, result: { estimate: { ...estimate, expectedMicros: 9_000, worstMicros: 75_000 } } },
+  "scenes.compose": { payload: { avatarId: "avatar-0001", count: 20, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 75_000 }, result: { sceneSetId: "set-00000001", jobId: "job-00000003" } },
+  "scenes.get": { payload: { avatarId: "avatar-0001" }, result: { sceneSet, unreadable: 0 } },
+  "scenes.edit": { payload: { sceneSetId: "set-00000001", revision: 3, op: { op: "remove", sceneIds: [1] } }, result: { sceneSet } },
+  "scenes.estimateWrite": { payload: { sceneSetId: "set-00000001", target: { kind: "unwritten" } }, result: { estimate: { ...estimate, expectedMicros: 4_000, worstMicros: 37_500 } } },
+  "scenes.write": { payload: { sceneSetId: "set-00000001", revision: 3, target: { kind: "unwritten" }, acceptedWorstMicros: 37_500 }, result: { jobId: "job-00000004" } },
+  "scenes.cancel": { payload: { sceneSetId: "set-00000001" }, result: { sceneSetId: "set-00000001" } },
+  "scenes.discard": { payload: { sceneSetId: "set-00000001" }, result: { sceneSetId: "set-00000001" } },
   "avatars.estimateImport": { payload: { stagingId: "staging-0001" }, result: { ...estimate, expectedMicros: 6_500, worstMicros: 42_000 } },
   "avatars.importAvatar": {
     payload: { stagingId: "staging-0001", name: "Лиза", acceptedWorstMicros: 42_000 },
@@ -473,6 +518,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "music.changed": { status: { ...musicStatus, refresh: { state: "running", done: 1, total: 31 } } },
   "media.changed": { change: "upserted", media: ownMedia },
   "category.changed": { change: "upserted", category: customCategory },
+  "scenes.changed": { change: "upserted", sceneSet },
 };
 
 // ---------- helpers ----------
@@ -558,6 +604,14 @@ describe("contract surface", () => {
         "categories.update",
         "categories.delete",
         "categories.dismissInterrupted",
+        "scenes.estimateCompose",
+        "scenes.compose",
+        "scenes.get",
+        "scenes.edit",
+        "scenes.estimateWrite",
+        "scenes.write",
+        "scenes.cancel",
+        "scenes.discard",
         "avatars.estimateImport",
         "avatars.importAvatar",
         "runs.estimate",
@@ -618,6 +672,7 @@ describe("contract surface", () => {
         "music.changed",
         "media.changed",
         "category.changed",
+        "scenes.changed",
       ].sort(),
     );
   });

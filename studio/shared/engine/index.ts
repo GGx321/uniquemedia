@@ -16,6 +16,7 @@ export * from "./mediaPath";
 export * from "./messages";
 export * from "./montage";
 export * from "./primitives";
+export * from "./scenes";
 export * from "./state";
 export * from "./stickerBytes";
 export * from "./video";

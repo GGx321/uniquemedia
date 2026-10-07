@@ -104,6 +104,7 @@ import { planWithPools, POOLS } from "./scenes";
 import { runCategoryJob } from "./scenes/categoryJob";
 import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
 import { poolOf } from "./scenes/poolGen";
+import { SceneSetService } from "./sceneSets/service";
 import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
@@ -542,6 +543,8 @@ interface PendingDelete {
   readonly token: string;
   library: Library | null;
   detached: DetachedAvatar | null;
+  /** The avatar's scene sets as the prepare found them: each is announced removed when the folder goes (their files go with it, so only now can they be listed). */
+  sceneSetIds: string[];
   /** The plan has been made and is on its way to main: from here a finish is the ordinary end of the delete. */
   planned: boolean;
   /** Main ended the delete (`kept`) while the prepare was still waiting: the prepare puts everything back itself when it comes to its next look. */
@@ -694,6 +697,8 @@ export class Engine {
   readonly #dismissingCalls = new Set<string>();
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs: JobRegistry;
+  /** CS.4a: the scene sets' commands and their writer job (an avatar's planned run held before its images are paid for). */
+  readonly #sceneSets: SceneSetService;
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
   readonly #reportedBadJobs = new Set<string>();
   /**
@@ -880,6 +885,52 @@ export class Engine {
     this.#imageCatalogue = new ImageCatalogueCache({
       load: () => loadImageCatalogue({ fetch: priceFetch, baseUrl: this.#openRouterBaseUrl }),
       monotonic: deps.monotonic,
+    });
+    this.#sceneSets = new SceneSetService({
+      newId: () => this.#deps.newId(),
+      currentLibrary: () => this.library,
+      withLiveLibrary: (work) => this.#withLiveLibrary(work),
+      liveLibrary: () => this.#liveLibrary(),
+      usableKey: (purpose) => this.#usableKey(purpose),
+      paidBudget: () => this.#paidBudget(),
+      ledger: () => (this.#money.ok ? this.#money.budget.ledger : null),
+      runnableAvatar: (library, avatarId) => this.#runnableAvatar(library, avatarId),
+      assertAvatarOnDisk: (library, avatarId) => this.#assertAvatarOnDisk(library, avatarId),
+      customCategories: (library, categories) => this.#customCategories(library, categories),
+      textModel: () => this.#avatarModels().textModel,
+      prices: (models) => this.#prices.get(models),
+      checkAccepted: (worstMicros, acceptedWorstMicros) => Engine.#checkAccepted(worstMicros, acceptedWorstMicros),
+      checkMonthlyRoom: (budget, worstMicros) => Engine.#checkMonthlyRoom(budget, worstMicros),
+      claimAvatar: (avatarId, detail) => this.#claimAvatar(avatarId, detail),
+      releaseAvatar: (avatarId) => {
+        this.#busyAvatars.delete(avatarId);
+      },
+      paidStart: () => {
+        this.#paidCommands++;
+      },
+      paidEnd: () => {
+        this.#paidCommands--;
+      },
+      setCap: (key, micros) => {
+        this.#caps.set(key, micros);
+      },
+      clearCap: (key) => {
+        this.#caps.delete(key);
+      },
+      openRouter: (key) => this.#openRouter(key, reportingTo(this.#networkPool, this.#deps.fetch)),
+      networkPool: this.#networkPool,
+      jobs: this.#jobs,
+      emit: (event) => this.#emit(event),
+      emitMoney: () => this.#emitMoney(),
+      markKeyRejected: (key) => this.markKeyRejected(key),
+      recentPairs: (library, avatarId) =>
+        library.recentPairs(avatarId, RECENT_PAIRS).catch((error: unknown) => {
+          // A hint for the planner, never a reason to refuse a set: plan without it, and say so.
+          console.warn(`studio engine: avatar ${avatarId}'s scene history could not be read; planning without it (${messageOf(error, "unknown error")})`);
+          return [];
+        }),
+      errorOf: (error) => engineErrorFrom(error),
+      warn: (line) => console.warn(line),
     });
   }
 
@@ -1495,6 +1546,24 @@ export class Engine {
       }
       case "categories.dismissInterrupted":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#withLiveLibrary((library) => this.#dismissInterrupted(library, command.payload.jobId)) };
+      case "scenes.estimateCompose":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate: await this.#sceneSets.estimateCompose(command.payload) } };
+      case "scenes.compose":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.compose(command.payload) };
+      case "scenes.get":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.get(command.payload.avatarId) };
+      case "scenes.edit":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.edit(command.payload) };
+      case "scenes.estimateWrite":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate: await this.#sceneSets.estimateWrite(command.payload.sceneSetId, command.payload.target) } };
+      case "scenes.write":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#sceneSets.write(command.payload) };
+      case "scenes.cancel":
+        await this.#sceneSets.cancel(command.payload.sceneSetId);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { sceneSetId: command.payload.sceneSetId } };
+      case "scenes.discard":
+        await this.#sceneSets.discard(command.payload.sceneSetId);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { sceneSetId: command.payload.sceneSetId } };
       case "runs.estimate": {
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
@@ -3303,7 +3372,7 @@ export class Engine {
   async #deletePrepare(avatarId: string, token: string): Promise<AvatarDeletePlan> {
     if (this.#pendingDelete !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: "an avatar is already being deleted; wait for it to finish" });
     // The single slot is taken HERE, before the first await: a second prepare that arrives while this one awaits the library finds it taken.
-    const slot: PendingDelete = { avatarId, token, library: null, detached: null, planned: false, abandoned: false };
+    const slot: PendingDelete = { avatarId, token, library: null, detached: null, sceneSetIds: [], planned: false, abandoned: false };
     this.#pendingDelete = slot;
     try {
       // Claimed before the first await too: nothing else (a library switch included) may change the avatar from here to the finish.
@@ -3325,6 +3394,12 @@ export class Engine {
       // No await between the last look and this: nothing can start for the avatar in between. From here a render or a pick finds no avatar.
       slot.library = library;
       slot.detached = library.detachAvatar(avatarId);
+      // Listed before the folder moves; a set that cannot be listed is simply not announced (`avatar.removed` still tells the windows).
+      slot.sceneSetIds = await library.sceneSets.list(avatarId).then(
+        (listed) => listed.sets.map((set) => set.sceneSetId),
+        () => [],
+      );
+      assertNotAbandoned();
       const found = await this.#videos.avatarFiles(library.root, avatarId);
       assertNotAbandoned();
       slot.planned = true;
@@ -3376,6 +3451,7 @@ export class Engine {
         return;
       }
       this.#jobs.forgetFinishedFor(avatarId);
+      for (const sceneSetId of pending.sceneSetIds) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId } });
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId } });
     } finally {
       this.#busyAvatars.delete(avatarId);

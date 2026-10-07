@@ -78,6 +78,7 @@ import { MOCK_IMAGE_CATALOGUE } from "./mockImageModels";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { MockCategories } from "./mockCategories";
+import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -286,6 +287,10 @@ export interface MockEngineOptions {
   unreadableCategories?: number;
   /** CS.2: creates and regenerates a closed Studio left unanswered (`categories.list`'s `interrupted`). */
   interruptedCategories?: CategoryInterrupted[];
+  /** CS.4a: scene sets the library holds at the start, as a compose would have left them. */
+  sceneSets?: MockSceneSetSeed[];
+  /** CS.4a: scene set files the library could not read (counted in `scenes.get`, never deleted). */
+  unreadableSceneSets?: number;
 }
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
@@ -712,6 +717,8 @@ export class MockEngine implements EngineBridge {
   private mediaPick: readonly MockMediaPick[] | null = null;
   /** The custom category library and the one paid call in flight (CS.2). */
   private readonly categories: MockCategories;
+  /** The scene sets and their writer jobs (CS.4a). */
+  private readonly sceneSets: MockSceneSets;
   private categoryPriceValue: Pick<Estimate, "expectedMicros" | "worstMicros"> = { ...MOCK_CATEGORY_PRICE };
   /** The next paid category call fails after its checks, having cost this much (`failNextCategoryCall`). */
   private nextCategoryFailure: { error: EngineError; spentMicros: number } | null = null;
@@ -730,6 +737,28 @@ export class MockEngine implements EngineBridge {
     this.categories = new MockCategories(
       { ...(options.categories === undefined ? {} : { categories: options.categories }), ...(options.unreadableCategories === undefined ? {} : { unreadable: options.unreadableCategories }), ...(options.interruptedCategories === undefined ? {} : { interrupted: options.interruptedCategories }) },
       { nextId: (prefix) => this.nextId(prefix), nowIso: () => this.nowIso() },
+    );
+    this.sceneSets = new MockSceneSets(
+      {
+        scheduler: this.scheduler,
+        stepMs: this.stepMs,
+        nextId: (prefix) => this.nextId(prefix),
+        nowIso: () => this.nowIso(),
+        emit: (event) => this.emit(event),
+        textModel: () => this.settings.textModel,
+        category: (ref) => this.categories.get(ref),
+        reserveOpen: (key) => this.reserves.has(key),
+        openReserve: (key, worst) => {
+          this.reserves.set(key, worst);
+        },
+        spend: (micros) => this.spend(micros),
+        emitMoney: () => this.emitMoney(),
+        needReconcile: () => {
+          if (!this.reconcileReasons.includes("open-reserves")) this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
+        },
+      },
+      options.sceneSets ?? [],
+      options.unreadableSceneSets ?? 0,
     );
     this.capacity = options.eventCapacity ?? 256;
     this.log = new EventLog(this.capacity, this.bootId());
@@ -1003,6 +1032,16 @@ export class MockEngine implements EngineBridge {
    */
   failNextCategoryCall(error: EngineError, spentMicros: number): void {
     this.nextCategoryFailure = { error, spentMicros };
+  }
+
+  /** CS.4a: the next request of a scenes writer job comes back as `outcome` (a good answer when none is scripted). */
+  failNextSceneAttempt(outcome: MockSceneAttempt): void {
+    this.sceneSets.failNextSceneAttempt(outcome);
+  }
+
+  /** CS.4a: the set's run was started, so the set is read-only. */
+  markSceneSetUsed(sceneSetId: string): void {
+    this.sceneSets.markUsed(sceneSetId);
   }
 
   /** CS.2: leaves the record of a create or regenerate a closed Studio did not finish, as `categories.list` lists it. */
@@ -1829,6 +1868,74 @@ export class MockEngine implements EngineBridge {
         // committed/remaining figures, not just the list itself).
         if (this.unavailable !== null || !this.libraryOpen) return this.ok(c, { runs: [] });
         return this.ok(c, { runs: this.sortedRuns().slice(0, MAX_LISTED_RUNS).map((r) => this.runSummary(r)) });
+      case "scenes.estimateCompose": {
+        const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.composePrice(c.payload.count)) });
+      }
+      case "scenes.compose": {
+        const { acceptedWorstMicros, ...request } = c.payload;
+        const free = request.count === 0;
+        // The engine's order: the avatar is claimed first, then (a paid compose) the key and the ledger, the library, the avatar, the categories, the one open set, the price.
+        if (this.jobRunningFor(request.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
+        const refusal =
+          (free ? null : this.keyAndLedgerGate()) ??
+          this.libraryGate() ??
+          this.runnableRefusal(request.avatarId) ??
+          this.categoryRefusal(request.categories) ??
+          (this.sceneSets.hasOpenSet(request.avatarId) ? { code: "VALIDATION" as const, detail: `avatar ${request.avatarId} already has an open scene set; discard it first` } : null) ??
+          (free ? null : this.priceGate(acceptedWorstMicros, this.sceneSets.composePrice(request.count).worst));
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, this.sceneSets.compose(request));
+      }
+      case "scenes.get": {
+        const refusal = this.libraryGate() ?? (this.avatarKnown(c.payload.avatarId) ? null : { code: "NOT_FOUND" as const, detail: `no avatar ${c.payload.avatarId} in the open library` });
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, this.sceneSets.get(c.payload.avatarId));
+      }
+      case "scenes.edit": {
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        const outcome = this.sceneSets.edit(c.payload.sceneSetId, c.payload.revision, c.payload.op);
+        if ("error" in outcome) return this.fail(c, outcome.error);
+        return this.ok(c, "problem" in outcome ? { problem: outcome.problem } : { sceneSet: outcome.view });
+      }
+      case "scenes.estimateWrite": {
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        const set = this.sceneSets.find(c.payload.sceneSetId);
+        if (set === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
+        return this.ok(c, { estimate: this.sceneEstimate(this.sceneSets.writePrice(set)) });
+      }
+      case "scenes.write": {
+        const early = this.keyAndLedgerGate() ?? this.libraryGate();
+        if (early) return this.fail(c, early);
+        const set = this.sceneSets.find(c.payload.sceneSetId);
+        if (set === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
+        if (this.jobRunningFor(set.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
+        const refusal =
+          this.runnableRefusal(set.avatarId) ??
+          (set.used ? { code: "VALIDATION" as const, detail: `scene set ${set.sceneSetId} is used and read-only` } : null) ??
+          (set.revision !== c.payload.revision ? { code: "SCENES_CHANGED" as const } : null) ??
+          (this.sceneSets.writePrice(set).worst === 0 ? { code: "VALIDATION" as const, detail: "no scene of the set is waiting to be written" } : null) ??
+          this.priceGate(c.payload.acceptedWorstMicros, this.sceneSets.writePrice(set).worst);
+        if (refusal) return this.fail(c, refusal);
+        return this.ok(c, { jobId: this.sceneSets.write(set) });
+      }
+      case "scenes.cancel": {
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        if (this.sceneSets.find(c.payload.sceneSetId) === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
+        this.sceneSets.cancel(c.payload.sceneSetId);
+        return this.ok(c, { sceneSetId: c.payload.sceneSetId });
+      }
+      case "scenes.discard": {
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        const outcome = this.sceneSets.discard(c.payload.sceneSetId);
+        if ("error" in outcome) return this.fail(c, outcome.error);
+        return this.ok(c, { sceneSetId: c.payload.sceneSetId });
+      }
       case "runs.estimate": {
         // No library open: the engine cannot find the avatar either.
         const refusal = this.libraryOpen ? (this.runnableRefusal(c.payload.avatarId) ?? this.categoryRefusal(c.payload.categories)) : { code: "NOT_FOUND" as const, detail: `no saved, active avatar ${c.payload.avatarId} in the open library` };
@@ -2050,7 +2157,7 @@ export class MockEngine implements EngineBridge {
   /** Whether an avatar has a candidate batch or a photo run still queued or running: a second batch, a pick or a run must wait. */
   private jobRunningFor(avatarId: string): boolean {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
-    return this.jobs.some(active) || this.runJobs.some(active);
+    return this.jobs.some(active) || this.runJobs.some(active) || this.sceneSets.liveFor(avatarId);
   }
 
   // ---------- «Удалить аватар» ----------
@@ -2110,6 +2217,7 @@ export class MockEngine implements EngineBridge {
     this.renderJobs = this.renderJobs.filter((j) => j.avatarId !== avatarId);
     this.jobs = this.jobs.filter((j) => j.avatarId !== avatarId);
     this.runJobs = this.runJobs.filter((j) => j.avatarId !== avatarId);
+    this.sceneSets.removeAvatar(avatarId);
     for (const photoId of mine) this.pendingVideoPhotos.delete(photoId);
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.removed", payload: { avatarId } });
     const kept = this.videoFilesKeptNext;
@@ -2847,6 +2955,11 @@ export class MockEngine implements EngineBridge {
     return isCustomCategory(category) ? { categoryName: run.categoryNames[category] ?? category } : {};
   }
 
+  /** A scene set's price in the contract's shape: the mock's usual prices source, the writer's own figures. */
+  private sceneEstimate(price: { expected: number; worst: number }): Estimate {
+    return { expectedMicros: price.expected, worstMicros: price.worst, prices: this.price.prices, pricesAsOf: this.price.pricesAsOf };
+  }
+
   /** The pool call's price: the mock's usual prices source, the category call's own figures. */
   private categoryPrice(): Estimate {
     return { ...this.price, ...this.categoryPriceValue };
@@ -3374,7 +3487,7 @@ export class MockEngine implements EngineBridge {
       drafts: this.drafts,
       unreadableAvatars: this.unreadable,
       unreadableTotal: this.unreadableCount(),
-      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j)), ...this.ownMedia.jobStates()],
+      jobs: [...this.jobs.map((j) => this.jobState(j)), ...this.runJobs.map((j) => this.runJobState(j)), ...this.renderJobs.map((j) => this.renderJobState(j)), ...this.ownMedia.jobStates(), ...this.sceneSets.jobStates()],
       librarySwitchGeneration: this.librarySwitchGeneration,
       exportStatus: this.exportReported,
       notices: [],
@@ -3505,8 +3618,8 @@ export class MockEngine implements EngineBridge {
   }
 
   /** Every job still queued or running, candidate batches and photo runs alike: a library switch or a reconcile waits for them. */
-  private running(): (MockJob | MockRunJob)[] {
-    return [...this.jobs, ...this.runJobs].filter((j) => j.status === "queued" || j.status === "running");
+  private running(): { status: JobState["status"] }[] {
+    return [...[...this.jobs, ...this.runJobs].filter((j) => j.status === "queued" || j.status === "running"), ...this.sceneSets.running()];
   }
 
   private spend(micros: number): void {

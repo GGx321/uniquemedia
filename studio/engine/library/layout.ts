@@ -22,6 +22,13 @@ export const MEDIA_DIR = "media";
 export const CATEGORIES_DIR = "categories";
 /** A category record's `schemaVersion`: the store stamps it, and a newer one is refused and kept as it is (it would lose what it does not know on the next write). */
 export const CATEGORY_FILE_SCHEMA_VERSION = 1;
+/**
+ * Scene sets (CS.4a): `avatars/<avatarId>/scenes/<sceneSetId>.json`, one atomically rewritten record per set (an avatar's planned run held before its
+ * images are paid for). Older builds never look here.
+ */
+export const SCENES_DIR = "scenes";
+/** A scene set's `schemaVersion`: a newer one is counted as unreadable and kept as it is (it would lose what it does not know on the next write). */
+export const SCENE_SET_FILE_SCHEMA_VERSION = 1;
 export const MEDIA_STAGING_DIR = ".staging";
 /** An own-media record's `schemaVersion`: the writer (mediaRecords.ts) stamps it and refuses to list a newer one (it is kept as it is). */
 export const MEDIA_RECORD_SCHEMA_VERSION = 1;
