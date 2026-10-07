@@ -146,6 +146,17 @@ export class SceneSetService {
     }
   }
 
+  /** Announces the set as its file and the live jobs say it now; nothing when it is gone, and never a throw (it runs where a refusal is already on its way). */
+  async #reannounce(library: Library, avatarId: string | null, sceneSetId: string): Promise<void> {
+    if (avatarId === null) return;
+    try {
+      const current = await library.sceneSets.get(avatarId, sceneSetId);
+      if (current !== null) await this.#announce(library, current);
+    } catch (error) {
+      this.#deps.warn(`studio engine: scene set ${sceneSetId} could not be announced after a write that did not begin (${detailOfError(error)})`);
+    }
+  }
+
   /** The set with this id, in whichever avatar's folder it lies; NOT_FOUND when none of them has it. */
   #find(library: Library, sceneSetId: string): Promise<{ set: StoredSceneSet; avatarId: string }> {
     return findSceneSet(library, sceneSetId);
@@ -371,6 +382,8 @@ export class SceneSetService {
     let mine: LiveJob | null = null;
     /** Set when a cancel beat the job's start: it is registered and ended cancelled once the call has let go of the set. */
     let cancelledJob: { jobId: string; avatarId: string } | null = null;
+    /** The library whose set this call made live: a window may have read the set as writing from then on, so a call that ends without a job says it is not. */
+    let shownIn: Library | null = null;
     try {
       // A set whose job runs refuses before anything is read, claimed or written.
       if (this.#live.has(sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${sceneSetId} is being written; wait for that to end (or cancel it)` });
@@ -380,6 +393,7 @@ export class SceneSetService {
       const { set, avatarId } = await this.#find(library, sceneSetId);
       deps.claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
       claimed = avatarId;
+      shownIn = library;
       const jobId = deps.newId();
       mine = { jobId, avatarId, kind: target.kind === "unwritten" ? "unwritten" : "rewrite", count: 0, inFlight: new Set() };
       this.#live.set(sceneSetId, mine);
@@ -431,9 +445,13 @@ export class SceneSetService {
       return { jobId };
     } finally {
       if (!launched) {
-        if (mine !== null && this.#live.get(sceneSetId) === mine) this.#live.delete(sceneSetId);
+        const wasLive = mine !== null && this.#live.get(sceneSetId) === mine;
+        if (wasLive) this.#live.delete(sceneSetId);
         deps.paidEnd();
         if (claimed !== null) deps.releaseAvatar(claimed);
+        // The set was live from the claim, before the prices: a window that read it then holds «writing» for a write that is refused (price, budget, revision)
+        // or cancelled before it began. Nothing else would clear it, so the set is announced as it is now, before the job's own end.
+        if (wasLive && shownIn !== null) await this.#reannounce(shownIn, claimed, sceneSetId);
         if (cancelledJob !== null) this.#endCancelledUnstarted(sceneSetId, cancelledJob);
       }
     }

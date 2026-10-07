@@ -934,6 +934,72 @@ describe("scenes.write: «Дописать»", () => {
     expect((await setOf(engine, avatarId)).scenes.every((s) => !s.removed && s.text !== null)).toBe(true);
   });
 
+  test("a write refused after the set was shown as writing (the price moved) is announced again, so another window does not stay on «Дописываем…»", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, write: compose });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let priceRequested = false;
+    const net = sceneNetwork({
+      prices: async () => {
+        priceRequested = true;
+        await gate;
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    const revision = (await setOf(engine, avatarId)).revision;
+
+    // Window A sends a write whose accepted price is too low; window B reads the set while the prices are still loading.
+    const refusedWrite = engine.handle(writeCommand(revision, 1));
+    await until(() => priceRequested, "the price request");
+    const windowB = await setOf(engine, avatarId);
+    expect(windowB.status).toBe("writing");
+    const heardBefore = changes(events).length;
+    release();
+
+    expect(code(await refusedWrite)).toBe("PRICE_CHANGED");
+    // Window B applies what it hears by revision, as the renderer's store does: the last upsert at or after its own read is what it shows.
+    const heard = changes(events)
+      .slice(heardBefore)
+      .filter((view) => view.revision >= windowB.revision);
+    expect(heard.at(-1)).toMatchObject({ status: "stopped", write: null });
+    expect(await setOf(engine, avatarId)).toMatchObject({ status: "stopped", write: null });
+    expect(ledgerReserves()).toEqual([]);
+  });
+
+  test("a write cancelled before it began is announced as the set it is again, before job.cancelled", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, write: compose });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let priceRequested = false;
+    const net = sceneNetwork({
+      prices: async () => {
+        priceRequested = true;
+        await gate;
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    const revision = (await setOf(engine, avatarId)).revision;
+    const writing = engine.handle(writeCommand(revision, 2 * ATTEMPT));
+    await until(() => priceRequested, "the price request");
+    ok(await engine.handle(command("scenes.cancel", { sceneSetId: SET })));
+    release();
+    expect(jobOf(await writing)).toBeTruthy();
+    await until(() => events().some((e) => e.type === "job.cancelled"), "job.cancelled");
+
+    const order = events().flatMap((e, i) =>
+      e.type === "job.cancelled" ? [`cancelled@${i}`] : e.type === "scenes.changed" && e.payload.change === "upserted" && e.payload.sceneSet.status !== "writing" ? [`settled@${i}`] : [],
+    );
+    expect(order[0]?.startsWith("settled")).toBe(true);
+  });
+
   test("a write whose revision moved while it was being made is SCENES_CHANGED, whatever it waits on", async () => {
     const avatarId = await seedAvatar();
     await seedSet(avatarId, { count: 3, write: compose });
