@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { callsOf, describeElement, flush, inAct, openSection, runAll, setup } from "../testing";
 import { MIA } from "./photos/categoryScreenKit";
 import { SCENE_REVIEW_KEY } from "./photos/sceneReview";
-import { ATTEMPT, card, column, goButton, isDisabled, nb, openReview, priceRow, reviewSwitch, sceneCard } from "./photos/sceneScreenKit";
+import { ATTEMPT, card, column, describedText, goButton, isDisabled, nb, openReview, priceRow, reviewSwitch, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.6: «Сцены на проверку» — the switch, the card's compose mode and its strip, approval, a used set, «Пересоставить…», against the mock engine. The
 // artboards are ReviewOff, ReviewCompose, ReviewComposing, ReviewReady (the card), ReviewUsed, ReviewRecompose and the ReviewStates sheet (A: the card's
@@ -33,6 +33,24 @@ describe("the switch", () => {
     expect(localStorage.getItem(SCENE_REVIEW_KEY)).toBe("off");
     expect(within(column()).getByText("проверка выключена")).toBeDefined();
     expect(callsOf(engine, "scenes.compose")).toHaveLength(0);
+  });
+
+  test("while a scenes job writes the set it waits and says why: «Отменить» of the job stays on screen (CS.7 M3)", async () => {
+    const { scheduler } = await openReview();
+    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
+    await flush();
+    expect(isDisabled(reviewSwitch())).toBe(true);
+    expect(describedText(reviewSwitch())).toBe("Пока модель пишет сцены, проверку не выключить — дождитесь конца или отмените запись.");
+    fireEvent.click(reviewSwitch());
+    await flush();
+    expect(reviewSwitch().getAttribute("aria-checked")).toBe("true");
+    expect(localStorage.getItem(SCENE_REVIEW_KEY) === "off").toBe(false);
+    expect(within(column()).getByRole("button", { name: "Отменить" })).toBeDefined();
+    expect(within(column()).queryByText("проверка выключена") === null).toBe(true);
+    runAll(scheduler);
+    await flush();
+    expect(isDisabled(reviewSwitch())).toBe(false);
+    expect(reviewSwitch().getAttribute("aria-describedby") === null).toBe(true);
   });
 
   test("Space toggles it; its name is the visible label", async () => {
@@ -260,15 +278,18 @@ describe("the set's read and the other paid paths", () => {
     expect(callsOf(engine, "scenes.compose")).toHaveLength(0);
   });
 
-  test("today's «Сгенерировать» waits while a scenes job of the avatar runs", async () => {
-    const { engine } = await openReview();
-    fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
-    await flush();
-    fireEvent.click(reviewSwitch());
-    await flush();
+  test("today's «Сгенерировать» waits while a scenes job of the avatar runs — another window's compose, review off here", async () => {
+    // CS.7 M3: this window holds the switch on while its own write runs, so the job comes from elsewhere, as the events announce it.
+    const { engine, client } = await openReview({ sceneReview: "off" });
     await waitFor(() => expect(goButton().textContent).toBe("Сгенерировать 20 фото · до $3.08"));
+    await act(async () => {
+      const reply = await client.request("scenes.compose", { avatarId: MIA.avatarId, count: 20, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 2 * ATTEMPT });
+      if (!reply.ok) throw new Error(reply.error.code);
+    });
+    await flush();
+    await waitFor(() => expect(within(card()).getByText("Дождитесь, пока модель допишет сцены.")).toBeDefined());
     expect(isDisabled(goButton())).toBe(true);
-    expect(within(card()).getByText("Дождитесь, пока модель допишет сцены.")).toBeDefined();
+    expect(within(column()).getByText("Открытый набор — 20 сцен — пишется. Включите проверку, чтобы вернуться к нему.")).toBeDefined();
     expect(callsOf(engine, "runs.start")).toHaveLength(0);
   });
 });

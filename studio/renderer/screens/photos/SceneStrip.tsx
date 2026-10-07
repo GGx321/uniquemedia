@@ -79,6 +79,8 @@ interface SceneStripProps {
   paidInFlight: boolean;
   onPaidInFlightChange: (inFlight: boolean) => void;
   onToggleReview: () => void;
+  /** Why the switch waits (a write of the set runs), or null. */
+  switchWaits: string | null;
   onOpenSheet: () => void;
   myCategories: number | null;
   onRecompose: () => void;
@@ -99,6 +101,7 @@ export function SceneStrip({
   paidInFlight,
   onPaidInFlightChange,
   onToggleReview,
+  switchWaits,
   onOpenSheet,
   myCategories,
   onRecompose,
@@ -340,7 +343,7 @@ export function SceneStrip({
         </div>
 
         <div className="photos-gen-side scene-strip-go">
-          <ReviewSwitch on onToggle={onToggleReview} labelId={switchLabel} />
+          <ReviewSwitch on onToggle={onToggleReview} labelId={switchLabel} waits={switchWaits} />
           <StackButton buttonRef={goRef} state={button} describedBy={describedBy(reasonShown && why, priceFailed !== null && priceFailedId)} onClick={onClick} />
           {reasonShown && <Why id={why}>{reason}</Why>}
           {priceFailed !== null && priced !== null && <PriceFailed id={priceFailedId} error={priceFailed} onRetry={priced.retryPrice} after={() => goRef.current} />}
@@ -376,13 +379,33 @@ export function setMetaText(set: SceneSetView): { count: string; detail: string 
   return { count, detail: `составлен ${SET_DATE.format(Date.parse(set.createdAt))}` };
 }
 
-/** «Сцены на проверку»: a switch named by its visible label (README «Keyboard and focus»). */
-export function ReviewSwitch({ on, onToggle, labelId, disabled = false }: { on: boolean; onToggle: () => void; labelId: string; disabled?: boolean }) {
+/**
+ * «Сцены на проверку»: a switch named by its visible label (README «Keyboard and focus»). `waits` (CS.7 M3) keeps it as it is, saying why under it: turned
+ * off while a write of the set runs, it would hide the job and its «Отменить».
+ */
+export function ReviewSwitch({ on, onToggle, labelId, waits = null }: { on: boolean; onToggle: () => void; labelId: string; waits?: string | null }) {
+  const whyId = `${labelId}-why`;
   return (
-    <div className="scene-switch">
-      <button type="button" className={on ? "sw sw-on" : "sw"} role="switch" aria-checked={on} aria-labelledby={labelId} disabled={disabled} onClick={onToggle} />
-      <span id={labelId}>Сцены на проверку</span>
-    </div>
+    <>
+      <div className="scene-switch">
+        <button
+          type="button"
+          className={on ? "sw sw-on" : "sw"}
+          role="switch"
+          aria-checked={on}
+          aria-labelledby={labelId}
+          aria-describedby={waits !== null ? whyId : undefined}
+          disabled={waits !== null}
+          onClick={onToggle}
+        />
+        <span id={labelId}>Сцены на проверку</span>
+      </div>
+      {waits !== null && (
+        <p id={whyId} className="field-hint scene-why scene-switch-why">
+          {waits}
+        </p>
+      )}
+    </>
   );
 }
 

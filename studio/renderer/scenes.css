@@ -110,6 +110,11 @@
   line-height: 1.35;
 }
 
+/* CS.7 M3: why the switch waits, tied to it rather than to the button below */
+.scene-switch-why {
+  margin-top: -4px;
+}
+
 /* CS.7 M2: «Цену не узнать: … · Повторить» under a paid control — CS.3's .cat-cost-error line, on its own row */
 .price-failed {
   display: flex;

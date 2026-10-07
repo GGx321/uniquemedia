@@ -30,7 +30,7 @@ import {
 } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, Why } from "./scenePaid";
 import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
-import { composeTitle } from "./sceneText";
+import { composeTitle, SWITCH_WAITS } from "./sceneText";
 import { SEEDREAM_FALLBACK_IMAGE_MODEL, useMounted } from "./shared";
 import { usePaidAction } from "./usePaidAction";
 
@@ -280,8 +280,13 @@ export function GenerateCard({
   });
   useEffect(() => onComposePrice(review ? compose.estimate : null), [review, compose.estimate, onComposePrice]);
 
+  // CS.7 M3: off while a write of the set runs (sent, tracked or announced) would hide the job and its «Отменить» — the column shows the set only with
+  // review on — so the switch waits for its end, saying why. Turning review on is never held.
+  const switchWaits = review && (compose.sending || scenesJob !== null || (openSet !== null && openSet.write !== null)) ? SWITCH_WAITS : null;
+
   /** Off at fewer than five photos: the count goes to five (a run has no empty set). */
   function toggleReview(): void {
+    if (switchWaits !== null) return;
     if (review && form.count < COUNT_MIN) onFormChange({ ...form, count: COUNT_MIN });
     onReviewChange(!review);
   }
@@ -579,7 +584,7 @@ export function GenerateCard({
             <span aria-live="polite">{current ? (review ? about(current.estimate.expectedMicros) : `≈ ${formatUsd(current.estimate.expectedMicros)}`) : "—"}</span>
           </div>
           {review && form.count > 0 && current && <div className="mono faint scene-total-sub">{`${ceiling(current.estimate.worstMicros)} без правок`}</div>}
-          <ReviewSwitch on={review} onToggle={toggleReview} labelId={`${ids}-sw`} />
+          <ReviewSwitch on={review} onToggle={toggleReview} labelId={`${ids}-sw`} waits={switchWaits} />
           {review ? (
             <StackButton
               buttonRef={goRef}
@@ -634,6 +639,7 @@ export function GenerateCard({
           paidInFlight={paidInFlight}
           onPaidInFlightChange={onPaidInFlightChange}
           onToggleReview={toggleReview}
+          switchWaits={switchWaits}
           onOpenSheet={openSheet}
           myCategories={customs === null ? null : customs.length}
           onRecompose={() => setRecomposeSet(openSet)}

@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import type { EngineError } from "../../shared/engine";
 import { callsOf, describeElement, flush, runAll } from "../testing";
 import { MIA, PARIS } from "./photos/categoryScreenKit";
-import { card, column, goButton, isDisabled, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
+import { card, column, describedText, goButton, isDisabled, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.7 M2: a free price that could not be had leaves no paid button dead and silent (README decision 16: paid but unavailable — the reason is always
 // shown). Each paid button of the review — «Составить», «Дописать», ⟳ «Заменить», «Написать N сцен», «Повторить», «Другие сцены для N» — says why under
@@ -12,15 +12,6 @@ import { card, column, goButton, isDisabled, nb, openReview, sceneCard } from ".
 
 const REFUSED: EngineError = { code: "PRICE_UNAVAILABLE", detail: "no price for the text model" };
 const WHY = "Цену не узнать: не удалось узнать цену модели, поэтому запрос не отправлен.";
-
-/** The text of everything an element is described by. */
-function describedText(el: HTMLElement): string {
-  return (el.getAttribute("aria-describedby") ?? "")
-    .split(" ")
-    .filter((id) => id !== "")
-    .map((id) => document.getElementById(id)?.textContent ?? "")
-    .join(" | ");
-}
 
 /** «Повторить» of the price line inside `root`: focused as a keyboard owner would, then pressed. */
 async function retryPrice(root: HTMLElement): Promise<void> {

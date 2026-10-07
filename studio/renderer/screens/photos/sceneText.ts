@@ -413,7 +413,8 @@ export function runDoneText(photos: number): string {
 export function offNoteSet(set: SceneSetView): string {
   const tally = tallyScenes(set.scenes);
   const touched = tally.removed > 0 || tally.own > 0 || set.scenes.some((s: SceneView) => s.edited);
-  return `Открытый набор — ${countOf(tally.active, SCENE_NOM)}${touched ? " с вашими правками" : ""} — сохранён. Включите проверку, чтобы вернуться к нему.`;
+  // CS.7 M3: a write of the set running (another window's: this one keeps the switch on meanwhile) — the set is being written, not saved yet.
+  return `Открытый набор — ${countOf(tally.active, SCENE_NOM)}${touched ? " с вашими правками" : ""} — ${set.write !== null ? "пишется" : "сохранён"}. Включите проверку, чтобы вернуться к нему.`;
 }
 
 // ---------- the task line ----------
@@ -485,7 +486,9 @@ export function recomposeAfter(count: number): string {
 
 // ---------- fixed lines ----------
 
-export const CANCEL_HINT = "Отмена посреди запроса остановит платные действия до сверки расходов.";
+/** CS.7 M3: why «Сцены на проверку» cannot be turned off now — off would hide the running write and its «Отменить». */
+export const SWITCH_WAITS = "Пока модель пишет сцены, проверку не выключить — дождитесь конца или отмените запись.";
+export const CANCEL_HINT ="Отмена посреди запроса остановит платные действия до сверки расходов.";
 export const CANCELLING_NOTE = "отмена отправлена · ждём конца запроса";
 export const SCENES_CHANGED_EDIT = "Набор изменился в другом окне — ваша правка не сохранена. Показана свежая версия; повторите правку.";
 export const SCENES_CHANGED_APPROVE = "Пока считалась цена, набор изменился — проверьте сцены и нажмите снова.";

@@ -268,6 +268,12 @@ describe("column notices", () => {
     expect(offNoteSet(sceneSet([...written(19), scene(20, { removed: true })]))).toBe(nb("Открытый набор — 19 сцен с вашими правками — сохранён. Включите проверку, чтобы вернуться к нему."));
     expect(offNoteSet(sceneSet(written(20)))).toBe(nb("Открытый набор — 20 сцен — сохранён. Включите проверку, чтобы вернуться к нему."));
   });
+
+  test("review off while a write of the set runs (another window's): the set is being written, not saved (CS.7 M3)", () => {
+    expect(offNoteSet(sceneSet(written(20), { status: "writing", write: { kind: "compose", count: 20 } }))).toBe(
+      nb("Открытый набор — 20 сцен — пишется. Включите проверку, чтобы вернуться к нему."),
+    );
+  });
 });
 
 describe("the task line of a scenes job", () => {
