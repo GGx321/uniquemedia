@@ -87,7 +87,7 @@ describe("step 1 of the price column: «Сцены»", () => {
   });
 
   test("«Дописываем…» after earlier spending keeps the spend on step 1; a fresh compose that spent nothing shows none", () => {
-    const writing = { status: "writing", write: { kind: "unwritten" } } as const;
+    const writing: Partial<SceneSetView> = { status: "writing", write: { kind: "unwritten", count: 35 } };
     expect(stepScenes(stopped({ ...writing, openReserveMicros: 0 }))).toEqual({ label: "Сцены", value: "пишутся", done: false, spent: "потрачено $0.049" });
     expect(stepScenes(stopped({ ...writing }))).toEqual({ label: "Сцены", value: "пишутся", done: false, spent: "потрачено до $0.049" });
     expect(stepScenes(stopped({ ...writing, spentMicros: 0, openReserveMicros: 0 })).spent).toBeNull();
