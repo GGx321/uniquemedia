@@ -126,8 +126,10 @@
   line-height: 1.35;
 }
 
+/* Under all of a notice's buttons, not between them («Повторить» sits first in its row) */
 .notice-actions .price-failed {
   flex-basis: 100%;
+  order: 1;
 }
 
 .scene-idea-form .price-failed {
