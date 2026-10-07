@@ -997,7 +997,7 @@ State machine (derived on every view; the file stores only the write record `{k,
 | set written, no reserve yet | nothing | `stopped`/`closed`, both attempts left, spent 0 |
 | between a reserve and its answer | open reserve | `stopped`/`closed`, spent and open reserve = $0.0375, ONE attempt left; paid calls wait for the reconcile |
 | after the reconcile closed it | estimated settle | same spend, no longer open; «Дописать» sends ONE attempt, never a fresh pair, never the reserved id |
-| answer settled, chunk not yet saved | settle | `stopped`/`closed`, that attempt counted, scenes still waiting (the raw answer is kept by the client) |
+| answer settled, chunk not yet saved | settle | `stopped`/`closed`, that attempt counted, scenes still waiting (an accepted answer is kept nowhere: `raw/` holds only unusable paid responses; the save is retried once first) |
 | chunk 1 saved, chunk 2 not asked | settle | `stopped`/`closed`, chunk 2's scenes pending |
 | all chunks saved, write not cleared | settles | `ready` (nothing left to write) |
 | job stopped by a 429/5xx | free settle | `stopped`/`rate-limited` or `provider-error`, both attempts kept |
@@ -1015,7 +1015,7 @@ costs nothing. The writer prompt floor pin holds for every chunk a set can send 
 Deviations, and why: (1) **the job's cap is the estimate's worst case** (`min(accepted, estimate)`; `accepted ≥ estimate` is checked, so they are equal for a window that sends the price it
 showed) rather than the accepted value itself, so an inflated acceptance cannot raise a cap. (2) **No per-scene «interrupted write» markers**: in CS.4a only compose and «Дописать»
 exist, and an interrupted one reads as the set `stopped`; the per-scene markers (`rewriteInterrupted`, `interruptedIdeas`, `dismissInterrupted`) arrive with CS.4b's rewrite and idea writes.
-(3) **A paid answer whose chunk could not be written to disk is lost to the set** (the client keeps the raw body in `raw/`); the attempt stays counted. (4) `scenes.get` answers the open
+(3) **A paid answer whose chunk could not be written to disk, even after one retry, is lost to the set**: the client keeps a raw body in `raw/` only for an unusable paid response (`UNUSABLE_PAID_RESPONSE`), NOT for an accepted answer, so nothing else holds it; the attempt stays counted. (4) `scenes.get` answers the open
 set, else the newest used one; it reads every set file of the avatar (a prune of used sets is a backlog item). (5) The set is live (edits refused `IN_FLIGHT`) from the claim of its
 write, while its prices are still being fetched, so no edit can land between the checks and the first call. (6) Own scenes (CS.4b) will join `SceneRecord` as a second variant.
 
@@ -1025,6 +1025,28 @@ the engine commands (71 of 72: INTERNAL «not implemented yet»), the deadlines 
 (`sceneSets/floor.test.ts`: a chunk bound of 30 turns «a chunk holds at most 25» red) and the renderer store tests; the parity golden was generated from agreeing engines.
 
 Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 6991 + 6570 + 5977 = 19538 tests, 0 failing (after one fix: the new test files call `useNativeGlobals()`).
+
+**CS.4a fix round 1** (review: not mergeable; every finding reproduced, each fix has a test seen red first for the intended reason).
+
+- **A refused `scenes.write` removed another job's live mark (HIGH).** `write` now refuses `IN_FLIGHT` at its very start when the set is live, and its `finally` deletes only the live
+  entry it made itself (`mine`); `scenes.cancel` goes through `jobs.runningJobOfSet`. Two concurrent writes start exactly one job; the other is `IN_FLIGHT` with nothing written.
+- **An accepted paid chunk could be lost to the store (MEDIUM, money).** The writer's sentence has no upper bound (the run's journal accepts `z.string().min(1)`), while the stored and
+  shown text was capped at 600: a 676-char accepted sentence failed the whole save. The stored/view `SceneText` is now bounded below only; the 600-char bound (`SCENE_TEXT_MAX`) is the
+  OWNER's edit alone (`textProblem` answers `too-long`). The save of an accepted chunk is retried once from the sentences in memory on a non-store error (a refusal of the store itself,
+  `SceneSetError`, is deterministic and is not retried). Row 4 of the crash table and deviation (3) are corrected above: `raw/` holds only unusable paid responses, never an accepted answer.
+- **The start of a write is announced (MEDIUM).** compose: the first `scenes.changed` carries the full `write.count` (it was 0 until the launch). «Дописать»: `scenes.changed` goes out
+  right after the write is recorded (status `writing`, the next revision), not at the first chunk, which can be minutes away. The mock already did both.
+- **Renderer store tests pinned (MEDIUM).** The tracking test runs on a bare scripted bridge, so only `trackScenesJob` can give the total; the job-first-heard-at-its-end test feeds only
+  `job.done`, so only the `written + unwritten` sum can give it. Seen red under both mutations (`trackScenesJob` a no-op; the sum replaced by 0).
+- **LOW, same files.** `avatar delete` now announces `scenes.changed removed` for each of the avatar's sets before `avatar.removed` (engine: the sets are listed at the prepare, announced
+  at a `trashed` finish; an avatar pruned after its folder vanished is announced by `avatar.removed` alone; the mock does the same). The mock takes the text model from the set (kept at
+  its creation), as the engine does. `lastCompose` is the outcome stored when the last write job ended (`SceneSetFile.lastOutcome`, optional, so older files stay valid); a set no job
+  ended on (seeded, or its process died) still reads it from the scenes as they are now, so «Готово 35 из 60» no longer changes when the owner removes scenes. The store's JSDoc blocks sit
+  on their own methods again.
+
+Verification of the round: `tsc` clean for `studio/` and `studio/shared/`; the scene sets' suites, the mock, the store and the parity scenarios for scenes all green. A local full run
+(this machine lacks the resvg wasm, fonts, native decoders and caption renderer) had 6929 + 6417 + 6680 passing and no failure in any scenes test; the red ones are the text, decode, media and
+caption-preview files only. CI is the full run of record.
 
 ### CS.4b — Scene sets, writes (test-engineer)
 
