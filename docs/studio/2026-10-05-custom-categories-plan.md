@@ -1429,6 +1429,68 @@ Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio su
 Not done on purpose (backlog): `#regenerateCategory`'s pre-payment `get` is tolerant, so a transient EIO there reads as NOT_FOUND; `#bookCategorySpend` and the
 `landed` check treat an OS failure as «missing».
 
+### CS.8a built — angles and body position from descriptions (engine, contract, mock)
+
+The owner's paid canary (2026-10-07, «Лежит на животе в домашних шортиках и топике. Вид сзади») came back as front and three-quarter photos: the pool kept places,
+activities and outfits only, and the pose was the planner's, drawn from the run's «Ракурсы» toggles (both off by default). Decision A: the description's angles
+and body position are read once, by the pool call, and kept with the category. The UI half (CS.8b, with CS.8d's design addition) is not part of this task.
+
+**Contract (protocol v5, additive; an old record or plan is byte-identical and still parses).** `ScenePose` moved from `scenes.ts` to `categories.ts` (the same
+export through the index; `scenes.ts` imports it, because `categories.ts` could not import `scenes.ts`). New `CategoryPoses`: 1..4 distinct poses of that
+vocabulary. `CategoryPool.poses?` and `CategorySnapshot.poses?` carry it; absent means «no preference» and is what every record written before had.
+`categories.update` gained `poses: CategoryPoses | null` as a fourth optional field of the flat payload (the others are `name`, `removeLocations`,
+`removeOutfits`), not an `{ op: "poses" }` — the command has no `op`. `null` clears, a list replaces, it never refuses (any list is storable), so there is no new
+`categoryReason`. It goes in one write with a rename or a removal, and a refused removal leaves the poses as they were. The engine's `Pool` and `PoolSchema` carry
+`poses?` too (`poolOf` copies it). A regeneration replaces the whole pool, so it re-derives the poses (a description with no angle clears them).
+
+**Pool call.** The strict schema requires a new key `poses` (an array of the four values): an empty list is «the description says nothing about the angle», and
+`readPoolAnswer` leaves the pool without the key then. It keeps the valid, distinct values in the model's order, drops the rest, and never refuses over them.
+The prompt gained one line under the JSON keys and one rule: «`"poses"`: the camera angles the description asks for, 0 to 4 of: front, three-quarter, profile,
+back (back is seen from behind). An empty list when it says nothing about the angle.» and «If the description gives a body position (lying on her stomach, sitting
+on the floor), start EVERY activity with it, e.g. "lying on her stomach, texting"; the 35 characters include the position, so keep the rest short. Places and
+outfits suit it.» The example answer shows `"poses":[]`.
+
+- **The 35-character bound was NOT touched.** «lying on her stomach, » is 22 characters, so 13 are left for the activity: «lying on her stomach, texting» is 29,
+  «on her stomach, reading a book» 30, but «lying on her stomach, reading a magazine» is 40 and the reader drops it (pinned in `poolGen.test.ts`). A model that
+  ignores the budget loses activities, and a place with fewer than two left is dropped; that is the risk to watch in the next paid canary.
+- **Floor pin (`poolGen.floor.test.ts`):** the worst prompt (500 CJK characters, the worst feedback) is 6,993 tokens against the 10,000 ceiling: 3,007 of
+  headroom (was 6,442 and 3,558); the pin still requires 3,000. The additions cost 551 tokens, and the wording was trimmed to stay inside the pin rather than the
+  pin relaxed. The prompt has 7 tokens of room above the pin: the next line needs the prompt trimmed or the ceiling re-priced. Output limits and the call's price
+  are unchanged ($0.0225 an attempt, $0.045 for two).
+
+**Planner.** A slot of a category whose pool has `poses` draws its pose uniformly from them on the category's pose stream, whatever the run's toggles say
+(`poses.ts` `drawFromPoses`). The pairing rule is unchanged: a selfie or a mirror shot faces the camera, so a slot that draws back or profile on such a shot takes
+another shot of the category's deck that nobody holds a phone for (friend, candid, photographer), drawn from the same stream; a deck with none falls back to the
+photographer, whatever the category's style. A front or three-quarter slot keeps the deck's shot. Without `poses` the code path is the old one: the five
+built-ins' fixtures (`planner-main-3a9cd498.json`) are green unchanged, and a hash taken from main before the change pins a custom pool without `poses` (every seed,
+count and toggle). The redraw of «Другая сцена» follows the same rule (`redrawSlot`), so a scene of such a category keeps its angle and never leaves a phone facing
+away. The writer's pose-contradiction rule is untouched.
+
+**Idea writes (`scenes.write` target `idea`).** The shot the owner left on «Авто» and the pose are now the model's, read from the idea («вид сзади» is a view from
+behind, whatever the run's toggles say): the slot shows `"choose"` for what is left to the model, the model returns `shot` and `pose` per scene (`null` for what the
+slot gave), and a new schema `scene_ideas` (`IDEA_JSON_SCHEMA`; shot is any but the mirror) carries them. `readIdeaAnswer` holds the pick to the vocabulary and the
+pairing rule and reads the sentence against the angle that was picked (two-handed, pose contradiction, the words); a missing, unknown or impossible pick (a selfie
+from behind, the mirror on «Авто») is a new `bad-angle` refusal that names the slots, which the next attempt is told — nothing is repaired or invented, and two
+such answers resolve the write with no scene added. A shot the owner chose stays; a rewrite of an own scene keeps its shot and pose and asks for neither. The
+accepted angles ride from the reader through `runWriterPhase` (optional `jsonSchema` and `read`, absent for a run) to `withReviewWriteAccepted`, which prefers
+them to the draw the write was recorded with (a write recorded before CS.8a and resumed after it keeps the draw). The idea prompt gained one rule about «choose»
+(friend, selfie, candid or photographer; front, three-quarter, profile or back; «back» for a view from behind; a selfie and a mirror shot face the camera; never the mirror on «Авто»; null for what the slot
+gives). Floor pin for the idea call (`ideaWriter.test.ts`): five 500-character ideas, the worst refusal, 12,832 tokens against 14,000 (1,168 of headroom, was
+11,757 and 2,243; the pin requires 200).
+
+**Mock.** `mockCategoryPool` reads the angles and the body position from the description (сзади / со спины / back view / from behind → back, профиль / profile →
+profile, спереди / анфас → front, в три четверти → three-quarter; на животе → «lying on her stomach, » + the activity's first word, within the 35 characters);
+the canary's description gives `["back"]` and activities that all open with «lying on her stomach». The mock's compose, redraw and idea writes follow the engine's
+rules, `categories.update` takes `poses`, and `studio/scripts/mockOpenRouter.ts` answers the pool call (the same description, `["back"]`) and the idea schema. Parity:
+one new free-command scenario (set, replace, clear, with a rename, a refused removal, the contract's refusals, an unknown category); the golden only grew.
+
+Verification: `tsc` clean for `studio/` and `studio/shared/`; the full Studio suite in three shards, 6996 + 6799 + 6821 = 20616 passing, 34 skipped, 0 failing (this
+machine; CI is the run of record). Two existing tests changed on purpose, both because the behaviour they pinned is the one the decision replaced: an idea write's
+pose no longer follows the set's «Ракурсы» (the model picks it), and the fake model in the idea tests now answers the new schema.
+
+Not done on purpose: the UI (the sheet's angles, the create preview, the «Ракурсы» hint, the idea form) is CS.8b/CS.8d; no paid call was made; the canary is repeated
+by the owner.
+
 Phase 1 = CS.0 (category states), CS.1, CS.2, CS.3. Phase 2 = CS.0 (review states), CS.4a, CS.4b,
 CS.5, CS.6, CS.7. Rough size: phase 1 ≈ one L and two M tasks; phase 2 ≈ two L and three M tasks
 plus the review.
