@@ -86,6 +86,17 @@ describe("compose", () => {
     expect(queue.textContent).toContain("0 / 20");
   });
 
+  test("two clicks before the screen draws again (one batch) still send one compose", async () => {
+    const { engine } = await openReview();
+    const button = await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") });
+    act(() => {
+      button.click();
+      button.click();
+    });
+    await flush();
+    expect(callsOf(engine, "scenes.compose")).toHaveLength(1);
+  });
+
   test("PRICE_CHANGED: nothing is sent again until a new click accepts the new price", async () => {
     const { engine } = await openReview();
     const button = await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") });
