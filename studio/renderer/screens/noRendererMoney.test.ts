@@ -39,7 +39,10 @@ const REMAINING: Record<string, string[]> = {
 };
 
 async function sources(): Promise<{ file: string; text: string }[]> {
-  const files = Array.from(new Bun.Glob("**/*.{ts,tsx}").scanSync({ cwd: SCREENS })).filter((f) => !/\.test\.tsx?$/.test(f));
+  // The glob answers with the platform's separator; the list names files with "/", so a Windows path is normalised before it is compared.
+  const files = Array.from(new Bun.Glob("**/*.{ts,tsx}").scanSync({ cwd: SCREENS }))
+    .map((f) => f.replaceAll("\\", "/"))
+    .filter((f) => !/\.test\.tsx?$/.test(f));
   return Promise.all(files.sort().map(async (file) => ({ file, text: await Bun.file(join(SCREENS, file)).text() })));
 }
 
