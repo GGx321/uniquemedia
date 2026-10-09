@@ -19,6 +19,8 @@ export interface ViewContext {
   liveK?: number | null;
   /** The set's pre-issued run's folder exists: the set is used. */
   used: boolean;
+  /** Stage 4: the unfinished launch the set belongs to (the unlinked rule already applied by the caller); absent for the owner's own set. */
+  launchId?: string | undefined;
 }
 
 /**
@@ -157,5 +159,6 @@ export function buildSceneSetView(set: StoredSceneSet, ctx: ViewContext): SceneS
     }),
     scenes,
     ...(ideas.length === 0 ? {} : { interruptedIdeas: ideas }),
+    ...(ctx.launchId === undefined ? {} : { launchId: ctx.launchId }),
   };
 }

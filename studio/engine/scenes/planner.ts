@@ -1,4 +1,4 @@
-import { splitCount } from "../../shared/engine";
+import { orderCategories, splitCount, type CategoryRef } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
 import { POOLS, type Place, type Pool } from "./pools";
@@ -41,6 +41,23 @@ export interface PlanInput {
    *  are never gated here; a selfie or mirror shot always draws one of them,
    *  whatever this says (poses.ts's drawPose). */
   poses?: PoseAllowance;
+  /**
+   * S4.5a, internal (a batch launch's compose): the exact number of scenes for each category instead of the even split. The counts add up to `count`, each
+   * category once, every one of them among `categories`; a count of 0 is allowed. The slots keep the canonical category order whatever order this lists.
+   */
+  split?: readonly { ref: CategoryRef; count: number }[];
+}
+
+/** `split` checked against the request and put in the contract's category order. */
+export function explicitSplit(split: readonly { ref: CategoryRef; count: number }[], categories: readonly CategoryRef[], count: number): { ref: CategoryRef; count: number }[] {
+  const refs = split.map((entry) => entry.ref);
+  if (new Set(refs).size !== refs.length) throw new RangeError("a split names each category once");
+  const asked = new Set<CategoryRef>(categories);
+  if (!refs.every((ref) => asked.has(ref))) throw new RangeError("a split names only categories the plan was asked for");
+  if (!split.every((entry) => Number.isInteger(entry.count) && entry.count >= 0)) throw new RangeError("a split's counts are non-negative integers");
+  if (split.reduce((sum, entry) => sum + entry.count, 0) !== count) throw new RangeError(`a split's counts must add up to ${count}`);
+  const countOf = new Map(split.map((entry) => [entry.ref, entry.count] as const));
+  return orderCategories(refs).map((ref) => ({ ref, count: countOf.get(ref) ?? 0 }));
 }
 
 function pairKey(location: string, outfit: string): string {
@@ -204,7 +221,8 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
   const { seed, count } = input;
   if (!Number.isInteger(count) || count < 0) throw new RangeError(`count must be a non-negative integer, got ${count}`);
   // The order and the split are the contract's own (shared splitCount), the one rule the renderer's chips read too.
-  const split = splitCount(count, input.categories.map(categoryRefOf));
+  const refs = input.categories.map(categoryRefOf);
+  const split = input.split === undefined ? splitCount(count, refs) : explicitSplit(input.split, refs, count);
   if (count > 0 && split.length === 0) throw new RangeError("at least one category is required when count > 0");
   if (count === 0) return ScenePlanSchema.parse({ version: 1, seed, slots: [] });
 

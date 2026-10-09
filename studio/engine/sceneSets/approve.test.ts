@@ -54,7 +54,7 @@ describe("commitApproval", () => {
   test("holds a change of the set until the run folder exists, and that change then meets a used set", async () => {
     const { library, avatarId } = await seeded();
     const held = gated(library);
-    const deps = { library: held.library, isLive: () => false };
+    const deps = { library: held.library, isLive: () => false, launchOf: () => undefined };
     const approved = await loadApprovable(deps, "set-aaaa-0001", 1);
 
     const commit = commitApproval(deps, { ...approved, revision: 1 }, (current) => {

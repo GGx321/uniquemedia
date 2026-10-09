@@ -25,6 +25,10 @@ export interface ComposeInput {
   /** The avatar's recent (location, outfit) pairs the planner steers away from. */
   recentPairs: readonly { location: string; outfit: string }[];
   textModel: string;
+  /** S4.5a, internal: the exact scenes per category a batch launch asked for, in place of the even split. */
+  split?: readonly { ref: CategoryRef; count: number }[];
+  /** S4.5a, internal: the batch launch the set belongs to; absent for the owner's own set. */
+  launchId?: string;
 }
 
 /** A set's planner seed: fixed by its id (as a run's is by its own), so the plan is reproducible from the set alone. */
@@ -44,6 +48,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
             categories: input.categories.map(plannerCategoryOf),
             excludePairs: input.recentPairs.map(({ location, outfit }) => ({ location, outfit })),
             poses: input.poses,
+            ...(input.split === undefined ? {} : { split: input.split }),
           },
           input.pools,
         ).slots;
@@ -55,6 +60,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
     // Omitted, not empty, for a built-in-only set: the same rule as a built-in run's plan.json.
     ...(input.snapshots.length === 0 ? {} : { categories: [...input.snapshots] }),
     models: { text: input.textModel },
+    ...(input.launchId === undefined ? {} : { launchId: input.launchId }),
     scenes: slots.map((slot) => ({ sceneId: slot.slotIndex, origin: "planned" as const, slot, text: null, edited: false, removed: false })),
     chunks: chunkSlots(slots).map((chunk, i) => ({ chunk: i + 1, sceneIds: chunk.map((slot) => slot.slotIndex), attemptIds: writerAttemptIds(input.sceneSetId, i + 1) })),
     write: slots.length === 0 ? null : { k: 1, kind: "compose", jobId: input.jobId },

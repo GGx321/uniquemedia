@@ -17,6 +17,14 @@ export interface ApprovalDeps {
   library: Library;
   /** Whether a job of the set runs now (or is about to). */
   isLive: (sceneSetId: string) => boolean;
+  /** S4.5a: the unfinished launch a set belongs to, if any. The owner's «Отрисовать» on a launch's set is refused (`launch-set`): the launch draws it in slices. */
+  launchOf: (set: StoredSceneSet) => string | undefined;
+}
+
+/** The refusal of an owner's approval of a set an unfinished launch holds, or null. */
+function launchRefusal(deps: ApprovalDeps, set: StoredSceneSet): EngineFailure | null {
+  const launchId = deps.launchOf(set);
+  return launchId === undefined ? null : sceneRefusal(`scene set ${set.sceneSetId} is part of launch ${launchId}; the launch draws it`, "launch-set");
 }
 
 export interface Approvable {
@@ -36,6 +44,8 @@ export async function findSceneSet(library: Library, sceneSetId: string): Promis
 /** The set at the revision the window approved, or the free refusal that says why not. */
 export async function loadApprovable(deps: ApprovalDeps, sceneSetId: string, revision: number): Promise<Approvable> {
   const found = await findSceneSet(deps.library, sceneSetId);
+  const held = launchRefusal(deps, found.set);
+  if (held !== null) throw held;
   const refusal = approvalRefusal(found.set, { revision, live: deps.isLive(sceneSetId), used: await deps.library.runFolderExists(found.set.runId) });
   if (refusal !== null) throw new EngineFailure(refusal);
   return found;
@@ -52,6 +62,8 @@ export async function commitApproval(deps: ApprovalDeps, approved: Approvable & 
   return withSceneSetLock(sceneSetId, async () => {
     const current = await library.sceneSets.get(avatarId, sceneSetId);
     if (current === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `scene set ${sceneSetId} is gone: it was discarded while the run was being prepared` });
+    const held = launchRefusal(deps, current);
+    if (held !== null) throw held;
     const refusal = approvalRefusal(current, { revision, live: deps.isLive(sceneSetId), used: await library.runFolderExists(current.runId) });
     if (refusal !== null) throw new EngineFailure(refusal);
     const plan = build(current);
