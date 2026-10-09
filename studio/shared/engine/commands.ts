@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AvatarName, AvatarTraits } from "./avatar";
+import { AutopilotContinueResult, AutopilotEstimateResult, AutopilotGetResult, AutopilotLaunchResult, AutopilotListResult, LaunchDraft, LaunchDraftInput, LaunchEntryId, LaunchMicros, LaunchView } from "./autopilot";
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategorySummary, CustomCategoryId, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
 import { nonEmpty, ProtocolVersion } from "./envelope";
@@ -7,9 +8,9 @@ import { EngineError } from "./errors";
 import { EventMessage } from "./events";
 import { ImageModelCatalogue, ImageQuality } from "./imageModels";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
-import { AbsolutePath, ApiKey, Count, Id, Micros, ModelId, MusicKey } from "./primitives";
+import { AbsolutePath, ApiKey, Count, Id, LaunchId, Micros, ModelId, MusicKey } from "./primitives";
 import { COMPOSE_NEEDS_CATEGORY, COMPOSE_REQUEST_FIELDS, ComposeRequest, composeNeedsCategory, SceneEditOp, SceneWriteTarget, ScenesEditResult, ScenesGetResult } from "./scenes";
-import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult } from "./media";
+import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult, MediaSummary } from "./media";
 import { OwnStickerBytes, OwnStickerBytesPayload, StickerBytes, StickerBytesPayload } from "./stickerBytes";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
@@ -68,6 +69,13 @@ export type ExportPathPicked = z.infer<typeof ExportPathPicked>;
 export const DisplayPath = z.string().min(1).max(4096);
 
 const Empty = z.strictObject({});
+
+/** Whether the owner's «Опубликовано» marks could be read (Stage 4): `ok`, or `unknown` for a torn or unreadable `published.jsonl`. */
+export const PublishedMarks = z.enum(["ok", "unknown"]);
+export type PublishedMarks = z.infer<typeof PublishedMarks>;
+
+/** A video shows at most 20 clips, each a collage of at most 4 photos: far past it, and it bounds a forged result. */
+const MAX_REJECTED_PER_VIDEO = 100;
 
 /** A window of a track is at most a day: far past any track, and it bounds the work a request can ask for. */
 const MAX_PEAK_WINDOW_MS = 24 * 3600 * 1000;
@@ -170,6 +178,11 @@ export const Snapshot = z.strictObject({
   notices: z
     .array(EngineNotice)
     .refine((notices) => new Set(notices.map((n) => n.noticeId)).size === notices.length, "notices must not repeat"),
+  /**
+   * Stage 4 (additive): the library's launch that is not finished (running, paused, pausing or stopping), so a window opened later sees it; null or absent
+   * when there is none. A finished launch is read with `autopilot.get`.
+   */
+  autopilot: LaunchView.nullable().optional(),
 });
 
 /**
@@ -416,7 +429,13 @@ const ENGINE_SPECS = [
   // (one shared hash budget per listing, so it stays a `stat` for almost every record). A record that cannot be read or
   // checked never fails the list: an unreadable one is left out, one whose look failed or did not answer reads `unchecked` (3e.2,
   // K15). NOT_FOUND for an unknown avatar.
-  defineCommand("videos.list", z.strictObject({ avatarId: Id }), z.strictObject({ videos: z.array(VideoSummary).max(MAX_LISTED_VIDEOS) })),
+  // Stage 4 (additive): `published` says whether the owner's «Опубликовано» marks (`published.jsonl`) could be read: `unknown` when the log is torn or unreadable, and
+  // then every video is shown unmarked, with a notice. Absent from a producer that has no marks (before Stage 4), read as `ok` with none.
+  defineCommand(
+    "videos.list",
+    z.strictObject({ avatarId: Id }),
+    z.strictObject({ videos: z.array(VideoSummary).max(MAX_LISTED_VIDEOS), published: PublishedMarks.optional() }),
+  ),
   // Deletes a video by the OWNER'S INTENT, which the request carries (Studio never guesses it from a state it just looked at):
   //   mode "video"  («Удалить»): the file (when its FULL check finds it `present`), then the record; the photos are freed.
   //                 The export folder must be usable: an unavailable one answers EXPORT_UNAVAILABLE and NOTHING is deleted
@@ -427,10 +446,13 @@ const ENGINE_SPECS = [
   // Answers what it did: `fileDeleted`, and the file's `fileState` as it was found before anything was removed.
   // NOT_FOUND for an unknown video; LIBRARY_TOO_NEW for a record from a newer Studio; INTERNAL (detail names no path)
   // for a record that cannot be read or a disk that fails.
+  // Stage 4 (additive): `rejectPhotos: true` («Удалить видео и отклонить фото», on every video, autopilot or not) first marks every scene photo of the record rejected
+  // (`rejected.jsonl`), then deletes as above, so a crash between the two leaves a video with rejected photos (harmless; delete again) and never free photos the
+  // next launch could take. A delete refused by EXPORT_UNAVAILABLE leaves the photos rejected and the video in place. The result then lists `rejectedPhotoIds`.
   defineCommand(
     "videos.delete",
-    z.strictObject({ videoId: Id, mode: z.enum(["video", "record"]) }),
-    z.strictObject({ videoId: Id, fileDeleted: z.boolean(), fileState: FileState }),
+    z.strictObject({ videoId: Id, mode: z.enum(["video", "record"]), rejectPhotos: z.literal(true).optional() }),
+    z.strictObject({ videoId: Id, fileDeleted: z.boolean(), fileState: FileState, rejectedPhotoIds: z.array(Id).max(MAX_REJECTED_PER_VIDEO).optional() }),
   ),
   // One video by id (3e.2), with its file's state looked at now: whatever its avatar and however many videos it has (a listing
   // stops at MAX_LISTED_VIDEOS). Main's «Открыть в папке» reads the record's place through it. NOT_FOUND for an unknown video;
@@ -638,6 +660,43 @@ const ENGINE_SPECS = [
   // status as the check found it, and `export.status` follows when it CHANGED, so a window that asks on focus shows an
   // unplugged drive, and a plugged one, without a render attempt.
   defineCommand("export.check", Empty, z.strictObject({ exportStatus: ExportStatus })),
+  // ---- Stage 4 «Автопилот» (S4.1, plan §9 and §18). Until the orchestrator lands (S4.6) the engine answers every autopilot command INTERNAL «… is not implemented yet»
+  // (a payload that breaks the contract is still VALIDATION). Nothing here spends before `autopilot.start` is accepted with a worst case at least the engine's own.
+  // `autopilot.estimate`: free. The plan of the draft with the engine's own estimate, the month's room and what the card shows; draws the `planSeed` when the draft has none.
+  //   LIBRARY_UNAVAILABLE without a library; NOT_FOUND for an avatar that is not saved and active. What blocks a start is listed in `blockers`, not refused here.
+  // `autopilot.start`: the click «Запустить: N видео · до $W» accepts the launch's worst case. PRICE_CHANGED when the engine's recomputed W′ is above `acceptedWorstMicros`
+  //   (free: the screen asks again and needs a new click), BUDGET_EXCEEDED for the month's `short`, IN_FLIGHT while a launch is unfinished, VALIDATION (`launchReason`:
+  //   open-set, too-many-photos, usage-unknown, launch-unreadable, nothing-enabled), AUTH_INVALID, RECONCILE_REQUIRED and the halt codes, EXPORT_UNAVAILABLE — all before
+  //   anything is written or spent. The launch then spends without further clicks, up to W′ and never above, until a restart.
+  // `autopilot.pause` / `autopilot.stop`: a soft stop, nothing is aborted: the requests in flight finish and nothing new starts. NOT_FOUND, VALIDATION for the wrong state.
+  // `autopilot.resume`: «Продолжить · до $R». The one click that also consents to paid work after a restart, so it carries the remaining worst case it accepts; PRICE_CHANGED
+  //   when the engine's R′ is above it, RECONCILE_REQUIRED / the halt codes / LEDGER_UNREADABLE while the ledger blocks paid work, AUTH_INVALID, VALIDATION when the launch
+  //   is in the wrong state or the hold's cause is still there, NOT_FOUND.
+  // `autopilot.continueAfterReview`: «Продолжить запуск: M фото» after the owner reviewed an avatar's scenes. SCENES_CHANGED when the revision moved; VALIDATION with
+  //   `sceneReason` `over-plan` (more active scenes than planned) or `not-awaiting`. The answer says whether the draw starts now or waits for «Продолжить» (a paused launch).
+  // `autopilot.list`: the launches, newest first (≤ 200), and the entries of `autopilot/` that cannot be read as a launch, by an opaque `entryId`.
+  // `autopilot.get`: one launch with its log (the newest ≤ 500 lines) and its videos. NOT_FOUND.
+  // `autopilot.removeUnreadable`: moves one unreadable entry to the library's quarantine, never deletes it. `entryId` is taken from `autopilot.list`; the engine finds the
+  //   file itself and never takes a name or a path. NOT_FOUND for no match, and for a file that reads fine now (it is never moved).
+  defineCommand("autopilot.estimate", z.strictObject({ draft: LaunchDraftInput }), AutopilotEstimateResult),
+  defineCommand("autopilot.start", z.strictObject({ draft: LaunchDraft, acceptedWorstMicros: LaunchMicros }), AutopilotLaunchResult),
+  defineCommand("autopilot.pause", z.strictObject({ launchId: LaunchId }), AutopilotLaunchResult),
+  defineCommand("autopilot.resume", z.strictObject({ launchId: LaunchId, acceptedRemainingMicros: LaunchMicros }), AutopilotLaunchResult),
+  defineCommand("autopilot.stop", z.strictObject({ launchId: LaunchId }), AutopilotLaunchResult),
+  defineCommand(
+    "autopilot.continueAfterReview",
+    z.strictObject({ launchId: LaunchId, avatarId: Id, sceneSetId: Id, revision: z.number().int().min(1) }),
+    AutopilotContinueResult,
+  ),
+  defineCommand("autopilot.list", Empty, AutopilotListResult),
+  defineCommand("autopilot.get", z.strictObject({ launchId: LaunchId }), AutopilotGetResult),
+  defineCommand("autopilot.removeUnreadable", z.strictObject({ entryId: LaunchEntryId }), Empty),
+  // `videos.setPublished`: the owner's «Опубликовано» mark on a video, an append-only log beside the records (the records are write-once). Studio deletes nothing on it.
+  // Answers the video as it now stands and `video.changed` follows. NOT_FOUND for an unknown video.
+  defineCommand("videos.setPublished", z.strictObject({ videoId: Id, published: z.boolean() }), z.strictObject({ video: VideoSummary })),
+  // `media.setForAutopilot`: «для автопилота» on an own track (an append-only log; free). NOT_FOUND for a media that is not an own track the library holds,
+  // MEDIA_UNSUPPORTED (`mediaReason` `format`) for a track that is not an m4a, which the render cannot read. Answers the record as it now stands.
+  defineCommand("media.setForAutopilot", z.strictObject({ mediaId: Id, on: z.boolean() }), z.strictObject({ media: MediaSummary })),
   // engine
   defineCommand("engine.snapshot", Empty, Snapshot),
   defineCommand("engine.events", z.strictObject({ afterSeq: Count, bootId: Id }), EventsSince),

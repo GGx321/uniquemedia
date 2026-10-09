@@ -8,6 +8,7 @@ import {
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   CATEGORY_REASONS_RU,
+  LAUNCH_REASONS_RU,
   SCENE_REASONS_RU,
   PHOTO_UNAVAILABLE_REASONS_RU,
   RENDER_NO_SPACE_DETAIL_PREFIX,
@@ -80,6 +81,8 @@ function baseText(error: EngineError): string {
   if (error.code === "VALIDATION" && (error.detail === UNKNOWN_IMAGE_MODEL_RU || error.detail === UNSUPPORTED_IMAGE_QUALITY_RU)) return error.detail;
   // A category command the engine refused says which rule it broke (the limit, a taken name, the pool's minimum, the mirror place, a missing item).
   if (error.code === "VALIDATION" && error.categoryReason !== undefined) return CATEGORY_REASONS_RU[error.categoryReason];
+  // Stage 4: a launch the engine refused to plan or start says which rule it broke (an open set, over 100 photos, an unreadable usage or launch file, nothing enabled).
+  if (error.code === "VALIDATION" && error.launchReason !== undefined) return LAUNCH_REASONS_RU[error.launchReason];
   // A scene-set command the engine refused says which rule it broke; the window names the scene itself from `sceneId`.
   if (error.code === "VALIDATION" && error.sceneReason !== undefined) return namedScene(error.sceneReason, error.sceneId) ?? SCENE_REASONS_RU[error.sceneReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;

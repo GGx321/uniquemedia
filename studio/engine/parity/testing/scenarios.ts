@@ -1,5 +1,6 @@
 import { defaultSpec, estimateBytesUpper } from "../../../shared/montage";
 import { STICKER_MANIFEST } from "../../../shared/stickers";
+import { AUTOPILOT_SCENARIOS } from "./scenarios.autopilot";
 import { IMAGE_MODEL_SCENARIOS } from "./scenarios.imageModels";
 import type { Control, RigOptions, World } from "./rigs";
 import { PARITY_DECODED_APART, parityListTracks } from "./tracks";
@@ -13,6 +14,12 @@ export interface Scenario {
   readonly name: string;
   /** What the rig is started with, when the scenario needs more than the default. */
   readonly rig?: RigOptions;
+  /**
+   * Stage 4 (S4.1): the real engine does not serve these commands yet (`until` names the task that will), so the story cannot match line for line. The mock's transcript is
+   * still bound to the golden; for the real engine the harness checks that each command named here is answered with the engine's one refusal, INTERNAL
+   * «<command> is not implemented yet», and nothing else. A story whose commands are all served is not pending.
+   */
+  readonly pending?: { readonly until: string; readonly commands: readonly string[] };
   run(t: Transcript, world: World, control: Control): Promise<void>;
 }
 
@@ -1926,7 +1933,7 @@ const SCENE_RUN_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS, ...SCENE_RUN_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS, ...SCENE_RUN_SCENARIOS, ...AUTOPILOT_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

@@ -2,6 +2,7 @@ import {
   AvatarDescriptor,
   checkImageChoice,
   type ApiKeyStatus,
+  type AutoRefresh,
   type MusicKeyStatus,
   type AvatarStatus,
   type AvatarSummary,
@@ -61,6 +62,7 @@ import {
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
+  type UnreadableLaunch,
   type UnsequencedEvent,
   type UsageUnknownReason,
   usageUntrustedDetail,
@@ -80,6 +82,7 @@ import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
+import { MockAutopilot, type MockAutopilotUnit } from "./mockAutopilot";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -292,6 +295,8 @@ export interface MockEngineOptions {
   sceneSets?: MockSceneSetSeed[];
   /** CS.4a: scene set files the library could not read (counted in `scenes.get`, never deleted). */
   unreadableSceneSets?: number | Readonly<Record<string, number>>;
+  /** Stage 4: entries of the library's `autopilot/` folder that cannot be read as a launch (listed by an opaque id; they block a start until removed). */
+  unreadableLaunches?: UnreadableLaunch[];
 }
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
@@ -721,6 +726,10 @@ export class MockEngine implements EngineBridge {
   private readonly categories: MockCategories;
   /** The scene sets and their writer jobs (CS.4a). */
   private readonly sceneSets: MockSceneSets;
+  /** Whether the owner has ever marked a video «Опубликовано» in this library: the `published.jsonl` log then exists, and `videos.list` says its marks could be read. */
+  private publishedLogUsed = false;
+  /** Stage 4 (S4.1): the batch autopilot's stubs: the plan, the price and a launch held in a canned state. */
+  private readonly autopilot: MockAutopilot;
   private categoryPriceValue: Pick<Estimate, "expectedMicros" | "worstMicros"> = { ...MOCK_CATEGORY_PRICE };
   /** The next paid category call fails after its checks, having cost this much (`failNextCategoryCall`). */
   private nextCategoryFailure: { error: EngineError; spentMicros: number } | null = null;
@@ -765,6 +774,30 @@ export class MockEngine implements EngineBridge {
       },
       options.sceneSets ?? [],
       options.unreadableSceneSets ?? 0,
+    );
+    this.autopilot = new MockAutopilot(
+      {
+        nowIso: () => this.nowIso(),
+        nextEventId: () => this.nextId("evt"),
+        emit: (event) => this.emit(event),
+        usage: (avatarId) => this.avatars.find((a) => a.avatarId === avatarId)?.usage ?? { state: "ok" },
+        freePhotos: (avatarId, categories) =>
+          this.photos.filter((p) => {
+            const view = this.photoView(p);
+            return p.avatarId === avatarId && categories.some((c) => c === p.category) && view.eligible && !view.used && !view.reserved && !view.rejected;
+          }).length,
+        busy: (avatarId) => this.jobRunningFor(avatarId),
+        hasOpenSet: (avatarId) => this.sceneSets.hasOpenSet(avatarId),
+        unit: () => this.autopilotUnit(),
+        prices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
+        month: () => ({ budgetMicros: this.settings.monthlyBudgetMicros, spentAndOpenMicros: this.spentMicros + this.unsettledMicros() }),
+        paidGate: () => this.keyAndLedgerGate(),
+        exportReason: () => (this.exportDisk.status === "unavailable" ? this.markerReason(this.exportDisk.reason) : null),
+        exportFreeBytes: () => this.exportFreeBytes,
+        music: () => this.autopilotMusic(),
+        balance: () => (this.settings.apiKey.stored && !this.settings.apiKey.rejected ? { micros: 12_400_000, asOf: new Date(this.clock).toISOString() } : null),
+      },
+      options.unreadableLaunches ?? [],
     );
     this.capacity = options.eventCapacity ?? 256;
     this.log = new EventLog(this.capacity, this.bootId());
@@ -1647,6 +1680,28 @@ export class MockEngine implements EngineBridge {
       case "media.cancelImport":
         if (!this.ownMedia.cancel(c.payload.jobId)) return this.fail(c, { code: "NOT_FOUND", detail: `no import job ${c.payload.jobId} in this engine` });
         return this.ok(c, { jobId: c.payload.jobId });
+      case "autopilot.estimate":
+        return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.ok(c, { preview: this.autopilot.estimate(c.payload.draft) }));
+      case "autopilot.start":
+        return this.autopilotCommand(c, c.payload.draft.avatarIds, () => this.answer(c, this.autopilot.start(c.payload.draft, c.payload.acceptedWorstMicros)));
+      case "autopilot.pause":
+        return this.autopilotGated(c, () => this.answer(c, this.autopilot.pause(c.payload.launchId)));
+      case "autopilot.resume":
+        return this.autopilotGated(c, () => this.answer(c, this.autopilot.resume(c.payload.launchId, c.payload.acceptedRemainingMicros)));
+      case "autopilot.stop":
+        return this.autopilotGated(c, () => this.answer(c, this.autopilot.stop(c.payload.launchId)));
+      case "autopilot.continueAfterReview":
+        return this.autopilotGated(c, () => this.answer(c, this.autopilot.continueAfterReview(c.payload.launchId, c.payload.avatarId, c.payload.sceneSetId, c.payload.revision)));
+      case "autopilot.list":
+        return this.autopilotGated(c, () => this.ok(c, this.autopilot.list()));
+      case "autopilot.get":
+        return this.autopilotGated(c, () => this.answer(c, this.autopilot.get(c.payload.launchId)));
+      case "autopilot.removeUnreadable":
+        return this.autopilotGated(c, () => this.answer(c, this.autopilot.removeUnreadable(c.payload.entryId)));
+      case "videos.setPublished":
+        return this.videosSetPublished(c, c.payload.videoId, c.payload.published);
+      case "media.setForAutopilot":
+        return this.mediaSetForAutopilot(c, c.payload.mediaId, c.payload.on);
       case "export.check": {
         this.checkExport();
         return this.ok(c, { exportStatus: this.exportReported });
@@ -2918,6 +2973,96 @@ export class MockEngine implements EngineBridge {
   }
 
   /** One video by id, as `videos.list` shows it, its file looked at now (3e.2). */
+  /** The rejection of a video's scene photos, in the order the video shows them; undefined for a video the mock does not hold (the delete then answers NOT_FOUND as before). */
+  private rejectPhotosOf(videoId: string): string[] | undefined {
+    const video = this.videos.find((v) => v.summary.videoId === videoId);
+    if (video === undefined) return undefined;
+    for (const photoId of video.photoIds) {
+      const photo = this.photos.find((p) => p.photoId === photoId);
+      // A photo in a video is not counted as free, so rejecting it moves no count; the video's delete frees nothing that is rejected.
+      if (photo !== undefined && !photo.rejected) this.photos = this.photos.map((p) => (p === photo ? { ...p, rejected: true, eligible: false } : p));
+    }
+    return [...video.photoIds];
+  }
+
+  /** `videos.setPublished`: the owner's «Опубликовано» mark, kept in the video's summary (the engine keeps it beside the write-once records); announced like any change of a record. */
+  private videosSetPublished(c: CommandMessage, videoId: string, published: boolean): ResponseMessage {
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    const video = this.videos.find((v) => v.summary.videoId === videoId);
+    if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
+    this.publishedLogUsed = true;
+    const { publishedAt: _before, ...rest } = video.summary;
+    const summary: VideoSummary = published ? { ...rest, publishedAt: this.nowIso() } : rest;
+    video.summary = summary;
+    this.checkExport();
+    const shown: VideoSummary = { ...summary, fileState: this.fileStateOf(video), montageId: this.liveDraft(video.montageId) };
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "upserted", video: shown } });
+    return this.ok(c, { video: shown });
+  }
+
+  /** `media.setForAutopilot`: only an own track the render can read (an m4a) may be marked; a media that is not a track is NOT_FOUND, as `music.peaks` has it. */
+  private mediaSetForAutopilot(c: CommandMessage, mediaId: string, on: boolean): ResponseMessage {
+    const refusal = this.writeLibraryGate();
+    if (refusal) return this.fail(c, refusal);
+    const name = this.ownMedia.nameOf(mediaId);
+    if (name === undefined) return this.fail(c, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
+    if (!/\.m4a$/i.test(name)) return this.fail(c, { code: "MEDIA_UNSUPPORTED", mediaReason: "format", detail: "only an m4a track can be marked for the autopilot" });
+    const media = this.ownMedia.setForAutopilot(mediaId, on);
+    if (media === undefined) return this.fail(c, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
+    return this.ok(c, { media });
+  }
+
+  /** The autopilot's fixed unit prices: an attempt, a photo, the writer's chunk, as the mock prices a run. */
+  private autopilotUnit(): MockAutopilotUnit {
+    const image = this.runImagePrice;
+    const ageOn = this.settings.imageAgeCheck === "on";
+    return {
+      attemptWorstMicros: image + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0),
+      photoExpectedMicros: image + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.expected : 0),
+      photoWorstMicros: MOCK_RUN_ATTEMPTS_PER_SLOT * (image + (ageOn ? MOCK_AGE_CHECK_PER_SLOT.worst : 0)),
+      writerChunkWorstMicros: MOCK_RUN_WRITER.worstPerChunk,
+      writerExpectedPerPhotoMicros: MOCK_RUN_WRITER.expectedPerPhoto,
+    };
+  }
+
+  /** The plan card's music line: the stored trends and the flagged own tracks, and how the trends would be refreshed (§7). */
+  private autopilotMusic(): { candidates: number; ownFlagged: number; explicitSkipped: number; autoRefresh: AutoRefresh; quotaRemaining: number | null } {
+    const trends = this.music.tracks.filter((t) => !t.summary.explicit).length;
+    const ownFlagged = this.ownMedia.flaggedTracks();
+    const status = this.musicStatus();
+    const quotaRemaining = status.quotaLog === "ok" ? Math.max(0, status.limit - status.sentLast31d) : null;
+    const key = this.settings.musicKey;
+    const candidates = trends + ownFlagged;
+    const autoRefresh: AutoRefresh = !key.stored || key.rejected ? "no-key" : quotaRemaining !== null && quotaRemaining < 10 ? "no-quota" : candidates < 10 ? "will" : "not-needed";
+    return { candidates, ownFlagged, explicitSkipped: this.music.tracks.filter((t) => t.summary.explicit).length, autoRefresh, quotaRemaining };
+  }
+
+  /**
+   * The autopilot commands that name avatars (the estimate and the start): the library must be open, and every avatar must be a saved, active one. The refusals the
+   * engine makes after these are the autopilot's own (`MockAutopilot`).
+   */
+  private autopilotCommand(c: CommandMessage, avatarIds: readonly string[], run: () => ResponseMessage): ResponseMessage {
+    const gone = this.libraryGate();
+    if (gone) return this.fail(c, gone);
+    for (const avatarId of avatarIds) {
+      const refusal = this.runnableRefusal(avatarId);
+      if (refusal) return this.fail(c, refusal);
+    }
+    return run();
+  }
+
+  /** The autopilot commands that name a launch or an entry rather than avatars: only the library must be open. */
+  private autopilotGated(c: CommandMessage, run: () => ResponseMessage): ResponseMessage {
+    const gone = this.libraryGate();
+    return gone ? this.fail(c, gone) : run();
+  }
+
+  /** An autopilot outcome as a response. */
+  private answer(c: CommandMessage, outcome: { ok: true; result: unknown } | { ok: false; error: EngineError }): ResponseMessage {
+    return outcome.ok ? this.ok(c, outcome.result) : this.fail(c, outcome.error);
+  }
+
   private videosGet(c: CommandMessage, videoId: string): ResponseMessage {
     const video = this.libraryOpen ? this.videos.find((v) => v.summary.videoId === videoId) : undefined;
     if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
@@ -2958,10 +3103,12 @@ export class MockEngine implements EngineBridge {
       .map((v): VideoSummary => ({ ...v.summary, fileState: this.fileStateOf(v), montageId: this.liveDraft(v.montageId) }))
       .reverse()
       .slice(0, MAX_LISTED_VIDEOS);
-    return this.ok(c, { videos });
+    // Once the owner has marked a video the log exists and is modelled as readable (a torn one is the engine's own unit tests' business). Before that the field is absent, as from a
+    // producer with no marks: the listing is the one it always was.
+    return this.ok(c, { videos, ...(this.publishedLogUsed ? { published: "ok" as const } : {}) });
   }
 
-  private videosDelete(c: CommandMessage, payload: { videoId: string; mode: "video" | "record" }): ResponseMessage {
+  private videosDelete(c: CommandMessage, payload: { videoId: string; mode: "video" | "record"; rejectPhotos?: true }): ResponseMessage {
     const { videoId, mode } = payload;
     const gone = this.libraryGate();
     if (gone) return this.fail(c, gone);
@@ -2972,6 +3119,10 @@ export class MockEngine implements EngineBridge {
     if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
     const state = this.fileStateOf(video);
     if (mode === "video" && state === "elsewhere") return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: "missing", detail: "the video's file is not in the current export folder" });
+    // Stage 4 (§8.5): «Удалить видео и отклонить фото» asks the export folder FIRST (above): a refusal there changes nothing. Only then are the video's scene photos marked
+    // rejected, and then the video goes, so the photos are never free for the next launch while the video is gone. (A failure of the delete itself after the rejection is the
+    // engine's business: the mock's delete cannot fail here.)
+    const rejectedPhotoIds = payload.rejectPhotos === true ? this.rejectPhotosOf(videoId) : undefined;
     const fileDeleted = mode === "video" && state === "present";
     const { avatarId } = video.summary;
     this.movingUsage(avatarId, video.photoIds, () => {
@@ -2981,7 +3132,7 @@ export class MockEngine implements EngineBridge {
     this.adjustAvatar(avatarId, { videoCount: -1 });
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId } });
     this.announceAvatar(avatarId);
-    return this.ok(c, { videoId, fileDeleted, fileState: state });
+    return this.ok(c, { videoId, fileDeleted, fileState: state, ...(rejectedPhotoIds === undefined ? {} : { rejectedPhotoIds }) });
   }
 
   private renderJobState(j: MockRenderJob): JobState {
@@ -3603,6 +3754,7 @@ export class MockEngine implements EngineBridge {
       librarySwitchGeneration: this.librarySwitchGeneration,
       exportStatus: this.exportReported,
       notices: [],
+      autopilot: this.autopilot.active(),
     };
   }
 

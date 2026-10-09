@@ -131,6 +131,8 @@ export class MockOwnMedia {
   #records: MediaSummary[] = [];
   /** The own photos the script says have a face (3f.2). */
   readonly #faces = new Set<string>();
+  /** The own tracks the owner marked «для автопилота» (Stage 4): the engine keeps the mark in an append-only log beside the records. */
+  readonly #forAutopilot = new Set<string>();
   /** Each stored track's waveform (3f.4), kept beside its record as the engine keeps it in the record. */
   readonly #waveforms = new Map<string, readonly number[]>();
   /** How many files were seeded: the number in the next seed's id. */
@@ -337,7 +339,28 @@ export class MockOwnMedia {
   list(kind?: MediaKind, mediaIds?: readonly string[]): { media: MediaSummary[]; total: number } {
     const named = mediaIds === undefined ? undefined : new Set(mediaIds);
     const all = this.#records.filter((r) => (kind === undefined || r.kind === kind) && (named === undefined || named.has(r.mediaId))).reverse();
-    return { media: all.slice(0, MAX_LISTED_MEDIA), total: all.length };
+    return { media: all.slice(0, MAX_LISTED_MEDIA).map((r) => this.#shown(r)), total: all.length };
+  }
+
+  /** A record as the contract shows it: a track the owner marked says so; every other record is as it was stored (the mark is absent, not false). */
+  #shown(record: MediaSummary): MediaSummary {
+    return this.#forAutopilot.has(record.mediaId) ? { ...record, forAutopilot: true } : record;
+  }
+
+  /** Marks or unmarks an own track «для автопилота»; the record as it now stands, or undefined for a media that is not a track. */
+  setForAutopilot(mediaId: string, on: boolean): MediaSummary | undefined {
+    const record = this.#records.find((r) => r.mediaId === mediaId && r.kind === "audio");
+    if (record === undefined) return undefined;
+    if (on) this.#forAutopilot.add(mediaId);
+    else this.#forAutopilot.delete(mediaId);
+    const shown = this.#shown(record);
+    this.#event("media.changed", { change: "upserted", media: shown });
+    return shown;
+  }
+
+  /** How many own tracks are marked «для автопилота». */
+  flaggedTracks(): number {
+    return this.#records.filter((r) => r.kind === "audio" && this.#forAutopilot.has(r.mediaId)).length;
   }
 
   /** Whether the library holds this media as a PHOTO: what a render's admission and a draft's referential check ask (3f.2). */
@@ -425,6 +448,7 @@ export class MockOwnMedia {
     if (at < 0) return false;
     this.#faces.delete(mediaId);
     this.#waveforms.delete(mediaId);
+    this.#forAutopilot.delete(mediaId);
     this.#records.splice(at, 1);
     this.#event("media.changed", { change: "removed", mediaId });
     return true;

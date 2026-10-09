@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CategoryPoses, CategoryRef, PhotoCategory, PoolShot, ScenePose, MAX_RUN_CATEGORIES } from "./categories";
 import { EngineError } from "./errors";
-import { Count, Id, Micros, ModelId } from "./primitives";
+import { Count, Id, LaunchId, Micros, ModelId } from "./primitives";
 
 // CS.4a: the scene set on the contract. A scene set is one avatar's planned run held BEFORE any image is paid for: the planner's scenes, the sentence
 // the scene writer wrote for each (a paid job, chunk by chunk) and the owner's free edits. Pure data: the engine builds the view from the set's file
@@ -210,6 +210,8 @@ export const SceneSetView = z
     scenes: z.array(SceneView).max(MAX_SCENES_PER_SET),
     /** CS.4b: idea writes that were interrupted; absent when there are none. */
     interruptedIdeas: z.array(SceneInterruptedIdea).max(MAX_SCENES_PER_SET).optional(),
+    /** Stage 4 (additive): the batch launch this set belongs to while that launch is unfinished; the owner's paid edits on it stay separate. Absent for the owner's own sets. */
+    launchId: LaunchId.optional(),
   })
   .refine((v) => (v.status === "stopped") === (v.stoppedBy !== null), { message: "a stopped set says why, and only a stopped set does", path: ["stoppedBy"] })
   .refine((v) => (v.stoppedError !== null) === (v.stoppedBy === "failed"), { message: "the error belongs to a set that stopped by a failure", path: ["stoppedError"] })

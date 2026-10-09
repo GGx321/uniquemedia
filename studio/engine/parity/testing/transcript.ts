@@ -60,6 +60,8 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "a redraw (CS.4b): the mock draws a new place from its own small tables, the engine from the planner's pools (a custom category's own pool included), so what a redraw picks is not compared, only its refusals. The category-name snapshot a redraw takes is the engine's own (taken when the write is planned, a newer write's never undone); the mock keeps the same rule in its own tests (mockEngine.sceneParity)",
   "events of the slice: `scenes.changed` and `category.changed` are not in `COVERED_EVENTS`, so their order against `job.*` (the set is announced before the job's own end, and before `job.cancelled`) is held by the engine's and the mock's own tests, not by a transcript. The refusals' `sceneReason` and `sceneId` (and `categoryReason`) are compared",
   "scene set files and the ledger (CS.7): the mock has no disk, so a set file or folder the OS refuses, a record whose close was lost, and a ledger that cannot be read are states a test seeds (`unreadableSceneSets`, `money.unavailable`); the engine finds them in the stores, whose own tests hold them. A `scenes.cancel` opens a reserve in the mock by a control (`setSceneCancelOutcome`), in the engine only when a request was at the model; the order `job.cancelled` before the answer of a write is played by `cancelNextSceneWriteBeforeAnswer`, not by a transcript",
+  "the batch autopilot (Stage 4, S4.1): the real engine answers every autopilot command INTERNAL «<type> is not implemented yet» until its orchestrator lands (S4.6), the mock answers a plan, a price and a launch held in a canned state. So a story that needs the engine to serve the command is PENDING (`Scenario.pending`): the mock's transcript is bound to the golden, and the harness only checks that the real engine answers each named command with that one refusal; the story joins the full comparison when `pending` is taken off (S4.6 to S4.8). The payloads the CONTRACT refuses are refused by both and compared now. What a pending story writes is limited to what the engine will also say: the plan's counts, the states and the codes, not the prices (as for every estimate), the clock, or the spend of a launch",
+
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -86,12 +88,13 @@ const ID_KINDS: Readonly<Record<string, string>> = {
   montageId: "montage",
   videoId: "video",
   jobId: "job",
+  launchId: "launch",
   sceneSetId: "set",
   previewId: "preview",
   clipId: "clip",
   layerId: "layer",
 };
-const ID_LIST_KINDS: Readonly<Record<string, string>> = { photoIds: "photo", usedIn: "video", jobIds: "job" };
+const ID_LIST_KINDS: Readonly<Record<string, string>> = { photoIds: "photo", usedIn: "video", jobIds: "job", rejectedPhotoIds: "photo" };
 
 /** Replaces identifiers by their role and order of appearance, and masks what `MASKED` lists. */
 export class Normalizer {
@@ -154,7 +157,9 @@ function objectOf(value: unknown): Record<string, unknown> {
  * K12, K13) are left out, so no older golden line changed. A story about them asks `videos.get` (`videoFactsLine`).
  */
 function videoLine(video: unknown): Record<string, unknown> {
-  const { title: _title, firstClip: _firstClip, ...rest } = objectOf(video);
+  const { title: _title, firstClip: _firstClip, publishedAt, ...withoutMark } = objectOf(video);
+  // Stage 4: the owner's «Опубликовано» mark is written as set or null (its time is a clock); a video never marked has no field, so no older line changed.
+  const rest = typeof publishedAt === "string" ? { ...withoutMark, publishedAt: "<set>" } : publishedAt === null ? { ...withoutMark, publishedAt: null } : withoutMark;
   if (rest.music === null || rest.music === undefined) return rest;
   const { trackId: _trackId, ...music } = objectOf(rest.music);
   return { ...rest, music };
@@ -269,7 +274,7 @@ function snapshotLine(result: Record<string, unknown>, norm: Normalizer): string
 /** An answer as a line. */
 export function answerLine(type: string, answer: Answer, norm: Normalizer): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId } = answer.error;
+    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     const text = code === "VALIDATION" || code.startsWith("MUSIC_") ? undefined : detail;
@@ -284,6 +289,7 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
         ...(categoryReason === undefined ? {} : { categoryReason }),
         ...(sceneReason === undefined ? {} : { sceneReason }),
         ...(sceneId === undefined ? {} : { sceneId }),
+        ...(launchReason === undefined ? {} : { launchReason }),
       }),
     )}`;
   }
@@ -349,7 +355,62 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
     const p = objectOf(answer.result.photo);
     return `< ok ${compact(norm.value({ photo: { photoId: p.photoId, used: p.used, usedIn: p.usedIn, reserved: p.reserved, rejected: p.rejected, eligible: p.eligible } }))}`;
   }
+  if (type.startsWith("autopilot.")) return `< ok ${compact(norm.value(autopilotFacts(type, answer.result)))}`;
+  if (type === "videos.setPublished") {
+    // The time of the mark is the engine's clock or the mock's: that the video is marked is compared.
+    const video = objectOf(answer.result.video);
+    return `< ok ${compact(norm.value({ videoId: video.videoId, published: typeof video.publishedAt === "string" }))}`;
+  }
+  if (type === "media.setForAutopilot") {
+    const media = objectOf(answer.result.media);
+    return `< ok ${compact(norm.value({ mediaId: media.mediaId, forAutopilot: media.forAutopilot === true }))}`;
+  }
   return `< ok ${compact(norm.value(answer.result))}`;
+}
+
+/**
+ * What an autopilot answer is bound to say (Stage 4, S4.1): the facts that are the contract's and the plan's, not the prices (the mock's are «live» and the engine's the
+ * bundled table, as for every estimate), not the clock (the times of a hold, a pause or a log line), and not the spend and the progress of a launch (the mock holds a canned
+ * mid-run state until S4.8). A story passes its own plan seed, which the preview echoes.
+ */
+function autopilotFacts(type: string, result: Record<string, unknown>): Record<string, unknown> {
+  const list = (value: unknown): Record<string, unknown>[] => (Array.isArray(value) ? value.map((item) => objectOf(item)) : []);
+  const launch = (value: unknown): Record<string, unknown> => {
+    const v = objectOf(value);
+    return {
+      launchId: v.launchId,
+      status: v.status,
+      paused: v.paused === null ? null : objectOf(v.paused).cause,
+      plan: v.plan,
+      acceptedMicros: v.acceptedMicros,
+      resumeBlockedBy: v.resumeBlockedBy,
+      hold: v.paidHold === null ? null : objectOf(v.paidHold).reason,
+      // The avatars' phases are written where a transition is the point (a start, a pause, a resume, the review hand-off); a stopped or a read launch shows its canned rows only in the mock.
+      ...(type === "autopilot.stop" || type === "autopilot.get" ? {} : { avatars: list(v.avatars).map((a) => ({ avatarId: a.avatarId, phase: a.phase })) }),
+    };
+  };
+  if (type === "autopilot.estimate") {
+    const p = objectOf(result.preview);
+    return {
+      preview: {
+        planSeed: p.planSeed,
+        avatars: list(p.avatars),
+        totals: p.totals,
+        blockers: p.blockers,
+        autoRefresh: objectOf(p.music).autoRefresh,
+      },
+    };
+  }
+  if (type === "autopilot.list") {
+    const summaries = list(result.launches).map((l) => ({ launchId: l.launchId, status: l.status, avatarCount: l.avatarCount, videosPlanned: l.videosPlanned }));
+    return { launches: summaries, unreadable: list(result.unreadable) };
+  }
+  if (type === "autopilot.get") {
+    const log = list(result.log);
+    return { launch: launch(result.launch), firstLogKind: log[0]?.kind ?? null };
+  }
+  if (type === "autopilot.removeUnreadable") return result;
+  return { launch: launch(result.launch), ...(result.draw === undefined ? {} : { draw: result.draw }) };
 }
 
 /** What a rig gives the transcript: commands, the events so far, and the two moves of time. */

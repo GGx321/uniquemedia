@@ -41,6 +41,17 @@ import { z } from "zod";
 //    `EngineSettings`, `EngineInit`) are built together, and the literal version stays 5. A change like it after a release needs a version bump.
 //  - avatars: `avatars.deletePreview` and `avatars.delete`, the `avatar.removed` event, the error code TRASH_UNAVAILABLE.
 //  - montage: `MIN_CLIP_MS` is 100 ms (the shortest clip).
+// Stage 4 «Автопилот» (S4.1, additive, one bundle with the window; plan §9 and §18):
+//  - commands `autopilot.estimate`, `.start`, `.pause`, `.resume` (it carries `acceptedRemainingMicros`: the click that also consents to paid work after a restart), `.stop`,
+//    `.continueAfterReview`, `.list`, `.get` (the launch, its log and its videos) and `.removeUnreadable` (by an opaque `entryId`, never a name or a path); `videos.setPublished`;
+//    `media.setForAutopilot`; the event `autopilot.changed` (the launch, whole); `Snapshot.autopilot`. The types are in `autopilot.ts`: `LaunchDraft`, `LaunchPreview`, `LaunchView`
+//    (its `stopping` and `pausing` states, `paused.cause`, `inFlight`, the strict `PaidHold` by reason, `freeHold`, `resumeBlockedBy`), `LaunchSummary`, `LaunchVideo` and `LogLine`
+//    (a closed `kind`, types and numbers only: the window words them).
+//  - optional fields on shapes that exist: `VideoSummary.origin` / `.launchId` / `.publishedAt`, `videos.list`'s `published` (`ok` / `unknown`), `videos.delete`'s `rejectPhotos` and the
+//    result's `rejectedPhotoIds`, `MediaSummary.forAutopilot`, `RunSummary.launchId`, `SceneSetView.launchId`, `launchId` on the `run`, `scenes` and `render` `JobState`.
+//  - `EngineError.launchReason` (`LAUNCH_REASONS`, Russian texts `LAUNCH_REASONS_RU`) and the scene reasons `launch-set`, `over-plan` and `not-awaiting`. No new error code.
+//  - not in the renderer's contract, on purpose: main's `host.power` (`suspend` / `resume`) is a `HostControl` of engine/control.ts, and the video record's `origin` / `launchId` /
+//    `launchVideoKey` and the scene set file's `launchId` / `launchDraw` are on-disk fields, all optional, with no schema version bumped.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

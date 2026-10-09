@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { LaunchView } from "./autopilot";
 import { CategorySummary, CustomCategoryId } from "./categories";
 import { nonEmpty, ProtocolVersion, Seq } from "./envelope";
 import { EngineError } from "./errors";
@@ -44,6 +45,7 @@ function defineEvent<const T extends string, P extends z.ZodType>(type: T, paylo
  * - `music.changed`: the music status changed (a refresh started, progressed, ended or failed; the quota moved), whole.
  * - `scenes.changed`: a scene set was created or changed (`upserted`, with the whole set: a chunk written, an edit, a stop) or is gone (`removed`: discarded, or its
  *   avatar was deleted through «Удалить аватар»: one per set, before `avatar.removed`; an avatar pruned after its folder vanished is announced by `avatar.removed` alone). Always BEFORE the `job.done`, `job.failed` or `job.cancelled` of the job that changed it. The set is read on demand (`scenes.get`).
+ * - `autopilot.changed`: the launch changed (a step, a hold, a state), whole. Coalesced to at most 4 a second; the window drops it into place by `launchId`.
  * - `category.changed`: a custom category was stored or changed (`upserted`, with its summary: created, renamed, an item removed, regenerated, or only its
  *   spend moved after a failed regeneration) or is gone (`removed`). Categories are listed on demand (`categories.list`); the event keeps the windows in step.
  */
@@ -91,6 +93,7 @@ const EVENT_SPECS = [
       z.strictObject({ change: z.literal("removed"), sceneSetId: Id, avatarId: Id }),
     ]),
   ),
+  defineEvent("autopilot.changed", z.strictObject({ launch: LaunchView })),
   defineEvent(
     "category.changed",
     z.discriminatedUnion("change", [
