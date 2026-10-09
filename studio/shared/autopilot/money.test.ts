@@ -1,6 +1,18 @@
 import { describe, expect, test } from "bun:test";
 import { LAUNCH_SLICE_MAX_PHOTOS, type MonthFit } from "../engine/autopilot";
-import { budgetHoldCleared, budgetHoldDetail, drawAllocationLeft, launchCommittedMicros, monthFit, monthRoomMicros, SLICE_MAX_PHOTOS, sliceSize, withinLaunchCeiling, type LaunchScopeMoney } from "./money";
+import {
+  budgetHoldCleared,
+  budgetHoldDetail,
+  drawAllocationLeft,
+  launchCommittedMicros,
+  monthFit,
+  monthRoomMicros,
+  raiseBudgetToMicros,
+  SLICE_MAX_PHOTOS,
+  sliceSize,
+  withinLaunchCeiling,
+  type LaunchScopeMoney,
+} from "./money";
 
 // Stage 4, S4.2 (plan §4.3, §4.4, amendments §18; invariants A2 and A21): the month's room, the fit, the slice size and the budget hold's threshold, as pure
 // functions over integer micro-dollars.
@@ -78,6 +90,36 @@ describe("monthFit", () => {
 
   test("an expected cost above the worst case is a bug and is refused", () => {
     expect(() => monthFit(10, 20, 10)).toThrow(RangeError);
+  });
+});
+
+describe("raiseBudgetToMicros", () => {
+  // «поднимите бюджет до $⌈W − R + B⌉» (plan §4.4): the budget, in whole dollars rounded up, at which the room covers the worst case.
+  const W = 19_200_000;
+
+  test("the plan's worked example: $10 budget, $1.64 committed, W $19.20 → $21", () => {
+    expect(raiseBudgetToMicros({ budgetMicros: 10_000_000, committedMicros: 1_640_000, freeMicros: 8_360_000 }, W)).toBe(21_000_000);
+  });
+
+  test("null exactly when the room covers the worst case (R = W), a raise one micro-dollar below it", () => {
+    expect(raiseBudgetToMicros({ budgetMicros: 30_000_000, committedMicros: 10_800_000, freeMicros: W }, W)).toBeNull();
+    // 10.800001 + 19.20 = 30.000001: a $30 budget leaves one micro-dollar too little, so $31.
+    expect(raiseBudgetToMicros({ budgetMicros: 30_000_000, committedMicros: 10_800_001, freeMicros: W - 1 }, W)).toBe(31_000_000);
+  });
+
+  test("a need of whole dollars is not rounded up past itself; one micro-dollar more is the next dollar", () => {
+    expect(raiseBudgetToMicros({ budgetMicros: 10_000_000, committedMicros: 1_800_000, freeMicros: 8_200_000 }, W)).toBe(21_000_000);
+    expect(raiseBudgetToMicros({ budgetMicros: 10_000_000, committedMicros: 1_800_001, freeMicros: 8_199_999 }, W)).toBe(22_000_000);
+  });
+
+  test("an overspent month (committed above the budget, no room) still names a budget that covers what is committed and the worst case", () => {
+    expect(raiseBudgetToMicros({ budgetMicros: 10_000_000, committedMicros: 12_000_000, freeMicros: 0 }, 4_140_000)).toBe(17_000_000);
+  });
+
+  test("a free launch never asks for a raise; a broken figure is refused", () => {
+    expect(raiseBudgetToMicros({ budgetMicros: 10_000_000, committedMicros: 10_000_000, freeMicros: 0 }, 0)).toBeNull();
+    expect(() => raiseBudgetToMicros({ budgetMicros: 10_000_000, committedMicros: -1, freeMicros: 0 }, W)).toThrow(TypeError);
+    expect(() => raiseBudgetToMicros({ budgetMicros: 10_000_000, committedMicros: 0, freeMicros: 10_000_000 }, 1.5)).toThrow(TypeError);
   });
 });
 

@@ -40,9 +40,10 @@ const TIERED_THREE_DECIMALS_BELOW = 100_000;
 /**
  * The small prices of custom categories and scene review (the CS.0 design's «Деньги на экране»): three decimals below $0.10,
  * two from there. `up` for a ceiling (after «до», a cap, an open reserve), `nearest` for an estimate after «≈» and for money
- * already spent, so the price line and the button never disagree («$0.045» on both, not «$0.05» on one).
+ * already spent, so the price line and the button never disagree («$0.045» on both, not «$0.05» on one); `down` for what is
+ * left (the month's room, a balance), which is never overstated.
  */
-export function formatUsdTiered(micros: number, rounding: Exclude<Rounding, "down">): string {
+export function formatUsdTiered(micros: number, rounding: Rounding): string {
   assertMicros(micros);
   return formatUsd(micros, micros < TIERED_THREE_DECIMALS_BELOW ? 3 : 2, rounding);
 }

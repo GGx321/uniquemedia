@@ -1,9 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { EngineClient } from "./engine/client";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { sidebarCounts } from "./engine/renderJobs";
 import { readStudioVersion } from "./engine/windowStudio";
 import { arriving, createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
+import { AutopilotScreen } from "./screens/AutopilotScreen";
+import { LaunchForms, LaunchFormsProvider } from "./screens/autopilot/launchForm";
+import { SidebarMarkView, useSidebarMark } from "./screens/autopilot/SidebarMark";
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
 import { AvatarWizard } from "./screens/AvatarWizard";
@@ -21,7 +24,6 @@ import { dismissalKey, EngineNotices } from "./ui/EngineNotices";
 import { Docked, NoticeDockProvider } from "./ui/NoticeDock";
 import { RenderNotices } from "./ui/RenderNotices";
 import { Icon } from "./ui/Icon";
-import { ScreenTitle } from "./ui/ScreenTitle";
 
 interface Section {
   id: SectionId;
@@ -114,15 +116,8 @@ function Screen({ route, lastPhotos }: { route: Route; lastPhotos: string | null
       return <DraftsScreen lastAvatarId={lastPhotos} />;
     case "editor":
       return <EditorScreen montageId={route.montageId} created={route.created ?? false} />;
-    case "section": {
-      const label = SECTIONS.find((s) => s.id === route.id)?.label ?? "";
-      return (
-        <div className="page">
-          <ScreenTitle>{label}</ScreenTitle>
-          <p className="muted">Скоро</p>
-        </div>
-      );
-    }
+    case "section":
+      return <AutopilotScreen />;
   }
 }
 
@@ -169,6 +164,40 @@ function ForgetOnLibrarySwitch({ onSwitch }: { onSwitch: () => void }) {
     last.current = libraryPath;
   }, [libraryPath, onSwitch]);
   return null;
+}
+
+/** One section of the sidebar; `mark` (S4.9a) is what «Автопилот» says of the launch, described with the item (`describedBy`) rather than named in it. */
+function NavButton({ section, active, onClick, mark, describedBy }: { section: Section; active: boolean; onClick: () => void; mark?: ReactNode; describedBy?: string }) {
+  return (
+    <button
+      type="button"
+      className={active ? "nav-item active" : "nav-item"}
+      aria-current={active ? "page" : undefined}
+      aria-describedby={describedBy}
+      onClick={onClick}
+    >
+      <svg className="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        {section.icon}
+      </svg>
+      <span>{section.label}</span>
+      {mark}
+    </button>
+  );
+}
+
+/** «Автопилот» with the launch's mark («14 / 30», «сцены», «пауза», «ждёт», «готово»), read with the item through aria-describedby. */
+function AutopilotNavItem({ section, active, onClick }: { section: Section; active: boolean; onClick: () => void }) {
+  const mark = useSidebarMark(active);
+  const descriptionId = useId();
+  return (
+    <NavButton
+      section={section}
+      active={active}
+      onClick={onClick}
+      describedBy={mark === null ? undefined : descriptionId}
+      mark={mark === null ? undefined : <SidebarMarkView mark={mark} descriptionId={descriptionId} />}
+    />
+  );
 }
 
 const TASK_FORMS = ["задача", "задачи", "задач"] as const;
@@ -259,11 +288,14 @@ export function App({ client }: { client: EngineClient }) {
   const [montagePicks] = useState(() => new MontagePicks());
   // The run's form on each avatar's Photos screen, kept while the window runs (CS.7 L4).
   const [runForms] = useState(() => new RunForms());
+  // The «Автопилот» launch form, kept while the window runs (S4.9a).
+  const [launchForms] = useState(() => new LaunchForms());
   const forgetLibrary = useCallback(() => {
     draftSessions.clear();
     montagePicks.clear();
     runForms.clear();
-  }, [draftSessions, montagePicks, runForms]);
+    launchForms.clear();
+  }, [draftSessions, montagePicks, runForms, launchForms]);
   const [versionLabel, setVersionLabel] = useState("");
   const active = sectionOf(route);
   const lastPhotos = useRef<string | null>(null);
@@ -303,28 +335,11 @@ export function App({ client }: { client: EngineClient }) {
               <nav className="nav" aria-label="Разделы">
                 {SECTIONS.map((s) => {
                   const isActive = s.id === active;
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      className={isActive ? "nav-item active" : "nav-item"}
-                      aria-current={isActive ? "page" : undefined}
-                      onClick={() => navigation.navigate(routeFor(s.id, lastPhotos.current))}
-                    >
-                      <svg
-                        className="nav-icon"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.8"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        {s.icon}
-                      </svg>
-                      <span>{s.label}</span>
-                    </button>
+                  const go = () => navigation.navigate(routeFor(s.id, lastPhotos.current));
+                  return s.id === "autopilot" ? (
+                    <AutopilotNavItem key={s.id} section={s} active={isActive} onClick={go} />
+                  ) : (
+                    <NavButton key={s.id} section={s} active={isActive} onClick={go} />
                   );
                 })}
               </nav>
@@ -348,7 +363,9 @@ export function App({ client }: { client: EngineClient }) {
                 <DraftSessionsProvider value={draftSessions}>
                   <MontagePicksProvider value={montagePicks}>
                     <RunFormsProvider value={runForms}>
-                      <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                      <LaunchFormsProvider value={launchForms}>
+                        <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                      </LaunchFormsProvider>
                     </RunFormsProvider>
                   </MontagePicksProvider>
                 </DraftSessionsProvider>

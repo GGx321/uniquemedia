@@ -189,7 +189,7 @@ export const preview: LaunchPreview = {
   totals: { videos: 20, photosNeeded: 28, fromLibrary: 18, toGenerate: 10 },
   estimate: { expectedMicros: 700_000, worstMicros: 3_000_000, prices: "live", pricesAsOf: "2026-10-08" },
   perShapeExpectedMicros: { single: 70_000, collage: 210_000, slides: 350_000 },
-  month: { budgetMicros: 10_000_000, committedMicros: 1_640_000, freeMicros: 8_360_000, fit: "fits" },
+  month: { budgetMicros: 10_000_000, committedMicros: 1_640_000, freeMicros: 8_360_000, fit: "fits", raiseToMicros: null },
   balance: { micros: 12_400_000, asOf: NOW },
   music: { candidates: 24, ownFlagged: 3, explicitSkipped: 2, autoRefresh: "will", quotaRemaining: 21 },
   disk: { neededBytes: 9_000_000, freeBytes: 50_000_000_000 },

@@ -153,6 +153,15 @@ const PATHS = {
       <path d="M17 9l4 6M21 9l-4 6" />
     </>
   ),
+  /** «Автопилот» (S4.9a): the sidebar's own bolt, on «Запустить». */
+  bolt: <path d="M13 2L4 14h7l-1 8 9-12h-7z" />,
+  /** S4.9a: «Активных аватаров нет», the sidebar's «Аватары» figure. */
+  person: (
+    <>
+      <circle cx="12" cy="8" r="4" />
+      <path d="M4 20c0-3.9 3.6-6 8-6s8 2.1 8 6" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

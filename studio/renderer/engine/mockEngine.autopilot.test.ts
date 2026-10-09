@@ -157,15 +157,17 @@ describe("autopilot.estimate", () => {
     expect(withoutLibrary.avatars[1]?.blocked).toBeNull();
   });
 
+  // The worst case here is one writer chunk and 4 photos at 3 attempts: $0.675. A raise names the budget that covers it, in whole dollars: $1.
   test.each([
-    [10_000_000, "fits"],
-    [300_000, "fits-expected"],
-    [100_000, "short"],
-  ] as const)("with a budget of %i µ$ the month's fit is %s", async (budget, fit) => {
+    [10_000_000, "fits", null],
+    [300_000, "fits-expected", 1_000_000],
+    [100_000, "short", 1_000_000],
+  ] as const)("with a budget of %i µ$ the month's fit is %s (raise to %p)", async (budget, fit, raiseToMicros) => {
     const mock = world();
     await unwrap(mock.client.request("settings.setBudget", { monthlyBudgetMicros: budget }));
     const preview = await estimate(mock);
-    expect(preview.month).toMatchObject({ budgetMicros: budget, committedMicros: 0, freeMicros: budget, fit });
+    expect(preview.estimate.worstMicros).toBe(WRITER_CHUNK + 4 * 3 * IMAGE);
+    expect(preview.month).toEqual({ budgetMicros: budget, committedMicros: 0, freeMicros: budget, fit, raiseToMicros });
   });
 
   test("the balance is known with a key and unknown without; no key blocks a plan that needs generating, not a library-only one", async () => {
