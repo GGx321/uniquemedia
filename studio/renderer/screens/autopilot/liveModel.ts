@@ -314,6 +314,7 @@ export function avatarLine(launch: LaunchView, row: LaunchAvatarView, name: stri
       const reason = row.waiting?.reason ?? "paid-hold";
       if (reason === "avatar-busy") return line("ждёт: идёт ваша генерация на «Фото» — продолжим сами", "warn");
       if (reason === "open-set") return line("ждёт: открыт ваш набор сцен — завершите его на «Фото»", "warn", { kind: "photos", label: "Открыть «Фото»" });
+      if (reason === "library-unknown") return line("ждёт: не читается, какие фото свободны — продолжим, когда библиотека ответит", "warn");
       return line(heldPhase(launch.paidHold, row), "warn");
     }
     default:
@@ -863,6 +864,8 @@ export function logText(line: LogLine, sceneReview: boolean): { text: string; to
       return { text: `нет ответа ${line.drops}-й раз · ждём сверки`, tone: "warn" };
     case "avatar-busy":
       return { text: "ждём: аватар занят вашей генерацией", tone: "warn" };
+    case "library-unknown":
+      return { text: "ждём: не читается, какие фото свободны", tone: "warn" };
     case "app-restarted":
       return {
         text: line.cause === "quit" ? (line.requests > 0 ? "Studio открыт снова · нужна сверка" : "Studio открыт снова · запуск на паузе") : line.requests > 0 ? "движок перезапущен · нужна сверка" : "движок перезапущен · запуск на паузе",

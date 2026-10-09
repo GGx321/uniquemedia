@@ -139,6 +139,7 @@ describe("the avatars' rows", () => {
 
   test("waiting: a busy avatar, an open set of the owner's, the launch's paid hold by its reason", () => {
     expect(line(row(B, { phase: "waiting", waiting: { reason: "avatar-busy" } })).phase).toBe("ждёт: идёт ваша генерация на «Фото» — продолжим сами");
+    expect(line(row(B, { phase: "waiting", waiting: { reason: "library-unknown" } })).phase).toBe("ждёт: не читается, какие фото свободны — продолжим, когда библиотека ответит");
     expect(line(row(B, { phase: "waiting", waiting: { reason: "open-set" } }))).toMatchObject({ phase: "ждёт: открыт ваш набор сцен — завершите его на «Фото»", action: { kind: "photos" } });
     const held = row(B, { phase: "waiting", waiting: { reason: "paid-hold" } });
     expect(line(held, { paidHold: hold("budget") }).phase).toBe("ждёт бюджета · 9 из 14 фото");
@@ -364,6 +365,7 @@ describe("the log", () => {
     expect(say("done", { videosDone: 10, videosPlanned: 10 }, true)).toBe("готово: 10 из 10");
     expect(say("hold-network")).toBe("нет ответа 3-й раз · ждём сверки");
     expect(say("avatar-busy")).toBe("ждём: аватар занят вашей генерацией");
+    expect(say("library-unknown")).toBe("ждём: не читается, какие фото свободны");
   });
 
   test("newest first, the avatar's name or «—», a tone for holds and the review", () => {
