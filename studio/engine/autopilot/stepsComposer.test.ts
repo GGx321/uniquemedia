@@ -3,6 +3,7 @@ import type { LaunchFile } from "./launchFile";
 import { composeSteps, guardFreeChange } from "./stepsComposer";
 import { FakeSteps } from "./testing/fakeSteps";
 import { IDLE_STEPS, type LaunchStepsContext } from "./steps";
+import { FakeTimers } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -17,8 +18,12 @@ interface RawCtx {
   ctx: LaunchStepsContext;
   finishes: () => number;
   failNextFinish(): void;
+  /** The next finish fails AND the launch is paused by then: the pause landed while the finish was under way. */
+  failNextFinishWhilePaused(): void;
   lastUpdate(): LaunchFile | null;
   setFile(file: LaunchFile): void;
+  /** Whether the core reports the launch as running (a pause, a stop and a sleep make it false). */
+  setRunning(running: boolean): void;
 }
 
 /** A bare core-side context: `finish` and `update` are spies, `file` is whatever the test sets. */
@@ -26,11 +31,13 @@ function rawContext(initial: LaunchFile = fileWith(row())): RawCtx {
   let file = initial;
   let finishes = 0;
   let fail = false;
+  let pauseOnFail = false;
   let updated: LaunchFile | null = null;
+  let running = true;
   const ctx = {
     launchId: "launch-x",
     file: () => file,
-    isRunning: () => true,
+    isRunning: () => running,
     update: (change: (f: LaunchFile) => LaunchFile | null) => {
       updated = change(file);
       return Promise.resolve(updated ?? file);
@@ -39,12 +46,17 @@ function rawContext(initial: LaunchFile = fileWith(row())): RawCtx {
       finishes += 1;
       if (fail) {
         fail = false;
+        if (pauseOnFail) running = false;
         return Promise.reject(new Error("still has work in flight"));
       }
       return Promise.resolve(file);
     },
   } as unknown as LaunchStepsContext;
-  return { ctx, finishes: () => finishes, failNextFinish: () => void (fail = true), lastUpdate: () => updated, setFile: (f) => void (file = f) };
+  return { ctx, finishes: () => finishes, failNextFinish: () => void (fail = true),
+    failNextFinishWhilePaused: () => {
+      fail = true;
+      pauseOnFail = true;
+    }, lastUpdate: () => updated, setFile: (f) => void (file = f), setRunning: (value) => void (running = value) };
 }
 
 describe("composeSteps: the parts", () => {
@@ -250,5 +262,121 @@ describe("composeSteps: who owns which field", () => {
     expect(raw.lastUpdate()).toBeNull();
     await held.paid?.update((f) => ({ ...f, avatars: f.avatars.map((a) => ({ ...a, photosDone: 5 })) }));
     expect(raw.lastUpdate()?.avatars[0]).toMatchObject({ photosDone: 5 });
+  });
+});
+
+describe("composeSteps: the finish retry runs only while the launch runs (S4.6b2, review)", () => {
+  /** Both parts ready, so a vote reaches the real finish; the retry timer is the test's. */
+  function ready(timers: FakeTimers, retryMs = 1_000) {
+    const paid = new FakeSteps();
+    const free = new FakeSteps();
+    paid.finishReady = () => true;
+    let freeCtx: LaunchStepsContext | null = null;
+    free.onBegin = (ctx) => {
+      freeCtx = ctx;
+    };
+    const steps = composeSteps(paid, free, { warn: () => undefined, retryMs, timers });
+    const raw = rawContext();
+    steps.begin(raw.ctx);
+    const vote = async (): Promise<void> => {
+      if (freeCtx === null) throw new Error("the free part was not begun");
+      await freeCtx.finish();
+      await steps.settled();
+    };
+    return { steps, raw, vote };
+  }
+
+  test("a finish that fails while the launch runs arms one retry", async () => {
+    const timers = new FakeTimers();
+    const g = ready(timers);
+    g.raw.failNextFinish();
+    await g.vote();
+    expect(timers.pending()).toBe(1);
+  });
+
+  test("a finish that fails and finds the launch paused meanwhile arms no retry", async () => {
+    const timers = new FakeTimers();
+    const g = ready(timers);
+    g.raw.failNextFinish();
+    g.raw.setRunning(false);
+    await g.vote();
+    expect(timers.pending()).toBe(0);
+  });
+
+  test("a finish that fails because a pause landed while it was under way arms no retry (the branch inside the failure handler)", async () => {
+    const timers = new FakeTimers();
+    const g = ready(timers);
+    g.raw.failNextFinishWhilePaused();
+    await g.vote();
+    expect(g.raw.finishes()).toBe(1);
+    expect(timers.pending()).toBe(0);
+  });
+
+  test("a retry that falls due after a pause tries nothing", async () => {
+    const timers = new FakeTimers();
+    const g = ready(timers);
+    g.raw.failNextFinish();
+    await g.vote();
+    expect(g.raw.finishes()).toBe(1);
+    g.raw.setRunning(false);
+    timers.advance(1_000);
+    await g.steps.settled();
+    expect(g.raw.finishes()).toBe(1);
+  });
+
+  test("a vote while the launch does not run reaches no finish", async () => {
+    const timers = new FakeTimers();
+    const g = ready(timers);
+    g.raw.setRunning(false);
+    await g.vote();
+    expect(g.raw.finishes()).toBe(0);
+  });
+
+  test.each(["begin", "release", "complete", "drain"] as const)("%s takes the pending retry back", async (call) => {
+    const timers = new FakeTimers();
+    const g = ready(timers);
+    g.raw.failNextFinish();
+    await g.vote();
+    expect(timers.pending()).toBe(1);
+    if (call === "begin") g.steps.begin(g.raw.ctx);
+    else if (call === "release") await g.steps.release(g.raw.ctx);
+    else if (call === "complete") await g.steps.complete?.(g.raw.ctx);
+    else await g.steps.drain();
+    expect(timers.pending()).toBe(0);
+  });
+});
+
+describe("composeSteps: host.power reaches both parts", () => {
+  test("suspend is forwarded to every part that answers it, and a part that throws does not stop the others", () => {
+    const paid = new FakeSteps();
+    const free = new FakeSteps();
+    paid.suspend = () => {
+      throw new Error("a part that cannot be told");
+    };
+    free.suspend = () => void free.calls.push("suspend");
+    const told: string[] = [];
+    const steps = composeSteps(paid, free, { warn: (line) => told.push(line) });
+    steps.suspend?.();
+    expect(free.calls).toContain("suspend");
+    expect(told.some((line) => line.includes("could not be told of the sleep"))).toBe(true);
+  });
+
+  test("wake hands the paid part its re-check and begins a part that has none, without forgetting the votes", async () => {
+    const paid = new FakeSteps();
+    const free = new FakeSteps();
+    paid.wake = async () => void paid.calls.push("wake");
+    const steps = composeSteps(paid, free);
+    const raw = rawContext();
+    steps.begin(raw.ctx);
+    await steps.wake?.(raw.ctx);
+    expect(paid.calls.filter((c) => c === "begin")).toHaveLength(1);
+    expect(paid.calls).toContain("wake");
+    expect(free.calls.filter((c) => c === "begin")).toHaveLength(2);
+  });
+
+  test("without any part that answers a sleep, the composer has no suspend or wake of its own", () => {
+    const steps = composeSteps(new FakeSteps(), new FakeSteps());
+    expect(steps.suspend).toBeUndefined();
+    expect(steps.wake).toBeUndefined();
   });
 });

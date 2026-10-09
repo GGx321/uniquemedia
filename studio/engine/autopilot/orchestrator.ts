@@ -22,6 +22,7 @@ import { buildLaunchFile, isEnded, type LaunchFile } from "./launchFile";
 import { entryIdOf, type LaunchStore, type StoreScan } from "./launchStore";
 import { launchViewOf, minimalViewOf, type ViewContext } from "./launchView";
 import type { LaunchStores } from "./lookup";
+import { displaces, sameHold } from "./paidFailures";
 import type { LaunchPlan } from "./planner";
 import { persistedStatus, transition, type LaunchEvent } from "./states";
 import type { LaunchSteps, LaunchStepsContext, MirrorSource } from "./steps";
@@ -129,6 +130,8 @@ export class Orchestrator {
   #pausing = false;
   /** Set synchronously by `shutdown()`: from then on nothing begins and nothing counts as running (L7, L8). */
   #closing = false;
+  /** `host.power` `suspend` (plan §3.8): the Mac is going to sleep. Set synchronously; from then on nothing counts as running and no paid entry point admits, until `resume` (or the owner's own click, which proves the Mac is awake). */
+  #suspended = false;
   /** Launches whose stop has begun and not ended (its drain or its last write is under way): a repeated «Стоп» on one that is not here finishes it again (L1). */
   readonly #stopping = new Set<string>();
   /** The avatars of each launch whose scene sets could not be read at open (M3). */
@@ -267,7 +270,34 @@ export class Orchestrator {
    */
   mayPay(launchId: string): boolean {
     const file = this.#current;
-    return file !== null && file.launchId === launchId && !this.#closing && !this.#pausing && file.status === "running" && file.paidHold === null;
+    return file !== null && file.launchId === launchId && !this.#closing && !this.#pausing && !this.#suspended && file.status === "running" && file.paidHold === null;
+  }
+
+  /**
+   * `host.power` (plan §3.8, S4.6b2), the engine's side. `suspend`: synchronously, before the queue, nothing counts as running and no paid entry point admits; the steps soft-stop what they have
+   * in flight and hold their timers. No attempt already sent is aborted (A6). `resume`: when the launch ran before the sleep, the steps put right what the sleep interrupted and go on
+   * (`wake`, else `begin`); a launch that is paused, held by its owner or ended is left as it is. A `resume` without a `suspend` changes nothing.
+   */
+  power(state: "suspend" | "resume"): Promise<void> {
+    if (state === "suspend") {
+      this.#suspended = true;
+      try {
+        this.#d.steps.suspend?.();
+      } catch (error) {
+        this.#warn(`studio engine: the steps could not be told of the sleep (${error instanceof Error ? error.name : typeof error})`);
+      }
+      return Promise.resolve();
+    }
+    return this.#serial(async () => {
+      if (!this.#suspended) return;
+      this.#suspended = false;
+      const file = this.#current;
+      if (file === null || this.#closing || this.#pausing || file.status !== "running") return;
+      const ctx = this.#ctx(file.launchId);
+      const steps = this.#d.steps;
+      // Not awaited: a wake-up may arm timers and await the ledger test, and a «Пауза» must not wait behind it.
+      this.#track(steps.wake === undefined ? Promise.resolve(steps.begin(ctx)) : steps.wake(ctx));
+    });
   }
 
   /** Whether the unfinished launch (paused included) has this avatar: it cannot be deleted. */
@@ -303,6 +333,7 @@ export class Orchestrator {
       this.#d.groups.register({ launchId, capMicros: file.plannedWorstMicros, setIds: sets, runIds: runs });
       this.#current = file;
       this.#pausing = false;
+      this.#suspended = false;
       this.#tail = { id: launchId, lines: [] };
       this.#announce(file);
       await this.#log(launchId, { at: this.#nowIso(), kind: "start", acceptedMicros: input.acceptedMicros });
@@ -335,6 +366,12 @@ export class Orchestrator {
       const file = await this.#needCurrent(launchId);
       const status = this.#status(file);
       // «Продолжить» also clears a paid hold of a launch that runs; a launch that runs with no hold has nothing to continue.
+      if (status === "running" && file.paidHold === null && this.#suspended) {
+        // A lost wake-up: the launch runs, nothing holds it, and the screen says so, but the engine still believes the Mac sleeps. The click proves it does not.
+        this.#suspended = false;
+        if (!this.#closing) this.#d.steps.begin(this.#ctx(launchId));
+        return this.#answer(file);
+      }
       const clearsHold = status === "running" && file.paidHold !== null;
       if (!clearsHold) this.#expect(file, "resume");
       const at = this.#nowIso();
@@ -351,6 +388,8 @@ export class Orchestrator {
         return { ...f, status: "running", paused: null, paidHold: null, activeSince: f.activeSince ?? at };
       });
       await this.#log(launchId, { at, kind: "resumed", acceptedRemainingMicros });
+      // The owner clicked: the Mac is awake, whatever became of the wake-up message.
+      this.#suspended = false;
       if (!this.#closing) this.#d.steps.begin(this.#ctx(launchId));
       return this.#answer(resumed);
     });
@@ -592,6 +631,8 @@ export class Orchestrator {
         return { by: "budget", error: { code: "VALIDATION", detail: `the month has ${free ?? "an unknown amount of"} µ$ of room, the held step needs ${hold.detail.needMicros} µ$` } };
       }
       case "network":
+        // A hold with a retry still to come is the wait of an automatic continue: the person who clicks now only skips the wait, under the same ledger test as the timer (above).
+        if (hold.detail.nextAt !== null) return null;
         return this.#openReservesOf(file.launchId).requests === 0
           ? null
           : { by: "network", error: { code: "VALIDATION", detail: "requests of the launch got no answer; reconcile in Settings first, then continue" } };
@@ -695,12 +736,27 @@ export class Orchestrator {
         if (this.#current?.launchId !== launchId) throw new Error(`launch ${launchId} is over`);
         return this.#current;
       },
-      isRunning: () => !this.#closing && this.#current?.launchId === launchId && this.#current.status === "running" && !this.#pausing,
+      isRunning: () => !this.#closing && this.#current?.launchId === launchId && this.#current.status === "running" && !this.#pausing && !this.#suspended,
       update: (change) => this.#stepWrite(launchId, change),
-      setPaidHold: async (hold) => {
-        const file = await this.#stepWrite(launchId, (f) => ({ ...f, paidHold: hold }));
-        if (hold !== null) await this.#log(launchId, holdLine(hold, this.#nowIso()));
-        return file;
+      raisePaidHold: async (hold) => {
+        // Decided on the fresh file inside the store's own write: two tasks that fail at the same moment cannot both believe they hold the launch.
+        let won = false;
+        await this.#stepWrite(launchId, (f) => {
+          if (f.paidHold !== null && !displaces(hold, f.paidHold)) return null;
+          won = true;
+          return { ...f, paidHold: hold };
+        });
+        if (won) await this.#log(launchId, holdLine(hold, this.#nowIso()));
+        return { won };
+      },
+      clearPaidHold: async (expected) => {
+        let cleared = false;
+        await this.#stepWrite(launchId, (f) => {
+          if (f.paidHold === null || !sameHold(f.paidHold, expected)) return null;
+          cleared = true;
+          return { ...f, paidHold: null };
+        });
+        return cleared;
       },
       setFreeHold: async (hold) => {
         const file = await this.#stepWrite(launchId, (f) => ({ ...f, freeHold: hold }));

@@ -36,6 +36,14 @@ export type LaunchFileStatus = z.infer<typeof LaunchFileStatus>;
 
 export const isEnded = (status: LaunchStatus): boolean => status === "done" || status === "stopped";
 
+/**
+ * S4.6b2 (plan §4.6): what a paid job has used of its bounded automatic continues. The key names the job: a slice run's id, or `<setId>:compose` / `<setId>:write` for a scene step.
+ * `drops` counts the times the job got no answer (grows for good, across a reconcile and a «Продолжить»); `continues` counts the automatic continues it was given (at most 2: the
+ * third drop is a hold for a person). A job that never dropped has no entry.
+ */
+const AutoContinue = z.strictObject({ drops: Count, continues: z.number().int().min(0).max(2) }).refine((c) => c.continues <= c.drops, { message: "a continue answers a drop", path: ["continues"] });
+export type AutoContinue = z.infer<typeof AutoContinue>;
+
 const Allocation = z.strictObject({ composeMicros: Micros, drawMicros: Micros });
 
 /** What an avatar's paid path needs, issued BEFORE its first call (A4): the set and the set's run, the exact per-category split of the compose, the review switch. */
@@ -125,6 +133,10 @@ export const LaunchFile = z
     paused: z.strictObject({ cause: PausedCause, at: IsoDateTime }).nullable(),
     paidHold: PaidHold.nullable(),
     freeHold: FreeHold.nullable(),
+    /** S4.6b2: the bounded automatic continues, by job. Absent until a job drops (optional without a version bump, like the video fields of S4.6c1: Studio is unreleased). */
+    autoContinues: z.record(z.string().min(1).max(160), AutoContinue).optional(),
+    /** S4.6b2: how many of the three retries after «prices unavailable» (5, 15 and 60 minutes) the launch has used. */
+    priceRetries: z.number().int().min(0).max(3).optional(),
     /** The ledger's sum over the launch's group when the file was last written; the live figure is the ledger's, this is read when the ledger cannot be, and after the end. */
     spentMicros: Micros,
     avatars: z.array(FileAvatar).min(1),

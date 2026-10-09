@@ -34,6 +34,12 @@ export interface PaidLibrary {
   };
 }
 
+/** How a slice's slots ended (S4.6b2, the failure-rate guard): the slice's slots, and those that closed failed by a QA gate or by moderation: never by the cap, the month, or a request that got no answer. */
+export interface SliceOutcome {
+  slots: number;
+  checkFailures: number;
+}
+
 export interface PaidPort {
   /** The open library, or null. */
   readonly library: PaidLibrary | null;
@@ -62,6 +68,11 @@ export interface PaidPort {
   monthRoom(extraLive?: readonly LiveScope[]): MonthRoom | null;
   /** The `resume-slice` budget hold of a slice run. */
   resumeSliceHold(runId: string, extraLive?: readonly LiveScope[]): Promise<BudgetHoldDetail>;
+
+  /** The single admission rule (A19) as an automatic continue applies it: true while `Budget.blocked()` is null (no reserve of a previous process, no torn line, no halt). An open reserve of this session never blocks it. */
+  admitted(): boolean;
+  /** How the slice run's slots ended, or null when its journal cannot be read. */
+  sliceOutcome(runId: string): Promise<SliceOutcome | null>;
 
   /** The soft stop of a scenes job / a run job; false when there is none (and no start under way). */
   softStopScenes(sceneSetId: string): boolean;

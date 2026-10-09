@@ -172,3 +172,33 @@ describe("what a video carries once its photos are assigned (S4.6c1, plan §3.3)
     expect(LaunchFile.safeParse(withVideo({ music })).success).toBe(false);
   });
 });
+
+describe("the counters of the bounded automatic continues (S4.6b2, plan §4.6)", () => {
+  const withCounters = (patch: object) => ({ ...stamped(), ...patch });
+
+  test("a file written before the counters existed reads as it is: none", () => {
+    const parsed = LaunchFile.parse(stamped());
+    expect("autoContinues" in parsed || "priceRetries" in parsed).toBe(false);
+  });
+
+  test("a job's drops and the automatic continues it was given are kept, and the price retries with them", () => {
+    const parsed = LaunchFile.parse(withCounters({ autoContinues: { "run-0001": { drops: 2, continues: 2 }, "set-0001:compose": { drops: 1, continues: 1 } }, priceRetries: 3 }));
+    expect(parsed.autoContinues).toEqual({ "run-0001": { drops: 2, continues: 2 }, "set-0001:compose": { drops: 1, continues: 1 } });
+    expect(parsed.priceRetries).toBe(3);
+  });
+
+  test.each([
+    ["a third automatic continue of one job", { "run-0001": { drops: 3, continues: 3 } }],
+    ["more continues than drops", { "run-0001": { drops: 1, continues: 2 } }],
+    ["a negative count", { "run-0001": { drops: -1, continues: 0 } }],
+    ["a field it does not know", { "run-0001": { drops: 1, continues: 1, at: "x" } }],
+    ["an empty job key", { "": { drops: 1, continues: 1 } }],
+  ])("refuses %s", (_name, autoContinues) => {
+    expect(LaunchFile.safeParse(withCounters({ autoContinues })).success).toBe(false);
+  });
+
+  test("the price retries stop at the third: 5, 15 and 60 minutes are all there are", () => {
+    expect(LaunchFile.safeParse(withCounters({ priceRetries: 3 })).success).toBe(true);
+    expect(LaunchFile.safeParse(withCounters({ priceRetries: 4 })).success).toBe(false);
+  });
+});

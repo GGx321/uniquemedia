@@ -88,7 +88,8 @@ import { LaunchStores } from "./autopilot/lookup";
 import { Orchestrator, type Admission, type Prepared } from "./autopilot/orchestrator";
 import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
-import { NOT_PAYABLE_DETAIL, type LaunchSliceStart } from "./autopilot/paidPort";
+import { checkFailuresOf } from "./autopilot/paidFailures";
+import { NOT_PAYABLE_DETAIL, type LaunchSliceStart, type SliceOutcome } from "./autopilot/paidPort";
 import { IDLE_STEPS, type LaunchSteps } from "./autopilot/steps";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -1372,6 +1373,30 @@ export class Engine {
     return this.#sceneSets.idle(sceneSetId);
   }
 
+  /** S4.6b2, the single admission rule (A19) for an automatic continue: `Budget.blocked()` is null. */
+  admitted(): boolean {
+    return this.#launchAdmission() === null;
+  }
+
+  /**
+   * S4.6b2: how a slice run's slots ended, for the failure-rate guard (plan §4.6): its slots, and those a QA gate or moderation closed. Read from the run's journal and the ledger, the way the
+   * slice statuses are; null when the run cannot be read (the guard then judges nothing).
+   */
+  async sliceOutcome(runId: string): Promise<SliceOutcome | null> {
+    const money = this.#money;
+    if (!money.ok) return null;
+    try {
+      const library = await this.#liveLibrary();
+      const plan = await library.readRun(runId, RunPlanSchema);
+      const { events } = await library.readJournal(runId, RunEventSchema);
+      return checkFailuresOf(foldRun(plan, { events, ...this.#ledgerView(money.budget), photos: library.photosByAvatar(plan.avatarId) }).slots);
+    } catch (error) {
+      // The guard then judges nothing, and says why.
+      console.warn(`studio engine: the outcome of slice run ${runId} could not be read (${error instanceof Error ? error.name : typeof error})`);
+      return null;
+    }
+  }
+
   /** Which of the set's slices have a run, whether each is finished and what it committed. */
   async sliceStatuses(set: StoredSceneSet): Promise<Map<string, SliceStatus>> {
     return this.#sliceStatuses(await this.#liveLibrary(), set);
@@ -1767,7 +1792,7 @@ export class Engine {
         this.#mediaCalls.get(control.callId)?.abort();
         return;
       case "host.power":
-        // Stage 4 (S4.1): the contract exists, the orchestrator that stops sending on `suspend` lands with S4.6b2. Nothing of the engine's own is in flight on its account.
+        await this.#orchestrator.power(control.state);
         return;
       case "settings.update": {
         const refusal = await this.#applySettings(control.settings);

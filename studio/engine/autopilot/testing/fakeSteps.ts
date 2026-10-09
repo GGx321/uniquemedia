@@ -26,6 +26,9 @@ export class FakeSteps implements LaunchSteps {
     if (this.continueAnswer instanceof Error) throw this.continueAnswer;
     return this.continueAnswer;
   };
+  /** S4.6b2, `host.power`: assign to make this part answer a sleep; absent, the orchestrator begins it again on waking. */
+  suspend: LaunchSteps["suspend"] = undefined;
+  wake: LaunchSteps["wake"] = undefined;
   /** S4.6b1: the finish gate. Assign `finishReady` to make this a passive voter; `readyListeners` are the composer's. */
   finishReady: LaunchSteps["finishReady"] = undefined;
   readyListeners: (() => void)[] = [];
