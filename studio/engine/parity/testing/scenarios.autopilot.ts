@@ -2,8 +2,9 @@ import type { Scenario } from "./scenarios";
 import type { World } from "./rigs";
 import type { Answer } from "./transcript";
 
-// The batch autopilot, told through its commands (Stage 4, S4.1; plan §9 and §18). The real engine answers every one of them «not implemented yet» until its orchestrator lands
-// (S4.6), so the stories that need it served are PENDING (`Scenario.pending`): the mock's transcript is bound to the golden, and the real engine is only held to its one refusal.
+// The batch autopilot, told through its commands (Stage 4, S4.1; plan §9 and §18). The stories that need a running launch are PENDING (`Scenario.pending`): the mock's transcript
+// is bound to the golden, and the real engine is held to its one refusal «not implemented yet» for a command it cannot serve (S4.1 to S4.5) or, since S4.6a, to serving the
+// orchestrator core's commands (`served`), until S4.8 completes the mock and the two can be compared line for line.
 // What the contract itself refuses is refused by both engines and is compared line for line NOW.
 //
 // A pending story is written so that it can run against a real engine that refuses everything AND so that it can later run against one that serves it: it passes its own plan
@@ -94,8 +95,17 @@ const PARITY_NOW: Scenario[] = [
 ];
 
 const AUTOPILOT_COMMANDS = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.continueAfterReview", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
-/** The orchestrator's commands a story uses: the real engine answers them «not implemented yet» until S4.6. */
-const orchestrator = (...used: string[]): { until: string; commands: readonly string[] } => ({ until: "S4.6", commands: AUTOPILOT_COMMANDS.filter((c) => used.includes(c)) });
+/** The commands the real engine serves since S4.6a, the orchestrator core. `autopilot.continueAfterReview` is the paid path's (S4.6b1) and is still «not implemented yet». */
+const CORE_COMMANDS = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
+/**
+ * The orchestrator's commands a story uses. The real engine serves the core ones (`served`: held to ANY answer but «not implemented yet») and refuses the rest. The story stays
+ * pending until S4.8 completes the mock (the mock holds a launch in a canned state, the engine's is a real one, with its own figures and ids): it is not lifted from pending
+ * by serving it, only when the two transcripts really agree line for line.
+ */
+const orchestrator = (...used: string[]): { until: string; commands: readonly string[]; served: readonly string[] } => {
+  const commands = AUTOPILOT_COMMANDS.filter((c) => used.includes(c));
+  return { until: "S4.8", commands, served: commands.filter((c) => CORE_COMMANDS.includes(c)) };
+};
 
 const PENDING: Scenario[] = [
   {
@@ -212,4 +222,30 @@ const PENDING: Scenario[] = [
   },
 ];
 
-export const AUTOPILOT_SCENARIOS: readonly Scenario[] = [...PARITY_NOW, ...PENDING];
+/**
+ * Served by both engines since S4.6a and compared line for line (APPENDED: the golden is append-only). What the mock and the real orchestrator really agree on is what
+ * a launch that is not there, an entry that is not there and an avatar that is not saved and active are answered with.
+ */
+const PARITY_SERVED: Scenario[] = [
+  {
+    name: "autopilot: with no launch in the library the list is empty, the commands that name a launch or an entry are NOT_FOUND, and an avatar that is not saved and active is NOT_FOUND",
+    async run(t, w) {
+      t.note("nothing started: the list is empty");
+      await t.call("autopilot.list", {});
+      t.note("a launch that is not there");
+      await t.call("autopilot.get", { launchId: "launch-nobody0404" });
+      await t.call("autopilot.pause", { launchId: "launch-nobody0404" });
+      await t.call("autopilot.resume", { launchId: "launch-nobody0404", acceptedRemainingMicros: ENOUGH });
+      await t.call("autopilot.stop", { launchId: "launch-nobody0404" });
+      t.note("an entry that is not there");
+      await t.call("autopilot.removeUnreadable", { entryId: "0123456789abcdef" });
+      t.note("an avatar that is not saved and active, for the preview and for the start");
+      await t.call("autopilot.estimate", { draft: draftOf(w, { avatarIds: [w.archivedAvatarId] }) });
+      await t.call("autopilot.estimate", { draft: draftOf(w, { avatarIds: ["avatar-nobody-0404"] }) });
+      await t.call("autopilot.start", { draft: draftOf(w, { avatarIds: ["avatar-nobody-0404"] }), acceptedWorstMicros: ENOUGH });
+      await t.call("autopilot.list", {});
+    },
+  },
+];
+
+export const AUTOPILOT_SCENARIOS: readonly Scenario[] = [...PARITY_NOW, ...PENDING, ...PARITY_SERVED];

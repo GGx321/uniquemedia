@@ -20,7 +20,15 @@ export interface Scenario {
    * still bound to the golden; for the real engine the harness checks that each command named here is answered with the engine's one refusal, INTERNAL
    * «<command> is not implemented yet», and nothing else. A story whose commands are all served is not pending.
    */
-  readonly pending?: { readonly until: string; readonly commands: readonly string[] };
+  readonly pending?: {
+    readonly until: string;
+    readonly commands: readonly string[];
+    /**
+     * S4.6a: the commands of `commands` the real engine serves already, while the mock is not complete (S4.8) and the story still cannot match line for line. The harness
+     * holds the real engine to the opposite there: each must be answered with anything but «not implemented yet» (testing/pending.ts `servedProblems`).
+     */
+    readonly served?: readonly string[];
+  };
   run(t: Transcript, world: World, control: Control): Promise<void>;
 }
 

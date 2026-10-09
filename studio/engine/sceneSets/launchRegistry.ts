@@ -10,8 +10,9 @@ import type { Library } from "../library";
 // stopped or removed launch can never lock an avatar. The links are never trusted on their own.
 
 /**
- * What the launch store (S4.6a: `<library>/autopilot/<launchId>.json`) tells the registry. `isUnfinished` is true exactly when the launch's file is
- * readable and its status is not terminal (`done`, `stopped`); false for a launch that is finished, whose file was removed, or that cannot be read.
+ * What the launch store (S4.6a: `<library>/autopilot/<launchId>.json`) tells the registry. `isUnfinished` is true when the launch's file is readable and its
+ * status is not terminal (`done`, `stopped`), and FAILS CLOSED (true) for a launch whose file cannot be read, or when the folder cannot be listed: it may describe
+ * an active launch (§19). False for a launch that is finished or whose file was removed (moved to the quarantine).
  */
 export interface LaunchLookup {
   isUnfinished(launchId: string): boolean;

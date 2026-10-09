@@ -16,6 +16,8 @@ export type QuarantineReason =
   | "orphan-media"
   /** 3e.2: a file among an avatar's video records that cannot be read as one, moved aside by «Убрать повреждённую запись». */
   | "invalid-video-record"
+  /** Stage 4: a file of `autopilot/` that cannot be read as a launch, moved aside by «Убрать запись» (`autopilot.removeUnreadable`). */
+  | "invalid-launch-file"
   /** 3e.2: a reject log with a line that cannot be read, COPIED aside by «Восстановить отметки» before it is rebuilt. */
   | "invalid-reject-log";
 

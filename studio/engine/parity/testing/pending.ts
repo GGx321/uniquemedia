@@ -24,6 +24,28 @@ export function unservedAnswers(lines: readonly string[], commands: readonly str
   return problems;
 }
 
+/**
+ * The other half of a pending story (S4.6a): the named commands the real engine DOES serve now, while the mock is not complete (S4.8) and the story cannot match line for
+ * line yet. Each, every time it was sent, must be answered with anything but the refusal «not implemented yet»; a command sent and never answered, or never sent, is a
+ * problem too (a story must exercise what it names).
+ */
+export function servedProblems(lines: readonly string[], commands: readonly string[]): string[] {
+  const problems: string[] = [];
+  for (const type of new Set(commands)) {
+    const refusal = new RegExp(`^< error INTERNAL \\{"detail":"${escaped(type)}( with \\w+)? is not implemented yet"\\}$`);
+    let sent = 0;
+    lines.forEach((line, i) => {
+      if (!line.startsWith(`> ${type} `)) return;
+      sent += 1;
+      const answer = lines.slice(i + 1).find((later) => later.startsWith("< "));
+      if (answer === undefined) problems.push(`${type} was never answered`);
+      else if (refusal.test(answer) || answer.startsWith("< error INTERNAL ")) problems.push(`${type} answered ${answer}, but the engine serves it now`);
+    });
+    if (sent === 0) problems.push(`${type} was never sent`);
+  }
+  return problems;
+}
+
 function escaped(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

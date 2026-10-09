@@ -82,8 +82,12 @@ import type { ImageMediaType } from "./library/media";
 import { looksLikeRunPhoto, pagePhotoList, photoSummaryFrom, type PhotoPage } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
 import { budgetHoldDetail, type BudgetHoldDetail, type MonthRoom } from "../shared/autopilot/money";
+import { AutopilotCommands } from "./autopilot/commands";
 import { LaunchGroups } from "./autopilot/groups";
+import { LaunchStores } from "./autopilot/lookup";
+import { Orchestrator, type Admission, type Prepared } from "./autopilot/orchestrator";
 import { monthRoom, type LiveScope } from "./autopilot/room";
+import { IDLE_STEPS, type LaunchSteps } from "./autopilot/steps";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
@@ -113,7 +117,7 @@ import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
 import { poolOf } from "./scenes/poolGen";
 import { SceneSetService, type LaunchComposeOptions } from "./sceneSets/service";
 import { approveLaunchSet, drawLaunchSlice, type DrawSliceResult, type SliceStatus, type UnlinkPhase } from "./sceneSets/launchDraw";
-import { LaunchRegistry, NO_LAUNCHES, NO_LINKS, type LaunchLinks, type LaunchLookup } from "./sceneSets/launchRegistry";
+import { LaunchRegistry, NO_LINKS, type LaunchLinks, type LaunchLookup } from "./sceneSets/launchRegistry";
 import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
@@ -228,10 +232,13 @@ export interface EngineDeps {
   /** The registry of the engine's jobs; absent, the engine makes its own. Tests inject one holding a state the snapshot must not trust. */
   jobs?: JobRegistry;
   /**
-   * S4.5a: which launches are unfinished (a readable launch file whose status is not terminal). S4.6a backs it with the launch files; absent, no launch is
-   * unfinished, so every set and run is the owner's own and none is refused or marked (the unlinked rule).
+   * S4.5a: which launches are unfinished (a readable launch file whose status is not terminal). Absent, the engine uses the launch store (S4.6a, `LaunchStores`): the
+   * launch files of the live library, library-bound, cached per library, never throwing, failing closed. A `LaunchStores` passed here is also the store the orchestrator
+   * writes through; any other lookup (a test's) only answers the registry's questions, and the orchestrator keeps its own store.
    */
   launches?: LaunchLookup;
+  /** S4.6a: the work a launch does, plugged into the orchestrator core (autopilot/steps.ts). Absent, a started launch stays in its first step (S4.6b, S4.6c replace it). */
+  launchSteps?: LaunchSteps;
   /**
    * Downscales a tiny built-in image through the same ffmpeg path a real
    * slot's image would take (M8's `generateCandidates` preflight). Defaults
@@ -739,6 +746,13 @@ export class Engine {
   readonly #launchLinks = new WeakMap<Library, LaunchLinks>();
   /** The folder identity whose links the registry holds. */
   #launchesIdentity: string | null = null;
+  /** S4.6a: the orchestrator core (the launch store, the state machine, the commands, the events) and the engine's side of estimate and start. */
+  readonly #orchestrator: Orchestrator;
+  /** Launch commands (start, pause, resume, stop) being carried out now: a library switch is refused while any is. */
+  #launchCommands = 0;
+  readonly #autopilot: AutopilotCommands;
+  /** What each opened library's launch files and sets say of its launches, read when it was opened so that adopting it as the live one needs no await. */
+  readonly #launchPrepared = new WeakMap<Library, Prepared>();
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
   readonly #reportedBadJobs = new Set<string>();
   /**
@@ -775,7 +789,9 @@ export class Engine {
     this.#deps = deps;
     this.launchGroups = launchGroups;
     this.#jobs = deps.jobs ?? new JobRegistry();
-    this.#launches = new LaunchRegistry(deps.launches ?? NO_LAUNCHES);
+    // S4.6a: the launch store backs the registry's lookup unless a test injects its own; the orchestrator writes through the same store when it can.
+    const launchStores = deps.launches instanceof LaunchStores ? deps.launches : new LaunchStores();
+    this.#launches = new LaunchRegistry(deps.launches ?? launchStores);
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
     const checkTimeout = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
@@ -975,6 +991,77 @@ export class Engine {
       warn: (line) => console.warn(line),
       launches: this.#launches,
     });
+    // S4.6a: the orchestrator core. It gets the registry and the Budget groups through its constructor; the engine keeps no public handle on it.
+    this.#orchestrator = new Orchestrator({
+      stores: launchStores,
+      groups: launchGroups,
+      registry: this.#launches,
+      steps: deps.launchSteps ?? IDLE_STEPS,
+      clock: () => deps.clock(),
+      newId: () => deps.newId(),
+      budget: () => this.budget,
+      admission: () => this.#launchAdmission(),
+      keyState: () => (this.#apiKey === null ? "missing" : this.#keyRejected ? "rejected" : "ok"),
+      roomFreeMicros: () => this.monthRoom()?.freeMicros ?? null,
+      emit: (launch) => this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "autopilot.changed", payload: { launch } }),
+      // A launch view that broke the contract was not announced (§19): the windows are told the engine hit an internal error, the launch goes on.
+      degrade: () => this.noteUnhandledRejection(),
+      warn: (line) => console.warn(line),
+    });
+    this.#autopilot = new AutopilotCommands({
+      orchestrator: this.#orchestrator,
+      liveLibrary: () => this.#liveLibrary(),
+      runnableAvatar: (library, avatarId) => void this.#runnableAvatar(library, avatarId),
+      models: () => this.#avatarModels(),
+      imageAgeCheck: () => this.#settings.imageAgeCheck,
+      prices: (models) => this.#prices.get(models),
+      monthRoom: () => this.monthRoom(),
+      monthlyBudgetMicros: () => this.#settings.monthlyBudgetMicros,
+      isBusy: (avatarId) => this.#busyAvatars.has(avatarId) || this.#jobs.hasLiveJobFor(avatarId),
+      listDrafts: (library, avatarId) => this.#drafts.list(library, avatarId),
+      paidGate: () => this.#launchPaidGate(),
+      exportStatus: () => this.#exportStatus,
+      musicKeyStored: () => this.#musicKey !== null,
+      clock: () => deps.clock(),
+      newId: () => deps.newId(),
+    });
+  }
+
+  /** Runs a launch command counted for `#switchRefusal`: the count is taken before the first await and released whatever happens. */
+  async #launchCommand<T>(work: () => Promise<T>): Promise<T> {
+    this.#launchCommands++;
+    try {
+      return await work();
+    } finally {
+      this.#launchCommands--;
+    }
+  }
+
+  /** The engine's first checks before any paid call of a launch: the key, then the ledger (`Budget.blocked()`, halts, an unreadable ledger). Null when both are open. */
+  #launchPaidGate(): EngineError | null {
+    try {
+      this.#usableKey("start an autopilot launch");
+      this.#paidBudget();
+      return null;
+    } catch (error) {
+      return engineErrorFrom(error);
+    }
+  }
+
+  /**
+   * THE admission rule of «Продолжить» and every automatic continue (A19, plan §3.7): `Budget.blocked()` and nothing else of the ledger: reserves of a previous process, a torn
+   * line, a halt, an unreadable ledger. NOT `moneyStatus().reconcileNeeded`, which turns on for any reserve of this session left open and would make every ordinary
+   * pause and continue demand a reconcile.
+   */
+  #launchAdmission(): Admission | null {
+    try {
+      this.#paidBudget();
+      return null;
+    } catch (error) {
+      const refusal = engineErrorFrom(error);
+      const blockedBy = refusal.code === "RECONCILE_REQUIRED" ? "reconcile-required" : refusal.code === "SETTLE_ABOVE_WORST" || refusal.code === "LEDGER_WRITE_FAILED" ? "halt" : "ledger";
+      return { blockedBy, error: refusal };
+    }
   }
 
   /**
@@ -1030,7 +1117,7 @@ export class Engine {
 
   /** Resolves once the background work of the start and of library switches is done (recovery, the render-tmp sweep). Tests wait on it; nothing else does. */
   settled(): Promise<void> {
-    return this.#videos.settled();
+    return Promise.all([this.#videos.settled(), this.#orchestrator.settled()]).then(() => undefined);
   }
 
   /**
@@ -1046,7 +1133,8 @@ export class Engine {
     this.#internalNoticeTimer = null;
     // A music request in flight is aborted (its send stays counted); the renders get their bounded wait.
     // Imports are cancelled and have cleaned up (their staged copies and work files) when `stop` returns.
-    const [, renders] = await Promise.all([this.#music.stop(), this.#videos.shutdown(waitMs), this.#media.stop()]);
+    // A launch that runs is written as paused by the quit (S4.6a): its in-flight requests die with the process and are counted at worst until a reconcile.
+    const [, renders] = await Promise.all([this.#music.stop(), this.#videos.shutdown(waitMs), this.#media.stop(), this.#orchestrator.shutdown().catch(() => undefined)]);
     return renders;
   }
 
@@ -1326,7 +1414,8 @@ export class Engine {
           if (this.#live !== null) this.#staged.set(call.path, this.#live);
           return { kind: "control", type: "reply", callId: call.callId };
         }
-        if (this.#busy()) return { kind: "control", type: "reply", callId: call.callId, error: this.#inFlightRefusal() };
+        const switchRefusal = this.#switchRefusal();
+        if (switchRefusal !== null) return { kind: "control", type: "reply", callId: call.callId, error: switchRefusal };
         try {
           const opened = await this.#open(call.path, identity);
           // Staged under the exact string main sent, not the resolved
@@ -1361,12 +1450,13 @@ export class Engine {
           const detail = "the folder is not staged; open it again";
           return { kind: "control", type: "reply", callId: call.callId, error: { code: "VALIDATION", detail } };
         }
-        if (this.#busy()) {
+        const confirmRefusal = this.#switchRefusal();
+        if (confirmRefusal !== null) {
           // Dropped rather than left lingering: main always opens a folder
           // again before confirming it, so a retry re-stages it fresh
           // instead of ever adopting this now-stale entry later.
           this.#staged.delete(call.path);
-          return { kind: "control", type: "reply", callId: call.callId, error: this.#inFlightRefusal() };
+          return { kind: "control", type: "reply", callId: call.callId, error: confirmRefusal };
         }
         // No await between the check above and here: the switch is atomic
         // with the busy check just made, so nothing can start writing into
@@ -1490,6 +1580,18 @@ export class Engine {
   /** True while a job or paid command writes into the live library, a pick/archive is running, a reject mark is being written, an own-media import is running, or a render is queued or running (invariant 25): a library switch must be refused. */
   #busy(): boolean {
     return this.#paidCommands > 0 || this.#busyAvatars.size > 0 || this.#librarySmallWrites > 0 || this.#renders.active() > 0 || this.#jobs.activeImports() > 0 || this.#videos.preparing > 0 || (this.#money.ok && this.#money.budget.inFlightCount() > 0);
+  }
+
+  /**
+   * Why the library cannot be changed now, or null. A launch that is running, pausing or stopping refuses it by its OWN check (plan §3.8, A12): `#paidCommands` and the busy
+   * avatars are 0 between two of the launch's jobs, so `#busy()` alone would let a switch through. A paused launch stays with its library and lets it go.
+   */
+  #switchRefusal(): EngineError | null {
+    // A start, pause, resume or stop is under way: counted from its first synchronous step to its end, so a switch can never land between the library it read and the
+    // launch it writes (M2). `blocksLibrarySwitch()` alone is false until the launch is current.
+    if (this.#launchCommands > 0) return { code: "IN_FLIGHT", detail: "an autopilot command is being carried out; change the library folder when it ends" };
+    if (this.#orchestrator.blocksLibrarySwitch()) return { code: "IN_FLIGHT", detail: "an autopilot launch is running; pause or stop it before changing the library folder" };
+    return this.#busy() ? this.#inFlightRefusal() : null;
   }
 
   #inFlightRefusal(): EngineError {
@@ -2001,15 +2103,39 @@ export class Engine {
       }
       // Stage 4 (S4.1): the commands of the batch autopilot and the two marks. INTERNAL «<type> is not implemented yet» is this switch's one answer for a command it cannot
         // serve (the `default` below says the same), listed here so each service that lands (S4.5c published marks, S4.5d the track flag, S4.6 the orchestrator) takes its case out.
+      // S4.6a serves the orchestrator core's commands; `autopilot.continueAfterReview` is the paid path's (S4.6b1) and stays «not implemented yet» until then.
       case "autopilot.estimate":
-      case "autopilot.start":
-      case "autopilot.pause":
-      case "autopilot.resume":
-      case "autopilot.stop":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { preview: await this.#autopilot.estimate(command.payload.draft) } };
+      case "autopilot.start": {
+        const { payload } = command;
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { launch: await this.#launchCommand(() => this.#autopilot.start(payload)) } };
+      }
+      case "autopilot.pause": {
+        const { launchId } = command.payload;
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { launch: await this.#launchCommand(() => this.#orchestrator.pause(launchId)) } };
+      }
+      case "autopilot.resume": {
+        const { launchId, acceptedRemainingMicros } = command.payload;
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { launch: await this.#launchCommand(() => this.#orchestrator.resume(launchId, acceptedRemainingMicros)) } };
+      }
+      case "autopilot.stop": {
+        const { launchId } = command.payload;
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { launch: await this.#launchCommand(() => this.#orchestrator.stop(launchId)) } };
+      }
+      case "autopilot.list": {
+        await this.#liveLibrary();
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#orchestrator.list() };
+      }
+      case "autopilot.get": {
+        await this.#liveLibrary();
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#orchestrator.get(command.payload.launchId) };
+      }
+      case "autopilot.removeUnreadable": {
+        await this.#liveLibrary();
+        await this.#orchestrator.removeUnreadable(command.payload.entryId);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: {} };
+      }
       case "autopilot.continueAfterReview":
-      case "autopilot.list":
-      case "autopilot.get":
-      case "autopilot.removeUnreadable":
       case "videos.setPublished":
       case "media.setForAutopilot":
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
@@ -2663,6 +2789,8 @@ export class Engine {
       // As of the last check: start, a settings update, or a render attempt (`#refreshExportStatus`).
       exportStatus: this.#exportStatus,
       notices: [...this.#notices],
+      // The library's unfinished launch, or none. A view that breaks the contract degrades to none (and a notice): the snapshot never fails for it (§19).
+      autopilot: this.#orchestrator.snapshotView(),
     };
   }
 
@@ -3734,6 +3862,7 @@ export class Engine {
    * are the caller's to look at.
    */
   #deleteBusy(library: Library, avatarId: string): string | null {
+    if (this.#orchestrator.holdsAvatar(avatarId)) return "the avatar is in an unfinished autopilot launch: stop the launch first";
     if (this.#jobs.hasLiveJobFor(avatarId) || this.#renders.reservedPhotos(avatarId).size > 0) return "a photo run, a candidate job or a video render of this avatar is running";
     if ((this.#focusRequests.get(avatarId) ?? 0) > 0) return "a focus request for this avatar is running";
     if (library.pendingVideoCount(avatarId) > 0) return "a video of this avatar is still being saved";
@@ -4179,8 +4308,9 @@ export class Engine {
     let live = this.#live;
     let switched = false;
     if (!sameLibrary) {
-      if (this.#busy()) {
-        refusal = this.#inFlightRefusal();
+      const beforeSurvey = this.#switchRefusal();
+      if (beforeSurvey !== null) {
+        refusal = beforeSurvey;
       } else {
         // #switching blocks new paid work, pick and archive (#liveLibrary())
         // for the whole survey below, not only the busy check just made:
@@ -4196,8 +4326,9 @@ export class Engine {
           // job attempt already past its own #liveLibrary() call when the
           // survey started) is not stopped by #switching; #busy() still
           // catches it. The freshly opened library is dropped, not adopted.
-          if (this.#busy()) {
-            refusal = this.#inFlightRefusal();
+          const afterSurvey = this.#switchRefusal();
+          if (afterSurvey !== null) {
+            refusal = afterSurvey;
           } else {
             live = opened;
             switched = true;
@@ -4261,6 +4392,8 @@ export class Engine {
       for (const line of logIssueLines(opened.report.logIssues)) console.warn(line);
       // S4.5a: the launches its sets name, read now so that making it the live one is synchronous and no paid command can meet a half-built registry.
       this.#launchLinks.set(opened.library, await this.#launches.scan(opened.library));
+      // S4.6a: its launch files, and the slice runs its sets recorded, read now for the same reason: the Budget groups are restored when it becomes the live one.
+      this.#launchPrepared.set(opened.library, await this.#orchestrator.prepare(opened.library));
       return { library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) };
     });
     this.#opening.set(identity, opening);
@@ -4279,6 +4412,8 @@ export class Engine {
     if (identity !== null && identity === this.#launchesIdentity) return;
     this.#launchesIdentity = identity;
     this.#launches.adopt(opened === null ? NO_LINKS : (this.#launchLinks.get(opened.library) ?? NO_LINKS));
+    // S4.6a: its launch (a running one reads as paused by the restart, A5), its Budget groups restored before any paid command can run.
+    this.#orchestrator.adopt(opened === null ? null : opened.library, opened === null ? null : (this.#launchPrepared.get(opened.library) ?? null));
   }
 
   /** `#open`, or null (and a log line) when the folder cannot hold a library now. */
