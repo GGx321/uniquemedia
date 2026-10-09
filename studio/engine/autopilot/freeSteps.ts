@@ -272,6 +272,14 @@ class FreeRun {
   readonly #cancelled = new Set<string>();
   /** Set by `#exportAnswers` when the gate threw (its answer is «yes, the engine checks again» for a submit, but «unknown» for a render's end). */
   #gateThrew = false;
+  /**
+   * The outage epoch (S4.6r): counts the export outages this launch has seen, i.e. every time the folder's check refused or a render's end was read as a loss of the folder. A render takes the epoch
+   * at its submit (`#renderEpoch`); one that ends without a video after the epoch moved lived through an outage, so its failure is the folder's, whatever the check answers by the time its end is handled.
+   */
+  #outageEpoch = 0;
+  readonly #renderEpoch = new Map<string, number>();
+  /** Why the folder was last seen refusing: the hold's reason for a loss that is read after the folder is back. */
+  #lastOutage: ExportUnavailableReason = "not-writable";
   /** Consecutive losses of the folder per key when there is no check to confirm them (see `#endedWithoutVideo`). */
   readonly #exportLosses = new Map<string, number>();
   readonly #retryAt = new Map<string, number>();
@@ -338,6 +346,7 @@ class FreeRun {
     this.#abort.abort();
     this.#wakeSleep?.();
     this.#inflight.clear();
+    this.#renderEpoch.clear();
     this.#checkIdle();
   }
 
@@ -542,6 +551,7 @@ class FreeRun {
         const live = video.videoId === null ? undefined : this.#d.liveRenders?.().find((job) => job.videoId === video.videoId && (job.life === "queued" || job.life === "running"));
         if (live !== undefined) {
           this.#inflight.set(video.key, { key: video.key, avatarId: row.avatarId, jobId: live.jobId });
+          this.#renderEpoch.set(video.key, this.#outageEpoch);
           this.#parked.delete(video.key);
           continue;
         }
@@ -596,6 +606,12 @@ class FreeRun {
     const said = this.#exportFailed.get(key);
     const file = this.#file();
     const video = file?.avatars.find((row) => row.avatarId === avatarId)?.videos.find((v) => v.key === key);
+    // A render whose life overlapped an outage that was seen is an export loss, whatever the check answers now: the folder may be back by the time this end is handled.
+    const submittedAt = this.#renderEpoch.get(key);
+    if (submittedAt !== undefined && submittedAt < this.#outageEpoch) {
+      this.#renderEpoch.delete(key);
+      return this.#exportLost(avatarId, key, said ?? this.#lastOutage, false);
+    }
     if (this.#d.exportGate !== undefined && file !== null && video !== undefined) {
       this.#gateThrew = false;
       const open = await this.#exportAnswers(file, avatarId, video);
@@ -1030,8 +1046,15 @@ class FreeRun {
       return true;
     }
     this.#gateRefused = true;
+    this.#sawOutage(answer.exportReason);
     await this.#setHold(answer.exportReason, answer.exportReason === "not-enough-space" ? { neededBytes: answer.neededBytes, freeBytes: answer.freeBytes } : { neededBytes: null, freeBytes: null });
     return false;
+  }
+
+  /** The folder was seen gone: every render submitted before now lived through it. */
+  #sawOutage(exportReason: ExportUnavailableReason): void {
+    this.#outageEpoch += 1;
+    this.#lastOutage = exportReason;
   }
 
   /** Writes the hold only when it is new or its reason changed: the figures move with every look and are not worth a write (every write is an `autopilot.changed`). */
@@ -1173,9 +1196,12 @@ class FreeRun {
     }
     if (marked === "same") return "idle";
 
+    // Taken before the submit: an outage seen while the render is being taken counts for it.
+    const epochAtSubmit = this.#outageEpoch;
     try {
       const { jobId, videoId } = await this.#d.videos.renderInternal({ montageId: null, spec, provenance: { origin: "autopilot", launchId: this.#ctx.launchId, launchVideoKey: video.key } });
       this.#inflight.set(video.key, { key: video.key, avatarId, jobId });
+      this.#renderEpoch.set(video.key, epochAtSubmit);
       this.#attempts.delete(video.key);
       await this.#write((current) => mapVideo(current, avatarId, video.key, (v) => (v.state === "rendering" && v.videoId === null ? { ...v, videoId } : null)));
       // The engine took a render, so the folder answered: a hold the gate could not clear (no gate, or a refusal of the engine's own) is over.

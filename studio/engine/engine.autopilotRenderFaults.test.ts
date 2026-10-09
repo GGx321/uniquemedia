@@ -55,6 +55,16 @@ function vanishingFolder(): { deps: Partial<EngineDeps>; away: () => string; bri
   };
 }
 
+/** Resolves once no video of the launch is `rendering`: every failed render has been read as a loss and its video is back in the queue. */
+async function classified(started: Awaited<ReturnType<typeof kit.boot>>, launchId: string): Promise<void> {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const listed = await kit.getLaunch(started, launchId);
+    if (listed.videos.every((video) => video.state !== "rendering")) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 describe("an export folder that vanishes mid-render (S4.6r)", () => {
   test(
     "holds the launch on the folder without dropping a video, again and again, and every video finishes once the folder is back",
@@ -72,6 +82,8 @@ describe("an export folder that vanishes mid-render (S4.6r)", () => {
         expect(held.status).toBe("running");
         const whileHeld = await kit.getLaunch(started, launch.launchId);
         expect(whileHeld.videos.filter((v) => v.state === "dropped")).toEqual([]);
+        // Every render that was running has been classified (none is still `rendering`) before the folder is back; the product holds without this wait too (freeSteps.exportOutage.test.ts), it only keeps this test about one thing.
+        await within(classified(started, launch.launchId), 30_000, `every render of loss ${loss} to be classified`);
         folder.bringBack();
       }
 
