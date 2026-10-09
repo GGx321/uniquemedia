@@ -22,7 +22,7 @@ export {
   type RunSlot,
   type ScenePlan,
 } from "./schema";
-export { plan, placeMirrorShots, planWithPools, type ExcludedPair, type PlanInput } from "./planner";
+export { explicitSplit, plan, placeMirrorShots, planWithPools, type ExcludedPair, type PlanInput } from "./planner";
 export { drawPose, NO_EXTRA_POSES, POSE_WEIGHTS, type PoseAllowance } from "./poses";
 export {
   contradictsPose,

@@ -95,7 +95,9 @@ import { ImageCatalogueCache, loadImageCatalogue } from "./imageModels/catalogue
 import { rawFileName, saveRawBody } from "./rawStore";
 import { foldRun, RunEventSchema, type LedgerView, type RunState } from "./runs/journal";
 import { buildRunPlan, buildSceneRunPlan, RunPlanSchema, runEstimate, runEstimateFromScenes, runPriceModels, sceneCategory, sceneRunPriceModels, type RunPlan } from "./runs/plan";
-import { commitApproval, loadApprovable } from "./sceneSets/approve";
+import { commitApproval, findSceneSet, loadApprovable } from "./sceneSets/approve";
+import { sceneRefusal } from "./sceneSets/refusal";
+import type { StoredSceneSet } from "./library/sceneSets";
 import { runSnapshots, runSources } from "./sceneSets/toRun";
 import { CpuPool, NetworkPool } from "./runs/pools";
 import { FACE_GATE_NAME } from "./runs/faceGate";
@@ -106,7 +108,9 @@ import { planWithPools, POOLS } from "./scenes";
 import { runCategoryJob } from "./scenes/categoryJob";
 import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
 import { poolOf } from "./scenes/poolGen";
-import { SceneSetService } from "./sceneSets/service";
+import { SceneSetService, type LaunchComposeOptions } from "./sceneSets/service";
+import { approveLaunchSet, drawLaunchSlice, type DrawSliceResult, type SliceStatus, type UnlinkPhase } from "./sceneSets/launchDraw";
+import { LaunchRegistry, NO_LAUNCHES, NO_LINKS, type LaunchLinks, type LaunchLookup } from "./sceneSets/launchRegistry";
 import { configureFfmpegEnv } from "../node/ffmpegEnv";
 import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
@@ -220,6 +224,11 @@ export interface EngineDeps {
   reservedPhotos?: (avatarId: string) => ReadonlySet<string>;
   /** The registry of the engine's jobs; absent, the engine makes its own. Tests inject one holding a state the snapshot must not trust. */
   jobs?: JobRegistry;
+  /**
+   * S4.5a: which launches are unfinished (a readable launch file whose status is not terminal). S4.6a backs it with the launch files; absent, no launch is
+   * unfinished, so every set and run is the owner's own and none is refused or marked (the unlinked rule).
+   */
+  launches?: LaunchLookup;
   /**
    * Downscales a tiny built-in image through the same ffmpeg path a real
    * slot's image would take (M8's `generateCandidates` preflight). Defaults
@@ -716,6 +725,12 @@ export class Engine {
   readonly #pendingRunStops = new Map<string, { depth: number; stop: boolean }>();
   /** CS.4a: the scene sets' commands and their writer job (an avatar's planned run held before its images are paid for). */
   readonly #sceneSets: SceneSetService;
+  /** S4.5a: the sets and the slice runs of unfinished launches (plan §3.4). Replaced when a library becomes the live one. */
+  readonly #launches: LaunchRegistry;
+  /** What each opened library's sets say of launches, read when it was opened so that adopting it as the live one needs no await. */
+  readonly #launchLinks = new WeakMap<Library, LaunchLinks>();
+  /** The folder identity whose links the registry holds. */
+  #launchesIdentity: string | null = null;
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
   readonly #reportedBadJobs = new Set<string>();
   /**
@@ -751,6 +766,7 @@ export class Engine {
   private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
     this.#deps = deps;
     this.#jobs = deps.jobs ?? new JobRegistry();
+    this.#launches = new LaunchRegistry(deps.launches ?? NO_LAUNCHES);
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
     const checkTimeout = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
@@ -948,6 +964,7 @@ export class Engine {
         }),
       errorOf: (error) => engineErrorFrom(error),
       warn: (line) => console.warn(line),
+      launches: this.#launches,
     });
   }
 
@@ -988,6 +1005,7 @@ export class Engine {
       });
     }
     engine.#live = await engine.#openOrNull(init.settings.libraryPath);
+    engine.#adoptLaunches(engine.#live);
     if (engine.#live !== null) engine.#sweepMediaStaging(engine.#live.library);
     const exportCheck = await engine.#refreshExportStatus();
     for (const notice of init.notices) engine.#addNotice(notice);
@@ -1093,6 +1111,111 @@ export class Engine {
    */
   softStopScenes(sceneSetId: string): boolean {
     return this.#sceneSets.softStop(sceneSetId);
+  }
+
+  // ---------- S4.5a: the scene-set launch path (engine-internal; the autopilot's orchestrator calls these, there is no command) ----------
+
+  /** The sets and the slice runs of unfinished launches: the orchestrator links the ones it makes, the engine's refusals and marks read it. */
+  get launches(): LaunchRegistry {
+    return this.#launches;
+  }
+
+  /**
+   * A compose under ids the launch issued, with an exact per-category split (plan §3.4). Made again after a crash it creates no second set and sends no
+   * attempt id again (`jobId` is then null). A soft stop or cancel that arrives before its job exists is honoured (the live entry is made before the first await).
+   */
+  composeLaunchSet(payload: Parameters<SceneSetService["compose"]>[0], launch: LaunchComposeOptions): Promise<{ sceneSetId: string; jobId: string | null }> {
+    return this.#sceneSets.compose(payload, launch);
+  }
+
+  /** The launch's approval (plan §3.4): freezes the set's scenes with text into `launchDraw`; the set is read-only after. `over-plan` when M > `plannedCount`. */
+  approveLaunchSet(input: { sceneSetId: string; launchId: string; revision: number; plannedCount: number }): Promise<StoredSceneSet> {
+    return this.#withLiveLibrary(async (library) => {
+      const approved = await approveLaunchSet({ library, isLive: (id) => this.#sceneSets.isLive(id), registry: this.#launches }, input);
+      await this.#sceneSets.announce(library, approved);
+      return approved;
+    });
+  }
+
+  /**
+   * Draws the launch's next slice of at most 25 photos from the approved set: its entry is written in the set, its run is linked and created at the images-only
+   * worst case of its scenes at today's prices, never above `drawMicros` less what the other slices hold (plan §4.3 item 4). The slice's job is not started here.
+   */
+  drawLaunchSlice(input: { sceneSetId: string; launchId: string; size: number; drawMicros: number }): Promise<DrawSliceResult> {
+    return this.#withLiveLibrary(async (library) => {
+      const { set, avatarId } = await findSceneSet(library, input.sceneSetId);
+      this.#runnableAvatar(library, avatarId);
+      const models = this.#avatarModels();
+      const { imageAgeCheck, cameraRealism } = this.#settings;
+      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
+      const statuses = await this.#sliceStatuses(library, set);
+      const createdAt = new Date(this.#deps.clock()).toISOString();
+      const drawn = await drawLaunchSlice(
+        { library, isLive: (id) => this.#sceneSets.isLive(id), registry: this.#launches },
+        {
+          ...input,
+          capFor: (count) => runEstimateFromScenes(priced, models, { count }, imageAgeCheck).worstMicros,
+          statusOf: (runId) => statuses.get(runId) ?? { finished: false },
+          newId: () => this.#deps.newId(),
+          build: (current, slice) => {
+            const chosen = new Set(slice.sceneIds);
+            const scenes = runSources({ ...current, scenes: current.scenes.map((s) => ({ ...s, removed: !chosen.has(s.sceneId) })) });
+            return buildSceneRunPlan({
+              runId: slice.runId,
+              avatarId,
+              createdAt,
+              sceneSetId: current.sceneSetId,
+              imageAgeCheck,
+              models,
+              capMicros: slice.capMicros,
+              plannedWorstMicros: slice.capMicros,
+              scenes,
+              categories: runSnapshots(current, scenes),
+              cameraRealism,
+            });
+          },
+        },
+      );
+      if (drawn.kind === "drawn") {
+        const current = await library.sceneSets.get(avatarId, input.sceneSetId);
+        if (current !== null) await this.#sceneSets.announce(library, current);
+      }
+      return drawn;
+    });
+  }
+
+  /**
+   * The launch stopped: releases the set by the phase it is in (plan §3.7). A set whose job runs waits for the soft stop to end first. Composing and awaiting
+   * review: the launch id is cleared; approved with no slice folder: the draw too; drawn in part: the set stays used and its runs are the owner's own.
+   */
+  unlinkLaunchSet(sceneSetId: string): Promise<{ phase: UnlinkPhase }> {
+    return this.#sceneSets.unlinkSet(sceneSetId);
+  }
+
+  /** Whether each of the set's slices is finished (every slot closed: `runs.resume` then refuses) and what it committed, for the slices that have a run. */
+  async #sliceStatuses(library: Library, set: StoredSceneSet): Promise<Map<string, SliceStatus>> {
+    const statuses = new Map<string, SliceStatus>();
+    const money = this.#money;
+    if (!money.ok) return statuses;
+    const ledger = this.#ledgerView(money.budget);
+    for (const { runId } of set.launchDraw?.slices ?? []) {
+      try {
+        const plan = await library.readRun(runId, RunPlanSchema);
+        const { events } = await library.readJournal(runId, RunEventSchema);
+        const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
+        const finished = !state.slots.some((slot) => slot.end === undefined || slot.end === null) && this.#jobs.runningJobOf(runId) === null;
+        statuses.set(runId, finished ? { finished: true, committedMicros: scopeCommitted(money.budget.ledger, { runId }) } : { finished: false });
+      } catch {
+        // A slice entry whose run cannot be read is live: its whole cap stays counted (never over-allocate).
+      }
+    }
+    return statuses;
+  }
+
+  /** Plan §4.7: a launch's slice run is moved by the launch only, so the owner's resume or cancel is refused (VALIDATION `launch-set`), free. */
+  #refuseLaunchRun(runId: string, what: string): void {
+    const launchId = this.#launches.launchOfRun(runId);
+    if (launchId !== undefined) throw sceneRefusal(`run ${runId} is a slice of launch ${launchId}; ${what}`, "launch-set");
   }
 
   /** The RapidAPI key the flashapi client will use; never sent anywhere but flashapi. */
@@ -1212,6 +1335,7 @@ export class Engine {
         const beforeIdentity = this.#live?.identity ?? null;
         if (staged.identity !== beforeIdentity) this.#librarySwitchGeneration++;
         this.#live = staged;
+        this.#adoptLaunches(staged);
         // A different library is live: settle its crash windows in the background (never awaited here).
         if (staged.identity !== beforeIdentity) {
           this.#videos.libraryOpened(staged.library);
@@ -1672,6 +1796,7 @@ export class Engine {
       }
       case "runs.cancel": {
         const { runId } = command.payload;
+        this.#refuseLaunchRun(runId, "stopping it is the launch's call");
         const jobId = this.#jobs.runningJobOf(runId);
         if (jobId !== null) this.#jobs.cancel(jobId);
         else await this.#readRunPlan(this.library, runId);
@@ -1686,6 +1811,7 @@ export class Engine {
       }
       case "runs.resume": {
         const { runId } = command.payload;
+        this.#refuseLaunchRun(runId, "resuming it is the launch's call");
         if (this.#jobs.runningJobOf(runId) !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: `run ${runId} is already running` });
         // Counted before the first await (the run's avatar is only known once its plan is read): a library switch is refused from here on.
         this.#paidCommands++;
@@ -2109,6 +2235,7 @@ export class Engine {
       const failed = state.slots.filter((s) => s.end?.status === "failed").length;
       const open = state.slots.length - done - failed;
       const running = this.#jobs.runningJobOf(runId) !== null;
+      const launchId = this.#launches.launchOfRun(runId);
       const book = priced.get(JSON.stringify(models)) ?? null;
       // Ended by its cap only when prices are known: unpriced, the engine cannot tell and leaves the run resumable.
       // A run whose model's prices cannot reserve its requests now (no listed price for a reference image) is unknown like an unpriced one:
@@ -2129,6 +2256,7 @@ export class Engine {
         resumable: !running && open > 0 && !capExhausted,
         capExhausted,
         remainingWorstMicros: open === 0 ? 0 : remaining === null ? null : remaining.estimate.worstMicros,
+        ...(launchId === undefined ? {} : { launchId }),
       };
     });
     runs.sort((a, b) => (a.createdAt === b.createdAt ? (a.runId < b.runId ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
@@ -2248,7 +2376,7 @@ export class Engine {
   async #estimateFromScenes(payload: CommandPayload<"runs.estimateFromScenes">): Promise<Estimate> {
     const library = this.library;
     if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
-    const { set, avatarId } = await loadApprovable({ library, isLive: (id) => this.#sceneSets.isLive(id) }, payload.sceneSetId, payload.revision);
+    const { set, avatarId } = await loadApprovable({ library, isLive: (id) => this.#sceneSets.isLive(id), launchOf: (found) => this.#launches.activeLaunch(found.launchId) }, payload.sceneSetId, payload.revision);
     this.#runnableAvatar(library, avatarId);
     const models = this.#avatarModels();
     const imageAgeCheck = this.#settings.imageAgeCheck;
@@ -2266,7 +2394,7 @@ export class Engine {
   async #startFromScenes(payload: CommandPayload<"runs.startFromScenes">, claim: (avatarId: string) => void): Promise<{ runId: string; jobId: string }> {
     const { sceneSetId, revision } = payload;
     const library = await this.#liveLibrary();
-    const approvalDeps = { library, isLive: (id: string) => this.#sceneSets.isLive(id) };
+    const approvalDeps = { library, isLive: (id: string) => this.#sceneSets.isLive(id), launchOf: (found: StoredSceneSet) => this.#launches.activeLaunch(found.launchId) };
     const approved = await loadApprovable(approvalDeps, sceneSetId, revision);
     // The set's run id is known now (the owner's autopilot names the run by it): a soft stop from here on is kept until the job exists.
     return this.#pendingRun(approved.set.runId, () => this.#startApproved(payload, library, approvalDeps, approved, claim));
@@ -4056,6 +4184,7 @@ export class Engine {
         // must not spend a staged photo's one chance on a transient outage.
         if (live !== null) this.#importStaging = null;
         this.#live = live;
+        this.#adoptLaunches(live);
         // A different library is live: settle its crash windows in the background (never awaited here).
         if (live !== null && live.identity !== beforeIdentity) {
           this.#videos.libraryOpened(live.library);
@@ -4088,9 +4217,11 @@ export class Engine {
       return { library: opened.library, identity, unreadable: opened.unreadable };
     }
     const reservedPhotos = this.#deps.reservedPhotos ?? ((avatarId: string) => this.#renders.reservedPhotos(avatarId));
-    const opening = openLibrary(path, { reservedPhotos, ...(this.#deps.library ?? {}) }).then((opened) => {
+    const opening = openLibrary(path, { reservedPhotos, ...(this.#deps.library ?? {}) }).then(async (opened) => {
       // Fail-closed records and logs: said once per open, by avatar, relative file and reason class only (no absolute path, no content).
       for (const line of logIssueLines(opened.report.logIssues)) console.warn(line);
+      // S4.5a: the launches its sets name, read now so that making it the live one is synchronous and no paid command can meet a half-built registry.
+      this.#launchLinks.set(opened.library, await this.#launches.scan(opened.library));
       return { library: opened.library, unreadable: unreadableFromQuarantine(opened.report.quarantined) };
     });
     this.#opening.set(identity, opening);
@@ -4100,6 +4231,15 @@ export class Engine {
     } finally {
       if (this.#opening.get(identity) === opening) this.#opening.delete(identity);
     }
+  }
+
+  /** S4.5a: the library just became the live one (or none is): the registry holds its launches' sets and slice runs, and nothing else. */
+  #adoptLaunches(opened: OpenedLibrary | null): void {
+    // The same folder confirmed again (another spelling of its path opens it afresh) is not a new library: the links made since it opened must stay.
+    const identity = opened?.identity ?? null;
+    if (identity !== null && identity === this.#launchesIdentity) return;
+    this.#launchesIdentity = identity;
+    this.#launches.adopt(opened === null ? NO_LINKS : (this.#launchLinks.get(opened.library) ?? NO_LINKS));
   }
 
   /** `#open`, or null (and a log line) when the folder cannot hold a library now. */

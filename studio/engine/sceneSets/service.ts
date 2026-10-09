@@ -28,6 +28,9 @@ import { pendingChunks } from "./chunks";
 import { planSceneSet } from "./compose";
 import { findSceneSet } from "./approve";
 import { applyEdit, type EditOutcome } from "./edit";
+import { explicitSplit } from "../scenes/planner";
+import { unlinkLaunchSet, type UnlinkPhase } from "./launchDraw";
+import type { LaunchRegistry } from "./launchRegistry";
 import { composeEstimate, reviewWriteEstimate, sceneSetPriceModels, writeEstimate } from "./estimate";
 import { beginWrite, withChunkGivenUp, withChunkWritten, withOutcome, withWriteFinished, withWriteStopped } from "./mutations";
 import { planReviewWrite, type ReviewPlan } from "./reviewPlan";
@@ -85,6 +88,17 @@ export interface SceneSetServiceDeps {
   recentPairs: (library: Library, avatarId: string) => Promise<readonly { location: string; outfit: string }[]>;
   errorOf: (error: unknown) => EngineError;
   warn: (line: string) => void;
+  /** Stage 4 (S4.5a): which sets and runs belong to an unfinished launch. Every refusal and mark asks it, through the unlinked rule. */
+  launches: LaunchRegistry;
+}
+
+/** S4.5a, internal (the launch's orchestrator, never a command): what a launch's compose adds to the ordinary one. */
+export interface LaunchComposeOptions {
+  /** Issued by the launch and on disk in its file before the call, so a compose made again after a crash meets the same ids. */
+  ids: { sceneSetId: string; runId: string };
+  /** The exact scenes per category (plan §5.3), in place of the planner's even split. */
+  split: readonly { ref: CategoryRef; count: number }[];
+  launchId: string;
 }
 
 /** A set whose job runs (or is about to): what the view's `write` and its in-flight attempts come from. */
@@ -111,6 +125,9 @@ function detailOfError(error: unknown): string {
 export class SceneSetService {
   readonly #deps: SceneSetServiceDeps;
   readonly #live = new Map<string, LiveJob>();
+  /** Sets whose job has left `#live` and is still announcing its end: an unlink waits for them too, so its own announcement is the last. */
+  readonly #finishing = new Set<string>();
+  readonly #idleWaiters = new Map<string, (() => void)[]>();
 
   constructor(deps: SceneSetServiceDeps) {
     this.#deps = deps;
@@ -119,6 +136,30 @@ export class SceneSetService {
   /** Whether a job of this set runs (or is about to): what an approval (CS.5) asks, as every free edit does. */
   isLive(sceneSetId: string): boolean {
     return this.#live.has(sceneSetId);
+  }
+
+  /** Wakes whoever waits for the set's job to be completely over (`unlinkSet`). */
+  #notifyIdle(sceneSetId: string): void {
+    const waiters = this.#idleWaiters.get(sceneSetId);
+    this.#idleWaiters.delete(sceneSetId);
+    for (const wake of waiters ?? []) wake();
+  }
+
+  async #whenIdle(sceneSetId: string): Promise<void> {
+    while (this.#live.has(sceneSetId) || this.#finishing.has(sceneSetId)) {
+      await new Promise<void>((resolve) => this.#idleWaiters.set(sceneSetId, [...(this.#idleWaiters.get(sceneSetId) ?? []), resolve]));
+    }
+  }
+
+  /** The unfinished launch the set belongs to (the unlinked rule applied to the set's own file), or undefined. */
+  #launchOf(set: StoredSceneSet): string | undefined {
+    return this.#deps.launches.activeLaunch(set.launchId);
+  }
+
+  /** Plan §4.7: a launch's set is moved by the launch only, so the owner's command on it is refused (VALIDATION `launch-set`), free and before anything is claimed. */
+  #refuseLaunchSet(set: StoredSceneSet, what: string): void {
+    const launchId = this.#launchOf(set);
+    if (launchId !== undefined) throw sceneRefusal(`scene set ${set.sceneSetId} is part of launch ${launchId}; ${what}`, "launch-set");
   }
 
   /** Tells every window the set as it is now (`scenes.changed`): after an approval its run's folder exists, so it reads `used` and names its run. */
@@ -137,6 +178,7 @@ export class SceneSetService {
       live: live === undefined ? null : { kind: live.kind, count: live.count, ...(live.sceneIds === undefined ? {} : { sceneIds: live.sceneIds }) },
       liveK: live?.k ?? null,
       used: await library.runFolderExists(set.runId),
+      launchId: this.#launchOf(set),
     });
   }
 
@@ -234,10 +276,13 @@ export class SceneSetService {
   }
 
   /** Under the set's lock: the set's job runs (IN_FLIGHT), or its run's folder exists (the set is used: VALIDATION). */
-  #guard(library: Library): SceneSetGuard {
+  #guard(library: Library, change: "edit" | "discard"): SceneSetGuard {
     return async (current) => {
       if (this.#live.has(current.sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${current.sceneSetId} is being written; change it when that ends (or cancel it)` });
       if (await library.runFolderExists(current.runId)) throw sceneRefusal(`scene set ${current.sceneSetId} is used by run ${current.runId} and is read-only`, "set-used");
+      // S4.5a: a launch's set cannot be discarded, and once the launch approved it (a frozen list) it cannot be edited, while the launch is unfinished.
+      if (change === "discard") this.#refuseLaunchSet(current, "discarding it is the launch's call");
+      else if (current.launchDraw !== undefined) this.#refuseLaunchSet(current, "its scenes are frozen");
     };
   }
 
@@ -256,7 +301,7 @@ export class SceneSetService {
             outcome = applyEdit(current, payload.op);
             return outcome.kind === "changed" ? outcome.set : null;
           },
-          { expectedRevision: payload.revision, guard: this.#guard(library) },
+          { expectedRevision: payload.revision, guard: this.#guard(library, "edit") },
         );
       } catch (error) {
         return this.#failureOf(error);
@@ -274,7 +319,7 @@ export class SceneSetService {
     await this.#deps.withLiveLibrary(async (library) => {
       const { avatarId } = await this.#find(library, sceneSetId);
       try {
-        await library.sceneSets.remove(avatarId, sceneSetId, { guard: this.#guard(library) });
+        await library.sceneSets.remove(avatarId, sceneSetId, { guard: this.#guard(library, "discard") });
       } catch (error) {
         return this.#failureOf(error);
       }
@@ -285,7 +330,8 @@ export class SceneSetService {
   /** Aborts the set's job when one runs (its request in flight keeps its reserve open until reconciled); ok for a set whose job is not running. */
   async cancel(sceneSetId: string): Promise<void> {
     const library = this.#needLibrary();
-    await this.#find(library, sceneSetId);
+    const { set } = await this.#find(library, sceneSetId);
+    this.#refuseLaunchSet(set, "its job is stopped from the launch");
     const jobId = this.#deps.jobs.runningJobOfSet(sceneSetId);
     if (jobId !== null) this.#deps.jobs.cancel(jobId);
     else {
@@ -316,21 +362,56 @@ export class SceneSetService {
    * Plans a set and writes it, with its run id and every chunk's attempt ids, BEFORE the first call, then launches its writer job. Checked like a run's
    * start minus the image side (no master, no gates: nothing visual is paid yet). Count 0 is an empty set and costs nothing: no key, no job.
    */
-  async compose(payload: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses: { profile: boolean; back: boolean }; acceptedWorstMicros: number }): Promise<{ sceneSetId: string; jobId: string | null }> {
+  async compose(
+    payload: { avatarId: string; count: number; categories: readonly CategoryRef[]; poses: { profile: boolean; back: boolean }; acceptedWorstMicros: number },
+    launch?: LaunchComposeOptions,
+  ): Promise<{ sceneSetId: string; jobId: string | null }> {
     const { avatarId, count, categories, poses } = payload;
     const free = count === 0;
     const deps = this.#deps;
+    if (launch !== undefined) {
+      // Free, before anything is claimed: a split that does not fit the request is the orchestrator's defect, never a set.
+      try {
+        explicitSplit(launch.split, categories, count);
+      } catch (error) {
+        throw new EngineFailure({ code: "VALIDATION", detail: `the launch's split does not fit its compose (${detailOfError(error)})` });
+      }
+    }
     // Claimed before the first await, like a run's start: the avatar's one paid job at a time, and a library switch refused from here on.
     deps.claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
     if (!free) deps.paidStart();
-    const sceneSetId = deps.newId();
+    const sceneSetId = launch?.ids.sceneSetId ?? deps.newId();
     let launched = false;
+    /** The live entry THIS call made: a call that ends without a job must never delete another job's. */
+    let mine: LiveJob | null = null;
+    /** The job id, made before the first await when the launch issued the set's id (the entry below needs it). */
+    let jobId: string | null = null;
     try {
       const key = free ? null : deps.usableKey("compose scenes");
       const budget = free ? null : deps.paidBudget();
+      if (launch !== undefined && !free) {
+        // THE S4.5b RULE: a set whose id the caller already holds can be soft-stopped or cancelled from now on, so its live entry exists BEFORE the first await
+        // (the library, the prices, the recent pairs). `softStop` and `cancel` find no job yet and leave their mark on this entry; `#launch` applies it.
+        if (this.#live.has(sceneSetId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `scene set ${sceneSetId} is being written; wait for that to end (or cancel it)` });
+        jobId = deps.newId();
+        mine = { jobId, avatarId, kind: "compose", count: 0, inFlight: new Set() };
+        this.#live.set(sceneSetId, mine);
+      }
       const library = await deps.liveLibrary();
       const manifest = deps.runnableAvatar(library, avatarId);
       await deps.assertAvatarOnDisk(library, avatarId);
+      if (launch !== undefined) {
+        // Made again after a crash: the set file with these ids IS the compose that happened (perhaps stopped). Nothing is created, sent or reserved here;
+        // the caller finishes it with the launch's own «Дописать».
+        const existing = await library.sceneSets.get(avatarId, sceneSetId);
+        if (existing !== null) {
+          if (existing.launchId !== launch.launchId || existing.runId !== launch.ids.runId) {
+            throw new EngineFailure({ code: "INTERNAL", detail: `scene set ${sceneSetId} exists but does not belong to launch ${launch.launchId} under run ${launch.ids.runId}; nothing was sent` });
+          }
+          deps.launches.linkSet(sceneSetId, launch.launchId);
+          return { sceneSetId, jobId: null };
+        }
+      }
       const custom = await deps.customCategories(library, categories);
       // One open set per avatar: a set is open until its run starts (its folder exists) or it is discarded.
       // A record or a folder the OS fails to read may be the open set: the check refuses (nothing written, nothing reserved) instead of counting it unreadable.
@@ -349,12 +430,13 @@ export class SceneSetService {
         deps.checkAccepted(worstMicros, payload.acceptedWorstMicros);
         deps.checkMonthlyRoom(budget, worstMicros);
       }
-      const jobId = free ? null : deps.newId();
+      // An ordinary compose makes its job id here, as it always did; a launch's was made before the first await.
+      if (launch === undefined) jobId = free ? null : deps.newId();
       const recent = await deps.recentPairs(library, avatarId);
       const planned = planSceneSet({
         sceneSetId,
         avatarId,
-        runId: deps.newId(),
+        runId: launch?.ids.runId ?? deps.newId(),
         jobId: jobId ?? "none",
         count,
         categories,
@@ -363,17 +445,21 @@ export class SceneSetService {
         snapshots: custom.map(snapshotOf),
         recentPairs: recent,
         textModel,
+        ...(launch === undefined ? {} : { split: launch.split, launchId: launch.launchId }),
       });
-      // Live from here: an edit or a discard cannot slip in between the file and the job.
-      if (jobId !== null) this.#live.set(sceneSetId, { jobId, avatarId, kind: "compose", count: 0, inFlight: new Set() });
+      // Live from here: an edit or a discard cannot slip in between the file and the job. (A launch's entry has been live since the start of the call.)
+      if (jobId !== null && mine === null) {
+        mine = { jobId, avatarId, kind: "compose", count: 0, inFlight: new Set() };
+        this.#live.set(sceneSetId, mine);
+      }
       let stored: StoredSceneSet;
       try {
         stored = await library.sceneSets.create(planned);
       } catch (error) {
-        this.#live.delete(sceneSetId);
         if (error instanceof SceneSetError && error.code === "library-unreadable") throw sceneRefusal(error.message, "library-unreadable");
         throw new EngineFailure({ code: "INTERNAL", detail: `nothing was sent: the scene set could not be written (${detailOfError(error)})` });
       }
+      if (launch !== undefined) deps.launches.linkSet(sceneSetId, launch.launchId);
       if (jobId === null || key === null || budget === null || priced === null) {
         await this.#announce(library, stored);
         return { sceneSetId, jobId: null };
@@ -386,7 +472,8 @@ export class SceneSetService {
       return { sceneSetId, jobId };
     } finally {
       if (!launched) {
-        this.#live.delete(sceneSetId);
+        if (mine !== null && this.#live.get(sceneSetId) === mine) this.#live.delete(sceneSetId);
+        this.#notifyIdle(sceneSetId);
         if (!free) deps.paidEnd();
         deps.releaseAvatar(avatarId);
       }
@@ -421,6 +508,11 @@ export class SceneSetService {
       const budget = deps.paidBudget();
       const library = await deps.liveLibrary();
       const { set, avatarId } = await this.#find(library, sceneSetId);
+      // S4.5a (plan §4.7): the launch does its own «Дописать», and an idea write is an own scene, which a launch never draws. A rewrite or a resume is the owner's
+      // own paid click while the launch waits for the review, and is closed once the launch froze the set.
+      if (target.kind === "unwritten") this.#refuseLaunchSet(set, "the launch writes what is missing itself");
+      else if (target.kind === "idea") this.#refuseLaunchSet(set, "the scenes of a launch are its own; an own scene would never be drawn");
+      else if (set.launchDraw !== undefined) this.#refuseLaunchSet(set, "its scenes are frozen");
       deps.claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
       claimed = avatarId;
       shownIn = library;
@@ -477,6 +569,7 @@ export class SceneSetService {
       if (!launched) {
         const wasLive = mine !== null && this.#live.get(sceneSetId) === mine;
         if (wasLive) this.#live.delete(sceneSetId);
+        this.#notifyIdle(sceneSetId);
         deps.paidEnd();
         if (claimed !== null) deps.releaseAvatar(claimed);
         // The set was live from the claim, before the prices: a window that read it then holds «writing» for a write that is refused (price, budget, revision)
@@ -652,7 +745,8 @@ export class SceneSetService {
     } catch (error) {
       deps.warn(`studio engine: how scenes job ${jobId} ended could not be recorded in its set (${detailOfError(error)}); the set will read as closed`);
     }
-    // Not live any more: the view built below is the set at rest.
+    // Not live any more: the view built below is the set at rest. (Until it is announced, an unlink of the set still waits.)
+    this.#finishing.add(sceneSetId);
     this.#live.delete(sceneSetId);
     deps.paidEnd();
     deps.releaseAvatar(avatarId);
@@ -675,5 +769,24 @@ export class SceneSetService {
     } catch (error) {
       deps.warn(`studio engine: the end of scenes job ${jobId} could not be announced (${detailOfError(error)})`);
     }
+    this.#finishing.delete(sceneSetId);
+    this.#notifyIdle(sceneSetId);
+  }
+
+  // ---------- a launch's set ----------
+
+  /**
+   * S4.5a, plan §3.7: releases the set from its launch when the launch stops, by the phase it is in. A set whose job runs (composing) waits for the soft stop to
+   * end first — the caller has asked for it — and is then unlinked; `awaiting review` clears the launch id; `approved` with no slice folder clears the frozen
+   * draw too; a set drawn in part stays used and its runs become the owner's. Engine-internal (the autopilot's «Стоп»): there is no command.
+   */
+  async unlinkSet(sceneSetId: string): Promise<{ phase: UnlinkPhase }> {
+    await this.#whenIdle(sceneSetId);
+    return this.#deps.withLiveLibrary(async (library) => {
+      const result = await unlinkLaunchSet({ library, isLive: (id) => this.#live.has(id), registry: this.#deps.launches }, sceneSetId);
+      const { set } = await this.#find(library, sceneSetId);
+      await this.#announce(library, set);
+      return result;
+    });
   }
 }
