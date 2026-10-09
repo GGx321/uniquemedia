@@ -115,6 +115,11 @@ export const HostControl = z.discriminatedUnion("type", [
    * `media.cancelImport`, and a job outlives the window that asked for it.
    */
   z.strictObject({ kind: z.literal("control"), type: z.literal("media.abortImport"), callId: Id }),
+  /**
+   * Stage 4 (plan §9, S4.7): the Mac is going to sleep (`suspend`) or has woken (`resume`). Main sends it from `powerMonitor`; while suspended an autopilot launch sends no new
+   * attempt. There is no reply. It is a control message and not a command of the renderer's contract on purpose: no window can tell the engine the Mac is asleep.
+   */
+  z.strictObject({ kind: z.literal("control"), type: z.literal("host.power"), state: z.enum(["suspend", "resume"]) }),
 ]);
 export type HostControl = z.infer<typeof HostControl>;
 
@@ -341,4 +346,9 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "videos.delete": VIDEOS_DELETE_DEADLINE_MS,
   // The confirmation's counts: the same bounded look at the export folder and the avatar's record files as the delete's first step.
   "avatars.deletePreview": AVATAR_DELETE_PREPARE_DEADLINE_MS,
+  // Stage 4: the estimate, the start and the resume of a launch each wait for a price load (which times out into the fallback list) after their checks; the launch itself
+  // runs on and reports by `autopilot.changed`. The other autopilot commands only read or move the launch's own files and keep the default.
+  "autopilot.estimate": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "autopilot.start": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "autopilot.resume": PRICE_FETCH_TIMEOUT_MS + 15_000,
 };

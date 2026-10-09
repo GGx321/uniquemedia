@@ -1,4 +1,4 @@
-import type { CaptionIssue, CategoryReason, ErrorCode, ExportUnavailableReason, MusicUnavailableReason, PhotoUnavailableReason, SceneReason } from "./errors";
+import type { CaptionIssue, CategoryReason, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -204,7 +204,23 @@ export const SCENE_REASONS_RU = {
   "no-attempts-left": "У этой записи не осталось попыток. Закройте её или напишите сцены заново.",
   "nothing-to-dismiss": "У этой сцены нет незавершённой записи, которую можно закрыть. Обновите экран.",
   "library-unreadable": "Диск не отдал часть наборов сцен этого аватара (так бывает, когда файл занят антивирусом или диск не отвечает), поэтому Studio не может проверить, нет ли уже открытого набора. Ничего не записано и не потрачено — повторите через секунду.",
+  "launch-set": "Это часть запуска автопилота: управляйте им в «Автопилоте». Пока запуск не закончился, набор и его партии там же ставятся на паузу и останавливаются.",
+  "over-plan": "В наборе больше сцен, чем запланировано для запуска: уберите лишние. Запуск не тратит больше принятого предела, поэтому сцен сверх плана он не нарисует.",
+  "not-awaiting": "Этот набор сейчас не ждёт проверки в запуске: возможно, запуск уже продолжен, остановлен или на паузе. Обновите экран.",
 } as const satisfies Record<SceneReason, string>;
+
+/**
+ * Why a launch could not be planned or started, for VALIDATION's `launchReason`: each text names the cause and the way out. The window words the same
+ * causes with names and numbers from the preview's `blockers` (the avatar, how many photos); these are the plain texts for a refusal without that context.
+ * Nothing is written or spent in any of them.
+ */
+export const LAUNCH_REASONS_RU = {
+  "open-set": "У аватара открыт набор сцен: завершите или удалите его на экране «Фото», потом запускайте. Ничего не потрачено.",
+  "too-many-photos": "Аватару нужно больше 100 новых фото, а за один запуск больше 100 нельзя. Уменьшите число видео или долю слайдов. Ничего не потрачено.",
+  "usage-unknown": "Studio не знает, какие фото аватара уже в видео, поэтому из его библиотеки собрать нельзя. Уберите аватара из запуска или починьте записи на экране «Фото». Ничего не потрачено.",
+  "launch-unreadable": "Одна запись прошлого запуска не читается и может описывать идущий запуск. Уберите её в «Истории запусков» и повторите. Ничего не потрачено.",
+  "nothing-enabled": "Включите хотя бы одно: свободные фото из библиотеки или догенерацию. Ничего не потрачено.",
+} as const satisfies Record<LaunchReason, string>;
 
 /** Russian text for each structural problem of a montage (the `issues` of MONTAGE_INVALID). */
 export const MONTAGE_ISSUE_MESSAGES_RU = {

@@ -2,7 +2,7 @@ import { randomBytes } from "node:crypto";
 import { dirname, join } from "node:path";
 import { hasErrorCode } from "../library/durableFs";
 import type { CommitFs } from "./commitFs";
-import { videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
+import { videoPaths, VideoRecordWriteSchema, type VideoRecord } from "./record";
 
 // The commit intent (Commit row, steps 4 and 6): the FULL record-to-be, written
 // to `videos/.pending/<videoId>.json` with temp + fsync + rename, and promoted
@@ -39,7 +39,7 @@ async function discard(fs: CommitFs, path: string): Promise<void> {
  * with the disk's own error.
  */
 export async function writeIntent(fs: CommitFs, libraryRoot: string, record: VideoRecord, hooks: WriteIntentHooks = {}): Promise<void> {
-  const valid = VideoRecordSchema.parse(record);
+  const valid = VideoRecordWriteSchema.parse(record);
   const paths = videoPaths(libraryRoot, valid.avatarId);
   await ensureFolder(fs, paths.videosDir);
   await ensureFolder(fs, paths.pendingDir);

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { Clip, MontageName } from "./montage";
-import { Count, Id } from "./primitives";
+import { Count, Id, LaunchId } from "./primitives";
 
 // Rendered videos as the contract shows them (Stage 3 plan, "Outputs and
 // export"). The MP4 lives only in the export folder («Готовые видео»); the
@@ -99,7 +99,16 @@ export const VideoSummary = z.strictObject({
    * (3e.2). Null when the record's clip is not one this build can read.
    */
   firstClip: Clip.nullable(),
-});
+  /** Stage 4 (additive): `autopilot` for a video a batch launch made; absent for a manual one (a record from before Stage 4 has none). */
+  origin: z.literal("autopilot").optional(),
+  /** Stage 4 (additive): the launch that made it; only with `origin`. */
+  launchId: LaunchId.optional(),
+  /**
+   * Stage 4 (additive): when the owner marked it «Опубликовано»; null or absent for a video not marked. The mark lives in `published.jsonl`, never in the
+   * record, which is write-once. The list's `published` field says whether the marks could be read.
+   */
+  publishedAt: z.iso.datetime().nullable().optional(),
+}).refine((v) => v.launchId === undefined || v.origin === "autopilot", { message: "a launch id belongs to an autopilot video", path: ["launchId"] });
 
 /**
  * A finished render, `job.done`'s result. `kind` is the job-result

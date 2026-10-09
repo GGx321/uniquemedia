@@ -4,7 +4,7 @@ import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCate
 import { EngineError, ExportUnavailableReason } from "./errors";
 import { ImageQuality } from "./imageModels";
 import { MediaFileName, MediaKind, MediaSummary } from "./media";
-import { AbsolutePath, Count, Id, Micros, ModelId, SafeText } from "./primitives";
+import { AbsolutePath, Count, Id, LaunchId, Micros, ModelId, SafeText } from "./primitives";
 import { ScenesResult } from "./scenes";
 import { RenderResult } from "./video";
 
@@ -638,6 +638,8 @@ export const JobState = z
       runId: Id,
       /** The run's avatar: a snapshot restores it exactly as a live `job.progress` carries it. */
       avatarId: Id,
+      /** Stage 4 (additive): the batch launch this run is a slice of; absent for a run of the owner's own. */
+      launchId: LaunchId.optional(),
       ...jobCommon,
       result: RunResult.optional(),
     }),
@@ -646,6 +648,8 @@ export const JobState = z
       sceneSetId: Id,
       /** The set's avatar: a snapshot restores it exactly as a live `job.progress` carries it. */
       avatarId: Id,
+      /** Stage 4 (additive): the batch launch whose compose or «Дописать» this is; absent for the owner's own. */
+      launchId: LaunchId.optional(),
       ...jobCommon,
       result: ScenesResult.optional(),
     }),
@@ -655,6 +659,8 @@ export const JobState = z
       avatarId: Id,
       /** The draft it was rendered from; null for a headless spec. */
       montageId: Id.nullable(),
+      /** Stage 4 (additive): the batch launch this render belongs to; absent for the owner's own. */
+      launchId: LaunchId.optional(),
       ...renderSaving,
       ...jobCommon,
       result: RenderResult.optional(),
@@ -742,6 +748,11 @@ export const RunSummary = z
     resumable: z.boolean(),
     capExhausted: z.boolean(),
     remainingWorstMicros: Micros.nullable(),
+    /**
+     * Stage 4 (additive): the batch launch this run is a slice of, while that launch is unfinished. The Photos screen shows «в запуске автопилота» instead of
+     * «Продолжить» and «Отменить»; absent for a run of the owner's own, and for a launch's run once the launch is done, stopped or its file removed.
+     */
+    launchId: LaunchId.optional(),
   })
   .refine((r) => r.done + r.failed + r.open === r.total, { message: "done, failed and open slots must add up to the total", path: ["open"] })
   .refine((r) => r.resumable === (!r.running && r.open > 0 && !r.capExhausted), {

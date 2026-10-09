@@ -200,6 +200,11 @@ export const MediaSummary = z
     hdrToSdr: z.boolean(),
     loopFrames: PositiveInt.max(MAX_STICKER_LOOP_FRAMES).nullable(),
     delayFrames: z.array(PositiveInt.max(MAX_STICKER_LOOP_FRAMES)).min(1).max(MAX_STICKER_LOOP_FRAMES).nullable(),
+    /**
+     * Stage 4 (additive): the owner marked this own track «для автопилота», so the autopilot may put it in its videos. Only a track (`audio`) can be marked.
+     * The mark lives in an append-only log beside the records (`media.setForAutopilot`); absent means not marked, and so does a log that cannot be read.
+     */
+    forAutopilot: z.boolean().optional(),
   })
   .superRefine((media, ctx) => {
     const fail = (path: string, message: string): void => void ctx.addIssue({ code: "custom", path: [path], message });
@@ -211,6 +216,7 @@ export const MediaSummary = z
     if (media.kind === "photo" && media.durationMs !== null) fail("durationMs", "a photo has no length");
     if ((media.kind === "video") !== (media.sourceFps !== null)) fail("sourceFps", "only a video has a source frame rate, and every video has one");
     if (media.kind !== "video" && media.hdrToSdr) fail("hdrToSdr", "only a video is tone-mapped");
+    if (media.forAutopilot === true && media.kind !== "audio") fail("forAutopilot", "only a track can be marked for the autopilot");
     if ((media.kind === "sticker") !== (media.loopFrames !== null)) fail("loopFrames", "only a sticker has a loop, and every sticker has one");
     if ((media.kind === "sticker") !== (media.delayFrames !== null)) fail("delayFrames", "only a sticker has frame delays, and every sticker has them");
     if (media.loopFrames !== null && media.delayFrames !== null && media.delayFrames.reduce((sum, d) => sum + d, 0) !== media.loopFrames) {

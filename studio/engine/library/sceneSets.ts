@@ -8,9 +8,13 @@ import {
   EngineError,
   Id,
   isCustomCategory,
+  LAUNCH_SLICE_MAX_PHOTOS,
+  LaunchId,
+  MAX_COMPOSE_SCENES,
   MAX_RUN_CATEGORIES,
   MAX_SCENES_PER_SET,
   MAX_SCENES_PER_WRITE,
+  Micros,
   ModelId,
   PoolShot,
   SCENE_CHUNK_SIZE,
@@ -164,6 +168,35 @@ export const ReviewWriteRecord = z
   .refine((w) => (w.stoppedError !== undefined) === (w.stoppedBy === "failed"), { message: "the error belongs to a write that stopped by a failure", path: ["stoppedError"] });
 export type ReviewWriteRecord = z.infer<typeof ReviewWriteRecord>;
 
+const distinct = (items: readonly unknown[]): boolean => new Set(items).size === items.length;
+
+/** One slice of a launch's draw: its run, the scenes it draws and the cap its run was created with, all on disk BEFORE `createRun(runId)` (plan §3.4). */
+export const LaunchDrawSlice = z.strictObject({
+  runId: Id,
+  sceneIds: z.array(SceneId).min(1).max(LAUNCH_SLICE_MAX_PHOTOS).refine(distinct, "a scene must not repeat"),
+  capMicros: Micros,
+});
+
+/**
+ * Stage 4 (additive, plan §3.4): a launch's approval of an avatar's set. Under the set's mutex the launch freezes the ordered list of active scenes with text
+ * (`sceneIds`: the set becomes read-only) and then, per slice, appends `{ runId, sceneIds, capMicros }` BEFORE the run is created. The first slice uses the set's
+ * own pre-issued run id, so "used" (the run's folder exists) keeps its meaning. Slices draw disjoint scenes of the frozen list.
+ */
+export const LaunchDraw = z
+  .strictObject({
+    launchId: LaunchId,
+    sceneIds: z.array(SceneId).min(1).max(MAX_COMPOSE_SCENES).refine(distinct, "a scene must not repeat"),
+    slices: z.array(LaunchDrawSlice).max(MAX_COMPOSE_SCENES),
+  })
+  .superRefine((draw, ctx) => {
+    const fail = (message: string): void => void ctx.addIssue({ code: "custom", path: ["slices"], message });
+    const drawn = draw.slices.flatMap((s) => s.sceneIds);
+    if (!distinct(draw.slices.map((s) => s.runId))) fail("a run id belongs to one slice");
+    if (!distinct(drawn)) fail("a scene is drawn by one slice at most");
+    if (!drawn.every((id) => draw.sceneIds.includes(id))) fail("a slice draws scenes of the frozen list only");
+  });
+export type LaunchDraw = z.infer<typeof LaunchDraw>;
+
 export const SceneSetFile = z
   .strictObject({
     schemaVersion: z.literal(SCENE_SET_FILE_SCHEMA_VERSION),
@@ -197,6 +230,13 @@ export const SceneSetFile = z
     lastOutcome: SceneComposeTally.optional(),
     /** How many writes were started: the next write is number `writes + 1`. */
     writes: z.number().int().min(0),
+    /**
+     * Stage 4 (additive, no version bump: Studio is unreleased, T6c): the batch launch this set belongs to while that launch is unfinished. Cleared (revision + 1) when
+     * the launch is stopped, so the set is the owner's ordinary open set again. A set the owner makes has neither field, and the store writes neither into it.
+     */
+    launchId: LaunchId.optional(),
+    /** Stage 4 (additive): the launch's approval and its slices; only on a set that names the launch. */
+    launchDraw: LaunchDraw.optional(),
   })
   .superRefine((set, ctx) => {
     const ids = set.scenes.map((s) => s.sceneId);
@@ -220,6 +260,12 @@ export const SceneSetFile = z
     const used = new Set([...set.request.categories, ...plannedCategories].filter(isCustomCategory));
     for (const ref of used) {
       if (!snapshotRefs.includes(ref)) ctx.addIssue({ code: "custom", message: `the set names custom category ${ref} without a snapshot of it`, path: ["categories"] });
+    }
+    if (set.launchDraw !== undefined) {
+      if (set.launchId === undefined || set.launchDraw.launchId !== set.launchId) ctx.addIssue({ code: "custom", message: "a frozen draw belongs to the set's launch", path: ["launchDraw"] });
+      if (!set.launchDraw.sceneIds.every((id) => ids.includes(id))) ctx.addIssue({ code: "custom", message: "a frozen draw names scenes of the set", path: ["launchDraw"] });
+      const first = set.launchDraw.slices[0];
+      if (first !== undefined && first.runId !== set.runId) ctx.addIssue({ code: "custom", message: "the first slice is drawn under the set's own run id", path: ["launchDraw"] });
     }
     if (set.write !== null && set.write.k > set.writes) ctx.addIssue({ code: "custom", message: "the recorded write is one of the writes started", path: ["write"] });
     checkReviewWrites(set, snapshotRefs, ctx);

@@ -313,6 +313,9 @@ const SceneIdNumber = z.number().int().min(1).max(10_000);
  * - no-attempts-left: the unresolved write has no attempt left (resume).
  * - nothing-to-dismiss: a scene named in a dismissal has no unresolved rewrite.
  * - library-unreadable: the disk failed a read of the avatar's scene sets (a record or the folder) in the check that lets a new set in, so the engine could not tell whether one is open and wrote nothing (additive, CS.7 fix round 2).
+ * - launch-set (Stage 4): the set, or the run, belongs to a batch launch that is not finished; the launch moves it («управляйте им в «Автопилоте»»). Also the answer of `runs.resume` / `runs.cancel` on a launch's slice run.
+ * - over-plan (Stage 4): at `autopilot.continueAfterReview`, the set has more active scenes than the launch planned for the avatar; adding scenes cannot raise the launch's spend.
+ * - not-awaiting (Stage 4): at `autopilot.continueAfterReview`, the avatar of the launch is not waiting for the owner's review of this set.
  */
 export const SCENE_REASONS = [
   "set-used",
@@ -332,12 +335,30 @@ export const SCENE_REASONS = [
   "no-attempts-left",
   "nothing-to-dismiss",
   "library-unreadable",
+  "launch-set",
+  "over-plan",
+  "not-awaiting",
 ] as const;
 export const SceneReason = z.enum(SCENE_REASONS);
 export type SceneReason = z.infer<typeof SceneReason>;
 
 /** The reasons that point at one scene: `sceneId` may travel with these only, and must with the first two. */
 export const SCENE_REASONS_NAMING_A_SCENE = ["scene-text-problem", "scene-without-text", "scene-missing", "target-removed"] as const;
+
+/**
+ * Why `autopilot.estimate` or `autopilot.start` was refused with VALIDATION (`EngineError.launchReason`, Stage 4, additive in v5). The same codes are the
+ * `blockers` of a `LaunchPreview` (`AVATAR_BLOCKER_CODES` and `LAUNCH_BLOCKER_CODES` in autopilot.ts hold the full lists; the others have a code of their own
+ * when `start` refuses: AUTH_INVALID, RECONCILE_REQUIRED, EXPORT_UNAVAILABLE, IN_FLIGHT). Everything is refused BEFORE anything is written or spent.
+ *
+ * - open-set: an avatar the plan needs new photos for has an open scene set of its own (the owner finishes or deletes it on «Фото»).
+ * - too-many-photos: an avatar would need more than 100 new photos in one launch.
+ * - usage-unknown: which photos of an avatar are in a video cannot be trusted right now, so nothing can be taken from its library.
+ * - launch-unreadable: a launch file cannot be read and may describe an active launch; the owner removes the entry first (`autopilot.removeUnreadable`).
+ * - nothing-enabled: both «Сначала свободные фото» and «Догенерировать» are off, so there is nothing to make.
+ */
+export const LAUNCH_REASONS = ["open-set", "too-many-photos", "usage-unknown", "launch-unreadable", "nothing-enabled"] as const;
+export const LaunchReason = z.enum(LAUNCH_REASONS);
+export type LaunchReason = z.infer<typeof LaunchReason>;
 
 /**
  * An error as it travels between processes: a code plus optional diagnostics,
@@ -371,6 +392,8 @@ export const EngineError = z
     sceneReason: SceneReason.optional(),
     /** Additive (CS.7): the scene a `sceneReason` points at, when it names one (`SCENE_REASONS_NAMING_A_SCENE`); always with `scene-text-problem` and `scene-without-text`. */
     sceneId: SceneIdNumber.optional(),
+    /** Additive (Stage 4): which rule `autopilot.estimate` / `autopilot.start` broke (`LAUNCH_REASONS`); only on VALIDATION, never beside a scene or category reason. The window's text is `LAUNCH_REASONS_RU`. */
+    launchReason: LaunchReason.optional(),
     /**
      * Additive (CS.2): what a failed paid category call cost, in micro-dollars as the ledger booked it (a settled attempt at its cost, an
      * open reserve at its worst case). Present on every failure of `categories.create` / `categories.regenerate` from the moment its call
@@ -403,6 +426,14 @@ export const EngineError = z
   .refine((e) => e.sceneReason === undefined || e.categoryReason === undefined, {
     message: "a refusal has a sceneReason or a categoryReason, not both",
     path: ["sceneReason"],
+  })
+  .refine((e) => e.launchReason === undefined || e.code === "VALIDATION", {
+    message: "launchReason may only be present on VALIDATION",
+    path: ["launchReason"],
+  })
+  .refine((e) => e.launchReason === undefined || (e.sceneReason === undefined && e.categoryReason === undefined), {
+    message: "a refusal has one reason: a launchReason, a sceneReason or a categoryReason",
+    path: ["launchReason"],
   })
   .refine((e) => e.sceneId === undefined || (e.sceneReason !== undefined && (SCENE_REASONS_NAMING_A_SCENE as readonly string[]).includes(e.sceneReason)), {
     message: "sceneId may only accompany a sceneReason that names a scene",

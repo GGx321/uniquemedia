@@ -9,6 +9,7 @@ import {
   type ExportStatus,
   type JobResult,
   type JobState,
+  type LaunchView,
   type MoneyStatus,
   type MusicKeyStatus,
   type MusicStatus,
@@ -109,6 +110,11 @@ export interface EngineView {
   /** The engine's pending notices (a restart, a settings reset), oldest first: from the snapshot, then `engine.notice`. */
   readonly notices: readonly EngineNotice[];
   /**
+   * Stage 4: the library's launch that is not finished, whole: from the snapshot, then `autopilot.changed`. A launch that ended stays here as the last word of the
+   * engine until the screen reads another; null when there never was one in this window.
+   */
+  readonly autopilot: LaunchView | null;
+  /**
    * jobIds this window asked to cancel but has no real end for yet
    * (optimistic cancel, M-optimistic-cancel): the engine's own `avatars.cancel`
    * answers before the job actually ends (engine.ts's #runCandidates settles
@@ -165,6 +171,7 @@ const INITIAL: EngineView = {
   renderBatch: new Set(),
   engineError: null,
   notices: [],
+  autopilot: null,
   cancellingJobs: new Set(),
   paidInFlightAvatars: new Set(),
   avatarDeleteNotices: [],
@@ -972,6 +979,7 @@ export class EngineStore {
       ),
       engineError: null,
       notices: s.notices.reduce(mergeNotice, [] as readonly EngineNotice[]),
+      autopilot: s.autopilot ?? null,
     });
     // Not for the first load: nothing was shown, so nothing was missed.
     if (again) for (const listener of [...this.montageListeners]) listener({ change: "resynced" });
@@ -1160,6 +1168,10 @@ export class EngineStore {
         // Drafts are listed on demand (montages.list): the view keeps only the seq, and the listeners hear the change.
         this.update({ lastSeq });
         for (const listener of [...this.montageListeners]) listener(event.payload);
+        return;
+      case "autopilot.changed":
+        // The launch is shown whole and read in detail on demand (`autopilot.get`): the view keeps the latest word of the engine on it.
+        this.update({ autopilot: event.payload.launch, lastSeq });
         return;
       case "export.status":
         this.exportStatusEvents += 1;

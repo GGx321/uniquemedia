@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { z } from "zod";
-import { Id, MontageName, RelativePath, VideoKindToken } from "../../shared/engine";
+import { Id, LaunchId, LaunchVideoKey, MontageName, RelativePath, VideoKindToken } from "../../shared/engine";
 import { AVATARS_DIR, VIDEOS_DIR, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import { RecordSpecShape } from "../library/videoRecords";
 
@@ -71,6 +71,15 @@ export const VideoRecordSchema = z.looseObject({
   audio: RecordAudio.optional(),
   file: VideoFileRef,
   spec: RecordSpecShape,
+  /**
+   * Stage 4 (additive, plan §8.3, D5: NO schema bump): who made the video. `autopilot` for a batch launch, absent for a manual one and for every record from before Stage 4.
+   * The record is loose, so an older build ignores these fields. A value this build cannot read makes the record unreadable (the avatar's usage becomes unknown, the existing
+   * safe path): dropping a bad `launchVideoKey` would let step 9 of the launch's crash recovery render a second video for the key. The intent carries them too.
+   */
+  origin: z.literal("autopilot").optional(),
+  /** Stage 4 (additive): the launch that made it, and the video's key in it (`<avatar>-<n>`), the launch's idempotency key for a render submitted before a crash. */
+  launchId: LaunchId.optional(),
+  launchVideoKey: LaunchVideoKey.optional(),
 });
 export type VideoRecord = z.infer<typeof VideoRecordSchema>;
 
@@ -126,3 +135,12 @@ export function videoPaths(libraryRoot: string, avatarId: string): VideoPaths {
 
 /** The temp a render writes next to its final file: `.studio-part-<jobId>.mp4`. */
 export const partNameOf = (jobId: string): string => `.studio-part-${jobId}.mp4`;
+
+/**
+ * What may be WRITTEN (intents and records): the same schema, and provenance is all three fields or none. Used by `writeIntent`, so a malformed or half-given key never
+ * reaches the disk.
+ */
+export const VideoRecordWriteSchema = VideoRecordSchema.refine(
+  (r) => [r.origin, r.launchId, r.launchVideoKey].every((v) => v === undefined) || [r.origin, r.launchId, r.launchVideoKey].every((v) => v !== undefined),
+  { message: "provenance is origin, launchId and launchVideoKey together, or none of them", path: ["origin"] },
+);

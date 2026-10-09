@@ -1374,6 +1374,9 @@ export class Engine {
       case "media.abortImport":
         this.#mediaCalls.get(control.callId)?.abort();
         return;
+      case "host.power":
+        // Stage 4 (S4.1): the contract exists, the orchestrator that stops sending on `suspend` lands with S4.6b2. Nothing of the engine's own is in flight on its account.
+        return;
       case "settings.update": {
         const refusal = await this.#applySettings(control.settings);
         // settings.update has no reply main waits on: the engine's actual
@@ -1761,6 +1764,9 @@ export class Engine {
       case "videos.list":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { videos: await this.#videos.list(command.payload.avatarId) } };
       case "videos.delete":
+        // Stage 4 (S4.1): the contract already carries `rejectPhotos`, the engine does not act on it until S4.5c. Refused before anything is looked at or touched, so a
+        // video is never deleted while the owner is told its photos were rejected.
+        if (command.payload.rejectPhotos === true) return errorResponseFor(command, { code: "INTERNAL", detail: "videos.delete with rejectPhotos is not implemented yet" });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.delete(command.payload.videoId, command.payload.mode) };
       case "montages.create":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.create(command.payload) };
@@ -1828,6 +1834,20 @@ export class Engine {
         if (peaks === null) return errorResponseFor(command, { code: "NOT_FOUND", detail: `track ${track.trackId} is not stored` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { peaks } };
       }
+      // Stage 4 (S4.1): the commands of the batch autopilot and the two marks. INTERNAL «<type> is not implemented yet» is this switch's one answer for a command it cannot
+        // serve (the `default` below says the same), listed here so each service that lands (S4.5c published marks, S4.5d the track flag, S4.6 the orchestrator) takes its case out.
+      case "autopilot.estimate":
+      case "autopilot.start":
+      case "autopilot.pause":
+      case "autopilot.resume":
+      case "autopilot.stop":
+      case "autopilot.continueAfterReview":
+      case "autopilot.list":
+      case "autopilot.get":
+      case "autopilot.removeUnreadable":
+      case "videos.setPublished":
+      case "media.setForAutopilot":
+        return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }

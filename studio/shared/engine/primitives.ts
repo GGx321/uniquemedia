@@ -78,3 +78,15 @@ export function redactSecrets(text: string): string {
  * stripped on parse, so a provider error cannot carry them out (invariant 10).
  */
 export const SafeText = z.string().max(500).transform(redactSecrets);
+
+/**
+ * A batch launch of the autopilot (Stage 4): `launch-` and a body of 8 to 57 characters of a-z, 0-9 and `-`, starting with a letter or a digit. It names a
+ * file in the library (`autopilot/<launchId>.json`), so like every id it can carry no separator, dot or case. Issued by the engine, never by the renderer.
+ */
+export const LaunchId = z.string().regex(/^launch-[a-z0-9][a-z0-9-]{7,56}$/, "must be launch- and 8-57 chars of a-z, 0-9 or -");
+
+/**
+ * A video's place in its launch: the avatar's number in the launch (0 to 49) and the video's number (1 to 50), `<avatarIndex>-<n>`. Deterministic,
+ * so a render submitted before a crash is found again by it (plan §3.4). Not an id of any file.
+ */
+export const LaunchVideoKey = z.string().regex(/^(?:[0-9]|[1-4][0-9])-(?:[1-9]|[1-4][0-9]|50)$/, "must be <avatar 0-49>-<video 1-50>");

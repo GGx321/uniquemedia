@@ -31,6 +31,7 @@ import type {
 } from "./state";
 import { JobState } from "./state";
 import { PROTOCOL_VERSION } from ".";
+import { draft as launchDraft, draftSettings as launchDraftSettings, preview as launchPreview, summary as launchSummary, videoDone as launchVideo, view as launchView, startLine } from "./autopilot.fixtures";
 
 // ---------- fixtures ----------
 
@@ -479,6 +480,21 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     },
     result: { previewId: "preview-00000001", width: 640, height: 130 },
   },
+  // Stage 4 (S4.1)
+  "autopilot.estimate": { payload: { draft: launchDraftSettings }, result: { preview: launchPreview } },
+  "autopilot.start": { payload: { draft: launchDraft, acceptedWorstMicros: 4_140_000 }, result: { launch: launchView } },
+  "autopilot.pause": { payload: { launchId: launchView.launchId }, result: { launch: { ...launchView, status: "pausing" } } },
+  "autopilot.resume": { payload: { launchId: launchView.launchId, acceptedRemainingMicros: 2_930_000 }, result: { launch: launchView } },
+  "autopilot.stop": { payload: { launchId: launchView.launchId }, result: { launch: { ...launchView, status: "stopping" } } },
+  "autopilot.continueAfterReview": {
+    payload: { launchId: launchView.launchId, avatarId: "avatar-mia-0001", sceneSetId: "set-mia-00000001", revision: 3 },
+    result: { launch: launchView, draw: "started" },
+  },
+  "autopilot.list": { payload: {}, result: { launches: [launchSummary], unreadable: [{ entryId: "0123456789abcdef", reason: "invalid" }] } },
+  "autopilot.get": { payload: { launchId: launchView.launchId }, result: { launch: launchView, log: [startLine], videos: [launchVideo] } },
+  "autopilot.removeUnreadable": { payload: { entryId: "0123456789abcdef" }, result: {} },
+  "videos.setPublished": { payload: { videoId: "video-00000001", published: true }, result: { video: { ...video, origin: "autopilot", launchId: launchView.launchId, publishedAt: "2026-10-08T15:00:00.000Z" } } },
+  "media.setForAutopilot": { payload: { mediaId: "media-00000001", on: true }, result: { media: { ...ownMedia, kind: "audio", name: "summer-loop.m4a", width: null, height: null, durationMs: 42_000, forAutopilot: true } } },
   "engine.snapshot": {
     payload: {},
     result: {
@@ -522,6 +538,7 @@ const eventCases: { [T in EventType]: EventPayload<T> } = {
   "media.changed": { change: "upserted", media: ownMedia },
   "category.changed": { change: "upserted", category: customCategory },
   "scenes.changed": { change: "upserted", sceneSet },
+  "autopilot.changed": { launch: launchView },
 };
 
 // ---------- helpers ----------
@@ -649,6 +666,17 @@ describe("contract surface", () => {
         "montages.focus",
         "montages.textPreview",
         "export.check",
+        "autopilot.estimate",
+        "autopilot.start",
+        "autopilot.pause",
+        "autopilot.resume",
+        "autopilot.stop",
+        "autopilot.continueAfterReview",
+        "autopilot.list",
+        "autopilot.get",
+        "autopilot.removeUnreadable",
+        "videos.setPublished",
+        "media.setForAutopilot",
         "engine.snapshot",
         "engine.events",
       ].sort(),
@@ -678,6 +706,7 @@ describe("contract surface", () => {
         "media.changed",
         "category.changed",
         "scenes.changed",
+        "autopilot.changed",
       ].sort(),
     );
   });
