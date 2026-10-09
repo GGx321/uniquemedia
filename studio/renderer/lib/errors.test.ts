@@ -5,6 +5,7 @@ import {
   ERROR_MESSAGES_RU,
   EXPORT_CHANGING_DETAIL,
   EXPORT_UNAVAILABLE_REASONS_RU,
+  HOST_ASLEEP_DETAIL,
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
@@ -155,4 +156,12 @@ test("MONTAGE_INVALID adds the first issue's own text to the general one", () =>
   expect(text).toContain(ERROR_MESSAGES_RU.MONTAGE_INVALID);
   expect(text).toContain("В монтаже нет ни одного кадра.");
   expect(text).not.toContain("пустая ячейка");
+});
+
+// S4.7 fix round 1 (M4): a command main held back while the Mac sleeps says why, not «Внутренняя ошибка движка».
+test("a command held back while the Mac sleeps says to retry in a moment", () => {
+  const text = errorText({ code: "INTERNAL", detail: HOST_ASLEEP_DETAIL });
+  expect(text).toBe("Компьютер засыпает или только проснулся — команда не отправлена. Повторите через несколько секунд.");
+  expect(text).not.toBe(ERROR_MESSAGES_RU.INTERNAL);
+  expect(errorText({ code: "NETWORK", detail: HOST_ASLEEP_DETAIL })).toBe(ERROR_MESSAGES_RU.NETWORK);
 });

@@ -510,6 +510,12 @@ export const EXPORT_CHANGING_DETAIL = "the export folder is being changed; try t
 export const RENDER_NOT_QUEUED_DETAIL = "the render request ran out of time before it could be queued; nothing was queued";
 
 /**
+ * `EngineError.detail` of an INTERNAL answer main gives to a command that starts paid work or moves a launch while the Mac sleeps or has only just woken (S4.7, L-d; `commandHold.ts`):
+ * nothing was sent, a retry a moment later goes through. A plain string, not a new `ErrorCode`, like `ENGINE_GONE_DETAIL`; the window words it in Russian (studio/renderer/lib/errors.ts).
+ */
+export const HOST_ASLEEP_DETAIL = "the Mac is going to sleep or has just woken; the command was not sent, try again in a moment";
+
+/**
  * `EngineError.detail` of LIBRARY_TOO_NEW from `montages.create` and `videos.render` for an avatar with a video record a newer Studio
  * wrote (its photo usage cannot be judged). One text for the engine and the mock.
  */

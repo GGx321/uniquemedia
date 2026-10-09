@@ -4,6 +4,7 @@ import {
   ERROR_MESSAGES_RU,
   EXPORT_CHANGING_DETAIL,
   EXPORT_UNAVAILABLE_REASONS_RU,
+  HOST_ASLEEP_DETAIL,
   MONTAGE_ISSUE_MESSAGES_RU,
   MUSIC_UNAVAILABLE_REASONS_RU,
   NO_ANSWER_DETAIL_PREFIX,
@@ -30,6 +31,8 @@ import { countOf, sceneNumber, waitLabel } from "./format";
  * a retry. Neither may read as «Внутренняя ошибка движка».
  */
 const DRAFT_TOO_NEW_RU = "Этот черновик сохранён более новой версией Studio. Обновите приложение, чтобы открыть его: сам черновик цел.";
+/** S4.7: main held a paid start back while the Mac sleeps (shared/engine/commandHold.ts). */
+const HOST_ASLEEP_RU = "Компьютер засыпает или только проснулся — команда не отправлена. Повторите через несколько секунд.";
 const DRAFT_CHANGING_RU = "Черновик как раз сохранялся, и его не удалось прочитать. Повторите — он откроется.";
 
 /**
@@ -87,6 +90,7 @@ function baseText(error: EngineError): string {
   if (error.code === "VALIDATION" && error.sceneReason !== undefined) return namedScene(error.sceneReason, error.sceneId) ?? SCENE_REASONS_RU[error.sceneReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
+  if (error.code === "INTERNAL" && error.detail === HOST_ASLEEP_DETAIL) return HOST_ASLEEP_RU;
   // 3c.6: music that could not be fetched says why, and whether the request counted; «позже» only where waiting helps.
   if (error.code === "MUSIC_UNAVAILABLE" && error.musicReason !== undefined) return MUSIC_UNAVAILABLE_REASONS_RU[error.musicReason];
   return ERROR_MESSAGES_RU[error.code];
