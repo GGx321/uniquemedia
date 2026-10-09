@@ -27,7 +27,7 @@ import type { PreviewGate } from "../../text/preview";
 import { parityDecodedMs, parityListTracks, parityMockSeeds, parityPeaks } from "./tracks";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
-import { command, engineSettings, GOOD, NOW, startEngine, TRAITS, until } from "../../testing/engineHarness";
+import { command, engineSettings, GOOD, NOW, portraitPng, startEngine, TRAITS, until } from "../../testing/engineHarness";
 import type { Reply } from "../../openrouter/testing/fakes";
 import { imageReply, network as launchNetwork, writerReply } from "../../testing/wiringKit";
 import { within } from "../../testing/within";
@@ -646,9 +646,19 @@ async function seedPhotos(library: Awaited<ReturnType<typeof openLibrary>>["libr
   return ids;
 }
 
-async function seedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["library"], name: string): Promise<string> {
+/** An avatar's master photo as the rig seeds it: its bytes and the size its sidecar records. */
+interface SeedMaster {
+  readonly bytes: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+}
+
+/** The master of a rig that never draws: nothing downscales it. */
+const TINY_MASTER: SeedMaster = { bytes: PNG_1X1, width: 1, height: 1 };
+
+async function seedAvatar(library: Awaited<ReturnType<typeof openLibrary>>["library"], name: string, seed: SeedMaster = TINY_MASTER): Promise<string> {
   const avatar = await library.createAvatar({ name, age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
-  const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
+  const master = await library.addPhoto(avatar.id, seed.bytes, samplePhotoMeta({ width: seed.width, height: seed.height, qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
   return avatar.id;
 }
@@ -734,11 +744,15 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const exportDir = join(dir, "export");
   await mkdir(exportDir);
   const { library } = await openLibrary(join(dir, "library"), { now: steppingClock(), newId: sequentialIds("par") });
-  const avatarId = await seedAvatar(library, "Mia");
+  // S4.8: a launch's slice run downscales the master through ffmpeg as its face reference (Library.loadReference), and the Windows ffmpeg fails a 1×1 PNG
+  // deterministically (studio/node/downscale.ts, PREFLIGHT_IMAGE): the run then ends INTERNAL and the launch waits in «drawing» for ever. A launching rig's
+  // masters are real portraits, as the wiring tests' are (testing/wiringKit.ts).
+  const master = options.launch === true ? { bytes: portraitPng(1), width: 60, height: 80 } : TINY_MASTER;
+  const avatarId = await seedAvatar(library, "Mia", master);
   const photoIds = await seedPhotos(library, avatarId, MAIN_PHOTOS, 1);
-  const otherAvatarId = await seedAvatar(library, "Sofia");
+  const otherAvatarId = await seedAvatar(library, "Sofia", master);
   const otherPhotoIds = await seedPhotos(library, otherAvatarId, OTHER_PHOTOS, 2);
-  const archivedAvatarId = await seedAvatar(library, "Nora");
+  const archivedAvatarId = await seedAvatar(library, "Nora", master);
   if (options.usage !== undefined) await breakUsage(join(dir, "library", "avatars", avatarId), avatarId, options.usage);
   if (options.categories === true) {
     await library.categories.create(PARITY_CATEGORY);

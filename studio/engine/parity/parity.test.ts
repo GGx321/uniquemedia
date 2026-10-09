@@ -1,7 +1,11 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { useEngineDir } from "../testing/engineHarness";
+import { openLibrary } from "../library";
+import { imageSize } from "../library/media";
 import { GOLDEN } from "./testing/golden";
 import { goldenSource } from "./testing/goldenFile";
 import { play } from "./testing/play";
@@ -76,6 +80,24 @@ describe("the suite itself", () => {
         expect(scenario.pending?.commands).toContain(command);
         expect(CORE).toContain(command);
       }
+    }
+  });
+
+  // S4.8, Windows CI run 37958851142: a launch's slice run downscales the master through ffmpeg as its face reference (Library.loadReference), and the Windows
+  // ffmpeg fails a 1×1 PNG deterministically (studio/node/downscale.ts, PREFLIGHT_IMAGE). Every running story then waited in «drawing» until its deadline. macOS
+  // takes the 1×1 picture, so the size is held here, where any platform sees it.
+  test("a launching real rig seeds real portraits as masters, never a 1×1 picture the Windows ffmpeg cannot downscale", async () => {
+    const rig = await realRig(dir(), { launch: true });
+    const { world } = rig;
+    await rig.stop();
+    const { library } = await openLibrary(join(dir(), "library"));
+    for (const avatarId of [world.avatarId, world.otherAvatarId, world.archivedAvatarId]) {
+      const master = library.referencePhoto(avatarId);
+      expect(master).not.toBeNull();
+      const size = master === null ? null : imageSize(new Uint8Array(await readFile(master.path)));
+      expect(size).not.toBeNull();
+      expect(size?.width).toBeGreaterThanOrEqual(48);
+      expect(size?.height).toBeGreaterThanOrEqual(64);
     }
   });
 
