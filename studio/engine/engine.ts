@@ -81,6 +81,9 @@ import { CategoryError, LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibra
 import type { ImageMediaType } from "./library/media";
 import { looksLikeRunPhoto, pagePhotoList, photoSummaryFrom, type PhotoPage } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
+import { budgetHoldDetail, type BudgetHoldDetail, type MonthRoom } from "../shared/autopilot/money";
+import { LaunchGroups } from "./autopilot/groups";
+import { monthRoom, type LiveScope } from "./autopilot/room";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
@@ -659,6 +662,11 @@ export class Engine {
   readonly #reportedSkips = new Set<string>();
   /** Each running paid job's cap by scope (`scopeKey`), shared with the Budget; a scope without one can reserve nothing. */
   readonly #caps: Map<string, number>;
+  /**
+   * Stage 4: which attempts belong to a launch's `Budget` group (plan §4.10), read by the Budget's `groupOf` on every reserve and hold. The orchestrator registers a
+   * launch here before its first reserve and restores the registry from the launch files when the library opens.
+   */
+  readonly launchGroups: LaunchGroups;
   /** Prices for the engine's life, fetched (free, no key) through the injected fetch. */
   readonly #prices: PriceCache;
   /** The image models Settings offers (imageModels/catalogue.ts): live from OpenRouter, cached, the bundled list when it cannot be read. */
@@ -748,8 +756,9 @@ export class Engine {
   /** M3: why the face gate could not be loaded, when `deps.faceGateLoadError` said — `#assertFaceGate()`'s own detail. */
   readonly #faceGateLoadError: string | undefined;
 
-  private constructor(init: EngineInit, money: Money, caps: Map<string, number>, deps: EngineDeps) {
+  private constructor(init: EngineInit, money: Money, caps: Map<string, number>, launchGroups: LaunchGroups, deps: EngineDeps) {
     this.#deps = deps;
+    this.launchGroups = launchGroups;
     this.#jobs = deps.jobs ?? new JobRegistry();
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
@@ -961,6 +970,7 @@ export class Engine {
   static async start(init: EngineInit, deps: EngineDeps): Promise<Engine> {
     let money: Money;
     const caps = new Map<string, number>();
+    const launchGroups = new LaunchGroups();
     try {
       const ledger = await Ledger.open(init.ledgerPath);
       // The engine's one Budget over the ledger, for its whole life: a new
@@ -970,6 +980,7 @@ export class Engine {
       // case) before its first reserve; a scope without a cap can reserve nothing.
       const budget = new Budget(ledger, {
         runCapMicros: (scope) => caps.get(scopeKey(scope)) ?? 0,
+        groupOf: (req) => launchGroups.groupOf(req),
         monthlyBudgetMicros: init.settings.monthlyBudgetMicros,
         clock: deps.clock,
         monotonic: deps.monotonic,
@@ -978,7 +989,7 @@ export class Engine {
     } catch (error) {
       money = { ok: false, unavailable: ledgerUnavailable(error) };
     }
-    const engine = new Engine(init, money, caps, deps);
+    const engine = new Engine(init, money, caps, launchGroups, deps);
     if (init.ffmpegEnv !== undefined) configureFfmpegEnv(init.ffmpegEnv);
     // First run: the default folder does not exist yet. Only the default is
     // created; a folder the user chose may be a volume that is not mounted.
@@ -1127,6 +1138,34 @@ export class Engine {
   /** The one Budget over the ledger, for the paid jobs; null when the ledger could not be read. */
   get budget(): Budget | null {
     return this.#money.ok ? this.#money.budget : null;
+  }
+
+  /**
+   * The month's room with live caps (plan §4.4, A21): the budget less what is spent, open and held and the unspent cap of every running job (and of `extraLive`,
+   * the launch's resumable slices). The room a launch shows its fit against and sizes its slices to; `#checkMonthlyRoom` does not see running jobs' unspent caps.
+   * Null when the ledger could not be read.
+   */
+  monthRoom(extraLive: readonly LiveScope[] = []): MonthRoom | null {
+    return this.#money.ok ? monthRoom(this.#money.budget, this.#caps, extraLive) : null;
+  }
+
+  /**
+   * The `resume-slice` budget hold of a launch's slice run (plan §18): `needMicros` is `#remaining`'s worst case, the very figure `runs.resume` checks against the
+   * month, and `freeMicros` is the room WITHOUT this slice (its unspent cap is its own need, not a second claim on the room). `extraLive` lists the launch's other
+   * resumable slices. The hold is gone when `budgetHoldCleared(detail, detail.freeMicros)`; with no other live scope that is exactly when `#checkMonthlyRoom` passes.
+   * Throws what `#remaining` throws (VALIDATION when every slot ended, RUN_CAP_EXCEEDED when the cap cannot fund an attempt: the slice is finished).
+   */
+  async resumeSliceHold(runId: string, extraLive: readonly LiveScope[] = []): Promise<BudgetHoldDetail> {
+    const library = await this.#liveLibrary();
+    const plan = await this.#readRunPlan(library, runId);
+    const { estimate, budget } = await this.#remaining(library, plan);
+    const scope: Scope = { runId };
+    return budgetHoldDetail({
+      kind: "resume-slice",
+      freeMicros: monthRoom(budget, this.#caps, extraLive, scope).freeMicros,
+      photoWorstMicros: 0,
+      resumeRemainingWorstMicros: estimate.worstMicros,
+    });
   }
 
   /** Handles one message from main: a control message is applied, a call or a command is answered through `post`. */
