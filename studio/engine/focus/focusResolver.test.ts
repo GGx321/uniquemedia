@@ -159,7 +159,8 @@ describe("focusFor: the face gate is unavailable — a fallback that is NOT a ju
     const f = await fixture();
     let hang = true;
     const gate = fakeGate(() => (hang ? "hang" : FACE));
-    const { focusFor } = createFocusResolver({ library: f.library, faceGate: gate, detectTimeoutMs: 30 });
+    // 250 ms, not less: the second call must read the photo and still have minStartMs left on a slow CI runner.
+    const { focusFor } = createFocusResolver({ library: f.library, faceGate: gate, detectTimeoutMs: 250 });
     const started = performance.now();
     expect(await focusFor(f.avatarId, only(f.photoIds))).toEqual(UNRESOLVED);
     expect(performance.now() - started).toBeLessThan(1_000);
@@ -171,7 +172,8 @@ describe("focusFor: the face gate is unavailable — a fallback that is NOT a ju
     const f = await fixture();
     let stuck = true;
     const gate = fakeGate(() => (stuck ? "ignore-signal" : FACE));
-    const { focusFor } = createFocusResolver({ library: f.library, faceGate: gate, detectTimeoutMs: 30 });
+    // 250 ms for the same reason as above: the resolved second call needs room after the photo read.
+    const { focusFor } = createFocusResolver({ library: f.library, faceGate: gate, detectTimeoutMs: 250 });
     expect(await focusFor(f.avatarId, only(f.photoIds))).toEqual(UNRESOLVED);
     stuck = false;
     expect(await focusFor(f.avatarId, only(f.photoIds))).toEqual(RESOLVED(FACE_FOCUS));
