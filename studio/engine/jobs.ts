@@ -40,6 +40,8 @@ export interface RenderJobRef {
   readonly videoId: string;
   readonly avatarId: string;
   readonly montageId: string | null;
+  /** Stage 4: the batch launch the render belongs to (its provenance's `launchId`); absent for the owner's own. */
+  readonly launchId?: string;
 }
 
 interface Entry {
@@ -111,7 +113,17 @@ export class JobRegistry {
    * (`Σ durationMs × 3 / 100`), and `done` counts the same frames.
    */
   queueRender(jobId: string, ref: RenderJobRef, total: number): AbortSignal {
-    return this.#start({ kind: "render", jobId, videoId: ref.videoId, avatarId: ref.avatarId, montageId: ref.montageId, status: "queued", done: 0, total });
+    return this.#start({
+      kind: "render",
+      jobId,
+      videoId: ref.videoId,
+      avatarId: ref.avatarId,
+      montageId: ref.montageId,
+      ...(ref.launchId === undefined ? {} : { launchId: ref.launchId }),
+      status: "queued",
+      done: 0,
+      total,
+    });
   }
 
   /** Moves a queued render to running; false for any other job or state (a cancelled one stays cancelled). */
@@ -304,7 +316,8 @@ export class JobRegistry {
     if (entry === undefined || entry.state.kind !== "render") return null;
     if (entry.state.status !== "queued" && entry.state.status !== "running") return null;
     const { kind, videoId, avatarId, montageId, done, total } = entry.state;
-    const common = { kind, jobId, videoId, avatarId, montageId, total };
+    // The launch is part of what a render IS, so it survives the render's end (the snapshot lists a finished render of a launch as that launch's).
+    const common = { kind, jobId, videoId, avatarId, montageId, total, ...(entry.state.launchId === undefined ? {} : { launchId: entry.state.launchId }) };
     switch (end.status) {
       case "done":
         entry.state = { ...common, status: "done", done: total, result: end.result };

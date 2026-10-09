@@ -75,7 +75,7 @@ export function distinctPhotos(n: number, extra: Partial<PlanPhoto> = {}, seed =
 }
 
 export function avatar(photos: readonly PlanPhoto[], extra: Partial<PlanAvatarInput> = {}): PlanAvatarInput {
-  return { avatarId: "mia", usage: { state: "ok" }, hasOpenSet: false, photos, ...extra };
+  return { avatarId: "mia", usage: { state: "ok" }, hasOpenSet: false, draftsKnown: true, photos, ...extra };
 }
 
 export function input(parts: { draft?: Partial<LaunchDraft>; avatars: readonly PlanAvatarInput[]; held?: readonly string[]; customPoses?: PlanInput["customPoses"] }): PlanInput {

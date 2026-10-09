@@ -652,7 +652,7 @@ export class VideoService {
     // ONE number of frames: the queue's total, and the verifier's expectation (execute), come from the same function.
     const result = deps.queue.submit({
       jobId,
-      ref: { videoId, avatarId: spec.avatarId, montageId },
+      ref: { videoId, avatarId: spec.avatarId, montageId, ...(source.provenance === undefined ? {} : { launchId: source.provenance.launchId }) },
       totalFrames: totalFramesOf(filled.clips),
       photoIds: scenePhotoIds(filled.clips),
       mediaIds: [...ownPhotos.keys(), ...ownVideos.keys(), ...ownStickers.keys(), ...(ownTrack === null ? [] : [ownTrack.mediaId])],

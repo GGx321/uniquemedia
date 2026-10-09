@@ -131,3 +131,44 @@ describe("the launch file schema", () => {
     expect(LaunchFile.safeParse({ ...file, avatars: [{ ...row, phase: "skipped", skipped: { reason: "archived" } }] }).success).toBe(true);
   });
 });
+
+describe("what a video carries once its photos are assigned (S4.6c1, plan §3.3)", () => {
+  const withVideo = (patch: object) => {
+    const file = stamped();
+    const row = file.avatars[0];
+    const video = row?.videos[0];
+    return { ...file, avatars: [{ ...row, videos: [{ ...video, ...patch }] }] };
+  };
+
+  test("a video written before the free steps existed reads as it is: no music, no sticker memory", () => {
+    const parsed = LaunchFile.parse(stamped());
+    const video = parsed.avatars[0]?.videos[0];
+    expect(video !== undefined && "music" in video).toBe(false);
+    expect(video !== undefined && "previousStickerId" in video).toBe(false);
+  });
+
+  test("a trending track with its start, and the sticker the previous video had, are kept", () => {
+    const music = { source: "trending", trackId: "track-00000001", startMs: 1500 };
+    const parsed = LaunchFile.parse(withVideo({ state: "assigned", shape: "single", size: 1, photoIds: ["photo-00000001"], music, previousStickerId: "sticker-heart" }));
+    expect(parsed.avatars[0]?.videos[0]).toMatchObject({ music, previousStickerId: "sticker-heart" });
+  });
+
+  test("an own track keeps its media id and start", () => {
+    const music = { source: "own", mediaId: "media-00000001", startMs: 0 };
+    expect(LaunchFile.parse(withVideo({ music })).avatars[0]?.videos[0]).toMatchObject({ music });
+  });
+
+  test("no sticker before it is the explicit null", () => {
+    expect(LaunchFile.parse(withVideo({ previousStickerId: null })).avatars[0]?.videos[0]).toMatchObject({ previousStickerId: null });
+  });
+
+  test.each([
+    ["a source it does not know", { source: "jamendo", trackId: "track-00000001", startMs: 0 }],
+    ["a trending track with a media id", { source: "trending", mediaId: "media-00000001", startMs: 0 }],
+    ["a negative start", { source: "trending", trackId: "track-00000001", startMs: -1 }],
+    ["a start past the contract's furthest", { source: "trending", trackId: "track-00000001", startMs: 600_001 }],
+    ["a field it does not know", { source: "trending", trackId: "track-00000001", startMs: 0, title: "x" }],
+  ])("refuses music with %s", (_name, music) => {
+    expect(LaunchFile.safeParse(withVideo({ music })).success).toBe(false);
+  });
+});
