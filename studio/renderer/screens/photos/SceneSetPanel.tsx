@@ -46,12 +46,33 @@ interface SceneSetPanelProps {
   titleRef: RefObject<HTMLElement | null>;
   addRef: RefObject<HTMLButtonElement | null>;
   counterRef: RefObject<HTMLButtonElement | null>;
+  /** S4.9b: the set is an unfinished launch's: a write of it is the launch's own («в запуске автопилота» instead of «Отменить»). */
+  inLaunch?: boolean;
+  /** S4.9b: the launch took the set (approved, or drawing): read only, with this note; null while it can still be edited. */
+  frozenNote?: string | null;
 }
 
 /** The pencil's edit: the revision and the scene's text it was opened on — the save is made on those, never on what the set is by then. */
 type Edit = { readonly sceneId: number; readonly revision: number; readonly text: string | null; readonly problem: SceneProblem | null; readonly problemFor: string | null; readonly busy: boolean };
 
-export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActive, runCreatedAt, paidInFlight, onPaidInFlightChange, idea, onIdea, titleRef, addRef, counterRef }: SceneSetPanelProps) {
+export function SceneSetPanel({
+  avatar,
+  view,
+  set,
+  sliceView,
+  scenesJob,
+  runActive,
+  runCreatedAt,
+  paidInFlight,
+  onPaidInFlightChange,
+  idea,
+  onIdea,
+  titleRef,
+  addRef,
+  counterRef,
+  inLaunch = false,
+  frozenNote = null,
+}: SceneSetPanelProps) {
   const { client, store, sceneSets } = useEngine();
   const mounted = useMounted();
   const [editing, setEditing] = useState<Edit | null>(null);
@@ -62,7 +83,8 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
   const [cancelError, setCancelError] = useState<EngineError | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const editSending = useRef(false);
-  const used = set.status === "used";
+  // A launch's set it has taken reads as a used one: nothing on it can change any more (§3.4, the frozen list).
+  const used = set.status === "used" || frozenNote !== null;
   const live = set.write !== null;
   const write = set.write;
 
@@ -241,16 +263,22 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
             <span id={`progress-${set.sceneSetId}`} className="job-progress-label" aria-live="polite">
               {progressLabel(write, done, total, set.scenes)}
             </span>
-            <button ref={cancelRef} type="button" className="btn btn-s" disabled={cancelling} onClick={() => void cancel()}>
-              {cancelling ? "Отменяем…" : "Отменить"}
-            </button>
+            {inLaunch ? (
+              <span className="ap-in" title="Отменить и продолжить — в «Автопилоте»: «Пауза», «Стоп»">
+                в запуске автопилота
+              </span>
+            ) : (
+              <button ref={cancelRef} type="button" className="btn btn-s" disabled={cancelling} onClick={() => void cancel()}>
+                {cancelling ? "Отменяем…" : "Отменить"}
+              </button>
+            )}
           </div>
           <div className="bar" role="progressbar" aria-labelledby={`progress-${set.sceneSetId}`} aria-valuemin={0} aria-valuemax={total} aria-valuenow={done}>
             <span style={{ width: `${total > 0 ? (done / total) * 100 : 0}%` }} />
             {!cancelling && <i className="shim" aria-hidden="true" />}
           </div>
           <span className="mono faint scene-progress-note">{cancelling ? CANCELLING_NOTE : progressNote(write, done, total, set.textModel, note?.price ?? null)}</span>
-          {!cancelling && <span className="faint scene-progress-hint">{CANCEL_HINT}</span>}
+          {!cancelling && !inLaunch && <span className="faint scene-progress-hint">{CANCEL_HINT}</span>}
         </div>
       )}
       {cancelError !== null && <ErrorNotice error={cancelError} />}
@@ -261,7 +289,9 @@ export function SceneSetPanel({ avatar, view, set, sliceView, scenesJob, runActi
             <rect x="5" y="11" width="14" height="10" rx="2" />
             <path d="M8 11V8a4 4 0 018 0v3" />
           </svg>
-          <span>{runCreatedAt === null ? "Набор стал запуском — правки закрыты." : `Набор стал запуском ${RUN_TIME.format(Date.parse(runCreatedAt))} — правки закрыты.`}</span>
+          <span>
+            {frozenNote ?? (runCreatedAt === null ? "Набор стал запуском — правки закрыты." : `Набор стал запуском ${RUN_TIME.format(Date.parse(runCreatedAt))} — правки закрыты.`)}
+          </span>
         </p>
       )}
 

@@ -18,7 +18,8 @@ import {
   type LaunchForm,
 } from "./autopilot/launchForm";
 import { useWide } from "./autopilot/layout";
-import { LaunchRow, PlanCard, PlanColumn, PlanMini, type GoButtonState } from "./autopilot/PlanColumn";
+import { LaunchCard } from "./autopilot/LaunchCard";
+import { PlanCard, PlanColumn, PlanMini, type GoButtonState } from "./autopilot/PlanColumn";
 import { aboutUsd, figuresOf, goTitle, goWhy, isUnfinished, limitText, musicLine, planNotes } from "./autopilot/planModel";
 import { SettingsColumn } from "./autopilot/SettingsColumn";
 import { probeWorldKey, useLaunchPlan, worldKey } from "./autopilot/useLaunchPlan";
@@ -27,8 +28,8 @@ import { arrangeCategories } from "./photos/runForm";
 
 // S4.9a: the «Автопилот» screen (AutopilotS4.dc.html, states plan … from-main; the owner's mockup Autopilot.dc.html): three columns — the avatars, «Настройки
 // запуска», and the plan with «Запустить: N видео · до $W». The plan is the engine's (`autopilot.estimate`), asked again as the form changes; the click
-// sends exactly its worst case. While a launch is unfinished the two columns on the left show its settings read only and the plan folds to one line; the
-// live card (pause, stop, progress, log) is S4.9b, «История запусков» and the results S4.9c.
+// sends exactly its worst case. While a launch is unfinished the two columns on the left show its settings read only and the plan folds to one line; under
+// it the live card (S4.9b: pause, stop, «Продолжить · до $R», the holds, the avatars' progress, the log). «История запусков» and the results are S4.9c.
 
 /** The launch the screen shows: the engine's, or the one this window just started while the engine's word on it is on its way. */
 function shownLaunch(engine: LaunchView | null, started: LaunchView | null): LaunchView | null {
@@ -217,10 +218,10 @@ export function AutopilotScreen() {
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
         />
 
-        {/* One place for the launch's row whatever the state, so its heading (with the focus after «Запустить» or «Остановить») survives running → stopped. */}
+        {/* One place for the launch's card whatever the state, so its heading (with the focus after «Запустить» or «Остановить») survives running → stopped. */}
         <PlanColumn>
           {running && wide && launch !== null && <PlanMini launch={launch} />}
-          {launch !== null && <LaunchRow launch={launch} titleRef={liveTitle} />}
+          {launch !== null && <LaunchCard key={launch.launchId} launch={launch} titleRef={liveTitle} wide={wide} nameOf={nameOf} />}
           {!running && (
             <PlanCard
               preview={figures}

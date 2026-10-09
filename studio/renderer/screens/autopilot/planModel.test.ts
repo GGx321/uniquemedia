@@ -3,13 +3,11 @@ import { raiseBudgetToMicros } from "../../../shared/autopilot/money";
 import { LaunchPreview, LaunchView, type LaunchAvatarView, type LaunchPreviewAvatar } from "../../../shared/engine";
 import {
   avatarRow,
-  canStop,
   diskLine,
   figuresOf,
   GO_WHY,
   goTitle,
   goWhy,
-  launchLine,
   launchPlanBits,
   limitText,
   monthMeter,
@@ -373,9 +371,8 @@ function launch(over: Partial<LaunchView> = {}): LaunchView {
 }
 
 describe("a launch that runs", () => {
-  test("the folded plan says what the click accepted; the row how far it got of W′", () => {
+  test("the folded plan says what the click accepted", () => {
     expect(launchPlanBits(launch())).toEqual([`30${NBSP}видео`, `56${NBSP}фото: 37 из библиотеки, 19 новых`, "≈ $1.34", "предел до $4.14"]);
-    expect(launchLine(launch())).toBe(`готово 14 из 30${NBSP}видео · потрачено $1.25 из $4.14`);
   });
 
   test("«Остановить запуск?» says what stops, what stays and what was spent of W′ (ApStopConfirm, short form)", () => {
@@ -389,15 +386,6 @@ describe("a launch that runs", () => {
     expect(stopTexts(quiet).stays[0]).toBe(`1${NBSP}готовое видео — в «Готовых видео»;`);
     expect(stoppingLine(launch())).toBe(`Новых трат не будет. Ждём ответов на 4${NBSP}запроса — обычно до минуты, не дольше 3 минут.`);
     expect(stoppingLine(quiet)).toBe("Новых трат не будет.");
-  });
-
-  test("«Стоп» is offered while the launch works or rests, never while it stops or after it ended", () => {
-    expect(canStop(launch())).toBe(true);
-    expect(canStop(launch({ status: "pausing" }))).toBe(true);
-    expect(canStop(launch({ status: "paused", paused: { cause: "owner", at: "2026-10-08T14:05:00.000Z" } }))).toBe(true);
-    expect(canStop(launch({ status: "stopping" }))).toBe(false);
-    expect(canStop(launch({ status: "stopped", endedAt: "2026-10-08T14:09:00.000Z" }))).toBe(false);
-    expect(canStop(launch({ status: "done", endedAt: "2026-10-08T14:31:00.000Z" }))).toBe(false);
   });
 
   test("the sidebar's mark: the count, «сцены», «ждёт», «пауза», «стоп», «готово» until seen, nothing once stopped", () => {

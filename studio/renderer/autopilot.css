@@ -818,17 +818,49 @@
   white-space: nowrap;
 }
 
-/* The launch's row: where S4.9b's live card goes. */
+/* ── S4.9b · the live launch card (decisions 6–9, round 1 M6) ── */
+
+/* Column 3 lets the live card grow to the column's foot; the card's own body scrolls under its pinned header and notice. */
+.ap-col3 > .ap-sc {
+  display: flex;
+  flex-direction: column;
+}
+
+.ap-col3-in {
+  flex: 1 0 auto;
+}
+
 .ap-live {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  flex-shrink: 0;
+  flex: 1 1 0;
+  min-height: 320px;
+  padding: 16px 20px 0;
+  overflow: hidden;
+}
+
+/* Ended (done, stopped): a card of its own height, nothing scrolls. */
+.ap-live-ended {
+  flex: 0 0 auto;
+  gap: 10px;
+  min-height: 0;
   padding: 16px 20px;
 }
 
 .ap-live-done {
   border-color: var(--ok-35);
+}
+
+.ap-live-pin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-shrink: 0;
+  padding-bottom: 12px;
+}
+
+.ap-live-ended .ap-live-pin {
+  padding-bottom: 0;
 }
 
 .ap-live-head {
@@ -845,15 +877,19 @@
   white-space: nowrap;
 }
 
+.ap-live-ok {
+  display: flex;
+  color: var(--ok);
+}
+
+.ap-live-meta {
+  white-space: nowrap;
+}
+
 .ap-live-spin {
   width: 13px;
   height: 13px;
   color: var(--warn);
-}
-
-.ap-live-line {
-  margin: 0;
-  line-height: 1.6;
 }
 
 .ap-live-actions {
@@ -862,14 +898,278 @@
   margin-left: auto;
 }
 
+.ap-btn-spin {
+  width: 12px;
+  height: 12px;
+}
+
+/* «Продолжить · до $R» closed: the accent stays (the sum is still the point), dimmed, no hover. */
+.btn-p[aria-disabled="true"]:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
 .ap-live-sub {
-  margin: -2px 0 0;
+  margin: -6px 0 0;
   color: var(--muted);
   font-size: 11.5px;
   line-height: 1.4;
 }
 
-/* «Остановить запуск?» (ApStopConfirm, short form): what stays and what was spent; «Остановить» first, the focus on «Отмена». */
+.ap-live-line {
+  margin: -4px 0 0;
+  line-height: 1.6;
+}
+
+.ap-live-why {
+  margin: -6px 0 0;
+  color: var(--faint);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ap-live-note {
+  flex-shrink: 0;
+  padding: 11px 13px;
+}
+
+.ap-live-note .notice-body {
+  flex-grow: 1;
+}
+
+.ap-live-note-why {
+  margin: 2px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ap-live-body {
+  margin: 0 -20px;
+}
+
+.ap-live-body > .ap-sc {
+  padding: 0 20px;
+}
+
+.ap-live-in {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+/* «Потрачено» (decision 6): settled solid, the open reserves hatched after it. */
+.ap-spent {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ap-spent-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ap-spent-value {
+  white-space: nowrap;
+}
+
+.ap-spent-bar,
+.ap-spent-bar > span {
+  height: 6px;
+}
+
+.ap-spent-settled {
+  background: var(--accent);
+}
+
+.ap-hatch {
+  background: repeating-linear-gradient(135deg, rgba(255, 122, 89, 0.62) 0 3px, rgba(255, 122, 89, 0.2) 3px 6px);
+}
+
+.bar > span.ap-hatch {
+  background: repeating-linear-gradient(135deg, rgba(255, 122, 89, 0.62) 0 3px, rgba(255, 122, 89, 0.2) 3px 6px);
+}
+
+.ap-spent-sub {
+  font-size: 10.5px;
+  line-height: 1.5;
+}
+
+/* The avatars' rows (decision 8): the name, the phase in words and colour, Фото / Монтаж / Готово. */
+.ap-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.ap-grid3 {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.ap-rows-head {
+  font-size: 11px;
+}
+
+.ap-row-av {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ap-row-top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.ap-row-name {
+  flex-shrink: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.ap-row-phase {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-row-act {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.btn-xs {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
+}
+
+.ap-fg-act {
+  color: var(--accent-text);
+}
+
+.ap-fg-calm {
+  color: var(--muted);
+}
+
+.ap-fg-info {
+  color: var(--info);
+}
+
+.ap-fg-warn {
+  color: var(--warn);
+}
+
+.ap-fg-ok {
+  color: var(--ok);
+}
+
+.ap-fg-off {
+  color: var(--faint);
+}
+
+.ap-fg-danger {
+  color: var(--danger);
+}
+
+.ap-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ap-cell-text {
+  white-space: nowrap;
+}
+
+.bar > span.ap-cell-0 {
+  background: var(--accent);
+}
+
+.bar > span.ap-cell-1 {
+  background: var(--info);
+}
+
+.bar > span.ap-cell-2 {
+  background: var(--ok);
+}
+
+/* The log (LaunchStates «Журнал»): time, avatar, what happened; newest first. At 1200 the avatar joins the line (.ap-log-n). */
+.ap-log-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ap-log-title {
+  font-size: 11px;
+}
+
+.mono.ap-log {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 10px 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--input);
+  color: var(--muted);
+  font-size: 10.5px;
+  list-style: none;
+}
+
+.ap-log li {
+  display: grid;
+  grid-template-columns: 58px 46px minmax(0, 1fr);
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.ap-log li > span:last-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ap-log-n li {
+  grid-template-columns: max-content minmax(0, 1fr);
+}
+
+.ap-log li.ap-log-warn {
+  color: var(--warn);
+}
+
+.ap-log li.ap-log-info {
+  color: var(--info);
+}
+
+.ap-log li.ap-log-ok {
+  color: var(--ok);
+}
+
+.ap-log li.ap-log-danger {
+  color: var(--danger);
+}
+
+/* «Остановить запуск?» (ApStopConfirm): what stays, what becomes of each set, what was spent; «Остановить» first, the focus on «Отмена». */
 .ap-stop {
   width: 520px;
 }
@@ -878,7 +1178,53 @@
   display: flex;
   flex-direction: column;
   gap: 12px;
+  min-height: 0;
   padding: 20px 20px 16px;
+  overflow-y: auto;
+}
+
+/* «Наборы сцен»: one row per avatar, its set's phase under the name and what «Стоп» does to it (LaunchStates, round 1 M2). */
+.ap-stop-sets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ap-stop-set-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--line);
+  list-style: none;
+}
+
+.ap-stop-set {
+  display: grid;
+  grid-template-columns: 132px minmax(0, 1fr);
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.ap-stop-set-who {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ap-stop-set-who b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ap-stop-set-phase {
+  font-size: 11.5px;
+}
+
+.ap-stop-spent {
+  color: var(--text);
 }
 
 .ap-stop-text {
@@ -914,6 +1260,109 @@
   gap: 8px;
   padding: 14px 20px;
   border-top: 1px solid var(--line);
+}
+
+/* ── S4.9b · «Фото»: a launch's set (PhotosS4.dc.html; README decision 10, «Классы»: .ap-band, .ap-in) ── */
+
+.ap-launch-set {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.ap-band {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 9px 20px;
+  border-bottom: 1px solid var(--accent-35);
+  background: var(--accent-08);
+  color: var(--accent);
+}
+
+.ap-band-title {
+  color: var(--accent-text);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ap-band-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-band-open {
+  margin-left: auto;
+}
+
+/* The strip inside the launch's card: its own border is the card's. */
+.ap-launch-strip {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+/* «в запуске автопилота»: where a paid action of the set or its batches would be. */
+.ap-in {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ap-in:focus {
+  outline: none;
+}
+
+.ap-in:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ap-in-s {
+  height: 18px;
+  padding: 0 8px;
+  font-size: 11px;
+  vertical-align: 1px;
+}
+
+.ap-launch-go {
+  gap: 8px;
+}
+
+.ap-launch-help {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ap-launch-btn {
+  width: 100%;
+  margin-top: auto;
+  padding: 6px 8px;
+  font-size: 12.5px;
+}
+
+.ap-launch-why {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+.ap-launch-accepted,
+.ap-launch-mark {
+  align-self: flex-start;
 }
 
 /* ── the sidebar's mark at «Автопилот» (decision 12) ── */
@@ -1042,6 +1491,18 @@
   }
 
   .ap-live {
-    padding: 16px;
+    padding: 16px 16px 0;
+  }
+
+  .ap-live-ended {
+    padding: 10px 16px;
+  }
+
+  .ap-live-body {
+    margin: 0 -16px;
+  }
+
+  .ap-live-body > .ap-sc {
+    padding: 0 16px;
   }
 }

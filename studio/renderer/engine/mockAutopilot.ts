@@ -357,6 +357,11 @@ export class MockAutopilot {
     return done({});
   }
 
+  /** Whether `launchId` names a launch of this library that is not done or stopped (a run or a set says it is the launch's only while so). */
+  isUnfinished(launchId: string): boolean {
+    return this.#launches.some((l) => l.launchId === launchId && isUnfinished(l.status));
+  }
+
   /** The unfinished launch as `Snapshot.autopilot` shows it, or null. */
   active(): LaunchView | null {
     const live = this.#unfinished();

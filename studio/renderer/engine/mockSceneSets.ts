@@ -77,6 +77,8 @@ export interface MockSceneSetSeed {
   )[];
   /** Writes already started (a seeded review write has a number under it). */
   writes?: number;
+  /** Stage 4 (S4.9b): the batch launch that composed this set (`SceneSetView.launchId`); absent for the owner's own set. */
+  launchId?: string;
   /**
    * Review writes a closed Studio left unresolved: nothing was reserved for them yet, so each has both attempts, unless `cutOff` says the Studio closed
    * while its request was out (CS.6): that attempt keeps its reserve open at the worst case, as `cutOff` does for a chunk.
@@ -179,6 +181,8 @@ interface MockSet {
   textModel: string;
   /** The counters when the last write job ended, as the compose said them; absent until a job ended. */
   lastOutcome?: SceneComposeTally;
+  /** Stage 4: the launch the set belongs to (a seed's); absent for the owner's own. */
+  launchId?: string;
 }
 
 interface Job {
@@ -469,7 +473,15 @@ export class MockSceneSets {
       used: false,
       // A seed is built before the settings exist: the mock's default text model, as a set made at first launch has.
       textModel: seed.textModel ?? "x-ai/grok-4.3",
+      ...(seed.launchId === undefined ? {} : { launchId: seed.launchId }),
     });
+  }
+
+  /** A set seeded while the engine runs (S4.9b: a launch's set, which the mock's launch names but does not write), announced as a compose would. */
+  add(seed: MockSceneSetSeed): void {
+    this.#seed(seed);
+    const set = this.find(seed.sceneSetId);
+    if (set !== undefined) this.#announce(set);
   }
 
   // ---------- controls ----------
@@ -666,6 +678,7 @@ export class MockSceneSets {
       chunks: set.chunks.map((c) => ({ chunk: c.chunk, sceneIds: [...c.sceneIds], attemptsLeft: this.#attemptsLeft(c), gaveUpBy: this.#chunkGaveUpBy(set, c) })),
       scenes,
       ...(ideas.length === 0 ? {} : { interruptedIdeas: ideas }),
+      ...(set.launchId === undefined ? {} : { launchId: set.launchId }),
     };
   }
 
