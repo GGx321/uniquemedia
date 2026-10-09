@@ -729,10 +729,12 @@ describe("idle recycling: an idle worker's memory is given back", () => {
   });
 
   test("the idle timer never fires during a computation, however long it outlasts idleRecycleMs", async () => {
-    const h = harness({ idleRecycleMs: 20 });
+    // 40 ms, not less: Windows timers fire on a ~15.6 ms grain, so the 5 ms sleep below can take 16-31 ms there and a 20 ms window
+    // closed before the check began (Windows CI 37899265757). The work still outlasts the window by about twice.
+    const h = harness({ idleRecycleMs: 40 });
     await h.gate.start();
     await Bun.sleep(5);
-    // ~80 ms of work against a 20 ms idle window: the worker must survive it and answer.
+    // ~80 ms of work against a 40 ms idle window: the worker must survive it and answer.
     expect((await h.gate.check(checkInput(Behaviour.slow), live())).kind).toBe("match");
     expect(h.spawned()).toBe(1);
   });
