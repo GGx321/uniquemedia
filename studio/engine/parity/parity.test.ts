@@ -68,8 +68,8 @@ describe("the suite itself", () => {
     }
   });
 
-  test("the commands a pending story says the engine serves are among the ones it names, and only autopilot's core commands are served so far (S4.6a)", () => {
-    const CORE = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
+  test("the commands a pending story says the engine serves are among the ones it names, and only the orchestrator's commands are served so far (the core, S4.6a, and the review hand-off, S4.6b1)", () => {
+    const CORE = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.continueAfterReview", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
     for (const scenario of SCENARIOS) {
       const served = scenario.pending?.served ?? [];
       for (const command of served) {

@@ -1,11 +1,10 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
-import { ERROR_CODES } from "../shared/engine";
 import { draft, LAUNCH } from "../shared/engine/autopilot.fixtures";
 import { ledgerLines, command, failed, ok, startEngine, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
-// Stage 4, S4.1 / S4.6a: until the service that serves it lands (S4.6b1 the review hand-off), the engine answers each of these commands with INTERNAL
+// Stage 4, S4.1 / S4.6a / S4.6b1: until the service that serves it lands, the engine answers each command of the list with INTERNAL
 // «<type> is not implemented yet», the engine's one wording for a command it has no handler for (its `default` branch). A payload that breaks the contract is still
 // VALIDATION, so a forged amount or path never reaches a handler that does not exist yet. Nothing is written, spent or announced. The orchestrator core's commands
 // are served since S4.6a (engine.autopilotCore.test.ts), the published mark and the rejecting delete since S4.5c, and the track flag since S4.5d.
@@ -17,12 +16,16 @@ const NEW_COMMANDS: [string, unknown][] = [
 ];
 
 describe("the new commands whose services are not here yet", () => {
-  test.each(NEW_COMMANDS)("%s answers INTERNAL «… is not implemented yet», the code the engine uses for a command it cannot serve", async (type, payload) => {
-    const { engine } = await startEngine(dir());
-    const response = failed(await engine.handle(command(type, payload)));
-    expect<string | null>(response.type).toBe(type);
-    expect(response.error).toEqual({ code: "INTERNAL", detail: `${type} is not implemented yet` });
-    expect(ERROR_CODES).toContain("INTERNAL");
+  // S4.6b1 serves the last of them, the review hand-off: it is no longer «not implemented yet» (a launch it does not know is NOT_FOUND; the paid path itself is
+  // engine.autopilotPaid.test.ts). No command is left that the engine cannot serve, so the answer «<type> is not implemented yet» has nothing to pin; the list stays for the
+  // day a new command lands before its service.
+  test("autopilot.continueAfterReview is served: a launch the library does not hold is NOT_FOUND, and nothing is written", async () => {
+    const { engine, events } = await startEngine(dir());
+    const before = events().length;
+    const response = failed(await engine.handle(command("autopilot.continueAfterReview", { launchId: LAUNCH, avatarId: "avatar-mia-0001", sceneSetId: "set-mia-00000001", revision: 3 })));
+    expect(response.error.code).toBe("NOT_FOUND");
+    expect(ledgerLines(dir())).toEqual([]);
+    expect(events().length).toBe(before);
   });
 
   test("none of them writes a ledger line, a launch file or an event", async () => {

@@ -20,11 +20,11 @@ import { EventCoalescer, COALESCE_INTERVAL_MS } from "./coalescer";
 import { launchGroupKey, type LaunchGroups, type LaunchGroupSpec } from "./groups";
 import { buildLaunchFile, isEnded, type LaunchFile } from "./launchFile";
 import { entryIdOf, type LaunchStore, type StoreScan } from "./launchStore";
-import { launchViewOf, type ViewContext } from "./launchView";
+import { launchViewOf, minimalViewOf, type ViewContext } from "./launchView";
 import type { LaunchStores } from "./lookup";
 import type { LaunchPlan } from "./planner";
 import { persistedStatus, transition, type LaunchEvent } from "./states";
-import type { LaunchSteps, LaunchStepsContext } from "./steps";
+import type { LaunchSteps, LaunchStepsContext, MirrorSource } from "./steps";
 import type { z } from "zod";
 
 // Stage 4 (plan §3): the orchestrator core. It owns the launch's life, not its work: the launch file, the state machine, the commands, the events and the snapshot. What a
@@ -37,7 +37,11 @@ import type { z } from "zod";
 export interface ListedSet {
   readonly sceneSetId: string;
   readonly launchId?: string | undefined;
-  readonly launchDraw?: { readonly slices: readonly { readonly runId: string }[] } | undefined;
+  readonly launchDraw?: { readonly sceneIds?: readonly number[]; readonly slices: readonly { readonly runId: string; readonly sceneIds?: readonly number[] }[] } | undefined;
+  /** What the mirrors need; a real `StoredSceneSet` has them all, a test double may leave them out (it then has no mirror). */
+  readonly avatarId?: string;
+  readonly revision?: number;
+  readonly scenes?: readonly { origin: string; removed: boolean; text: string | null }[];
 }
 
 /** What the orchestrator needs of the open library. */
@@ -57,9 +61,11 @@ export interface Prepared {
    * its WHOLE allocation counts as committed (the group's cap is lowered by it, and spent and R include it) until its set reads again at the next open (M3, fail closed).
    */
   incomplete: { launchId: string; avatarIds: string[] }[];
+  /** The sets each unfinished launch has that the mirrors can be built from (S4.6b1), by launch id. */
+  mirrorSets: Map<string, MirrorSource[]>;
 }
 
-const EMPTY_PREPARED: Prepared = { scan: { launches: [], unreadable: [], folderUnreadable: false }, specs: [], tail: [], incomplete: [] };
+const EMPTY_PREPARED: Prepared = { scan: { launches: [], unreadable: [], folderUnreadable: false }, specs: [], tail: [], incomplete: [], mirrorSets: new Map() };
 
 /** Why the ledger is closed to paid work (`Budget.blocked()`), with the engine's refusal for it. */
 export interface Admission {
@@ -159,36 +165,41 @@ export class Orchestrator {
       const store = this.#d.stores.storeOf(library);
       const scan = await store.scan();
       const specs: Prepared["specs"] = [];
+      const mirrors = new Map<string, MirrorSource[]>();
       const incomplete: Prepared["incomplete"] = [];
       for (const launch of scan.launches) {
         const ended = isEnded(launch.status);
         const setIds = new Set<string>();
         const runIds = new Set<string>();
-        for (const row of launch.avatars) {
-          if (row.generation === null) continue;
-          setIds.add(row.generation.sceneSetId);
-          runIds.add(row.generation.setRunId);
-        }
         const cut: string[] = [];
-        if (!ended) {
+        const mirrorSets: MirrorSource[] = [];
+        for (const row of launch.avatars) {
           // The sets' own `launchDraw.slices` name runs the launch file does not (§19): a slice run left out would reserve outside the group.
-          for (const row of launch.avatars) {
-            const listed = await library.sceneSets.list(row.avatarId).catch((): { sets: readonly ListedSet[]; unreadable: number } => ({ sets: [], unreadable: 1 }));
-            if (listed.unreadable > 0) cut.push(row.avatarId);
-            for (const set of listed.sets) {
-              if (set.launchId !== launch.launchId) continue;
-              setIds.add(set.sceneSetId);
-              for (const slice of set.launchDraw?.slices ?? []) runIds.add(slice.runId);
-            }
+          const listed = ended ? { sets: [] as readonly ListedSet[], unreadable: 0 } : await library.sceneSets.list(row.avatarId).catch((): { sets: readonly ListedSet[]; unreadable: number } => ({ sets: [], unreadable: 1 }));
+          if (listed.unreadable > 0) {
+            // N1: an avatar whose sets cannot all be read has its WHOLE allocation counted as spent (below), so none of its sets or runs joins the group: its ledger lines would be counted twice.
+            cut.push(row.avatarId);
+            continue;
+          }
+          if (row.generation !== null) {
+            setIds.add(row.generation.sceneSetId);
+            runIds.add(row.generation.setRunId);
+          }
+          for (const set of listed.sets) {
+            if (set.launchId !== launch.launchId) continue;
+            setIds.add(set.sceneSetId);
+            if (set.avatarId !== undefined && set.revision !== undefined && set.scenes !== undefined) mirrorSets.push({ sceneSetId: set.sceneSetId, avatarId: set.avatarId, revision: set.revision, scenes: set.scenes, launchDraw: set.launchDraw?.sceneIds === undefined ? undefined : { sceneIds: set.launchDraw.sceneIds, slices: set.launchDraw.slices.map((s) => ({ sceneIds: s.sceneIds ?? [] })) } });
+            for (const slice of set.launchDraw?.slices ?? []) runIds.add(slice.runId);
           }
         }
         const unseen = launch.avatars.filter((a) => cut.includes(a.avatarId)).reduce((sum, a) => sum + a.allocation.composeMicros + a.allocation.drawMicros, 0);
         if (cut.length > 0) incomplete.push({ launchId: launch.launchId, avatarIds: cut });
+        mirrors.set(launch.launchId, mirrorSets);
         specs.push({ launchId: launch.launchId, capMicros: Math.max(0, launch.plannedWorstMicros - unseen), setIds: [...setIds], runIds: [...runIds], finished: ended });
       }
       const newest = scan.launches.find((l) => !isEnded(l.status));
       const tail = newest === undefined ? [] : await store.readLog(newest.launchId, TAIL).catch(() => []);
-      return { scan, specs, tail, incomplete };
+      return { scan, specs, tail, incomplete, mirrorSets: mirrors };
     } catch (error) {
       this.#warn(`studio engine: the launch files could not be read (${error instanceof Error ? error.name : typeof error})`);
       return EMPTY_PREPARED;
@@ -219,6 +230,7 @@ export class Orchestrator {
       this.#current = restarted(newest, this.#nowIso(), this.#nowMs()).file;
       this.#tail = { id: newest.launchId, lines: [...prepared.tail] };
     }
+    for (const launch of unfinished) this.#d.steps.restore?.(launch.launchId, prepared.mirrorSets.get(launch.launchId) ?? []);
     for (const launch of unfinished) this.#trackRecovery(this.#serial(() => this.#recover(launch.launchId)));
   }
 
@@ -247,6 +259,15 @@ export class Orchestrator {
     if (file === null) return false;
     const status = this.#status(file);
     return status === "running" || status === "pausing" || status === "stopping";
+  }
+
+  /**
+   * Synchronous: whether paid work of this launch may start now. The launch must be the current one, `running` (not pausing, stopping, paused, closing) and hold no paid hold.
+   * The engine's internal paid entry points ask it first, so a step that was already past its own check cannot spend for a launch that has since been stopped.
+   */
+  mayPay(launchId: string): boolean {
+    const file = this.#current;
+    return file !== null && file.launchId === launchId && !this.#closing && !this.#pausing && file.status === "running" && file.paidHold === null;
   }
 
   /** Whether the unfinished launch (paused included) has this avatar: it cannot be deleted. */
@@ -365,6 +386,35 @@ export class Orchestrator {
     });
   }
 
+  /**
+   * «Продолжить запуск: M фото» (S4.6b1, plan §4.7): the owner reviewed an avatar's scenes. The avatar must be waiting for exactly this set in `awaiting-review` (else
+   * `not-awaiting`, which also answers a second click); the steps approve the set (SCENES_CHANGED, `over-plan` come from there) and, while the launch runs, start the draw.
+   * While it is paused or pausing the approval is only recorded: the avatar waits as «approved, waits for Продолжить» and the draw starts with «Продолжить» (§18 item 9).
+   */
+  continueAfterReview(input: { launchId: string; avatarId: string; sceneSetId: string; revision: number }): Promise<{ launch: LaunchView; draw: "started" | "waits-for-resume" }> {
+    return this.#serial(async () => {
+      this.#assertOpen();
+      const file = await this.#needCurrent(input.launchId);
+      const notAwaiting = (): EngineFailure => fail({ code: "VALIDATION", sceneReason: "not-awaiting", detail: `avatar ${input.avatarId} is not waiting for the review of scene set ${input.sceneSetId}` });
+      const status = this.#status(file);
+      if (isEnded(status) || status === "stopping") throw notAwaiting();
+      const row = file.avatars.find((a) => a.avatarId === input.avatarId);
+      if (row === undefined || row.generation?.sceneSetId !== input.sceneSetId || row.phase !== "awaiting-review") throw notAwaiting();
+      const review = this.#d.steps.continueAfterReview;
+      if (review === undefined) throw notAwaiting();
+      const outcome = await review.call(this.#d.steps, this.#ctx(file.launchId), { avatarId: input.avatarId, sceneSetId: input.sceneSetId, revision: input.revision });
+      const at = this.#nowIso();
+      if (outcome.draw === "waits-for-resume") {
+        // The launch is not running, so the steps may not write: the core records that the approval is given and the draw waits.
+        await this.#write(file.launchId, (f) => ({ ...f, avatars: f.avatars.map((a) => (a.avatarId === input.avatarId && a.phase === "awaiting-review" ? { ...a, phase: "approved-waiting" as const } : a)) }));
+        await this.#log(file.launchId, { at, kind: "review-approved-paused", avatarId: input.avatarId, photos: outcome.photos });
+      } else {
+        await this.#log(file.launchId, { at, kind: "review-continued", avatarId: input.avatarId, photos: outcome.photos, writtenByOwner: 0 });
+      }
+      return { launch: this.#answer(this.#current ?? (await this.#needCurrent(file.launchId))), draw: outcome.draw };
+    });
+  }
+
   /** The quit: a launch that runs is persisted as paused by «quit» and the steps are told to start nothing new. Whatever is in flight dies with the process. */
   shutdown(): Promise<void> {
     // Synchronously, before the queue: from this instant steps are not running and nothing new begins (L7, L8).
@@ -468,7 +518,7 @@ export class Orchestrator {
       // A launch whose sets could not be unlinked still ends: a stopped launch is no link at all (the unlinked rule), so nothing stays locked.
       this.#warn(`studio engine: launch ${launchId} could not release everything it held`);
     }
-    const spent = this.#spentNow(launchId);
+    const spent = this.#finalSpent(launchId);
     const at = this.#nowIso();
     const ended = await this.#write(launchId, (f) => ({
       ...f,
@@ -566,9 +616,18 @@ export class Orchestrator {
 
   #spentOf(file: LaunchFile): number {
     if (isEnded(file.status)) return file.spentMicros;
-    // An avatar whose scene set could not be read at open may have slices the ledger's group does not know: its whole allocation counts as spent (M3).
-    const unseen = file.avatars.filter((a) => this.#incomplete.get(file.launchId)?.includes(a.avatarId) === true).reduce((sum, a) => sum + a.allocation.composeMicros + a.allocation.drawMicros, 0);
-    return this.#spentNow(file.launchId, file.spentMicros) + unseen;
+    return this.#spentNow(file.launchId, file.spentMicros) + this.#unseenOf(file);
+  }
+
+  /** An avatar whose scene set could not be read at open may have slices the ledger's group does not know: its whole allocation counts as spent (M3, N1). */
+  #unseenOf(file: LaunchFile): number {
+    return file.avatars.filter((a) => this.#incomplete.get(file.launchId)?.includes(a.avatarId) === true).reduce((sum, a) => sum + a.allocation.composeMicros + a.allocation.drawMicros, 0);
+  }
+
+  /** The sum a launch ends with: the ledger's, and the unseen allocation of the avatars whose sets could not be read (N1). */
+  #finalSpent(launchId: string): number {
+    const file = this.#current?.launchId === launchId ? this.#current : null;
+    return this.#spentNow(launchId) + (file === null ? 0 : this.#unseenOf(file));
   }
 
   /** The very sum the Budget enforces (§19): settled at cost, open at worst, held, over the launch's group. The file's last one when the ledger cannot say. */
@@ -649,7 +708,15 @@ export class Orchestrator {
         return file;
       },
       log: (line) => this.#log(launchId, line),
-      finish: () => this.#finish(launchId),
+      finish: () => {
+        // Refused at once for a launch that does not run: a step that waits in the core's queue while a stop drains it would hold the drain for ever.
+        if (this.#current?.launchId !== launchId || this.#current.status !== "running") return Promise.reject(new Error(`launch ${launchId} is not running: only a running launch finishes`));
+        return this.#serial(() => this.#finish(launchId));
+      },
+      isCut: (avatarId) => this.#incomplete.get(launchId)?.includes(avatarId) === true,
+      touch: () => {
+        if (this.#current?.launchId === launchId) this.#announce(this.#current);
+      },
     };
   }
 
@@ -662,7 +729,15 @@ export class Orchestrator {
   }
 
   async #finish(launchId: string): Promise<LaunchFile> {
-    const spent = this.#spentNow(launchId);
+    // The group is closed and the sum read at this moment, so nothing of the launch may be in flight: a live job would reserve outside the group from now on (fix round 1).
+    const flight = this.#d.steps.inFlight();
+    if (flight.requests > 0 || flight.renders > 0) throw new Error(`launch ${launchId} still has work in flight (${flight.requests} requests, ${flight.renders} renders): it cannot finish`);
+    try {
+      await this.#d.steps.complete?.(this.#ctx(launchId));
+    } catch {
+      this.#warn(`studio engine: launch ${launchId} could not release everything it held at its end`);
+    }
+    const spent = this.#finalSpent(launchId);
     const now = this.#nowMs();
     const at = this.#nowIso();
     const done = await this.#write(launchId, (f) => {
@@ -709,18 +784,29 @@ export class Orchestrator {
       inFlight: live ? this.#openReservesOf(file.launchId) : { requests: 0, openMicros: 0 },
       resumeBlockedBy: this.#resumeBlockedBy(file),
       logTail: tail ?? (this.#tail?.id === file.launchId ? this.#tail.lines : []),
+      mirror: (avatarId) => this.#d.steps.mirror?.(file.launchId, avatarId) ?? null,
     };
   }
 
-  /** The view, checked against the contract (§19). A view that breaks it is not announced and not put in the snapshot: the engine is told, the launch goes on. */
+  /**
+   * The view, checked against the contract (§19). A view that breaks it is never announced as it is. L2 (S4.6b1): the engine is told, and the owner gets the smallest view that
+   * does fit (`minimalViewOf`: no log, no set mirrors), so a running paid launch is never hidden and «Стоп» stays reachable. Only when even that does not fit is there none.
+   */
   #validView(file: LaunchFile, tail?: readonly LogLine[]): LaunchView | null {
+    const context = this.#viewContext(file, tail);
     try {
-      const parsed = LaunchView.safeParse((this.#d.viewOf ?? launchViewOf)(file, this.#viewContext(file, tail)));
+      const parsed = LaunchView.safeParse((this.#d.viewOf ?? launchViewOf)(file, context));
       if (parsed.success) return parsed.data;
     } catch {
       // A view that cannot even be built is the same as one that breaks the contract.
     }
     this.#d.degrade();
+    try {
+      const minimal = LaunchView.safeParse(minimalViewOf(file, context));
+      if (minimal.success) return minimal.data;
+    } catch {
+      // Not even the minimal view could be built.
+    }
     return null;
   }
 

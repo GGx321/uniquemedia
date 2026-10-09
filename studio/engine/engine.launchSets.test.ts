@@ -132,7 +132,7 @@ function sceneNetwork(opts: { writer?: Handler; prices?: (call: FetchCall) => Re
 }
 
 function engineOver(net: ReturnType<typeof sceneNetwork>, launches = new MemoryLaunches().add(LAUNCH)) {
-  return startEngine(dir(), { init: { settings: engineSettings(dir(), { imageAgeCheck: "off" }) }, net, deps: { launches } }).then((started) => ({ ...started, launches }));
+  return startEngine(dir(), { init: { settings: engineSettings(dir(), { imageAgeCheck: "off" }) }, net, deps: { launches, launchMayPay: (id) => launches.isUnfinished(id) } }).then((started) => ({ ...started, launches }));
 }
 
 function held(content: Handler = goodAnswer) {

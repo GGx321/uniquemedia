@@ -16,6 +16,8 @@ import { LaunchStores, type LaunchStoresDeps } from "./lookup";
 import { Orchestrator, type Admission, type ListedSet, type OrchestratorDeps } from "./orchestrator";
 import { deferred, FakeSteps } from "./testing/fakeSteps";
 import { startInput } from "./testing/launchFixtures";
+import { composeSteps } from "./stepsComposer";
+import type { LaunchStepsContext } from "./steps";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -883,16 +885,31 @@ describe("autopilot.changed and the snapshot", () => {
     expect(r.emitted.at(-1)?.avatars[0]?.photos.done).toBe(5);
   });
 
-  test("a view that breaks the contract is never announced: the snapshot degrades to none, the engine is told, and the launch itself is unharmed", async () => {
+  // S4.6b1, L2 (deliberate change of the S4.6a test that stood here): a view that breaks the contract is still never announced AS IT IS, but it no longer hides a running paid
+  // launch. The engine is told, and the owner gets the minimal view (no log, no set mirrors) that fits the contract, so «Стоп» stays reachable. The old test pinned INTERNAL and
+  // no snapshot, which cut the owner off from a launch that goes on spending.
+  test("a view that breaks the contract is never announced as it is: the owner gets the minimal valid view, the engine is told, and the launch itself is unharmed", async () => {
     const r = await rig({ deps: { viewOf: () => ({ launchId: "not a launch" }) } });
-    // The click took effect (the file is on disk, the steps began), but its answer would not pass the contract: INTERNAL, never a half-true launch.
-    expect((await failure(r.start())).code).toBe("INTERNAL");
+    const view = await r.start();
+    expect(LaunchView.safeParse(view).success).toBe(true);
+    expect(view).toMatchObject({ launchId: "launch-orch-0001", status: "running", logTail: [] });
     expect(existsSync(r.pathOf("launch-orch-0001"))).toBe(true);
     expect(r.fileOf("launch-orch-0001").status).toBe("running");
     expect(r.steps.calls).toEqual(["begin"]);
-    expect(r.emitted).toEqual([]);
-    expect(r.orchestrator.snapshotView()).toBeNull();
+    expect(r.emitted.every((v) => LaunchView.safeParse(v).success)).toBe(true);
+    expect(r.orchestrator.snapshotView()).toMatchObject({ launchId: "launch-orch-0001", status: "running" });
     expect(r.state.degraded).toBeGreaterThanOrEqual(1);
+  });
+
+  test("L2: «Стоп» stays reachable while the full view is broken: the stop is answered, ends the launch, and its last state is announced", async () => {
+    const r = await rig({ deps: { viewOf: () => ({ launchId: "not a launch" }) } });
+    const started = await r.start();
+    const stopped = await r.orchestrator.stop(started.launchId);
+    expect(stopped.status).toBe("stopped");
+    await r.orchestrator.settled();
+    expect(r.fileOf(started.launchId).status).toBe("stopped");
+    expect(r.emitted.at(-1)).toMatchObject({ launchId: started.launchId, status: "stopped" });
+    expect((await r.orchestrator.get(started.launchId)).launch.status).toBe("stopped");
   });
 });
 
@@ -961,6 +978,29 @@ describe("M3: a scene set that cannot be read at open counts as spent in full", 
     await second.orchestrator.settled();
     expect(second.groups.groupOf({ attemptId: `${setId}:writer-1#1`, scope: { runId: "x" } })?.capMicros).toBe(started.plannedWorstMicros);
     expect(second.orchestrator.snapshotView()?.spentMicros).toBe(0);
+  });
+
+  test("N1: such an avatar's set and run are not in the group (its allocation already counts as spent, its ledger lines would be counted twice), and its allocation is in the final spent", async () => {
+    const first = await rig();
+    const started = await first.start({ avatarIds: ["avatar-mia-0001", B] });
+    const rows = first.fileOf(started.launchId).avatars;
+    const allocB = (rows[1]?.allocation.composeMicros ?? 0) + (rows[1]?.allocation.drawMicros ?? 0);
+    const second = await rig({ root: first.root });
+    second.unreadableSets.add(B);
+    await second.adopt();
+    await second.orchestrator.settled();
+    const setB = rows[1]?.generation?.sceneSetId ?? "";
+    const runB = rows[1]?.generation?.setRunId ?? "";
+    expect(second.groups.groupOf({ attemptId: `${setB}:writer-1#1`, scope: { avatarJobId: "job-x" } })).toBeNull();
+    expect(second.groups.groupOf({ attemptId: "any#1", scope: { runId: runB } })).toBeNull();
+    const setA = rows[0]?.generation?.sceneSetId ?? "";
+    expect(second.groups.groupOf({ attemptId: `${setA}:writer-1#1`, scope: { avatarJobId: "job-x" } })?.key).toBe(launchGroupKey(started.launchId));
+    // The ledger holds nothing for B here, so what the stop writes as spent is exactly the unseen allocation.
+    await second.orchestrator.resume(started.launchId, started.plannedWorstMicros).catch(() => undefined);
+    const stopped = await second.orchestrator.stop(started.launchId);
+    expect(stopped.status).toBe("stopped");
+    expect(second.fileOf(started.launchId).spentMicros).toBe(allocB);
+    expect(stopped.spentMicros).toBe(allocB);
   });
 
   test("a listing that fails outright is the same as an unreadable set", async () => {
@@ -1069,5 +1109,155 @@ describe("L10: «app-restarted» counts the launch's own open reserves", () => {
     const second = await rig({ root: first.root });
     await second.orchestrator.settled();
     expect(second.orchestrator.snapshotView()?.logTail.at(-1)).toMatchObject({ kind: "app-restarted", requests: 1 });
+  });
+});
+
+// ---------- S4.6b1: the review hand-off (plan §4.7, §18 item 9) ----------
+
+describe("autopilot.continueAfterReview", () => {
+  /** A running launch whose first avatar waits for the owner's review of its set. */
+  async function awaiting(r: Rig, draft: Partial<LaunchDraft> = { sceneReview: true }) {
+    const started = await r.start(draft);
+    const generation = r.fileOf(started.launchId).avatars[0]?.generation;
+    const sceneSetId = generation?.sceneSetId ?? "";
+    await r.steps.ctx.update((f) => ({ ...f, avatars: f.avatars.map((a, i) => (i === 0 ? { ...a, phase: "awaiting-review" as const } : a)) }));
+    const input = { launchId: started.launchId, avatarId: "avatar-mia-0001", sceneSetId, revision: 4 };
+    return { started, input };
+  }
+
+  test("hands the set and the revision to the steps, logs the continue and answers that the draw started", async () => {
+    const r = await rig();
+    const { input } = await awaiting(r);
+    r.steps.continueAnswer = { draw: "started", photos: 10 };
+    const answer = await r.orchestrator.continueAfterReview(input);
+    expect(answer.draw).toBe("started");
+    expect(LaunchView.safeParse(answer.launch).success).toBe(true);
+    expect(r.steps.continued).toEqual([{ avatarId: input.avatarId, sceneSetId: input.sceneSetId, revision: 4 }]);
+    expect(answer.launch.logTail.at(-1)).toMatchObject({ kind: "review-continued", avatarId: input.avatarId, photos: 10, writtenByOwner: 0 });
+  });
+
+  test("while the launch is paused the steps only record the approval: the avatar waits as «approved, waits for Продолжить» and the log says so (§18 item 9)", async () => {
+    const r = await rig();
+    const { input } = await awaiting(r);
+    await r.orchestrator.pause(input.launchId);
+    await r.orchestrator.settled();
+    r.steps.continueAnswer = { draw: "waits-for-resume", photos: 10 };
+    const answer = await r.orchestrator.continueAfterReview(input);
+    expect(answer.draw).toBe("waits-for-resume");
+    expect(answer.launch.status).toBe("paused");
+    expect(answer.launch.avatars[0]?.phase).toBe("approved-waiting");
+    expect(r.fileOf(input.launchId).avatars[0]?.phase).toBe("approved-waiting");
+    expect(answer.launch.logTail.at(-1)).toMatchObject({ kind: "review-approved-paused", avatarId: input.avatarId, photos: 10 });
+  });
+
+  test("is not-awaiting for an avatar that is not in awaiting-review, for another set, for a launch that was stopped, and for steps with no review step; nothing reaches the steps", async () => {
+    const r = await rig();
+    const started = await r.start({ sceneReview: true });
+    const sceneSetId = r.fileOf(started.launchId).avatars[0]?.generation?.sceneSetId ?? "";
+    const base = { launchId: started.launchId, avatarId: "avatar-mia-0001", sceneSetId, revision: 1 };
+    // Still composing: not waiting for the review yet.
+    expect((await failure(r.orchestrator.continueAfterReview(base))).sceneReason).toBe("not-awaiting");
+    await r.steps.ctx.update((f) => ({ ...f, avatars: f.avatars.map((a) => ({ ...a, phase: "awaiting-review" as const })) }));
+    expect((await failure(r.orchestrator.continueAfterReview({ ...base, sceneSetId: "set-someone-else-0001" }))).sceneReason).toBe("not-awaiting");
+    expect((await failure(r.orchestrator.continueAfterReview({ ...base, avatarId: "avatar-nobody-0404" }))).sceneReason).toBe("not-awaiting");
+    r.steps.continueAfterReview = undefined;
+    expect((await failure(r.orchestrator.continueAfterReview(base))).sceneReason).toBe("not-awaiting");
+    expect(r.steps.continued).toEqual([]);
+    await r.orchestrator.stop(started.launchId);
+    expect((await failure(r.orchestrator.continueAfterReview(base))).sceneReason).toBe("not-awaiting");
+  });
+
+  test("an unknown launch is NOT_FOUND", async () => {
+    const r = await rig();
+    expect((await failure(r.orchestrator.continueAfterReview({ launchId: "launch-nobody0404", avatarId: "avatar-mia-0001", sceneSetId: "set-x-0001", revision: 1 }))).code).toBe("NOT_FOUND");
+  });
+
+  test("a refusal of the approval (SCENES_CHANGED, over-plan) passes through and changes nothing", async () => {
+    const r = await rig();
+    const { input } = await awaiting(r);
+    r.steps.continueAnswer = new EngineFailure({ code: "SCENES_CHANGED", detail: "scene set moved on" });
+    expect((await failure(r.orchestrator.continueAfterReview(input))).code).toBe("SCENES_CHANGED");
+    r.steps.continueAnswer = new EngineFailure({ code: "VALIDATION", sceneReason: "over-plan", detail: "11 scenes, the launch planned 10" });
+    expect(await failure(r.orchestrator.continueAfterReview(input))).toMatchObject({ code: "VALIDATION", sceneReason: "over-plan" });
+    expect(r.fileOf(input.launchId).avatars[0]?.phase).toBe("awaiting-review");
+    expect(r.orchestrator.snapshotView()?.logTail.some((l) => l.kind === "review-continued" || l.kind === "review-approved-paused")).toBe(false);
+  });
+
+  test("the view names the avatar's set mirrors the steps keep, and ignores a mirror of another set", async () => {
+    const r = await rig();
+    const { started, input } = await awaiting(r);
+    r.steps.mirrors.set(input.avatarId, { sceneSetId: input.sceneSetId, setRevision: 4, scenes: 10, scenesWithoutText: 2, continuePhotos: 8, slice: null, undrawnScenes: 0, resumableSlots: 0 });
+    const row = (await r.orchestrator.get(started.launchId)).launch.avatars[0];
+    expect(row).toMatchObject({ sceneSetId: input.sceneSetId, setRevision: 4, scenes: 10, scenesWithoutText: 2, continuePhotos: 8 });
+    r.steps.mirrors.set(input.avatarId, { sceneSetId: "set-someone-else-0001", setRevision: 9, scenes: 1, scenesWithoutText: 0, continuePhotos: 1, slice: null, undrawnScenes: 0, resumableSlots: 0 });
+    expect((await r.orchestrator.get(started.launchId)).launch.avatars[0]).toMatchObject({ sceneSetId: null, setRevision: null, scenes: null });
+  });
+});
+
+// ---------- S4.6b1 fix round 1: the finish ----------
+
+describe("ctx.finish: the group is closed only when nothing of the launch is in flight (MEDIUM)", () => {
+  const writerOf = (r: Rig, launchId: string) => ({ attemptId: `${r.fileOf(launchId).avatars[0]?.generation?.sceneSetId ?? ""}:writer-1#1`, scope: { avatarJobId: "job-x" } });
+
+  test("is refused while a request or a render is in flight: the launch stays running and its group stays", async () => {
+    const r = await rig();
+    const started = await r.start();
+    r.steps.inflight = { requests: 1, renders: 0 };
+    await expect(r.steps.ctx.finish()).rejects.toThrow("in flight");
+    r.steps.inflight = { requests: 0, renders: 2 };
+    await expect(r.steps.ctx.finish()).rejects.toThrow("in flight");
+    expect(r.fileOf(started.launchId).status).toBe("running");
+    expect(r.groups.groupOf(writerOf(r, started.launchId))).not.toBeNull();
+  });
+
+  test("with nothing in flight it releases what the launch holds (complete) BEFORE the group is closed, then ends the launch", async () => {
+    const r = await rig();
+    const started = await r.start();
+    let groupAtComplete: unknown = "unset";
+    r.steps.complete = () => {
+      groupAtComplete = r.groups.groupOf(writerOf(r, started.launchId));
+      return Promise.resolve();
+    };
+    const done = await r.steps.ctx.finish();
+    expect(done.status).toBe("done");
+    expect(groupAtComplete).not.toBe("unset");
+    expect(groupAtComplete).not.toBeNull();
+    expect(r.groups.groupOf(writerOf(r, started.launchId))).toBeNull();
+  });
+
+  test("a launch that is not running cannot be finished, and the refusal does not wait in the queue behind a stop", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.orchestrator.pause(started.launchId);
+    await r.orchestrator.settled();
+    await expect(r.steps.ctx.finish()).rejects.toThrow("not running");
+  });
+
+  test("behind the composer the group is closed only after the paid jobs have ended: free votes, paid still has a slice live, then the slice ends", async () => {
+    const paid = new FakeSteps();
+    const free = new FakeSteps();
+    let paidReady = false;
+    paid.finishReady = () => paidReady;
+    const held: { free: LaunchStepsContext | null } = { free: null };
+    free.onBegin = (ctx) => {
+      held.free = ctx;
+    };
+    const composed = composeSteps(paid, free);
+    const r = await rig({ deps: { steps: composed } });
+    const started = await r.start();
+    paid.inflight = { requests: 1, renders: 0 };
+    await held.free?.finish();
+    await composed.settled();
+    expect(r.fileOf(started.launchId).status).toBe("running");
+    expect(r.groups.groupOf(writerOf(r, started.launchId))).not.toBeNull();
+    // The slice ends, the paid part is ready: the composer's finish goes through, once.
+    paid.inflight = { requests: 0, renders: 0 };
+    paidReady = true;
+    for (const listener of paid.readyListeners) listener();
+    await composed.settled();
+    await r.orchestrator.settled();
+    expect(r.fileOf(started.launchId).status).toBe("done");
+    expect(paid.completed).toBe(1);
+    expect(r.groups.groupOf(writerOf(r, started.launchId))).toBeNull();
   });
 });
