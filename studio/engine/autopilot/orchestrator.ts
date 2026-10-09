@@ -732,6 +732,8 @@ export class Orchestrator {
     // The group is closed and the sum read at this moment, so nothing of the launch may be in flight: a live job would reserve outside the group from now on (fix round 1).
     const flight = this.#d.steps.inFlight();
     if (flight.requests > 0 || flight.renders > 0) throw new Error(`launch ${launchId} still has work in flight (${flight.requests} requests, ${flight.renders} renders): it cannot finish`);
+    // A pause (or a stop) that landed first wins: nothing is released for a launch that is not running now.
+    if (this.#current?.launchId !== launchId || this.#current.status !== "running" || this.#pausing) throw new Error(`launch ${launchId} is not running: only a running launch finishes`);
     try {
       await this.#d.steps.complete?.(this.#ctx(launchId));
     } catch {

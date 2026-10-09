@@ -571,20 +571,20 @@ describe("the internal paid entry points need a launch that runs (MEDIUM)", () =
   test("a paused launch's slice run is not started: the call is refused and the ledger gets no line", async () => {
     const { started, setRunId } = await pausedWithDrawnSlice();
     const before = ledgerLines(dir()).length;
-    await expect(started.engine.startLaunchSlice(setRunId)).rejects.toMatchObject({ error: { code: "IN_FLIGHT" } });
+    await expect(started.engine.startLaunchSlice(setRunId)).rejects.toMatchObject({ error: { code: "VALIDATION", detail: expect.stringContaining("not payable") } });
     expect(ledgerLines(dir()).length).toBe(before);
   });
 
   test("a paused launch's «Дописать» is not sent, and neither is a compose", async () => {
     const { avatarId, started, launch, sceneSetId, setRunId } = await pausedWithDrawnSlice();
     const before = ledgerLines(dir()).length;
-    await expect(started.engine.writeLaunchScenes({ sceneSetId, launchId: launch.launchId, revision: 1, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "IN_FLIGHT" } });
+    await expect(started.engine.writeLaunchScenes({ sceneSetId, launchId: launch.launchId, revision: 1, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "VALIDATION", detail: expect.stringContaining("not payable") } });
     await expect(
       started.engine.composeLaunchSet(
         { avatarId, count: 3, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 1_000_000 },
         { ids: { sceneSetId: "set-other-0001", runId: "run-other-0001" }, split: [{ ref: "home", count: 3 }], launchId: launch.launchId },
       ),
-    ).rejects.toMatchObject({ error: { code: "IN_FLIGHT" } });
+    ).rejects.toMatchObject({ error: { code: "VALIDATION", detail: expect.stringContaining("not payable") } });
     expect(ledgerLines(dir()).length).toBe(before);
     expect(setRunId).toBeDefined();
   });
@@ -664,5 +664,22 @@ describe("an unreadable slice run is live, not pending (L1)", () => {
     const after = await setOf(started, avatarId, sceneSetId);
     if (after === null) throw new Error("no set");
     expect((await started.engine.sliceStatuses(after)).get(setRunId)).toEqual({ finished: false });
+  });
+});
+
+describe("a listener of the set announcements cannot swallow the event (LOW)", () => {
+  test("a throwing listener leaves scenes.changed announced", async () => {
+    const avatarId = await seedAvatar();
+    const started = await boot(network());
+    const launch = await startLaunch(started, draftOf([avatarId], { sceneReview: true }));
+    await reachPhase(launch.launchId, "awaiting-review");
+    const { sceneSetId } = generationOf(launch.launchId);
+    started.engine.onSetChanged(() => {
+      throw new Error("a listener defect");
+    });
+    const before = started.events().filter((e) => e.type === "scenes.changed").length;
+    const revision = (await setOf(started, avatarId, sceneSetId))?.revision ?? 0;
+    ok(await call(started, "scenes.edit", { sceneSetId, revision, op: { op: "text", sceneId: 1, text: `${SENTENCE} Again.` } }));
+    expect(started.events().filter((e) => e.type === "scenes.changed").length).toBeGreaterThan(before);
   });
 });

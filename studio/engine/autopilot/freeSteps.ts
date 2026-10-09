@@ -341,14 +341,15 @@ class FreeRun {
 
   /** `changed`: the file was rewritten. `same`: `change` left it as it is. `refused`: the write failed (before or after `change` ran): nothing is known to be on disk. */
   async #writeState(change: (file: LaunchFile) => LaunchFile | null): Promise<"changed" | "same" | "refused"> {
-    let changed = false;
+    // «Changed» is what really happened to the file (its revision moved), not what `change` asked for: behind the composer a filtered-away change writes nothing, and counting it as
+    // progress would send the loop round again at once, for ever.
+    let before = -1;
     try {
-      await this.#ctx.update((file) => {
-        const next = change(file);
-        changed = next !== null;
-        return next;
+      const written = await this.#ctx.update((file) => {
+        before = file.revision;
+        return change(file);
       });
-      return changed ? "changed" : "same";
+      return written.revision !== before ? "changed" : "same";
     } catch (error) {
       this.#warn(`a write was refused (${error instanceof Error ? error.name : typeof error})`);
       return "refused";

@@ -88,7 +88,7 @@ import { LaunchStores } from "./autopilot/lookup";
 import { Orchestrator, type Admission, type Prepared } from "./autopilot/orchestrator";
 import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
-import type { LaunchSliceStart } from "./autopilot/paidPort";
+import { NOT_PAYABLE_DETAIL, type LaunchSliceStart } from "./autopilot/paidPort";
 import { IDLE_STEPS, type LaunchSteps } from "./autopilot/steps";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -1337,7 +1337,7 @@ export class Engine {
 
   /** A launch's paid entry points work only for a launch that RUNS now and is not held (fix round 1): a paused, stopping or held launch spends nothing, whoever calls. */
   #assertLaunchMayPay(launchId: string): void {
-    if (!(this.#deps.launchMayPay ?? ((id: string) => this.#orchestrator.mayPay(id)))(launchId)) throw new EngineFailure({ code: "IN_FLIGHT", detail: `launch ${launchId} is not running: nothing of it is paid now` });
+    if (!(this.#deps.launchMayPay ?? ((id: string) => this.#orchestrator.mayPay(id)))(launchId)) throw new EngineFailure({ code: "VALIDATION", detail: `${NOT_PAYABLE_DETAIL}: launch ${launchId} is not running, or is held` });
   }
 
   /** Adds a slice run to its launch's Budget group, before the run's folder is made; a launch that is not registered (finished, unknown) has no group to join. */

@@ -11,6 +11,9 @@ import type { LiveScope } from "./room";
 // Stage 4, S4.6b1 (plan §3.4, §3.6): what the paid steps need of the engine. The engine satisfies it structurally (its engine-internal launch methods); a test hands the steps a double.
 // Nothing here is a command: every method is internal, and every paid one is a call the launch's acceptance covers (the click at `autopilot.start`).
 
+/** The detail every refusal of a launch that cannot pay now starts with (VALIDATION): the steps leave such a launch quietly, they do not read it as «avatar busy». */
+export const NOT_PAYABLE_DETAIL = "the launch is not payable now";
+
 /** The payload of a compose, as the engine's `scenes.compose` takes it. */
 export interface LaunchComposePayload {
   avatarId: string;

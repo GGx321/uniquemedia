@@ -19,7 +19,7 @@ import type { LaunchFile } from "./launchFile";
 import { AUTOPILOT_DIR } from "./launchStore";
 import { LaunchStores } from "./lookup";
 import { Orchestrator } from "./orchestrator";
-import type { LaunchComposePayload, LaunchSliceStart, PaidPort } from "./paidPort";
+import { NOT_PAYABLE_DETAIL, type LaunchComposePayload, type LaunchSliceStart, type PaidPort } from "./paidPort";
 import { createPaidSteps } from "./paidSteps";
 import type { LaunchStepsContext } from "./steps";
 import { A, B, startInput } from "./testing/launchFixtures";
@@ -715,5 +715,25 @@ describe("an avatar none of whose videos waits for photos draws nothing (6e)", (
     await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "montage");
     expect(r.port.calls).not.toContain("drawLaunchSlice");
     expect(r.port.calls).not.toContain("startLaunchSlice");
+  });
+});
+
+describe("a launch that is not payable now is left quietly (LOW)", () => {
+  test("the engine's «not payable» refusal is neither «avatar busy» nor a failure: no waiting phase, no retry, no hold", async () => {
+    const r = await rig();
+    r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL, slices: [{ runId: RUN1, sceneIds: ALL, capMicros: PHOTO * 10 }] } });
+    r.port.statuses.set(RUN1, { finished: false });
+    let attempts = 0;
+    r.port.start = async () => {
+      attempts += 1;
+      throw new EngineFailure({ code: "VALIDATION", detail: `${NOT_PAYABLE_DETAIL}: launch ${LAUNCH} is paused` });
+    };
+    const launch = await r.start({ sceneReview: true });
+    await until(() => attempts === 1, "the refused start");
+    await idle();
+    await idle();
+    expect(attempts).toBe(1);
+    expect(r.fileOf(launch.launchId).avatars[0]?.waiting).toBeNull();
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 });

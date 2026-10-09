@@ -9,7 +9,8 @@ useNativeGlobals();
 // Stage 4, S4.6b1 (fix round 1): the composer puts the paid and the free steps behind the engine's one seam, decides the finish jointly, and keeps the two parts to their own
 // fields of the launch file.
 
-const row = (over: Record<string, unknown> = {}) => ({ avatarId: "avatar-a", phase: "montage", waiting: null, skipped: null, photosDone: 3, videos: [], ...over });
+const NO_VIDEOS: never[] = [];
+const row = (over: Record<string, unknown> = {}) => ({ avatarId: "avatar-a", phase: "montage", waiting: null, skipped: null, photosDone: 3, videos: NO_VIDEOS, generation: { sceneSetId: "set-x" }, ...over });
 const fileWith = (...rows: Record<string, unknown>[]): LaunchFile => ({ launchId: "launch-x", avatars: rows }) as unknown as LaunchFile;
 
 interface RawCtx {
@@ -111,7 +112,7 @@ describe("composeSteps: the parts", () => {
 
 describe("composeSteps: the finish is a joint decision", () => {
   /** Paid is a passive voter whose readiness a test sets; free is an active one that votes through its context. */
-  function gate() {
+  function gate(retryMs = 60_000) {
     const paid = new FakeSteps();
     const free = new FakeSteps();
     let paidReady = false;
@@ -121,7 +122,7 @@ describe("composeSteps: the finish is a joint decision", () => {
       freeCtx = ctx;
     };
     const told: string[] = [];
-    const steps = composeSteps(paid, free, { warn: (line) => told.push(line) });
+    const steps = composeSteps(paid, free, { warn: (line) => told.push(line), retryMs });
     const raw = rawContext();
     steps.begin(raw.ctx);
     const vote = (): Promise<LaunchFile> => {
@@ -183,6 +184,17 @@ describe("composeSteps: the finish is a joint decision", () => {
     expect(g.raw.finishes()).toBe(2);
   });
 
+  test("a finish that fails with both parts ready is tried again by the composer itself, with no new vote", async () => {
+    const g = gate(5);
+    await g.paidIsReady();
+    g.raw.failNextFinish();
+    await g.vote();
+    await g.steps.settled();
+    const deadline = Date.now() + 1_000;
+    while (g.raw.finishes() < 2 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(g.raw.finishes()).toBe(2);
+  });
+
   test("a resume forgets the votes: a vote of the earlier epoch does not finish the launch", async () => {
     const g = gate();
     await g.vote();
@@ -197,14 +209,26 @@ describe("composeSteps: who owns which field", () => {
     const before = fileWith(row({ phase: "drawing", waiting: null, skipped: null, photosDone: 2 }));
     const after = fileWith(row({ phase: "montage", waiting: { reason: "paid-hold" }, skipped: { reason: "archived" }, photosDone: 9, videos: [{ key: "0-1", state: "done" }] }));
     const guarded = guardFreeChange(before, after, () => true);
-    expect(guarded.avatars[0]).toMatchObject({ phase: "drawing", waiting: null, skipped: null, photosDone: 2, videos: [{ key: "0-1", state: "done" }] });
+    expect(guarded?.avatars[0]).toMatchObject({ phase: "drawing", waiting: null, skipped: null, photosDone: 2, videos: [{ key: "0-1", state: "done" }] });
+  });
+
+  test("a row with no generation is the free part's entirely: its phase moves freely", () => {
+    const before = fileWith(row({ phase: "planned", generation: null }));
+    const after = fileWith(row({ phase: "montage", generation: null }));
+    expect(guardFreeChange(before, after, () => false)?.avatars[0]?.phase).toBe("montage");
+  });
+
+  test("a change the filter rolls back entirely is no change: null, so nothing is written", () => {
+    const before = fileWith(row({ phase: "drawing", photosDone: 2 }));
+    const after = fileWith(row({ phase: "done", photosDone: 9 }));
+    expect(guardFreeChange(before, after, () => false)).toBeNull();
   });
 
   test("the free part may finish an avatar (montage to done) only while the paid part has nothing live for it", () => {
     const before = fileWith(row({ phase: "montage" }));
     const after = fileWith(row({ phase: "done" }));
-    expect(guardFreeChange(before, after, () => true).avatars[0]?.phase).toBe("done");
-    expect(guardFreeChange(before, after, () => false).avatars[0]?.phase).toBe("montage");
+    expect(guardFreeChange(before, after, () => true)?.avatars[0]?.phase).toBe("done");
+    expect(guardFreeChange(before, after, () => false)).toBeNull();
   });
 
   test("the composer filters the free part's own rewrite, and leaves the paid part's alone", async () => {
@@ -222,7 +246,8 @@ describe("composeSteps: who owns which field", () => {
     const raw = rawContext(fileWith(row({ phase: "montage", photosDone: 3 })));
     steps.begin(raw.ctx);
     await held.free?.update((f) => ({ ...f, avatars: f.avatars.map((a) => ({ ...a, phase: "done" as const, photosDone: 0 })) }));
-    expect(raw.lastUpdate()?.avatars[0]).toMatchObject({ phase: "montage", photosDone: 3 });
+    // Everything the free part asked for belongs to the paid part: nothing is left of it, so nothing is written.
+    expect(raw.lastUpdate()).toBeNull();
     await held.paid?.update((f) => ({ ...f, avatars: f.avatars.map((a) => ({ ...a, photosDone: 5 })) }));
     expect(raw.lastUpdate()?.avatars[0]).toMatchObject({ photosDone: 5 });
   });

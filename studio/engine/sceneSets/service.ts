@@ -190,8 +190,13 @@ export class SceneSetService {
   }
 
   async #announce(library: Library, set: StoredSceneSet): Promise<void> {
+    // The listener first, on its own: a defect in it must never swallow the event the windows are waiting for.
     try {
       this.#deps.onSetAnnounced?.(set);
+    } catch (error) {
+      this.#deps.warn(`studio engine: a listener of scene set ${set.sceneSetId} failed (${detailOfError(error)})`);
+    }
+    try {
       const sceneSet = await this.#view(library, set);
       this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "upserted", sceneSet } });
     } catch (error) {

@@ -1261,3 +1261,16 @@ describe("ctx.finish: the group is closed only when nothing of the launch is in 
     expect(r.groups.groupOf(writerOf(r, started.launchId))).toBeNull();
   });
 });
+
+describe("ctx.finish: a pause that landed first wins (LOW)", () => {
+  test("a launch that is pausing is not finished and its sets are not released", async () => {
+    const r = await rig();
+    const started = await r.start();
+    r.steps.inflight = { requests: 1, renders: 0 };
+    await r.orchestrator.pause(started.launchId);
+    r.steps.inflight = { requests: 0, renders: 0 };
+    await expect(r.steps.ctx.finish()).rejects.toThrow();
+    expect(r.steps.completed).toBe(0);
+    expect(r.fileOf(started.launchId).status).not.toBe("done");
+  });
+});

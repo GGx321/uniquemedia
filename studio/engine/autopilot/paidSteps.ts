@@ -8,7 +8,7 @@ import { sceneRefusal } from "../sceneSets/refusal";
 import { pendingChunks } from "../sceneSets/chunks";
 import type { LiveScope } from "./room";
 import type { FileAvatar, LaunchFile } from "./launchFile";
-import type { PaidPort } from "./paidPort";
+import { NOT_PAYABLE_DETAIL, type PaidPort } from "./paidPort";
 import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchStepsContext, MirrorSource } from "./steps";
 
 // Stage 4, S4.6b1 (plan §3.2, §3.4, §3.6 rows 2–5, §4.3, §4.4, §4.7, §18, §19): the launch's PAID path, plugged in behind `LaunchSteps`. Per avatar that generates:
@@ -52,6 +52,8 @@ type SetRead = { kind: "set"; set: StoredSceneSet } | { kind: "missing" } | { ki
 type Move = "ran" | "busy" | "retry" | "end";
 
 const isFailure = (error: unknown, code: string): error is EngineFailure => error instanceof EngineFailure && error.error.code === code;
+/** The engine refused because the launch cannot pay now (paused, stopping, held): not a failure and not a busy avatar. The launch's own state will wake the steps again. */
+const isNotPayable = (error: unknown): boolean => isFailure(error, "VALIDATION") && (error.error.detail ?? "").startsWith(NOT_PAYABLE_DETAIL);
 const plannedOf = (set: MirrorSource) => set.scenes.filter((s) => s.origin === "planned" && !s.removed);
 const FINAL_PHASES: readonly string[] = ["montage", "done", "skipped"];
 
@@ -371,6 +373,7 @@ export class PaidSteps implements LaunchSteps {
     } catch (error) {
       // The set moved between the read and the approval (an edit that landed): read it again. A job of the set still ending: the avatar is busy. Anything else is not this file's to decide.
       if (isFailure(error, "SCENES_CHANGED")) return "retry";
+      if (isNotPayable(error)) return "end";
       if (isFailure(error, "IN_FLIGHT")) return "busy";
       return this.#stuck(row.avatarId, `the set could not be approved (${error instanceof EngineFailure ? (error.error.sceneReason ?? error.error.code) : "unknown"})`);
     }
@@ -517,6 +520,7 @@ export class PaidSteps implements LaunchSteps {
       started = await port.startLaunchSlice(runId);
     } catch (error) {
       this.#liveRuns.delete(runId);
+      if (isNotPayable(error)) return "end";
       if (isFailure(error, "IN_FLIGHT")) return "busy";
       if (isFailure(error, "BUDGET_EXCEEDED")) {
         try {
@@ -562,6 +566,7 @@ export class PaidSteps implements LaunchSteps {
     error: unknown,
     price: () => Promise<{ stage: "compose" | "rewrite"; needMicros: number; leftMicros: number }>,
   ): Promise<Move> {
+    if (isNotPayable(error)) return "end";
     if (isFailure(error, "IN_FLIGHT")) return ctx.isRunning() ? "busy" : "end";
     if (isFailure(error, "PRICE_CHANGED")) {
       const detail = await price();

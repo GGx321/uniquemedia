@@ -23,20 +23,49 @@ export interface ComposedSteps extends LaunchSteps {
 
 export interface ComposeOptions {
   warn?: (line: string) => void;
+  /** After a refused or failed finish with both parts ready, the composer tries again after this long (and at every ready-change). Default 1000 ms. */
+  retryMs?: number;
 }
 
-/** The free part's rewrite, filtered: what the paid part owns is restored from the file as it was; `montage` to `done` is allowed when paid is idle for that avatar. */
-export function guardFreeChange(before: LaunchFile, after: LaunchFile, paidIdle: (avatarId: string) => boolean): LaunchFile {
+/**
+ * The free part's rewrite, filtered. A row without a `generation` belongs to the free part entirely (the paid part never touches it). On a generating row what the paid part owns
+ * (`waiting`, `skipped`, `photosDone`, and the phase) is restored from the file as it was; `montage` to `done` is allowed when paid is idle for that avatar. Null when nothing is left
+ * of the change: no write at all, so the free part never counts a rolled-back change as progress.
+ */
+export function guardFreeChange(before: LaunchFile, after: LaunchFile, paidIdle: (avatarId: string) => boolean): LaunchFile | null {
   const old = new Map(before.avatars.map((a) => [a.avatarId, a]));
-  return {
-    ...after,
-    avatars: after.avatars.map((row) => {
-      const was = old.get(row.avatarId);
-      if (was === undefined) return row;
+  let rowsChanged = false;
+  const avatars = after.avatars.map((row) => {
+    const was = old.get(row.avatarId);
+    if (was === undefined) {
+      rowsChanged = true;
+      return row;
+    }
+    let out = row;
+    if (was.generation !== null) {
       const finishes = was.phase === "montage" && row.phase === "done" && paidIdle(row.avatarId);
-      return { ...row, phase: finishes ? row.phase : was.phase, waiting: was.waiting, skipped: was.skipped, photosDone: was.photosDone };
-    }),
-  };
+      out = { ...row, phase: finishes ? row.phase : was.phase, waiting: was.waiting, skipped: was.skipped, photosDone: was.photosDone };
+    }
+    const same = out.phase === was.phase && out.waiting === was.waiting && out.skipped === was.skipped && out.photosDone === was.photosDone && out.videos === was.videos;
+    if (same) return was;
+    rowsChanged = true;
+    return out;
+  });
+  const outside = (Object.keys(after) as (keyof LaunchFile)[]).some((key) => key !== "avatars" && after[key] !== before[key]);
+  if (!rowsChanged && !outside) return null;
+  return { ...after, avatars };
+}
+
+/** The final rewrite before the launch finishes: a row whose videos are all final (done or dropped) is `done`, a generating row included (the paid part rests at `montage`). */
+function settledRows(file: LaunchFile): LaunchFile | null {
+  let changed = false;
+  const avatars = file.avatars.map((row) => {
+    const final = row.videos.length > 0 && row.videos.every((v) => v.state === "done" || v.state === "dropped");
+    if (row.phase === "skipped" || row.phase === "done" || !final) return row;
+    changed = true;
+    return { ...row, phase: "done" as const, waiting: null };
+  });
+  return changed ? { ...file, avatars } : null;
 }
 
 export function composeSteps(paid: LaunchSteps, free: LaunchSteps, options: ComposeOptions = {}): ComposedSteps {
@@ -57,12 +86,19 @@ export function composeSteps(paid: LaunchSteps, free: LaunchSteps, options: Comp
   const evaluate = (launchId: string): void => {
     const raw = raws.get(launchId);
     if (raw === undefined || finished.has(launchId) || finishing.has(launchId) || !ready(launchId)) return;
-    const run = raw.finish().then(
-      () => void finished.add(launchId),
-      (error: unknown) => {
-        warn(`studio engine: launch ${launchId} could not finish yet (${error instanceof Error ? error.message : typeof error}); the next vote tries again`);
-      },
-    );
+    // The rows whose videos are all final become `done` first (a generating row rests at `montage`), then the core finishes: it refuses while anything is in flight.
+    const run = raw
+      .update(settledRows)
+      .then(() => raw.finish())
+      .then(
+        () => void finished.add(launchId),
+        (error: unknown) => {
+          warn(`studio engine: launch ${launchId} could not finish yet (${error instanceof Error ? error.message : typeof error}); trying again`);
+          // Both parts have voted and nobody would vote again: try once more soon.
+          const timer = setTimeout(() => evaluate(launchId), options.retryMs ?? 1_000);
+          timer.unref();
+        },
+      );
     const tracked = run.finally(() => {
       finishing.delete(launchId);
     });
