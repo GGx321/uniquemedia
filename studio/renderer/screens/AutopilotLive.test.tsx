@@ -618,7 +618,10 @@ describe("the end of a launch", () => {
     announce(engine, done);
     expect(within(card()).getByRole("heading", { level: 2, name: "Запуск завершён" })).toBeDefined();
     expect(within(card()).queryByRole("button", { name: "Стоп" }) === null).toBe(true);
-    expect(card().querySelector(".ap-live-line")?.textContent).toMatch(/^\d+ из 30 видео · \$1\.69 из \$4\.14$/);
+    // S4.9c fix round 1 (ApDone at 1200): the span is in the folded line, so the header holds the title and «Результаты · N» on one row.
+    expect(card().querySelector(".ap-live-line")?.textContent).toMatch(/^\d+ из 30 видео · \$1\.69 из \$4\.14 · \d\d:\d\d–\d\d:\d\d$/);
+    expect(card().querySelector(".ap-live-meta") === null).toBe(true);
+    expect(within(card()).getByRole("button", { name: /^Результаты · \d+$/ })).toBeDefined();
   });
 });
 

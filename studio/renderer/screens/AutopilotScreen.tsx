@@ -1,8 +1,12 @@
 import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import type { CategoryRef, LaunchMix, LaunchPreview, LaunchPreviewAvatar, LaunchView } from "../../shared/engine";
+import { MAX_LAUNCH_AVATARS, type CategoryRef, type LaunchMix, type LaunchPreview, type LaunchPreviewAvatar, type LaunchSummary, type LaunchView } from "../../shared/engine";
 import { useCategoryLibrary, useEngine, useEngineView } from "../engine/react";
+import { useNavigate } from "../navigation";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { AvatarColumn } from "./autopilot/AvatarColumn";
+import { lastLaunchLine, statusTag } from "./autopilot/historyModel";
+import { MusicDialog } from "./autopilot/MusicDialog";
+import { useLaunchList } from "./autopilot/useLaunches";
 import {
   DEFAULT_MIX,
   defaultForm,
@@ -29,7 +33,8 @@ import { arrangeCategories } from "./photos/runForm";
 // S4.9a: the «Автопилот» screen (AutopilotS4.dc.html, states plan … from-main; the owner's mockup Autopilot.dc.html): three columns — the avatars, «Настройки
 // запуска», and the plan with «Запустить: N видео · до $W». The plan is the engine's (`autopilot.estimate`), asked again as the form changes; the click
 // sends exactly its worst case. While a launch is unfinished the two columns on the left show its settings read only and the plan folds to one line; under
-// it the live card (S4.9b: pause, stop, «Продолжить · до $R», the holds, the avatars' progress, the log). «История запусков» and the results are S4.9c.
+// it the live card (S4.9b: pause, stop, «Продолжить · до $R», the holds, the avatars' progress, the log). S4.9c: «История запусков» in the header, «Последний
+// запуск» under the plan, the music chip's window, and the avatars «Автопилот для выбранных» brought from «Аватары» (ApFromMain).
 
 /** The launch the screen shows: the engine's, or the one this window just started while the engine's word on it is on its way. */
 function shownLaunch(engine: LaunchView | null, started: LaunchView | null): LaunchView | null {
@@ -66,11 +71,33 @@ function useFocusAfter<T extends HTMLElement>(): readonly [RefObject<T | null>, 
   return [ref, useCallback(() => setWanted((n) => n + 1), [])] as const;
 }
 
-export function AutopilotScreen() {
+/** «Последний запуск» (ApPlan, at 1440 under the plan): the newest launch of the history, when none is on the card, with «Результаты». */
+function LastLaunchCard({ summary, nameOf }: { summary: LaunchSummary; nameOf: (avatarId: string) => string | null }) {
+  const navigate = useNavigate();
+  const tag = statusTag(summary.status);
+  return (
+    <section className="card ap-last" aria-labelledby="ap-last-title">
+      <div className="ap-last-head">
+        <h2 id="ap-last-title" className="ap-h2">
+          Последний запуск
+        </h2>
+        <span className={`tag ap-st ap-st-${tag.tone}`}>{tag.text}</span>
+      </div>
+      <p className="mono muted ap-last-line">{lastLaunchLine(summary, nameOf)}</p>
+      <button type="button" className="btn btn-s ap-last-go" onClick={() => navigate({ name: "launch", launchId: summary.launchId, from: "autopilot" })}>
+        Результаты
+      </button>
+    </section>
+  );
+}
+
+export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] | null }) {
   const view = useEngineView();
   const { client } = useEngine();
+  const navigate = useNavigate();
   const forms = useLaunchForms();
   const wide = useWide();
+  const { list: history } = useLaunchList();
   const { view: categorySlice } = useCategoryLibrary();
   const customs = categorySlice.list.status === "ready" ? categorySlice.list.categories : null;
   const customOrder = useMemo(() => (customs ?? []).map((c) => c.categoryId), [customs]);
@@ -96,6 +123,33 @@ export function AutopilotScreen() {
     if (kept.length !== form.avatarIds.length) setForm({ ...form, avatarIds: kept });
   }, [ready, activeIds, form, setForm]);
 
+  // S4.9c (ApFromMain): «Автопилот для выбранных» opens the screen with those avatars chosen, once, in the list's order (the active ones, at most a launch's).
+  // Fix round 1: while a launch is unfinished the form on screen is that launch's, so the choice is not slipped into the next launch's form unseen — it is
+  // left alone, and the column says so; and a choice that has no active avatar left changes nothing and says nothing («Выбраны: 0» is never shown). The count
+  // is of the ones still active: one archived or deleted after the screen opened leaves the line's number too, and the line goes with the last.
+  const [fromMain, setFromMain] = useState<{ readonly ids: readonly string[]; readonly held: boolean } | null>(null);
+  const chosenTaken = useRef(false);
+  useEffect(() => {
+    if (chosen === null || chosenTaken.current || !ready) return;
+    chosenTaken.current = true;
+    const picked = activeIds.filter((id) => chosen.includes(id)).slice(0, MAX_LAUNCH_AVATARS);
+    if (picked.length === 0) return;
+    if (isUnfinished(view.autopilot)) {
+      setFromMain({ ids: picked, held: true });
+      return;
+    }
+    setForm({ ...form, avatarIds: picked });
+    setFromMain({ ids: picked, held: false });
+  }, [chosen, ready, activeIds, form, setForm, view.autopilot]);
+  const fromMainCount = fromMain === null ? 0 : fromMain.ids.filter((id) => activeIds.includes(id)).length;
+  const fromMainLine = fromMain === null || fromMainCount === 0 ? null : { count: fromMainCount, held: fromMain.held };
+
+  // S4.9c: the music chip's window (ApPlanMusic), opened by the chip or by «Мои треки…» of the waiting-music notice; the focus goes back to what opened it.
+  const musicChip = useRef<HTMLButtonElement>(null);
+  const [musicWindow, setMusicWindow] = useState<{ readonly opener: HTMLElement | null } | null>(null);
+  const [musicMarks, setMusicMarks] = useState(0);
+  const openMusic = useCallback(() => setMusicWindow({ opener: document.activeElement instanceof HTMLElement ? document.activeElement : null }), []);
+
   const [started, setStarted] = useState<LaunchView | null>(null);
   const launch = shownLaunch(view.autopilot, started);
   const running = isUnfinished(launch);
@@ -109,7 +163,8 @@ export function AutopilotScreen() {
     settings: ready ? settings : null,
     activeIds,
     categories: settings?.categories ?? arrangeCategories(form.categories, customOrder),
-    world: worldKey(view, customOrder),
+    // An own track marked or unmarked in the music window moves the plan's tracks: the plan is asked again.
+    world: `${worldKey(view, customOrder)}:${musicMarks}`,
     probeWorld: probeWorldKey(view, customOrder),
     enabled: ready && !running,
     onStarted: (next) => {
@@ -171,6 +226,9 @@ export function AutopilotScreen() {
   const music = musicLine(musicNow ?? lastMusic.current);
   const figures = figuresOf(plan.shown);
   const limit = running && launch !== null ? limitText(launch.plannedWorstMicros) : limitText(figures === null ? null : figures.estimate.worstMicros);
+  const launches = history.state === "ready" ? history.launches : null;
+  const last = launches?.[0] ?? null;
+  const knownName = (avatarId: string): string | null => names.get(avatarId) ?? null;
 
   return (
     <div className="page ap-page">
@@ -181,6 +239,10 @@ export function AutopilotScreen() {
             {wide ? "Аватары пачкой → сцены → фото → видео до 10 с. Сначала библиотека, недостающее догенерируется." : "Аватары пачкой → сцены → фото → видео до 10 с."}
           </p>
         </div>
+        <button type="button" className="btn ap-history-btn" onClick={() => navigate({ name: "launches" })}>
+          История запусков
+          {launches !== null && <span className="mono faint ap-history-n">{launches.length}</span>}
+        </button>
       </header>
 
       <div className="ap-cols">
@@ -195,6 +257,7 @@ export function AutopilotScreen() {
           onToggle={(id) => edit(toggleAvatar(form, id, activeIds))}
           onAll={() => edit(selectAll(form, activeIds))}
           onNone={() => edit(selectNone(form))}
+          fromMain={fromMainLine}
         />
 
         <SettingsColumn
@@ -216,12 +279,15 @@ export function AutopilotScreen() {
           onCategory={toggleCategory}
           onPose={(pose) => edit({ ...form, poses: { ...form.poses, [pose]: !form.poses[pose] } })}
           onSwitch={(which) => edit({ ...form, [which]: !form[which] })}
+          musicOpen={musicWindow !== null}
+          musicChipRef={musicChip}
+          onMusic={() => (musicWindow === null ? openMusic() : setMusicWindow(null))}
         />
 
         {/* One place for the launch's card whatever the state, so its heading (with the focus after «Запустить» or «Остановить») survives running → stopped. */}
         <PlanColumn>
           {running && wide && launch !== null && <PlanMini launch={launch} />}
-          {launch !== null && <LaunchCard key={launch.launchId} launch={launch} titleRef={liveTitle} wide={wide} nameOf={nameOf} />}
+          {launch !== null && <LaunchCard key={launch.launchId} launch={launch} titleRef={liveTitle} wide={wide} nameOf={nameOf} onMusic={openMusic} />}
           {!running && (
             <PlanCard
               preview={figures}
@@ -235,8 +301,20 @@ export function AutopilotScreen() {
               onGo={go.retry ? plan.retry : plan.start}
             />
           )}
+          {launch === null && wide && last !== null && <LastLaunchCard summary={last} nameOf={knownName} />}
         </PlanColumn>
       </div>
+
+      {musicWindow !== null && (
+        <MusicDialog
+          music={musicNow ?? lastMusic.current}
+          anchor={musicChip.current}
+          wide={wide}
+          onClose={() => setMusicWindow(null)}
+          onChanged={() => setMusicMarks((n) => n + 1)}
+          returnFocus={() => (musicWindow.opener?.isConnected === true ? musicWindow.opener : musicChip.current)}
+        />
+      )}
     </div>
   );
 }

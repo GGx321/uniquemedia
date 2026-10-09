@@ -267,7 +267,63 @@ function VisualTileView({
   );
 }
 
-function TrackRowView({ row, montageMs, listening, onListen, onPick, onDelete, onCancel }: { row: TrackTile; montageMs: number; listening: string | null; onListen: (mediaId: string) => void; onPick: (media: MediaSummary) => void; onDelete: AskDelete; onCancel: (view: ImportView) => void }) {
+/**
+ * S4.9c: «для автопилота» on an own track (LaunchStates «Музыка», the tab «Мои» of «Монтаж»): the autopilot may put the track in its videos. A free mark the
+ * library keeps (`media.setForAutopilot`), never the montage's: the track goes into this draft as before, by a click on its row. A track the render cannot
+ * read (not stored as an m4a) is refused by the engine, and the chip says so from then on.
+ */
+function AutopilotFlag({ media, onError }: { media: MediaSummary; onError: (error: EngineError) => void }) {
+  const { client } = useEngine();
+  const mounted = useMounted();
+  const [busy, setBusy] = useState(false);
+  const [refused, setRefused] = useState(false);
+  const on = media.forAutopilot === true && !refused;
+  const toggle = async (): Promise<void> => {
+    setBusy(true);
+    const reply = await client.request("media.setForAutopilot", { mediaId: media.mediaId, on: !on });
+    if (!mounted.current) return;
+    setBusy(false);
+    // The row follows `media.changed`; only a refusal is this chip's to say.
+    if (reply.ok) return;
+    if (reply.error.code === "MEDIA_UNSUPPORTED") setRefused(true);
+    else onError(reply.error);
+  };
+  return (
+    <button
+      type="button"
+      className={on ? "chip chip-on mine-ap" : "chip mine-ap"}
+      aria-pressed={on}
+      aria-label={`Для автопилота: ${media.name}`}
+      aria-disabled={refused || busy || undefined}
+      aria-busy={busy || undefined}
+      title={refused ? "Автопилот берёт только m4a с известной длиной" : undefined}
+      onClick={refused || busy ? undefined : () => void toggle()}
+    >
+      {on && <Icon name="bolt" size={10} />}
+      для автопилота
+    </button>
+  );
+}
+
+function TrackRowView({
+  row,
+  montageMs,
+  listening,
+  onListen,
+  onPick,
+  onDelete,
+  onCancel,
+  onFlagError,
+}: {
+  row: TrackTile;
+  montageMs: number;
+  listening: string | null;
+  onListen: (mediaId: string) => void;
+  onPick: (media: MediaSummary) => void;
+  onDelete: AskDelete;
+  onCancel: (view: ImportView) => void;
+  onFlagError: (error: EngineError) => void;
+}) {
   const { client } = useEngine();
   if (row.kind === "import") {
     const { view } = row;
@@ -314,6 +370,7 @@ function TrackRowView({ row, montageMs, listening, onListen, onPick, onDelete, o
         <span className="mine-track-name">{media.name}</span>
         <span className={inDraft ? "mono mine-track-note mine-track-note-on" : "mono faint mine-track-note"}>{trackRowNote(row)}</span>
       </button>
+      <AutopilotFlag media={media} onError={onFlagError} />
       <DeleteButton media={media} onDelete={onDelete} />
     </li>
   );
@@ -478,6 +535,8 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
   // ---------- listen (M9): one track at a time, and one sound in the editor (L5) ----------
   const audio = useRef<HTMLAudioElement>(null);
   const [listening, setListening] = useState<string | null>(null);
+  /** S4.9c: «для автопилота» refused for another reason than the track's format. */
+  const [flagError, setFlagError] = useState<EngineError | null>(null);
   useEffect(() => {
     const element = audio.current;
     if (element === null) return;
@@ -704,10 +763,15 @@ export function MineTab({ spec, playhead, fillTarget, addBlock, stickerWhy, sele
                     onPick={onPickTrack}
                     onDelete={askDelete}
                     onCancel={(v) => void cancel(v)}
+                    onFlagError={setFlagError}
                   />
                 ))}
               </ul>
             )}
+            {sections.tracks.some((row) => row.kind !== "import") && (
+              <p className="faint mine-hint mine-ap-hint">«для автопилота» — автопилот может брать трек в свои видео. В этот монтаж трек ставится как раньше — кликом по строке.</p>
+            )}
+            {flagError !== null && <MineAlert title="Не удалось отметить трек" body={errorText(flagError)} onClose={() => setFlagError(null)} />}
           </section>
 
           <section className="mine-section" aria-label="Стикеры">

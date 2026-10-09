@@ -25,9 +25,14 @@ export interface AvatarColumnProps {
   readonly onToggle: (avatarId: string) => void;
   readonly onAll: () => void;
   readonly onNone: () => void;
+  /**
+   * S4.9c (ApFromMain): how many avatars «Автопилот для выбранных» brought from «Аватары», and whether they were held back because a launch is unfinished (the
+   * form is that launch's then); null when the screen was opened otherwise.
+   */
+  readonly fromMain?: { readonly count: number; readonly held: boolean } | null;
 }
 
-export function AvatarColumn({ avatars, chosen, planned, probed, readOnly, running, showFree, onToggle, onAll, onNone }: AvatarColumnProps) {
+export function AvatarColumn({ avatars, chosen, planned, probed, readOnly, running, showFree, onToggle, onAll, onNone, fromMain = null }: AvatarColumnProps) {
   const navigate = useNavigate();
   const ids = useId();
   const headId = `${ids}-head`;
@@ -54,6 +59,20 @@ export function AvatarColumn({ avatars, chosen, planned, probed, readOnly, runni
         )}
       </div>
       {showFree && avatars !== null && avatars.length > 0 && <span className="faint ap-avatars-hint">своб. — свободные фото в выбранных категориях</span>}
+      {fromMain !== null && !fromMain.held && !running && (
+        <p className="ap-from-main" role="status">
+          <Icon name="info" size={13} />
+          <span>Выбраны на экране «Аватары»: {fromMain.count}. Поменять можно здесь.</span>
+        </p>
+      )}
+      {fromMain !== null && fromMain.held && running && (
+        <p className="ap-from-main" role="status">
+          <Icon name="info" size={13} />
+          <span>
+            Выбранные на экране «Аватары» ({fromMain.count}) не подставлены: запуск не закончен, и здесь его настройки. Выберите их снова после «Стоп» или конца запуска.
+          </span>
+        </p>
+      )}
       {empty ? (
         <div className="ap-avatars-empty">
           <span className="ap-empty-mark" aria-hidden="true">

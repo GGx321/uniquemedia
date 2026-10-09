@@ -170,7 +170,8 @@ const RECONCILE_FIRST = new Set<ResumeBlockedBy>(["reconcile-required", "network
  * when a reconcile is required one plain line says the open reserves are already inside «Потрачено» (round 1 M1).
  */
 export function spentBlock(launch: LaunchView): SpentBlock {
-  const free = launch.plannedWorstMicros === 0;
+  // «бесплатно» only when nothing was planned AND nothing spent (S4.9c fix round 1): a spend above a W′ of 0 is an A2 breach, and is shown as it is.
+  const free = launch.plannedWorstMicros === 0 && launch.spentMicros === 0;
   const flight = liveRequests(launch);
   const network = launch.paidHold?.reason === "network";
   let sub: string | null = null;
@@ -374,7 +375,9 @@ export type NoteAction =
   | { readonly kind: "photos"; readonly avatarId: string; readonly label: string }
   | { readonly kind: "avatars"; readonly label: string }
   | { readonly kind: "continue"; readonly avatarId: string; readonly sceneSetId: string; readonly revision: number; readonly label: string }
-  | { readonly kind: "stop"; readonly label: string };
+  | { readonly kind: "stop"; readonly label: string }
+  /** S4.9c: «Мои треки…» opens «Музыка для автопилота», where an own track is marked «для автопилота». */
+  | { readonly kind: "music"; readonly label: string };
 
 export interface LiveNote {
   /** Stable for one cause: React's key, the tests' handle, and what announces a new one. */
@@ -691,7 +694,7 @@ function musicNote(launch: LaunchView): LiveNote {
     icon: "alert",
     title: `${countOf(n, VIDEOS)} ${n === 1 ? "ждёт" : "ждут"} музыку`,
     text: "Подходящих треков нет: все тренды и отмеченные треки короче этих видео (или их нет совсем). Отметьте свои треки «для автопилота» или обновите тренды — видео соберутся сами.",
-    actions: [toSettings("music", "Обновить тренды — в Настройках")],
+    actions: [{ kind: "music", label: "Мои треки…" }, toSettings("music", "Обновить тренды — в Настройках")],
     resume: false,
     why: refreshed ? "Автопилот уже обновлял тренды при старте — второй раз только вручную." : null,
   };

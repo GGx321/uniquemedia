@@ -22,7 +22,7 @@ import {
   type LiveNote,
   type NoteAction,
 } from "./liveModel";
-import { ceilingUsd, launchTitle, videosOf } from "./planModel";
+import { ceilingUsd, clockLabel, launchTitle, videosOf } from "./planModel";
 import { StopDialog } from "./StopDialog";
 
 // S4.9b: the live launch card (AutopilotS4.dc.html, states review-wait … paused-reviewed; LaunchStates; README decisions 6–9 and round 1 M6). Its header —
@@ -67,9 +67,11 @@ export interface LaunchCardProps {
   readonly titleRef: RefObject<HTMLHeadingElement | null>;
   readonly wide: boolean;
   readonly nameOf: (avatarId: string) => string;
+  /** S4.9c: «Мои треки…» of the waiting-music notice opens the music chip's window. */
+  readonly onMusic?: () => void;
 }
 
-export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf }: LaunchCardProps) {
+export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMusic }: LaunchCardProps) {
   const ids = useId();
   const { client } = useEngine();
   const { money, settings } = useEngineView();
@@ -256,8 +258,13 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf }: Lau
       case "stop":
         setAsking(true);
         return;
+      case "music":
+        onMusic?.();
+        return;
     }
   };
+  /** S4.9c: the launch's own page — its results and its whole log. */
+  const openLaunch = (): void => navigate({ name: "launch", launchId: launch.launchId, from: "autopilot" });
 
   const resumeButton = (
     <button
@@ -284,7 +291,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf }: Lau
   const recount = current !== null && current.recountFrom !== null && current.recountFrom !== current.view.remainingMicros ? { from: current.recountFrom, to: current.view.remainingMicros } : null;
 
   return (
-    <section id="ap-live" className={`card ap-live ${ended ? "ap-live-ended" : ""} ${tone}`} aria-labelledby={`${ids}-title`}>
+    <section id="ap-live" className={`card ap-live ${ended ? "ap-live-ended" : ""} ${compact ? "ap-live-compact" : ""} ${tone}`} aria-labelledby={`${ids}-title`}>
       <div className="ap-live-pin">
         <div className="ap-live-head">
           {status === "done" && (
@@ -296,7 +303,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf }: Lau
             {busyTitle && <span className="spin ap-live-spin" aria-hidden="true" />}
             {launchTitle(status)}
           </h2>
-          <LiveMeta launch={launch} status={status} />
+          {!compact && <LiveMeta launch={launch} status={status} />}
           {!ended && (
             <div className="ap-live-actions">
               {(status === "running" || pausing) && (
@@ -323,6 +330,13 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf }: Lau
                 onClick={stopping ? undefined : () => setAsking(true)}
               >
                 Стоп
+              </button>
+            </div>
+          )}
+          {ended && compact && (
+            <div className="ap-live-actions">
+              <button type="button" className="btn btn-p btn-xs" onClick={openLaunch}>
+                Результаты · {videosOf(launch).done}
               </button>
             </div>
           )}
@@ -354,9 +368,28 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf }: Lau
       </div>
 
       {ended ? (
-        status === "done" && !compact && <SpentView launch={launch} />
+        !compact && (
+          <>
+            {status === "done" && <SpentView launch={launch} />}
+            {/* S4.9c (ApDone): the launch's results and its whole log, on its own page. */}
+            <div className="ap-live-ended-acts">
+              <button type="button" className="btn btn-p btn-s" onClick={openLaunch}>
+                Результаты · {videosOf(launch).done}
+              </button>
+              <button type="button" className="btn btn-s" onClick={openLaunch}>
+                Журнал
+              </button>
+            </div>
+          </>
+        )
       ) : (
-        <LiveBody launch={launch} nameOf={nameOf} wide={wide} onOpen={(avatarId, kind) => (kind === "avatars" ? navigate({ name: "avatars" }) : navigate({ name: "photos", avatarId, focus: "launch" }))} />
+        <LiveBody
+          launch={launch}
+          nameOf={nameOf}
+          wide={wide}
+          onOpen={(avatarId, kind) => (kind === "avatars" ? navigate({ name: "avatars" }) : navigate({ name: "photos", avatarId, focus: "launch" }))}
+          onJournal={openLaunch}
+        />
       )}
 
       {asking && (
@@ -375,8 +408,10 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf }: Lau
 /** At 1200 the ended card folds to a line (decision 1), so «Запустить» stays on screen: «28 из 30 видео · $1.69 из $4.14». */
 function endedLine(launch: LaunchView): string {
   const { done, planned } = videosOf(launch);
-  const spent = launch.plannedWorstMicros === 0 ? "бесплатно" : `${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}`;
-  return `${done} из ${planned} видео · ${spent}`;
+  const spent = launch.plannedWorstMicros === 0 && launch.spentMicros === 0 ? "бесплатно" : `${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}`;
+  // S4.9c fix round 1 (ApDone at 1200): the span joins the line, so the header keeps the title and «Результаты · N» on one row.
+  const span = launch.endedAt === null ? null : `${clockLabel(launch.createdAt)}–${clockLabel(launch.endedAt)}`;
+  return [`${done} из ${planned} видео`, spent, span].filter((part) => part !== null).join(" · ");
 }
 
 function LiveNoteView({
@@ -441,7 +476,19 @@ function LiveNoteView({
 }
 
 /** The card's scrolling body (round 1 M6): «Потрачено», the rows and the log under the pinned header, with the fade only while they overflow. */
-function LiveBody({ launch, nameOf, wide, onOpen }: { launch: LaunchView; nameOf: (avatarId: string) => string; wide: boolean; onOpen: (avatarId: string, kind: "photos" | "avatars") => void }) {
+function LiveBody({
+  launch,
+  nameOf,
+  wide,
+  onOpen,
+  onJournal,
+}: {
+  launch: LaunchView;
+  nameOf: (avatarId: string) => string;
+  wide: boolean;
+  onOpen: (avatarId: string, kind: "photos" | "avatars") => void;
+  onJournal: () => void;
+}) {
   const scroller = useRef<HTMLDivElement>(null);
   const content = useRef<HTMLDivElement>(null);
   const over = useOverflows(scroller, content);
@@ -451,7 +498,7 @@ function LiveBody({ launch, nameOf, wide, onOpen }: { launch: LaunchView; nameOf
         <div ref={content} className="ap-live-in">
           <SpentView launch={launch} />
           <AvatarRows launch={launch} nameOf={nameOf} onOpen={onOpen} />
-          <LogView launch={launch} nameOf={nameOf} wide={wide} />
+          <LogView launch={launch} nameOf={nameOf} wide={wide} onJournal={onJournal} />
         </div>
       </div>
       {over && <div className="ap-fd" aria-hidden="true" />}
@@ -538,17 +585,23 @@ function AvatarRows({ launch, nameOf, onOpen }: { launch: LaunchView; nameOf: (a
 }
 
 /** The log's tail, newest first: time, avatar (in the line at 1200), what happened. */
-function LogView({ launch, nameOf, wide }: { launch: LaunchView; nameOf: (avatarId: string) => string; wide: boolean }) {
+function LogView({ launch, nameOf, wide, onJournal }: { launch: LaunchView; nameOf: (avatarId: string) => string; wide: boolean; onJournal: () => void }) {
   const rows = logRows(launch, nameOf);
   if (rows.length === 0) return null;
   return (
     <div className="ap-log-block">
-      <span className="faint ap-log-title">Журнал</span>
+      <div className="ap-log-head">
+        <span className="faint ap-log-title">Журнал</span>
+        {/* S4.9c: the card holds the last 20 lines; the launch's page holds the whole log. */}
+        <button type="button" className="link-btn ap-log-all" onClick={onJournal}>
+          Весь журнал
+        </button>
+      </div>
       <ol aria-label="Журнал" className={wide ? "mono ap-log" : "mono ap-log ap-log-n"}>
         {rows.map((row) => (
           <li key={row.key} className={`ap-log-${row.tone}`}>
             <span className="faint">{row.at}</span>
-            {wide ? <span>{row.who}</span> : null}
+            {wide ? <span className="ap-log-who" title={row.who}>{row.who}</span> : null}
             <span>{wide || row.who === "—" ? row.text : `${row.who} · ${row.text}`}</span>
           </li>
         ))}

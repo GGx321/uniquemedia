@@ -70,6 +70,14 @@ import {
   type UsageUnknownReason,
   usageUntrustedDetail,
   type VideoSummary,
+  type DropReason,
+  type LaunchAvatarView,
+  type LaunchDraft,
+  type LaunchStatus,
+  type LaunchVideo,
+  type LaunchVideoState,
+  type LogLine,
+  type VideoShape,
 } from "../../shared/engine";
 import { MAX_LISTED_VIDEOS } from "../../shared/engine/video";
 import { MAX_CLIPS, MAX_LISTED_MONTAGES, MAX_MONTAGE_ISSUES, Montage, montageIssues, type Focus, type MontageDraft, type MontageIssue, type TextLayer } from "../../shared/engine/montage";
@@ -477,6 +485,36 @@ interface MockJob {
   cancelTimers: (() => void)[];
 }
 
+/** S4.9c: one video of a seeded launch (`MockEngine.seedLaunch`): its shape, its state, and for a finished one its length, size, track and «Опубликовано». */
+export interface MockLaunchVideoSeed {
+  readonly avatarId: string;
+  readonly shape: VideoShape;
+  readonly size: number;
+  readonly state: LaunchVideoState;
+  readonly durationMs?: number;
+  readonly bytes?: number;
+  readonly track?: LaunchVideo["track"];
+  readonly dropReason?: DropReason;
+  readonly published?: boolean;
+}
+
+/** S4.9c: a launch seeded into the history (`MockEngine.seedLaunch`); what is left out takes the design's defaults (done, free, 29 minutes). */
+export interface MockLaunchSeed {
+  readonly createdAt: string;
+  readonly endedAt?: string | null;
+  readonly status?: LaunchStatus;
+  readonly draft: Partial<LaunchDraft> & { readonly avatarIds: string[] };
+  readonly acceptedMicros?: number;
+  readonly plannedWorstMicros?: number;
+  readonly plannedExpectedMicros?: number;
+  readonly spentMicros?: number;
+  readonly videos: readonly MockLaunchVideoSeed[];
+  readonly log?: readonly LogLine[];
+}
+
+/** The track a seeded finished video carries when its seed names none. */
+const MOCK_SEED_TRACK = { source: "trending", title: "Soft Static", artist: "Ivo" } as const;
+
 /** A rendered video the mock keeps: the record the windows see, the photos it shows, and the draft as the record was written. */
 interface MockVideo {
   summary: VideoSummary;
@@ -733,6 +771,11 @@ export class MockEngine implements EngineBridge {
   private readonly sceneSets: MockSceneSets;
   /** Whether the owner has ever marked a video «Опубликовано» in this library: the `published.jsonl` log then exists, and `videos.list` says its marks could be read. */
   private publishedLogUsed = false;
+  /**
+   * S4.9c: the avatars whose `published.jsonl` has a torn tail (`tearPublishedLog`): `videos.list` says `published: "unknown"` and shows every video unmarked; the
+   * next mark of that avatar heals the log by its append (the engine's `markPublished`), and the marks read again.
+   */
+  private readonly tornPublished = new Set<string>();
   /** Stage 4 (S4.1): the batch autopilot's stubs: the plan, the price and a launch held in a canned state. */
   private readonly autopilot: MockAutopilot;
   private categoryPriceValue: Pick<Estimate, "expectedMicros" | "worstMicros"> = { ...MOCK_CATEGORY_PRICE };
@@ -1586,6 +1629,179 @@ export class MockEngine implements EngineBridge {
   /** Stage 4 (S4.9b): a scene set seeded while the engine runs — a launch's set (`launchId`), which the mock's launch names but does not write. */
   seedSceneSet(seed: MockSceneSetSeed): void {
     this.sceneSets.add(seed);
+  }
+
+  /**
+   * Stage 4 (S4.9c): a launch put into the history as if it had run (`MockLaunchSeed`), for the history and results screens. Every finished video becomes a
+   * real record of the library (`origin: "autopilot"`, the launch's id, photos of its avatar taken and marked used, a file in the export folder), so
+   * `videos.list`, «Опубликовано» and the delete reach it like any other video; `published` marks it in the avatar's log. The launch file says what the engine's
+   * says (`autopilot.get` keeps `publishedAt: null`, as the engine's does: the marks are `videos.list`'s). Answers the launch's id and the records' ids in order.
+   */
+  seedLaunch(seed: MockLaunchSeed): { launchId: string; videoIds: string[] } {
+    const status = seed.status ?? "done";
+    const ended = status === "done" || status === "stopped";
+    const createdAt = seed.createdAt;
+    const endedAt = ended ? (seed.endedAt ?? new Date(Date.parse(createdAt) + 29 * 60_000).toISOString()) : null;
+    const perAvatar = new Map<string, number>();
+    for (const v of seed.videos) perAvatar.set(v.avatarId, (perAvatar.get(v.avatarId) ?? 0) + 1);
+    const videosPerAvatar = seed.draft.videosPerAvatar ?? Math.max(1, ...perAvatar.values());
+    const draft: LaunchDraft = {
+      videosPerAvatar,
+      mix: { single: 70, collage: 20, slides: 10 },
+      categories: ["home", "travel", "shoot", "fit"],
+      poses: { profile: false, back: false },
+      library: true,
+      generate: true,
+      sceneReview: true,
+      stickers: false,
+      planSeed: 7_919,
+      ...seed.draft,
+    };
+    const touched = new Set<string>();
+    const videoIds: string[] = [];
+    const launchId = this.autopilot.seed((id) => {
+      const counters = new Map<string, number>();
+      const videos: LaunchVideo[] = seed.videos.map((v) => {
+        const index = draft.avatarIds.indexOf(v.avatarId);
+        if (index < 0) throw new Error(`seedLaunch: ${v.avatarId} is not one of the launch's avatars`);
+        const n = (counters.get(v.avatarId) ?? 0) + 1;
+        counters.set(v.avatarId, n);
+        const key = `${index}-${n}`;
+        const durationMs = v.durationMs ?? 8_000;
+        const bytes = v.bytes ?? 2_200_000;
+        const track = v.track === undefined ? MOCK_SEED_TRACK : v.track;
+        const base = { key, avatarId: v.avatarId, shape: v.shape, size: v.size, dropReason: null, publishedAt: null };
+        switch (v.state) {
+          case "done": {
+            const madeAt = new Date(Math.min(Date.parse(endedAt ?? createdAt) - 1_000, Date.parse(createdAt) + (n * 3 + 15) * 60_000 + index * 20_000)).toISOString();
+            const videoId = this.seedLaunchVideo({ launchId: id, avatarId: v.avatarId, size: v.size, durationMs, bytes, track, createdAt: madeAt, published: v.published === true, n });
+            if (videoId !== null) {
+              videoIds.push(videoId);
+              touched.add(v.avatarId);
+            }
+            return { ...base, durationMs, bytes, track: track ?? MOCK_SEED_TRACK, state: "done", videoId: videoId ?? `video-gone-${id.slice(7)}-${key}` };
+          }
+          case "rendering":
+            return { ...base, durationMs, bytes: null, track, state: "rendering", videoId: `video-render-${id.slice(7)}-${key}` };
+          case "waiting-music":
+            return { ...base, durationMs: null, bytes: null, track: null, state: "waiting-music", videoId: null };
+          case "dropped":
+            return { ...base, durationMs: null, bytes: null, track: null, state: "dropped", dropReason: v.dropReason ?? "not-enough-photos", videoId: null };
+        }
+      });
+      const avatars: LaunchAvatarView[] = draft.avatarIds.map((avatarId) => {
+        const own = videos.filter((v) => v.avatarId === avatarId);
+        const done = own.filter((v) => v.state === "done").length;
+        const dropped = own.filter((v) => v.state === "dropped");
+        const total = Math.max(videosPerAvatar, own.length);
+        return {
+          avatarId,
+          phase: ended ? "done" : "montage",
+          waiting: null,
+          skipped: null,
+          photos: { done: 0, total: 0 },
+          montage: { done: Math.min(total, done + own.filter((v) => v.state === "rendering").length), total },
+          videos: { done, total },
+          sceneSetId: null,
+          setRevision: null,
+          scenes: null,
+          scenesWithoutText: null,
+          continuePhotos: null,
+          slice: null,
+          dropped: dropped.length === 0 ? null : { count: dropped.length, reason: dropped[0]?.dropReason ?? "not-enough-photos" },
+          waitingMusic: own.filter((v) => v.state === "waiting-music").length,
+          undrawnScenes: 0,
+          resumableSlots: 0,
+          drawAllocationMicros: null,
+        };
+      });
+      const planned = avatars.reduce((sum, a) => sum + a.videos.total, 0);
+      const photos = seed.videos.reduce((sum, v) => sum + v.size, 0);
+      const worst = seed.plannedWorstMicros ?? 0;
+      const doneCount = videos.filter((v) => v.state === "done").length;
+      const spent = seed.spentMicros ?? 0;
+      const log: LogLine[] = seed.log !== undefined
+        ? [...seed.log]
+        : [
+            { at: createdAt, kind: "start", acceptedMicros: seed.acceptedMicros ?? worst },
+            ...videos.flatMap((v): LogLine[] =>
+              v.state === "done" && v.durationMs !== null && v.bytes !== null ? [{ at: createdAt, kind: "video-done", avatarId: v.avatarId, key: v.key, shape: v.shape, size: v.size, durationMs: v.durationMs, bytes: v.bytes }] : [],
+            ),
+            ...(status === "done" ? [{ at: endedAt ?? createdAt, kind: "done" as const, videosDone: doneCount, videosPlanned: planned }] : status === "stopped" ? [{ at: endedAt ?? createdAt, kind: "stopped" as const, spentMicros: spent }] : []),
+          ];
+      return {
+        createdAt,
+        endedAt,
+        status,
+        paused: status === "paused" ? { cause: "owner", at: createdAt } : null,
+        draft,
+        acceptedMicros: seed.acceptedMicros ?? worst,
+        plannedWorstMicros: worst,
+        plannedExpectedMicros: seed.plannedExpectedMicros ?? Math.floor(worst / 3),
+        plan: { videos: planned, photos, fromLibrary: worst === 0 ? photos : 0, toGenerate: worst === 0 ? 0 : photos },
+        spentMicros: spent,
+        activeMs: endedAt === null ? 60_000 : Math.max(0, Date.parse(endedAt) - Date.parse(createdAt)),
+        avatars,
+        videos,
+        log,
+      };
+    });
+    for (const avatarId of touched) this.announceAvatar(avatarId);
+    return { launchId, videoIds };
+  }
+
+  /**
+   * One finished video of a seeded launch as the library's record: `size` free photos of its avatar (new ones made after its first when there are too few),
+   * a spec over them, a file in the export folder. Null when the avatar has no photo to copy.
+   */
+  private seedLaunchVideo(v: { launchId: string; avatarId: string; size: number; durationMs: number; bytes: number; track: LaunchVideo["track"]; createdAt: string; published: boolean; n: number }): string | null {
+    const avatar = this.avatars.find((a) => a.avatarId === v.avatarId);
+    const template = this.photos.find((p) => p.avatarId === v.avatarId);
+    if (avatar === undefined || template === undefined) return null;
+    const free = this.photos.filter((p) => p.avatarId === v.avatarId && this.photoUsable(v.avatarId, p.photoId)).slice(0, v.size);
+    for (let k = free.length; k < v.size; k++) {
+      const photo: PhotoSummary = { ...template, photoId: this.nextId("photo-seed"), used: false, usedIn: [], rejected: false, reserved: false, eligible: true };
+      this.photos.push(photo);
+      free.push(photo);
+    }
+    const photoIds = free.map((p) => p.photoId);
+    const spec = defaultSpec(v.avatarId, photoIds, 7 + v.n);
+    const focused = withFocus(spec, new Map(photoIds.map((id) => [id, { x: 0.5, y: 0.35 }])));
+    const kind = videoKindOf(spec.clips);
+    const relPath = mockRelPath(mockFolderName(avatar.name, avatar.avatarId), v.createdAt.slice(0, 10), kind, this.exportFiles, this.namedPaths());
+    this.exportFiles.add(relPath);
+    const summary: VideoSummary = {
+      videoId: this.nextId("video"),
+      avatarId: v.avatarId,
+      kind,
+      durationMs: v.durationMs,
+      bytes: v.bytes,
+      createdAt: v.createdAt,
+      relPath,
+      fileState: "present",
+      montageId: null,
+      photoCount: photoIds.length,
+      music: v.track === null ? null : { title: v.track.title, artist: v.track.artist, trackId: null },
+      hasPoster: false,
+      title: null,
+      firstClip: focused.clips[0] ?? null,
+      origin: "autopilot",
+      launchId: v.launchId,
+      ...(v.published ? { publishedAt: v.createdAt } : {}),
+    };
+    if (v.published) this.publishedLogUsed = true;
+    this.movingUsage(v.avatarId, photoIds, () => {
+      this.videos.push({ summary, photoIds, montageId: null, fileState: null, rootId: this.exportRootId });
+    });
+    this.adjustAvatar(v.avatarId, { videoCount: 1 });
+    this.avatars = this.avatars.map((a) => (a.avatarId === v.avatarId ? { ...a, photoCount: this.photos.filter((p) => p.avatarId === v.avatarId).length } : a));
+    return summary.videoId;
+  }
+
+  /** Stage 4 (S4.9c): `avatarId`'s «Опубликовано» log gets a torn tail: its marks read `unknown` until the next mark heals it. */
+  tearPublishedLog(avatarId: string): void {
+    this.publishedLogUsed = true;
+    this.tornPublished.add(avatarId);
   }
 
   get currentBootId(): string {
@@ -3015,13 +3231,16 @@ export class MockEngine implements EngineBridge {
     if (gone) return this.fail(c, gone);
     const video = this.videos.find((v) => v.summary.videoId === videoId);
     if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
-    // A mark that already is what is asked changes nothing, writes no line and announces nothing (the engine's `markPublished`).
-    if ((video.summary.publishedAt !== undefined && video.summary.publishedAt !== null) === published) {
+    // A mark that already is what is asked changes nothing, writes no line and announces nothing (the engine's `markPublished`) — except over a torn log, which the
+    // append heals (S4.9c): the marks read again, and the list says so.
+    const healed = this.tornPublished.delete(video.summary.avatarId);
+    if (!healed && (video.summary.publishedAt !== undefined && video.summary.publishedAt !== null) === published) {
       return this.ok(c, { video: { ...video.summary, fileState: this.fileStateOf(video), montageId: this.liveDraft(video.montageId) } });
     }
     this.publishedLogUsed = true;
-    const { publishedAt: _before, ...rest } = video.summary;
-    const summary: VideoSummary = published ? { ...rest, publishedAt: this.nowIso() } : rest;
+    const { publishedAt: before, ...rest } = video.summary;
+    // A mark that stood (under a torn tail) keeps its first time, as the engine's line does.
+    const summary: VideoSummary = published ? { ...rest, publishedAt: before ?? this.nowIso() } : rest;
     video.summary = summary;
     this.checkExport();
     const shown: VideoSummary = { ...summary, fileState: this.fileStateOf(video), montageId: this.liveDraft(video.montageId) };
@@ -3128,14 +3347,21 @@ export class MockEngine implements EngineBridge {
   private videosList(c: CommandMessage, avatarId: string): ResponseMessage {
     if (!this.libraryOpen || !this.avatarKnown(avatarId)) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
     this.checkExport();
+    // S4.9c: a torn log (`tearPublishedLog`) reads as marks unknown: every video is shown unmarked, and the list says so.
+    const torn = this.tornPublished.has(avatarId);
     const videos = this.videos
       .filter((v) => v.summary.avatarId === avatarId)
-      .map((v): VideoSummary => ({ ...v.summary, fileState: this.fileStateOf(v), montageId: this.liveDraft(v.montageId) }))
+      .map((v): VideoSummary => {
+        const shown: VideoSummary = { ...v.summary, fileState: this.fileStateOf(v), montageId: this.liveDraft(v.montageId) };
+        if (!torn) return shown;
+        const { publishedAt: _unknown, ...unmarked } = shown;
+        return unmarked;
+      })
       .reverse()
       .slice(0, MAX_LISTED_VIDEOS);
-    // Once the owner has marked a video the log exists and is modelled as readable (a torn one is the engine's own unit tests' business). Before that the field is absent, as from a
-    // producer with no marks: the listing is the one it always was.
-    return this.ok(c, { videos, ...(this.publishedLogUsed ? { published: "ok" as const } : {}) });
+    // Once the owner has marked a video the log exists and is modelled as readable unless a test tore it. Before that the field is absent, as from a producer with no
+    // marks: the listing is the one it always was.
+    return this.ok(c, { videos, ...(this.publishedLogUsed ? { published: torn ? ("unknown" as const) : ("ok" as const) } : {}) });
   }
 
   private videosDelete(c: CommandMessage, payload: { videoId: string; mode: "video" | "record"; rejectPhotos?: true }): ResponseMessage {

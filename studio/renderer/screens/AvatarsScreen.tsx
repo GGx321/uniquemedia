@@ -1,8 +1,8 @@
 import { useEffect, useId, useRef, useState } from "react";
-import { IMPORT_FALLBACK_PRICE, type AvatarDeleteResult, type AvatarSummary, type Draft, type EngineError, type Estimate, type UnreadableAvatar } from "../../shared/engine";
+import { IMPORT_FALLBACK_PRICE, MAX_LAUNCH_AVATARS, type AvatarDeleteResult, type AvatarSummary, type Draft, type EngineError, type Estimate, type UnreadableAvatar } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
-import { countOf, groupNumber, NBSP, yearsOld } from "../lib/format";
+import { countOf, groupNumber, NBSP, plural, yearsOld } from "../lib/format";
 import { formatUsd, formatUsdRange } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { DEFAULT_TRAITS, ETHNICITIES } from "../lib/traits";
@@ -14,11 +14,70 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice, Notice } from "../ui/Notice";
 import { Portrait, PortraitPlaceholder, Silhouette } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { useAnnouncer } from "../ui/useAnnouncer";
 import { type DeletedAvatar, keptText, useAvatarDelete } from "./AvatarDelete";
+import { isUnfinished } from "./autopilot/planModel";
 
 type Filter = "all" | "active" | "archived";
 
 const AVATAR_FORMS = ["аватар", "аватара", "аватаров"] as const;
+const UNUSED_FORMS = ["неиспользованное фото", "неиспользованных фото", "неиспользованных фото"] as const;
+/** A click a browser makes on the keyup of a Shift+Space the box already took comes within this long. */
+const KEY_CLICK_MS = 400;
+
+/**
+ * S4.9c: the selection bar (Main.dc.html, MainS4-selected): how many are chosen and their unused photos, «Снять выбор» and «Автопилот для выбранных», which
+ * opens «Автопилот» with them chosen (ApFromMain). The mockup's paid «Сгенерировать фото» for several avatars is not in the plan, so it is not here.
+ */
+function SelectionBar({
+  chosen,
+  hidden,
+  running,
+  onClear,
+  onAutopilot,
+}: {
+  chosen: readonly AvatarSummary[];
+  /** Fix round 1: the chosen avatars the search or the filter hides now — they are still chosen, and still go to «Автопилот». */
+  hidden: { readonly count: number; readonly by: "search" | "filter" };
+  /** A launch is unfinished: «Автопилот» shows that launch's settings, so the choice is not put into the form until it is over. */
+  running: boolean;
+  onClear: () => void;
+  onAutopilot: () => void;
+}) {
+  const hintId = useId();
+  const known = chosen.filter((a) => a.usage.state === "ok");
+  const unused = known.reduce((sum, a) => sum + a.eligibleUnusedCount, 0);
+  const unknown = chosen.length - known.length;
+  const hint = running
+    ? "запуск не закончен — в форму выбор не попадёт"
+    : chosen.length > MAX_LAUNCH_AVATARS
+      ? `в запуск войдут первые ${MAX_LAUNCH_AVATARS}`
+      : "откроет «Автопилот» с ними";
+  return (
+    <section className="avatars-sel" aria-label="Выбранные аватары">
+      <span className="avatars-sel-n">
+        Выбрано: {chosen.length}
+        {hidden.count > 0 && <span className="avatars-sel-hidden"> ({hidden.count} {hidden.by === "search" ? "скрыто поиском" : "скрыто фильтром"})</span>}
+      </span>
+      <span className="mono muted">
+        {`${groupNumber(unused)}${NBSP}${plural(unused, UNUSED_FORMS)}`}
+        {unknown > 0 && ` · у ${unknown} неизвестно`}
+      </span>
+      <span id={hintId} className={running ? "avatars-sel-hint avatars-sel-hint-warn" : "faint avatars-sel-hint"}>
+        {hint}
+      </span>
+      <div className="avatars-sel-acts">
+        <button type="button" className="btn" onClick={onClear}>
+          Снять выбор
+        </button>
+        <button type="button" className="btn btn-p" aria-describedby={hintId} onClick={onAutopilot}>
+          <Icon name="bolt" size={16} />
+          Автопилот для выбранных
+        </button>
+      </div>
+    </section>
+  );
+}
 
 /** A short name per reason, for the tile's warning badge (screen readers only: the line under the name says it in full). */
 const UNREADABLE_REASON_LABEL: Record<UnreadableAvatar["reason"], string> = {
@@ -67,23 +126,55 @@ function photosLabel(count: number): string {
   return `${groupNumber(count)}${NBSP}фото`;
 }
 
+/** S4.9c: an active avatar's box on its tile (Main.dc.html): chosen for «Автопилот для выбранных»; Space chooses, Shift with a click or Space chooses a run. */
+export interface AvatarSelect {
+  readonly on: boolean;
+  readonly onToggle: (range: boolean) => void;
+  readonly buttonRef: (el: HTMLButtonElement | null) => void;
+}
+
 /**
  * A saved avatar. The sheet's tile also carries «N новых» and category tags;
  * the contract has neither, so the name, the photo count and (3e.2) the video
- * count are drawn, the last opening the avatar's «Видео» tab.
+ * count are drawn, the last opening the avatar's «Видео» tab. S4.9c: an active
+ * one has the box that chooses it for «Автопилот для выбранных».
  */
-function AvatarCard({ avatar, onDeleted }: { avatar: AvatarSummary; onDeleted: (who: DeletedAvatar, result: AvatarDeleteResult) => void }) {
+function AvatarCard({ avatar, select, onDeleted }: { avatar: AvatarSummary; select: AvatarSelect | null; onDeleted: (who: DeletedAvatar, result: AvatarDeleteResult) => void }) {
   const navigate = useNavigate();
   const titleId = `avatar-${avatar.avatarId}`;
   const remove = useAvatarDelete({ avatarId: avatar.avatarId, label: avatar.name, draft: false, onDeleted });
+  // Shift+Space is taken here (a run): the click a browser may still make on its keyup is not a second toggle.
+  const byKey = useRef(0);
   return (
-    <article className="card avatar-card" aria-labelledby={titleId}>
+    <article className={select?.on === true ? "card avatar-card avatar-card-chosen" : "card avatar-card"} aria-labelledby={titleId}>
       <div className="ph">
         <Portrait avatarId={avatar.avatarId} photoId={avatar.masterPhotoId} label={`Мастер-портрет: ${avatar.name}`} />
         {avatar.status === "archived" && (
           <span className="pill avatar-pill" style={{ color: PILL_TONE.muted }}>
             В архиве
           </span>
+        )}
+        {select !== null && (
+          <button
+            ref={select.buttonRef}
+            type="button"
+            className={select.on ? "avatar-select avatar-select-on" : "avatar-select"}
+            aria-pressed={select.on}
+            aria-label={`Выбрать ${avatar.name}`}
+            onKeyDown={(event) => {
+              if (event.key === " " && event.shiftKey) {
+                event.preventDefault();
+                byKey.current = Date.now();
+                select.onToggle(true);
+              }
+            }}
+            onClick={(event) => {
+              if (Date.now() - byKey.current < KEY_CLICK_MS) return;
+              select.onToggle(event.shiftKey);
+            }}
+          >
+            {select.on && <Icon name="check" size={16} strokeWidth={3} />}
+          </button>
         )}
       </div>
       <div className="avatar-body">
@@ -500,6 +591,48 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
 
   const query = search.trim().toLocaleLowerCase("ru-RU");
   const shownAvatars = (filter === "all" ? view.avatars : filter === "active" ? active : archived).filter((a) => matches(a.name, query));
+
+  // S4.9c: the avatars chosen for «Автопилот для выбранных» (Main.dc.html), in the grid's order; only active ones, and one that is archived or deleted leaves.
+  const [chosen, setChosen] = useState<readonly string[]>([]);
+  /** The last box toggled: Shift with a click (or Space) chooses every shown avatar from it to the one clicked, as it now stands. */
+  const anchor = useRef<string | null>(null);
+  const boxes = useRef(new Map<string, HTMLButtonElement>());
+  const activeKey = active.map((a) => a.avatarId).join(" ");
+  useEffect(() => {
+    const live = new Set(activeKey === "" ? [] : activeKey.split(" "));
+    setChosen((now) => (now.every((id) => live.has(id)) ? now : now.filter((id) => live.has(id))));
+  }, [activeKey]);
+  const order = (ids: ReadonlySet<string>): string[] => active.map((a) => a.avatarId).filter((id) => ids.has(id));
+  const shownActive = shownAvatars.filter((a) => a.status === "active").map((a) => a.avatarId);
+  // A run chosen with Shift changes several boxes at once: the count is said (a live region kept in the page, so the same words said again are heard).
+  const [spoken, say] = useAnnouncer();
+  const toggleChosen = (avatarId: string, range: boolean): void => {
+    const from = anchor.current;
+    const next = new Set(chosen);
+    const at = shownActive.indexOf(avatarId);
+    const start = from === null ? -1 : shownActive.indexOf(from);
+    if (range && start >= 0 && at >= 0) {
+      const on = chosen.includes(from ?? "");
+      for (const id of shownActive.slice(Math.min(start, at), Math.max(start, at) + 1)) {
+        if (on) next.add(id);
+        else next.delete(id);
+      }
+    } else if (next.has(avatarId)) next.delete(avatarId);
+    else next.add(avatarId);
+    setChosen(order(next));
+    say(next.size === 0 ? "Выбор снят" : `Выбрано: ${next.size}`);
+    // A run starts from a box on screen: an anchor archived, deleted or hidden by the search since (fix round 1) gives way to the box clicked now.
+    if (!range || start < 0) anchor.current = avatarId;
+  };
+  const clearChosen = (): void => {
+    const back = anchor.current === null ? null : (boxes.current.get(anchor.current) ?? null);
+    setChosen([]);
+    anchor.current = null;
+    say("Выбор снят");
+    // The bar goes with «Снять выбор»: the focus goes to the box last toggled, else to the title.
+    (back ?? document.querySelector<HTMLElement>(".content .screen-title"))?.focus();
+  };
+  const chosenAvatars = chosen.flatMap((id) => active.filter((a) => a.avatarId === id));
   // Drafts and unreadable records are to-dos: with the saved avatars, not in the archive; a search by name has none to match.
   const drafts = withTodo && query === "" ? view.drafts : [];
   // Unreadable tiles stay mounted whatever the filter or search — only hidden —
@@ -574,6 +707,19 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
       ))}
       {ready && <AccountBanner view={view} />}
 
+      <p className="sr-only" aria-live="polite" data-announcer="avatars-chosen">
+        {spoken}
+      </p>
+      {ready && chosenAvatars.length > 0 && (
+        <SelectionBar
+          chosen={chosenAvatars}
+          hidden={{ count: chosenAvatars.filter((a) => !shownActive.includes(a.avatarId)).length, by: query === "" ? "filter" : "search" }}
+          running={isUnfinished(view.autopilot)}
+          onClear={clearChosen}
+          onAutopilot={() => navigate({ name: "section", id: "autopilot", chosen: chosenAvatars.map((a) => a.avatarId) })}
+        />
+      )}
+
       {view.phase === "connecting" && <SkeletonGrid />}
 
       {view.phase === "offline" && <EngineOffline view={view} />}
@@ -594,7 +740,23 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
               <DraftCard key={d.avatarId} draft={d} job={latestJobFor(view.jobs, d.avatarId)} onDeleted={onDeleted} />
             ))}
             {shownAvatars.map((a) => (
-              <AvatarCard key={a.avatarId} avatar={a} onDeleted={onDeleted} />
+              <AvatarCard
+                key={a.avatarId}
+                avatar={a}
+                select={
+                  a.status === "active"
+                    ? {
+                        on: chosen.includes(a.avatarId),
+                        onToggle: (range) => toggleChosen(a.avatarId, range),
+                        buttonRef: (el) => {
+                          if (el === null) boxes.current.delete(a.avatarId);
+                          else boxes.current.set(a.avatarId, el);
+                        },
+                      }
+                    : null
+                }
+                onDeleted={onDeleted}
+              />
             ))}
             {showTiles && (
               <>

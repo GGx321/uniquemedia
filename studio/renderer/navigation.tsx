@@ -20,7 +20,12 @@ export type Route =
   | { name: "montages" }
   /** 3d.2: one draft in the editor. `created`: opened right after `montages.create`, so the header says «создан только что». */
   | { name: "editor"; montageId: string; created?: boolean }
-  | { name: "section"; id: "autopilot" };
+  /** «Автопилот». `chosen` (S4.9c): the avatars «Автопилот для выбранных» brought from «Аватары», chosen in the form as the screen opens. */
+  | { name: "section"; id: "autopilot"; chosen?: readonly string[] }
+  /** S4.9c: «История запусков». `focus`: the launch whose row takes the focus (back from its page). */
+  | { name: "launches"; focus?: string }
+  /** S4.9c: one launch — its results and its whole log. `from`: where «←» leads back to. */
+  | { name: "launch"; launchId: string; from: "history" | "autopilot" };
 
 export type SettingsFocus = "key" | "money" | "export" | "music";
 
@@ -138,5 +143,8 @@ export function sectionOf(route: Route): SectionId {
       return "montage";
     case "section":
       return route.id;
+    case "launches":
+    case "launch":
+      return "autopilot";
   }
 }
