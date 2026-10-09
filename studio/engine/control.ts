@@ -333,6 +333,8 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "runs.resume": PRICE_FETCH_TIMEOUT_MS + 15_000,
   // CS.5: a run from a scene set is priced and started like any run (the start also waits for the master's preflight).
   "runs.estimateFromScenes": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  // S4.6p: the images alone for N photos, or for what a launch still has to draw: the same price load.
+  "runs.estimateImages": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "runs.startFromScenes": PRICE_FETCH_TIMEOUT_MS + 2 * REFERENCE_TIMEOUT_MS + COMMAND_SLACK_MS,
   "runs.list": PRICE_FETCH_TIMEOUT_MS + 15_000,
   // CS.4a: a set's compose and «Дописать» answer once their checks and a price load are done (the writer's job runs on and reports by events); the

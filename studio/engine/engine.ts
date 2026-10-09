@@ -95,6 +95,7 @@ import { createMusicPorts } from "./autopilot/musicPorts";
 import { checkFailuresOf } from "./autopilot/paidFailures";
 import { NOT_PAYABLE_DETAIL, type LaunchSliceStart, type SliceOutcome } from "./autopilot/paidPort";
 import { createPaidSteps } from "./autopilot/paidSteps";
+import { launchDrawFit } from "./autopilot/launchImages";
 import type { FileMusic } from "./autopilot/launchFile";
 import { lookupVideo, scanProvenance, type ProvenanceScan, type VideoLookup } from "./autopilot/provenanceScan";
 import type { TrackUsage } from "../shared/autopilot/track";
@@ -1603,7 +1604,7 @@ export class Engine {
   }
 
   /** Whether each of the set's slices is finished (every slot closed: `runs.resume` then refuses) and what it committed, for the slices that have a run. */
-  async #sliceStatuses(library: Library, set: StoredSceneSet): Promise<Map<string, SliceStatus>> {
+  async #sliceStatuses(library: Library, set: StoredSceneSet, peek = false): Promise<Map<string, SliceStatus>> {
     const statuses = new Map<string, SliceStatus>();
     const money = this.#money;
     if (!money.ok) return statuses;
@@ -1617,7 +1618,8 @@ export class Engine {
         const running = this.#jobs.runningJobOf(runId) !== null;
         const committedMicros = scopeCommitted(money.budget.ledger, { runId });
         // A slice that a cap ended keeps its slots open, and nothing will draw them again (the paid side moves on): it is finished for everyone who asks, or a launch would wait for it for ever.
-        const spent = openSlots > 0 && !running && (await this.#sliceIsSpent(plan, state, money.budget, openSlots, committedMicros));
+        // `peek` (the free price of drawing): what is already judged, with no price list read and nothing latched.
+        const spent = openSlots > 0 && !running && (peek ? this.#spentSlices.peek(runId) || this.#capEndedSlices.has(runId) : await this.#sliceIsSpent(plan, state, money.budget, openSlots, committedMicros));
         const finished = (openSlots === 0 && !running) || spent;
         statuses.set(runId, finished ? { finished: true, committedMicros } : { finished: false, openSlots });
       } catch {
@@ -2255,6 +2257,8 @@ export class Engine {
       }
       case "runs.estimateFromScenes":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate: await this.#estimateFromScenes(command.payload) } };
+      case "runs.estimateImages":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#estimateImages(command.payload) };
       case "runs.startFromScenes": {
         // Counted before the first await (the set's avatar is only known once the set is found): a library switch is refused from here on.
         this.#paidCommands++;
@@ -2912,6 +2916,41 @@ export class Engine {
     const models = this.#avatarModels();
     const imageAgeCheck = this.#settings.imageAgeCheck;
     return runEstimateFromScenes(await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck)), models, { count: runSources(set).length }, imageAgeCheck);
+  }
+
+  /**
+   * S4.6p: the images alone for photos, so the window works no price out. Free, and priced by `runEstimateFromScenes` exactly as the draw of a set and a launch's slice are
+   * (`#estimateFromScenes`, `#startApproved`, `photoWorstMicros`): the same models, quality, age-check mode and price book. With a count: that many photos of an avatar that
+   * can get photos (`#runnableAvatar`'s refusals come before any price is asked). With a launch: the photos the unfinished launch still has to draw for the avatar, held at
+   * the photos the money it has for them buys (autopilot/launchImages.ts: `launchDrawFit`).
+   */
+  async #estimateImages(payload: CommandPayload<"runs.estimateImages">): Promise<{ estimate: Estimate; photos: number }> {
+    const library = this.library;
+    if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+    const models = this.#avatarModels();
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    if ("count" in payload) {
+      this.#runnableAvatar(library, payload.avatarId);
+      const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
+      return { estimate: runEstimateFromScenes(priced, models, { count: payload.count }, imageAgeCheck), photos: payload.count };
+    }
+    const { launchId, avatarId } = payload;
+    const view = this.#orchestrator.snapshotView();
+    if (view === null || view.launchId !== launchId) throw new EngineFailure({ code: "NOT_FOUND", detail: `no unfinished launch ${launchId}` });
+    const row = view.avatars.find((a) => a.avatarId === avatarId);
+    if (row === undefined) throw new EngineFailure({ code: "NOT_FOUND", detail: `launch ${launchId} holds no avatar ${avatarId}` });
+    const sceneSetId = this.#orchestrator.sceneSetOf(avatarId);
+    const set = sceneSetId === null ? null : await library.sceneSets.get(avatarId, sceneSetId);
+    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
+    // One photo's worst case at today's price, the very figure the slice sizing uses; the figure for n photos is priced as the real draw prices n.
+    const photoWorst = runEstimateFromScenes(priced, models, { count: 1 }, imageAgeCheck).worstMicros;
+    // An avatar the launch has finished with, or has left, has nothing to draw. The slices are read without judging them (a free command latches nothing and loads no price).
+    const over = row.phase === "skipped" || row.phase === "done" || row.phase === "montage";
+    const statuses = set === null || over ? new Map<string, SliceStatus>() : await this.#sliceStatuses(library, set, true);
+    const photos = set === null || over || row.drawAllocationMicros === null ? 0 : launchDrawFit(set, statuses, row.drawAllocationMicros, photoWorst).photos;
+    // Priced for at least one photo: an estimate has no zero-photo form, and the price source is told even when nothing is left to draw.
+    const estimate = runEstimateFromScenes(priced, models, { count: Math.max(1, photos) }, imageAgeCheck);
+    return { estimate: photos === 0 ? { ...estimate, expectedMicros: 0, worstMicros: 0 } : estimate, photos };
   }
 
   /**

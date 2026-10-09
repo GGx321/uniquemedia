@@ -348,16 +348,48 @@ describe("S4.9d: the strip's focus as the design's keyboard table has it (S4.9b 
   });
 });
 
-describe("S4.9d: the strip prices nothing itself (S4.9b L15)", () => {
-  test("step 2 is the engine's own figure for the draw — its allocation — never run − compose worked out in the window; the price list's source is still said", async () => {
-    const { engine, row } = await launchWithSet();
+describe("S4.6p: the strip shows the engine's expected price of the draw (PhotosS4: «12 фото ≈ $0.84», «Предел до $2.94»)", () => {
+  const stepsOf = (): string[] => Array.from(strip().querySelectorAll(".scene-step"), (el) => el.textContent ?? "");
+
+  test("step 2 is «≈ $X», the engine's own expected price of the photos still to draw; the limit stays in «Предел». The window works out no money", async () => {
+    const { engine, client, launch, row } = await launchWithSet();
     await openFromAutopilot();
     await flush();
-    const steps = Array.from(strip().querySelectorAll(".scene-step"), (el) => el.textContent ?? "");
-    expect(steps[1]).toBe(`2${row.continuePhotos ?? 0}${NBSP}фотодо ${formatUsdTiered(row.drawAllocationMicros ?? 0, "up")}`);
-    expect(steps[1]).not.toContain("≈");
+    // What the strip itself asked, before the test asks anything.
+    const askedByStrip = callsOf(engine, "runs.estimateImages").map((c) => c.payload);
+    const asked = await client.request("runs.estimateImages", { launchId: launch.launchId, avatarId: SOFIA.avatarId });
+    if (!asked.ok) throw new Error("the engine refused the price");
+    expect(asked.result.photos).toBe(row.continuePhotos ?? Number.NaN);
+    await waitFor(() => expect(stepsOf()[1]).toBe(`2${row.continuePhotos ?? 0}${NBSP}фото≈ ${formatUsdTiered(asked.result.estimate.expectedMicros, "nearest")}`));
+    expect(Array.from(strip().querySelectorAll(".photos-cost-total")).map((r) => r.textContent)).toEqual([`Пределдо ${formatUsdTiered(row.drawAllocationMicros ?? 0, "up")}`]);
+    expect(askedByStrip.some((payload) => "launchId" in payload && payload.launchId === launch.launchId && payload.avatarId === SOFIA.avatarId)).toBe(true);
     expect(callsOf(engine, "scenes.estimateCompose")).toHaveLength(0);
+    // The generate card prices its own run (the form's count and categories); the strip no longer probes with one built-in category to take the writer off.
+    expect(callsOf(engine, "runs.estimate").filter((c) => c.payload.categories.length === 1 && c.payload.categories[0] === "home")).toHaveLength(0);
+  });
+
+  test("the figure is below the limit it sits beside: an expected price, not a ceiling", async () => {
+    const { client, launch, row } = await launchWithSet();
+    await openFromAutopilot();
+    const asked = await client.request("runs.estimateImages", { launchId: launch.launchId, avatarId: SOFIA.avatarId });
+    if (!asked.ok) throw new Error("the engine refused the price");
+    expect(asked.result.estimate.expectedMicros).toBeLessThan(row.drawAllocationMicros ?? 0);
+    await waitFor(() => expect(stepsOf()[1]).toContain("≈"));
+  });
+
+  test("where today's prices come from is the estimate's own source, read with the figure", async () => {
+    await launchWithSet();
+    await openFromAutopilot();
     await waitFor(() => expect(strip().querySelector(".photos-cost-row")?.textContent ?? "").toMatch(/^Цены(OpenRouter|резервные) · /));
+  });
+
+  test("a price the engine cannot give leaves step 2 at «≈ …»: nothing is worked out in its place, and the limit stays", async () => {
+    const { engine, row } = await launchWithSet();
+    engine.failNext("runs.estimateImages", { code: "PRICE_UNAVAILABLE", detail: "no price" });
+    await openFromAutopilot();
+    await flush();
+    expect(stepsOf()[1]).toBe(`2${row.continuePhotos ?? 0}${NBSP}фото≈ …`);
+    expect(Array.from(strip().querySelectorAll(".photos-cost-total")).map((r) => r.textContent)).toEqual([`Пределдо ${formatUsdTiered(row.drawAllocationMicros ?? 0, "up")}`]);
   });
 });
 

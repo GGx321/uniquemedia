@@ -232,6 +232,8 @@ export interface SpentSliceQuestion {
 
 export interface SpentSlices {
   judge(runId: string, question: SpentSliceQuestion): Promise<boolean>;
+  /** Whether the slice was already judged spent, with no judging: no price is read and nothing is latched (a free read-only command may ask). */
+  peek(runId: string): boolean;
 }
 
 /**
@@ -249,6 +251,7 @@ export function createSpentSlices(): SpentSlices {
       if (spent) latched.add(runId);
       return spent;
     },
+    peek: (runId) => latched.has(runId),
   };
 }
 

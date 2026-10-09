@@ -32,7 +32,7 @@ import {
   sameCategories,
   toggleCategory,
 } from "./runForm";
-import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, Why } from "./scenePaid";
+import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, useImagesPrice, Why } from "./scenePaid";
 import { categorySceneCount } from "./sceneReview";
 import { ReviewSwitch, SceneStrip, Step } from "./SceneStrip";
 import { composeTitle, priceSourceText, SWITCH_WAITS } from "./sceneText";
@@ -291,6 +291,8 @@ export function GenerateCard({
     onPaidInFlightChange,
   });
   useEffect(() => onComposePrice(review ? compose.estimate : null), [review, compose.estimate, onComposePrice]);
+  // S4.6p: the compose mode's photos, priced by the engine (images alone); the window subtracts nothing.
+  const images = useImagesPrice(avatar.avatarId, review ? form.count : 0, view);
 
   // CS.7 M3: off while a write of the set runs (sent, tracked or announced) would hide the job and its «Отменить» — the column shows the set only with
   // review on — so the switch waits for its end, saying why. Turning review on is never held.
@@ -444,7 +446,7 @@ export function GenerateCard({
   const imageQuality =
     view.settings && view.settings.imageQuality !== null && view.settings.imageModel !== SEEDREAM_FALLBACK_IMAGE_MODEL ? `${view.settings.imageQuality} · ` : "";
 
-  // The compose mode's price column: step 1 the scenes (the compose's own estimate), step 2 the photos (the run's estimate less its writer), and the
+  // The compose mode's price column: step 1 the scenes (the compose's own estimate), step 2 the photos (the engine's images-only estimate), and the
   // whole run «без правок» (an own scene or another one raises its ceiling).
   const composeSteps = [
     {
@@ -457,7 +459,7 @@ export function GenerateCard({
       n: "2",
       state: "next" as const,
       label: form.count === 0 ? "фото" : countOf(form.count, ["фото", "фото", "фото"]),
-      value: form.count === 0 ? "—" : current !== null && compose.estimate !== null ? about(Math.max(0, current.estimate.expectedMicros - compose.estimate.expectedMicros)) : "≈ …",
+      value: form.count === 0 ? "—" : images !== null ? about(images.expectedMicros) : "≈ …",
     },
   ];
   const composeBlocked =

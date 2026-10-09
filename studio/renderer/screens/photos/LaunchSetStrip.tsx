@@ -8,7 +8,7 @@ import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { bandText, launchGo, launchSetMeta, overPlanText, type LaunchLink } from "./launchSet";
-import { ceiling, focusLost, usePriceSource } from "./scenePaid";
+import { drawStepText, focusLost, useLaunchDrawPrice } from "./scenePaid";
 import { focusSceneCard } from "./SceneSetPanel";
 import { setCategoryTags } from "./sceneReview";
 import { modelSegments, setMetaText, Step } from "./SceneStrip";
@@ -20,7 +20,8 @@ import { useMounted } from "./shared";
 // «Пересоставить…» and no «Мои категории»: the set is the launch's. The price column ends on «Предел до $Y — в пределах запуска, новых денег нет». The
 // one button is «Продолжить запуск: M фото» (`autopilot.continueAfterReview` with the view's set and revision), or «Сцены принять» while the launch is
 // paused; after it, «принято — ждёт «Продолжить»» or «в запуске автопилота». S4.9d: the focus as the design's keyboard table moves it (S4.9b L5), and no money the
-// window works out (S4.9b L15): step 2 is the launch view's allocation for the draw, the price column says only where today's prices come from.
+// window works out (S4.9b L15). S4.6p: step 2 is the engine's expected price of the photos still to draw, «≈ $0.84» (`runs.estimateImages` by the launch), the limit
+// is the row «Предел» (the view's allocation), and the price column says where today's prices come from.
 
 const PHOTOS = ["фото", "фото", "фото"] as const;
 
@@ -53,8 +54,9 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
   const go = launchGo(link);
   const band = bandText(link);
   const photos = go.kind === "continue" ? go.photos : (row.continuePhotos ?? row.photos.total);
-  // Where today's prices come from, for the price column; no sum of it is shown (S4.9b L15).
-  const source = usePriceSource(avatar.avatarId, view);
+  // S4.6p: the engine's price of the photos still to draw (expected and worst, held at the draw allocation left), and where today's prices come from.
+  const draw = useLaunchDrawPrice(launch.launchId, avatar.avatarId, row, view);
+  const source = draw?.estimate ?? null;
   const firstWithoutText = set.scenes.find((s) => !s.removed && s.text === null)?.sceneId ?? null;
   const lastScene = set.scenes.findLast((s) => !s.removed)?.sceneId ?? null;
 
@@ -143,9 +145,8 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
   const step1 = stepScenes(set);
   const allocation = row.drawAllocationMicros;
   const drawing = go.kind === "in-launch" && row.photos.done > 0;
-  // The draw's own figure while the scenes wait: the allocation the launch view gives it (S4.9b L15). The engine has no expected price of a launch's draw (the
-  // mockup's «≈ $0.84»): `runs.estimateFromScenes` refuses a launch's set, and run − compose would be money the window works out.
-  const step2Value = drawing ? `${row.photos.done} из ${row.photos.total}` : allocation === null ? "—" : ceiling(allocation);
+  // The draw's own figure while the scenes wait: the engine's expected price of the photos still to draw, «≈ $0.84» (S4.6p), with the limit apart, in «Предел».
+  const step2Value = drawing ? `${row.photos.done} из ${row.photos.total}` : allocation === null ? "—" : drawStepText(draw);
   const step2State = drawing ? (row.photos.done >= row.photos.total ? "done" : "current") : go.kind === "continue" ? "current" : "next";
   const whyId = `${ids}-why`;
   const reason = overPlan ? overPlanText(row) : go.kind === "continue" ? go.why : null;
@@ -203,7 +204,7 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
               <span className={source?.prices === "fallback" ? "warn-text" : "faint"}>{priceSourceText(source?.prices ?? null, source?.pricesAsOf ?? null)}</span>
             </div>
             <Step row={{ n: "1", state: step1.done ? "done" : "current", label: step1.label, value: step1.value }} />
-            <Step row={{ n: "2", state: step2State, label: countOf(photos, PHOTOS), value: step2Value }} />
+            <Step row={{ n: "2", state: step2State, label: countOf(drawing ? photos : (draw?.photos ?? photos), PHOTOS), value: step2Value }} />
             <div className="mono photos-cost-row">
               <span>Проверка возраста</span>
               <span className={view.settings?.imageAgeCheck === "on" ? undefined : "faint"}>{view.settings?.imageAgeCheck === "on" ? "вкл." : "выкл."}</span>

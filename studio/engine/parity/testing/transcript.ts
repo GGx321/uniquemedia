@@ -62,6 +62,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "scene set files and the ledger (CS.7): the mock has no disk, so a set file or folder the OS refuses, a record whose close was lost, and a ledger that cannot be read are states a test seeds (`unreadableSceneSets`, `money.unavailable`); the engine finds them in the stores, whose own tests hold them. A `scenes.cancel` opens a reserve in the mock by a control (`setSceneCancelOutcome`), in the engine only when a request was at the model; the order `job.cancelled` before the answer of a write is played by `cancelNextSceneWriteBeforeAnswer`, not by a transcript",
   "the batch autopilot (Stage 4, S4.1): the real engine answers every autopilot command INTERNAL «<type> is not implemented yet» until its orchestrator lands (S4.6), the mock answers a plan, a price and a launch held in a canned state. So a story that needs the engine to serve the command is PENDING (`Scenario.pending`): the mock's transcript is bound to the golden, and the harness only checks that the real engine answers each named command with that one refusal; the story joins the full comparison when `pending` is taken off (S4.6 to S4.8). The payloads the CONTRACT refuses are refused by both and compared now. What a pending story writes is limited to what the engine will also say: the plan's counts, the states and the codes, not the prices (as for every estimate), the clock, or the spend of a launch",
   "a launch that RUNS (Stage 4, S4.8): the real rig runs the engine's default launch steps over a fake OpenRouter, the rig's fake ffmpeg and its track store; the mock runs its launch on its clock (`RigOptions.launch`). Both are read only at the STABLE points a story waits for (`Transcript.untilLaunch`), through `callLaunch`, which writes `launchFacts` (state, holds, reasons, rows' phases and progress, videos by state) and NOT: the prices, the clock, how many requests a batch sends or are in flight while the launch moves, the set file's revision (the engine's compose makes it 3, an approval 4: the contract says a set is named with one, not which), the text of a launch's refusals (sums and sentences of the engine's own: the code and the reason are written), or the events the launch causes (`autopilot.changed` is coalesced by the engine and sent per pass by the mock; the older stories' covered events are not written during a launch). The stories plan every photo NEW (`library: false`): a generated video asks for the same photos from both planners (1, 3, 5), but the photos a LIBRARY video takes are drawn by the engine's planner from the seed (collages of 2 to 4, slides of 5 to 7, near-duplicates refused) and are fixed in the mock, as are the order of the shapes and the categories: the library plan's counts are held by each engine's own tests, and the five S4.1 stories whose commands plan from the library stay pending for that reason. The bounded automatic continues after a drop (1 and 5 minutes) and the price list's retries (5, 15, 60) wait real minutes in the engine: the mock's tests hold them, the engine's own (paidHolds, engine.autopilotHolds), and no story waits for them. The quit is the graceful one (`paused { quit }`); the engine's other restart, a crash read as `paused { engine-restart }`, needs the crash matrix's copy of the folders (engine.autopilotCrashMatrix) and is played against the mock by its own tests",
+  "the price of drawing photos (S4.6p, `runs.estimateImages`): the figures are each engine's own prices (the mock's fixed image price, the engine's bundled table), so the transcript writes the photos the price is for, that expected is within worst, that the figure is above zero exactly when there are photos, and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. A refusal's text names the launch or the avatar in each engine's words: its code is compared",
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -376,7 +377,8 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     // S4.8 (`running`): a launch's refusals say sums and sentences of the engine's own (the remaining worst case, the key's state); the code and the reason are the contract.
-    const text = code === "VALIDATION" || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) ? undefined : detail;
+    // S4.6p: a launch the price is asked for is told in each engine's own words (which launch, which avatar); its code is the contract.
+    const text = code === "VALIDATION" || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" ? undefined : detail;
     return `< error ${code} ${compact(
       norm.value({
         ...(text === undefined ? {} : { detail: text }),
@@ -430,6 +432,15 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
     const next = typeof answer.result.nextCursor === "string" ? decodePhotoCursor(answer.result.nextCursor) : null;
     const paging = next === null && !(typeof answer.result.remainingTotal === "number" && answer.result.remainingTotal > 0) ? {} : { next: next === null ? null : norm.value(next.photoId, "photoId"), remainingTotal: answer.result.remainingTotal };
     return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal, order, ...paging })}`, ...held.map((s) => `  ${s}`)].join("\n");
+  }
+  if (type === "runs.estimateImages") {
+    // S4.6p: the figures are each engine's own prices (the mock's fixed image price, the engine's bundled table, as for every estimate). What both are bound to say: the photos the
+    // price is for, that the figure is ordered (expected within worst), that it is a price (above zero) exactly when there are photos, and that it names its price source.
+    const { photos, estimate } = answer.result;
+    const figures = objectOf(estimate);
+    const expected = Number(figures.expectedMicros);
+    const worst = Number(figures.worstMicros);
+    return `< ok images ${compact({ photos, ordered: expected <= worst, priced: worst > 0, source: typeof figures.prices === "string" })}`;
   }
   if (type === "engine.snapshot") return snapshotLine(answer.result, norm);
   if (type === "media.list") {

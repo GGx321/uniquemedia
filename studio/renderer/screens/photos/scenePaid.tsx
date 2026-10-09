@@ -132,27 +132,19 @@ export function PriceChangedNotice({ previousWorst, estimate }: { previousWorst:
 
 /**
  * The images alone for `photos` photos at the current Settings, for a set whose «Отрисовать» is not yet possible (an active scene without text, a write
- * running, a stop): `runs.estimateFromScenes` refuses those, so the image price is told by the run's own estimate less its writer (the compose's estimate
- * for the same count) — both free, both priced by the count and the settings alone (engine/runs/plan.ts `runEstimate`). It is shown, never sent.
+ * running, a stop) and for the generate card's compose mode: `runs.estimateFromScenes` refuses those, so the engine answers the price of drawing that many photos
+ * itself (`runs.estimateImages`: free, priced by the code the real draw is priced by). It is shown, never sent; the window works out no money (S4.6p).
  */
 export function useImagesPrice(avatarId: string, photos: number, view: EngineView): Estimate | null {
   const { client } = useEngine();
   const settings = view.settings;
-  const key = photos >= 1 && photos <= 100 && settings !== null ? `${avatarId}|${photos}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}|${settings.textModel}` : null;
+  const key = photos >= 1 && photos <= 100 && settings !== null ? `${avatarId}|${photos}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
   const [shown, setShown] = useState<{ key: string; estimate: Estimate } | null>(null);
   useEffect(() => {
     if (key === null) return;
     let alive = true;
-    // Any built-in category: the price does not depend on which.
-    const request = { avatarId, count: photos, categories: ["home" as const], poses: { profile: false, back: false } };
-    void Promise.all([client.request("runs.estimate", request), client.request("scenes.estimateCompose", request)]).then(([run, writer]) => {
-      if (!alive || !run.ok || !writer.ok) return;
-      const r = run.result.estimate;
-      const w = writer.result.estimate;
-      setShown({
-        key,
-        estimate: { ...r, expectedMicros: Math.max(0, r.expectedMicros - w.expectedMicros), worstMicros: Math.max(0, r.worstMicros - w.worstMicros) },
-      });
+    void client.request("runs.estimateImages", { avatarId, count: photos }).then((reply) => {
+      if (alive && reply.ok) setShown({ key, estimate: reply.result.estimate });
     });
     return () => {
       alive = false;
@@ -161,27 +153,48 @@ export function useImagesPrice(avatarId: string, photos: number, view: EngineVie
   return shown !== null && shown.key === key ? shown.estimate : null;
 }
 
+/** The engine's answer for a launch's draw: the price, and the photos it was made for (those the money buys, which may be fewer than «Продолжить запуск» names). */
+export interface LaunchDraw {
+  readonly estimate: Estimate;
+  readonly photos: number;
+}
+
+/** Step 2 of a launch's strip: «≈ …» until the engine answers, «—» with nothing to draw (never «≈ $0.000»), else the engine's expected price. */
+export function drawStepText(draw: LaunchDraw | null): string {
+  if (draw === null) return "≈ …";
+  return draw.photos === 0 ? "—" : about(draw.estimate.expectedMicros);
+}
+
+/** What `useLaunchDrawPrice` re-asks on: the row's phase, its set's revision, the photos «Продолжить запуск» would draw and the photos drawn. */
+export interface LaunchDrawRow {
+  readonly phase: string;
+  readonly setRevision: number | null;
+  readonly continuePhotos: number | null;
+  readonly photos: { readonly done: number };
+}
+
 /**
- * S4.9d (S4.9b L15): where today's prices come from («OpenRouter · 8 окт.», «резервные · …») for a launch's strip, and nothing else. A launch's set has no free price
- * of its own draw (`runs.estimateFromScenes` refuses a launch's set), and the strip shows no money the window works out: its figure is the launch view's allocation.
- * The source is the run estimate's own, read free at the current Settings; its sums are not used.
+ * S4.6p: the engine's price of what an unfinished launch still has to draw for an avatar (`runs.estimateImages` by the launch): the expected and worst figures of the
+ * photos not yet drawn that the launch's money buys, with where today's prices come from. It replaces the limit that step 2 of a launch's strip
+ * showed for want of an expected price. Asked again whenever the row moves or the image settings do; null until it answers (and while the engine refuses).
  */
-export function usePriceSource(avatarId: string, view: EngineView): Pick<Estimate, "prices" | "pricesAsOf"> | null {
+export function useLaunchDrawPrice(launchId: string, avatarId: string, row: LaunchDrawRow, view: EngineView): LaunchDraw | null {
   const { client } = useEngine();
   const settings = view.settings;
-  const key = settings !== null ? `${avatarId}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
-  const [shown, setShown] = useState<{ key: string; source: Pick<Estimate, "prices" | "pricesAsOf"> } | null>(null);
+  const moved = `${row.phase}|${row.setRevision ?? ""}|${row.continuePhotos ?? ""}|${row.photos.done}`;
+  const key = settings !== null ? `${launchId}|${avatarId}|${moved}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
+  const [shown, setShown] = useState<{ key: string; draw: LaunchDraw } | null>(null);
   useEffect(() => {
     if (key === null) return;
     let alive = true;
-    void client.request("runs.estimate", { avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false } }).then((reply) => {
-      if (alive && reply.ok) setShown({ key, source: { prices: reply.result.estimate.prices, pricesAsOf: reply.result.estimate.pricesAsOf } });
+    void client.request("runs.estimateImages", { launchId, avatarId }).then((reply) => {
+      if (alive && reply.ok) setShown({ key, draw: reply.result });
     });
     return () => {
       alive = false;
     };
-  }, [client, key, avatarId]);
-  return shown !== null && shown.key === key ? shown.source : null;
+  }, [client, key, launchId, avatarId]);
+  return shown !== null && shown.key === key ? shown.draw : null;
 }
 
 /** The free price of a review write, asked for one key; null while asked or refused (the refusal is answered). */

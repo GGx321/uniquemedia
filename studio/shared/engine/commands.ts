@@ -9,7 +9,7 @@ import { EventMessage } from "./events";
 import { ImageModelCatalogue, ImageQuality } from "./imageModels";
 import { Focus, MAX_CLIPS, MAX_LISTED_MONTAGES, Montage, MontageDraft, MontageIssues, MontageListItem, MontageName, MontageShape, PhotoRef, TextLayer } from "./montage";
 import { AbsolutePath, ApiKey, Count, Id, LaunchId, Micros, ModelId, MusicKey } from "./primitives";
-import { COMPOSE_NEEDS_CATEGORY, COMPOSE_REQUEST_FIELDS, ComposeRequest, composeNeedsCategory, SceneEditOp, SceneWriteTarget, ScenesEditResult, ScenesGetResult } from "./scenes";
+import { COMPOSE_NEEDS_CATEGORY, COMPOSE_REQUEST_FIELDS, ComposeRequest, composeNeedsCategory, MAX_COMPOSE_SCENES, SceneEditOp, SceneWriteTarget, ScenesEditResult, ScenesGetResult } from "./scenes";
 import { MediaCancelImportPayload, MediaCancelImportResult, MediaDeletePayload, MediaDeleteResult, MediaListPayload, MediaListResult, MediaPickImportPayload, MediaPickResult, MediaSummary } from "./media";
 import { OwnStickerBytes, OwnStickerBytesPayload, StickerBytes, StickerBytesPayload } from "./stickerBytes";
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
@@ -382,6 +382,20 @@ const ENGINE_SPECS = [
   // of the same set is refused (the run exists); the set is read-only from the moment the run exists. Answers like `runs.start`: the job runs on.
   defineCommand("runs.estimateFromScenes", z.strictObject({ sceneSetId: Id, revision: z.number().int().min(1) }), z.strictObject({ estimate: Estimate })),
   defineCommand("runs.startFromScenes", z.strictObject({ sceneSetId: Id, revision: z.number().int().min(1), ...AcceptedWorst }), z.strictObject({ runId: Id, jobId: Id })),
+  // S4.6p: what DRAWING photos costs, images alone, so the window never works a price out (the renderer computes no money). Free and read-only, priced by the very code
+  // `runs.startFromScenes` and the launch's slices price a draw with, at the settings' image model, quality and age-check mode; `photos` is the count the figure is for.
+  //  - `{ avatarId, count }`: `count` photos (1..100) of an avatar that can get photos. For an owner's set that cannot be approved yet (a scene without text, a write running).
+  //    Refused free like `runs.estimate`: LIBRARY_UNAVAILABLE, NOT_FOUND for an avatar that is not saved and active, DESCRIPTOR_INVALID.
+  //  - `{ launchId, avatarId }`: what the unfinished launch still has to draw for the avatar. Its photos are those of the avatar's set not yet in a slice (before the owner's
+  //    «Продолжить запуск»: the active scenes with a text) plus the open slots of the slices that began. `photos` is those the money buys: an open slot is paid from its own slice's cap, a scene
+  //    not yet in a slice from the draw allocation left for new slices, so a price that rose since the plan answers FEWER photos and the figure is that of the photos named: it never
+  //    exceeds what the launch may spend. NOT_FOUND for a launch that is not the unfinished one, or an avatar it does not hold. Nothing to draw (or an avatar that is done, in montage
+  //    or skipped): 0 photos and zero figures. Reading the slices judges and latches nothing.
+  defineCommand(
+    "runs.estimateImages",
+    z.union([z.strictObject({ avatarId: Id, count: z.number().int().min(1).max(MAX_COMPOSE_SCENES) }), z.strictObject({ launchId: LaunchId, avatarId: Id })]),
+    z.strictObject({ estimate: Estimate, photos: Count }),
+  ),
   // Aborts the run's requests in flight (their reserves stay at their worst case until reconciled); ok for a run
   // that is not running, NOT_FOUND for an unknown one.
   defineCommand("runs.cancel", z.strictObject({ runId: Id }), z.strictObject({ runId: Id })),
