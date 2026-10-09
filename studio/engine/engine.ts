@@ -81,6 +81,7 @@ import { CategoryError, LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibra
 import type { ImageMediaType } from "./library/media";
 import { looksLikeRunPhoto, pagePhotoList, photoSummaryFrom, type PhotoPage } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
+import { createBalanceProbe, type Balance } from "./money/balance";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
@@ -649,6 +650,27 @@ export class Engine {
   readonly #opening = new Map<string, Promise<{ library: Library; unreadable: UnreadableAvatar[] }>>();
   /** Set by a 401 with the current key; a new key clears it. */
   #keyRejected = false;
+  /** The OpenRouter balance for the launch preview (S4.5e): a warning only, cached 60 s, null without a usable key. A 401 marks the key rejected. */
+  readonly #balance = createBalanceProbe({
+    clock: () => this.#deps.clock(),
+    monotonic: () => this.#deps.monotonic(),
+    source: () => {
+      const key = this.#apiKey;
+      if (key === null || this.#keyRejected) return null;
+      // The id is the key itself, held only in memory and never logged; the client is built only when a request is sent.
+      return {
+        id: key,
+        fetch: async () => {
+          try {
+            return await this.#openRouter(key).fetchCredits();
+          } catch (error) {
+            if (error instanceof OpenRouterError && error.code === "AUTH_INVALID") this.markKeyRejected(key);
+            throw error;
+          }
+        },
+      };
+    },
+  });
   /** The RapidAPI key, in memory only (invariant 29); main hands it over on every start and on a set. */
   #musicKey: string | null = null;
   /** Set by a 401 with the current music key (3c.3's client); a new key clears it. */
@@ -1034,6 +1056,11 @@ export class Engine {
   /** Resolves once a running music refresh and every status it announced are done. Tests wait on it; nothing else does. */
   musicSettled(): Promise<void> {
     return this.#music.settled();
+  }
+
+  /** The OpenRouter balance, or null (no usable key, no `total_credits`, or the read failed). Never throws, never a gate. */
+  readBalance(): Promise<Balance | null> {
+    return this.#balance.read();
   }
 
   /**
