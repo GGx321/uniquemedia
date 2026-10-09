@@ -479,6 +479,24 @@ export class MockAutopilot {
     return done({ launch: this.#view(launch), log: launch.log.slice(-500), videos, ...(published === undefined ? {} : { published }) });
   }
 
+  /**
+   * S4.6p: what `runs.estimateImages { launchId, avatarId }` is priced for, from the view the window reads: the photos the unfinished launch still has to draw for the avatar
+   * (before the draw: the ones «Продолжить запуск» would draw; while it draws: those not drawn yet; afterwards none) and the avatar's draw allocation. NOT_FOUND for a launch that is
+   * not the unfinished one and for an avatar it does not hold, as the engine answers. The price is the engine's to put on them (`MockEngine`).
+   */
+  imagesLeft(launchId: string, avatarId: string): Outcome<{ photos: number; allocationMicros: number }> {
+    const found = this.#find(launchId);
+    if (!found.ok) return found;
+    if (!isUnfinished(found.result.status)) return refuse({ code: "NOT_FOUND", detail: `no unfinished launch ${launchId}` });
+    const row = this.#view(found.result).avatars.find((a) => a.avatarId === avatarId);
+    if (row === undefined) return refuse({ code: "NOT_FOUND", detail: `launch ${launchId} holds no avatar ${avatarId}` });
+    const beforeDraw = row.phase === "planned" || row.phase === "composing" || row.phase === "awaiting-review" || row.phase === "approved-waiting";
+    // As the engine counts: an avatar the launch has finished with (done, montage, skipped) has none; one parked by a paid hold keeps the photos it has not drawn (none while its scenes are not written).
+    const parked = row.phase === "waiting" && row.waiting?.reason === "paid-hold";
+    const photos = beforeDraw ? (row.continuePhotos ?? 0) : row.phase === "drawing" || parked ? ((row.continuePhotos ?? 0) === 0 ? 0 : Math.max(0, row.photos.total - row.photos.done)) : 0;
+    return done({ photos, allocationMicros: row.drawAllocationMicros ?? 0 });
+  }
+
   /** The records the launch's videos of one avatar still have. */
   #recordsOf(launch: MockLaunch, avatarId: string): ReadonlySet<string> | undefined {
     return this.#world.recordsOf(

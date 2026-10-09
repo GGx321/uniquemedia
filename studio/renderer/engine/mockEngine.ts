@@ -2546,6 +2546,22 @@ export class MockEngine implements EngineBridge {
         if (refusal) return this.fail(c, refusal);
         return this.ok(c, { estimate: this.runPriceFromScenes(approval.active.length) });
       }
+      case "runs.estimateImages": {
+        // The engine's order: the library, then the avatar (a count) or the launch and its avatar (a launch); the price comes last, and a launch's figure never passes its draw allocation.
+        const gone = this.libraryGate();
+        if (gone) return this.fail(c, gone);
+        const payload = c.payload;
+        if ("count" in payload) {
+          const refusal = this.runnableRefusal(payload.avatarId);
+          return refusal ? this.fail(c, refusal) : this.ok(c, { estimate: this.runPriceFromScenes(payload.count), photos: payload.count });
+        }
+        const left = this.autopilot.imagesLeft(payload.launchId, payload.avatarId);
+        if (!left.ok) return this.fail(c, left.error);
+        // Only the photos the draw allocation still buys are priced (the engine's rule when a price has risen since the plan), so the figure is the count form's for the photos it names.
+        const photoWorst = this.runPriceFromScenes(1).worstMicros;
+        const photos = photoWorst > 0 ? Math.min(left.result.photos, Math.floor(left.result.allocationMicros / photoWorst)) : left.result.photos;
+        return this.ok(c, { estimate: this.runPriceFromScenes(photos), photos });
+      }
       case "runs.startFromScenes": {
         // The engine's order: the library, the set's refusals, the avatar claimed by another job, then `runs.start`'s own checks.
         const gone = this.writeLibraryGate();

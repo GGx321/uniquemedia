@@ -413,6 +413,8 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: { runId: "run-00000001", jobId: "job-00000002" },
   },
   "runs.estimateFromScenes": { payload: { sceneSetId: "set-00000001", revision: 4 }, result: { estimate: { ...estimate, expectedMicros: 900_000, worstMicros: 2_700_000 } } },
+  // S4.6p: the images alone for N photos of an avatar (an owner's set), or for what a launch still has to draw for it.
+  "runs.estimateImages": { payload: { avatarId: "avatar-0001", count: 12 }, result: { estimate: { ...estimate, expectedMicros: 840_000, worstMicros: 2_520_000 }, photos: 12 } },
   "runs.startFromScenes": { payload: { sceneSetId: "set-00000001", revision: 4, acceptedWorstMicros: 2_700_000 }, result: { runId: "run-00000001", jobId: "job-00000002" } },
   "runs.cancel": { payload: { runId: "run-00000001" }, result: { runId: "run-00000001" } },
   "runs.estimateResume": { payload: { runId: "run-00000001" }, result: { estimate: { ...estimate, expectedMicros: 500_000, worstMicros: 1_650_000 } } },
@@ -637,6 +639,7 @@ describe("contract surface", () => {
         "runs.estimate",
         "runs.start",
         "runs.estimateFromScenes",
+        "runs.estimateImages",
         "runs.startFromScenes",
         "runs.cancel",
         "runs.estimateResume",
@@ -1301,6 +1304,40 @@ describe("estimate before spend", () => {
 
   test("the scene-set run commands take no photo count of their own: the set decides it", () => {
     expect(reasonOf(command("runs.estimateFromScenes", { sceneSetId: "set-00000001", revision: 4, count: 5 }))).not.toBe("");
+  });
+
+  describe("runs.estimateImages (S4.6p)", () => {
+    const AVATAR = "avatar-0001";
+    const LAUNCH = "launch-0a1b2c3d4e5f";
+
+    test("answers a launch's draw too, by the launch and the avatar, with no count of its own", () => {
+      expect(parseMessage(command("runs.estimateImages", { launchId: LAUNCH, avatarId: AVATAR })).ok).toBe(true);
+    });
+
+    test.each([0, -1, 1.5, 101])("refuses a photo count of %p", (count) => {
+      expect(reasonOf(command("runs.estimateImages", { avatarId: AVATAR, count }))).not.toBe("");
+    });
+
+    test.each([1, 100])("takes a photo count of %p, the ends of what a set can hold", (count) => {
+      expect(parseMessage(command("runs.estimateImages", { avatarId: AVATAR, count })).ok).toBe(true);
+    });
+
+    test("refuses a count together with a launch: the launch decides how many photos are left", () => {
+      expect(reasonOf(command("runs.estimateImages", { launchId: LAUNCH, avatarId: AVATAR, count: 5 }))).not.toBe("");
+    });
+
+    test("refuses a payload that names neither a count nor a launch", () => {
+      expect(reasonOf(command("runs.estimateImages", { avatarId: AVATAR }))).not.toBe("");
+    });
+
+    test("takes no money from the window: an accepted worst case is not part of a free estimate", () => {
+      expect(reasonOf(command("runs.estimateImages", { avatarId: AVATAR, count: 3, acceptedWorstMicros: 1 }))).not.toBe("");
+    });
+
+    test("refuses an answer without the number of photos it was priced for", () => {
+      const { photos: _photos, ...bare } = commandCases["runs.estimateImages"].result;
+      expect(reasonOf(okResponse("runs.estimateImages", bare))).not.toBe("");
+    });
   });
 
   test("runs.resume is refused without the remaining worst case the user accepted", () => {

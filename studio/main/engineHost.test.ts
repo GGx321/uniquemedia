@@ -537,7 +537,7 @@ describe("request deadline", () => {
     expect(COMMAND_DEADLINE_MS["runs.startFromScenes"]).toBe(COMMAND_DEADLINE_MS["runs.start"]);
   });
 
-  test.each(["runs.estimate", "runs.estimateResume", "runs.resume", "runs.list"] as const)(
+  test.each(["runs.estimate", "runs.estimateResume", "runs.estimateImages", "runs.resume", "runs.list"] as const)(
     "%s answers once its checks and a price load are done (a run's job runs on), so it waits as long as an estimate",
     (type) => {
       expect(COMMAND_DEADLINE_MS[type]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);

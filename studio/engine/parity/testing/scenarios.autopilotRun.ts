@@ -288,4 +288,28 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
       await t.callLaunch("autopilot.get", { launchId: launch });
     },
   },
+  // S4.6p (appended): the price of drawing photos, free. The figures are each engine's own (the transcript writes what both are bound to say), the photos and the refusals are the contract.
+  {
+    name: "autopilot (running): the price of drawing is free and told by the engine — a launch's photos still to draw, a count of an avatar's, and the refusals of a launch or an avatar that is not there",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      const { launch } = await begin(t, w, { sceneReview: true });
+      const row = await review(t, launch);
+      t.note("the scenes wait for the owner: the photos «Продолжить запуск» would draw, the same as the price of that many photos of the avatar");
+      const byLaunch = await t.callLaunch("runs.estimateImages", { launchId: launch, avatarId: row.avatarId });
+      const photos = byLaunch.ok && typeof byLaunch.result.photos === "number" ? byLaunch.result.photos : 0;
+      const byCount = await t.callLaunch("runs.estimateImages", { avatarId: row.avatarId, count: photos });
+      // The figures are each engine's own, but within one engine the launch's price of N photos must be the avatar's price of N photos: the transcript says whether it is.
+      const figure = (answer: Answer): string => (answer.ok ? JSON.stringify([record(answer.result.estimate)?.expectedMicros, record(answer.result.estimate)?.worstMicros]) : "refused");
+      t.note(`the launch's price is the price of that many photos of the avatar: ${String(figure(byLaunch) === figure(byCount))}`);
+      t.note("an avatar the launch does not hold, and a launch there is not, are NOT_FOUND; so is an avatar the library does not have");
+      await t.callLaunch("runs.estimateImages", { launchId: launch, avatarId: w.otherAvatarId });
+      await t.callLaunch("runs.estimateImages", { launchId: NO_LAUNCH, avatarId: row.avatarId });
+      await t.callLaunch("runs.estimateImages", { avatarId: "avatar-nobody-0404", count: 3 });
+      t.note("once the launch is over it is no unfinished launch");
+      await t.callLaunch("autopilot.stop", { launchId: launch });
+      await t.callLaunch("runs.estimateImages", { launchId: launch, avatarId: row.avatarId });
+    },
+  },
 ];

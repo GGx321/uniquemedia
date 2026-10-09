@@ -68,6 +68,15 @@ import { z } from "zod";
 //  - `autopilot.list`'s `UnreadableLaunch.scope` (`folder` / `file`, only on an `io-error`): the `autopilot/` folder could not be listed, or one launch file could not be opened.
 //  - `EngineError.outcome` (`unknown`, only on EXPORT_UNAVAILABLE): a `videos.delete` that did not answer in time; its work was not cancelled and may have finished, so the answer
 //    promises neither that the video is still there nor that it is gone.
+// Stage 4, S4.6p (additive, no bump; a new command, nothing that exists changes): `runs.estimateImages`, the free price of DRAWING photos, images alone, so the window computes no
+//   money (it used to take the run's estimate less the compose's, and a launch's strip showed the allocation for want of an expected price). Two payloads, one answer
+//   `{ estimate, photos }`: `{ avatarId, count }` (1..100) prices `count` photos of an avatar that can get photos (an owner's set that cannot be approved yet; the generate card's
+//   compose mode), and `{ launchId, avatarId }` prices what the unfinished launch still has to draw for the avatar (the photos of its set that no slice has taken, plus the open
+//   slots of the slices that began; before «Продолжить запуск», the planned scenes with a text), and `photos` is those the money buys (an open slot within its own slice's cap, a scene not yet in a
+//   slice within the allocation left for new slices; fewer than the photos left only when a price rose since the plan). Both are priced by the code the real
+//   draw is priced by (`runs.estimateFromScenes`' and the launch's slices'), so the figure is the one the run will reserve. NOT_FOUND for an avatar that is not saved and active, a
+//   launch that is not the unfinished one, or an avatar it does not hold. Why a command and not `runs.estimateFromScenes` for a launch's set: that refuses a set with a scene
+//   that has no text, which is the very state of the review the strip prices.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
