@@ -9,6 +9,7 @@ import { openLibrary } from "./library";
 import { PNG_1X1, SAMPLE_SOURCE, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { sampleSet } from "./library/testing/sceneSetSample";
 import { FakeSteps } from "./autopilot/testing/fakeSteps";
+import { IDLE_STEPS } from "./autopilot/steps";
 import { command, engineSettings, failed, GOOD, ledgerLines, ok, startEngine, TRAITS, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -55,7 +56,7 @@ async function startOver(opts: { key?: string | null; budget?: number; steps?: F
   return startEngine(dir(), {
     init: { settings: engineSettings(dir(), { imageAgeCheck: "off", monthlyBudgetMicros: opts.budget ?? 10_000_000 }) },
     ...(opts.key === undefined ? {} : { key: opts.key }),
-    ...(opts.steps === undefined ? {} : { deps: { launchSteps: opts.steps } }),
+    deps: { launchSteps: opts.steps ?? IDLE_STEPS },
   });
 }
 

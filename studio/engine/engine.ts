@@ -88,9 +88,18 @@ import { LaunchStores } from "./autopilot/lookup";
 import { Orchestrator, type Admission, type Prepared } from "./autopilot/orchestrator";
 import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
+import { exportGateOf } from "./autopilot/exportGate";
+import { createFreeSteps, freeLibraryOf, type FreeSteps, type FreeStepsDeps } from "./autopilot/freeSteps";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, liveRendersOf, normalizeTrackLabel, renderLifeOf, sliceFactsOf, type SliceFactsSet } from "./autopilot/launchWiring";
+import { createMusicPorts } from "./autopilot/musicPorts";
 import { checkFailuresOf } from "./autopilot/paidFailures";
 import { NOT_PAYABLE_DETAIL, type LaunchSliceStart, type SliceOutcome } from "./autopilot/paidPort";
-import { IDLE_STEPS, type LaunchSteps } from "./autopilot/steps";
+import { createPaidSteps } from "./autopilot/paidSteps";
+import type { FileMusic } from "./autopilot/launchFile";
+import type { LaunchSteps } from "./autopilot/steps";
+import { composeSteps } from "./autopilot/stepsComposer";
+import { trackUsage } from "./autopilot/trackUsage";
+import { NO_TRENDS, type AutopilotTrends } from "./music/autopilotCandidates";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
@@ -241,8 +250,16 @@ export interface EngineDeps {
    * writes through; any other lookup (a test's) only answers the registry's questions, and the orchestrator keeps its own store.
    */
   launches?: LaunchLookup;
-  /** S4.6a: the work a launch does, plugged into the orchestrator core (autopilot/steps.ts). Absent, a started launch stays in its first step (S4.6b, S4.6c replace it). */
+  /**
+   * The work a launch does, plugged into the orchestrator core (autopilot/steps.ts). Absent (S4.6w), the engine builds the real thing from its own parts: the paid steps and the free steps behind
+   * the composer, with one set of music ports. A test passes a double (or `IDLE_STEPS`) to keep a launch from doing anything.
+   */
   launchSteps?: LaunchSteps;
+  /**
+   * S4.6w: the saved trends the autopilot may choose a track from, and their titles for the results list. `main.ts` passes the same `TrackStore` as `musicSink`. Absent: the autopilot has its own
+   * flagged tracks only, and a launch whose videos find no track waits for one.
+   */
+  musicTrends?: AutopilotTrends;
   /** Test seam: whether a launch may pay now. Absent: the orchestrator's answer (a running launch with no paid hold). The S4.5a seam tests run launches that only the lookup knows. */
   launchMayPay?: (launchId: string) => boolean;
   /**
@@ -778,6 +795,10 @@ export class Engine {
   #launchesIdentity: string | null = null;
   /** S4.6a: the orchestrator core (the launch store, the state machine, the commands, the events) and the engine's side of estimate and start. */
   readonly #orchestrator: Orchestrator;
+  /** S4.6w: the free steps of the default wiring (null when a test injected its own steps): poked when the world they wait for changes, disposed by `shutdown`. */
+  #freeSteps: FreeSteps | null = null;
+  /** The slice runs that have ended, so a pass of the free steps reads a finished slice's journal once and not at every poll (a finished slice stays finished: the owner cannot resume a launch's run). */
+  readonly #finishedSlices = new Set<string>();
   /** Launch commands (start, pause, resume, stop) being carried out now: a library switch is refused while any is. */
   #launchCommands = 0;
   readonly #autopilot: AutopilotCommands;
@@ -853,7 +874,11 @@ export class Engine {
       // Read at every start, so a settings change applies to the next job.
       size: () => renderPoolSize(this.#settings.renderConcurrency, { cores: availableParallelism(), totalMem: totalmem() }),
       // Events carry a job's state and result, never the error's `cause` (raw, with the owner's paths).
-      onEvent: (event) => this.#videos.onQueueEvent(event),
+      onEvent: (event) => {
+        this.#videos.onQueueEvent(event);
+        // A launch's free steps wait on their renders: an end is the moment to look again, not the next poll.
+        if (event.type === "ended") this.#pokeFreeSteps();
+      },
       onListenerError: (error) => this.#videos.onListenerError(error),
     });
     this.#drafts = new DraftStore({
@@ -1029,7 +1054,8 @@ export class Engine {
       stores: launchStores,
       groups: launchGroups,
       registry: this.#launches,
-      steps: deps.launchSteps ?? IDLE_STEPS,
+      steps: deps.launchSteps ?? this.#defaultLaunchSteps(),
+      trackLabel: (music) => this.#trackLabelOf(music),
       clock: () => deps.clock(),
       newId: () => deps.newId(),
       budget: () => this.budget,
@@ -1058,6 +1084,103 @@ export class Engine {
       clock: () => deps.clock(),
       newId: () => deps.newId(),
     });
+  }
+
+  // ---------- S4.6w: the autopilot's steps, built from the engine's own parts ----------
+
+  /**
+   * The default of `EngineDeps.launchSteps` (plan §21.2): the paid steps (they use this engine as their `PaidPort`) and the free steps behind the composer. Built once, with ONE set of music ports;
+   * Q2's network waits are the one constant `AUTOPILOT_NETWORK_WAITS_MS`. Called from the constructor, after every part it reads has been made, and reads nothing from disk.
+   */
+  #defaultLaunchSteps(): LaunchSteps {
+    const free = createFreeSteps(this.#freeStepsDeps());
+    this.#freeSteps = free;
+    const paid = createPaidSteps({ port: () => this, networkWaitsMs: AUTOPILOT_NETWORK_WAITS_MS });
+    return composeSteps(paid, free, { warn: (line) => console.warn(line) });
+  }
+
+  /** What the free steps read and do, each from the engine's live parts. Every read of the library goes to the LIVE library of the moment, never to one captured earlier. */
+  #freeStepsDeps(): FreeStepsDeps {
+    const ports = createMusicPorts({ trends: this.#deps.musicTrends ?? NO_TRENDS, media: this.#media }, this.#music);
+    const live = (): Library => {
+      const library = this.#live?.library;
+      if (library === undefined) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open" });
+      return library;
+    };
+    return {
+      library: () => {
+        const library = this.#live?.library;
+        return library === undefined ? null : freeLibraryOf(library);
+      },
+      videos: { renderInternal: (input) => this.#videos.renderInternal(input), settled: () => this.#videos.settled() },
+      renderLife: (jobId) => renderLifeOf(this.#renders.states(), jobId),
+      liveRenders: () => liveRendersOf(this.#renders.states()),
+      focus: { prefetchFocus: (avatarId, photoId, options) => this.#focusOf(live()).prefetchFocus(avatarId, photoId, options) },
+      photoIdsInDrafts: (avatarId) => boundedRead(() => this.#drafts.photoIdsInDrafts(live(), avatarId), AUTOPILOT_READ_TIMEOUT_MS, "the drafts of the avatar"),
+      sliceRuns: (avatarId) => boundedRead(() => this.#launchSliceRuns(avatarId), AUTOPILOT_READ_TIMEOUT_MS, "the slice runs of the avatar"),
+      trackUsage: (avatarId) => boundedRead(() => trackUsage(live().root, avatarId), AUTOPILOT_READ_TIMEOUT_MS, "the track usage of the avatar"),
+      chooseMusic: ports.chooseMusic,
+      autoRefresh: ports.autoRefresh,
+      // The engine's own bounded check (it queues behind the others and never rejects), with the size of the next video: never the raw `checkExportRoot`.
+      exportGate: exportGateOf({
+        check: async (requiredBytes) => {
+          const check = await this.#refreshExportStatus(requiredBytes);
+          return check.ok ? { ok: true } : { ok: false, reason: check.reason };
+        },
+        freeBytes: () => this.#exportRootFs.freeBytes(this.#settings.exportPath),
+        timeoutMs: EXPORT_CHECK_TIMEOUT_MS,
+      }),
+    };
+  }
+
+  /**
+   * The avatar's slice runs of the launch that have ENDED, and whether its draw is over (`sliceFactsOf`): from the avatar's sets that belong to an unfinished launch, the frozen list of each and the
+   * state of each slice's run. A finished slice is read once. Throws when the library cannot be listed: the free steps read that as «the paid path cannot say» and wait.
+   */
+  async #launchSliceRuns(avatarId: string): Promise<{ runIds: readonly string[]; over: boolean }> {
+    const library = this.#live?.library;
+    if (library === undefined) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open" });
+    const { sets, unreadable } = await library.sceneSets.list(avatarId);
+    const mine: SliceFactsSet[] = [];
+    for (const set of sets) {
+      if (this.#launches.activeLaunch(set.launchId) === undefined) continue;
+      mine.push({ draw: set.launchDraw, statuses: await this.#openSliceStatuses(library, set) });
+    }
+    return sliceFactsOf(mine, unreadable);
+  }
+
+  /** `#sliceStatuses` for the slices not known to be finished yet. */
+  async #openSliceStatuses(library: Library, set: StoredSceneSet): Promise<Map<string, SliceStatus>> {
+    const statuses = new Map<string, SliceStatus>();
+    const draw = set.launchDraw;
+    if (draw === undefined) return statuses;
+    const unknown = draw.slices.filter((entry) => !this.#finishedSlices.has(entry.runId));
+    for (const entry of draw.slices) if (this.#finishedSlices.has(entry.runId)) statuses.set(entry.runId, { finished: true, committedMicros: 0 });
+    if (unknown.length === 0) return statuses;
+    for (const [runId, status] of await this.#sliceStatuses(library, { ...set, launchDraw: { ...draw, slices: unknown } })) {
+      statuses.set(runId, status);
+      if (status.finished) this.#finishedSlices.add(runId);
+    }
+    return statuses;
+  }
+
+  /** The title and artist the results list names a video's track by: a saved trend's from the track store, an own track's from its file name. Null: the list titles the video by the track's id. */
+  #trackLabelOf(music: FileMusic): { title: string; artist: string | null } | null {
+    if (music.source === "trending") {
+      const label = (this.#deps.musicTrends ?? NO_TRENDS).labelOf(music.trackId);
+      return label === null ? null : normalizeTrackLabel(label.title, label.artist);
+    }
+    const root = this.#live?.library.root;
+    return root === undefined ? null : normalizeTrackLabel(this.#media.trackNameOf(root, music.mediaId), null);
+  }
+
+  /** Something the free steps wait on changed (a slice or a render ended, a track appeared, the export folder answered): they look again now instead of at the next poll. Never throws. */
+  #pokeFreeSteps(): void {
+    try {
+      this.#freeSteps?.poke();
+    } catch {
+      // The steps poll anyway; a poke is only a hurry.
+    }
   }
 
   /** Runs a launch command counted for `#switchRefusal`: the count is taken before the first await and released whatever happens. */
@@ -1161,6 +1284,8 @@ export class Engine {
   async shutdown(waitMs: number = SHUTDOWN_RENDER_WAIT_MS): Promise<{ idle: boolean }> {
     // The held-back notice announcement is for windows of a running engine: it is dropped, not posted into a stopping one.
     this.#stopping = true;
+    // The free steps' runs end now, whatever they still have in flight: a render that never reports its end would leave a run sleeping for ever on a timer that is not unref'd, and the process alive.
+    this.#freeSteps?.dispose();
     this.#mediaAbort.abort();
     if (this.#internalNoticeTimer !== null) clearTimeout(this.#internalNoticeTimer);
     this.#internalNoticeTimer = null;
@@ -1435,6 +1560,8 @@ export class Engine {
       const started = await this.#pendingRun(runId, () => this.#resumeRunNow({ runId, acceptedWorstMicros: 0 }, { onEnd: finish }));
       if (started === null) return { kind: "finished" };
       launched = true;
+      // The slice's photos are the free steps' to assign: its end is their cue.
+      void ended.then(() => this.#pokeFreeSteps());
       return { kind: "started", jobId: started.jobId, ended };
     } finally {
       if (!launched) this.#paidCommands--;
@@ -2337,7 +2464,7 @@ export class Engine {
   }
 
   /** The focus resolver of a library, kept for its life (it holds the in-flight computations and the cache), with a fill budget that fits main's command deadline. */
-  #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus" | "focusFor" | "focusForOwn"> {
+  #focusOf(library: Library): Pick<FocusResolver, "fillMissingFocus" | "focusFor" | "focusForOwn" | "prefetchFocus"> {
     let resolver = this.#focusResolvers.get(library);
     if (resolver === undefined) {
       resolver = createFocusResolver({
@@ -4806,10 +4933,14 @@ export class Engine {
       type: "settings.changed",
       payload: { settings: this.#currentSettings(), librarySwitchGeneration: this.#librarySwitchGeneration },
     });
+    // H1: the key and the monthly budget are settings, and the launch's view reads both (what closes «Продолжить»).
+    this.#orchestrator.reannounce();
   }
 
   #emitMoney(): void {
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "money.changed", payload: { status: this.#moneyStatus() } });
+    // H1: R and what closes «Продолжить» (a reconcile) come from the ledger.
+    this.#orchestrator.reannounce();
   }
 
   /**
@@ -4818,6 +4949,8 @@ export class Engine {
    * (a caller that retried after such a throw would send the same terminal event twice).
    */
   #emit(event: UnsequencedEvent): void {
+    // The free steps of a launch wait on a music candidate (a refresh, a flag on an own track) and on the export folder: either arriving is their cue.
+    if (event.type === "music.changed" || event.type === "media.changed" || event.type === "export.status") this.#pokeFreeSteps();
     const seq = this.#events.append(event);
     const stamped = this.#events.since(seq - 1, this.#events.bootId);
     if (stamped.gap) return;

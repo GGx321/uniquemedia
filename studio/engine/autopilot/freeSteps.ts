@@ -32,8 +32,10 @@ import type { LaunchSteps, LaunchStepsContext } from "./steps";
 
 /** The most renders of one launch that may be unfinished (queued plus running) at once: 8 of the 20 the queue allows, so the owner always has 12 (A10). */
 export const MAX_AUTOPILOT_RENDERS = 8;
-const DEFAULT_POLL_MS = 1_000;
-const DEFAULT_IDLE_POLL_MS = 8_000;
+/** How often the free steps look while renders are in flight. */
+export const FREE_POLL_MS = 1_000;
+/** How often they look when nothing is in flight. */
+export const FREE_IDLE_POLL_MS = 8_000;
 const DEFAULT_RECHECK_MS = 5_000;
 /** A render that fails for a reason that may pass is tried this many times before the video is dropped. */
 const MAX_ATTEMPTS = 3;
@@ -104,10 +106,16 @@ export interface FreeStepsDeps {
 export interface FreeSteps extends LaunchSteps {
   /** Something outside changed (a slice ended, a render ended, a candidate track appeared): look again now instead of at the next poll. */
   poke(): void;
+  /**
+   * The engine is shutting down: every run ends at once, whatever it still has in flight, and its loop with it (a run that waits on a render that never reports its end would otherwise sleep for ever on a
+   * timer that is not unref'd). Nothing begins afterwards. Synchronous, idempotent, never throws.
+   */
+  dispose(): void;
 }
 
 export function createFreeSteps(deps: FreeStepsDeps): FreeSteps {
   const runs = new Map<string, FreeRun>();
+  let disposed = false;
   /** A launch that has ended and has nothing in flight is forgotten. */
   const prune = (): void => {
     for (const [id, run] of runs) if (run.ended && run.unfinished() === 0) runs.delete(id);
@@ -122,6 +130,7 @@ export function createFreeSteps(deps: FreeStepsDeps): FreeSteps {
   };
   return {
     begin(ctx) {
+      if (disposed) return;
       prune();
       let run = runs.get(ctx.launchId);
       if (run === undefined || run.ended) {
@@ -154,6 +163,11 @@ export function createFreeSteps(deps: FreeStepsDeps): FreeSteps {
     },
     poke() {
       for (const run of runs.values()) run.poke();
+    },
+    dispose() {
+      disposed = true;
+      for (const run of runs.values()) run.dispose();
+      runs.clear();
     },
   };
 }
@@ -346,7 +360,7 @@ class FreeRun {
 
   #sleep(): Promise<void> {
     return new Promise<void>((resolve) => {
-      const ms = this.#inflight.size > 0 ? (this.#d.pollMs ?? DEFAULT_POLL_MS) : (this.#d.idlePollMs ?? DEFAULT_IDLE_POLL_MS);
+      const ms = this.#inflight.size > 0 ? (this.#d.pollMs ?? FREE_POLL_MS) : (this.#d.idlePollMs ?? FREE_IDLE_POLL_MS);
       // Not `unref`ed: a drain (and a release) wait on this loop, and while it sleeps THIS timer is what the process is waiting for. With an unref'd one Bun on Windows idles for ever with the
       // drain's promise pending, and not even a test's own timeout fires. The loop sleeps only while work is outstanding (`#waitsOnTheWorld`), and `dispose` wakes it, so it never holds a finished launch open.
       const timer = setTimeout(done, ms);
@@ -871,7 +885,7 @@ class FreeRun {
 
   /** Waits this long before the next submit after a refusal: for a render's end when some are in flight, else for the recheck interval. */
   #backoff(): number {
-    return this.#inflight.size > 0 ? (this.#d.pollMs ?? DEFAULT_POLL_MS) : (this.#d.recheckMs ?? DEFAULT_RECHECK_MS);
+    return this.#inflight.size > 0 ? (this.#d.pollMs ?? FREE_POLL_MS) : (this.#d.recheckMs ?? DEFAULT_RECHECK_MS);
   }
 
   // ----- the export folder and the disk: `freeHold { export }` -----

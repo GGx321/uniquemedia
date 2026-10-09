@@ -88,3 +88,45 @@ describe("storedTrends", () => {
     expect(store.storedTrends().map((t) => t.trackId)).toEqual([tracks[0]?.trackId, tracks[2]?.trackId].map((id) => id ?? ""));
   });
 });
+
+// S4.6w: the results list titles a video by its track; the title and the artist come from the record the list wrote.
+describe("labelOf", () => {
+  test("a stored track tells its title and artist as the list recorded them", async () => {
+    const cdn = fakeCdn();
+    const [track] = listTracks(1) as [MusicTrack];
+    serve(cdn, [track]);
+    const store = await open(cdn);
+    await accept(store, [{ ...track, title: "Midnight Drive", artist: "The Lamps" }]);
+    expect(store.labelOf(track.trackId)).toEqual({ title: "Midnight Drive", artist: "The Lamps" });
+  });
+
+  test("a track the list gave no title or artist has none to tell", async () => {
+    const cdn = fakeCdn();
+    const [track] = listTracks(1) as [MusicTrack];
+    serve(cdn, [track]);
+    const store = await open(cdn);
+    await accept(store, [{ ...track, title: null, artist: null }]);
+    expect(store.labelOf(track.trackId)).toEqual({ title: null, artist: null });
+  });
+
+  test("a track kept from an earlier list is labelled too", async () => {
+    const cdn = fakeCdn();
+    const all = listTracks(2);
+    serve(cdn, all);
+    const store = await open(cdn);
+    await accept(store, all.slice(0, 1));
+    await accept(store, all.slice(1, 2));
+    expect(store.labelOf(all[0]?.trackId ?? "")).not.toBeNull();
+  });
+
+  test("an id that is not stored, or whose audio failed, is null", async () => {
+    const cdn = fakeCdn();
+    const tracks = listTracks(2);
+    serve(cdn, tracks, new Set([1]));
+    const store = await open(cdn);
+    await accept(store, tracks).catch(() => undefined);
+    expect(store.labelOf(tracks[1]?.trackId ?? "")).toBeNull();
+    expect(store.labelOf("track-nobody-0001")).toBeNull();
+    expect(store.labelOf("../etc")).toBeNull();
+  });
+});

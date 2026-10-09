@@ -252,6 +252,14 @@ export class Orchestrator {
     this.#coalescer.flush();
   }
 
+  /**
+   * The money, the key or the monthly budget changed (S4.6w, H1): what the view derives from them (R, the spent sum, what closes «Продолжить») is read again and the unfinished launch is
+   * announced as it now reads. Coalesced like every other announcement; nothing when there is no unfinished launch.
+   */
+  reannounce(): void {
+    if (this.#current !== null) this.#announce(this.#current);
+  }
+
   // ---------- what the engine asks ----------
 
   snapshotView(): LaunchView | null {

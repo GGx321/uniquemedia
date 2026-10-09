@@ -46,6 +46,15 @@ export function buildAutopilotCandidates(input: CandidateInput): AutopilotCandid
   return { candidates, flaggedOwn, explicitSkipped };
 }
 
+/** What the engine needs of the track store for a launch (S4.6w): the saved trends the chooser picks from, and the title and artist the results list names a video's track by. `TrackStore` satisfies it. */
+export interface AutopilotTrends {
+  storedTrends(): TrendingCandidate[];
+  labelOf(trackId: string): { title: string | null; artist: string | null } | null;
+}
+
+/** No saved trends at all: an engine without a music folder offers the autopilot its own flagged tracks only. */
+export const NO_TRENDS: AutopilotTrends = { storedTrends: () => [], labelOf: () => null };
+
 /** Where the lists come from: the track store and the media service (structural, so a test needs neither). */
 export interface CandidateSources {
   readonly trends: { storedTrends(): TrendingCandidate[] };

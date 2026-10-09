@@ -326,6 +326,13 @@ export class TrackStore implements MusicListSink, RenderTrackSource {
     return audio?.state === "stored" ? { decodedMs: audio.decodedMs } : null;
   }
 
+  /** The title and artist the list recorded for a STORED track (of any list), from the record alone; null for any id that is not stored. The results list of a launch names its videos by them (S4.6w). */
+  labelOf(trackId: string): { title: string | null; artist: string | null } | null {
+    if (!Id.safeParse(trackId).success) return null;
+    const entry = this.#record?.tracks.find((candidate) => candidate.trackId === trackId);
+    return entry?.audio.state === "stored" ? { title: entry.title, artist: entry.artist } : null;
+  }
+
   /**
    * Every STORED trending track as the autopilot's chooser takes it (S4.5d, plan §7): of the current list or kept from an earlier one (`inList` says which), with the PROVEN
    * length (`decodedMs`), the highlights and the explicit flag as stored. A track whose audio is pending or failed is left out. From the record alone: no disk, no ffmpeg.

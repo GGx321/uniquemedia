@@ -333,6 +333,15 @@ export class MediaService {
     });
   }
 
+  /**
+   * The picked file's name of an own track of the library at `root`, from the records in memory: null for a photo, a video, an id the library does not hold, or a library this service has not
+   * opened. Synchronous, so the results list of a launch can name a video by its track without a wait.
+   */
+  trackNameOf(root: string, mediaId: string): string | null {
+    const summary = this.#areas.get(root)?.records.get(mediaId);
+    return summary !== undefined && summary.kind === "audio" ? summary.name : null;
+  }
+
   /** The own tracks the autopilot may use: flagged, and still valid own tracks (a deleted track, a photo or an mp3 named in the log is not one). By id. A damaged flag log offers none. */
   async autopilotTracks(): Promise<{ mediaId: string; durationMs: number }[]> {
     return this.#deps.withLibrary(async (library) => {

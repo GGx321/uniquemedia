@@ -210,3 +210,27 @@ describe("autopilotTracks", () => {
     expect((await flagOf(service, photoId))?.forAutopilot).toBeUndefined();
   });
 });
+
+// S4.6w: the results list of a launch names a video by its track; an own track's name is the picked file's.
+describe("trackNameOf", () => {
+  test("is the name of an own track of the library, read without an await", async () => {
+    const { service } = rig();
+    const mediaId = await track(service, "my-song.m4a");
+    expect(service.trackNameOf(libraryRoot(), mediaId)).toBe("my-song.m4a");
+  });
+
+  test("is null for a photo, for an id the library does not hold, and for a library the service has not opened", async () => {
+    const { service } = rig();
+    const photoId = await importOne(service, "pic.png", Buffer.from(PNG_1X1), "photo");
+    expect(service.trackNameOf(libraryRoot(), photoId)).toBeNull();
+    expect(service.trackNameOf(libraryRoot(), "media-nobody-0001")).toBeNull();
+    expect(service.trackNameOf(join(tmp(), "elsewhere"), photoId)).toBeNull();
+  });
+
+  test("is null once the track is deleted", async () => {
+    const { service } = rig();
+    const mediaId = await track(service);
+    expect(await service.delete(mediaId)).toBe("deleted");
+    expect(service.trackNameOf(libraryRoot(), mediaId)).toBeNull();
+  });
+});
