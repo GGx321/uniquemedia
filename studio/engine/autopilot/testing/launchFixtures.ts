@@ -3,7 +3,7 @@ import { A, B } from "../../../shared/engine/autopilot.fixtures";
 import type { LaunchDraft } from "../../../shared/engine/autopilot";
 import { buildLaunchFile, LAUNCH_FILE_SCHEMA_VERSION, type LaunchFile, type NewLaunchFile } from "../launchFile";
 import type { StartInput } from "../orchestrator";
-import { planLaunch, type LaunchPlan } from "../planner";
+import { planLaunch, type LaunchPlan, type PlanPhoto } from "../planner";
 import { avatar, input } from "./planFixtures";
 
 // Fixtures of the orchestrator's tests (S4.6a): one launch file built the way `autopilot.start` builds it, from a plan with no library photos, so every video is generated.
@@ -41,14 +41,17 @@ export function settings(extra: Partial<LaunchDraft> = {}): LaunchDraft {
   };
 }
 
-export function planOf(draft: LaunchDraft): LaunchPlan {
-  return planLaunch(input({ draft, avatars: draft.avatarIds.map((avatarId) => avatar([], { avatarId })) }));
+/** The library photos each avatar had when the plan was made (S4.6c1): none by default, so every video is generated. */
+export type PhotosByAvatar = Readonly<Record<string, readonly PlanPhoto[]>>;
+
+export function planOf(draft: LaunchDraft, photos: PhotosByAvatar = {}): LaunchPlan {
+  return planLaunch(input({ draft, avatars: draft.avatarIds.map((avatarId) => avatar(photos[avatarId] ?? [], { avatarId })) }));
 }
 
 /** A running launch file for `draft`, ids `set-fixture-<n>` / `run-fixture-<n>` in order. */
-export function newLaunchFile(draftExtra: Partial<LaunchDraft> = {}, launchId = "launch-fixture-0001", acceptedMicros = 20_000_000): NewLaunchFile {
+export function newLaunchFile(draftExtra: Partial<LaunchDraft> = {}, launchId = "launch-fixture-0001", acceptedMicros = 20_000_000, photos: PhotosByAvatar = {}): NewLaunchFile {
   const draft = settings(draftExtra);
-  const plan = planOf(draft);
+  const plan = planOf(draft, photos);
   const estimate = launchEstimate(
     plan.avatars.filter((a) => a.blocked === null).map((a) => ({ avatarId: a.avatarId, photos: a.toGenerate })),
     UNIT,
@@ -60,8 +63,8 @@ export function newLaunchFile(draftExtra: Partial<LaunchDraft> = {}, launchId = 
 }
 
 /** A launch file as the store would have written it. */
-export function stampedFile(draftExtra: Partial<LaunchDraft> = {}, over: Partial<LaunchFile> = {}): LaunchFile {
-  const file = newLaunchFile(draftExtra);
+export function stampedFile(draftExtra: Partial<LaunchDraft> = {}, over: Partial<LaunchFile> = {}, photos: PhotosByAvatar = {}): LaunchFile {
+  const file = newLaunchFile(draftExtra, "launch-fixture-0001", 20_000_000, photos);
   return { ...file, schemaVersion: LAUNCH_FILE_SCHEMA_VERSION, revision: 1, updatedAt: file.createdAt, ...over };
 }
 

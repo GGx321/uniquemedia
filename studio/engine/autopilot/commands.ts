@@ -10,14 +10,13 @@ import {
   type LaunchView,
 } from "../../shared/engine/autopilot";
 import { isCustomCategory, type CategoryPoses, type CategoryRef } from "../../shared/engine/categories";
-import type { Montage } from "../../shared/engine/montage";
 import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
 import type { PriceModels, PricedBook } from "../money/priceCache";
 import type { RunModels } from "../runs/plan";
-import { scenePhotoIds } from "../videos/record";
 import { launchPriceModels, unitPricesOf } from "./prices";
 import { buildLaunchPreview } from "./preview";
+import { readDraftHolds, type DraftHoldsReader } from "./draftHolds";
 import { planAvatarInput } from "./libraryInput";
 import { planLaunch, type LaunchPlan } from "./planner";
 import type { Orchestrator } from "./orchestrator";
@@ -26,13 +25,6 @@ import type { Orchestrator } from "./orchestrator";
 // own estimates (`launchEstimate` over `unitPricesOf`), and answers the preview; the start does the same and then refuses in the order the contract lists, all BEFORE anything
 // is written: the library, the avatars, a launch already unfinished, an unreadable entry, nothing enabled, a blocked avatar, the key and the ledger, the export folder, the
 // price (PRICE_CHANGED) and the month (BUDGET_EXCEEDED). Only then does the orchestrator write the launch file.
-
-export interface DraftListing {
-  montages: readonly Montage[];
-  skipped: number;
-  notRead: number;
-  truncated: boolean;
-}
 
 export interface AutopilotCommandsDeps {
   orchestrator: Orchestrator;
@@ -48,7 +40,8 @@ export interface AutopilotCommandsDeps {
   monthlyBudgetMicros(): number;
   /** Another job of the avatar's own holds it now. */
   isBusy(avatarId: string): boolean;
-  listDrafts(library: Library, avatarId: string): Promise<DraftListing>;
+  /** S4.5c's `DraftStore.photoIdsInDrafts`: the photos an avatar's saved drafts name, and whether the listing was complete. Throws `DraftFolderError`. */
+  photoIdsInDrafts(library: Library, avatarId: string): Promise<{ photoIds: ReadonlySet<string>; complete: boolean }>;
   /** The engine's first checks before any paid call: the key, then the ledger. Null when both are open. */
   paidGate(): EngineError | null;
   exportStatus(): ExportStatus;
@@ -144,9 +137,10 @@ export class AutopilotCommands {
 
   async #plan(library: Library, draft: LaunchDraft): Promise<Planned> {
     for (const avatarId of draft.avatarIds) this.#runnable(library, avatarId);
+    const holds = await readDraftHolds(draft.avatarIds, this.#draftReader(library));
     const avatars = [];
-    for (const avatarId of draft.avatarIds) avatars.push(planAvatarInput(library, avatarId, await this.#hasOpenSet(library, avatarId)));
-    const plan = planLaunch({ draft, avatars, draftHeldPhotoIds: await this.#heldByDrafts(library, draft.avatarIds), customPoses: await this.#customPoses(library, draft.categories) });
+    for (const avatarId of draft.avatarIds) avatars.push(planAvatarInput(library, avatarId, await this.#hasOpenSet(library, avatarId), !holds.unknown.has(avatarId)));
+    const plan = planLaunch({ draft, avatars, draftHeldPhotoIds: holds.held, customPoses: await this.#customPoses(library, draft.categories) });
     const needs = plan.avatars.filter((a) => a.blocked === null).map((a) => ({ avatarId: a.avatarId, photos: a.toGenerate }));
     const generates = needs.some((n) => n.photos > 0);
     // A plan that generates nothing needs no price: the unit prices are read for the card's per-shape figures when they can be, and their absence is not an error.
@@ -183,25 +177,9 @@ export class AutopilotCommands {
     }
   }
 
-  /**
-   * The photos any saved montage draft holds (§19: `{ photoIds, complete }`). A listing that is not complete cannot say which photos are held, so it fails closed: every photo
-   * of the chosen avatars counts as held and none is taken from the library.
-   */
-  async #heldByDrafts(library: Library, avatarIds: readonly string[]): Promise<ReadonlySet<string>> {
-    const held = new Set<string>();
-    let complete = true;
-    for (const avatarId of avatarIds) {
-      try {
-        const listing = await this.#d.listDrafts(library, avatarId);
-        for (const montage of listing.montages) for (const photoId of scenePhotoIds(montage.spec.clips)) held.add(photoId);
-        if (listing.skipped > 0 || listing.notRead > 0 || listing.truncated) complete = false;
-      } catch {
-        complete = false;
-      }
-    }
-    if (complete) return held;
-    for (const avatarId of avatarIds) for (const photo of library.photosByAvatar(avatarId)) held.add(photo.id);
-    return held;
+  /** The ONE definition of «held by a saved draft» (A7): S4.5c's per-avatar answer, read through `readDraftHolds`, which fails closed per avatar. */
+  #draftReader(library: Library): DraftHoldsReader {
+    return (avatarId) => this.#d.photoIdsInDrafts(library, avatarId);
   }
 
   async #customPoses(library: Library, categories: readonly CategoryRef[]): Promise<Map<CategoryRef, CategoryPoses>> {

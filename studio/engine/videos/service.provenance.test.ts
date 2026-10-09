@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import type { EngineError } from "../../shared/engine";
+import { JobState, type EngineError } from "../../shared/engine";
 import type { MontageDraft } from "../../shared/engine/montage";
 import { EngineFailure } from "../engineFailure";
 import { readVideoRecordFiles } from "./listing";
@@ -80,6 +80,41 @@ describe("an autopilot render", () => {
     await r.queue.idle();
 
     expect(r.queue.states()[0]?.status).toBe("done");
+  });
+});
+
+describe("the render job's state names its launch (JobState.launchId, S4.6c1)", () => {
+  test("a render with provenance is a job of that launch, queued and done", async () => {
+    const w = world();
+    const r = serviceRig(w);
+
+    await r.service.renderInternal({ montageId: null, spec: specFor(w), provenance });
+    expect(r.queue.states().map((state) => (state.kind === "render" ? state.launchId : undefined))).toEqual([provenance.launchId]);
+    await r.queue.idle();
+
+    const [state] = r.queue.states();
+    expect(state).toMatchObject({ kind: "render", status: "done", launchId: provenance.launchId });
+  });
+
+  test("the state with its launch still fits the contract's JobState", async () => {
+    const w = world();
+    const r = serviceRig(w);
+
+    await r.service.renderInternal({ montageId: null, spec: specFor(w), provenance });
+    await r.queue.idle();
+
+    expect(JobState.safeParse(r.queue.states()[0]).success).toBe(true);
+  });
+
+  test("a manual render's job has no launch", async () => {
+    const w = world();
+    const r = serviceRig(w);
+
+    await r.service.render({ spec: specFor(w) });
+    await r.queue.idle();
+
+    const [state] = r.queue.states();
+    expect(state !== undefined && "launchId" in state).toBe(false);
   });
 });
 

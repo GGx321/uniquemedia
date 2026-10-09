@@ -25,7 +25,7 @@ describe("planAvatarInput", () => {
   test("a free generated photo comes through with its category, hash and face match", async () => {
     const { library, avatar, generated } = await fixture();
     const photo = await library.addPhoto(avatar.id, PNG_1X1, generated("home", { pdq: PDQ_A, faceCos: 0.82 }));
-    const out = planAvatarInput(library, avatar.id, false);
+    const out = planAvatarInput(library, avatar.id, false, true);
     expect(out.photos).toEqual([{ id: photo.id, avatarId: avatar.id, category: "home", pdq: PDQ_A, faceCos: 0.82, eligible: true, rejected: false, reserved: false, usedIn: [] }]);
     expect(out.usage).toEqual({ state: "ok" });
   });
@@ -33,7 +33,7 @@ describe("planAvatarInput", () => {
   test("an imported photo has no category, so it can never match a chosen one", async () => {
     const { library, avatar } = await fixture();
     await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: SAMPLE_IMPORTED_SOURCE }));
-    expect(planAvatarInput(library, avatar.id, false).photos[0]?.category).toBeUndefined();
+    expect(planAvatarInput(library, avatar.id, false, true).photos[0]?.category).toBeUndefined();
   });
 
   test("a rejected photo is marked rejected and the planner leaves it out", async () => {
@@ -41,7 +41,7 @@ describe("planAvatarInput", () => {
     const kept = await library.addPhoto(avatar.id, PNG_1X1, generated("home", { pdq: PDQ_A }));
     const rejected = await library.addPhoto(avatar.id, PNG_1X1, generated("home", { pdq: PDQ_B }));
     await library.setRejected(avatar.id, rejected.id, true);
-    const input = planAvatarInput(library, avatar.id, false);
+    const input = planAvatarInput(library, avatar.id, false, true);
     expect(input.photos.find((p) => p.id === rejected.id)?.rejected).toBe(true);
     const plan = planLaunch({ draft: draft({ avatarIds: [avatar.id], videosPerAvatar: 2, mix: { single: 100, collage: 0, slides: 0 }, generate: false }), avatars: [input], draftHeldPhotoIds: new Set(), customPoses: new Map() });
     expect(plan.avatars[0]?.videos.flatMap((v) => v.photoIds)).toEqual([kept.id]);
@@ -50,7 +50,7 @@ describe("planAvatarInput", () => {
   test("a photo held by a saved draft is left out of the pool, though the library calls it free", async () => {
     const { library, avatar, generated } = await fixture();
     const held = await library.addPhoto(avatar.id, PNG_1X1, generated("home", { pdq: PDQ_A }));
-    const input = planAvatarInput(library, avatar.id, false);
+    const input = planAvatarInput(library, avatar.id, false, true);
     const plan = planLaunch({ draft: draft({ avatarIds: [avatar.id] }), avatars: [input], draftHeldPhotoIds: new Set([held.id]), customPoses: new Map() });
     expect(plan.avatars[0]?.free).toBe(0);
   });
@@ -62,7 +62,7 @@ describe("planAvatarInput", () => {
     await library.setRejected(avatar.id, rejected.id, true);
     const plan = planLaunch({
       draft: draft({ avatarIds: [avatar.id], categories: ["home", "travel", "cat-sunsets-on-roofs", "glam", "fit", "shoot"] }),
-      avatars: [planAvatarInput(library, avatar.id, false)],
+      avatars: [planAvatarInput(library, avatar.id, false, true)],
       draftHeldPhotoIds: new Set(),
       customPoses: new Map(),
     });
@@ -77,7 +77,7 @@ describe("planAvatarInput", () => {
       photoStates: (id) => library.photoStates(id),
       usageReasons: () => ["index-stale"],
     };
-    const input = planAvatarInput(distrusting, avatar.id, false);
+    const input = planAvatarInput(distrusting, avatar.id, false, true);
     expect(input.usage).toEqual({ state: "unknown", reasons: ["index-stale"] });
     const plan = planLaunch({ draft: draft({ avatarIds: [avatar.id] }), avatars: [input], draftHeldPhotoIds: new Set(), customPoses: new Map() });
     expect(plan.avatars[0]).toMatchObject({ free: 0, fromLibrary: 0, blocked: "usage-unknown" });
@@ -91,7 +91,7 @@ describe("planAvatarInput", () => {
 
   // The adapter must carry the library's own verdict on every axis: the planner's `free` equals `eligibleUnusedPhotos` (M2).
   const freeOf = (library: Library, avatarId: string): number =>
-    planLaunch({ draft: draft({ avatarIds: [avatarId] }), avatars: [planAvatarInput(library, avatarId, false)], draftHeldPhotoIds: new Set(), customPoses: new Map() }).avatars[0]?.free ?? -1;
+    planLaunch({ draft: draft({ avatarIds: [avatarId] }), avatars: [planAvatarInput(library, avatarId, false, true)], draftHeldPhotoIds: new Set(), customPoses: new Map() }).avatars[0]?.free ?? -1;
 
   test("a photo a video record lists carries usedIn and drops out of free, like the library's own list", async () => {
     const { library, avatar, generated } = await fixture();
@@ -99,7 +99,7 @@ describe("planAvatarInput", () => {
     const free = await library.addPhoto(avatar.id, PNG_1X1, generated("home"));
     await writeVideoRecord(root(), "video-00000001", sceneSpec(avatar.id, [used.id]));
     const reopened = (await openLibrary(root(), { now: steppingClock(), newId: sequentialIds("later") })).library;
-    expect(planAvatarInput(reopened, avatar.id, false).photos.find((p) => p.id === used.id)?.usedIn).toEqual(["video-00000001"]);
+    expect(planAvatarInput(reopened, avatar.id, false, true).photos.find((p) => p.id === used.id)?.usedIn).toEqual(["video-00000001"]);
     expect(freeOf(reopened, avatar.id)).toBe(1);
     expect(freeOf(reopened, avatar.id)).toBe(reopened.eligibleUnusedPhotos(avatar.id).length);
     expect(reopened.eligibleUnusedPhotos(avatar.id).map((p) => p.id)).toEqual([free.id]);
@@ -113,7 +113,7 @@ describe("planAvatarInput", () => {
     await library.addPhoto(avatar.id, PNG_1X1, generated("home"));
     reserved.add(byRender.id);
     library.holdPendingPhotos(avatar.id, "video-00000009", [byHold.id]);
-    const photos = planAvatarInput(library, avatar.id, false).photos;
+    const photos = planAvatarInput(library, avatar.id, false, true).photos;
     expect(photos.find((p) => p.id === byRender.id)?.reserved).toBe(true);
     expect(photos.find((p) => p.id === byHold.id)?.reserved).toBe(true);
     expect(freeOf(library, avatar.id)).toBe(1);
@@ -126,7 +126,7 @@ describe("planAvatarInput", () => {
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
     const imported = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: SAMPLE_IMPORTED_SOURCE }));
     await library.addPhoto(avatar.id, PNG_1X1, generated("home"));
-    const photos = planAvatarInput(library, avatar.id, false).photos;
+    const photos = planAvatarInput(library, avatar.id, false, true).photos;
     expect(photos.find((p) => p.id === master.id)?.eligible).toBe(false);
     expect(photos.find((p) => p.id === imported.id)?.eligible).toBe(false);
     expect(freeOf(library, avatar.id)).toBe(1);
