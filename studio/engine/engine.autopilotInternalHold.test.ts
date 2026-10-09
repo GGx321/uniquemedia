@@ -53,7 +53,8 @@ describe("a slice whose job ends INTERNAL (S4.6r)", () => {
       writeFileSync(path, damaged);
 
       const launch = await kit.startLaunch(started, draftOf([avatarId]));
-      const held = await kit.waitView(started, launch.launchId, "the internal hold", (v) => v.paidHold?.reason === "internal");
+      // The hold and its journal line are two writes: wait for both, or a slow runner reads the hold before its line.
+      const held = await kit.waitView(started, launch.launchId, "the internal hold and its journal line", (v) => v.paidHold?.reason === "internal" && v.logTail.some((l) => l.kind === "hold-internal"));
       expect(held.status).toBe("running");
       expect(held.paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed" } });
       const words = held.paidHold?.reason === "internal" ? (held.paidHold.detail.message ?? "") : "";

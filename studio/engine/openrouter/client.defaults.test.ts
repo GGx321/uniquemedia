@@ -37,23 +37,30 @@ test("arms the money core's 180 s request timeout by default", async () => {
 
 test("the default retry wait ends as soon as the signal aborts", async () => {
   const controller = new AbortController();
+  let abortedAt = 0;
   // Abort only once the 429 has been answered, so the abort lands in the retry
   // wait. A fixed timer from the start raced a slow runner: the abort could win
   // before the request was sent, and the reserve was then (rightly) released.
   const { client, calls } = defaultClient([
     () => {
-      setTimeout(() => controller.abort(), 20);
+      setTimeout(() => {
+        abortedAt = performance.now();
+        controller.abort();
+      }, 20);
       return { status: 429 };
     },
   ]);
-  const started = performance.now();
 
   const result = await client.generateImage(imageParams(money, { signal: controller.signal }));
 
   expect(result).toEqual({ status: "aborted", ledger: { action: "settled", costMicros: 0, estimated: false } });
   expect(calls).toHaveLength(1);
-  expect(performance.now() - started).toBeLessThan(500);
-}, 2_000);
+  // The default wait after a 429 is at least 1 s (`BACKOFF_BASE_MS`), so it would still have about 980 ms to go
+  // when the abort lands. Measured from the abort, not from the start: a slow runner spends its time on the
+  // ledger's writes before the request, which says nothing about the wait.
+  expect(abortedAt).toBeGreaterThan(0);
+  expect(performance.now() - abortedAt).toBeLessThan(900);
+}, 3_000);
 
 test("refuses to send an attempt id a second time (invariant 5)", async () => {
   const { client, calls } = defaultClient([{ status: 200, body: imageBody(PNG, { cost: 0.05 }) }]);
