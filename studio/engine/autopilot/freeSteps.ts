@@ -273,13 +273,12 @@ class FreeRun {
   /** Set by `#exportAnswers` when the gate threw (its answer is «yes, the engine checks again» for a submit, but «unknown» for a render's end). */
   #gateThrew = false;
   /**
-   * The outage epoch (S4.6r): counts the export outages this launch has seen, i.e. every time the folder's check refused or a render's end was read as a loss of the folder. A render takes the epoch
+   * The outage epoch (S4.6r): counts the export outages this launch has seen: it moves only when the folder was seen refusing (the check's refusal, or the engine's own `EXPORT_UNAVAILABLE` at a submit) and NEVER when a render's end is read
+   * as a loss, or two renders that fail for their own reasons would bump each other's epochs for ever. A render takes the epoch
    * at its submit (`#renderEpoch`); one that ends without a video after the epoch moved lived through an outage, so its failure is the folder's, whatever the check answers by the time its end is handled.
    */
   #outageEpoch = 0;
   readonly #renderEpoch = new Map<string, number>();
-  /** Why the folder was last seen refusing: the hold's reason for a loss that is read after the folder is back. */
-  #lastOutage: ExportUnavailableReason = "not-writable";
   /** Consecutive losses of the folder per key when there is no check to confirm them (see `#endedWithoutVideo`). */
   readonly #exportLosses = new Map<string, number>();
   readonly #retryAt = new Map<string, number>();
@@ -594,7 +593,8 @@ class FreeRun {
   }
 
   /**
-   * A render ended without a video and the library says «none». Whether the FOLDER is to blame is decided by the folder's own check at this moment, not by the job's word: what the job reports
+   * A render ended without a video and the library says «none». First rule: a render submitted before the latest outage the steps saw (`#outageEpoch`) lost its video to the folder, whatever the check answers
+   * now, so it is an export loss with no retry used. For a render that lived through no outage, the folder is judged by its own check at this moment, not by the job's word: what the job reports
    * (`EXPORT_UNAVAILABLE`, or an ffmpeg write that failed as `RENDER_FAILED` when a volume went away) can be a cause the check cannot see (a subfolder taken by a file, a commit past its deadline), and
    * resubmitting for ever on it would flood the launch.
    * - the check refuses (or a drain aborted it): the folder holds the renders, the video goes back, no retry is used;
@@ -610,7 +610,7 @@ class FreeRun {
     const submittedAt = this.#renderEpoch.get(key);
     if (submittedAt !== undefined && submittedAt < this.#outageEpoch) {
       this.#renderEpoch.delete(key);
-      return this.#exportLost(avatarId, key, said ?? this.#lastOutage, false);
+      return this.#exportLost(avatarId, key, said ?? this.#file()?.freeHold?.detail.exportReason ?? "not-writable", false);
     }
     if (this.#d.exportGate !== undefined && file !== null && video !== undefined) {
       this.#gateThrew = false;
@@ -1046,15 +1046,14 @@ class FreeRun {
       return true;
     }
     this.#gateRefused = true;
-    this.#sawOutage(answer.exportReason);
+    this.#sawOutage();
     await this.#setHold(answer.exportReason, answer.exportReason === "not-enough-space" ? { neededBytes: answer.neededBytes, freeBytes: answer.freeBytes } : { neededBytes: null, freeBytes: null });
     return false;
   }
 
   /** The folder was seen gone: every render submitted before now lived through it. */
-  #sawOutage(exportReason: ExportUnavailableReason): void {
+  #sawOutage(): void {
     this.#outageEpoch += 1;
-    this.#lastOutage = exportReason;
   }
 
   /** Writes the hold only when it is new or its reason changed: the figures move with every look and are not worth a write (every write is an `autopilot.changed`). */
@@ -1249,6 +1248,7 @@ class FreeRun {
       case "EXPORT_UNAVAILABLE":
         // The engine's own check refused the folder or the disk (a folder that went away between the gate and the submit): the same hold, and the video goes back to «assigned».
         this.#gateRefused = true;
+        this.#sawOutage();
         await this.#setHold(e.exportReason ?? "not-writable", { neededBytes: null, freeBytes: null });
         return wait();
       case "RENDER_QUEUE_FULL":

@@ -55,7 +55,7 @@ function vanishingFolder(): { deps: Partial<EngineDeps>; away: () => string; bri
   };
 }
 
-/** Resolves once no video of the launch is `rendering`: every failed render has been read as a loss and its video is back in the queue. */
+/** Resolves once no video of the launch is `rendering`: every failed render has been read as a loss and its video is back in the queue. Throws at its own deadline. */
 async function classified(started: Awaited<ReturnType<typeof kit.boot>>, launchId: string): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
@@ -63,6 +63,7 @@ async function classified(started: Awaited<ReturnType<typeof kit.boot>>, launchI
     if (listed.videos.every((video) => video.state !== "rendering")) return;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+  throw new Error("timed out waiting for every failed render to be classified");
 }
 
 describe("an export folder that vanishes mid-render (S4.6r)", () => {
