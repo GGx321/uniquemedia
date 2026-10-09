@@ -1,6 +1,7 @@
 import {
   AvatarDescriptor,
   checkImageChoice,
+  LaunchView,
   decodePhotoCursor,
   pagePhotoList,
   type ApiKeyStatus,
@@ -416,6 +417,8 @@ interface MockRun {
    * writer phase of its own: a job marks it done as it starts.
    */
   writerDone: boolean;
+  /** Stage 4 (S4.9b): the launch this run is a batch of (`RunSummary.launchId`); a seed's, absent for the owner's own. */
+  launchId?: string;
 }
 
 interface MockRunJob {
@@ -1470,7 +1473,7 @@ export class MockEngine implements EngineBridge {
    * settled slots have used up, without needing a real run to actually
    * exhaust it slot by slot). Answers the run's id.
    */
-  seedRun(request: RunRequest, done: number, capMicros?: number, opts: { writerDone?: boolean } = {}): string {
+  seedRun(request: RunRequest, done: number, capMicros?: number, opts: { writerDone?: boolean; launchId?: string } = {}): string {
     this.seedCounter += 1;
     const n = String(this.seedCounter).padStart(4, "0");
     const runId = `run-seed-${n}`;
@@ -1488,6 +1491,7 @@ export class MockEngine implements EngineBridge {
       photoIds: [],
       categoryNames: this.categoryNamesOf(request.categories),
       writerDone: opts.writerDone ?? done > 0,
+      ...(opts.launchId === undefined ? {} : { launchId: opts.launchId }),
     };
     const { expected } = this.slotPrice(run);
     slots.slice(0, Math.min(done, slots.length)).forEach((slot, i) => {
@@ -1568,6 +1572,20 @@ export class MockEngine implements EngineBridge {
   /** Emits an `engine.notice` (a restart, a settings reset) for tests of the renderer's notice handling. */
   emitNotice(notice: EngineNotice): void {
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "engine.notice", payload: { notice } });
+  }
+
+  /**
+   * Stage 4 (S4.9b): announces `launch` as the engine's word on the library's launch (`autopilot.changed`), parsed by the contract first. The mock moves a
+   * launch only by the owner's clicks (S4.8 runs it on timers): the renderer's tests reach the other states (a hold, «Ставим на паузу…», a restart) this way.
+   * The mock's own launch is untouched, so a later command answers from it.
+   */
+  announceLaunch(launch: LaunchView): void {
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "autopilot.changed", payload: { launch: LaunchView.parse(launch) } });
+  }
+
+  /** Stage 4 (S4.9b): a scene set seeded while the engine runs — a launch's set (`launchId`), which the mock's launch names but does not write. */
+  seedSceneSet(seed: MockSceneSetSeed): void {
+    this.sceneSets.add(seed);
   }
 
   get currentBootId(): string {
@@ -3465,6 +3483,8 @@ export class MockEngine implements EngineBridge {
       resumable: !running && open > 0 && !capExhausted,
       capExhausted,
       remainingWorstMicros: this.resumePrice(run).worstMicros,
+      // The contract's rule: a launch's batch names it only while the launch is unfinished; after, it is an ordinary run.
+      ...(run.launchId === undefined || !this.autopilot.isUnfinished(run.launchId) ? {} : { launchId: run.launchId }),
     };
   }
 

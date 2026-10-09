@@ -475,23 +475,11 @@ export function videosOf(launch: LaunchView): { done: number; planned: number } 
   return { done: launch.avatars.reduce((sum, a) => sum + a.videos.done, 0), planned: launch.plan.videos };
 }
 
-/** The launch row's one line: «готово 14 из 30 видео · потрачено $1.25 из $4.14» («из» is W′ on every screen, the design's M4). */
-export function launchLine(launch: LaunchView): string {
-  const { done, planned } = videosOf(launch);
-  const spent = launch.plannedWorstMicros === 0 ? "" : ` · потрачено ${formatUsdTiered(launch.spentMicros, "nearest")} из ${ceilingUsd(launch.plannedWorstMicros)}`;
-  return `готово ${done} из ${planned}${NBSP}видео${spent}`;
-}
-
 // ---------- «Стоп» ----------
 
-/** Whether «Стоп» is offered: a launch that works or rests can be stopped; one that is stopping or ended cannot. */
-export function canStop(launch: LaunchView): boolean {
-  return launch.status === "running" || launch.status === "pausing" || launch.status === "paused";
-}
-
 /**
- * «Остановить запуск?» in its short form (ApStopConfirm; the per-set lines are S4.9b's): that nothing new starts and nothing is cut off, what stays, and
- * what was spent of W′. Every figure is the launch view's.
+ * «Остановить запуск?» (ApStopConfirm): that nothing new starts and nothing is cut off, what stays, and what was spent of W′; the lines for each set are
+ * liveModel's `stopSetLine` (S4.9b). Every figure is the launch view's.
  */
 export function stopTexts(launch: LaunchView): { readonly lead: string; readonly stays: readonly string[]; readonly spent: string | null } {
   const requests = launch.inFlight.requests;

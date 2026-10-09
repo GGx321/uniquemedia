@@ -162,6 +162,13 @@ const PATHS = {
       <path d="M4 20c0-3.9 3.6-6 8-6s8 2.1 8 6" />
     </>
   ),
+  /** S4.9b: «Studio был закрыт — запуск ждёт вас» (ApPausedRestart). */
+  pause: (
+    <>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M10 9v6M14 9v6" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

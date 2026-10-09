@@ -7,6 +7,7 @@ import { countOf } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
+import { batchNote, frozenNote, isLaunchBatch, isLaunchRun, launchPaused, launchRowOf, type LaunchLink } from "./launchSet";
 import { modelName } from "./runForm";
 import { EMPTY_IDEA, type IdeaStart } from "./SceneIdeaForm";
 import { about, focusLost } from "./scenePaid";
@@ -294,6 +295,39 @@ interface ScenesColumnProps {
   scenesJob: JobView | null;
   /** The compose's price as the card shows it, for the «как это работает» box. */
   composePrice: Estimate | null;
+  /** S4.9b: the set is an unfinished launch's: shown whatever «Сцены на проверку» says, without «+ Своя сцена», read only once the launch took it. */
+  launchLink: LaunchLink | null;
+}
+
+/**
+ * A stopped batch of a launch (`RunSummary.launchId`, HostStates «Фото»): what it drew, and «в запуске автопилота» where «Продолжить · до $…» would be —
+ * `runs.resume` on it is refused (`launch-set`); «Продолжить» in «Автопилоте» picks it up.
+ */
+function LaunchRunRow({ run, paused }: { run: RunSummary; paused: boolean }) {
+  const titleId = useId();
+  const dateId = useId();
+  return (
+    <article className="photos-scene photos-run" aria-labelledby={`${titleId} ${dateId}`}>
+      <div className="photos-run-top">
+        <div className="photos-scene-main">
+          <div className="photos-scene-tags">
+            <span id={titleId} className="tag">
+              Остановлена
+            </span>
+            <span id={dateId} className="tag tag-o">
+              {RUN_DATE.format(Date.parse(run.createdAt))}
+            </span>
+          </div>
+          <p className="photos-scene-text">
+            Готово {run.done} из {run.total} · {paused ? "партия запуска на паузе" : "партия запуска ждёт"}
+          </p>
+        </div>
+        <span className="ap-in" title="Продолжить и остановить — в «Автопилоте»: «Продолжить», «Стоп»">
+          в запуске автопилота
+        </span>
+      </div>
+    </article>
+  );
 }
 
 /**
@@ -322,6 +356,7 @@ export function ScenesColumn({
   sliceView,
   scenesJob,
   composePrice,
+  launchLink,
 }: ScenesColumnProps) {
   const { client, store, sceneSets } = useEngine();
   const mounted = useMounted();
@@ -371,8 +406,13 @@ export function ScenesColumn({
     if (!reply.ok) setCancelError(reply.error);
   }
 
-  // The set the column shows: with review on, the open set or the newest used one; with review off, none (it is kept aside, said below).
-  const shownSet = review && sceneSet !== undefined && sceneSet !== null ? sceneSet : null;
+  // The set the column shows: with review on, the open set or the newest used one; with review off, none (it is kept aside, said below). A launch's set
+  // shows either way (S4.9b): the launch has its own switch.
+  const shownSet = (review || launchLink !== null) && sceneSet !== undefined && sceneSet !== null ? sceneSet : null;
+  // The running batch is the launch's — its `RunSummary.launchId` says so; before `runs.list` names it, only while the launch runs and the avatar's row draws
+  // (round 1 M2) — «в запуске автопилота» instead of «Отменить». An owner's own run keeps its «Отменить» and its own limit.
+  const launchRow = launchRowOf(view.autopilot, avatar.avatarId);
+  const launchBatch = running && runJob !== null && isLaunchBatch(runJob.runId, runs, launchRow);
   const openSet = sceneSet !== undefined && sceneSet !== null && sceneSet.status !== "used" ? sceneSet : null;
   const used = shownSet !== null && shownSet.status === "used";
   const fromSet = used && runJob !== null && runJob.runId === shownSet.runId;
@@ -381,7 +421,8 @@ export function ScenesColumn({
   const counts = shownSet === null ? null : headerCounts(shownSet, used ? (running && fromSet ? "active" : "ended") : null);
   const runCreatedAt = used ? (runs.find((r) => r.runId === shownSet.runId)?.createdAt ?? null) : null;
   // «+ Своя сцена» only for an open set; it waits while a write of the set runs or the form is open. An empty set opens with the form (ReviewEmpty).
-  const canAdd = shownSet !== null && !used;
+  // Never on a launch's set (§4.7, M8 option б): its own scenes would not be drawn.
+  const canAdd = shownSet !== null && !used && launchLink === null;
   const addOff = live || idea !== null;
   const emptySetId = openSet !== null && openSet.scenes.length === 0 && openSet.write === null ? openSet.sceneSetId : null;
   useEffect(() => {
@@ -413,6 +454,11 @@ export function ScenesColumn({
               <Icon name="plus" size={14} strokeWidth={2.4} />
               Своя сцена
             </button>
+          )}
+          {launchLink !== null && shownSet !== null && (
+            <span className="tag tag-o photos-sec-action" title="Свои сцены в запуск не входят — добавить их можно в обычный набор на этом экране">
+              свои сцены — не в запуске
+            </span>
           )}
         </div>
         {counts !== null && (
@@ -446,14 +492,21 @@ export function ScenesColumn({
             <span id={progressId} className="job-progress-label">
               Рисуем фото: {runJob.done} из {total}
             </span>
-            <button ref={runCancelRef} type="button" className="btn btn-s" onClick={() => void cancel()} disabled={cancelling || activeRunId === null}>
-              {cancelling ? "Отменяем…" : "Отменить"}
-            </button>
+            {launchBatch ? (
+              <span className="ap-in" title="Отменить и продолжить — в «Автопилоте»: «Пауза», «Стоп»">
+                в запуске автопилота
+              </span>
+            ) : (
+              <button ref={runCancelRef} type="button" className="btn btn-s" onClick={() => void cancel()} disabled={cancelling || activeRunId === null}>
+                {cancelling ? "Отменяем…" : "Отменить"}
+              </button>
+            )}
           </div>
           <div className="bar" role="progressbar" aria-labelledby={progressId} aria-valuemin={0} aria-valuemax={total} aria-valuenow={runJob.done}>
             <span style={{ width: `${total > 0 ? (runJob.done / total) * 100 : 0}%` }} />
           </div>
-          {fromSet && runCreatedAt !== null && <span className="mono faint scene-progress-note">запуск из набора сцен · {RUN_DATE.format(Date.parse(runCreatedAt))}</span>}
+          {launchBatch && launchRow !== null && <span className="mono faint scene-progress-note">{batchNote(launchRow)}</span>}
+          {!launchBatch && fromSet && runCreatedAt !== null && <span className="mono faint scene-progress-note">запуск из набора сцен · {RUN_DATE.format(Date.parse(runCreatedAt))}</span>}
         </div>
       )}
       {cancelError && <ErrorNotice error={cancelError} />}
@@ -483,7 +536,10 @@ export function ScenesColumn({
       {runs.filter((run) => run.capExhausted).map((run) => (
         <EndedRunRow key={run.runId} run={run} />
       ))}
-      {runs.filter((run) => run.resumable).map((run) => (
+      {runs.filter((run) => run.resumable && isLaunchRun(run)).map((run) => (
+        <LaunchRunRow key={run.runId} run={run} paused={launchRow !== null && launchPaused(launchRow.launch)} />
+      ))}
+      {runs.filter((run) => run.resumable && !isLaunchRun(run)).map((run) => (
         <ResumeRow
           key={`${run.runId}:${run.open}`}
           run={run}
@@ -495,7 +551,7 @@ export function ScenesColumn({
         />
       ))}
 
-      {!review && (
+      {!review && launchLink === null && (
         <article className="photos-soon scene-box" aria-label="Проверка выключена">
           <div className="photos-scene-tags">
             <span className="tag">проверка выключена</span>
@@ -556,6 +612,8 @@ export function ScenesColumn({
           titleRef={titleRef}
           addRef={addRef}
           counterRef={counterRef}
+          inLaunch={launchLink !== null}
+          frozenNote={launchLink === null ? null : frozenNote(launchLink)}
         />
       )}
     </section>

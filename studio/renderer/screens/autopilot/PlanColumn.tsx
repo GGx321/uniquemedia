@@ -1,33 +1,26 @@
-import { type ReactNode, type RefObject, useId, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useId, useRef } from "react";
 import type { EngineError, LaunchPreview, LaunchView } from "../../../shared/engine";
-import { useEngine } from "../../engine/react";
 import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
-import { useMounted } from "../photos/shared";
 import { useOverflows } from "./layout";
 import {
-  canStop,
   ceilingUsd,
   clockLabel,
   diskLine,
-  launchLine,
   launchPlanBits,
-  launchTitle,
   monthMeter,
   priceSourceLabel,
   planTiles,
-  stoppingLine,
   type NoteLink,
   type NoteText,
   type PlanNote,
 } from "./planModel";
-import { StopDialog } from "./StopDialog";
 import type { PriceChange } from "./useLaunchPlan";
 
 // S4.9a: column 3 of «Автопилот» (AutopilotS4.dc.html): the plan card with its tiles, the month's bar, the notes over «Запустить» and the button itself;
-// while a launch runs, the plan folded to «План запуска» (the design's decision 3; not drawn at 1200, where «Потрачено … из $W′» says the limit) and the
-// launch's own row with «Стоп». The live card with «Пауза», the avatars' progress and the log is S4.9b: this row is where it goes.
+// while a launch runs, the plan folded to «План запуска» (the design's decision 3; not drawn at 1200, where «Потрачено … из $W′» says the limit). The live
+// card under it (S4.9b) is LaunchCard.tsx; the column lets it grow to the column's foot, its own body scrolling (round 1 M6).
 
 export interface GoButtonState {
   readonly title: string;
@@ -200,76 +193,6 @@ export function PlanMini({ launch }: { launch: LaunchView }) {
           <span key={bit}>{bit}</span>
         ))}
       </div>
-    </section>
-  );
-}
-
-/**
- * The launch's row: its state, since when, how far it got and what it spent of W′, and «Стоп» (the design's decision 9: it asks first). The heading takes the
- * focus once «Запустить» is accepted and once «Остановить» is clicked (the design's keyboard table); «Останавливаем…» stays until the engine's view says the
- * launch stopped. S4.9b grows the row into the live card («Пауза», the avatars' progress, the log, the holds).
- */
-export function LaunchRow({ launch, titleRef }: { launch: LaunchView; titleRef: RefObject<HTMLHeadingElement | null> }) {
-  const ids = useId();
-  const { client } = useEngine();
-  const mounted = useMounted();
-  const stopRef = useRef<HTMLButtonElement>(null);
-  const [asking, setAsking] = useState(false);
-  /** The launch this window asked to stop: «Останавливаем…» until the view says it stopped (or the ask was refused). */
-  const [stopSent, setStopSent] = useState<string | null>(null);
-  const [error, setError] = useState<EngineError | null>(null);
-  const stoppable = canStop(launch);
-  const stopping = launch.status === "stopping" || (stopSent === launch.launchId && stoppable);
-  const status = stopping ? "stopping" : launch.status;
-  const ended = status === "done" || status === "stopped";
-  const busy = status === "pausing" || status === "stopping";
-  const tone = status === "done" ? "ap-live-done" : status === "paused" || busy ? "ap-live-paused" : status === "stopped" ? "ap-live-stopped" : "";
-
-  const stop = async (): Promise<void> => {
-    setAsking(false);
-    setError(null);
-    setStopSent(launch.launchId);
-    const reply = await client.request("autopilot.stop", { launchId: launch.launchId });
-    if (!mounted.current || reply.ok) return;
-    setStopSent(null);
-    setError(reply.error);
-  };
-
-  return (
-    <section id="ap-live" className={`card ap-live ${tone}`} aria-labelledby={`${ids}-title`}>
-      <div className="ap-live-head">
-        <h2 id={`${ids}-title`} ref={titleRef} className="ap-h2 ap-live-title" tabIndex={-1} aria-live="polite">
-          {busy && <span className="spin ap-live-spin" aria-hidden="true" />}
-          {launchTitle(status)}
-        </h2>
-        <span className="mono muted">{ended && launch.endedAt !== null ? `${clockLabel(launch.createdAt)}–${clockLabel(launch.endedAt)}` : `с ${clockLabel(launch.createdAt)}`}</span>
-        {(stoppable || stopping) && (
-          <div className="ap-live-actions">
-            <button
-              ref={stopRef}
-              type="button"
-              className="btn btn-s"
-              aria-disabled={stopping || undefined}
-              aria-busy={stopping || undefined}
-              aria-haspopup="dialog"
-              onClick={stopping ? undefined : () => setAsking(true)}
-            >
-              Стоп
-            </button>
-          </div>
-        )}
-      </div>
-      {stopping && <p className="ap-live-sub">{stoppingLine(launch)}</p>}
-      <p className="mono muted ap-live-line">{launchLine(launch)}</p>
-      {error !== null && <ErrorNotice error={error} />}
-      {asking && (
-        <StopDialog
-          launch={launch}
-          onCancel={() => setAsking(false)}
-          onStop={() => void stop()}
-          returnFocus={(stopped) => (stopped ? titleRef.current : stopRef.current)}
-        />
-      )}
     </section>
   );
 }

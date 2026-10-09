@@ -14,6 +14,8 @@ import { ownAnglesLine } from "./categoryText";
 import { CategoryCardNotices } from "./CategoryNotices";
 import { CategoryRow } from "./CategoryRow";
 import { CategorySheet } from "./CategorySheet";
+import type { LaunchLink } from "./launchSet";
+import { LaunchSetStrip } from "./LaunchSetStrip";
 import { RecomposeDialog } from "./RecomposeDialog";
 import {
   arrangeCategories,
@@ -86,6 +88,10 @@ interface GenerateCardProps {
   onComposePrice: (estimate: Estimate | null) => void;
   /** Scrolls the column to a scene and puts the focus on it (a reason's link). */
   onFocusScene: (sceneId: number) => void;
+  /** S4.9b: the set is an unfinished launch's: its own strip with the launch's band, whatever «Сцены на проверку» says here. */
+  launchLink: LaunchLink | null;
+  /** Opened from «Автопилот» for the launch's scenes: the focus starts on «Продолжить запуск». */
+  focusLaunch: boolean;
 }
 
 /**
@@ -114,6 +120,8 @@ export function GenerateCard({
   scenesJob,
   onComposePrice,
   onFocusScene,
+  launchLink,
+  focusLaunch,
 }: GenerateCardProps) {
   const { client, store, sceneSets } = useEngine();
   const navigate = useNavigate();
@@ -637,7 +645,9 @@ export function GenerateCard({
 
   return (
     <>
-      {review && openSet !== null ? (
+      {launchLink !== null && sceneSet !== undefined && sceneSet !== null ? (
+        <LaunchSetStrip avatar={avatar} view={view} set={sceneSet} link={launchLink} focusGo={focusLaunch} />
+      ) : review && openSet !== null ? (
         <SceneStrip
           avatar={avatar}
           view={view}

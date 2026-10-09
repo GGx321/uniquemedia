@@ -19,6 +19,7 @@ import { ScenesColumn } from "./photos/ScenesColumn";
 import { readSceneReview, viewerStorage, writeSceneReview } from "./photos/sceneReview";
 import { focusSceneCard } from "./photos/SceneSetPanel";
 import { liveScenesJob } from "./photos/SceneStrip";
+import { launchLinkOf } from "./photos/launchSet";
 import { useMounted } from "./photos/shared";
 import { UsageNotice } from "./photos/UsageNotice";
 import { avatarPhotoKeys, usePhotoPages } from "./photos/usePhotoPages";
@@ -61,7 +62,7 @@ function HeaderCounts({ avatar }: { avatar: AvatarSummary }) {
   );
 }
 
-function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; view: EngineView; initialTab: PhotosTab }) {
+function AvatarPhotos({ avatar, view, initialTab, focus }: { avatar: AvatarSummary; view: EngineView; initialTab: PhotosTab; focus: "launch" | null }) {
   const { client, store } = useEngine();
   const ready = view.phase === "ready";
   const { avatarId } = avatar;
@@ -148,6 +149,8 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   const sceneSet = sceneEntry.status === "ready" ? sceneEntry.sceneSet : undefined;
   const sceneReadError = sceneEntry.status === "failed" ? sceneEntry.error : null;
   const scenesJob = liveScenesJob(view.jobs, avatarId);
+  // S4.9b: the set is an unfinished launch's (its band, «Продолжить запуск», «в запуске автопилота»), whatever this machine's «Сцены на проверку» says.
+  const launchLink = launchLinkOf(view.autopilot, avatarId, sceneSet);
   const [composePrice, setComposePrice] = useState<Estimate | null>(null);
 
   // The gallery: on open, and again whenever this avatar's run reports a
@@ -176,8 +179,11 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   });
 
   // The runs a resume can continue: on open, whenever this avatar's run job
-  // starts or ends, and after this window's own start or resume.
-  const statusKey = runJob ? `${runJob.jobId}:${runJob.status}` : "none";
+  // starts or ends, after this window's own start or resume, and whenever the
+  // library's launch moves to another status (S4.9b L9: a batch of a launch
+  // that ended is the owner's own to continue, its `launchId` gone).
+  const autopilot = view.autopilot;
+  const statusKey = `${runJob ? `${runJob.jobId}:${runJob.status}` : "none"}|${autopilot === null ? "none" : `${autopilot.launchId}:${autopilot.status}`}`;
   useEffect(() => {
     if (!ready) return;
     let alive = true;
@@ -423,6 +429,8 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
               scenesJob={scenesJob}
               onComposePrice={setComposePrice}
               onFocusScene={focusSceneCard}
+              launchLink={launchLink}
+              focusLaunch={focus === "launch"}
             />
 
             <div className="photos-body">
@@ -447,6 +455,7 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
                 onPaidInFlightChange={setPaidInFlight}
                 blockedReason={paidBlockedReason(view) ?? (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : null)}
                 onResumed={launched}
+                launchLink={launchLink}
               />
               <div className="photos-gallery-col">
                 {markError !== null && (
@@ -517,7 +526,7 @@ function NoAvatar() {
  * «K видео» opens the «Видео» tab), or from the sidebar's «Фото» (the avatar
  * shown last, else the first active one).
  */
-export function PhotosScreen({ avatarId, tab = "photos" }: { avatarId: string | null; tab?: PhotosTab }) {
+export function PhotosScreen({ avatarId, tab = "photos", focus = null }: { avatarId: string | null; tab?: PhotosTab; focus?: "launch" | null }) {
   const view = useEngineView();
   // L11/N5: once the route names no avatar (the sidebar's own «Фото»), or
   // names one that is no longer present (a library switch, say — N5: a
@@ -564,5 +573,5 @@ export function PhotosScreen({ avatarId, tab = "photos" }: { avatarId: string | 
     }
     return <NoAvatar />;
   }
-  return <AvatarPhotos key={avatar.avatarId} avatar={avatar} view={view} initialTab={tab} />;
+  return <AvatarPhotos key={avatar.avatarId} avatar={avatar} view={view} initialTab={tab} focus={focus} />;
 }
