@@ -18,7 +18,7 @@ import type { Budget } from "../money/budget";
 import type { LaunchRegistry } from "../sceneSets/launchRegistry";
 import { EventCoalescer, COALESCE_INTERVAL_MS } from "./coalescer";
 import { launchGroupKey, type LaunchGroups, type LaunchGroupSpec } from "./groups";
-import { buildLaunchFile, isEnded, type LaunchFile } from "./launchFile";
+import { buildLaunchFile, isEnded, type FileMusic, type LaunchFile } from "./launchFile";
 import { entryIdOf, type LaunchStore, type StoreScan } from "./launchStore";
 import { launchViewOf, minimalViewOf, type ViewContext } from "./launchView";
 import type { LaunchStores } from "./lookup";
@@ -94,6 +94,8 @@ export interface OrchestratorDeps {
   degrade(): void;
   coalesce?: { intervalMs?: number; now?: () => number; schedule?: (run: () => void, ms: number) => () => void };
   warn?(line: string): void;
+  /** The title and artist of a track the free steps gave a video, for the results list; null or absent: the list titles it by the track's id. */
+  trackLabel?(music: FileMusic): { title: string; artist: string | null } | null;
   /** Test seam: the view builder. */
   viewOf?: (file: LaunchFile, ctx: ViewContext) => unknown;
 }
@@ -465,7 +467,7 @@ export class Orchestrator {
     const file = this.#current?.launchId === launchId ? this.#current : read.file;
     const view = this.#validView(file, log.slice(-TAIL));
     if (view === null) throw fail({ code: "INTERNAL", detail: "the launch's view does not fit the contract" });
-    return { launch: view, log, videos: read.file.avatars.flatMap((a) => a.videos.flatMap((v) => videoOf(a.avatarId, v))) };
+    return { launch: view, log, videos: read.file.avatars.flatMap((a) => a.videos.flatMap((v) => videoOf(a.avatarId, v, this.#d.trackLabel))) };
   }
 
   /** `NOT_FOUND` when no plain unreadable entry matches the id, or the file reads fine now (it is never moved). */
@@ -924,11 +926,17 @@ function holdLine(hold: PaidHold, at: string): LogLine {
   }
 }
 
-/** The video as the results list shows it. Only the states S4.6a writes are mapped; `done` waits for S4.6c2, which records the file's length, size and track. */
-function videoOf(avatarId: string, v: LaunchFile["avatars"][number]["videos"][number]): LaunchVideo[] {
+/** The video as the results list shows it. `done` lists when the file kept its length, size and track (S4.6c2). */
+function videoOf(avatarId: string, v: LaunchFile["avatars"][number]["videos"][number], label: OrchestratorDeps["trackLabel"]): LaunchVideo[] {
   const base = { key: v.key, avatarId, shape: v.shape, size: v.size, durationMs: null, bytes: null, track: null, dropReason: null, videoId: null, publishedAt: null } as const;
   if (v.state === "dropped") return [{ ...base, state: "dropped", dropReason: v.dropReason, videoId: v.videoId }];
   if (v.state === "waiting-music") return [{ ...base, state: "waiting-music" }];
+  // A done video lists with the length and size the free steps kept and the track it was given; one without them (done before they were kept) cannot meet the contract and is left out.
+  if (v.state === "done" && v.videoId !== null && v.durationMs !== undefined && v.bytes !== undefined && v.music !== undefined) {
+    const id = v.music.source === "trending" ? v.music.trackId : v.music.mediaId;
+    const named = label?.(v.music) ?? null;
+    return [{ ...base, state: "done", videoId: v.videoId, durationMs: v.durationMs, bytes: v.bytes, track: { source: v.music.source, title: named?.title ?? id, artist: named?.artist ?? null } }];
+  }
   if (v.state === "rendering" && v.videoId !== null) return [{ ...base, state: "rendering", videoId: v.videoId }];
   return [];
 }

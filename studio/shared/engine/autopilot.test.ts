@@ -284,9 +284,9 @@ describe("PaidHold: a strict union by reason", () => {
 // ---------- the log ----------
 
 describe("LogLine", () => {
-  test("the kinds are the 23 rows of the design's log sheet (the plan counted 22) and the 13 more the artboards draw (holds, a busy avatar, a restart, scenes being written, a dropped render)", () => {
+  test("the kinds are the 23 rows of the design's log sheet (the plan counted 22), the 13 more the artboards draw (holds, a busy avatar, a restart, scenes being written, a dropped render) and the library-unknown wait (S4.6c2)", () => {
     expect<string[]>([...LOG_KINDS].sort()).toEqual(Object.keys(LOG_SAMPLES).sort());
-    expect(LOG_KINDS.length).toBe(36);
+    expect(LOG_KINDS.length).toBe(37);
   });
 
   test.each(Object.keys(LOG_SAMPLES))("accepts a %s line and round-trips it", (kind) => {
@@ -480,7 +480,7 @@ describe("LaunchView avatar rows", () => {
     expect(rowOf({ phase: "sleeping" })).toBe(false);
   });
 
-  test.each(["avatar-busy", "open-set", "paid-hold"])("a waiting avatar names why: %s", (reason) => {
+  test.each(["avatar-busy", "open-set", "paid-hold", "library-unknown"])("a waiting avatar names why: %s", (reason) => {
     expect(rowOf({ phase: "waiting", waiting: { reason } })).toBe(true);
   });
 

@@ -354,4 +354,53 @@ describe("the log", () => {
     const numbers = all.map((l) => (l.kind === "done" ? l.videosDone : -1));
     expect(numbers).toEqual([...numbers].sort((a, b) => a - b));
   });
+
+  // S4.6c2 (plan §3.3, §18.11): the real limits are 5 000 lines, cut back to the newest 4 000. The file is seeded whole (5 000 fsynced appends would only slow the test).
+  const seedLines = async (count: number): Promise<void> => {
+    await mkdir(dir(), { recursive: true });
+    await writeFile(join(dir(), `${ID}.log.jsonl`), Array.from({ length: count }, (_, i) => `${JSON.stringify(line(i + 1))}\n`).join(""));
+  };
+  const linesOnDisk = async (): Promise<string[]> => (await readFile(join(dir(), `${ID}.log.jsonl`), "utf8")).split("\n").filter((l) => l !== "");
+
+  test("a log of exactly 5 000 lines is left whole", async () => {
+    await seedLines(4_999);
+    await store().appendLog(ID, line(5_000));
+    expect(await linesOnDisk()).toHaveLength(5_000);
+  });
+
+  test("the 5 001st line cuts the log back to the newest 4 000, and the new line is the last", async () => {
+    await seedLines(5_000);
+    await store().appendLog(ID, line(5_001));
+    const kept = await linesOnDisk();
+    expect(kept).toHaveLength(4_000);
+    expect(JSON.parse(kept.at(-1) ?? "{}")).toEqual(line(5_001));
+    expect(JSON.parse(kept[0] ?? "{}")).toEqual(line(1_002));
+  });
+
+  test("after the cut the log counts on from 4 000: the next cut comes 1 000 lines later, not at once", async () => {
+    await seedLines(5_000);
+    const s = store();
+    await s.appendLog(ID, line(5_001));
+    for (let n = 5_002; n <= 5_010; n++) await s.appendLog(ID, line(n));
+    expect(await linesOnDisk()).toHaveLength(4_009);
+  });
+
+  test("a kind outside the closed set is refused and nothing is written", async () => {
+    const s = store();
+    await s.appendLog(ID, line(1));
+    const stray = { at: AT, kind: "made-up" } as unknown as LogLine;
+    await expect(s.appendLog(ID, stray)).rejects.toMatchObject({ code: "invalid" });
+    expect(await linesOnDisk()).toHaveLength(1);
+  });
+
+  test.each<LogLine>([
+    { at: AT, avatarId: "avatar-aaaaaaaa", kind: "waiting-music", key: "0-1", neededMs: 8_000 },
+    { at: AT, avatarId: "avatar-aaaaaaaa", kind: "library-unknown" },
+    { at: AT, kind: "music-refresh", added: 12, remaining: 18 },
+    { at: AT, kind: "hold-export", exportReason: "not-enough-space" },
+  ])("the S4.6c2 line $kind is written and read back as it was", async (written) => {
+    const s = store();
+    await s.appendLog(ID, written);
+    expect(await s.readLog(ID, 10)).toEqual([written]);
+  });
 });
