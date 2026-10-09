@@ -1,20 +1,17 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import type { AvatarSummary, EngineError, PhotoSummary } from "../../../shared/engine";
-import { countOf } from "../../lib/format";
+import { countOf, groupNumber, NBSP, plural } from "../../lib/format";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice } from "../../ui/Notice";
 import { Portrait, Silhouette } from "../../ui/Portrait";
+import { MorePhotos } from "./MorePhotos";
+import type { PhotoPages } from "./photoPages";
 import { PhotoViewer } from "./PhotoViewer";
 import { heldLabel, montagePickRefusal, PhotoBadges, type MarkControl } from "./photoState";
 import { photoCategoryLabel } from "./runForm";
 import { viewerPhotos, viewerPlace } from "./viewerModel";
+import type { MoreState } from "./usePhotoPages";
 import { galleryPhotos, type GalleryFilter } from "./videosModel";
-
-/** What photos.list last answered: the photos it could list, and how many more it could not. */
-export interface GalleryList {
-  photos: readonly PhotoSummary[];
-  skippedTotal: number;
-}
 
 /** The slots of the run still drawing: how many there are, and how many of them the network can be drawing at once. */
 export interface PendingSlots {
@@ -120,22 +117,41 @@ function PendingTiles({ pending }: { pending: PendingSlots }) {
   );
 }
 
-/** What the gallery says when a filter leaves nothing. */
-function emptyText(filter: GalleryFilter, usage: AvatarSummary["usage"]): { title: string; text: string } {
+const NOT_LOADED_FORMS = ["не загружено", "не загружены", "не загружено"] as const;
+
+/** «Ещё 1 201 фото не загружено» (S4.P2): the photos beyond the pages read, which a filter has not seen yet. */
+const notLoaded = (n: number): string => `Ещё ${groupNumber(n)}${NBSP}фото ${plural(n, NOT_LOADED_FORMS)}`;
+
+/** What the gallery says when a filter leaves nothing; `remaining`: photos beyond the pages read (S4.P2), where the filter may yet find some. */
+function emptyText(filter: GalleryFilter, usage: AvatarSummary["usage"], remaining: number): { title: string; text: string } {
   if (filter === "unused") {
-    return usage.state === "unknown"
-      ? { title: "Свободные фото не известны", text: "Пока использование фото неизвестно, Studio не считает ни одно фото свободным." }
+    if (usage.state === "unknown") return { title: "Свободные фото не известны", text: "Пока использование фото неизвестно, Studio не считает ни одно фото свободным." };
+    return remaining > 0
+      ? { title: "Среди загруженных свободных нет", text: `${notLoaded(remaining)} — свободные могут быть среди них.` }
       : { title: "Неиспользованных фото нет", text: "Все подходящие фото уже в видео или в рендере. Новые кадры появятся после запуска выше." };
   }
-  if (filter === "rejected") return { title: "Отклонённых фото нет", text: "Отклонённое фото не попадает в видео. Отклонить можно кнопкой на фото." };
+  if (filter === "rejected") {
+    return remaining > 0
+      ? { title: "Среди загруженных отклонённых нет", text: `${notLoaded(remaining)} — отклонённые могут быть среди них.` }
+      : { title: "Отклонённых фото нет", text: "Отклонённое фото не попадает в видео. Отклонить можно кнопкой на фото." };
+  }
   return { title: "Фото пока нет", text: "Задайте запуск выше — готовые кадры появятся здесь." };
 }
 
+/** «Показать ещё» (S4.P2): the next page of photos.list, from `usePhotoPages`. */
+export interface GalleryMore {
+  readonly state: MoreState;
+  /** The photos the last press brought, in order: the focus goes to the first one the filter shows. */
+  readonly added: readonly string[] | null;
+  readonly onMore: () => void;
+}
+
 interface GalleryProps {
-  /** Null until photos.list first answers. */
-  gallery: GalleryList | null;
+  /** Null until photos.list first answers; every page read so far after (S4.P2). */
+  gallery: PhotoPages | null;
   /** The last photos.list failure, shown above whatever list is already on screen. */
   error: EngineError | null;
+  more: GalleryMore;
   pending: PendingSlots | null;
   picked: ReadonlySet<string>;
   /** Photos `montages.create` just refused (`PHOTO_UNAVAILABLE` at `["photoIds", i]`, K11): marked on their tiles. */
@@ -159,7 +175,7 @@ interface GalleryProps {
  * tile's photo opens it in the viewer (PhotoViewer), which steps through the
  * photos as the filter shows them.
  */
-export function Gallery({ gallery, error, pending, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark }: GalleryProps) {
+export function Gallery({ gallery, error, more, pending, picked, refused, onToggle, onRetry, filter, onFilter, usage, mark }: GalleryProps) {
   const titleId = useId(); // L12: was the hardcoded "gallery-title"
   const sectionRef = useRef<HTMLElement>(null);
   /** The photo open in the viewer, by id: a list that changes under it moves its number, never what it shows. */
@@ -169,7 +185,9 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
   const skipped = filter === "all" ? (gallery?.skippedTotal ?? 0) : 0;
   const slots = filter === "all" ? pending : null;
   const empty = gallery !== null && photos.length === 0 && skipped === 0 && slots === null;
-  const nothing = emptyText(filter, usage);
+  const nothing = emptyText(filter, usage, gallery?.remainingTotal ?? 0);
+  /** The next page on its way: where its photos will land, the grid's own loading tiles (a row's worth at most). */
+  const nextTiles = gallery !== null && more.state.status === "loading" ? Math.min(gallery.remainingTotal, 4) : 0;
   // A photo's number is its place in the whole gallery, whatever the filter shows.
   const positions = new Map((gallery?.photos ?? []).map((p, i) => [p.photoId, i + 1]));
   const viewerList = viewing === null ? [] : viewerPhotos(gallery?.photos ?? [], photos, viewing);
@@ -199,6 +217,22 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
       null
     );
   };
+
+  /** After «Показать ещё»: the tile of the first photo it brought that the filter shows. */
+  const firstShown = useCallback((photoIds: readonly string[]): HTMLElement | null => {
+    const tiles = new Map(Array.from(sectionRef.current?.querySelectorAll<HTMLButtonElement>("button.photo-open") ?? []).map((tile) => [tile.dataset.photoId, tile]));
+    for (const photoId of photoIds) {
+      const tile = tiles.get(photoId);
+      if (tile !== undefined) return tile;
+    }
+    return null;
+  }, []);
+  /** None of them shown, and the button gone with the last page: the last tile, else the filter's pressed button. */
+  const lastTile = useCallback((): HTMLElement | null => {
+    const section = sectionRef.current;
+    const tiles = Array.from(section?.querySelectorAll<HTMLElement>("button.photo-open") ?? []);
+    return tiles.at(-1) ?? section?.querySelector<HTMLElement>('.photos-sec-action button[aria-pressed="true"]') ?? null;
+  }, []);
 
   return (
     <section ref={sectionRef} className="photos-gallery" aria-labelledby={titleId} aria-busy={loading}>
@@ -255,6 +289,11 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
                 onOpen={setViewing}
               />
             ))}
+            {Array.from({ length: nextTiles }, (_, i) => (
+              <div key={`next-${i}`} className="ph photo-tile photo-tile-next" aria-hidden="true">
+                <div className="shim" />
+              </div>
+            ))}
             {skipped > 0 && (
               <div className="ph photo-tile photo-tile-skipped" role="note" aria-label="Показаны не все фото">
                 <span className="flag" aria-hidden="true">
@@ -266,6 +305,10 @@ export function Gallery({ gallery, error, pending, picked, refused, onToggle, on
             )}
           </div>
         )
+      )}
+
+      {gallery !== null && (
+        <MorePhotos pages={gallery} more={more.state} added={more.added} onMore={more.onMore} firstShown={firstShown} fallback={lastTile} variant="gallery" />
       )}
 
       {place !== null && (

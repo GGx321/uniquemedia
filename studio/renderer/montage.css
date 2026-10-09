@@ -1200,6 +1200,23 @@
   line-height: 1.4;
 }
 
+/* S4.P2: the bin's «Показать ещё» (MorePhotos.tsx, ui.css): pinned under the scrolling bin, the panel's whole width, no hairlines —
+   in a 280 px panel the end of 500 tiles is far away, so the way on stays in sight. */
+.photos-more-bin {
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.photos-more-bin .photos-more-btn {
+  width: 100%;
+}
+
+.photos-more-bin .photos-more-error {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
 /* preview (SLOT 3d.4) */
 
 .ed-preview {

@@ -2334,6 +2334,93 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: center;
 }
 
+/* S4.P2: «Показать ещё» (MorePhotos.tsx). The owner's mockups draw none, so it is drawn in their language: the sheet's quiet .btn-s
+   between two hairlines that fade out from it, what remains in mono; while the next page is on its way the grid ends in its own
+   shimmering tiles (.photo-tile-next) and the button spins, in full colour like any busy button. Failed: the reason under it in the
+   danger tone, the same button «Повторить». Paged to the end: the gallery's end, faint, between the same hairlines. */
+.photos-more {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.photos-more-gallery {
+  padding: 6px 0 2px;
+}
+
+.photos-more-row {
+  display: flex;
+  align-items: center;
+  align-self: stretch;
+  gap: 14px;
+}
+
+.photos-more-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-strong));
+}
+
+.photos-more-row > .photos-more-rule:last-child {
+  background: linear-gradient(90deg, var(--border-strong), transparent);
+}
+
+.photos-more-btn {
+  flex-shrink: 0;
+  color: var(--text-2);
+}
+
+.photos-more-btn svg {
+  transition: transform 0.16s ease;
+}
+
+/* The chevron leans the way the page will come. */
+.photos-more-btn[data-state="idle"]:hover svg {
+  transform: translateY(2px);
+}
+
+.photos-more-count {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+/* Busy keeps its colour (the sheet's rule for a busy button) over scenes.css's dimmed aria-disabled: it is waiting, not refused. */
+.btn.photos-more-btn[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
+.photos-more-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  max-width: 560px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.photos-more-error svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.photos-more-end {
+  color: var(--faint);
+}
+
+.photos-more-end .mono {
+  white-space: nowrap;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .photos-more-btn svg {
+    transition: none;
+  }
+}
+
 @media (max-width: 1279px) {
   /* Narrower than the mockup, a wide control wraps under its label: keep air around it. */
   .row {

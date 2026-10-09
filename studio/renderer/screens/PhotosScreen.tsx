@@ -9,10 +9,10 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
-import { Gallery, type GalleryList, type PendingSlots } from "./photos/Gallery";
+import { Gallery, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
-import { usablePicks, useMontagePicks } from "./photos/picks";
+import { listedPicks, usablePicks, useMontagePicks } from "./photos/picks";
 import { arrangeCategories, DEFAULT_RUN_FORM, paidBlockedReason, type RunForm } from "./photos/runForm";
 import { useRunForms } from "./photos/runForms";
 import { ScenesColumn } from "./photos/ScenesColumn";
@@ -21,6 +21,7 @@ import { focusSceneCard } from "./photos/SceneSetPanel";
 import { liveScenesJob } from "./photos/SceneStrip";
 import { useMounted } from "./photos/shared";
 import { UsageNotice } from "./photos/UsageNotice";
+import { avatarPhotoKeys, usePhotoPages } from "./photos/usePhotoPages";
 import { VideosTab } from "./photos/VideosTab";
 import { headerCounts, type GalleryFilter } from "./photos/videosModel";
 
@@ -84,9 +85,6 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
       }),
     [categoryLibrary],
   );
-  /** The last list photos.list answered (null until the first); a later failure is shown above it, never instead of it. */
-  const [gallery, setGallery] = useState<GalleryList | null>(null);
-  const [galleryError, setGalleryError] = useState<EngineError | null>(null);
   const [galleryRetry, setGalleryRetry] = useState(0);
   /** «Все / Неиспользованные / Отклонённые» (F4). */
   const [filter, setFilter] = useState<GalleryFilter>("all");
@@ -156,29 +154,26 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
   // slot done or ends — each photo lands in the library before its progress
   // event — and whenever the avatar's counts move (a video made or deleted,
   // a render queued or ended, a mark set: `avatar.changed`), since a photo's
-  // used, reserved and rejected states move with them. An answer overtaken
-  // by a newer ask is dropped.
+  // used, reserved and rejected states move with them. S4.P2: past 500
+  // photos it pages («Показать ещё»), one read at a time; a new photo reads
+  // only the top, a change of state every page the owner opened.
   const progressKey = runJob ? `${runJob.jobId}:${runJob.done}:${runJob.status}` : "none";
-  const countsKey = `${avatar.videoCount}:${avatar.eligibleUnusedCount}:${avatar.usage.state === "ok" ? "ok" : avatar.usage.reasons.join(",")}`;
-  useEffect(() => {
-    if (!ready) return;
-    let alive = true;
-    void client.request("photos.list", { avatarId }).then((reply) => {
-      if (!alive) return;
-      if (reply.ok) {
-        setGallery({ photos: reply.result.photos, skippedTotal: reply.result.skippedTotal });
-        setGalleryError(null);
-        // The picks the window kept from an earlier visit are checked once, against the first answer (review r1 LOW-6).
-        if (!picksChecked.current) {
-          picksChecked.current = true;
-          setPicked((current) => usablePicks(current, reply.result.photos));
-        }
-      } else setGalleryError(reply.error);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [ready, client, avatarId, progressKey, galleryRetry, countsKey]);
+  const keys = avatarPhotoKeys(avatar);
+  const gallery = usePhotoPages(client, avatarId, {
+    enabled: ready,
+    refresh: [keys.states, galleryRetry],
+    arrivals: [progressKey, keys.arrivals],
+    onRead: (list, added) => {
+      // The picks the window kept from an earlier visit are checked once, against the first answer (review r1 LOW-6) — against the
+      // photos it lists: one picked on a later page is kept until its own page comes in with «Показать ещё», and checked then. Once
+      // the last page is in, a pick on none of them is of a photo gone meanwhile, and goes (review MEDIUM-2).
+      if (added !== null) setPicked((current) => (list.nextCursor === null ? listedPicks(usablePicks(current, added, true), list.photos) : usablePicks(current, added, true)));
+      else if (!picksChecked.current) {
+        picksChecked.current = true;
+        setPicked((current) => usablePicks(current, list.photos, list.nextCursor !== null));
+      }
+    },
+  });
 
   // The runs a resume can continue: on open, whenever this avatar's run job
   // starts or ends, and after this window's own start or resume.
@@ -278,7 +273,7 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
       return;
     }
     const updated = reply.result.photo;
-    setGallery((list) => (list === null ? list : { ...list, photos: list.photos.map((p) => (p.photoId === updated.photoId ? updated : p)) }));
+    gallery.replace(updated);
     // A rejected photo no longer goes into a montage: it leaves the selection.
     if (updated.rejected) {
       setPicked((current) => {
@@ -465,8 +460,9 @@ function AvatarPhotos({ avatar, view, initialTab }: { avatar: AvatarSummary; vie
                   />
                 )}
                 <Gallery
-                  gallery={gallery}
-                  error={galleryError}
+                  gallery={gallery.pages}
+                  error={gallery.error}
+                  more={{ state: gallery.more, added: gallery.added, onMore: gallery.loadMore }}
                   pending={pending}
                   picked={picked}
                   refused={refused}

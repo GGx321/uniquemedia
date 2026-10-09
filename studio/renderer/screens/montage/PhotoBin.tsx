@@ -1,7 +1,10 @@
-import { useId } from "react";
+import { useCallback, useId, useRef } from "react";
 import type { MontageDraft, PhotoSummary } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
 import { Portrait } from "../../ui/Portrait";
+import { MorePhotos } from "../photos/MorePhotos";
+import type { PhotoPages } from "../photos/photoPages";
+import type { MoreState } from "../photos/usePhotoPages";
 import { binFacets, type BinFilter, binTiles, type BinTile, isBuiltInCategory, tileAction } from "./bin";
 import type { AddRefusal } from "./clipOps";
 import { addBlockedLabel } from "./labels";
@@ -16,6 +19,8 @@ export interface PhotoBinProps {
   readonly avatarId: string;
   readonly spec: MontageDraft;
   readonly photos: readonly PhotoSummary[] | null;
+  /** S4.P2: the pages of photos.list behind `photos`, and «Показать ещё» for the next; null until the first answer. */
+  readonly paging?: BinPaging | null;
   readonly filter: BinFilter;
   readonly onFilter: (filter: BinFilter) => void;
   /** A click on a photo: select its clip when it is placed, else fill `fillTarget` or add a clip at the end. */
@@ -29,6 +34,15 @@ export interface PhotoBinProps {
   readonly addBlock: AddRefusal | null;
   /** A free photo dragged out of the bin (onto the track or a cell), or null when the drag ends. */
   readonly onDragPhoto: (photoId: string | null) => void;
+}
+
+/** The bin's «Показать ещё» (S4.P2): the bin is a picker of the avatar's photos, so the photos past the first 500 must be reachable too. */
+export interface BinPaging {
+  readonly pages: PhotoPages;
+  readonly state: MoreState;
+  /** The photos the last press brought, in order: the focus goes to the first one the chips show and a click can take. */
+  readonly added: readonly string[] | null;
+  readonly onMore: () => void;
 }
 
 const inVideos = (n: number): string => `в ${n} видео`;
@@ -70,9 +84,25 @@ function actionLabel(tile: BinTile, fillTarget: PhotoBinProps["fillTarget"], add
   }
 }
 
-export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto }: PhotoBinProps) {
+export function PhotoBin({ avatarName, avatarId, spec, photos, paging = null, filter, onFilter, onPick, fillTarget, addBlock, onDragPhoto }: PhotoBinProps) {
   const hintId = useId();
   const categoryId = useId();
+  const binRef = useRef<HTMLUListElement>(null);
+  const chipsRef = useRef<HTMLDivElement>(null);
+  /** After «Показать ещё»: the first photo it brought that the chips show and a click can take (a taken one's button is off). */
+  const firstShown = useCallback((photoIds: readonly string[]): HTMLElement | null => {
+    const picks = new Map(Array.from(binRef.current?.querySelectorAll<HTMLButtonElement>("button.ed-bin-pick:not(:disabled)") ?? []).map((pick) => [pick.dataset.photoId, pick]));
+    for (const photoId of photoIds) {
+      const pick = picks.get(photoId);
+      if (pick !== undefined) return pick;
+    }
+    return null;
+  }, []);
+  /** None of them shown, and the button gone with the last page: the bin's last photo a click can take, else «Неиспользованные». */
+  const lastPick = useCallback((): HTMLElement | null => {
+    const picks = Array.from(binRef.current?.querySelectorAll<HTMLElement>("button.ed-bin-pick:not(:disabled)") ?? []);
+    return picks.at(-1) ?? chipsRef.current?.querySelector<HTMLElement>("button") ?? null;
+  }, []);
   const all = photos ?? [];
   const eligible = all.filter((p) => p.eligible).length;
   const tiles = binTiles(all, spec, filter);
@@ -80,10 +110,12 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter,
   const builtIns = facets.categories.filter((c) => isBuiltInCategory(c.category));
   const owners = facets.categories.filter((c) => !isBuiltInCategory(c.category));
   const filtered = filter.unusedOnly || filter.category !== null;
+  /** S4.P2: more photos beyond the pages read, where an empty bin may yet find some. */
+  const partial = paging !== null && paging.pages.nextCursor !== null;
 
   return (
     <>
-      <div className="ed-chips">
+      <div ref={chipsRef} className="ed-chips">
         <span className="chip ed-chip-fixed" title="Аватар черновика не меняется">
           {avatarName}
         </span>
@@ -134,16 +166,24 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter,
           ))}
         </div>
       ) : eligible === 0 ? (
-        <p className="faint ed-bin-empty">Подходящих фото у аватара пока нет. Сгенерируйте их на экране «Фото».</p>
+        <p className="faint ed-bin-empty">
+          {partial ? "Среди загруженных фото подходящих нет — нажмите «Показать ещё»." : "Подходящих фото у аватара пока нет. Сгенерируйте их на экране «Фото»."}
+        </p>
       ) : tiles.length === 0 && filtered ? (
         <div className="ed-bin-empty">
-          <p className="faint">{filter.unusedOnly && filter.category === null ? "Свободных фото не осталось: все уже в видео или в рендере." : "Под эти фильтры фото нет."}</p>
+          <p className="faint">
+            {partial
+              ? "Среди загруженных фото под эти фильтры ничего нет — нажмите «Показать ещё»."
+              : filter.unusedOnly && filter.category === null
+                ? "Свободных фото не осталось: все уже в видео или в рендере."
+                : "Под эти фильтры фото нет."}
+          </p>
           <button type="button" className="btn btn-s" onClick={() => onFilter({ unusedOnly: false, category: null })}>
             Показать все фото
           </button>
         </div>
       ) : (
-        <ul className="ed-bin" aria-label="Фото аватара">
+        <ul ref={binRef} className="ed-bin" aria-label="Фото аватара">
           {tiles.map((tile) => {
             const { photo, n, slot } = tile;
             const does = tileAction(tile, fillTarget, addBlock);
@@ -154,6 +194,7 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter,
                 <button
                   type="button"
                   className="ed-bin-pick"
+                  data-photo-id={photo.photoId}
                   aria-label={`Фото ${n}: ${actionLabel(tile, fillTarget, addBlock)}`}
                   aria-describedby={hintId}
                   disabled={taken || does === "full"}
@@ -183,6 +224,9 @@ export function PhotoBin({ avatarName, avatarId, spec, photos, filter, onFilter,
             );
           })}
         </ul>
+      )}
+      {paging !== null && (
+        <MorePhotos pages={paging.pages} more={paging.state} added={paging.added} onMore={paging.onMore} firstShown={firstShown} fallback={lastPick} variant="bin" />
       )}
       {eligible > 0 && (
         <p id={hintId} className={addBlock !== null && fillTarget === null ? "ed-bin-hint ed-bin-hint-full" : "faint ed-bin-hint"}>
