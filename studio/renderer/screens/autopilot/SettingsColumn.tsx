@@ -31,6 +31,10 @@ export interface SettingsColumnProps {
   readonly onCategory: (ref: CategoryRef) => void;
   readonly onPose: (pose: "profile" | "back") => void;
   readonly onSwitch: (which: "library" | "generate" | "sceneReview" | "stickers") => void;
+  /** S4.9c: the music chip's window is open, and the chip that opens and closes it. */
+  readonly musicOpen: boolean;
+  readonly musicChipRef: RefObject<HTMLButtonElement | null>;
+  readonly onMusic: () => void;
 }
 
 export function SettingsColumn(props: SettingsColumnProps) {
@@ -180,11 +184,20 @@ export function SettingsColumn(props: SettingsColumnProps) {
                   {music.sub}
                 </span>
               </div>
-              {/* The chip's window (own tracks «для автопилота», ApPlanMusic) belongs to S4.9c; until then the chip only says what the launch has. */}
-              <span className="chip ap-chip-static" aria-describedby={id("mus-sub")}>
+              {/* S4.9c: the chip opens «Музыка для автопилота» (ApPlanMusic): the own tracks' «для автопилота» is the library's, not the launch's, so it opens
+                  while a launch runs too (its videos waiting for music go on as soon as a track is marked). */}
+              <button
+                ref={props.musicChipRef}
+                type="button"
+                className={props.musicOpen ? "chip chip-on ap-music-chip" : "chip ap-music-chip"}
+                aria-haspopup="dialog"
+                aria-expanded={props.musicOpen}
+                aria-describedby={id("mus-sub")}
+                onClick={props.onMusic}
+              >
                 <Icon name="music" size={13} />
                 {music.chip}
-              </span>
+              </button>
             </div>
             <SwitchRow id={id("gif")} title="GIF-стикеры" sub="встроенные · один на видео" on={form.stickers} disabled={readOnly} onToggle={() => props.onSwitch("stickers")} />
             <div className="ap-row">

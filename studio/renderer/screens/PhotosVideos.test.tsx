@@ -203,30 +203,39 @@ describe("the «Видео» tab", () => {
     await waitFor(() => expect(document.querySelector(".editor") !== null).toBe(true));
   });
 
+  // S4.9c (README decision 11): the trash asks in a dialog with two ways instead of on the card; a video that is not published starts on the plain delete,
+  // as the card's confirmation did, with the photos it frees.
   test("«Удалить» asks with the photos it frees, then deletes the file and the record; the card goes", async () => {
     const h = await openMia({ tab: "videos" });
+    let videoId = "";
     await act(async () => {
-      await rendered(h, [scenePhoto(1).photoId, scenePhoto(2).photoId], "утро дома");
+      videoId = await rendered(h, [scenePhoto(1).photoId, scenePhoto(2).photoId], "утро дома");
     });
     const video = await screen.findByRole("article", { name: "утро дома" });
     fireEvent.click(within(video).getByRole("button", { name: /^Удалить видео / }));
-    expect(within(video).getByRole("alert").textContent).toBe(`Удалить видео? Файл в «Готовых видео» тоже удалится, 2${NBSP}фото снова станут свободными.`);
+    const dialog = await screen.findByRole("alertdialog", { name: "Удалить видео «утро дома»?" });
+    expect(dialog.querySelector(".ap-del-lead")?.textContent).toBe("Файл в «Готовых видео» тоже удалится.");
+    const plain = within(dialog).getByRole("radio", { name: /^Только удалить видео/ });
+    expect(plain.getAttribute("aria-checked")).toBe("true");
+    expect(plain.textContent).toBe(`Только удалить видео2${NBSP}фото снова станут свободными — из них может собраться новое видео.`);
+    expect(within(dialog).getByRole("radio", { name: /^Удалить видео и отклонить фото/ }).getAttribute("aria-checked")).toBe("false");
+    expect(callsOf(h.engine, "videos.delete")).toHaveLength(0);
 
-    fireEvent.click(within(video).getByRole("button", { name: "Удалить" }));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Удалить видео" }));
     await flush();
 
-    expect(callsOf(h.engine, "videos.delete").map((c) => c.payload.mode)).toEqual(["video"]);
+    expect(callsOf(h.engine, "videos.delete").map((c) => c.payload)).toEqual([{ videoId, mode: "video" }]);
     await waitFor(() => expect(screen.queryByRole("article", { name: "утро дома" }) === null).toBe(true));
   });
 
-  test("the keyboard (slice review 5-M4): asked, the focus is on «Отмена»; Escape and «Отмена» give it back to the trash; deleted, it lands on «Видео»", async () => {
+  test("the keyboard (slice review 5-M4, S4.9c): asked, the focus is on the chosen way; Escape and «Отмена» give it back to the trash; deleted, it lands on «Видео»", async () => {
     const h = await openMia({ tab: "videos" });
     await act(async () => {
       await rendered(h, [scenePhoto(1).photoId, scenePhoto(2).photoId], "утро дома");
     });
     await screen.findByRole("article", { name: "утро дома" });
     const trash = (): HTMLElement => within(card("утро дома")).getByRole("button", { name: /^Удалить видео / });
-    const cancel = (): HTMLElement => within(card("утро дома")).getByRole("button", { name: "Отмена" });
+    const dialog = (): HTMLElement => screen.getByRole("alertdialog", { name: "Удалить видео «утро дома»?" });
     const ask = async (): Promise<void> => {
       trash().focus();
       fireEvent.click(trash());
@@ -234,20 +243,22 @@ describe("the «Видео» tab", () => {
     };
 
     await ask();
-    expect(focusedLabel()).toBe(describeElement(cancel()));
+    expect(focusedLabel()).toBe(describeElement(within(dialog()).getByRole("radio", { name: /^Только удалить видео/ })));
     expect(trash().hasAttribute("disabled")).toBe(false);
-    fireEvent.keyDown(cancel(), { key: "Escape" });
+    fireEvent.keyDown(within(dialog()).getByRole("radio", { name: /^Только удалить видео/ }), { key: "Escape" });
     await flush();
-    expect(within(card("утро дома")).queryByRole("alert") === null).toBe(true);
+    expect(screen.queryByRole("alertdialog") === null).toBe(true);
     expect(focusedLabel()).toBe(describeElement(trash()));
 
     await ask();
-    fireEvent.click(cancel());
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Отмена" }));
     await flush();
+    expect(screen.queryByRole("alertdialog") === null).toBe(true);
     expect(focusedLabel()).toBe(describeElement(trash()));
+    expect(callsOf(h.engine, "videos.delete")).toHaveLength(0);
 
     await ask();
-    fireEvent.click(within(card("утро дома")).getByRole("button", { name: "Удалить" }));
+    fireEvent.click(within(dialog()).getByRole("button", { name: "Удалить видео" }));
     await waitFor(() => expect(screen.queryByRole("article", { name: "утро дома" }) === null).toBe(true));
     expect(focusedLabel()).toBe(describeElement(screen.getByRole("heading", { level: 2, name: "Видео" })));
   });

@@ -843,3 +843,44 @@
     animation: none;
   }
 }
+
+/* ── S4.9c · «автопилот» on a video the autopilot made, «Опубликовано», «Скрыть опубликованные» (PhotoVideos) ── */
+
+.video-name-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tag.video-ap-tag {
+  flex-shrink: 0;
+  gap: 4px;
+  height: 18px;
+  padding: 0 7px;
+  background: var(--accent-18);
+  color: var(--accent-text);
+  font-size: 10.5px;
+}
+
+.video-pub {
+  margin-top: 4px;
+}
+
+.videos-hide {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.videos-hide .mono {
+  font-size: 10.5px;
+}
+
+.videos-hide + .videos-folder {
+  margin-left: 6px;
+}

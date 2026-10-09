@@ -8,8 +8,9 @@ import { useNavigate } from "../../navigation";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { useMounted } from "./shared";
-import { JobCard, VideoCard } from "./VideoCards";
+import { JobCard, VideoCard, videoLabel } from "./VideoCards";
 import { VideoPlayer } from "./VideoPlayer";
+import { deleteFailedText, rejectDoneText } from "./deleteVideo";
 import { avatarFolderDisplay, deleteOutcomeText, filterCounts, megabytesLabel, renderCardsOf, visibleItems, type VideoFilter } from "./videosModel";
 
 // 3e.2: the avatar's «Видео» tab (AvatarVideos.dc.html). The records come from `videos.list` (each with its file's state, looked
@@ -25,6 +26,8 @@ const FILTERS: readonly { id: VideoFilter; label: string }[] = [
 
 interface Listed {
   readonly videos: readonly VideoSummary[];
+  /** S4.9c: whether the owner's «Опубликовано» marks could be read (`videos.list.published`; absent from an older producer, read as `ok`). */
+  readonly marks: "ok" | "unknown";
 }
 
 export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: EngineView }) {
@@ -45,6 +48,10 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
   const [retrying, setRetrying] = useState<ReadonlySet<string>>(new Set());
   const [notice, setNotice] = useState<{ tone: "ok" | "info"; text: string } | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
+  /** S4.9c: «Удалить видео и отклонить фото» that did not go, in its own words (its work may still go on). */
+  const [failure, setFailure] = useState<{ title: string; text: string } | null>(null);
+  const [publishing, setPublishing] = useState<ReadonlySet<string>>(new Set());
+  const [hidePublished, setHidePublished] = useState(false);
   const [playing, setPlaying] = useState<VideoSummary | null>(null);
   const [rootDisplay, setRootDisplay] = useState<string | null>(null);
   const [tracks, setTracks] = useState<ReadonlyMap<string, TrackSummary>>(new Map());
@@ -61,7 +68,7 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
     void client.request("videos.list", { avatarId }).then((reply) => {
       if (!alive) return;
       if (reply.ok) {
-        setListed({ videos: reply.result.videos });
+        setListed({ videos: reply.result.videos, marks: reply.result.published ?? "ok" });
         setListError(null);
       } else setListError(reply.error);
     });
@@ -129,23 +136,56 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
       return next;
     });
 
-  async function remove(video: VideoSummary, mode: "video" | "record"): Promise<void> {
+  async function remove(video: VideoSummary, mode: "video" | "record", reject: boolean): Promise<void> {
+    // Said after it is gone: its name as the card showed it.
+    const label = videoLabel(video, ordinalOf(video));
     markBusy(video.videoId, true);
     setError(null);
     setNotice(null);
-    const reply = await client.request("videos.delete", { videoId: video.videoId, mode });
+    setFailure(null);
+    const reply = await client.request("videos.delete", { videoId: video.videoId, mode, ...(reject ? { rejectPhotos: true as const } : {}) });
     if (!mounted.current) return;
     markBusy(video.videoId, false);
     if (!reply.ok) {
-      setError(reply.error);
+      if (reject) {
+        // S4.9c: a delete that timed out reads as refused while its work may still go on (the photos already rejected): the list and the photos are read again.
+        setFailure(deleteFailedText(reply.error, true));
+        void store.refreshAvatars();
+      } else setError(reply.error);
       setReread((n) => n + 1);
       return;
     }
     // The card goes with the `video.changed` that follows, and the focus with it: the tab's heading takes it (slice review 5-M4). What happened
     // to the file is said here, as the answer says it.
     heading.current?.focus();
+    if (reject) {
+      setNotice({ tone: "ok", text: rejectDoneText(label, reply.result) });
+      return;
+    }
     const text = deleteOutcomeText(mode, reply.result, view.exportStatus);
     if (text !== null) setNotice({ tone: reply.result.fileDeleted || mode === "record" ? "ok" : "info", text });
+  }
+
+  async function markPublished(video: VideoSummary, published: boolean): Promise<void> {
+    if (publishing.has(video.videoId)) return;
+    setPublishing((now) => new Set(now).add(video.videoId));
+    setError(null);
+    const reply = await client.request("videos.setPublished", { videoId: video.videoId, published });
+    if (!mounted.current) return;
+    setPublishing((now) => {
+      const next = new Set(now);
+      next.delete(video.videoId);
+      return next;
+    });
+    if (!reply.ok) {
+      setError(reply.error);
+      setReread((n) => n + 1);
+      return;
+    }
+    // The card the owner just marked leaves while «Скрыть опубликованные» is on: the focus goes to the tab's heading, as after a delete.
+    if (published && hidePublished) heading.current?.focus();
+    // `video.changed` reads the list again; under an unreadable log the mark heals it, and a mark that changed nothing announces nothing, so it is read here.
+    if (listed?.marks === "unknown") setReread((n) => n + 1);
   }
 
   async function reveal(video: VideoSummary): Promise<void> {
@@ -202,7 +242,13 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
 
   const videos = listed?.videos ?? [];
   const counts = filterCounts(cards, videos);
-  const items = visibleItems(filter, cards, videos);
+  // S4.9c: a mark is shown only while the marks could be read (an unreadable log shows every video unmarked, with its notice).
+  const marksKnown = listed?.marks !== "unknown";
+  const isPublished = (video: VideoSummary): boolean => marksKnown && typeof video.publishedAt === "string";
+  // A record's place among the avatar's videos from the oldest (the list is newest first): «Видео N» of a video of the autopilot.
+  const ordinalOf = (video: VideoSummary): number => videos.length - videos.indexOf(video);
+  const publishedCount = videos.filter(isPublished).length;
+  const items = visibleItems(filter, cards, videos).filter((item) => !(hidePublished && item.kind === "video" && isPublished(item.video)));
   const folder = avatarFolderDisplay(rootDisplay, videos);
   const exportStatus = view.exportStatus;
   const now = new Date();
@@ -225,6 +271,19 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
             </button>
           ))}
         </div>
+        <span className="videos-hide">
+          <button
+            type="button"
+            className={hidePublished ? "sw sw-s sw-on" : "sw sw-s"}
+            role="switch"
+            aria-checked={hidePublished}
+            aria-labelledby={`${titleId}-hide`}
+            onClick={() => setHidePublished(!hidePublished)}
+          />
+          <span id={`${titleId}-hide`}>
+            Скрыть опубликованные <span className="mono faint">{publishedCount}</span>
+          </span>
+        </span>
         <div className="videos-folder">
           {folder !== null && (
             <span className="mono faint videos-path" title={folder}>
@@ -250,6 +309,25 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
           }
         >
           {EXPORT_UNAVAILABLE_REASONS_RU[exportStatus.reason]} Пока она недоступна, Studio не может проверить файлы видео и собрать новые.
+        </Notice>
+      )}
+      {listed !== null && !marksKnown && (
+        <Notice tone="warn" role="status">
+          Отметки «Опубликовано» не читаются — все видео показаны без отметки. Studio по ним ничего не удаляет; новая отметка допишется.
+        </Notice>
+      )}
+      {failure !== null && (
+        <Notice
+          tone="warn"
+          title={failure.title}
+          role="alert"
+          actions={
+            <button type="button" className="btn btn-s" onClick={() => setFailure(null)}>
+              Закрыть
+            </button>
+          }
+        >
+          {failure.text}
         </Notice>
       )}
       {notice !== null && (
@@ -328,10 +406,15 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
                 tracks={tracks}
                 now={now}
                 busy={busy.has(item.video.videoId)}
+                ordinal={ordinalOf(item.video)}
+                published={isPublished(item.video)}
+                marksUnknown={!marksKnown}
+                publishing={publishing.has(item.video.videoId)}
                 onPlay={setPlaying}
                 onReveal={(video) => void reveal(video)}
                 onEdit={edit}
-                onDelete={(video, mode) => void remove(video, mode)}
+                onDelete={(video, mode, reject) => void remove(video, mode, reject)}
+                onPublished={(video, published) => void markPublished(video, published)}
                 onRecheck={() => setReread((n) => n + 1)}
               />
             ),

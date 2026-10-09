@@ -5,7 +5,9 @@ import { sidebarCounts } from "./engine/renderJobs";
 import { readStudioVersion } from "./engine/windowStudio";
 import { arriving, createNavigation, NavigationProvider, type Route, type SectionId, sectionOf } from "./navigation";
 import { AutopilotScreen } from "./screens/AutopilotScreen";
+import { HistoryScreen } from "./screens/autopilot/HistoryScreen";
 import { LaunchForms, LaunchFormsProvider } from "./screens/autopilot/launchForm";
+import { LaunchScreen } from "./screens/autopilot/LaunchScreen";
 import { SidebarMarkView, useSidebarMark } from "./screens/autopilot/SidebarMark";
 import { AvatarImport } from "./screens/AvatarImport";
 import { AvatarsScreen } from "./screens/AvatarsScreen";
@@ -117,7 +119,11 @@ function Screen({ route, lastPhotos }: { route: Route; lastPhotos: string | null
     case "editor":
       return <EditorScreen montageId={route.montageId} created={route.created ?? false} />;
     case "section":
-      return <AutopilotScreen />;
+      return <AutopilotScreen chosen={route.chosen ?? null} />;
+    case "launches":
+      return <HistoryScreen focus={route.focus ?? null} />;
+    case "launch":
+      return <LaunchScreen launchId={route.launchId} from={route.from} />;
   }
 }
 
@@ -130,7 +136,9 @@ function screenKey(route: Route): string {
     case "editor":
       return `editor:${route.montageId}`;
     case "section":
-      return route.id;
+      return route.chosen === undefined ? route.id : `${route.id}:${route.chosen.join(",")}`;
+    case "launch":
+      return `launch:${route.launchId}`;
     default:
       return route.name;
   }

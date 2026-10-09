@@ -11,15 +11,16 @@ import { cancelOnEscape, useConfirmFocus } from "../../ui/useConfirmFocus";
 import { useMediaRetry } from "../../ui/useMediaRetry";
 import { ClipPoster } from "../montage/ClipPoster";
 import { draftMeta, draftName, whenLabel } from "../montage/labels";
-import { deleteConfirmText, durationPill, failedRenderLine, videoCardView, videoMeta } from "./videosModel";
+import { DeleteVideoDialog } from "./DeleteVideoDialog";
+import { durationPill, failedRenderLine, videoCardView, videoMeta } from "./videosModel";
 
 // 3e.2: the cards of the avatar's «Видео» tab (AvatarVideos.dc.html, card variants from the components sheet): a record in its
 // file state, and a render job queued, running, saving or failed. The tab owns the commands; a card only asks for them.
 
 const RENDER_FORMS = ["рендера", "рендеров", "рендеров"] as const;
 
-/** The poster of a card: the record's poster frame when it has one, else its first clip as rendered (the drafts' still), else a stand-in. */
-function Poster({ avatarId, videoId, hasPoster, clip, children }: { avatarId: string; videoId: string | null; hasPoster: boolean; clip: VideoSummary["firstClip"]; children?: ReactNode }) {
+/** The poster of a card: the record's poster frame when it has one, else its first clip as rendered (the drafts' still), else a stand-in. S4.9c: the launch's results draw it too. */
+export function Poster({ avatarId, videoId, hasPoster, clip, children }: { avatarId: string; videoId: string | null; hasPoster: boolean; clip: VideoSummary["firstClip"]; children?: ReactNode }) {
   const { client } = useEngine();
   const address = hasPoster && videoId !== null && client.kind !== "mock" ? posterUrl(avatarId, videoId) : null;
   const retry = useMediaRetry(address);
@@ -73,20 +74,42 @@ export interface VideoCardProps {
   now: Date;
   /** A command of this card is out (a delete, a reveal): its buttons wait. */
   busy: boolean;
+  /** S4.9c: its place among the avatar's videos counted from the oldest: a video of the autopilot, which has no draft, is «Видео N» by it. */
+  ordinal: number;
+  /** S4.9c: the owner's «Опубликовано» mark as the list could read it (an unreadable log shows none), and a mark on its way. */
+  published: boolean;
+  publishing: boolean;
+  /** The avatar's marks could not be read: the delete dialog says so (fix round 1). */
+  marksUnknown: boolean;
   onPlay: (video: VideoSummary) => void;
   onReveal: (video: VideoSummary) => void;
   onEdit: (montageId: string) => void;
-  onDelete: (video: VideoSummary, mode: "video" | "record") => void;
+  /** `reject` (S4.9c): «Удалить видео и отклонить фото», the video's photos rejected before it goes. */
+  onDelete: (video: VideoSummary, mode: "video" | "record", reject: boolean) => void;
+  onPublished: (video: VideoSummary, published: boolean) => void;
   onRecheck: () => void;
 }
 
+/**
+ * S4.9c: what a record is called in a sentence — «видео «утро дома»» by its draft's name, «видео 12» for a video of the autopilot (no draft: `ordinal`, its
+ * place among the avatar's videos counted from the oldest, as PhotoVideos numbers them), else «видео 003» by its file's number.
+ */
+export function videoLabel(video: VideoSummary, ordinal: number): string {
+  if (video.title !== null) return `видео «${video.title}»`;
+  if (video.origin === "autopilot") return `видео ${ordinal}`;
+  return `видео ${video.relPath.slice(video.relPath.lastIndexOf("_") + 1, -".mp4".length)}`;
+}
+
 /** One video record, in its file state (A23-A31; the states no artboard draws in the same language). */
-export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onReveal, onEdit, onDelete, onRecheck }: VideoCardProps) {
+export function VideoCard({ video, exportStatus, tracks, now, busy, ordinal, published, publishing, marksUnknown, onPlay, onReveal, onEdit, onDelete, onPublished, onRecheck }: VideoCardProps) {
   const titleId = useId();
-  const [asking, setAsking] = useState<"video" | "record" | null>(null);
+  const [asking, setAsking] = useState<"record" | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const view = videoCardView(video, exportStatus);
-  const name = draftName(video.title);
   const number = video.relPath.slice(video.relPath.lastIndexOf("_") + 1, -".mp4".length);
+  const autopilot = video.origin === "autopilot";
+  // A video of the autopilot has no draft and so no name of its own: it is «Видео 12» by its place among the avatar's videos (PhotoVideos).
+  const name = autopilot && video.title === null ? `Видео ${ordinal}` : draftName(video.title);
   const edit =
     video.montageId === null ? null : (
       <button type="button" className="btn btn-s" disabled={busy} onClick={() => onEdit(video.montageId ?? "")}>
@@ -94,30 +117,36 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
       </button>
     );
   // Slice review 5-M4: the confirmation keeps the keyboard's place (Settings' pattern): asked, the focus is on «Отмена»; cancelled, it goes back
-  // to the button that asked (the trash, or «Удалить запись», which is mounted again).
+  // to the button that asked («Удалить запись», which is mounted again). S4.9c: the trash asks in a dialog with two ways (README decision 11), which gives
+  // the focus back to the trash itself.
   const focus = useConfirmFocus();
   const trashRef = useRef<HTMLButtonElement>(null);
   const recordRef = useRef<HTMLButtonElement>(null);
   const ask = (mode: "video" | "record"): void => {
-    if (asking !== null || busy) return;
-    if (mode === "record" && view.recordDelete?.confirm === null) onDelete(video, "record");
+    if (asking !== null || deleting || busy) return;
+    if (mode === "video") setDeleting(true);
+    else if (view.recordDelete?.confirm === null) onDelete(video, "record", false);
     else {
       setAsking(mode);
       focus.opened();
     }
   };
   const cancel = (): void => {
-    const from = asking;
     setAsking(null);
-    focus.moveTo(() => (from === "video" ? trashRef.current : recordRef.current));
+    focus.moveTo(() => recordRef.current);
   };
-  const confirmText = asking === "video" ? deleteConfirmText(video.photoCount) : asking === "record" ? (view.recordDelete?.confirm ?? null) : null;
+  const confirmText = asking === "record" ? (view.recordDelete?.confirm ?? null) : null;
   return (
     <article className={asking !== null ? "card video-card video-card-asking" : "card video-card"} aria-labelledby={titleId} aria-busy={busy}>
       <div className="video-poster-wrap">
         <Poster avatarId={video.avatarId} videoId={video.videoId} hasPoster={video.hasPoster} clip={video.firstClip}>
           {view.dim && <span className="video-poster-dim" />}
           {view.pill !== null && <span className={`pill video-pill video-pill-${view.pill.tone}`}>{view.pill.text}</span>}
+          {published && (
+            <span className="video-pub-mark" title="Опубликовано">
+              <Icon name="check" size={11} strokeWidth={3.4} />
+            </span>
+          )}
           <span className="pill mono video-len">{durationPill(video.durationMs)}</span>
         </Poster>
         {view.canPlay && (
@@ -129,13 +158,29 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
       <div className="video-body">
         <div className="video-top">
           <div className="video-heading">
-            <h3 id={titleId} className="video-name">
-              {name}
-            </h3>
+            <span className="video-name-row">
+              <h3 id={titleId} className="video-name">
+                {name}
+              </h3>
+              {autopilot && (
+                <span className="tag video-ap-tag">
+                  <Icon name="bolt" size={9} />
+                  автопилот
+                </span>
+              )}
+            </span>
             <span className="mono faint video-when">{whenLabel(video.createdAt, now)}</span>
           </div>
           {view.trash && (
-            <button ref={trashRef} type="button" className="ibtn video-trash" aria-label={`Удалить видео ${number}`} aria-disabled={busy || asking !== null} onClick={() => ask("video")}>
+            <button
+              ref={trashRef}
+              type="button"
+              className={deleting ? "ibtn video-trash video-trash-on" : "ibtn video-trash"}
+              aria-label={autopilot && video.title === null ? `Удалить видео ${ordinal}` : `Удалить видео ${number}`}
+              aria-haspopup="dialog"
+              aria-disabled={busy || asking !== null || deleting}
+              onClick={() => ask("video")}
+            >
               <Icon name="trash" size={13} />
             </button>
           )}
@@ -148,9 +193,9 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
               {confirmText}
             </span>
             <div className="video-actions" onKeyDown={(e) => cancelOnEscape(e, cancel, busy)}>
-              <button type="button" className="btn btn-s btn-d" disabled={busy} onClick={() => onDelete(video, asking ?? "record")}>
+              <button type="button" className="btn btn-s btn-d" disabled={busy} onClick={() => onDelete(video, "record", false)}>
                 {busy && <Spin />}
-                {asking === "video" ? "Удалить" : "Удалить запись"}
+                Удалить запись
               </button>
               <button ref={focus.cancelRef} type="button" className="btn btn-s" disabled={busy} onClick={cancel}>
                 Отмена
@@ -160,6 +205,19 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
         ) : (
           <>
             <span className={`video-status video-status-${view.status.tone}`}>{view.status.text}</span>
+            {/* S4.9c (PhotoVideos): the owner's «Опубликовано», on every video; Studio deletes nothing by it. */}
+            <span className={published ? "video-pub video-pub-on" : "video-pub"}>
+              <button
+                type="button"
+                className={published ? "sw sw-s sw-on" : "sw sw-s"}
+                role="switch"
+                aria-checked={published}
+                aria-label={`Опубликовано: ${name}`}
+                aria-busy={publishing || undefined}
+                onClick={publishing ? undefined : () => onPublished(video, !published)}
+              />
+              <span aria-hidden="true">Опубликовано</span>
+            </span>
             <div className="video-actions">
               {view.canReveal && (
                 <button type="button" className="btn btn-s" disabled={busy} onClick={() => onReveal(video)}>
@@ -182,6 +240,21 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, onPlay, onRe
           </>
         )}
       </div>
+      {deleting && (
+        <DeleteVideoDialog
+          label={videoLabel(video, ordinal)}
+          published={published}
+          marksUnknown={marksUnknown}
+          photos={video.photoCount}
+          busy={false}
+          onCancel={() => setDeleting(false)}
+          onDelete={(choice) => {
+            setDeleting(false);
+            onDelete(video, "video", choice === "reject");
+          }}
+          returnFocus={() => trashRef.current}
+        />
+      )}
     </article>
   );
 }

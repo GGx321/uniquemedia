@@ -922,6 +922,29 @@
   line-height: 1.6;
 }
 
+/* ApDone at 1200 (fix round 1): the folded card is one row — the title and «Результаты · N» never wrap apart — and the numbers under it. */
+.ap-live-compact {
+  gap: 4px;
+  padding: 10px 16px;
+}
+
+.ap-live-compact .ap-live-pin {
+  gap: 4px;
+}
+
+.ap-live-compact .ap-live-head {
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.ap-live-compact .ap-live-title {
+  font-size: 15px;
+}
+
+.ap-live-compact .ap-live-line {
+  margin: 0;
+}
+
 .ap-live-why {
   margin: -6px 0 0;
   color: var(--faint);
@@ -1151,6 +1174,14 @@
 
 .ap-log-n li {
   grid-template-columns: max-content minmax(0, 1fr);
+}
+
+/* A name longer than its column («удалённый аватар», fix round 1) is cut, never drawn over the line beside it; the whole name is its title. */
+.ap-log li > .ap-log-who {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .ap-log li.ap-log-warn {
@@ -1504,5 +1535,1034 @@
 
   .ap-live-body > .ap-sc {
     padding: 0 16px;
+  }
+}
+
+/* ── S4.9c · history, a launch's page and its results, the delete dialog, the music window, the avatars' selection
+      (AutopilotS4.dc.html states history, launch, delete-published, plan-music, from-main; MainS4-selected; README «Классы») ── */
+
+/* The small switch («Опубликовано», «Скрыть опубликованные», a track's «для автопилота»): 28 × 16. */
+.sw.sw-s {
+  width: 28px;
+  height: 16px;
+}
+
+.sw.sw-s::after {
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+}
+
+.sw.sw-s.sw-on::after {
+  left: 14px;
+}
+
+/* A launch's status as a tag: «идёт», «на паузе», «завершён», «остановлен», «не читается», «опубликовано». */
+.ap-st-acc {
+  background: var(--accent-18);
+  color: var(--accent-text);
+}
+
+.ap-st-warn {
+  background: var(--warn-12);
+  color: var(--warn);
+}
+
+.ap-st-ok {
+  background: var(--ok-14);
+  color: var(--ok);
+}
+
+.ap-st-off {
+  background: var(--line);
+  color: var(--tag-text);
+}
+
+/* The header's «История запусков N» and, under the plan, «Последний запуск». */
+.ap-history-btn {
+  flex-shrink: 0;
+}
+
+.ap-history-n {
+  margin-left: 2px;
+  font-size: 10.5px;
+}
+
+.ap-last {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  padding: 16px 20px;
+}
+
+.ap-last-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ap-last-line {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.ap-last-go {
+  align-self: flex-start;
+}
+
+/* «Выбраны на экране «Аватары»: 4» (ApFromMain), the ended card's «Результаты · N» / «Журнал», «Весь журнал» in the live card. */
+.ap-from-main {
+  display: flex;
+  gap: 6px;
+  margin: 0;
+  color: var(--info);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ap-from-main > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ap-live-ended-acts {
+  display: flex;
+  gap: 8px;
+}
+
+.ap-log-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ap-log-all {
+  font-size: 11.5px;
+}
+
+/* The music marks are the library's, not the launch's: the chip opens its window while a launch runs too. */
+.ap-lockd .chip.ap-music-chip {
+  opacity: 1;
+  cursor: pointer;
+}
+
+/* ── the pages «История запусков» and «Запуск …» ── */
+
+.ap-launch-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.ap-launch-head-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ap-launch-head-text .screen-title {
+  margin: 0;
+}
+
+.ap-launch-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ap-launch-title .ap-st {
+  height: 24px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.ap-launch-meta,
+.ap-launch-loading {
+  margin: 0;
+}
+
+.ap-launch-bits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  flex-shrink: 0;
+  margin: 0;
+  font-size: 10.5px;
+}
+
+.ap-launch-bits > span {
+  white-space: nowrap;
+}
+
+/* «История запусков»: one card of rows, each a button to its launch. */
+.ap-history,
+.ap-history-empty {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.ap-history-empty {
+  align-items: center;
+  gap: 8px;
+  padding: 28px;
+  font-size: 12px;
+}
+
+.ap-history-foot {
+  margin: 0;
+  flex-shrink: 0;
+  font-size: 11.5px;
+}
+
+.ap-hrow {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 1fr) 110px 190px 120px 16px;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  min-height: 58px;
+  padding: 0 20px;
+  border: 0;
+  border-top: 1px solid var(--line);
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.ap-hrow:hover {
+  background: var(--panel-2);
+}
+
+button.ap-hrow:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.ap-hrow-head {
+  min-height: 40px;
+  border-top: 0;
+  color: var(--faint);
+  font-size: 11px;
+  cursor: default;
+}
+
+.ap-hrow-when {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ap-hrow-when > b {
+  font-weight: 600;
+}
+
+.ap-hrow-when > .mono {
+  font-size: 10.5px;
+}
+
+.ap-hrow-who {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ap-faces {
+  display: flex;
+  flex-shrink: 0;
+}
+
+.ap-face {
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  margin-right: -7px;
+  border: 2px solid var(--panel);
+  border-radius: 7px;
+}
+
+.ap-face .portrait-silhouette {
+  display: none;
+}
+
+.ap-hrow-names {
+  min-width: 0;
+  margin-left: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-hrow-n {
+  white-space: nowrap;
+}
+
+.ap-hrow-go {
+  display: flex;
+  color: var(--faint);
+}
+
+/* An entry that cannot be read: amber, what it means, and «Убрать запись» (or «Прочитать снова» for a folder that would not read). */
+.ap-hrow-bad {
+  border-top: 1px solid var(--line);
+  background: var(--warn-04);
+}
+
+.ap-hrow-bad:focus {
+  outline: none;
+}
+
+.ap-hrow-bad .ap-hrow {
+  border-top: 0;
+  cursor: default;
+}
+
+.ap-hrow-badrow {
+  padding-top: 14px;
+  padding-bottom: 4px;
+}
+
+.ap-hrow-bad-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.ap-hrow-bad-text {
+  grid-column: span 3;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ap-hrow-bad-act {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 20px 12px;
+  font-size: 11.5px;
+}
+
+.ap-hrow-bad > .notice {
+  margin: 0 20px 12px;
+}
+
+/* A launch's page: the results and the log side by side, filling the window; each scrolls inside. */
+.ap-launch-body {
+  display: flex;
+  gap: 20px;
+  flex: 1 1 0;
+  min-height: 420px;
+}
+
+.ap-res-col {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.ap-res-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.ap-res-title:focus {
+  outline: none;
+}
+
+.ap-res-seg {
+  margin-left: 6px;
+}
+
+.ap-seg-n {
+  margin-left: 4px;
+  font-size: 10.5px;
+  opacity: 0.8;
+}
+
+.ap-res-hide {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ap-res-hide .mono {
+  font-size: 10.5px;
+}
+
+.ap-res-dropped {
+  margin: 0;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.ap-res-col > .notice {
+  flex-shrink: 0;
+}
+
+.ap-res-wrap {
+  margin: 0 -4px;
+}
+
+.ap-res-wrap > .ap-sc {
+  padding: 0 4px 4px;
+}
+
+.ap-res-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-content: start;
+  gap: 12px;
+}
+
+.ap-res-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.ap-res-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  grid-column: 1 / -1;
+  padding: 28px;
+  border: 1px dashed var(--dashed);
+  border-radius: 12px;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* One video of the launch (.ap-res, .ap-thumb-v): a 72 × 128 frame, its name, when, shape · size, the track, «Опубликовано». */
+.ap-res {
+  display: flex;
+  gap: 12px;
+  min-width: 0;
+  padding: 10px;
+}
+
+.ap-res:focus {
+  outline: none;
+}
+
+.ap-res:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ap-res-dropped-tile {
+  border-color: var(--danger-35);
+}
+
+.ap-res-thumb {
+  position: relative;
+  flex-shrink: 0;
+  width: 72px;
+  height: 128px;
+  overflow: hidden;
+  border-radius: 7px;
+  background: var(--frame-black);
+}
+
+.ap-res-thumb .video-poster {
+  width: 72px;
+  height: 128px;
+  border-radius: 7px;
+}
+
+.ap-res-quiet .ap-res-thumb .video-poster {
+  background: var(--panel-3);
+}
+
+.ap-res-bars {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  left: 5px;
+  display: flex;
+  gap: 2px;
+}
+
+.ap-res-bars > span {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.35);
+}
+
+.ap-res-bars > span.ap-res-bar-on {
+  background: #fff;
+}
+
+.ap-res-pub,
+.video-pub-mark {
+  position: absolute;
+  top: 8px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--ok);
+  color: #08130f;
+}
+
+.ap-res-len {
+  position: absolute;
+  bottom: 5px;
+  left: 5px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 10px;
+  font-weight: 500;
+}
+
+.ap-res-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.ap-res-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ap-res-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.ap-res-name {
+  margin: 0;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-res-when {
+  font-size: 10.5px;
+}
+
+.ap-res-meta {
+  white-space: nowrap;
+}
+
+.ap-res-music {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.ap-res-cover {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  background: var(--panel-3);
+}
+
+.ap-res-music-text {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-res-foot {
+  display: flex;
+  flex-direction: column;
+  margin-top: auto;
+  padding-top: 6px;
+}
+
+.ap-res-pubrow,
+.video-pub {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ap-res-pubrow-on,
+.video-pub-on {
+  color: var(--text);
+}
+
+.ap-res-status {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.ap-res-status-warn {
+  color: var(--warn);
+}
+
+.ap-res-status-danger {
+  color: var(--danger);
+}
+
+/* An avatar deleted since the launch: its tiles stay, inert, «аватар удалён». */
+.ap-res-status-faint {
+  color: var(--faint);
+}
+
+/* The trash whose dialog is open keeps its highlight behind the scrim (ApDeletePublished). */
+.ibtn.ap-res-trash-on,
+.ibtn.video-trash-on {
+  border-color: var(--danger-45);
+  background: var(--danger-08);
+  color: var(--danger);
+  box-shadow: 0 0 0 2px var(--danger-35);
+}
+
+/* «Удалить видео» while the marks cannot be read: the owner chooses. */
+.ap-del-marks {
+  color: var(--warn);
+}
+
+.ap-res-render {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--accent-text);
+  font-size: 12px;
+}
+
+.ap-res-render-row {
+  display: flex;
+  justify-content: space-between;
+  font-weight: 600;
+}
+
+.ap-res-render-row .mono {
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+.ap-res-render .bar > span {
+  background: var(--accent);
+}
+
+/* «Журнал» of the launch: «Потрачено», «Правки сцен», the whole log with «Показать раньше». */
+.ap-journal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex-shrink: 0;
+  width: 330px;
+  min-height: 0;
+  padding: 16px;
+  overflow: hidden;
+}
+
+.ap-journal-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mono.ap-journal-log {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: var(--border-strong) transparent;
+  scrollbar-width: thin;
+}
+
+.ap-log-wrap li {
+  align-items: start;
+  white-space: normal;
+}
+
+.ap-log-wrap li > span:last-child {
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.ap-journal-more {
+  flex-shrink: 0;
+}
+
+.ap-journal-none {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* «Удалить видео»: two ways as a radiogroup (.ap-opt, .ap-radio); the button repeats the choice. */
+.ap-del {
+  width: 480px;
+}
+
+.ap-del-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 20px 16px;
+}
+
+.ap-del-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.ap-del-lead {
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ap-del-opts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ap-opt {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 10px;
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ap-opt:hover {
+  border-color: var(--border-strong);
+}
+
+.ap-opt-on,
+.ap-opt-on:hover {
+  border-color: var(--accent-45);
+  background: var(--accent-08);
+}
+
+.ap-opt:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.ap-radio {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1.5px solid var(--muted);
+  border-radius: 50%;
+}
+
+.ap-opt-on .ap-radio {
+  border-color: var(--accent);
+}
+
+.ap-opt-on .ap-radio::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.ap-opt-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ap-opt-text > b {
+  font-weight: 600;
+}
+
+.ap-opt-sub {
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.ap-del-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* «Музыка для автопилота» (.ap-trk): beside the settings column, its arrow at the chip, over the plan; not modal. */
+.ap-music-pop {
+  position: fixed;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--panel-2);
+  box-shadow: var(--shadow-pop);
+  font-size: 12px;
+}
+
+.ap-music-pop:focus {
+  outline: none;
+}
+
+.ap-music-pop > .pop-arrow {
+  left: -6px;
+}
+
+.ap-music-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ap-music-head > b {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ap-music-part {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.ap-music-own {
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.ap-music-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ap-music-note {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ap-trks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ap-trk {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 4px 8px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--input);
+}
+
+.ap-trk-off {
+  opacity: 0.55;
+}
+
+.ap-trk-cover {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 6px;
+}
+
+.ap-trk-text {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ap-trk-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ap-trk-note {
+  font-size: 10px;
+}
+
+.ap-music-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.ap-music-foot > .ap-music-note {
+  flex: 1 1 auto;
+}
+
+/* «Аватары»: the box on an active avatar's tile and the selection bar (Main.dc.html, MainS4-selected). */
+.avatar-select {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1.5px solid rgba(238, 237, 243, 0.45);
+  border-radius: 8px;
+  background: var(--scrim-35);
+  color: var(--accent-ink);
+  cursor: pointer;
+}
+
+.avatar-select:hover {
+  border-color: var(--text);
+}
+
+.avatar-select-on,
+.avatar-select-on:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.avatar-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.avatar-card-chosen {
+  border-color: var(--accent-45);
+}
+
+.avatars-sel {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 58px;
+  padding: 8px 10px 8px 18px;
+  border: 1px solid var(--accent-35);
+  border-radius: 12px;
+  background: var(--accent-08);
+}
+
+.avatars-sel-n {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.avatars-sel > .mono {
+  white-space: nowrap;
+}
+
+.avatars-sel-hint {
+  font-size: 11.5px;
+}
+
+.avatars-sel-hint-warn {
+  min-width: 0;
+  color: var(--warn);
+  line-height: 1.35;
+}
+
+.avatars-sel-hidden {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.avatars-sel-acts {
+  display: flex;
+  gap: 8px;
+  margin-left: auto;
+}
+
+/* «Мои» of «Монтаж»: «для автопилота» on an own track. */
+.chip.mine-ap {
+  flex-shrink: 0;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  font-size: 11px;
+}
+
+.mine-ap-hint {
+  margin-top: 2px;
+}
+
+/* ── 1200: the history's narrower columns, two columns of tiles, the log narrower, the selection bar's hint gone (not its warning) ── */
+
+@media (max-width: 1439px) {
+  .ap-hrow {
+    grid-template-columns: 120px minmax(0, 1fr) 84px 150px 96px 16px;
+  }
+
+  .ap-journal {
+    width: 268px;
+  }
+
+  .ap-launch-body {
+    gap: 16px;
+  }
+
+  .avatars-sel-hint:not(.avatars-sel-hint-warn) {
+    display: none;
   }
 }

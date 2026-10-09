@@ -103,7 +103,7 @@ interface PlannedAvatar {
   readonly shapes: readonly VideoShape[];
 }
 
-interface MockLaunch {
+export interface MockLaunch {
   readonly launchId: string;
   readonly createdAt: string;
   endedAt: string | null;
@@ -120,6 +120,12 @@ interface MockLaunch {
   videos: LaunchVideo[];
   log: LogLine[];
 }
+
+/**
+ * A launch put straight into the library's history (S4.9c, a renderer test and dev control): what `autopilot.list` and `autopilot.get` then read of it, as if
+ * the launch had run. Nothing is spent or checked; the view it makes is parsed by the contract, so a seed that breaks it fails loudly.
+ */
+export type MockSeededLaunch = Omit<MockLaunch, "launchId">;
 
 type Outcome<T> = { readonly ok: true; readonly result: T } | { readonly ok: false; readonly error: EngineError };
 const done = <T>(result: T): Outcome<T> => ({ ok: true, result });
@@ -355,6 +361,21 @@ export class MockAutopilot {
     if (at < 0) return refuse({ code: "NOT_FOUND", detail: "no unreadable launch entry matches" });
     this.#unreadable.splice(at, 1);
     return done({});
+  }
+
+  /**
+   * S4.9c: a launch seeded into the history (`MockSeededLaunch`), built by `build` once its id is known (its videos' records name it). Kept in the order the
+   * launches were made, so `list` stays newest first whatever order they are seeded in. Answers the launch's id.
+   */
+  seed(build: (launchId: string) => MockSeededLaunch): string {
+    this.#launchCount += 1;
+    const launchId = `launch-${String(this.#launchCount).padStart(8, "0")}`;
+    const launch: MockLaunch = { launchId, ...build(launchId) };
+    // The contract judges the seed now, not at the first read.
+    this.#view(launch);
+    this.#launches.push(launch);
+    this.#launches.sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
+    return launchId;
   }
 
   /** Whether `launchId` names a launch of this library that is not done or stopped (a run or a set says it is the launch's only while so). */
