@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { scenePhoto } from "../../engine/mockEngine.testkit";
-import { MontagePicks, usablePicks } from "./picks";
+import { listedPicks, MontagePicks, usablePicks } from "./picks";
 
 // Slice review 5-L3 and review r1 LOW-6/7: the picks the window keeps per avatar are checked against the gallery once it answers (a photo that went
 // into a video, a render, the reject list or out of the library meanwhile leaves them), and a library switch forgets them all.
@@ -36,5 +36,25 @@ describe("usablePicks", () => {
     const photos = [free, scenePhoto(3, { used: true, usedIn: ["video-0000001"] }), scenePhoto(4, { reserved: true }), scenePhoto(5, { rejected: true, eligible: false }), scenePhoto(6, { eligible: false })];
     const picked = new Set(["gone-photo", ...photos.map((p) => p.photoId)]);
     expect([...usablePicks(picked, photos)]).toEqual([free.photoId]);
+  });
+
+  // S4.P2: past 500 photos the gallery answers a page at a time.
+  test("against some pages only: a pick they do not list is kept for its own page, one they list unusable still goes", () => {
+    const rejected = scenePhoto(5, { rejected: true, eligible: false });
+    const picked = new Set(["photo-on-a-later-page", rejected.photoId, free.photoId]);
+    expect([...usablePicks(picked, [free, rejected], true)]).toEqual(["photo-on-a-later-page", free.photoId]);
+  });
+
+  test("the whole gallery read: a pick on no page goes, and only that one (an unusable listed pick is the first check's to judge)", () => {
+    const rejected = scenePhoto(5, { rejected: true, eligible: false });
+    const picked = new Set([free.photoId, "photo-gone-meanwhile", rejected.photoId]);
+    expect([...listedPicks(picked, [free, rejected])]).toEqual([free.photoId, rejected.photoId]);
+    const kept = new Set([free.photoId]);
+    expect(listedPicks(kept, [free])).toBe(kept);
+  });
+
+  test("against some pages only: the same set when nothing they list goes", () => {
+    const picked = new Set(["photo-on-a-later-page", free.photoId]);
+    expect(usablePicks(picked, [free, other], true)).toBe(picked);
   });
 });

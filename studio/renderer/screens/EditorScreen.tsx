@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type MediaSummary, type Montage, type MontageIssue, type PhotoSummary, type VideoSummary } from "../../shared/engine";
+import { DRAFT_CHANGING_DETAIL, DRAFT_TOO_NEW_DETAIL, type AvatarSummary, type EngineError, type MediaSummary, type Montage, type MontageIssue, type VideoSummary } from "../../shared/engine";
 import { ownVideoClips } from "../../shared/montage";
 import { useEngine, useEngineView } from "../engine/react";
 import { realScheduler } from "../engine/scheduler";
@@ -65,6 +65,7 @@ import { seekInto } from "./montage/timelineScale";
 import { usePlayheadRest } from "./montage/usePlayhead";
 import { playheadStep, type TimelineState, useFocusResolver, useSelectionCommands, useTimeline } from "./montage/useTimeline";
 import { useMounted } from "./photos/shared";
+import { avatarPhotoKeys, usePhotoPages } from "./photos/usePhotoPages";
 
 // 3d.2: the montage editor's shell (Editor.dc.html, EditorNew.dc.html). It opens a draft by `montages.get`, keeps
 // it in a `DraftSession` (undo/redo of up to 100 spec versions, the serialised autosave), and lays out the header
@@ -325,7 +326,6 @@ function DraftEditor({
   const renderKey = renderJob === null ? "none" : `${renderJob.jobId}:${renderJob.status}`;
   /** The engine's verdict, and the render state it was read AFTER: a verdict older than a render's end is stale. */
   const [verdict, setVerdict] = useState<EngineVerdict & { after: string }>(() => ({ spec: initial.spec, issues: initialIssues, after: renderKey }));
-  const [photos, setPhotos] = useState<readonly PhotoSummary[] | null>(null);
   const [videos, setVideos] = useState<readonly VideoSummary[] | null>(null);
   /** Why the last re-read of the draft failed (cleared by the next one that answers). */
   const [verdictError, setVerdictError] = useState<EngineError | null>(null);
@@ -500,16 +500,12 @@ function DraftEditor({
     // read it again in a loop); `avatar` on each avatar.changed; `mediaTick` on a change to one of the draft's own files.
   }, [client, session, montageId, avatarId, savedAt, avatar, focusTick, renderKey, gone, mediaTick]);
 
-  // The avatar's photos: the bin, and why the engine refuses a photo.
-  useEffect(() => {
-    let alive = true;
-    void client.request("photos.list", { avatarId }).then((reply) => {
-      if (alive && reply.ok) setPhotos(reply.result.photos);
-    });
-    return () => {
-      alive = false;
-    };
-  }, [client, avatarId, avatar, focusTick]);
+  // The avatar's photos: the bin, and why the engine refuses a photo. Read again when avatar.changed moves its counts and when the window
+  // comes back; past 500 the bin pages with «Показать ещё» (S4.P2), one read at a time: a new photo reads the top, any other change
+  // every page the owner opened.
+  const binKeys = avatarPhotoKeys(avatar);
+  const bin = usePhotoPages(client, avatarId, { enabled: true, refresh: [binKeys.states, focusTick], arrivals: [binKeys.arrivals] });
+  const photos = bin.pages?.photos ?? null;
 
   const photoIndex = useMemo(() => (photos === null ? null : new Map(photos.map((p) => [p.photoId, p]))), [photos]);
   const flagged = photoProblems(state.spec, verdict, photoIndex ?? new Map());
@@ -1117,6 +1113,7 @@ function DraftEditor({
                 avatarId={avatarId}
                 spec={state.spec}
                 photos={photos}
+                paging={bin.pages === null ? null : { pages: bin.pages, state: bin.more, added: bin.added, onMore: bin.loadMore }}
                 filter={binFilter}
                 onFilter={setBinFilter}
                 onPick={pickPhoto}
