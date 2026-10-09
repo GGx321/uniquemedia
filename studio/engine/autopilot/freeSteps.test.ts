@@ -3,6 +3,7 @@ import { emptyUsage, trackKey, type TrackChoice, type TrackUsage } from "../../s
 import type { LaunchDraft } from "../../shared/engine/autopilot";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { until } from "../testing/engineHarness";
+import { within } from "../testing/within";
 import { createFreeSteps, MAX_AUTOPILOT_RENDERS as RENDER_CAP, type FreeStepsDeps } from "./freeSteps";
 import type { FileVideo, LaunchFile } from "./launchFile";
 import type { PlanPhoto } from "./planner";
@@ -17,6 +18,8 @@ useNativeGlobals();
 
 /** The number of the plan (section 8.1, A10), written out so that a change of the constant fails a test. */
 const EIGHT = 8;
+/** The bound on every await of a promise the steps own (a drain, a release): a loop that is never woken fails here, with the label, instead of hanging until the CI job is killed. */
+const BOUND_MS = 4_000;
 useRigCleanup();
 
 describe("the order: videos.settled() first, nothing before it", () => {
@@ -576,7 +579,7 @@ describe("the soft stop and the steps' contract", () => {
     expect(r.steps.inFlight().renders).toBe(EIGHT);
 
     r.videos.finishAll();
-    await drain;
+    await within(drain, BOUND_MS, "the drain to resolve after the renders ended");
     r.launch.settlePause();
     expect(r.steps.inFlight()).toEqual({ requests: 0, renders: 0 });
     expect(videosOf(r.launch).filter((v) => v.state === "done")).toHaveLength(EIGHT);
@@ -588,10 +591,55 @@ describe("the soft stop and the steps' contract", () => {
 
   test("drain with nothing in flight resolves at once and never rejects", async () => {
     const r = rig();
-    await r.steps.drain();
+    await within(r.steps.drain(), BOUND_MS, "a drain before anything began");
     r.start();
-    await r.steps.drain();
+    await within(r.steps.drain(), BOUND_MS, "a drain with nothing in flight");
     expect(r.steps.inFlight()).toEqual({ requests: 0, renders: 0 });
+  });
+
+  test("the loop's sleep is a ref'd timer: while a drain is pending, that timer is what keeps the process waiting (Bun on Windows idles for ever on an unref'd one)", async () => {
+    const real = globalThis.setTimeout;
+    let unrefs = 0;
+    let sleeps = 0;
+    globalThis.setTimeout = ((fn: () => void, ms?: number, ...rest: unknown[]) => {
+      const timer = real(fn, ms, ...rest) as ReturnType<typeof setTimeout> & { unref?: () => unknown };
+      if (ms === POLL && typeof timer === "object" && timer !== null && typeof timer.unref === "function") {
+        sleeps += 1;
+        const unref = timer.unref.bind(timer);
+        timer.unref = () => {
+          unrefs += 1;
+          return unref();
+        };
+      }
+      return timer;
+    }) as unknown as typeof setTimeout;
+    try {
+      const r = rig({ auto: false });
+      r.start();
+      await until(() => r.videos.calls.length === 3, "three renders");
+      await settleFor(20);
+      expect(sleeps).toBeGreaterThan(0);
+      expect(unrefs).toBe(0);
+    } finally {
+      globalThis.setTimeout = real;
+    }
+  });
+
+  test("a drain does not wait for a launch that is gone: its renders in flight end by themselves", async () => {
+    const r = rig({ auto: false, photos: 4, draft: { videosPerAvatar: 3 } });
+    let gone = false;
+    const ctx = {
+      ...r.launch.ctx,
+      file: () => {
+        if (gone) throw new Error("the launch is not on disk any more");
+        return r.launch.file();
+      },
+    };
+    r.steps.begin(ctx);
+    await until(() => r.videos.calls.length === 3, "three renders");
+    const drain = r.steps.drain();
+    gone = true;
+    await within(drain, BOUND_MS, "a drain of a launch whose file is gone, with renders still in flight");
   });
 
   test("after a drain, begin carries on from the file: the rest is rendered, none twice", async () => {
@@ -601,7 +649,7 @@ describe("the soft stop and the steps' contract", () => {
     r.launch.pause();
     const drain = r.steps.drain();
     r.videos.finishAll();
-    await drain;
+    await within(drain, BOUND_MS, "the drain before the resume");
     r.launch.settlePause();
 
     r.launch.resume();
@@ -615,10 +663,10 @@ describe("the soft stop and the steps' contract", () => {
 
   test("release is harmless when nothing ran, and when called twice", async () => {
     const r = rig();
-    await r.steps.release(r.launch.ctx);
+    await within(r.steps.release(r.launch.ctx), BOUND_MS, "a release of nothing");
     r.start();
-    await r.steps.release(r.launch.ctx);
-    await r.steps.release(r.launch.ctx);
+    await within(r.steps.release(r.launch.ctx), BOUND_MS, "the first release");
+    await within(r.steps.release(r.launch.ctx), BOUND_MS, "the second release");
   });
 
   test("two avatars in one launch are both rendered and never share a photo", async () => {
