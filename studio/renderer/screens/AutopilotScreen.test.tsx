@@ -115,7 +115,7 @@ describe("the form before a launch", () => {
     expect(screen.getByRole("heading", { level: 2, name: /^Аватары/ }).textContent).toBe("Аватары 0 из 3");
     for (const name of ["Mia", "Sofia", "Elena"]) expect(avatarButton(name).getAttribute("aria-pressed")).toBe("false");
     // Nora is archived: the autopilot works with active avatars only.
-    expect(within(screen.getByRole("group", { name: /^Аватары/ })).queryByRole("button", { name: "Nora" })).toBeNull();
+    expect(within(screen.getByRole("group", { name: /^Аватары/ })).queryByRole("button", { name: "Nora" }) === null).toBe(true);
     // «своб.» comes from the engine's plan of every active avatar, not from the avatar's own counts.
     await waitFor(() => expect(descriptionOf(avatarButton("Mia"))).toBe("31 своб."));
     expect(descriptionOf(avatarButton("Sofia"))).toBe("4 своб.");
@@ -123,7 +123,7 @@ describe("the form before a launch", () => {
     expect(go.textContent).toBe("Запустить");
     expect(go.getAttribute("aria-disabled")).toBe("true");
     expect(descriptionOf(go)).toBe(GO_WHY.noneChosen);
-    expect(screen.queryByText(/Текст на видео/)).toBeNull();
+    expect(screen.queryByText(/Текст на видео/) === null).toBe(true);
     expect(screen.getByRole("switch", { name: "Сцены на проверку" }).getAttribute("aria-checked")).toBe("true");
   });
 
@@ -316,7 +316,7 @@ describe("what blocks the launch", () => {
     expect(screen.getByText(/^Видео: \d+ из 20 — не хватает фото$/)).toBeDefined();
     expect(screen.getByText(/^: \d из 10 — свободных фото в этих категориях 4\.$/)).toBeDefined();
     expect(goButton().textContent).toMatch(/· бесплатно$/);
-    expect(screen.queryByText("В месяце свободно")).toBeNull();
+    expect(screen.queryByText("В месяце свободно") === null).toBe(true);
     expect(screen.getByText("бесплатно", { selector: ".ap-limit" })).toBeDefined();
   });
 
@@ -360,8 +360,8 @@ describe("«Запустить»", () => {
     const live = await screen.findByRole("heading", { level: 2, name: "Идёт запуск" });
     await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(live)));
     // The plan card is gone; «План запуска» says what was accepted (drawn at 1440).
-    expect(screen.queryByRole("heading", { level: 2, name: "План" })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Запустить/ })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "План" }) === null).toBe(true);
+    expect(screen.queryByRole("button", { name: /^Запустить/ }) === null).toBe(true);
     expect(screen.getByRole("heading", { level: 2, name: "План запуска" })).toBeDefined();
     expect(screen.getByText(`предел до ${formatUsdTiered(preview.estimate.worstMicros, "up")}`)).toBeDefined();
     expect(screen.getByText(/^Это настройки идущего запуска/)).toBeDefined();
@@ -388,7 +388,7 @@ describe("«Запустить»", () => {
     expect(screen.getByRole("slider", { name: "Граница «Одно фото» и «Коллаж»" }).getAttribute("aria-valuenow")).toBe("70");
     expect(screen.getByRole("switch", { name: "GIF-стикеры" }).getAttribute("aria-checked")).toBe("false");
     // «Все» / «Никого» belong to a form that can change; the music line keeps the last plan's words.
-    expect(screen.queryByRole("button", { name: "Все" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Все" }) === null).toBe(true);
     expect(screen.getByText(/^Тренды \+ мои · 0\sтреков$/)).toBeDefined();
     await new Promise((resolve) => setTimeout(resolve, 300));
     await flush();
@@ -412,7 +412,7 @@ describe("«Запустить»", () => {
     expect(screen.getByText(`Было не больше ${formatUsdTiered(before.estimate.worstMicros, "up")}, теперь ${formatUsdTiered(after.estimate.worstMicros, "up")}.`)).toBeDefined();
     expect(goButton().textContent).toBe(titleOf(after));
     expect(describeElement(document.activeElement)).toBe(describeElement(goButton()));
-    expect(screen.queryByRole("heading", { level: 2, name: "Идёт запуск" })).toBeNull();
+    expect(screen.queryByRole("heading", { level: 2, name: "Идёт запуск" }) === null).toBe(true);
     fireEvent.click(goButton());
     await flush();
     const starts = callsOf(engine, "autopilot.start");
@@ -543,11 +543,11 @@ describe("«Стоп»", () => {
     expect(within(dialog).getByText(/^Потрачено \$[\d.]+ из \$[\d.]+ — остальное запуск уже не потратит\.$/)).toBeDefined();
     await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" }))));
     fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("alertdialog") === null).toBe(true));
     expect(describeElement(document.activeElement)).toBe(describeElement(screen.getByRole("button", { name: "Стоп" })));
     fireEvent.click(screen.getByRole("button", { name: "Стоп" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Отмена" }));
-    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("alertdialog") === null).toBe(true));
     expect(describeElement(document.activeElement)).toBe(describeElement(screen.getByRole("button", { name: "Стоп" })));
     expect(callsOf(engine, "autopilot.stop")).toHaveLength(0);
     expect(screen.getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();
@@ -572,8 +572,8 @@ describe("«Стоп»", () => {
     const stopped = await screen.findByRole("heading", { level: 2, name: "Запуск остановлен" });
     // The same heading, renamed: the focus stayed on it.
     expect(describeElement(document.activeElement)).toBe(describeElement(stopped));
-    expect(screen.queryByRole("button", { name: "Стоп" })).toBeNull();
-    expect(screen.queryByText(/^Это настройки идущего запуска/)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Стоп" }) === null).toBe(true);
+    expect(screen.queryByText(/^Это настройки идущего запуска/) === null).toBe(true);
     expect(avatarButton("Mia").getAttribute("aria-disabled")).toBeNull();
     expect(goButton()).toBeDefined();
   });
