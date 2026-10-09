@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { unservedAnswers } from "./testing/pending";
+useNativeGlobals();
 
 // Stage 4, S4.1: a parity story can be PENDING while the real engine does not serve its commands. The harness then asks only that the real engine refuses each named command
 // with its one refusal, «<command> is not implemented yet». These tests hold that check itself, on transcripts made by hand.

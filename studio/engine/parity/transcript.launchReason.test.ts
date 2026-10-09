@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import type { EngineError } from "../../shared/engine";
 import { answerLine, Normalizer } from "./testing/transcript";
+useNativeGlobals();
 
 // Stage 4 (review M3): the refusal of a start names its reason in a closed code, so the transcript compares it; an error without one is written as it always was.
 
