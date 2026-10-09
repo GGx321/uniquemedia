@@ -143,7 +143,7 @@ test("runs.estimate and runs.start answer NOT_FOUND for an avatar that is not sa
   expect(await client.request("runs.estimate", { ...REQUEST, avatarId: archived.avatarId })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
   expect(await client.request("runs.start", { ...REQUEST, avatarId: "avatar-none-0001", acceptedWorstMicros: 9_000_000 })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
   // The gallery itself still answers for an archived avatar.
-  expect(await unwrap(client.request("photos.list", { avatarId: archived.avatarId }))).toEqual({ photos: [], skippedTotal: 0 });
+  expect(await unwrap(client.request("photos.list", { avatarId: archived.avatarId }))).toEqual({ photos: [], skippedTotal: 0, nextCursor: null, remainingTotal: 0 });
 });
 
 test("a cancel keeps only the in-flight slots' reserves open (MEDIUM-2); reconciling frees the rest for the resume to price again", async () => {
@@ -274,7 +274,7 @@ test("failed slots end without a photo and are counted in the run's result", asy
 
 test("photos.list is NOT_FOUND only for an unknown avatar, and carries the unreadable count", async () => {
   const { client } = makeMock({ skippedPhotos: { [MIA.avatarId]: 2 } });
-  expect(await unwrap(client.request("photos.list", { avatarId: MIA.avatarId }))).toEqual({ photos: [], skippedTotal: 2 });
+  expect(await unwrap(client.request("photos.list", { avatarId: MIA.avatarId }))).toEqual({ photos: [], skippedTotal: 2, nextCursor: null, remainingTotal: 0 });
   expect(await client.request("photos.list", { avatarId: "avatar-none-0001" })).toMatchObject({ ok: false, error: { code: "NOT_FOUND" } });
 });
 

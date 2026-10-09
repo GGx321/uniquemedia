@@ -79,7 +79,7 @@ import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity"
 import { EngineReply, HostCall, HostControl, isControlMessage, MEDIA_IMPORT_ENGINE_DEADLINE_MS, type AvatarDeletePlan, type EngineInit, type EngineSettings } from "./control";
 import { CategoryError, LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, snapshotOf, summaryOf, type AvatarManifest, type DetachedAvatar, type Library, type LibraryDeps, type LogIssue, type StoredCategory } from "./library";
 import type { ImageMediaType } from "./library/media";
-import { finalizePhotoList, looksLikeRunPhoto, photoSummaryFrom } from "./library/photoRecords";
+import { looksLikeRunPhoto, pagePhotoList, photoSummaryFrom, type PhotoPage } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -1663,13 +1663,14 @@ export class Engine {
         // already lists archived avatars normally (AvatarSummary excludes only
         // "draft"). `library?.` also makes "no library open" answer NOT_FOUND
         // here, like #runnableAvatar: there is nothing to find either way.
-        const { avatarId } = command.payload;
+        // S4.P2: `cursor` (already decoded by the request schema, the trust boundary) asks for the page after a previous one.
+        const { avatarId, cursor } = command.payload;
         const library = this.library;
         if (library?.getAvatar(avatarId) === undefined) {
           throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
         }
-        const { photos, skippedTotal } = this.#photosFor(library, avatarId);
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { photos, skippedTotal } };
+        const { photos, skippedTotal, nextCursor, remainingTotal } = this.#photosFor(library, avatarId, cursor ?? null);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { photos, skippedTotal, nextCursor, remainingTotal } };
       }
       case "photos.setRejected":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#setRejected(command.payload) };
@@ -1900,9 +1901,9 @@ export class Engine {
    * for it. `skippedTotal` is never itself bounded: it counts every skip,
    * not only those among the returned (and possibly capped) photos.
    */
-  #photosFor(library: Library, avatarId: string): { photos: PhotoSummary[]; skippedTotal: number } {
+  #photosFor(library: Library, avatarId: string, cursor: string | null): PhotoPage & { skippedTotal: number } {
     const { photos, skippedTotal } = this.#photoSummaries(library, avatarId);
-    return { photos: finalizePhotoList(photos, MAX_LISTED_PHOTOS), skippedTotal };
+    return { ...pagePhotoList(photos, MAX_LISTED_PHOTOS, cursor), skippedTotal };
   }
 
   /**

@@ -88,13 +88,39 @@ export type MusicPeaksRequest = z.infer<typeof MusicPeaksRequest>;
 export const MAX_LISTED_RUNS = 100;
 
 /**
- * photos.list answers at most this many photos, newest first: no cursor yet
- * (T8b). A single run already caps at 100 photos (RunRequest.count); this is
- * a generous multiple of that for one avatar's whole gallery across many
- * runs, picked as a simple bound for now rather than because anything today
- * demands more — revisit with a cursor if a real library ever approaches it.
+ * photos.list answers at most this many photos per page, newest first (T8b).
+ * A single run already caps at 100 photos (RunRequest.count); this is a
+ * generous multiple of that for one avatar's whole gallery across many runs.
+ * Past it the gallery pages with a cursor (S4.P2, `PhotoCursor`): every photo
+ * the autopilot may take can also be seen by the owner.
  */
 export const MAX_LISTED_PHOTOS = 500;
+
+const PHOTO_CURSOR_PATTERN = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z)\|([A-Za-z0-9_-]{1,128})$/;
+
+/** A position in photos.list's newest-first order: where the last shown photo stands. */
+export type PhotoCursorPosition = { createdAt: string; photoId: string };
+
+/** The cursor naming the position (createdAt, photoId) of the last photo of a page: `<createdAt>|<photoId>`. Keyset, not an offset. */
+export function encodePhotoCursor(createdAt: string, photoId: string): string {
+  return `${createdAt}|${photoId}`;
+}
+
+/** The position a cursor names, or null when it is not one of ours (a forged or damaged value). */
+export function decodePhotoCursor(cursor: string): PhotoCursorPosition | null {
+  const match = PHOTO_CURSOR_PATTERN.exec(cursor);
+  const createdAt = match?.[1];
+  const photoId = match?.[2];
+  if (createdAt === undefined || photoId === undefined || Number.isNaN(Date.parse(createdAt))) return null;
+  return { createdAt, photoId };
+}
+
+/**
+ * photos.list's `cursor` (S4.P2; additive, protocol stays 5): the value a previous page's `nextCursor` gave. It crosses the
+ * renderer-to-engine boundary, so the schema is the gate: anything that does not decode is refused as VALIDATION.
+ */
+export const PhotoCursor = z.string().max(160).refine((value) => decodePhotoCursor(value) !== null, "must be a cursor photos.list gave");
+export type PhotoCursor = z.infer<typeof PhotoCursor>;
 
 /**
  * `montages.create`'s photos: none (an empty draft, «Новый монтаж») up to the
@@ -355,8 +381,9 @@ const ENGINE_SPECS = [
   defineCommand("runs.resume", z.strictObject({ runId: Id, ...AcceptedWorst }), z.strictObject({ runId: Id, jobId: Id })),
   // Every run the open library holds, newest first (bounded), read from disk: how to find a run to resume after a restart.
   defineCommand("runs.list", Empty, z.strictObject({ runs: z.array(RunSummary).max(MAX_LISTED_RUNS) })),
-  // T8b's gallery: an avatar's stored run photos, newest first, bounded at
-  // MAX_LISTED_PHOTOS. NOT_FOUND only for an avatarId the library does not
+  // T8b's gallery: an avatar's stored run photos, newest first, a page of
+  // MAX_LISTED_PHOTOS at a time (S4.P2: `cursor` asks for the page after a
+  // previous one; without it, the first page, as before). NOT_FOUND only for an avatarId the library does not
   // have at all — a draft, an active avatar and an archived one all get
   // their (possibly empty) list, like avatars.list already lists archived
   // avatars normally; see engine.ts's own comment on this handler.
@@ -366,8 +393,15 @@ const ENGINE_SPECS = [
   // is no per-item list to show for it.
   defineCommand(
     "photos.list",
-    z.strictObject({ avatarId: Id }),
-    z.strictObject({ photos: z.array(PhotoSummary).max(MAX_LISTED_PHOTOS), skippedTotal: Count }),
+    z.strictObject({ avatarId: Id, cursor: PhotoCursor.optional() }),
+    z.strictObject({
+      photos: z.array(PhotoSummary).max(MAX_LISTED_PHOTOS),
+      skippedTotal: Count,
+      // S4.P2: the cursor of the next (older) page, null on the last one; and how many listable photos lie beyond this page.
+      // `skippedTotal` keeps its meaning (photos that could not be read), so a photo beyond the page is never counted in it.
+      nextCursor: PhotoCursor.nullable(),
+      remainingTotal: Count,
+    }),
   ),
   // Stage 3: montages and rendered videos. A render spends nothing.
   // The owner's own "do not use" mark on a photo (rejected.jsonl); the mark is set or cleared, and the photo answered as it now stands.

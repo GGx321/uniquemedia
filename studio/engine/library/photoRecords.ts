@@ -1,4 +1,4 @@
-import { CategoryName, MAX_PHOTO_USED_IN, PhotoSummary, SceneCategory, type PhotoQaSummary } from "../../shared/engine";
+import { CategoryName, MAX_PHOTO_USED_IN, newestFirstPhotos, PhotoSummary, SceneCategory, type PhotoQaSummary } from "../../shared/engine";
 import type { PhotoState } from "./eligibility";
 import type { PhotoQa, PhotoSidecar } from "./schemas";
 
@@ -80,7 +80,8 @@ export function photoSummaryFrom(sidecar: PhotoSidecar, state: PhotoState): Phot
  * the contract's own constant.
  */
 export function finalizePhotoList(photos: readonly PhotoSummary[], limit: number): PhotoSummary[] {
-  return [...photos]
-    .sort((a, b) => (a.createdAt === b.createdAt ? (a.photoId < b.photoId ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1))
-    .slice(0, limit);
+  return [...photos].sort(newestFirstPhotos).slice(0, limit);
 }
+
+// S4.P2: one page of photos.list is shared with the mock, which cannot import the engine.
+export { pagePhotoList, type PhotoPage } from "../../shared/engine";

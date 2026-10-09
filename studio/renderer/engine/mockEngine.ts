@@ -1,6 +1,8 @@
 import {
   AvatarDescriptor,
   checkImageChoice,
+  decodePhotoCursor,
+  pagePhotoList,
   type ApiKeyStatus,
   type MusicKeyStatus,
   type AvatarStatus,
@@ -1883,14 +1885,17 @@ export class MockEngine implements EngineBridge {
         return this.ok(c, { avatar });
       }
       case "photos.list": {
-        const { avatarId } = c.payload;
+        const { avatarId, cursor } = c.payload;
+        // S4.P2: the engine refuses a cursor its request schema cannot read before it looks at anything else; the mock does the same.
+        if (cursor !== undefined && decodePhotoCursor(cursor) === null) return this.fail(c, { code: "VALIDATION", detail: "cursor: must be a cursor photos.list gave" });
         // NOT_FOUND only for an id the library does not have at all: a draft, an active and an archived avatar all get their list.
         const known = this.libraryOpen && (this.avatars.some((a) => a.avatarId === avatarId) || this.drafts.some((d) => d.avatarId === avatarId));
         if (!known) return this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
         const own = this.photos.filter((p) => p.avatarId === avatarId);
         const readable = own.filter((p) => !this.unreadableSidecars.has(p.photoId));
-        const photos = readable.reverse().slice(0, MAX_LISTED_PHOTOS).map((p) => this.photoView(p));
-        return this.ok(c, { photos, skippedTotal: (this.skippedPhotos[avatarId] ?? 0) + own.length - readable.length });
+        // The same page rule as the engine's (pagePhotoList, studio/shared/engine/photoPage.ts): a key after the last shown photo, newest first.
+        const page = pagePhotoList(readable.map((p) => this.photoView(p)), MAX_LISTED_PHOTOS, cursor ?? null);
+        return this.ok(c, { ...page, skippedTotal: (this.skippedPhotos[avatarId] ?? 0) + own.length - readable.length });
       }
       case "runs.list":
         // L7: an unavailable ledger answers no runs at all, like the real
