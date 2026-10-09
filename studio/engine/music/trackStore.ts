@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import { Id, MAX_LISTED_TRACKS, type TrackSummary } from "../../shared/engine";
 import { fsyncDir, isTempName, tempSiblingPath, writeFileAtomic, writeFileDurable, writeJsonAtomic } from "../library/durableFs";
 import { renameWithRetry } from "../library/renameRetry";
+import type { TrackCandidate } from "../../shared/autopilot/track";
 import { normaliseHighlights, windowPeaks } from "../../shared/music/trackShape";
 import { checkCdnUrl } from "./cdnPolicy";
 import type { CdnTransport } from "./cdnTransport";
@@ -141,6 +142,9 @@ function reasonOf(error: unknown): string {
 }
 
 export { TrackUnavailableError } from "./renderTrack";
+
+/** A stored trending track as the autopilot's chooser takes it (`shared/autopilot/track.ts`). */
+export type TrendingCandidate = Extract<TrackCandidate, { source: "trending" }>;
 
 export class TrackStore implements MusicListSink, RenderTrackSource {
   readonly persistent = true;
@@ -320,6 +324,21 @@ export class TrackStore implements MusicListSink, RenderTrackSource {
     if (!Id.safeParse(trackId).success) return null;
     const audio = this.#record?.tracks.find((entry) => entry.trackId === trackId)?.audio;
     return audio?.state === "stored" ? { decodedMs: audio.decodedMs } : null;
+  }
+
+  /**
+   * Every STORED trending track as the autopilot's chooser takes it (S4.5d, plan §7): of the current list or kept from an earlier one (`inList` says which), with the PROVEN
+   * length (`decodedMs`), the highlights and the explicit flag as stored. A track whose audio is pending or failed is left out. From the record alone: no disk, no ffmpeg.
+   * Nothing is filtered here: «not explicit» is the candidate builder's rule.
+   */
+  storedTrends(): TrendingCandidate[] {
+    const record = this.#record;
+    if (record === null) return [];
+    return record.tracks.flatMap((entry) =>
+      entry.audio.state === "stored"
+        ? [{ source: "trending" as const, trackId: entry.trackId, durationMs: entry.audio.decodedMs, highlights: entry.highlights.map(({ ms, likelyDefault }) => ({ ms, likelyDefault })), explicit: entry.explicit, inList: entry.inList }]
+        : [],
+    );
   }
 
   /**

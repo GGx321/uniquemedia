@@ -97,6 +97,44 @@ const AUTOPILOT_COMMANDS = ["autopilot.estimate", "autopilot.start", "autopilot.
 /** The orchestrator's commands a story uses: the real engine answers them «not implemented yet» until S4.6. */
 const orchestrator = (...used: string[]): { until: string; commands: readonly string[] } => ({ until: "S4.6", commands: AUTOPILOT_COMMANDS.filter((c) => used.includes(c)) });
 
+/** The media ids a `media.list` answer holds, newest first. */
+function mediaIdsOf(answer: Answer): string[] {
+  const media = answer.ok ? answer.result.media : null;
+  return Array.isArray(media) ? media.flatMap((item) => (typeof record(item)?.mediaId === "string" ? [String(record(item)?.mediaId)] : [])) : [];
+}
+
+/** Served by S4.5d: both engines answer the owner's «для автопилота» flag on an own track the same, line for line. */
+const TRACK_FLAG: Scenario[] = [
+  {
+    name: "autopilot: an own track is flagged for the autopilot and unflagged, the list says so, and a media that is not an own track is refused",
+    rig: { ownMedia: true },
+    async run(t, _w, control) {
+      await control.mediaDialog("track");
+      await t.call("media.pickImport", { kind: "audio" });
+      await t.settle();
+      const [track = "media-00000000"] = mediaIdsOf(await t.call("media.list", { kind: "audio" }));
+      t.note("the flag is set, shown by media.list, set again (nothing changes) and cleared; a track never flagged says nothing");
+      await t.call("media.setForAutopilot", { mediaId: track, on: true });
+      await t.call("media.list", { kind: "audio" });
+      await t.call("media.setForAutopilot", { mediaId: track, on: true });
+      await t.call("media.setForAutopilot", { mediaId: track, on: false });
+      await t.call("media.list", { kind: "audio" });
+      t.note("an id the library does not hold, and a photo, are not own tracks");
+      await t.call("media.setForAutopilot", { mediaId: "media-nobody-0404", on: true });
+      await control.mediaDialog("good");
+      await t.call("media.pickImport", { kind: "photo" });
+      await t.settle();
+      const [photo = "media-00000000"] = mediaIdsOf(await t.call("media.list", { kind: "photo" }));
+      await t.call("media.setForAutopilot", { mediaId: photo, on: true });
+      t.note("a flagged track that is deleted is gone; flagging it again is NOT_FOUND");
+      await t.call("media.setForAutopilot", { mediaId: track, on: true });
+      await t.call("media.delete", { mediaId: track });
+      await t.call("media.setForAutopilot", { mediaId: track, on: true });
+      await t.call("media.list", { kind: "audio" });
+    },
+  },
+];
+
 const PENDING: Scenario[] = [
   {
     name: "autopilot (pending the orchestrator): the preview plans per avatar, library first, and names what blocks it",
@@ -186,7 +224,8 @@ const PENDING: Scenario[] = [
   },
   {
     name: "autopilot (pending the marks): a video is marked published, an own track for the autopilot, and a delete rejects the photos first",
-    pending: { until: "S4.5c", commands: ["videos.setPublished", "media.setForAutopilot", "videos.delete"] },
+    // `media.setForAutopilot` is served since S4.5d (the story TRACK_FLAG compares it); the story still sends it, and only the two commands of S4.5c are held to the refusal.
+    pending: { until: "S4.5c", commands: ["videos.setPublished", "videos.delete"] },
     async run(t, w) {
       const photo = (n: number): string => w.photoIds[n - 1] ?? "";
       const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(1), photo(2)] });
@@ -212,4 +251,4 @@ const PENDING: Scenario[] = [
   },
 ];
 
-export const AUTOPILOT_SCENARIOS: readonly Scenario[] = [...PARITY_NOW, ...PENDING];
+export const AUTOPILOT_SCENARIOS: readonly Scenario[] = [...PARITY_NOW, ...TRACK_FLAG, ...PENDING];

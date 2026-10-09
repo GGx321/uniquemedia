@@ -3006,13 +3006,15 @@ export class MockEngine implements EngineBridge {
     return this.ok(c, { video: shown });
   }
 
-  /** `media.setForAutopilot`: only an own track the render can read (an m4a) may be marked; a media that is not a track is NOT_FOUND, as `music.peaks` has it. */
+  /**
+   * `media.setForAutopilot`: only an own track the render can read may be marked, which the mock judges as it judges a render's admission (`holdsTrack`: audio with a length); a
+   * media that is not a track is NOT_FOUND, as `music.peaks` has it. The engine's MEDIA_UNSUPPORTED (format) for audio stored outside an m4a has no counterpart here: the importer
+   * stores every track as an m4a whatever the picked file was called, so nothing the mock can import or hold is one (S4.5d: the name `.mp3` is no reason to refuse).
+   */
   private mediaSetForAutopilot(c: CommandMessage, mediaId: string, on: boolean): ResponseMessage {
     const refusal = this.writeLibraryGate();
     if (refusal) return this.fail(c, refusal);
-    const name = this.ownMedia.nameOf(mediaId);
-    if (name === undefined) return this.fail(c, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
-    if (!/\.m4a$/i.test(name)) return this.fail(c, { code: "MEDIA_UNSUPPORTED", mediaReason: "format", detail: "only an m4a track can be marked for the autopilot" });
+    if (this.ownMedia.holdsTrack(mediaId) === null) return this.fail(c, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
     const media = this.ownMedia.setForAutopilot(mediaId, on);
     if (media === undefined) return this.fail(c, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
     return this.ok(c, { media });
