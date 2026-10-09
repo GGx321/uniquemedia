@@ -7,6 +7,9 @@ import {
   ipcMain,
   Menu,
   MessageChannelMain,
+  Notification,
+  powerMonitor,
+  powerSaveBlocker,
   protocol,
   safeStorage,
   session,
@@ -20,7 +23,7 @@ import {
 import { randomUUID } from "node:crypto";
 import { lstat, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import type { EventMessage, MediaPickKind } from "../shared/engine";
+import { PROTOCOL_VERSION, type EventMessage, type MediaPickKind } from "../shared/engine";
 import { DEBUGGABLE, STUDIO_DEV, STUDIO_E2E } from "../engine/buildFlags";
 import { CH } from "../preload/api";
 import { installProcessGuards } from "../engine/processGuards";
@@ -46,6 +49,7 @@ import { APP_PAGE_URL, APP_SCHEME, APP_SCHEME_PRIVILEGES, handleAppRequest } fro
 import { HostNotices } from "./notices";
 import { appMenuTemplate } from "./appMenu";
 import { createQuitFlow, WINDOW_FLUSH_WAIT_MS } from "./quitFlow";
+import { AutopilotHost, gateWhileAsleep, reopensWindowAfterStay, watchPower } from "./autopilotHost";
 import { createWindowFlush } from "./windowFlush";
 import { handleRendererRequest, isTrustedSender, type SenderFrame, type TrustedRenderer } from "./requests";
 import { installSessionPermissions } from "./sessionPermissions";
@@ -122,6 +126,21 @@ function isDevServer(url: string): boolean {
 /** Whether the quit is agreed (quitFlow.ts's `isQuitting`); set once the quit flow exists. */
 let quitAgreed: () => boolean = () => false;
 
+/** A window got focus or input (autopilotHost.ts's `activity`: the Mac is awake); set once the autopilot host exists. */
+let windowActivity: (source: "key" | "focus") => void = () => undefined;
+
+/** Focuses the window, or opens one: a notification's click, and the owner staying after the last window closed on Windows. */
+function focusOrOpenWindow(): void {
+  const [win] = BrowserWindow.getAllWindows();
+  if (win === undefined) {
+    createWindow();
+    return;
+  }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
 function createWindow(): void {
   const win = new BrowserWindow({
     width: 1440,
@@ -140,6 +159,12 @@ function createWindow(): void {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  // S4.7 (L-c): a focus or a key press is proof that someone is at the Mac, whatever the power events said. `before-input-event` is the keyboard only (a mouse-only owner
+  // is covered by powerMonitor's unlock-screen / user-did-become-active and by the host's command-time recovery); a key-up is the tail of the shortcut that may have slept the Mac.
+  win.on("focus", () => windowActivity("focus"));
+  win.webContents.on("before-input-event", (_event, input) => {
+    if (input.type === "keyDown") windowActivity("key");
+  });
   // A page holds a close with beforeunload while it saves (the montage editor); during an agreed quit it may not.
   win.webContents.on("will-prevent-unload", (event) => {
     if (quitAgreed()) event.preventDefault();
@@ -274,6 +299,47 @@ async function startStudio(): Promise<void> {
   const notices = new HostNotices({ newId: randomUUID, clock: Date.now });
   if (notice !== null) notices.add("settings-reset", notice);
 
+  // The autopilot's host (S4.7): the power blocker, the quit question, the notifications and the sleep (autopilotHost.ts). It learns the launch from the engine's events.
+  // Notifications that are being shown are kept here: one that is garbage collected never delivers its click.
+  const shownNotifications = new Set<Notification>();
+  const autopilot = new AutopilotHost({
+    blocker: {
+      start: () => powerSaveBlocker.start("prevent-app-suspension"),
+      stop: (id) => powerSaveBlocker.stop(id),
+    },
+    notifier: {
+      show: (content, onClick) => {
+        if (!Notification.isSupported()) return;
+        const notification = new Notification({ title: content.title, body: content.body });
+        shownNotifications.add(notification);
+        notification.on("click", onClick);
+        notification.on("close", () => shownNotifications.delete(notification));
+        notification.show();
+      },
+    },
+    dialog: {
+      ask: async (spec) => {
+        const options = { type: "question" as const, message: spec.message, detail: spec.detail, buttons: [...spec.buttons], defaultId: spec.defaultId, cancelId: spec.cancelId, noLink: true };
+        const owner = BrowserWindow.getFocusedWindow();
+        const result = owner === null ? await dialog.showMessageBox(options) : await dialog.showMessageBox(owner, options);
+        return result.response;
+      },
+    },
+    isWindowFocused: () => BrowserWindow.getAllWindows().some((win) => win.isFocused()),
+    openWindow: () => focusOrOpenWindow(),
+    avatarName: async (avatarId) => {
+      const response = await engine.request({ v: PROTOCOL_VERSION, id: randomUUID(), kind: "command", type: "avatars.list", payload: {} });
+      if (!response.ok || response.type !== "avatars.list") return null;
+      return response.result.avatars.find((a) => a.avatarId === avatarId)?.name ?? null;
+    },
+    sendPower: (state) => engine.send({ kind: "control", type: "host.power", state }),
+    now: () => performance.now(),
+    platform: process.platform,
+  });
+  watchPower(powerMonitor, autopilot);
+  windowActivity = (source) => autopilot.activity(source);
+  app.on("browser-window-focus", () => autopilot.activity("focus"));
+
   const engine = new EngineHost<MessagePortMain>({
     fork: () => {
       // Piped, not inherited, and relayed to main's own output: an inherited stream does not reach the launcher on
@@ -316,6 +382,7 @@ async function startStudio(): Promise<void> {
     musicKey: () => musicKeys.read(),
     onEvent: (event) => {
       broadcast(event);
+      autopilot.observe(event);
       // The engine is the source of truth about the live library: a confirm
       // main gave up on (engineHost.ts's 30 s deadline) can still land after
       // that, and settings.json must not keep naming the old folder then.
@@ -327,6 +394,7 @@ async function startStudio(): Promise<void> {
     // every request from then on answers ENGINE_GONE_DETAIL, not a bare
     // "the engine is not running".
     onExit: (error, restarting) => {
+      autopilot.engineGone();
       if (restarting) notices.add("engine-restarted", error.detail);
     },
   });
@@ -350,10 +418,18 @@ async function startStudio(): Promise<void> {
     if (isTrustedSender(senderFrameOf(event), TRUSTED)) windowFlush.acknowledge(answer);
   });
   const quitFlow = createQuitFlow({
+    // While a launch runs the owner is asked first (S4.7); «Остаться» after the last window closed on Windows opens a window again.
+    confirmQuit: () => autopilot.confirmQuit(),
+    stay: () => {
+      if (reopensWindowAfterStay(process.platform, BrowserWindow.getAllWindows().length)) createWindow();
+    },
     flushWindows: () => windowFlush.request(),
     shutdown: () => engine.shutdown(),
     quit: () => app.quit(),
-    stop: () => engine.stop(),
+    stop: () => {
+      autopilot.dispose();
+      engine.stop();
+    },
   });
   ipcMain.on(CH.quitWithoutSaving, (event) => {
     if (isTrustedSender(senderFrameOf(event), TRUSTED)) quitFlow.quitWithoutSaving();
@@ -461,7 +537,8 @@ async function startStudio(): Promise<void> {
       stickerBytes: (command) => handleStickerBytesCommand(command, { stickers: stickerAssets }),
       // 3f.5: an own sticker's bytes, resolved through its record in the library the settings name now.
       ownStickerBytes: (command) => handleOwnStickerBytesCommand(command, { libraryRoot: () => settings.current.libraryPath }),
-      engine: (command) => engine.request(command),
+      // L-d: between the Mac's suspend and resume the window's paid starts and launch moves wait (autopilotHost.ts, shared/engine/commandHold.ts).
+      engine: gateWhileAsleep(autopilot, (command) => engine.request(command)),
     }),
   );
   // 3f.6 round 2 (M13): files dropped onto «Мои». The preload sends the paths Electron gave the dropped `File`s; main answers only the app

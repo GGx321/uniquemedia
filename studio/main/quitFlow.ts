@@ -10,11 +10,19 @@ import type { FlushOutcome } from "./windowFlush";
 // wait must not skip it, nor start it again), the quit is asked again once the shutdown is over, and from then on a
 // page's `beforeunload` may no longer hold it (`isQuitting`, read by main's `will-prevent-unload`): the engine is
 // already shut down. The engine's process is stopped only when the quit really goes on (`will-quit`).
+// S4.7: before any of that, while an autopilot launch runs, the owner is asked (`confirmQuit`); «Остаться» touches nothing.
 
 /** How long the windows get to save before the engine is shut down anyway. */
 export const WINDOW_FLUSH_WAIT_MS = 5_000;
 
 export interface QuitFlowDeps {
+  /**
+   * Asked first, before a window or the engine is touched: false keeps the app open (S4.7: a launch runs). Absent, or resolving true, the quit goes on. A rejection
+   * counts as true: a dialog that failed must not trap the app.
+   */
+  confirmQuit?(): Promise<boolean>;
+  /** The owner stayed: on Windows the last window is already closed, so this opens one again. */
+  stay?(): void;
   /** Asks every window to save its unsaved work; also bounded here, so a hang or a throw cannot keep the app open. */
   flushWindows(): Promise<FlushOutcome>;
   /** The bound on `flushWindows`; `WINDOW_FLUSH_WAIT_MS` when absent. */
@@ -53,7 +61,7 @@ function bounded(work: () => Promise<FlushOutcome>, ms: number): Promise<FlushOu
 }
 
 export function createQuitFlow(deps: QuitFlowDeps): QuitFlow {
-  let phase: "idle" | "asking" | "shutting-down" | "done" = "idle";
+  let phase: "idle" | "confirming" | "asking" | "shutting-down" | "done" = "idle";
   const flushTimeoutMs = deps.flushTimeoutMs ?? WINDOW_FLUSH_WAIT_MS;
 
   function shutDownAndQuit(): void {
@@ -67,23 +75,45 @@ export function createQuitFlow(deps: QuitFlowDeps): QuitFlow {
       });
   }
 
+  function flushThenShutDown(): void {
+    phase = "asking";
+    void bounded(() => deps.flushWindows(), flushTimeoutMs).then((outcome) => {
+      if (phase !== "asking") return; // «Выйти без сохранения» went ahead meanwhile
+      if (outcome === "refused") {
+        phase = "idle"; // nothing was touched: the window says why, and the next Cmd+Q asks again
+        return;
+      }
+      shutDownAndQuit();
+    });
+  }
+
+  /** The question, when there is one to ask; a dialog that fails does not trap the app. */
+  function confirmThenFlush(confirm: () => Promise<boolean>): void {
+    phase = "confirming";
+    void Promise.resolve()
+      .then(confirm)
+      .catch(() => true)
+      .then((agreed) => {
+        if (agreed) {
+          flushThenShutDown();
+          return;
+        }
+        phase = "idle"; // «Остаться»: nothing was touched, and the next Cmd+Q asks again
+        deps.stay?.();
+      });
+  }
+
   return {
     beforeQuit: (event) => {
       if (phase === "done") return; // the shutdown is over: this quit goes through
       event.preventDefault();
       if (phase !== "idle") return; // one ask and one shutdown, however many times the owner presses Cmd+Q
-      phase = "asking";
-      void bounded(() => deps.flushWindows(), flushTimeoutMs).then((outcome) => {
-        if (phase !== "asking") return; // «Выйти без сохранения» went ahead meanwhile
-        if (outcome === "refused") {
-          phase = "idle"; // nothing was touched: the window says why, and the next Cmd+Q asks again
-          return;
-        }
-        shutDownAndQuit();
-      });
+      const confirm = deps.confirmQuit;
+      if (confirm === undefined) flushThenShutDown();
+      else confirmThenFlush(() => confirm.call(deps));
     },
     quitWithoutSaving: () => {
-      if (phase === "shutting-down" || phase === "done") return;
+      if (phase === "confirming" || phase === "shutting-down" || phase === "done") return;
       shutDownAndQuit();
     },
     isQuitting: () => phase === "done",

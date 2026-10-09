@@ -180,3 +180,76 @@ describe("the quit flow", () => {
     expect(r.calls.at(-1)).toBe("stop");
   });
 });
+
+// S4.7: while an autopilot launch runs, the owner is asked before anything else happens (`confirmQuit`).
+describe("the quit flow: the autopilot question", () => {
+  function questioned(answer: () => Promise<boolean>) {
+    const calls: string[] = [];
+    const flow = createQuitFlow({
+      confirmQuit: () => {
+        calls.push("confirm");
+        return answer();
+      },
+      stay: () => void calls.push("stay"),
+      flushWindows: async () => {
+        calls.push("flush");
+        return "saved";
+      },
+      shutdown: async () => void calls.push("shutdown"),
+      quit: () => void calls.push("quit"),
+      stop: () => void calls.push("stop"),
+    });
+    const event = () => {
+      const e = { prevented: false, preventDefault: () => void (e.prevented = true) };
+      return e;
+    };
+    return { calls, flow, event };
+  }
+
+  test("the question comes first; «Выйти» goes on to the save ask and the shutdown", async () => {
+    const r = questioned(async () => true);
+    const first = r.event();
+    r.flow.beforeQuit(first);
+    await settle();
+    expect(first.prevented).toBe(true);
+    expect(r.calls).toEqual(["confirm", "flush", "shutdown", "quit"]);
+  });
+
+  test("«Остаться» touches nothing, tells main it stayed, and the next Cmd+Q asks again", async () => {
+    let answers = 0;
+    const r = questioned(async () => ++answers > 1);
+    const first = r.event();
+    r.flow.beforeQuit(first);
+    await settle();
+    expect(first.prevented).toBe(true);
+    expect(r.calls).toEqual(["confirm", "stay"]);
+    expect(r.flow.isQuitting()).toBe(false);
+
+    r.flow.beforeQuit(r.event());
+    await settle();
+    expect(r.calls).toEqual(["confirm", "stay", "confirm", "flush", "shutdown", "quit"]);
+  });
+
+  test("a second Cmd+Q while the question is open neither asks again nor skips it", async () => {
+    let answer: (agreed: boolean) => void = () => undefined;
+    const r = questioned(() => new Promise<boolean>((resolve) => (answer = resolve)));
+    r.flow.beforeQuit(r.event());
+    const second = r.event();
+    r.flow.beforeQuit(second);
+    r.flow.quitWithoutSaving(); // no window can send this while the question is open; it must not skip the question either
+    await settle();
+    expect(second.prevented).toBe(true);
+    expect(r.calls).toEqual(["confirm"]);
+
+    answer(false);
+    await settle();
+    expect(r.calls).toEqual(["confirm", "stay"]);
+  });
+
+  test("a dialog that fails does not trap the app: the quit goes on", async () => {
+    const r = questioned(() => Promise.reject(new Error("no dialog")));
+    r.flow.beforeQuit(r.event());
+    await settle();
+    expect(r.calls).toEqual(["confirm", "flush", "shutdown", "quit"]);
+  });
+});
