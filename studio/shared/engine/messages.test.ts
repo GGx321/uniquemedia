@@ -417,7 +417,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
   "runs.estimateResume": { payload: { runId: "run-00000001" }, result: { estimate: { ...estimate, expectedMicros: 500_000, worstMicros: 1_650_000 } } },
   "runs.resume": { payload: { runId: "run-00000001", acceptedWorstMicros: 1_650_000 }, result: { runId: "run-00000001", jobId: "job-00000003" } },
   "runs.list": { payload: {}, result: { runs: [runSummary] } },
-  "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo, photoWithoutQa], skippedTotal: 1 } },
+  "photos.list": { payload: { avatarId: "avatar-0001" }, result: { photos: [photo, photoWithoutQa], skippedTotal: 1, nextCursor: null, remainingTotal: 0 } },
   "photos.setRejected": {
     payload: { avatarId: "avatar-0001", photoId: "photo-0003", rejected: true },
     result: { photo: { ...photoWithoutQa, rejected: true, eligible: false } },

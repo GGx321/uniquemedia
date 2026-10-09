@@ -1,3 +1,4 @@
+import { encodePhotoCursor } from "../../../shared/engine";
 import { defaultSpec, estimateBytesUpper } from "../../../shared/montage";
 import { STICKER_MANIFEST } from "../../../shared/stickers";
 import { IMAGE_MODEL_SCENARIOS } from "./scenarios.imageModels";
@@ -1926,7 +1927,36 @@ const SCENE_RUN_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS, ...SCENE_RUN_SCENARIOS];
+// S4.P2: photos.list pages by a cursor. The rig's library is far under one page (500), so what is compared here is the position rule itself on both
+// engines: the photos strictly after a cursor, newest first, from a live photo, from one that is gone, and from the last; and a forged cursor refused.
+// (A cursor-less call on a bigger library, the page boundaries 500/501/1001 and paging under adds are the engine's and the mock's own suites'.)
+const PHOTO_CURSOR_SCENARIOS: readonly Scenario[] = [
+  {
+    name: "photos list pages by cursor: a position, a gone photo, the last one, a forged value",
+    async run(t, w) {
+      const first = resultOf(await t.call("photos.list", { avatarId: w.avatarId }));
+      const listed = first.photos;
+      if (!Array.isArray(listed) || listed.length < 12) throw new Error("the world has fewer photos than the scenario pages");
+      const at = (n: number): { createdAt: string; photoId: string } => {
+        const found: unknown = listed[n];
+        const record = objectAt({ found }, "found");
+        return { createdAt: stringAt(record, "createdAt"), photoId: stringAt(record, "photoId") };
+      };
+      t.note("from the tenth photo of the list: the ones older than it, in order");
+      await t.call("photos.list", { avatarId: w.avatarId, cursor: encodePhotoCursor(at(9).createdAt, at(9).photoId) });
+      t.note("from a photo that is not in the library, at the time of the fifth (its id sorts before every real one, so a tie at that time is never taken in): the same position rule, nothing to find");
+      await t.call("photos.list", { avatarId: w.avatarId, cursor: encodePhotoCursor(at(4).createdAt, "-") });
+      t.note("from the oldest photo: an empty last page");
+      const last = at(listed.length - 1);
+      await t.call("photos.list", { avatarId: w.avatarId, cursor: encodePhotoCursor(last.createdAt, last.photoId) });
+      t.note("a value that is not a cursor is refused, and the list still answers");
+      await t.call("photos.list", { avatarId: w.avatarId, cursor: "forged" });
+      await t.call("photos.list", { avatarId: w.avatarId });
+    },
+  },
+];
+
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS, ...SCENE_RUN_SCENARIOS, ...PHOTO_CURSOR_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

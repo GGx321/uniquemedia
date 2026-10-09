@@ -41,6 +41,8 @@ import { z } from "zod";
 //    `EngineSettings`, `EngineInit`) are built together, and the literal version stays 5. A change like it after a release needs a version bump.
 //  - avatars: `avatars.deletePreview` and `avatars.delete`, the `avatar.removed` event, the error code TRASH_UNAVAILABLE.
 //  - montage: `MIN_CLIP_MS` is 100 ms (the shortest clip).
+// Stage 4, S4.P2 (additive, no bump): `photos.list` takes an optional `cursor` and answers `nextCursor` (null on the last page) and `remainingTotal`; without a cursor the
+//   first page is exactly what it was. The answer's two new fields are required: the engine and the mock, its only producers, ship with the window in one bundle.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

@@ -1,4 +1,4 @@
-import type { EngineError, EventMessage } from "../../../shared/engine";
+import { decodePhotoCursor, type EngineError, type EventMessage } from "../../../shared/engine";
 import { FRAME_H, FRAME_W } from "../../../shared/montage";
 import { ImportProgressInvariants, ProgressInvariants } from "./progress";
 
@@ -128,6 +128,11 @@ export class Normalizer {
       // An own media's id is aliased once the transcript has MET it (`registerMedia`: the first `media.changed` or listing that carries it): the
       // older stories name their own-media ids by hand, and those stay as written.
       if (key === "mediaId" && this.#aliases.has(value)) return this.register("media", value);
+      // S4.P2: a photos.list cursor is `<createdAt>|<photoId>`: the time is masked like every createdAt, the photo is named by its alias.
+      if (key === "cursor") {
+        const position = decodePhotoCursor(value);
+        return position === null ? this.text(value) : `<masked>|${this.register("photo", position.photoId)}`;
+      }
       if (key !== undefined && key in MASKED) return "<masked>";
       if (key === "relPath") return value.replace(/\d{4}-\d{2}-\d{2}/, "<date>");
       return this.text(value);
@@ -321,7 +326,10 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
       .sort();
     // The order of the whole list is what the photo grid shows: written as the seeded photos' numbers, runs as `22..1`.
     const order = orderOf(listed.map((photo) => norm.value(objectOf(photo).photoId, "photoId")));
-    return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal, order })}`, ...held.map((s) => `  ${s}`)].join("\n");
+    // S4.P2: where the next page starts and how many photos lie beyond this one are written only when there is a next page, so every older line stays as it was.
+    const next = typeof answer.result.nextCursor === "string" ? decodePhotoCursor(answer.result.nextCursor) : null;
+    const paging = next === null && !(typeof answer.result.remainingTotal === "number" && answer.result.remainingTotal > 0) ? {} : { next: next === null ? null : norm.value(next.photoId, "photoId"), remainingTotal: answer.result.remainingTotal };
+    return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal, order, ...paging })}`, ...held.map((s) => `  ${s}`)].join("\n");
   }
   if (type === "engine.snapshot") return snapshotLine(answer.result, norm);
   if (type === "media.list") {
