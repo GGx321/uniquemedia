@@ -62,6 +62,7 @@ import {
   type RunRequest,
   type RunSummary,
   splitCount,
+  type CategoryRef,
   type ScenePose,
   type Settings,
   type Snapshot,
@@ -94,7 +95,7 @@ import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
 import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
-import { MockAutopilot, type MockAutopilotUnit } from "./mockAutopilot";
+import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAutopilot";
 import { demoOwnMedia, MockOwnMedia, type MockMediaAccept, type MockOwnSeed } from "./mockMedia";
 import { realScheduler, type Scheduler } from "./scheduler";
 
@@ -309,6 +310,11 @@ export interface MockEngineOptions {
   unreadableSceneSets?: number | Readonly<Record<string, number>>;
   /** Stage 4: entries of the library's `autopilot/` folder that cannot be read as a launch (listed by an opaque id; they block a start until removed). */
   unreadableLaunches?: UnreadableLaunch[];
+  /**
+   * Stage 4 (S4.8): `timers` (the default) runs a started launch on the mock's scheduler, as the engine runs one. `canned` is the S4.1 launch: put straight into a canned mid-run state
+   * that moves only by the owner's clicks. It is kept for the fixtures and the parity stories that are bound to it; nothing else should ask for it.
+   */
+  launchRun?: "timers" | "canned";
 }
 
 /** A photo run's slot: its category (the plan's), and how it ended — null while it is still open. */
@@ -770,15 +776,25 @@ export class MockEngine implements EngineBridge {
   private readonly categories: MockCategories;
   /** The scene sets and their writer jobs (CS.4a). */
   private readonly sceneSets: MockSceneSets;
-  /** Whether the owner has ever marked a video «Опубликовано» in this library: the `published.jsonl` log then exists, and `videos.list` says its marks could be read. */
-  private publishedLogUsed = false;
+  /** The avatars whose `published.jsonl` exists, because the owner has marked one of their videos «Опубликовано» (or a seed did): their marks can be read, and `videos.list` says so. S4.6g L6: per avatar, as the engine's log is. */
+  private readonly publishedLogAvatars = new Set<string>();
   /**
    * S4.9c: the avatars whose `published.jsonl` has a torn tail (`tearPublishedLog`): `videos.list` says `published: "unknown"` and shows every video unmarked; the
    * next mark of that avatar heals the log by its append (the engine's `markPublished`), and the marks read again.
    */
   private readonly tornPublished = new Set<string>();
-  /** S4.6g: the video records the mock has deleted (a delete, or its avatar's), each with the mark it had: the mark stays, as the engine's log outlives the record. */
-  private readonly removedVideoIds = new Map<string, string | null>();
+  /** S4.6g: the video records the mock has deleted (a delete, or its avatar's), each with its avatar and the mark it had: the mark stays, as the engine's log outlives the record, and it stays in its own avatar's log. */
+  private readonly removedVideoIds = new Map<string, { avatarId: string; mark: string | null }>();
+  /** S4.8: the photos a launch's videos hold until their records land (they are reserved, not free). */
+  private readonly launchHeldPhotos = new Set<string>();
+  /** S4.8: the ledger holds reserves of a PREVIOUS process, or a torn line (a restart, `requireReconcile`): the engine's launch is not admitted until a reconcile (`Budget.blocked()`). */
+  private previousProcessReserves = false;
+  /** S4.8: avatars another job of the owner's holds, by a testkit switch (`setAvatarBusy`). */
+  private readonly busyAvatars = new Set<string>();
+  /** S4.8: the library cannot say which photos are free (`loseLaunchLibrary`). */
+  private launchLibraryLost = false;
+  /** S4.8: the launch's videos find no track though some are stored (`holdLaunchMusic`). */
+  private launchMusicHeld = false;
   /** S4.6g: the next `videos.delete` does its work and answers as a timeout whose outcome is unknown (`timeOutNextDelete`). */
   private deleteTimesOut = false;
   /** S4.6g: the records cannot be looked at (`loseTrackOfRecords`): nothing reads as removed. */
@@ -833,8 +849,11 @@ export class MockEngine implements EngineBridge {
     this.autopilot = new MockAutopilot(
       {
         nowIso: () => this.nowIso(),
+        isoAfter: (ms) => new Date(this.clock + ms).toISOString(),
         nextEventId: () => this.nextId("evt"),
         emit: (event) => this.emit(event),
+        schedule: (ms, task) => this.scheduler.schedule(ms, task),
+        stepMs: this.stepMs,
         usage: (avatarId) => this.avatars.find((a) => a.avatarId === avatarId)?.usage ?? { state: "ok" },
         freePhotos: (avatarId, categories) =>
           this.photos.filter((p) => {
@@ -842,19 +861,57 @@ export class MockEngine implements EngineBridge {
             return p.avatarId === avatarId && categories.some((c) => c === p.category) && view.eligible && !view.used && !view.reserved && !view.rejected;
           }).length,
         busy: (avatarId) => this.jobRunningFor(avatarId),
-        hasOpenSet: (avatarId) => this.sceneSets.hasOpenSet(avatarId),
+        hasOpenSet: (avatarId) => this.sceneSets.hasOpenSet(avatarId) || this.autopilot.holdsOpenSet(avatarId),
+        hasOwnersOpenSet: (avatarId) => this.sceneSets.hasOpenSet(avatarId),
+        avatarActive: (avatarId) => this.avatars.some((a) => a.avatarId === avatarId && a.status === "active"),
+        libraryKnown: (avatarId) => !this.launchLibraryLost && this.availabilityOf(avatarId).state === "known",
         unit: () => this.autopilotUnit(),
         prices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
         month: () => ({ budgetMicros: this.settings.monthlyBudgetMicros, spentAndOpenMicros: this.spentMicros + this.unsettledMicros() }),
-        paidGate: () => this.keyAndLedgerGate(),
+        paidGate: () => this.launchGate(),
+        keyState: () => (!this.settings.apiKey.stored ? "missing" : this.settings.apiKey.rejected ? "rejected" : "ok"),
+        admission: () => this.launchAdmission(),
+        rejectKey: () => {
+          this.rejectKey();
+          this.emitSettingsChanged();
+        },
+        haltLedger: () => this.haltAboveWorst(),
+        openReserve: (key, worst) => {
+          this.reserves.set(key, worst);
+        },
+        closeReserve: (key, cost) => {
+          this.reserves.delete(key);
+          this.spend(cost);
+        },
+        hasReserve: (key) => this.reserves.has(key),
+        noteOpenReserve: () => {
+          if (!this.reconcileReasons.includes("open-reserves")) this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
+          this.emitReconcileNeeded();
+        },
         exportReason: () => (this.exportDisk.status === "unavailable" ? this.markerReason(this.exportDisk.reason) : null),
         exportFreeBytes: () => this.exportFreeBytes,
         music: () => this.autopilotMusic(),
+        trackFor: (neededMs) => this.launchTrackFor(neededMs),
         balance: () => (this.settings.apiKey.stored && !this.settings.apiKey.rejected ? { micros: 12_400_000, asOf: new Date(this.clock).toISOString() } : null),
         recordsOf: (_avatarId, videoIds) => (this.recordsUnreadable ? undefined : new Set(videoIds.filter((id) => this.videos.some((v) => v.summary.videoId === id)))),
         marksOf: (avatarId) => this.publishedMarksOf(avatarId),
+        claimPhotos: (avatarId, categories, n, taken) => {
+          const free = this.photos.filter((p) => p.avatarId === avatarId && categories.some((c) => c === p.category) && !taken.has(p.photoId) && this.photoUsable(avatarId, p.photoId) && !p.rejected);
+          return free.length < n ? null : free.slice(0, n).map((p) => p.photoId);
+        },
+        holdPhotos: (photoIds, held) => {
+          for (const id of photoIds) {
+            if (held) this.launchHeldPhotos.add(id);
+            else this.launchHeldPhotos.delete(id);
+          }
+        },
+        leaveOpenSet: (avatarId, sceneSetId, written, count) => this.sceneSets.add({ avatarId, sceneSetId, count, written }),
+        drawPhotos: (avatarId, n, category) => this.drawLaunchPhotos(avatarId, n, category),
+        newVideoId: () => this.nextId("video"),
+        storeVideo: (video) => this.storeLaunchVideo(video),
       },
       options.unreadableLaunches ?? [],
+      { launchRun: options.launchRun ?? "timers" },
     );
     this.capacity = options.eventCapacity ?? 256;
     this.log = new EventLog(this.capacity, this.bootId());
@@ -1268,6 +1325,8 @@ export class MockEngine implements EngineBridge {
   /** Paid calls stop until a reconcile; announced with `money.reconcileNeeded`. */
   requireReconcile(reasons: ReconcileReason[]): void {
     this.reconcileReasons = [...new Set([...this.reconcileReasons, ...reasons])];
+    // A ledger that asks for a reconcile like this is one that holds what it cannot vouch for (a previous process's reserves, a torn line): a launch is not admitted either.
+    this.previousProcessReserves = true;
     this.emitReconcileNeeded();
   }
 
@@ -1610,9 +1669,13 @@ export class MockEngine implements EngineBridge {
     this.ownMedia.restart();
     this.boot += 1;
     this.log = new EventLog(this.capacity, this.bootId());
-    if (this.reserves.size > 0 && !this.reconcileReasons.includes("open-reserves")) {
-      this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
+    if (this.reserves.size > 0) {
+      // The reserves belong to a process that no longer exists: the engine's launch is not admitted until a reconcile (`Budget.blocked()`), unlike a reserve of this session.
+      this.previousProcessReserves = true;
+      if (!this.reconcileReasons.includes("open-reserves")) this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
     }
+    // The running launch is read as paused by the restart; the requests it had in flight are unsettled reserves now.
+    this.autopilot.engineRestarted();
     this.emitMoney();
   }
 
@@ -1633,6 +1696,88 @@ export class MockEngine implements EngineBridge {
    */
   announceLaunch(launch: LaunchView): void {
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "autopilot.changed", payload: { launch: LaunchView.parse(launch) } });
+  }
+
+  // ---------- the launch's testkit switches (Stage 4, S4.8) ----------
+  //
+  // The mock runs a launch on its scheduler (mockLaunchRun.ts). These switches put it in every state the engine can: each hold and each waiting reason has one, and the mock's own
+  // controls (the key, the budget, the export folder, `restart`, `requireReconcile`) reach the rest through the world, as they reach the engine's. The names are in the bundle check's list.
+
+  /**
+   * The next `times` paid steps of the launch (the compose and each draw) meet `cause`, as the engine's steps meet the same failure: `credits` (402), `key` (401: the stored key is also marked
+   * rejected), `price` (the price rose), `budget`, `price-unavailable` (the price list did not load: the retries of 5, 15 and 60 minutes, then a hold), `network` (no answer: the first and
+   * second drop continue by themselves after 1 and 5 minutes, the third holds; one call with `times` 3 reaches it), `halt` (the ledger halts), `internal`. Armed before the start, the
+   * first paid step meets it.
+   */
+  failLaunchPaidStep(cause: PaidFault, times = 1): void {
+    this.autopilot.failPaidStep(cause, times);
+  }
+
+  /** The owner has a job of their own running for the avatar (a photo run, a candidate batch): the launch's steps for it wait as «avatar-busy». */
+  setAvatarBusy(avatarId: string, busy: boolean): void {
+    if (busy) this.busyAvatars.add(avatarId);
+    else this.busyAvatars.delete(avatarId);
+  }
+
+  /** The library cannot say which photos are free (its usage or the drafts cannot be read): the launch's free steps wait as «library-unknown» and pick or drop nothing. */
+  loseLaunchLibrary(lost: boolean): void {
+    this.launchLibraryLost = lost;
+  }
+
+  /** While held, no stored track qualifies for a launch's video, though some are stored: the videos wait for music (the engine's `no-candidate`). */
+  holdLaunchMusic(held: boolean): void {
+    this.launchMusicHeld = held;
+  }
+
+  /**
+   * The owner quit the app: a running launch is persisted as paused by the quit; the requests that were in flight died with the process and their reserves stay open, so the next
+   * process asks for a reconcile (`resumeBlockedBy: "reconcile-required"`). `restart()` is the engine's own automatic restart (a crash), which reads the same launch as paused by it.
+   */
+  quitLaunch(): void {
+    if (this.reserves.size > 0) {
+      this.previousProcessReserves = true;
+      if (!this.reconcileReasons.includes("open-reserves")) this.reconcileReasons = [...this.reconcileReasons, "open-reserves"];
+    }
+    this.autopilot.quit();
+    this.emitMoney();
+  }
+
+  /** The engine's key and ledger test for a launch (start, «Продолжить»): the key first, then `Budget.blocked()`. */
+  private launchGate(): EngineError | null {
+    const key = this.settings.apiKey;
+    if (!key.stored) return { code: "AUTH_INVALID", detail: "no API key is stored" };
+    if (key.rejected) return { code: "AUTH_INVALID" };
+    return this.launchAdmission();
+  }
+
+  /**
+   * `Budget.blocked()` as a launch reads it (plan §3.7, A19): an unreadable ledger, a halt, or reserves of a previous process or a torn line. NOT the reserves of this session
+   * left open (a request that got no answer): those turn the settings screen's «Сверка» on, and the launch's own hold says what they mean.
+   */
+  private launchAdmission(): EngineError | null {
+    const stopped = this.ledgerStop();
+    if (stopped) return stopped;
+    if (this.halt !== null) return { code: this.halt.cause, detail: this.halt.detail };
+    if (this.previousProcessReserves) return { code: "RECONCILE_REQUIRED" };
+    return null;
+  }
+
+  /** The track a launch's video of this length is given: the first stored, non-explicit trend that is long enough, else the first flagged own track that is; null when none qualifies. */
+  private launchTrackFor(neededMs: number): NonNullable<LaunchVideo["track"]> | null {
+    if (this.launchMusicHeld) return null;
+    for (const track of this.music.tracks) {
+      if (track.summary.explicit || track.summary.durationMs < neededMs) continue;
+      return { source: "trending", title: track.summary.title, artist: track.summary.artist };
+    }
+    for (const own of this.ownMedia.flaggedTrackList()) {
+      if (own.durationMs >= neededMs) return { source: "own", title: own.name.replace(/\.[A-Za-z][A-Za-z0-9]*$/, "") || own.name, artist: null };
+    }
+    return null;
+  }
+
+  /** The launch's view is told again (S4.6w H1): called after every money and settings announcement, as the engine's `#emitMoney` and `#emitSettings` call `Orchestrator.refresh()`. */
+  private refreshLaunch(): void {
+    this.autopilot.refresh();
   }
 
   /** Stage 4 (S4.9b): a scene set seeded while the engine runs — a launch's set (`launchId`), which the mock's launch names but does not write. */
@@ -1774,13 +1919,24 @@ export class MockEngine implements EngineBridge {
       free.push(photo);
     }
     const photoIds = free.map((p) => p.photoId);
+    return this.recordLaunchVideo({ launchId: v.launchId, avatarId: v.avatarId, videoId: this.nextId("video"), photoIds, durationMs: v.durationMs, bytes: v.bytes, track: v.track, createdAt: v.createdAt, published: v.published, n: v.n });
+  }
+
+  /**
+   * The library's record of one video of a launch (the seeded ones, and the ones a running launch renders): its spec over `photoIds`, a file in the export folder, the photos taken,
+   * the avatar's counts moved. Silent: the caller announces what the situation calls for.
+   */
+  private recordLaunchVideo(v: { launchId: string; avatarId: string; videoId: string; photoIds: readonly string[]; durationMs: number; bytes: number; track: LaunchVideo["track"]; createdAt: string; published: boolean; n: number }): string | null {
+    const avatar = this.avatars.find((a) => a.avatarId === v.avatarId);
+    if (avatar === undefined) return null;
+    const photoIds = [...v.photoIds];
     const spec = defaultSpec(v.avatarId, photoIds, 7 + v.n);
     const focused = withFocus(spec, new Map(photoIds.map((id) => [id, { x: 0.5, y: 0.35 }])));
     const kind = videoKindOf(spec.clips);
     const relPath = mockRelPath(mockFolderName(avatar.name, avatar.avatarId), v.createdAt.slice(0, 10), kind, this.exportFiles, this.namedPaths());
     this.exportFiles.add(relPath);
     const summary: VideoSummary = {
-      videoId: this.nextId("video"),
+      videoId: v.videoId,
       avatarId: v.avatarId,
       kind,
       durationMs: v.durationMs,
@@ -1798,7 +1954,7 @@ export class MockEngine implements EngineBridge {
       launchId: v.launchId,
       ...(v.published ? { publishedAt: v.createdAt } : {}),
     };
-    if (v.published) this.publishedLogUsed = true;
+    if (v.published) this.publishedLogAvatars.add(v.avatarId);
     this.movingUsage(v.avatarId, photoIds, () => {
       this.videos.push({ summary, photoIds, montageId: null, fileState: null, rootId: this.exportRootId });
     });
@@ -1807,9 +1963,35 @@ export class MockEngine implements EngineBridge {
     return summary.videoId;
   }
 
+  /** S4.8: a running launch's render landed: the record, then `video.changed` and the avatar's counts, as a render's end announces them. */
+  private storeLaunchVideo(v: { launchId: string; avatarId: string; videoId: string; photoIds: readonly string[]; durationMs: number; bytes: number; track: NonNullable<LaunchVideo["track"]>; n: number }): void {
+    this.checkExport();
+    const videoId = this.recordLaunchVideo({ ...v, createdAt: this.nowIso(), published: false });
+    const record = this.videos.find((r) => r.summary.videoId === videoId);
+    if (record === undefined) return;
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "upserted", video: record.summary } });
+    this.announceAvatar(v.avatarId);
+  }
+
+  /** S4.8: `n` new free photos of the avatar, as a launch's draw makes them (copies of its first photo, of this category). */
+  private drawLaunchPhotos(avatarId: string, n: number, category: CategoryRef): string[] {
+    const template = this.photos.find((p) => p.avatarId === avatarId);
+    if (template === undefined || n < 1) return [];
+    const ids: string[] = [];
+    for (let k = 0; k < n; k++) {
+      const photo: PhotoSummary = { ...template, photoId: this.nextId("photo-launch"), category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true };
+      this.photos.push(photo);
+      ids.push(photo.photoId);
+    }
+    this.adjustAvatar(avatarId, { eligibleUnused: n });
+    this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, photoCount: this.photos.filter((p) => p.avatarId === avatarId).length } : a));
+    this.announceAvatar(avatarId);
+    return ids;
+  }
+
   /** Stage 4 (S4.9c): `avatarId`'s «Опубликовано» log gets a torn tail: its marks read `unknown` until the next mark heals it. */
   tearPublishedLog(avatarId: string): void {
-    this.publishedLogUsed = true;
+    this.publishedLogAvatars.add(avatarId);
     this.tornPublished.add(avatarId);
   }
 
@@ -1831,11 +2013,13 @@ export class MockEngine implements EngineBridge {
 
   /** The avatar's marks as `published.jsonl` reads (S4.6g): none before the first mark, unknown while torn, else the time of each marked video's mark. */
   private publishedMarksOf(avatarId: string): MarksRead {
-    if (!this.publishedLogUsed) return { state: "absent" };
+    // Per avatar, as the engine's log is: an avatar nobody marked a video of has none (S4.6g L6: the mock said «ok» for every avatar once any had one).
+    if (!this.publishedLogAvatars.has(avatarId)) return { state: "absent" };
     if (this.tornPublished.has(avatarId)) return { state: "unknown" };
     const at = new Map<string, string>();
     for (const v of this.videos) if (v.summary.avatarId === avatarId && typeof v.summary.publishedAt === "string") at.set(v.summary.videoId, v.summary.publishedAt);
-    for (const [videoId, mark] of this.removedVideoIds) if (mark !== null) at.set(videoId, mark);
+    // The mark of a deleted video stays in ITS avatar's log (L6: it used to leak into every avatar's).
+    for (const [videoId, removed] of this.removedVideoIds) if (removed.avatarId === avatarId && removed.mark !== null) at.set(videoId, removed.mark);
     return { state: "ok", at };
   }
 
@@ -2557,7 +2741,7 @@ export class MockEngine implements EngineBridge {
   private reconcile(c: CommandMessage): ResponseMessage {
     const stopped = this.ledgerStop();
     if (stopped) return this.fail(c, stopped);
-    if (this.running().length > 0) return this.fail(c, { code: "IN_FLIGHT" });
+    if (this.running().length > 0 || this.autopilot.hasLiveRequests()) return this.fail(c, { code: "IN_FLIGHT" });
     const ledgerDelta = this.spentSinceReconcile + this.unsettledMicros();
     const result: ReconcileResult = this.reconcileQueue.shift() ?? {
       status: "done",
@@ -2576,6 +2760,7 @@ export class MockEngine implements EngineBridge {
       this.reserves.clear();
       this.spentSinceReconcile = 0;
       this.reconcileReasons = [];
+      this.previousProcessReserves = false;
       this.halt = null;
       this.emitMoney();
     }
@@ -2585,7 +2770,7 @@ export class MockEngine implements EngineBridge {
   /** Whether an avatar has a candidate batch or a photo run still queued or running: a second batch, a pick or a run must wait. */
   private jobRunningFor(avatarId: string): boolean {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
-    return this.jobs.some(active) || this.runJobs.some(active) || this.sceneSets.liveFor(avatarId);
+    return this.jobs.some(active) || this.runJobs.some(active) || this.sceneSets.liveFor(avatarId) || this.busyAvatars.has(avatarId);
   }
 
   // ---------- «Удалить аватар» ----------
@@ -2636,7 +2821,7 @@ export class MockEngine implements EngineBridge {
     this.checkExport();
     const present = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
     for (const video of present) this.exportFiles.delete(video.summary.relPath);
-    for (const video of this.videos) if (video.summary.avatarId === avatarId) this.removedVideoIds.set(video.summary.videoId, video.summary.publishedAt ?? null);
+    for (const video of this.videos) if (video.summary.avatarId === avatarId) this.removedVideoIds.set(video.summary.videoId, { avatarId, mark: video.summary.publishedAt ?? null });
     const mine = new Set(this.photos.filter((p) => p.avatarId === avatarId).map((p) => p.photoId));
     this.avatars = this.avatars.filter((a) => a.avatarId !== avatarId);
     this.drafts = this.drafts.filter((d) => d.avatarId !== avatarId);
@@ -2664,7 +2849,7 @@ export class MockEngine implements EngineBridge {
   /** The photo as the windows see it: `used`, `usedIn` and `reserved` follow the mock's videos and queued or running renders, on top of what a seeded photo already says. */
   private photoView(photo: PhotoSummary): PhotoSummary {
     const usedIn = [...new Set([...photo.usedIn, ...this.videos.filter((v) => v.summary.avatarId === photo.avatarId && v.photoIds.includes(photo.photoId)).map((v) => v.summary.videoId)])];
-    const reserved = photo.reserved || this.heldByRender(photo) || this.pendingVideoPhotos.has(photo.photoId);
+    const reserved = photo.reserved || this.heldByRender(photo) || this.pendingVideoPhotos.has(photo.photoId) || this.launchHeldPhotos.has(photo.photoId);
     // The library's `photoStates` fails closed: while an avatar's reject marks cannot be read, no photo of it is eligible.
     const eligible = photo.eligible && !this.usageReasonsOf(photo.avatarId).includes("rejects-unreadable");
     return { ...photo, eligible, used: usedIn.length > 0, usedIn, reserved };
@@ -3273,7 +3458,7 @@ export class MockEngine implements EngineBridge {
     if (!healed && (video.summary.publishedAt !== undefined && video.summary.publishedAt !== null) === published) {
       return this.ok(c, { video: { ...video.summary, fileState: this.fileStateOf(video), montageId: this.liveDraft(video.montageId) } });
     }
-    this.publishedLogUsed = true;
+    this.publishedLogAvatars.add(video.summary.avatarId);
     const { publishedAt: before, ...rest } = video.summary;
     // A mark that stood (under a torn tail) keeps its first time, as the engine's line does.
     const summary: VideoSummary = published ? { ...rest, publishedAt: before ?? this.nowIso() } : rest;
@@ -3395,9 +3580,9 @@ export class MockEngine implements EngineBridge {
       })
       .reverse()
       .slice(0, MAX_LISTED_VIDEOS);
-    // Once the owner has marked a video the log exists and is modelled as readable unless a test tore it. Before that the field is absent, as from a producer with no
+    // Once the owner has marked a video of THIS avatar the log exists and is modelled as readable unless a test tore it. Before that the field is absent, as from a producer with no
     // marks: the listing is the one it always was.
-    return this.ok(c, { videos, ...(this.publishedLogUsed ? { published: torn ? ("unknown" as const) : ("ok" as const) } : {}) });
+    return this.ok(c, { videos, ...(this.publishedLogAvatars.has(avatarId) ? { published: torn ? ("unknown" as const) : ("ok" as const) } : {}) });
   }
 
   private videosDelete(c: CommandMessage, payload: { videoId: string; mode: "video" | "record"; rejectPhotos?: true }): ResponseMessage {
@@ -3421,7 +3606,7 @@ export class MockEngine implements EngineBridge {
       this.videos = this.videos.filter((v) => v !== video);
       if (fileDeleted) this.exportFiles.delete(video.summary.relPath);
     });
-    this.removedVideoIds.set(videoId, video.summary.publishedAt ?? null);
+    this.removedVideoIds.set(videoId, { avatarId, mark: video.summary.publishedAt ?? null });
     this.adjustAvatar(avatarId, { videoCount: -1 });
     const announce = (): void => {
       this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId } });
@@ -4201,6 +4386,7 @@ export class MockEngine implements EngineBridge {
 
   private emitMoney(): void {
     this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "money.changed", payload: { status: this.moneyStatus() } });
+    this.refreshLaunch();
   }
 
   /** Mirrors the real engine's #emitSettings: every settings command emits this, so generation-based resync (store.ts) is exercised in mock/dev mode too. */
@@ -4307,6 +4493,11 @@ export class MockEngine implements EngineBridge {
   }
 
   private emitSettingsChanged(): void {
+    this.emitSettingsEvent();
+    this.refreshLaunch();
+  }
+
+  private emitSettingsEvent(): void {
     this.emit({
       v: PROTOCOL_VERSION,
       id: this.nextId("evt"),

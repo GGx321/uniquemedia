@@ -231,7 +231,7 @@ describe("productionBundleProblems: preload and renderer bundles are scanned for
     expect(productionBundleProblems('fetch("studio-openrouter-base-url")')).toEqual(["contains studio-openrouter-base-url"]);
   });
 
-  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "holdImports", "MockOwnMedia", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos", "seedOwnSticker", "seedDemoOwnSticker", "mockOwnStickerBytes", "demoOwnVideo", "seedDemoOwnVideoClip", "timeOutNextDelete", "loseTrackOfRecords", "seedLaunch", "tearPublishedLog"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
+  test.each(["failNextRender", "setExportDisk", "moveExportFolder", "pickExportFolderNext", "pickMediaNext", "holdImports", "MockOwnMedia", "failNextMusicRefresh", "setMusicQuotaLog", "seedMusicTracks", "holdTextDrawing", "releaseTextDrawing", "mockPreviewPng", "demo-track-", "demoVideos", "seedDemoVideos", "seedOwnSticker", "seedDemoOwnSticker", "mockOwnStickerBytes", "demoOwnVideo", "seedDemoOwnVideoClip", "timeOutNextDelete", "loseTrackOfRecords", "seedLaunch", "tearPublishedLog", "failLaunchPaidStep", "setAvatarBusy", "loseLaunchLibrary", "holdLaunchMusic", "quitLaunch", "MockAutopilot", "MockRun"])("flags the mock engine's test control %s in a bundle: the mock must never ship", (control) => {
     expect(productionBundleProblems(`engine.${control}(1);`)).toEqual([`contains ${control}`]);
   });
 

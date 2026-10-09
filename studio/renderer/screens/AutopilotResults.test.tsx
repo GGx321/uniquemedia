@@ -439,7 +439,8 @@ describe("«Журнал» of the launch", () => {
 
 describe("from the launch card", () => {
   async function started(review = false) {
-    const h = setup({ ...historyLibrary(), sceneReview: "off" });
+    // S4.8: written against the mock's CANNED launch (a mid-run state that moves only by clicks); the mock now runs one by default.
+    const h = setup({ ...historyLibrary(), sceneReview: "off", launchRun: "canned" });
     h.engine.setRunImagePrice(70_000);
     await flush();
     const draft: LaunchDraftInput = {

@@ -61,7 +61,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "events of the slice: `scenes.changed` and `category.changed` are not in `COVERED_EVENTS`, so their order against `job.*` (the set is announced before the job's own end, and before `job.cancelled`) is held by the engine's and the mock's own tests, not by a transcript. The refusals' `sceneReason` and `sceneId` (and `categoryReason`) are compared",
   "scene set files and the ledger (CS.7): the mock has no disk, so a set file or folder the OS refuses, a record whose close was lost, and a ledger that cannot be read are states a test seeds (`unreadableSceneSets`, `money.unavailable`); the engine finds them in the stores, whose own tests hold them. A `scenes.cancel` opens a reserve in the mock by a control (`setSceneCancelOutcome`), in the engine only when a request was at the model; the order `job.cancelled` before the answer of a write is played by `cancelNextSceneWriteBeforeAnswer`, not by a transcript",
   "the batch autopilot (Stage 4, S4.1): the real engine answers every autopilot command INTERNAL «<type> is not implemented yet» until its orchestrator lands (S4.6), the mock answers a plan, a price and a launch held in a canned state. So a story that needs the engine to serve the command is PENDING (`Scenario.pending`): the mock's transcript is bound to the golden, and the harness only checks that the real engine answers each named command with that one refusal; the story joins the full comparison when `pending` is taken off (S4.6 to S4.8). The payloads the CONTRACT refuses are refused by both and compared now. What a pending story writes is limited to what the engine will also say: the plan's counts, the states and the codes, not the prices (as for every estimate), the clock, or the spend of a launch",
-
+  "a launch that RUNS (Stage 4, S4.8): the real rig runs the engine's default launch steps over a fake OpenRouter, the rig's fake ffmpeg and its track store; the mock runs its launch on its clock (`RigOptions.launch`). Both are read only at the STABLE points a story waits for (`Transcript.untilLaunch`), through `callLaunch`, which writes `launchFacts` (state, holds, reasons, rows' phases and progress, videos by state) and NOT: the prices, the clock, how many requests a batch sends or are in flight while the launch moves, the set file's revision (the engine's compose makes it 3, an approval 4: the contract says a set is named with one, not which), the text of a launch's refusals (sums and sentences of the engine's own: the code and the reason are written), or the events the launch causes (`autopilot.changed` is coalesced by the engine and sent per pass by the mock; the older stories' covered events are not written during a launch). The stories plan every photo NEW (`library: false`): a generated video asks for the same photos from both planners (1, 3, 5), but the photos a LIBRARY video takes are drawn by the engine's planner from the seed (collages of 2 to 4, slides of 5 to 7, near-duplicates refused) and are fixed in the mock, as are the order of the shapes and the categories: the library plan's counts are held by each engine's own tests, and the five S4.1 stories whose commands plan from the library stay pending for that reason. The bounded automatic continues after a drop (1 and 5 minutes) and the price list's retries (5, 15, 60) wait real minutes in the engine: the mock's tests hold them, the engine's own (paidHolds, engine.autopilotHolds), and no story waits for them. The quit is the graceful one (`paused { quit }`); the engine's other restart, a crash read as `paused { engine-restart }`, needs the crash matrix's copy of the folders (engine.autopilotCrashMatrix) and is played against the mock by its own tests",
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -276,13 +276,99 @@ function snapshotLine(result: Record<string, unknown>, norm: Normalizer): string
   return `< ok snapshot ${compact({ ...shown, exportStatus: result.exportStatus, avatars })}`;
 }
 
-/** An answer as a line. */
-export function answerLine(type: string, answer: Answer, norm: Normalizer): string {
+/**
+ * What a launch that RUNS is bound to say (Stage 4, S4.8): its state, its holds and its reasons, its rows' phases and progress, and the facts of its videos. NOT the prices (the mock's
+ * are «live» and the engine's the bundled table), the clock, the log's lines beyond its first and last kind, or how many requests a batch sends (the mock sends up to six at a
+ * time, the engine as many as its slots). It is written only at the stable points of a story (nothing in flight that is not named), so a tick more or less cannot move a line.
+ * The photos a LIBRARY video takes are not written: the engine's planner draws their number by the seed (collages of 2 to 4, slides of 5 to 7), the mock's plan is fixed.
+ */
+function launchFacts(value: unknown): Record<string, unknown> {
+  const v = objectOf(value);
+  const list = (items: unknown): Record<string, unknown>[] => (Array.isArray(items) ? items.map((item) => objectOf(item)) : []);
+  const hold = v.paidHold === null || v.paidHold === undefined ? null : objectOf(v.paidHold);
+  const free = v.freeHold === null || v.freeHold === undefined ? null : objectOf(v.freeHold);
+  const open = (counts: unknown): boolean => counts !== undefined && Number(objectOf(counts).requests) > 0;
+  return {
+    launchId: v.launchId,
+    status: v.status,
+    paused: v.paused === null ? null : objectOf(v.paused).cause,
+    paidHold: hold === null ? null : hold.reason === "network" || hold.reason === "price-unavailable" ? { reason: hold.reason, retryPending: objectOf(hold.detail).nextAt !== null } : hold.reason,
+    freeHold: free === null ? null : { reason: free.reason, exportReason: objectOf(free.detail).exportReason },
+    resumeBlockedBy: v.resumeBlockedBy,
+    planVideos: objectOf(v.plan).videos,
+    spent: v.spentMicros === 0 ? "none" : "some",
+    inFlight: open(v.inFlight),
+    unsettled: open(v.unsettled),
+    waitingMusic: v.waitingMusic,
+    avatars: list(v.avatars).map((a) => ({
+      avatarId: a.avatarId,
+      phase: a.phase,
+      waiting: a.waiting === null ? null : objectOf(a.waiting).reason,
+      skipped: a.skipped === null ? null : objectOf(a.skipped).reason,
+      videos: a.videos,
+      photos: a.photos,
+      waitingMusic: a.waitingMusic,
+      dropped: a.dropped,
+      sceneSetId: a.sceneSetId,
+      // The revision is the set file's count of writes (the engine's compose makes it 3, an approval 4): that a set is named with one is the contract, its number is not.
+      setRevision: a.setRevision === null ? null : "<n>",
+      scenes: a.scenes,
+      continuePhotos: a.continuePhotos,
+    })),
+  };
+}
+
+/** `launchFacts` for each autopilot answer a story reads at a stable point. */
+function autopilotDetail(type: string, result: Record<string, unknown>): Record<string, unknown> {
+  const list = (value: unknown): Record<string, unknown>[] => (Array.isArray(value) ? value.map((item) => objectOf(item)) : []);
+  if (type === "autopilot.list") {
+    return { launches: list(result.launches).map((l) => ({ launchId: l.launchId, status: l.status, avatarCount: l.avatarCount, videosDone: l.videosDone, videosPlanned: l.videosPlanned, spent: l.spentMicros === 0 ? "none" : "some" })), unreadable: list(result.unreadable) };
+  }
+  if (type === "autopilot.get") {
+    const log = list(result.log);
+    const videos = list(result.videos);
+    const states: Record<string, number> = {};
+    for (const video of videos) states[String(video.state)] = (states[String(video.state)] ?? 0) + 1;
+    return {
+      launch: launchFacts(result.launch),
+      firstLogKind: log[0]?.kind ?? null,
+      lastLogKind: log.at(-1)?.kind ?? null,
+      videos: states,
+      finishedVideosHaveATrack: videos.filter((v) => v.state === "done").every((v) => v.track !== null && v.videoId !== null),
+      dropReasons: [...new Set(videos.flatMap((v) => (v.dropReason === null ? [] : [String(v.dropReason)])))].sort(),
+      removed: videos.filter((v) => v.removed === true).length,
+      published: result.published ?? null,
+    };
+  }
+  return { launch: launchFacts(result.launch), ...(result.draw === undefined ? {} : { draw: result.draw }) };
+}
+
+/**
+ * The least a launch's answer must say at a point where it is MOVING (right after a click that lets it go on): where it stands and where its rows stand. How far a row has drawn, or what
+ * is in flight, belongs to a tick more or less.
+ */
+function launchBrief(value: unknown): Record<string, unknown> {
+  const v = objectOf(value);
+  const rows = Array.isArray(v.avatars) ? v.avatars.map((a) => objectOf(a)) : [];
+  return { launchId: v.launchId, status: v.status, paused: v.paused === null ? null : objectOf(v.paused).cause, hold: v.paidHold === null ? null : objectOf(v.paidHold).reason, phases: rows.map((a) => a.phase) };
+}
+
+/** `launchBrief` for an autopilot command's answer (`draw` too, when it carries one). */
+function autopilotBrief(result: Record<string, unknown>): Record<string, unknown> {
+  return { launch: launchBrief(result.launch), ...(result.draw === undefined ? {} : { draw: result.draw }) };
+}
+
+/**
+ * An answer as a line. `running` (S4.8): an autopilot answer is written as `autopilotDetail` says, for a story that reads a launch that runs; `"brief"` as `autopilotBrief` says, for an
+ * answer given while the launch moves.
+ */
+export function answerLine(type: string, answer: Answer, norm: Normalizer, running: boolean | "brief" = false): string {
   if (!answer.ok) {
     const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
-    const text = code === "VALIDATION" || code.startsWith("MUSIC_") ? undefined : detail;
+    // S4.8 (`running`): a launch's refusals say sums and sentences of the engine's own (the remaining worst case, the key's state); the code and the reason are the contract.
+    const text = code === "VALIDATION" || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) ? undefined : detail;
     return `< error ${code} ${compact(
       norm.value({
         ...(text === undefined ? {} : { detail: text }),
@@ -363,7 +449,11 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer): stri
     const p = objectOf(answer.result.photo);
     return `< ok ${compact(norm.value({ photo: { photoId: p.photoId, used: p.used, usedIn: p.usedIn, reserved: p.reserved, rejected: p.rejected, eligible: p.eligible } }))}`;
   }
-  if (type.startsWith("autopilot.")) return `< ok ${compact(norm.value(autopilotFacts(type, answer.result)))}`;
+  if (type.startsWith("autopilot.")) {
+    const detailed = running !== false && type !== "autopilot.removeUnreadable" && type !== "autopilot.estimate";
+    const facts = running === "brief" && "launch" in answer.result ? autopilotBrief(answer.result) : detailed ? autopilotDetail(type, answer.result) : autopilotFacts(type, answer.result);
+    return `< ok ${compact(norm.value(facts))}`;
+  }
   if (type === "videos.setPublished") {
     // The time of the mark is the engine's clock or the mock's: that the video is marked is compared.
     const video = objectOf(answer.result.video);
@@ -427,6 +517,8 @@ export interface Recorded {
   events(): EventMessage[];
   advance(step: "progress" | "saving" | "end"): Promise<void>;
   settle(): Promise<void>;
+  /** Stage 4 (S4.8): lets a RUNNING launch move a little: the mock runs the next task of its clock, the real engine gets a few milliseconds. Both parity rigs have it; a stub need not. */
+  pump?(): Promise<void>;
 }
 
 export class Transcript {
@@ -477,6 +569,44 @@ export class Transcript {
     this.#drain();
     this.#lines.push(answerLine(type, answer, this.norm));
     return answer;
+  }
+
+  /**
+   * Stage 4 (S4.8): sends an autopilot command to a launch that RUNS. The command, then its answer as `autopilotDetail` writes it; the events the launch causes meanwhile are not
+   * written (the engine's free steps and the mock's passes announce and render at their own pace, and what they announce is not what a story is about).
+   */
+  async callLaunch(type: string, payload: unknown, options: { brief?: boolean; written?: unknown } = {}): Promise<Answer> {
+    this.#drain();
+    // `written` is what the transcript says was sent where the payload carries a figure that is the engine's own (a scene set's revision, a sum): the revision the window saw is a
+    // number of the set file's writes, not of the contract.
+    this.#lines.push(`> ${type} ${compact(this.norm.value(options.written ?? payload))}`);
+    const answer = await this.#rig.send(type, payload);
+    this.#seen = this.#rig.events().length;
+    this.#lines.push(answerLine(type, answer, this.norm, options.brief === true ? "brief" : true));
+    return answer;
+  }
+
+  /**
+   * Stage 4 (S4.8): lets a launch that RUNS go on until `autopilot.get` says `want` of its view (or until `ms` of wall time pass, which fails the scenario), and writes one note. The default stays under the parity test's own 60 s timeout, so a hung engine fails with this message rather than the runner's. What
+   * happens on the way is not written; the story reads the launch at the point it waited for.
+   */
+  async untilLaunch(launchId: string, what: string, want: (launch: Record<string, unknown>) => boolean, ms = 45_000): Promise<void> {
+    const pump = this.#rig.pump;
+    if (pump === undefined) throw new Error("this rig cannot let a launch run");
+    this.#drain();
+    const deadline = Date.now() + ms;
+    for (let i = 0; ; i++) {
+      const answer = await this.#rig.send("autopilot.get", { launchId });
+      const launch = answer.ok ? objectOf(answer.result.launch) : null;
+      if (launch !== null && want(launch)) break;
+      if (Date.now() > deadline || i > 20_000) {
+        const seen = launch === null ? "an error" : `${String(launch.status)}, ${JSON.stringify(Array.isArray(launch.avatars) ? launch.avatars.map((a) => objectOf(a).phase) : [])}, hold ${JSON.stringify(launch.paidHold)}`;
+        throw new Error(`the launch never reached ${what} (it said ${seen})`);
+      }
+      await pump.call(this.#rig);
+    }
+    this.#seen = this.#rig.events().length;
+    this.#lines.push(`# the launch reached: ${what}`);
   }
 
   /**

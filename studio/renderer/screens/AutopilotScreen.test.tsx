@@ -40,7 +40,8 @@ function library({ free = {}, extra = [] }: Pick<World, "free" | "extra"> = {}):
 
 /** That library, the image attempt at $0.07 (the plan's figure). */
 function world({ free = {}, extra = [], ...options }: World = {}) {
-  const utils = setup({ ...library({ free, extra }), ...options });
+  // S4.8: these tests were written against the mock's CANNED launch (a mid-run state that moves only by clicks); the mock now runs one on its clock by default.
+  const utils = setup({ ...library({ free, extra }), launchRun: "canned", ...options });
   utils.engine.setRunImagePrice(70_000);
   return utils;
 }

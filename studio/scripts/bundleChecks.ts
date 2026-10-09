@@ -69,6 +69,15 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "tearPublishedLog",
   "timeOutNextDelete",
   "loseTrackOfRecords",
+  // Stage 4 (S4.8): the launch the mock RUNS and its testkit switches: the paid faults (`failLaunchPaidStep`), the avatar another job holds, a library that cannot say which photos are
+  // free, tracks held back, the owner's quit, and the classes that run it. These names exist nowhere else, so finding one in any bundle means the mock shipped.
+  "failLaunchPaidStep",
+  "setAvatarBusy",
+  "loseLaunchLibrary",
+  "holdLaunchMusic",
+  "quitLaunch",
+  "MockAutopilot",
+  "MockRun",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",

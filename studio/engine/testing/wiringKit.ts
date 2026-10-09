@@ -40,6 +40,16 @@ function slotsAskedFor(call: FetchCall): number[] {
 /** A reply for the `n`th request of its kind (counted from 1): a test's own answer in place of the default one. */
 export type WireHandler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
 
+/** The fake writer's default answer: one sentence per slot the request asks for. Exported so a handler of a test's own (S4.8's parity rig) can wrap it. */
+export function writerReply(call: FetchCall): Reply {
+  return { status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${SENTENCE} (${slotIndex})` })) }), { cost: 0.0112 }) };
+}
+
+/** The fake image endpoint's default answer for its `n`th request: one of four portraits, at $0.04. */
+export function imageReply(n: number): Reply {
+  return { status: 200, body: imageBody(portraitPng(((n - 1) % 4) + 1), { cost: 0.04 }) };
+}
+
 /**
  * A fake OpenRouter: the writer, the images and the credits answer; prices are offline (the dated fallback table). Any other request throws.
  * `writer` and `image` replace the default answer of those two kinds (S4.6d: a request that never returns is how a test kills the engine mid-request); `writerGate` holds the default writer answer until it resolves.
@@ -52,12 +62,12 @@ export function network(opts: { writer?: WireHandler; image?: WireHandler; write
       const n = ++writes;
       if (opts.writer !== undefined) return opts.writer(call, n);
       if (opts.writerGate !== undefined) await opts.writerGate;
-      return { status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${SENTENCE} (${slotIndex})` })) }), { cost: 0.0112 }) };
+      return writerReply(call);
     }
     if (call.url.endsWith("/images")) {
       const n = ++images;
       if (opts.image !== undefined) return opts.image(call, n);
-      return { status: 200, body: imageBody(portraitPng(((n - 1) % 4) + 1), { cost: 0.04 }) };
+      return imageReply(n);
     }
     if (call.url.endsWith("/credits")) return { status: 200, body: { data: { total_credits: 25, total_usage: 1 } } };
     if (call.url.endsWith("/models") || call.url.endsWith("/endpoints")) return OFFLINE;

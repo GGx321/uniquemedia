@@ -27,7 +27,10 @@ import type { PreviewGate } from "../../text/preview";
 import { parityDecodedMs, parityListTracks, parityMockSeeds, parityPeaks } from "./tracks";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "../../library/testing/helpers";
 import { RenderFailure } from "../../renderQueue/queue";
-import { command, engineSettings, GOOD, startEngine, TRAITS, until } from "../../testing/engineHarness";
+import { command, engineSettings, GOOD, NOW, startEngine, TRAITS, until } from "../../testing/engineHarness";
+import type { Reply } from "../../openrouter/testing/fakes";
+import { imageReply, network as launchNetwork, writerReply } from "../../testing/wiringKit";
+import { within } from "../../testing/within";
 import { acceptingVerify } from "../../videos/testing/kit";
 import { reportVideoClipFrames, writingRun } from "../../videos/testing/serviceKit";
 import type { Answer, Recorded } from "./transcript";
@@ -94,10 +97,29 @@ export interface Control {
   releaseText(): void;
   /** 3d.1b: whether the picture of a text preview id is still served (the engine's file is on disk, the mock still holds the PNG). */
   previewServed(previewId: string): Promise<boolean>;
+  /** Stage 4 (S4.8): what only a rig can do to a launch's world. A rig started without `RigOptions.launch` refuses every one. */
+  readonly launch: LaunchControl;
+}
+
+/**
+ * Stage 4 (S4.8): the launch's outside world, told the same way to both rigs. The real rig answers through the fake OpenRouter and the engine's own process; the mock arms its testkit
+ * switch (`failLaunchPaidStep`, `quitLaunch`). Needs `RigOptions.launch`.
+ */
+export interface LaunchControl {
+  /** The next paid request OpenRouter is asked gets a failure: `credits` (402) or `key` (401). Used once; the launch's next paid step meets it. */
+  fault(cause: "credits" | "key"): void;
+  /** The owner has a key OpenRouter accepts again (a new key stored): what releases a key hold. */
+  newKey(): Promise<void>;
+  /** The next writer request leaves and gets no answer, for as long as the scenario lasts (a request in flight whose reserve a quit leaves open). */
+  hangWriter(): void;
+  /** The owner quits the app and starts it again: a request in flight died with the process, and the engine reads the running launch as paused by the quit. */
+  quit(): Promise<void>;
 }
 
 /** The RapidAPI key the rigs store: obviously fake (studio/testing/keyLeaks.ts). No request is ever sent with it. */
 const PARITY_MUSIC_KEY = "Zq7-vKt9-Wm2x-Lp4s-0000";
+/** The OpenRouter key a launch scenario stores after a rejection: obviously fake, and sent only to the rig's fake OpenRouter. */
+const PARITY_OPENROUTER_KEY = "sk-or-v1-parity0123456789abcdef-new1";
 
 /**
  * The owner's pick in the dialog: nothing (`cancel`), a new empty folder (`fresh`), the export folder the rig started with (`first`),
@@ -298,6 +320,12 @@ export interface RigOptions {
   readonly reviewWrites?: boolean;
   /** CS.2: with `categories`, a second readable category (`PARITY_SECOND_CATEGORY`), so a rename can meet a name another category holds. */
   readonly secondCategory?: boolean;
+  /**
+   * Stage 4 (S4.8): a launch RUNS. The real rig leaves the engine's default launch steps in (the paid and the free path, over a fake OpenRouter that answers the writer, the
+   * images and the credits, a face gate that passes, and the rig's fake ffmpeg), its renders flow freely, and the track store feeds the autopilot; the mock runs its launch on
+   * its clock. Without it the real rig plugs `IDLE_STEPS` and the mock keeps its canned launch (the S4.1 stories are bound to both).
+   */
+  readonly launch?: boolean;
 }
 
 /** The custom category of a rig with `categories`: what the real store holds and the mock lists. */
@@ -361,6 +389,7 @@ export interface ParityRig extends Recorded {
   readonly control: Control;
   /** Lets whatever is queued or running end, so nothing outlives the scenario. */
   stop(): Promise<void>;
+  pump(): Promise<void>;
 }
 
 /** The text both engines give a failed ffmpeg: the real one builds it from the error below, the mock is told it. */
@@ -429,6 +458,8 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     avatars,
     photos,
     renderConcurrency: options.renderConcurrency ?? 1,
+    // The S4.1 stories are bound to the mock's canned launch; a rig that asks for a running launch gets the mock that runs one.
+    launchRun: options.launch === true ? "timers" : "canned",
     ...(options.categories === true
       ? {
           categories: [
@@ -494,7 +525,19 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     async settle() {
       scheduler.runAll();
     },
+    async pump() {
+      scheduler.next();
+    },
     control: {
+      launch: {
+        fault: (cause) => engine.failLaunchPaidStep(cause),
+        newKey: async () => {
+          await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setApiKey", payload: { key: PARITY_OPENROUTER_KEY } }));
+        },
+        // The mock's request is in flight between two ticks of its clock; the scenario stops pumping when it sees one.
+        hangWriter: () => undefined,
+        quit: async () => engine.quitLaunch(),
+      },
       failNextRender: (at = "encode") =>
         at === "encode" ? engine.failNextRender({ code: "RENDER_FAILED", detail: FFMPEG_FAILURE_DETAIL }) : engine.failNextRender({ ...SAVING_FAILURE }, "saving"),
       exportFolder: async (state) => {
@@ -876,13 +919,46 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     await writeFile(file.path, PARITY_M4A, { flag: "wx" });
     return { ok: true, facts: PARITY_TRACK_FACTS, output: { file, format: "m4a" }, waveform: [...PARITY_TRACK_WAVEFORM] };
   };
-  const { engine, events, posted } = await startEngine(dir, {
-    init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(), musicDir },
+  // S4.8: a rig with `launch` runs the engine as the app builds it (the default launch steps) over a fake OpenRouter that answers the writer, the images and the credits; a failure the
+  // scenario asks for meets the next paid request, and a writer can be left without an answer (a request in flight when the app quits). Without it the engine plugs no steps (plan §21):
+  // a launch only starts here, and nothing sends a request into the harness network.
+  const launching = options.launch === true;
+  let faultNext: "credits" | "key" | null = null;
+  let writerHung = false;
+  /** How far the launching engines' clock has moved on (ms): the owner was away. */
+  let shifted = 0;
+  const failureOf = (cause: "credits" | "key"): Reply => (cause === "credits" ? { status: 402, body: { error: { message: "Insufficient credits" } } } : { status: 401, body: { error: { message: "No auth credentials found" } } });
+  const meetFault = (): Reply | null => {
+    if (faultNext === null) return null;
+    const reply = failureOf(faultNext);
+    faultNext = null;
+    return reply;
+  };
+  const launchNet = launching
+    ? launchNetwork({
+        writer: (call) => meetFault() ?? (writerHung ? new Promise<Reply>(() => undefined) : writerReply(call)),
+        image: (_call, n) => meetFault() ?? imageReply(n),
+      })
+    : undefined;
+  // Every message every engine of this rig posts, in order (the rig may start a second engine over the same folders: the app was quit and opened again).
+  const posted: unknown[] = [];
+  const events = (): EventMessage[] => posted.filter((m) => typeof m === "object" && m !== null && "kind" in m && m.kind === "event").map((m) => EventMessage.parse(m));
+  let boots = 0;
+  const boot = async (): Promise<Awaited<ReturnType<typeof startEngine>>["engine"]> => {
+    boots += 1;
+    const started = await startEngine(dir, {
+    ...(launchNet === undefined ? {} : { net: launchNet }),
+    bootId: `boot-0000-${String.fromCharCode(96 + boots).repeat(4)}`,
+    init: { renderTmpDir: join(dir, "userData", "render-tmp"), settings: settings(launching ? { imageAgeCheck: "off" } : {}), musicDir },
     deps: {
+      post: (message) => posted.push(message),
+      // A launch's reconcile is allowed once the ledger has been quiet for a while: the rig moves the clock when the owner is away (`quit`).
+      ...(launching ? { clock: () => NOW + shifted, monotonic: () => shifted } : {}),
       musicSink: store,
       musicTracks: store,
-      // The parity engine plugs no steps (plan §21): a launch only starts here, and nothing sends a request into the harness network.
-      launchSteps: IDLE_STEPS,
+      ...(launching
+        ? { musicTrends: store, qaGates: [{ name: "face", paid: false, check: async () => ({ verdict: "pass" as const }) }] }
+        : { launchSteps: IDLE_STEPS }),
       text: { gate: textLane },
       ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, video: parityVideoImporter, audio: parityTrackImporter, sticker: parityStickerImporter } } : {}),
       mediaStaging: {
@@ -921,18 +997,32 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
         },
       },
     },
-  });
-  await engine.settled();
+    });
+    await started.engine.settled();
+    return started.engine;
+  };
+  let engine = await boot();
   // Nora is retired: the engine's own command, so the library's state is the engine's.
   const archived = ResponseMessage.parse(await engine.handle(command("avatars.archive", { avatarId: archivedAvatarId })));
   if (!archived.ok) throw new Error(`could not archive the third avatar: ${archived.error.code}`);
+  // A launch's renders flow on their own: the gate is open for good.
+  if (launching) gate.set(3);
 
   const settle = async (): Promise<void> => {
     gate.set(3);
     await engine.renders.idle();
     await engine.settled();
     await engine.mediaSettled();
-    gate.reset();
+    if (!launching) gate.reset();
+  };
+
+  // The app quit and opened again (S4.8): the first engine shuts down (a request in flight dies with it; its reserve stays open in the ledger), a second one opens the same folders.
+  const quitAndReopen = async (): Promise<void> => {
+    await within(engine.shutdown(50), 30_000, "the engine to shut down");
+    writerHung = false;
+    engine = await within(boot(), 60_000, "the engine to start again");
+    // The owner waits some minutes before the reconcile: it needs the new process to have been quiet for a while (the crash matrix moves its clock the same way).
+    shifted += 10 * 60_000;
   };
 
   // Main's half of `settings.setExportPath`: the real flow (main/exportFolderFlow.ts) over the real engine and a real settings file,
@@ -1054,7 +1144,23 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       }
     },
     settle,
+    async pump() {
+      await new Promise<void>((resolve) => setTimeout(resolve, 15));
+    },
     control: {
+      launch: {
+        fault: (cause) => {
+          if (!launching) throw new Error("this rig has no launch");
+          faultNext = cause;
+        },
+        newKey: async () => {
+          await within(engine.applyControl({ kind: "control", type: "apiKey.set", key: PARITY_OPENROUTER_KEY }), 30_000, "the new key to be stored");
+        },
+        hangWriter: () => {
+          writerHung = true;
+        },
+        quit: quitAndReopen,
+      },
       failNextRender: (at = "encode") => {
         failArmed = at;
       },
@@ -1165,7 +1271,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     stop: async () => {
       textLane.hold(false);
       holdImports(false);
-      await settle();
+      // A launch's free runs poll on timers: the engine is shut down so none outlives the scenario.
+      if (launching) await within(engine.shutdown(50), 30_000, "the engine to shut down");
+      else await settle();
     },
   };
 }

@@ -1,11 +1,20 @@
 import type { Scenario } from "./scenarios";
+import { LAUNCH_RUN_SCENARIOS } from "./scenarios.autopilotRun";
 import type { World } from "./rigs";
 import type { Answer } from "./transcript";
 
 // The batch autopilot, told through its commands (Stage 4, S4.1; plan §9 and §18). The stories that need a running launch are PENDING (`Scenario.pending`): the mock's transcript
 // is bound to the golden, and the real engine is held to its one refusal «not implemented yet» for a command it cannot serve (S4.1 to S4.5) or, since S4.6a, to serving the
-// orchestrator core's commands (`served`), until S4.8 completes the mock and the two can be compared line for line.
+// orchestrator core's commands (`served`).
 // What the contract itself refuses is refused by both engines and is compared line for line NOW.
+//
+// S4.8: the mock now RUNS a launch and the real engine's steps are its default, so a launch is told line for line in scenarios.autopilotRun.ts (appended, `rig: { launch: true }`):
+// review off and on, pause and resume, stop, a hold and its release, a full disk, a video that waits for music, and a quit with a reconcile. The five stories below were NOT lifted, and
+// the golden is append-only, so they stay as they were, bound to the mock's CANNED launch (`launchRun: "canned"`, which `mockRig` gives every rig without `launch`):
+//  - the estimate story cannot match: a plan against the library draws the sizes of a library collage (2 to 4) and of library slides (5 to 7) from the seed in the engine's planner, and the
+//    mock's are fixed (3 and 5): `fromLibrary` is 12 in the engine and 10 in the mock for the story's draft. A real difference, not papered over (transcript.ts, INTENTIONAL_DIFFERENCES);
+//  - the four that start a launch say «drawing» and «awaiting-review» in the ANSWER to the start, which a canned mock gives and no engine can: the engine writes a phase in a pass that
+//    runs after the start has answered, so its answer says «planned». Their lifted equivalents are the appended stories.
 //
 // A pending story is written so that it can run against a real engine that refuses everything AND so that it can later run against one that serves it: it passes its own plan
 // seed (the preview echoes it), accepts a worst case that is plainly enough (`ENOUGH`) or plainly not (`NOT_ENOUGH`) instead of the preview's own figure (the mock's prices and the
@@ -326,4 +335,4 @@ const PARITY_SERVED: Scenario[] = [
   },
 ];
 
-export const AUTOPILOT_SCENARIOS: readonly Scenario[] = [...PARITY_NOW, ...TRACK_FLAG, ...PENDING, ...PARITY_SERVED];
+export const AUTOPILOT_SCENARIOS: readonly Scenario[] = [...PARITY_NOW, ...TRACK_FLAG, ...PENDING, ...PARITY_SERVED, ...LAUNCH_RUN_SCENARIOS];

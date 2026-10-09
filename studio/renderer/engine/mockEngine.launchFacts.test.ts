@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, PhotoSummary } from "../../shared/engine";
+import type { MockEngineOptions } from "./mockEngine";
 import { freePhotos, makeMock, MIA, SOFIA, unwrap, type Mock } from "./mockEngine.testkit";
 
 // S4.6g: the mock answers `autopilot.get` and `autopilot.list` as the engine does once the owner has marked or deleted a launch's videos: `publishedAt` is the log's word,
@@ -8,10 +9,10 @@ import { freePhotos, makeMock, MIA, SOFIA, unwrap, type Mock } from "./mockEngin
 
 const at = (h: number, m: number): string => new Date(2026, 9, 8, h, m).toISOString();
 
-function world(): Mock {
+function world(options: Pick<MockEngineOptions, "launchRun"> = {}): Mock {
   const photos: PhotoSummary[] = [...freePhotos(8, MIA), ...freePhotos(4, SOFIA)];
   const countOf = (a: AvatarSummary): number => photos.filter((p) => p.avatarId === a.avatarId).length;
-  return makeMock({ avatars: [MIA, SOFIA].map((a) => ({ ...a, photoCount: countOf(a), eligibleUnusedCount: countOf(a) })), photos });
+  return makeMock({ avatars: [MIA, SOFIA].map((a) => ({ ...a, photoCount: countOf(a), eligibleUnusedCount: countOf(a) })), photos, ...options });
 }
 
 function seed(mock: Mock): { launchId: string; videoIds: string[] } {
@@ -170,9 +171,11 @@ describe("timeOutNextDelete", () => {
   });
 });
 
-describe("a launch the mock runs itself", () => {
+// S4.8: a launch the mock RUNS renders real records (mockEngine.launchRun.test.ts pins that). The CANNED launch (`launchRun: "canned"`, the S4.1 fixture) still has no record behind its
+// finished videos, which is why the fixture is not what the window is developed against any more.
+describe("a CANNED launch (launchRun: canned)", () => {
   test("its canned finished videos have no record in the mock, so they read removed and the history does not count them (the window never drew them)", async () => {
-    const mock = world();
+    const mock = world({ launchRun: "canned" });
     mock.engine.setRunImagePrice(70_000);
     const draft = { avatarIds: [MIA.avatarId, SOFIA.avatarId], videosPerAvatar: 3, mix: { single: 70, collage: 20, slides: 10 }, categories: ["home" as const], poses: { profile: false, back: false }, library: true, generate: true, sceneReview: false, stickers: false };
     const preview = (await unwrap(mock.client.request("autopilot.estimate", { draft }))).preview;

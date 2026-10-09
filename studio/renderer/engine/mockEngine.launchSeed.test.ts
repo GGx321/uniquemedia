@@ -87,8 +87,9 @@ describe("tearPublishedLog", () => {
     const torn = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));
     expect(torn.published).toBe("unknown");
     expect(torn.videos.every((v) => v.publishedAt === undefined)).toBe(true);
-    // Sofia's log is her own: it still reads.
-    expect((await unwrap(mock.client.request("videos.list", { avatarId: SOFIA.avatarId }))).published).toBe("ok");
+    // Sofia's log is her own, and nobody ever marked a video of hers, so she has none (S4.6g L6: the mock used to answer "ok" for her, where the engine has no log to read): the
+    // field is absent, as from an avatar with no marks, and the tear of Mia's log does not reach her.
+    expect("published" in (await unwrap(mock.client.request("videos.list", { avatarId: SOFIA.avatarId })))).toBe(false);
 
     await unwrap(mock.client.request("videos.setPublished", { videoId: videoIds[0] ?? "", published: true }));
     const healed = await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId }));

@@ -15,6 +15,7 @@ import {
   type EngineError,
   type Estimate,
   type ExportUnavailableReason,
+  type FreeHold,
   type LaunchAvatarView,
   type LaunchBlockerCode,
   type LaunchDraft,
@@ -24,50 +25,96 @@ import {
   type LaunchVideo,
   type LogLine,
   type MonthFit,
+  type PaidHold,
   type ResumeBlockedBy,
   type UnreadableLaunch,
   type UnsequencedEvent,
   type VideoShape,
 } from "../../shared/engine";
+import { MockRun, PAID_FAULTS, type PaidFault } from "./mockLaunchRun";
 
-// The mock's autopilot (Stage 4, S4.1): the stubs the screens are built on until the engine's orchestrator lands (S4.6) and the mock runs a launch on timers (S4.8).
+export { PAID_FAULTS, type PaidFault };
+
+// The mock's autopilot (Stage 4, S4.1, completed by S4.8): the plan and the price, the commands, and a launch that RUNS on the mock's scheduler (mockLaunchRun.ts) the way the engine's
+// orchestrator and steps run one.
 //
 //  - The PLAN and the PRICE follow the plan's rules with the mock's fixed unit prices: shapes by largest remainder, library photos first (slides, then collages, then
 //    singles), the rest generated at fixed sizes (a collage of 3, slides of 5), an avatar blocked for an open scene set, over 100 new photos or an unreadable usage, and the
-//    month's room against the expected and the worst case. S4.2's `launchEstimate` and S4.3's planner replace the arithmetic; the answers' shape does not change.
-//  - A launch it starts is held in a CANNED, consistent mid-run state (some videos done, one rendering, spent a fifth of the expected cost) and moves only by the owner's
-//    clicks: pause, resume, stop and the review hand-off. Nothing advances by itself.
+//    month's room against the expected and the worst case. What the engine's planner draws by the seed (the sizes of a library collage and of library slides, the order of the
+//    shapes and the categories, the near-duplicate rule) the mock does not model: a plan against the same library may differ in its library photo counts and its keys.
+//  - A launch it starts RUNS: it begins at `planned` with nothing spent, and every tick of the mock's clock advances it (composes, waits for the review, draws, assigns, renders), until it is
+//    done, or paused, held or stopped by the owner, a fault the testkit armed, or the world (the key, the ledger, the month, the export folder, the tracks).
+//  - `launchRun: "canned"` keeps the S4.1 behaviour for the renderer's fixtures and the parity stories that are bound to it: a launch put straight into a canned mid-run state (some videos
+//    done, one rendering, spent a fifth of the expected cost) that moves only by the owner's clicks.
 //  - It validates and refuses as the engine will, in the order the contract lists; the gates that belong to the mock engine (the library, the key and the ledger, the export
-//    folder) arrive through `MockAutopilotWorld`.
+//    folder, the tracks) arrive through `MockAutopilotWorld`.
 
 /** What the mock engine lets the autopilot see of its world, and the clock and the announcements. */
 export interface MockAutopilotWorld {
   nowIso(): string;
+  /** The time `ms` from now, as the mock's clock reads it (a hold's `nextAt`). */
+  isoAfter(ms: number): string;
   nextEventId(): string;
   emit(event: UnsequencedEvent): void;
+  /** The mock's scheduler and its step: what a launch's passes run on. */
+  schedule(ms: number, task: () => void): () => void;
+  readonly stepMs: number;
   usage(avatarId: string): AvatarUsage;
   /** Free scene photos of the avatar in these categories: eligible, in no video, held by no render, not rejected. */
   freePhotos(avatarId: string, categories: readonly CategoryRef[]): number;
   /** Another job of the avatar's own holds it now. */
   busy(avatarId: string): boolean;
+  /** The avatar has an open scene set: one of the owner's own, or the unfinished launch's (composed, not drawn from yet). A plan that needs new photos for it cannot start. */
   hasOpenSet(avatarId: string): boolean;
+  /** The avatar has an open scene set of the OWNER's own (what a launch's compose waits for). */
+  hasOwnersOpenSet(avatarId: string): boolean;
+  /** The avatar is a saved, active one (it can be archived while a launch is paused). */
+  avatarActive(avatarId: string): boolean;
+  /** The library can say which of the avatar's photos are free (its usage and drafts are known). */
+  libraryKnown(avatarId: string): boolean;
   unit(): MockAutopilotUnit;
   prices(): { prices: Estimate["prices"]; pricesAsOf: string };
   /** The month's budget, and what is spent and reserved in it. */
   month(): { budgetMicros: number; spentAndOpenMicros: number };
-  /** The key and the ledger: the engine's first checks before any paid call. */
+  /** The key, then the ledger's admission rule: the engine's first checks before any paid call. */
   paidGate(): EngineError | null;
+  keyState(): "ok" | "missing" | "rejected";
+  /** `Budget.blocked()` as the engine's launch reads it: a halt, an unreadable ledger, reserves of a previous process (never the reserves of this session). */
+  admission(): EngineError | null;
+  /** OpenRouter answered 401 to a paid step: the key is marked rejected. */
+  rejectKey(): void;
+  /** A settle came in above its reserve: the ledger halts until a reconcile. */
+  haltLedger(): void;
+  /** Reserves the ledger holds for the launch's requests. */
+  openReserve(key: string, worstMicros: number): void;
+  closeReserve(key: string, costMicros: number): void;
+  hasReserve(key: string): boolean;
+  /** A reserve of this session was left open (a request that got no answer): the settings screen asks for a reconcile. */
+  noteOpenReserve(): void;
   exportReason(): ExportUnavailableReason | null;
   exportFreeBytes(): number | null;
   music(): { candidates: number; ownFlagged: number; explicitSkipped: number; autoRefresh: AutoRefresh; quotaRemaining: number | null };
+  /** The track a video of this length is given, or null when none qualifies (no candidate, or every one is too short): the video waits for music. */
+  trackFor(neededMs: number): NonNullable<LaunchVideo["track"]> | null;
   balance(): { micros: number; asOf: string } | null;
   /**
-   * S4.6g: the ones of `videoIds` that have a record in the mock. A video the mock deleted (or its avatar's) has none, and neither has a finished video of the launch the mock
-   * runs itself (a canned stand-in, no file): both read removed, so the window never draws a tile it cannot act on. Undefined: the records cannot be looked at, so nothing reads as removed.
+   * S4.6g: the ones of `videoIds` that have a record in the mock. A video the mock deleted (or its avatar's) has none: it reads removed, so the window never draws a tile it cannot act
+   * on. Undefined: the records cannot be looked at, so nothing reads as removed.
    */
   recordsOf(avatarId: string, videoIds: readonly string[]): ReadonlySet<string> | undefined;
   /** S4.6g: the avatar's «Опубликовано» marks as its log reads (`absent` before the first mark, `unknown` while it is torn). */
   marksOf(avatarId: string): MarksRead;
+  /** The library photos a library video takes: `n` free photos of the avatar in these categories that are not in `taken`, or null when there are not enough. */
+  claimPhotos(avatarId: string, categories: readonly CategoryRef[], n: number, taken: ReadonlySet<string>): string[] | null;
+  /** The photos a launch's videos hold are reserved (not free) until their record lands. */
+  holdPhotos(photoIds: readonly string[], held: boolean): void;
+  /** A stopped launch lets go of a set it composed and never drew from: it is the avatar's own open set again (paid for; drawing or discarding it is the owner's call). */
+  leaveOpenSet(avatarId: string, sceneSetId: string, written: number, count: number): void;
+  /** `n` photos the launch's draw made for the avatar (new library photos), in order. */
+  drawPhotos(avatarId: string, n: number, category: CategoryRef): string[];
+  newVideoId(): string;
+  /** A render landed: the record of the video, its photos taken, its file in the export folder. */
+  storeVideo(video: { launchId: string; avatarId: string; videoId: string; photoIds: readonly string[]; durationMs: number; bytes: number; track: NonNullable<LaunchVideo["track"]>; n: number }): void;
 }
 
 /** The mock's fixed unit prices, as the mock prices a run: an attempt, a photo (up to three attempts), the writer's chunk. */
@@ -80,7 +127,7 @@ export interface MockAutopilotUnit {
 }
 
 const SHAPE_ORDER = ["single", "collage", "slides"] as const;
-/** The photos a generated video has, and the library's stand-in for the sizes it draws by seed. */
+/** The photos a generated video has, and the canned launch's stand-in for the sizes the engine draws by seed. */
 const SIZE: Readonly<Record<VideoShape, number>> = { single: 1, collage: 3, slides: 5 };
 const DURATION_MS: Readonly<Record<VideoShape, number>> = { single: 8_000, collage: 8_500, slides: 9_000 };
 const BYTES: Readonly<Record<VideoShape, number>> = { single: 2_200_000, collage: 2_300_000, slides: 3_100_000 };
@@ -122,18 +169,26 @@ export interface MockLaunch {
   readonly plannedWorstMicros: number;
   readonly plannedExpectedMicros: number;
   readonly plan: { videos: number; photos: number; fromLibrary: number; toGenerate: number };
-  readonly spentMicros: number;
-  readonly activeMs: number;
+  /** The figure of a launch the mock does not run (canned, seeded) and of one that ended; a running launch's is `run.spent()`. */
+  spentMicros: number;
+  activeMs: number;
   avatars: LaunchAvatarView[];
   videos: LaunchVideo[];
   log: LogLine[];
+  /** S4.8: what holds the launch's paid work, and its free work. */
+  paidHold: PaidHold | null;
+  freeHold: FreeHold | null;
+  /** S4.8: the owner's paid edits during the review (the mock models none; a seed may say). */
+  reviewWritesMicros: number;
+  /** The running launch's work; null for a canned or a seeded launch. */
+  run: MockRun | null;
 }
 
 /**
  * A launch put straight into the library's history (S4.9c, a renderer test and dev control): what `autopilot.list` and `autopilot.get` then read of it, as if
  * the launch had run. Nothing is spent or checked; the view it makes is parsed by the contract, so a seed that breaks it fails loudly.
  */
-export type MockSeededLaunch = Omit<MockLaunch, "launchId">;
+export type MockSeededLaunch = Omit<MockLaunch, "launchId" | "paidHold" | "freeHold" | "reviewWritesMicros" | "run"> & Partial<Pick<MockLaunch, "paidHold" | "freeHold" | "reviewWritesMicros">>;
 
 type Outcome<T> = { readonly ok: true; readonly result: T } | { readonly ok: false; readonly error: EngineError };
 const done = <T>(result: T): Outcome<T> => ({ ok: true, result });
@@ -141,17 +196,28 @@ const refuse = (error: EngineError): Outcome<never> => ({ ok: false, error });
 
 const isUnfinished = (status: LaunchStatus): boolean => status !== "done" && status !== "stopped";
 
+export interface MockAutopilotOptions {
+  /** `canned` keeps the S4.1 launch (see the header); the default runs it. */
+  readonly launchRun?: "timers" | "canned";
+}
+
 export class MockAutopilot {
   readonly #world: MockAutopilotWorld;
   #unreadable: UnreadableLaunch[];
+  readonly #canned: boolean;
   /** Oldest first. */
   #launches: MockLaunch[] = [];
   #launchCount = 0;
   #seedCount = 0;
+  /** The faults armed for the paid steps (`MockEngine.failLaunchPaidStep`): shared with the run, so one armed before the start is met by the first paid step. */
+  readonly #faults: PaidFault[] = [];
+  /** While a command or a pass is changing the launch, the money and the settings it causes do not announce it again (the pass announces once, at its end). */
+  #depth = 0;
 
-  constructor(world: MockAutopilotWorld, unreadable: readonly UnreadableLaunch[]) {
+  constructor(world: MockAutopilotWorld, unreadable: readonly UnreadableLaunch[], options: MockAutopilotOptions = {}) {
     this.#world = world;
     this.#unreadable = [...unreadable];
+    this.#canned = options.launchRun === "canned";
   }
 
   // ---------- the plan ----------
@@ -270,9 +336,11 @@ export class MockAutopilot {
     if (acceptedWorstMicros < preview.estimate.worstMicros) return refuse({ code: "PRICE_CHANGED", detail: "the launch's worst case is above the accepted one" });
     if (preview.month.fit === "short") return refuse({ code: "BUDGET_EXCEEDED", detail: "the month has less room than the launch's expected cost" });
 
-    const launch = this.#build(draft, acceptedWorstMicros, preview, planned);
+    const launch = this.#canned ? this.#buildCanned(draft, acceptedWorstMicros, preview, planned) : this.#buildRun(draft, acceptedWorstMicros, preview, planned);
     this.#launches.push(launch);
-    return done({ launch: this.#announce(launch) });
+    const view = this.#announce(launch);
+    launch.run?.begin();
+    return done({ launch: view });
   }
 
   pause(launchId: string): Outcome<{ launch: LaunchView }> {
@@ -280,43 +348,78 @@ export class MockAutopilot {
     if (!found.ok) return found;
     const launch = found.result;
     if (launch.status !== "running") return refuse({ code: "VALIDATION", detail: `launch ${launchId} is ${launch.status}, not running` });
-    launch.status = "paused";
-    launch.paused = { cause: "owner", at: this.#world.nowIso() };
-    launch.log.push({ at: this.#world.nowIso(), kind: "pausing", requests: this.#inFlight(launch).requests, renders: 0 }, { at: this.#world.nowIso(), kind: "paused" });
-    return done({ launch: this.#announce(launch) });
+    return this.#atomic(() => {
+      const run = launch.run;
+      if (run === null) {
+        launch.status = "paused";
+        launch.paused = { cause: "owner", at: this.#world.nowIso() };
+        launch.log.push({ at: this.#world.nowIso(), kind: "pausing", requests: this.#inFlight(launch).requests, renders: 0 }, { at: this.#world.nowIso(), kind: "paused" });
+        return done({ launch: this.#announce(launch) });
+      }
+      // The soft stop: with a request or a render in flight the launch is «pausing» until the next pass settles them; with none it is paused at once.
+      const flight = run.flight();
+      launch.log.push({ at: this.#world.nowIso(), kind: "pausing", requests: flight.requests, renders: flight.renders });
+      if (run.softStop()) {
+        launch.status = "paused";
+        launch.paused = { cause: "owner", at: this.#world.nowIso() };
+        launch.log.push({ at: this.#world.nowIso(), kind: "paused" });
+      } else {
+        launch.status = "pausing";
+      }
+      return done({ launch: this.#announce(launch) });
+    });
   }
 
   resume(launchId: string, acceptedRemainingMicros: number): Outcome<{ launch: LaunchView }> {
     const found = this.#find(launchId);
     if (!found.ok) return found;
     const launch = found.result;
-    if (launch.status !== "paused") return refuse({ code: "VALIDATION", detail: `launch ${launchId} is ${launch.status}, not paused` });
-    const gate = this.#world.paidGate();
-    if (gate !== null) return refuse(gate);
+    // «Продолжить» also clears a paid hold of a launch that runs; a launch that runs with no hold has nothing to continue.
+    const clearsHold = launch.status === "running" && launch.paidHold !== null;
+    if (launch.status !== "paused" && !clearsHold) return refuse({ code: "VALIDATION", detail: `launch ${launchId} is ${launch.status}, not paused` });
+    const blocked = this.#blockage(launch);
+    if (blocked !== null) return refuse(blocked.error);
     if (acceptedRemainingMicros < this.#remaining(launch)) return refuse({ code: "PRICE_CHANGED", detail: "the launch's remaining worst case is above the accepted one" });
-    launch.status = "running";
-    launch.paused = null;
-    launch.avatars = launch.avatars.map((a): LaunchAvatarView => (a.phase === "approved-waiting" ? { ...a, phase: "drawing", slice: { index: 1, total: Math.max(1, Math.ceil((a.continuePhotos ?? a.photos.total) / LAUNCH_SLICE_MAX_PHOTOS)) } } : a));
-    launch.log.push({ at: this.#world.nowIso(), kind: "resumed", acceptedRemainingMicros });
-    return done({ launch: this.#announce(launch) });
+    return this.#atomic(() => {
+      launch.status = "running";
+      launch.paused = null;
+      launch.paidHold = null;
+      launch.log.push({ at: this.#world.nowIso(), kind: "resumed", acceptedRemainingMicros });
+      if (launch.run === null) {
+        launch.avatars = launch.avatars.map((a): LaunchAvatarView => (a.phase === "approved-waiting" ? { ...a, phase: "drawing", slice: { index: 1, total: Math.max(1, Math.ceil((a.continuePhotos ?? a.photos.total) / LAUNCH_SLICE_MAX_PHOTOS)) } } : a));
+      } else {
+        launch.run.resumed();
+      }
+      return done({ launch: this.#announce(launch) });
+    });
   }
 
   stop(launchId: string): Outcome<{ launch: LaunchView }> {
     const found = this.#find(launchId);
     if (!found.ok) return found;
     const launch = found.result;
-    if (launch.status !== "running" && launch.status !== "paused") return refuse({ code: "VALIDATION", detail: `launch ${launchId} is ${launch.status}: only a running or paused launch can be stopped` });
-    launch.status = "stopped";
-    launch.paused = null;
-    launch.endedAt = this.#world.nowIso();
-    // What was not finished is dropped, and the sets of the launch go back to the owner (here: they simply stop being the launch's).
-    launch.videos = launch.videos.map((v): LaunchVideo => (v.state === "done" ? v : { ...v, state: "dropped", dropReason: "launch-stopped", videoId: null, bytes: null, publishedAt: null }));
-    launch.avatars = launch.avatars.map((a): LaunchAvatarView => {
-      const unfinished = launch.videos.filter((v) => v.avatarId === a.avatarId && v.state === "dropped").length;
-      return { ...a, dropped: unfinished > 0 ? { count: unfinished, reason: "launch-stopped" } : null, waitingMusic: 0, resumableSlots: 0 };
+    if (launch.status !== "running" && launch.status !== "paused" && launch.status !== "pausing") return refuse({ code: "VALIDATION", detail: `launch ${launchId} is ${launch.status}: only a running or paused launch can be stopped` });
+    return this.#atomic(() => {
+      const run = launch.run;
+      if (run === null) {
+        launch.status = "stopped";
+        launch.paused = null;
+        launch.endedAt = this.#world.nowIso();
+        // What was not finished is dropped, and the sets of the launch go back to the owner (here: they simply stop being the launch's).
+        launch.videos = launch.videos.map((v): LaunchVideo => (v.state === "done" ? v : { ...v, state: "dropped", dropReason: "launch-stopped", videoId: null, bytes: null, publishedAt: null }));
+        launch.avatars = launch.avatars.map((a): LaunchAvatarView => {
+          const unfinished = launch.videos.filter((v) => v.avatarId === a.avatarId && v.state === "dropped").length;
+          return { ...a, dropped: unfinished > 0 ? { count: unfinished, reason: "launch-stopped" } : null, waitingMusic: 0, resumableSlots: 0 };
+        });
+        launch.log.push({ at: this.#world.nowIso(), kind: "stopped", spentMicros: launch.spentMicros });
+        return done({ launch: this.#announce(launch) });
+      }
+      // «Стоп» is the same soft stop; what is in flight finishes at the next pass, and the launch is «stopping» until then.
+      launch.status = "stopping";
+      launch.paused = null;
+      if (run.softStop()) run.completeStop();
+      return done({ launch: this.#announce(launch) });
     });
-    launch.log.push({ at: this.#world.nowIso(), kind: "stopped", spentMicros: launch.spentMicros });
-    return done({ launch: this.#announce(launch) });
   }
 
   continueAfterReview(launchId: string, avatarId: string, sceneSetId: string, revision: number): Outcome<{ launch: LaunchView; draw: "started" | "waits-for-resume" }> {
@@ -328,14 +431,21 @@ export class MockAutopilot {
     if (row === undefined || row.sceneSetId !== sceneSetId || row.phase !== "awaiting-review" || !isUnfinished(launch.status) || launch.status === "stopping") return notAwaiting;
     if (row.setRevision !== revision) return refuse({ code: "SCENES_CHANGED", detail: `scene set ${sceneSetId} moved since revision ${revision}` });
     const photos = row.continuePhotos ?? 0;
-    const paused = launch.status === "paused";
-    launch.avatars = launch.avatars.map((a): LaunchAvatarView =>
-      a.avatarId !== avatarId ? a : { ...a, phase: paused ? "approved-waiting" : "drawing", slice: paused ? null : { index: 1, total: Math.max(1, Math.ceil(photos / LAUNCH_SLICE_MAX_PHOTOS)) } },
-    );
-    launch.log.push(
-      paused ? { at: this.#world.nowIso(), kind: "review-approved-paused", avatarId, photos } : { at: this.#world.nowIso(), kind: "review-continued", avatarId, photos, writtenByOwner: 0 },
-    );
-    return done({ launch: this.#announce(launch), draw: paused ? "waits-for-resume" : "started" });
+    // While the launch is paused or pausing the approval is only recorded; the draw waits for «Продолжить».
+    const paused = launch.status !== "running";
+    return this.#atomic(() => {
+      if (launch.run === null) {
+        launch.avatars = launch.avatars.map((a): LaunchAvatarView =>
+          a.avatarId !== avatarId ? a : { ...a, phase: paused ? "approved-waiting" : "drawing", slice: paused ? null : { index: 1, total: Math.max(1, Math.ceil(photos / LAUNCH_SLICE_MAX_PHOTOS)) } },
+        );
+      } else {
+        launch.run.review(avatarId, paused);
+      }
+      launch.log.push(
+        paused ? { at: this.#world.nowIso(), kind: "review-approved-paused", avatarId, photos } : { at: this.#world.nowIso(), kind: "review-continued", avatarId, photos, writtenByOwner: 0 },
+      );
+      return done({ launch: this.#announce(launch), draw: paused ? ("waits-for-resume" as const) : ("started" as const) });
+    });
   }
 
   list(): { launches: LaunchSummary[]; unreadable: UnreadableLaunch[] } {
@@ -349,7 +459,7 @@ export class MockAutopilot {
         avatarIds: [...l.draft.avatarIds],
         videosDone: l.videos.filter((v) => v.state === "done" && !isRemoved(this.#recordsOf(l, v.avatarId), v.videoId)).length,
         videosPlanned: l.plan.videos,
-        spentMicros: l.spentMicros,
+        spentMicros: this.#spentOf(l),
         acceptedMicros: l.acceptedMicros,
         plannedWorstMicros: l.plannedWorstMicros,
       }),
@@ -391,7 +501,8 @@ export class MockAutopilot {
   seed(build: (launchId: string) => MockSeededLaunch): string {
     this.#launchCount += 1;
     const launchId = `launch-${String(this.#launchCount).padStart(8, "0")}`;
-    const launch: MockLaunch = { launchId, ...build(launchId) };
+    const seeded = build(launchId);
+    const launch: MockLaunch = { launchId, ...seeded, paidHold: seeded.paidHold ?? null, freeHold: seeded.freeHold ?? null, reviewWritesMicros: seeded.reviewWritesMicros ?? 0, run: null };
     // The contract judges the seed now, not at the first read.
     this.#view(launch);
     this.#launches.push(launch);
@@ -410,6 +521,57 @@ export class MockAutopilot {
     return live === undefined ? null : this.#view(live);
   }
 
+  // ---------- the engine's re-announcements and the testkit ----------
+
+  /**
+   * The unfinished launch is told again (S4.6w H1): what its view derives from the money, the key or the monthly budget changed without a write of the launch (a reconcile closed
+   * its open reserves; R and what closes «Продолжить» moved). The mock engine calls it from its money and settings announcements, as the engine does from `#emitMoney` and `#emitSettings`.
+   */
+  refresh(): void {
+    if (this.#depth > 0) return;
+    const live = this.#unfinished();
+    if (live !== undefined) this.#announce(live);
+  }
+
+  /** Whether the unfinished launch holds an open scene set of this avatar: composed, and no photo of it bought yet (the engine's library counts it as the avatar's open set). */
+  holdsOpenSet(avatarId: string): boolean {
+    return this.#unfinished()?.run?.holdsOpenSet(avatarId) ?? false;
+  }
+
+  /** Whether the unfinished launch has a paid request out: a reconcile refuses `IN_FLIGHT` while any paid job runs (a request in flight cannot be settled from outside). */
+  hasLiveRequests(): boolean {
+    return (this.#unfinished()?.run?.flight().requests ?? 0) > 0;
+  }
+
+  /** Arms `fault` for the next `times` paid steps of the running launch (or of the next one): they meet it as the engine's steps meet the same cause. */
+  failPaidStep(fault: PaidFault, times: number): void {
+    for (let i = 0; i < times; i++) this.#faults.push(fault);
+  }
+
+  /** The process ended (a crash or an automatic restart): the engine reads the running launch as paused by the restart, and its requests' reserves stay open. */
+  engineRestarted(): void {
+    this.#processEnded("engine-restart");
+  }
+
+  /** The owner quit the app: the running launch is persisted as paused by the quit. */
+  quit(): void {
+    this.#processEnded("quit");
+  }
+
+  #processEnded(cause: "quit" | "engine-restart"): void {
+    const launch = this.#unfinished();
+    const run = launch?.run ?? null;
+    if (launch === undefined || run === null) return;
+    this.#atomic(() => {
+      if (launch.status === "stopping") {
+        run.completeStop();
+        return;
+      }
+      run.processEnded(cause);
+      this.#announce(launch);
+    });
+  }
+
   // ---------- the launch ----------
 
   #find(launchId: string): Outcome<MockLaunch> {
@@ -417,12 +579,27 @@ export class MockAutopilot {
     return launch === undefined ? refuse({ code: "NOT_FOUND", detail: `no launch ${launchId} in the open library` }) : done(launch);
   }
 
+  #atomic<T>(work: () => T): T {
+    this.#depth += 1;
+    try {
+      return work();
+    } finally {
+      this.#depth -= 1;
+    }
+  }
+
+  /** What the launch has spent: the running launch's committed money, else its figure. */
+  #spentOf(launch: MockLaunch): number {
+    return launch.run !== null && isUnfinished(launch.status) ? launch.run.spent() : launch.spentMicros;
+  }
+
   /** What the launch can still spend: its planned worst case less what it spent. */
   #remaining(launch: MockLaunch): number {
-    return isUnfinished(launch.status) ? Math.max(0, launch.plannedWorstMicros - launch.spentMicros) : 0;
+    return isUnfinished(launch.status) ? Math.max(0, launch.plannedWorstMicros - this.#spentOf(launch)) : 0;
   }
 
   #inFlight(launch: MockLaunch): { requests: number; openMicros: number } {
+    if (launch.run !== null) return launch.run.inFlight();
     if (launch.status !== "running") return { requests: 0, openMicros: 0 };
     // Open reserves are part of what the launch spent (the contract checks it), so no more requests are out than that sum can hold.
     const worst = this.#world.unit().attemptWorstMicros;
@@ -431,30 +608,59 @@ export class MockAutopilot {
   }
 
   /**
-   * S4.6v: the open reserves no request is out for. The mock has no process to die, so they exist only on a PAUSED launch while the ledger asks for a reconcile (what a restart leaves);
-   * a running launch has its requests in `#inFlight` instead, so the two never meet. One request per drawing avatar's pair, none invented when no avatar draws, and bounded by
-   * what the launch spent, which holds them.
+   * S4.6v: the open reserves no request is out for. A running launch's are the ones a drop abandoned and a restart left (the run tracks them). A canned launch has no process to die: it has them
+   * only while PAUSED and the ledger asks for a reconcile, one request per drawing avatar's pair, bounded by what the launch spent.
    */
   #unsettled(launch: MockLaunch): { requests: number; openMicros: number } {
     const none = { requests: 0, openMicros: 0 };
+    if (launch.run !== null) return launch.run.unsettled();
     if (launch.status !== "paused" || this.#world.paidGate()?.code !== "RECONCILE_REQUIRED") return none;
     const worst = this.#world.unit().attemptWorstMicros;
     const requests = Math.min(launch.avatars.filter((a) => a.phase === "drawing" || a.phase === "approved-waiting").length * 2, worst > 0 ? Math.floor(launch.spentMicros / worst) : 0);
     return requests > 0 ? { requests, openMicros: requests * worst } : none;
   }
 
-  /** What stops «Продолжить · до $R» now, from the key and the ledger as they stand. */
+  /**
+   * Whether «Продолжить · до $R» may let paid work run, by the engine's one rule (A19): the ledger's admission and the key, then the launch's own hold, per reason. Never the settings
+   * screen's `reconcileNeeded`, which turns on for any reserve of this session left open. A launch with no paid work (W′ = 0) needs neither the ledger nor the key.
+   */
+  #blockage(launch: MockLaunch): { by: ResumeBlockedBy; error: EngineError } | null {
+    if (launch.plannedWorstMicros > 0) {
+      const gate = this.#world.admission();
+      if (gate !== null) return { by: blockedByOf(gate), error: gate };
+      if (this.#world.keyState() !== "ok") return { by: "key", error: { code: "AUTH_INVALID", detail: "the stored OpenRouter API key cannot be used; store a new key to continue the launch" } };
+    }
+    const hold = launch.paidHold;
+    if (hold === null) return null;
+    switch (hold.reason) {
+      case "budget": {
+        const month = this.#world.month();
+        const free = Math.max(0, month.budgetMicros - month.spentAndOpenMicros);
+        return free >= hold.detail.needMicros ? null : { by: "budget", error: { code: "VALIDATION", detail: `the month has ${free} µ$ of room, the held step needs ${hold.detail.needMicros} µ$` } };
+      }
+      case "network":
+        // A hold with a retry still to come is the wait of an automatic continue: the click only skips the wait. One with none needs the launch's unanswered requests settled first.
+        if (hold.detail.nextAt !== null) return null;
+        return (launch.run?.openUnsettled() ?? 0) === 0 ? null : { by: "network", error: { code: "VALIDATION", detail: "requests of the launch got no answer; reconcile in Settings first, then continue" } };
+      case "internal":
+        return { by: "internal", error: { code: "VALIDATION", detail: "the launch's own check failed; its only exit is «Стоп»" } };
+      case "credits":
+      case "key":
+      case "halt":
+      case "price":
+      case "price-unavailable":
+        return null;
+    }
+  }
+
+  /** What stops «Продолжить · до $R» now: only a paused launch, or a running one with a paid hold, has the button. */
   #resumeBlockedBy(launch: MockLaunch): ResumeBlockedBy | null {
-    if (!isUnfinished(launch.status)) return null;
-    const gate = this.#world.paidGate();
-    if (gate === null) return null;
-    if (gate.code === "RECONCILE_REQUIRED") return "reconcile-required";
-    if (gate.code === "SETTLE_ABOVE_WORST" || gate.code === "LEDGER_WRITE_FAILED") return "halt";
-    if (gate.code === "LEDGER_CORRUPT" || gate.code === "LEDGER_UNREADABLE") return "ledger";
-    return gate.code === "AUTH_INVALID" ? "key" : null;
+    if (!(launch.status === "paused" || (launch.status === "running" && launch.paidHold !== null))) return null;
+    return this.#blockage(launch)?.by ?? null;
   }
 
   #view(launch: MockLaunch): LaunchView {
+    const spent = this.#spentOf(launch);
     return LaunchView.parse({
       launchId: launch.launchId,
       createdAt: launch.createdAt,
@@ -462,19 +668,19 @@ export class MockAutopilot {
       activeMs: launch.activeMs,
       status: launch.status,
       paused: launch.paused,
-      paidHold: null,
-      freeHold: null,
+      paidHold: launch.paidHold,
+      freeHold: launch.freeHold,
       draft: launch.draft,
       acceptedMicros: launch.acceptedMicros,
       plannedWorstMicros: launch.plannedWorstMicros,
       plannedExpectedMicros: launch.plannedExpectedMicros,
       plan: launch.plan,
-      spentMicros: launch.spentMicros,
-      remainingMicros: Math.max(0, launch.plannedWorstMicros - launch.spentMicros),
-      reviewWritesMicros: 0,
+      spentMicros: spent,
+      remainingMicros: Math.max(0, launch.plannedWorstMicros - spent),
+      reviewWritesMicros: launch.reviewWritesMicros,
       inFlight: this.#inFlight(launch),
       unsettled: this.#unsettled(launch),
-      waitingMusic: 0,
+      waitingMusic: launch.avatars.reduce((sum, a) => sum + a.waitingMusic, 0),
       resumeBlockedBy: this.#resumeBlockedBy(launch),
       avatars: launch.avatars,
       logTail: launch.log.slice(-20),
@@ -488,8 +694,55 @@ export class MockAutopilot {
     return view;
   }
 
+  /** A launch that runs: nothing spent, every avatar `planned`, the log at its first line; the passes do the rest. */
+  #buildRun(draft: LaunchDraft, acceptedMicros: number, preview: LaunchPreview, planned: readonly PlannedAvatar[]): MockLaunch {
+    this.#launchCount += 1;
+    const number = String(this.#launchCount).padStart(8, "0");
+    const launchId = `launch-${number}`;
+    const createdAt = this.#world.nowIso();
+    const launch: MockLaunch = {
+      launchId,
+      createdAt,
+      endedAt: null,
+      status: "running",
+      paused: null,
+      draft,
+      acceptedMicros,
+      plannedWorstMicros: preview.estimate.worstMicros,
+      plannedExpectedMicros: preview.estimate.expectedMicros,
+      plan: { videos: preview.totals.videos, photos: preview.totals.photosNeeded, fromLibrary: preview.totals.fromLibrary, toGenerate: preview.totals.toGenerate },
+      spentMicros: 0,
+      activeMs: 0,
+      avatars: [],
+      videos: [],
+      log: [{ at: createdAt, kind: "start", acceptedMicros }],
+      paidHold: null,
+      freeHold: null,
+      reviewWritesMicros: 0,
+      run: null,
+    };
+    launch.run = new MockRun(
+      launch,
+      this.#world,
+      {
+        announce: () => {
+          this.#announce(launch);
+        },
+        enter: () => {
+          this.#depth += 1;
+        },
+        leave: () => {
+          this.#depth -= 1;
+        },
+        faults: this.#faults,
+      },
+      { avatars: planned.map((p) => ({ avatarId: p.row.avatarId, shapes: p.shapes, fromLibrary: p.row.fromLibrary, toGenerate: p.row.toGenerate })), categories: draft.categories, review: draft.sceneReview, number },
+    );
+    return launch;
+  }
+
   /** A launch in a canned mid-run state, consistent in itself: its videos, rows, log and spend agree. */
-  #build(draft: LaunchDraft, acceptedMicros: number, preview: LaunchPreview, planned: readonly PlannedAvatar[]): MockLaunch {
+  #buildCanned(draft: LaunchDraft, acceptedMicros: number, preview: LaunchPreview, planned: readonly PlannedAvatar[]): MockLaunch {
     this.#launchCount += 1;
     const number = String(this.#launchCount).padStart(8, "0");
     const launchId = `launch-${number}`;
@@ -562,8 +815,19 @@ export class MockAutopilot {
       avatars,
       videos,
       log,
+      paidHold: null,
+      freeHold: null,
+      reviewWritesMicros: 0,
+      run: null,
     };
   }
+}
+
+/** What a refused admission blocks «Продолжить» as. */
+function blockedByOf(error: EngineError): ResumeBlockedBy {
+  if (error.code === "RECONCILE_REQUIRED") return "reconcile-required";
+  if (error.code === "SETTLE_ABOVE_WORST" || error.code === "LEDGER_WRITE_FAILED") return "halt";
+  return "ledger";
 }
 
 /** The blocker a refused paid gate stands for in the preview. */

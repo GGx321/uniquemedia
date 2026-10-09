@@ -5,7 +5,8 @@ import { draftOf, freePhotos, makeMock, MIA, NORA, PHOTO_IDS, renderDraft, SOFIA
 
 // Stage 4, S4.1: the mock's stubs of the autopilot. They answer typed data for the screens (S4.9) to be built on, validate as the engine will (the contract's own schemas at the
 // client, then the same refusals in the same order), and hold a launch in a canned, consistent mid-run state: pause, resume, stop and the review hand-off move it, and nothing
-// advances on a timer until S4.8. The real engine answers «not implemented yet» for all of it until S4.6; parity plays these stories against the mock only (see the parity suite).
+// advances on a timer. S4.8 made the mock RUN a launch on its scheduler (mockEngine.launchRun*.test.ts); this file keeps the S4.1 fixture's tests, which are about the CANNED launch
+// (`launchRun: "canned"`), unchanged. The plan's and the preview's tests here do not depend on the mode.
 
 const IMAGE = 50_000;
 const WRITER_CHUNK = 75_000;
@@ -16,7 +17,7 @@ function world(over: MockEngineOptions = {}): Mock {
   const photos: PhotoSummary[] = [...freePhotos(6, MIA), ...freePhotos(12, SOFIA)];
   const countOf = (a: AvatarSummary) => photos.filter((p) => p.avatarId === a.avatarId).length;
   const avatars = [MIA, SOFIA, NORA].map((a) => ({ ...a, photoCount: countOf(a), eligibleUnusedCount: countOf(a) }));
-  const mock = makeMock({ avatars, photos, ...over });
+  const mock = makeMock({ avatars, photos, launchRun: "canned", ...over });
   mock.engine.setRunImagePrice(IMAGE);
   return mock;
 }
@@ -654,12 +655,18 @@ describe("the open reserves of a launch (S4.6v)", () => {
     expect(paused.unsettled).toEqual({ requests: 0, openMicros: 0 });
   });
 
-  test("a reconcile closes them: the next read has none (the mock announces nothing on a money change, as the window's H1 fallback assumes)", async () => {
+  // S4.8 (the engine's H1, S4.6w): the mock used to announce nothing on a money change, which is what the window's interim fallback assumed. The engine re-announces the current launch from
+  // `#emitMoney` and `#emitSettings`, so the mock does too: the reconcile that closes the reserves is told to the window without a read.
+  test("a reconcile closes them: the next read has none, and the window is told without asking (the engine's H1 re-announce)", async () => {
     const mock = world();
     const launch = await start(mock);
     await unwrap(mock.client.request("autopilot.pause", { launchId: launch.launchId }));
     mock.engine.requireReconcile(["open-reserves"]);
+    const before = changed(mock.events).length;
     await unwrap(mock.client.request("money.reconcile", {}));
     expect((await unwrap(mock.client.request("autopilot.get", { launchId: launch.launchId }))).launch.unsettled).toEqual({ requests: 0, openMicros: 0 });
+    const told = changed(mock.events).slice(before);
+    expect(told.length).toBeGreaterThan(0);
+    expect(told.at(-1)).toMatchObject({ launchId: launch.launchId, resumeBlockedBy: null, unsettled: { requests: 0, openMicros: 0 } });
   });
 });

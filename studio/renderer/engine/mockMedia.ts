@@ -363,6 +363,11 @@ export class MockOwnMedia {
     return this.#records.filter((r) => r.kind === "audio" && this.#forAutopilot.has(r.mediaId)).length;
   }
 
+  /** The own tracks marked «для автопилота» that have a length, in the order they were stored: what a launch's videos may be given as music. */
+  flaggedTrackList(): { mediaId: string; name: string; durationMs: number }[] {
+    return this.#records.flatMap((r) => (r.kind === "audio" && this.#forAutopilot.has(r.mediaId) && r.durationMs !== null ? [{ mediaId: r.mediaId, name: r.name, durationMs: r.durationMs }] : []));
+  }
+
   /** Whether the library holds this media as a PHOTO: what a render's admission and a draft's referential check ask (3f.2). */
   holdsPhoto(mediaId: string): boolean {
     return this.#records.some((r) => r.mediaId === mediaId && r.kind === "photo");

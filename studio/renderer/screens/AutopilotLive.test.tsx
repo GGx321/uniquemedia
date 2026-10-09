@@ -45,7 +45,8 @@ interface Started {
 
 /** The mock with Mia (31 free photos), Sofia (4) and Elena (14), a launch of the three started through the engine, and «Автопилот» open. */
 async function started({ review = false, extra = [] as readonly AvatarSummary[], videos = 10, libraryOn = true } = {}): Promise<Started> {
-  const { engine, client } = setup({ ...library(extra), sceneReview: "off" });
+  // S4.8: the card's states are announced through the contract over the mock's CANNED launch (a mid-run state that moves only by clicks); the mock now runs one by default.
+  const { engine, client } = setup({ ...library(extra), sceneReview: "off", launchRun: "canned" });
   engine.setRunImagePrice(70_000);
   await flush();
   const draft: LaunchDraftInput = {
@@ -362,8 +363,11 @@ describe("a paid click is sent once, and stays busy until the view says what it 
   });
 });
 
-describe("the engine says nothing new of the launch after a money change (H1, interim)", () => {
-  test("a reconcile in Settings opens «Продолжить» on the card without a new `autopilot.changed`: the card asks the engine itself", async () => {
+// S4.8: the engine re-announces the current launch from `#emitMoney` and `#emitSettings` (S4.6w H1), and the mock now does the same. These two tests used to pin the engine's SILENCE
+// (no `autopilot.changed` after a reconcile) that the card's interim fallback was written for; they now pin that the button still opens when the window is told, and the fallback's
+// own tests (the card asks `autopilot.get` itself on a money change) are unchanged above and below.
+describe("the engine tells the launch again after a money change (H1)", () => {
+  test("a reconcile in Settings opens «Продолжить» on the card, and the window is told with a new `autopilot.changed`", async () => {
     const { engine, client, launch } = await started();
     // The ledger now wants a reconcile; the pause is the engine's last word on the launch, and it says so.
     act(() => engine.requireReconcile(["open-reserves"]));
@@ -386,14 +390,14 @@ describe("the engine says nothing new of the launch after a money change (H1, in
     });
     await flush();
     await waitFor(() => expect(resumeButton().getAttribute("aria-disabled")).toBeNull());
-    expect(changed).toHaveLength(0);
+    expect(changed.length).toBeGreaterThan(0);
     stop();
     fireEvent.click(resumeButton());
     await flush();
     expect(callsOf(engine, "autopilot.resume")[0]?.payload.acceptedRemainingMicros).toBe(blocked.result.launch.remainingMicros);
   });
 
-  test("the main path: «Перейти к сверке» → Settings → the reconcile → back to «Автопилот»: the card asks once as it opens, the button opens", async () => {
+  test("the main path: «Перейти к сверке» → Settings → the reconcile → back to «Автопилот»: the button opens, and the launch was told again while the card was not on screen", async () => {
     const { engine, client, launch } = await started();
     act(() => engine.requireReconcile(["open-reserves"]));
     await act(async () => {
@@ -418,7 +422,7 @@ describe("the engine says nothing new of the launch after a money change (H1, in
     await flush();
     await waitFor(() => expect(resumeButton().getAttribute("aria-disabled")).toBeNull());
     expect(card().querySelectorAll(".notice-title")).toHaveLength(0);
-    expect(changed).toHaveLength(0);
+    expect(changed.length).toBeGreaterThan(0);
     stop();
   });
 });

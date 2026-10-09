@@ -35,7 +35,8 @@ interface World {
 /** A launch with «Сцены на проверку» (Sofia's scenes wait for the owner), her set seeded with `written` of its scenes written, the launch paused if asked. */
 async function launchWithSet({ paused = false, written }: { paused?: boolean; written?: number } = {}): Promise<World> {
   // This machine's own switch is OFF: a launch's set shows on «Фото» whatever it says.
-  const { engine, client } = setup({ ...library(), sceneReview: "off" });
+  // S4.8: written against the mock's CANNED launch (a mid-run state that moves only by clicks); the mock now runs one by default.
+  const { engine, client } = setup({ ...library(), sceneReview: "off", launchRun: "canned" });
   engine.setRunImagePrice(70_000);
   await flush();
   const draft: LaunchDraftInput = {
