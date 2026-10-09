@@ -133,7 +133,11 @@ describe("an allowed automatic refresh", () => {
     const auto = harness();
     expect((await ask(auto)).kind).toBe("started");
     await auto.service.settled();
-    expect(await readFile(quotaPath(), "utf8")).toBe(manualText);
+    // serverAt is the mock server's own Date header (real time), so two runs can straddle a second; every other byte must match.
+    const withoutServerClock = (text: string): string => text.replace(/"serverAt":\d+/g, '"serverAt":0');
+    const autoText = await readFile(quotaPath(), "utf8");
+    expect(autoText).toContain('"serverAt":');
+    expect(withoutServerClock(autoText)).toBe(withoutServerClock(manualText));
   });
 
   test("an automatic send is written before the ledger's reserve: when the ledger cannot take its line, the auto line is there and nothing left", async () => {
