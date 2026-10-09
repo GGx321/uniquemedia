@@ -1,30 +1,22 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { ERROR_CODES } from "../shared/engine";
-import { draft, draftSettings, LAUNCH } from "../shared/engine/autopilot.fixtures";
+import { draft, LAUNCH } from "../shared/engine/autopilot.fixtures";
 import { ledgerLines, command, failed, ok, startEngine, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
-// Stage 4, S4.1: until the orchestrator lands (S4.6) and the media service learns its track flag (S4.5d), the engine answers every new command with
-// INTERNAL «<type> is not implemented yet», the engine's one wording for a command it has no handler for (its `default` branch). A payload that breaks the contract is
-// still VALIDATION, so a forged amount or path never reaches a handler that does not exist yet. Nothing is written, spent or announced.
+// Stage 4, S4.1 / S4.6a: until the service that serves it lands (S4.6b1 the review hand-off), the engine answers each of these commands with INTERNAL
+// «<type> is not implemented yet», the engine's one wording for a command it has no handler for (its `default` branch). A payload that breaks the contract is still
+// VALIDATION, so a forged amount or path never reaches a handler that does not exist yet. Nothing is written, spent or announced. The orchestrator core's commands
+// are served since S4.6a (engine.autopilotCore.test.ts), the published mark and the rejecting delete since S4.5c, and the track flag since S4.5d.
 
 const dir = useEngineDir("studio-engine-autopilot-");
 
 const NEW_COMMANDS: [string, unknown][] = [
-  ["autopilot.estimate", { draft: draftSettings }],
-  ["autopilot.start", { draft, acceptedWorstMicros: 4_140_000 }],
-  ["autopilot.pause", { launchId: LAUNCH }],
-  ["autopilot.resume", { launchId: LAUNCH, acceptedRemainingMicros: 2_930_000 }],
-  ["autopilot.stop", { launchId: LAUNCH }],
   ["autopilot.continueAfterReview", { launchId: LAUNCH, avatarId: "avatar-mia-0001", sceneSetId: "set-mia-00000001", revision: 3 }],
-  ["autopilot.list", {}],
-  ["autopilot.get", { launchId: LAUNCH }],
-  ["autopilot.removeUnreadable", { entryId: "0123456789abcdef" }],
-  // `media.setForAutopilot` (S4.5d) and `videos.setPublished` (S4.5c) are served: engine.setForAutopilot.test.ts, videos/service.published.test.ts.
 ];
 
-describe("the new commands before their services exist", () => {
+describe("the new commands whose services are not here yet", () => {
   test.each(NEW_COMMANDS)("%s answers INTERNAL «… is not implemented yet», the code the engine uses for a command it cannot serve", async (type, payload) => {
     const { engine } = await startEngine(dir());
     const response = failed(await engine.handle(command(type, payload)));
@@ -41,14 +33,14 @@ describe("the new commands before their services exist", () => {
     expect(events().length).toBe(before);
   });
 
-  test("a start with a forged amount is VALIDATION: the contract guards the handler that does not exist yet", async () => {
+  test("a start or a resume with a forged amount is VALIDATION: the contract guards the handler", async () => {
     const { engine } = await startEngine(dir());
     expect(failed(await engine.handle(command("autopilot.start", { draft, acceptedWorstMicros: 1.5 }))).error.code).toBe("VALIDATION");
     expect(failed(await engine.handle(command("autopilot.start", { draft, acceptedWorstMicros: -1 }))).error.code).toBe("VALIDATION");
     expect(failed(await engine.handle(command("autopilot.resume", { launchId: LAUNCH, acceptedRemainingMicros: 10_000_000_001 }))).error.code).toBe("VALIDATION");
   });
 
-  test("removeUnreadable with a name or a path is VALIDATION, not NOT_FOUND: it never reaches a file system lookup", async () => {
+  test("removeUnreadable with a name or a path is VALIDATION, not NOT_FOUND: it never reaches the file system lookup", async () => {
     const { engine } = await startEngine(dir());
     expect(failed(await engine.handle(command("autopilot.removeUnreadable", { entryId: "../../etc/passwd" }))).error.code).toBe("VALIDATION");
     expect(failed(await engine.handle(command("autopilot.removeUnreadable", { entryId: "launch-0a1b2c3d4e5f.json" }))).error.code).toBe("VALIDATION");

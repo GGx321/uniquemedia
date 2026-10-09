@@ -5,7 +5,7 @@ import { useEngineDir } from "../testing/engineHarness";
 import { GOLDEN } from "./testing/golden";
 import { goldenSource } from "./testing/goldenFile";
 import { play } from "./testing/play";
-import { unservedAnswers } from "./testing/pending";
+import { servedProblems, unservedAnswers } from "./testing/pending";
 import { mockRig, realRig } from "./testing/rigs";
 import { SCENARIOS } from "./testing/scenarios";
 import { INTENTIONAL_DIFFERENCES, MASKED } from "./testing/transcript";
@@ -37,8 +37,13 @@ describe("mock and engine agree", () => {
 
         // Stage 4 (S4.1): a story whose commands the real engine does not serve yet is PENDING. It cannot match line for line, so the real engine is held to its one refusal
         // for the commands the story names (testing/pending.ts); the mock's transcript is still bound to the golden below.
+        // S4.6a: the commands it already serves (`served`) are held to the opposite, until the mock is complete (S4.8) and the story can match line for line.
         if (scenario.pending === undefined) expect(real).toEqual(mock);
-        else expect(unservedAnswers(real, scenario.pending.commands)).toEqual([]);
+        else {
+          const served = scenario.pending.served ?? [];
+          expect(unservedAnswers(real, scenario.pending.commands.filter((c) => !served.includes(c)))).toEqual([]);
+          expect(servedProblems(real, served)).toEqual([]);
+        }
         if (WRITE_GOLDEN) written[scenario.name] = mock;
         else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
       },
@@ -60,6 +65,17 @@ describe("the suite itself", () => {
       expect(story.until).toMatch(/^S4\.\d/);
       expect(story.commands.length).toBeGreaterThan(0);
       for (const command of story.commands) expect(command).toMatch(/^(autopilot\.|videos\.(setPublished|delete)$|media\.setForAutopilot$)/);
+    }
+  });
+
+  test("the commands a pending story says the engine serves are among the ones it names, and only autopilot's core commands are served so far (S4.6a)", () => {
+    const CORE = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
+    for (const scenario of SCENARIOS) {
+      const served = scenario.pending?.served ?? [];
+      for (const command of served) {
+        expect(scenario.pending?.commands).toContain(command);
+        expect(CORE).toContain(command);
+      }
     }
   });
 
