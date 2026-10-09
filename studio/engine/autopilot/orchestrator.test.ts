@@ -1720,6 +1720,151 @@ describe("LaunchView.reviewWritesMicros: the owner's paid edits on the launch's 
   });
 });
 
+// S4.6d, F1 (the S4.6v review): the figure is written in a write of its own BEFORE the sets are let go, so a final write that fails afterwards, a crash between the release and the final
+// write, or a repeated «Стоп» cannot fold the owner's later edits into it.
+describe("reviewWritesMicros is frozen in the file before the sets are released (F1)", () => {
+  async function reviewWrite(r: Rig, launch: LaunchView, attempt: string, worst: number, cost: number) {
+    const setId = r.fileOf(launch.launchId).avatars[0]?.generation?.sceneSetId ?? "";
+    const reserved = await r.budget.tryReserve({ attemptId: `${setId}:${attempt}`, jobId: "job-review-0001", scope: { avatarJobId: "job-review-0001" }, model: "x-ai/grok-4.3", worstMicros: worst });
+    if (!reserved.ok) throw new Error(`the reserve was refused: ${reserved.reason}`);
+    await r.budget.settle(reserved.handle, { costMicros: cost, estimated: false });
+  }
+
+  /** A store whose NEXT rename fails once `arm()` was called: the disk refusing one write. */
+  function cuttingStore() {
+    const cut = { armed: false };
+    return {
+      arm: () => {
+        cut.armed = true;
+      },
+      storeDeps: {
+        beforeRename: () => {
+          if (cut.armed) {
+            cut.armed = false;
+            throw new Error("the disk refused the write");
+          }
+        },
+      },
+    };
+  }
+
+  test("«Стоп»: the file already carries the figure while the sets are being released, and an edit made inside the release is not in it", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    const seen: { onDisk: number | undefined } = { onDisk: undefined };
+    r.steps.release = async () => {
+      r.steps.calls.push("release");
+      seen.onDisk = r.fileOf(started.launchId).reviewWritesMicros;
+      await reviewWrite(r, started, "write-2#1", 7_000, 5_000);
+    };
+    const stopped = await r.orchestrator.stop(started.launchId);
+    expect(seen.onDisk).toBe(3_000);
+    expect(stopped.reviewWritesMicros).toBe(3_000);
+    expect(r.fileOf(started.launchId).reviewWritesMicros).toBe(3_000);
+  });
+
+  test("«Стоп»: the final write fails after the release, the owner edits, and the repeated «Стоп» still reports the figure of the first", async () => {
+    const cutting = cuttingStore();
+    const r = await rig({ storeDeps: cutting.storeDeps });
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    r.steps.onRelease = () => {
+      cutting.arm();
+      r.steps.onRelease = null;
+    };
+    await expect(r.orchestrator.stop(started.launchId)).rejects.toThrow();
+    expect(r.fileOf(started.launchId).status).toBe("stopping");
+    await reviewWrite(r, started, "write-2#1", 7_000, 5_000);
+    const view = await r.orchestrator.stop(started.launchId);
+    expect(view.status).toBe("stopped");
+    expect(view.reviewWritesMicros).toBe(3_000);
+    expect(r.fileOf(started.launchId).reviewWritesMicros).toBe(3_000);
+  });
+
+  test("«Стоп» found under way at a restart: the figure is frozen from the ledger at that moment and the stopped file keeps it", async () => {
+    const first = await rig();
+    const started = await first.start();
+    await reviewWrite(first, started, "write-1#1", 9_000, 3_000);
+    first.steps.inflight = { requests: 1, renders: 0 };
+    first.steps.drainGate = deferred().promise;
+    await first.orchestrator.stop(started.launchId);
+    expect(first.fileOf(started.launchId)).toMatchObject({ status: "stopping" });
+    expect(first.fileOf(started.launchId).reviewWritesMicros).toBeUndefined();
+    const second = await rig({ root: first.root });
+    await second.orchestrator.settled();
+    expect(second.fileOf(started.launchId)).toMatchObject({ status: "stopped", reviewWritesMicros: 3_000 });
+    await reviewWrite(second, started, "write-2#1", 7_000, 5_000);
+    expect((await second.orchestrator.get(started.launchId)).launch.reviewWritesMicros).toBe(3_000);
+  });
+
+  test("a restart that finds «stopping» after the figure was frozen keeps that figure, not the ledger's newer one", async () => {
+    const cutting = cuttingStore();
+    const first = await rig({ storeDeps: cutting.storeDeps });
+    const started = await first.start();
+    await reviewWrite(first, started, "write-1#1", 9_000, 3_000);
+    first.steps.onRelease = () => {
+      cutting.arm();
+      first.steps.onRelease = null;
+    };
+    await expect(first.orchestrator.stop(started.launchId)).rejects.toThrow();
+    await reviewWrite(first, started, "write-2#1", 7_000, 5_000);
+    const second = await rig({ root: first.root });
+    await second.orchestrator.settled();
+    expect(second.fileOf(started.launchId)).toMatchObject({ status: "stopped", reviewWritesMicros: 3_000 });
+  });
+
+  test("a launch that finishes: the file carries the figure while the sets are being released, and an edit made inside the release is not in it", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    const seen: { onDisk: number | undefined } = { onDisk: undefined };
+    r.steps.complete = async () => {
+      seen.onDisk = r.fileOf(started.launchId).reviewWritesMicros;
+      await reviewWrite(r, started, "write-2#1", 7_000, 5_000);
+    };
+    const done = await r.steps.ctx.finish();
+    expect(seen.onDisk).toBe(3_000);
+    expect(done.reviewWritesMicros).toBe(3_000);
+  });
+
+  test("a launch whose final write fails after the sets were released: the finish repeated later reports the figure of the first attempt", async () => {
+    const cutting = cuttingStore();
+    const r = await rig({ storeDeps: cutting.storeDeps });
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    r.steps.complete = async () => {
+      cutting.arm();
+      r.steps.complete = async () => undefined;
+    };
+    await expect(r.steps.ctx.finish()).rejects.toThrow();
+    expect(r.fileOf(started.launchId).status).toBe("running");
+    await reviewWrite(r, started, "write-2#1", 7_000, 5_000);
+    const done = await r.steps.ctx.finish();
+    expect(done.status).toBe("done");
+    expect(done.reviewWritesMicros).toBe(3_000);
+  });
+
+  test("a figure that cannot be frozen (the freeze write fails) releases nothing, and the repeated «Стоп» goes on", async () => {
+    const cutting = cuttingStore();
+    const r = await rig({ storeDeps: cutting.storeDeps });
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    r.steps.onDrain = () => {
+      r.steps.onDrain = null;
+      // The drain is over before the freeze: the next write is the freeze.
+      cutting.arm();
+    };
+    // The «stopping» write came first, so the cut lands on the freeze write.
+    await expect(r.orchestrator.stop(started.launchId)).rejects.toThrow();
+    expect(r.steps.calls).not.toContain("release");
+    expect(r.fileOf(started.launchId).status).toBe("stopping");
+    const view = await r.orchestrator.stop(started.launchId);
+    expect(view).toMatchObject({ status: "stopped", reviewWritesMicros: 3_000 });
+    expect(r.steps.calls.filter((c) => c === "release")).toHaveLength(1);
+  });
+});
+
 describe("announcing a launch the window must read again (S4.6v)", () => {
   test("a mirror change of the current launch announces it; another launch's does not", async () => {
     const r = await rig();

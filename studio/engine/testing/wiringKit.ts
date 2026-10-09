@@ -37,12 +37,28 @@ function slotsAskedFor(call: FetchCall): number[] {
   return (JSON.parse(text.slice(text.indexOf("["), text.lastIndexOf("]") + 1)) as { slotIndex: number }[]).map((s) => s.slotIndex);
 }
 
-/** A fake OpenRouter: the writer, the images and the credits answer; prices are offline (the dated fallback table). Any other request throws. */
-export function network() {
+/** A reply for the `n`th request of its kind (counted from 1): a test's own answer in place of the default one. */
+export type WireHandler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
+
+/**
+ * A fake OpenRouter: the writer, the images and the credits answer; prices are offline (the dated fallback table). Any other request throws.
+ * `writer` and `image` replace the default answer of those two kinds (S4.6d: a request that never returns is how a test kills the engine mid-request); `writerGate` holds the default writer answer until it resolves.
+ */
+export function network(opts: { writer?: WireHandler; image?: WireHandler; writerGate?: Promise<void> } = {}) {
   let images = 0;
+  let writes = 0;
   const route = async (call: FetchCall): Promise<Reply> => {
-    if (isWriter(call)) return { status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${SENTENCE} (${slotIndex})` })) }), { cost: 0.0112 }) };
-    if (call.url.endsWith("/images")) return { status: 200, body: imageBody(portraitPng(((++images - 1) % 4) + 1), { cost: 0.04 }) };
+    if (isWriter(call)) {
+      const n = ++writes;
+      if (opts.writer !== undefined) return opts.writer(call, n);
+      if (opts.writerGate !== undefined) await opts.writerGate;
+      return { status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `${SENTENCE} (${slotIndex})` })) }), { cost: 0.0112 }) };
+    }
+    if (call.url.endsWith("/images")) {
+      const n = ++images;
+      if (opts.image !== undefined) return opts.image(call, n);
+      return { status: 200, body: imageBody(portraitPng(((n - 1) % 4) + 1), { cost: 0.04 }) };
+    }
     if (call.url.endsWith("/credits")) return { status: 200, body: { data: { total_credits: 25, total_usage: 1 } } };
     if (call.url.endsWith("/models") || call.url.endsWith("/endpoints")) return OFFLINE;
     throw new Error(`unexpected request to ${call.method} ${call.url}`);
@@ -82,9 +98,9 @@ export function wiringKit(dir: () => string) {
   const musicDir = () => join(dir(), "userData", "music");
 
   /** An avatar with a master portrait and `photos` fixture JPEGs of the category «home», far apart in their hashes. */
-  async function seedAvatar(photos: number): Promise<string> {
-    const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("wire") });
-    const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
+  async function seedAvatar(photos: number, prefix = "wire", name = "Mia"): Promise<string> {
+    const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds(prefix) });
+    const avatar = await library.createAvatar({ name, age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
     const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
     const base = samplePhotoMeta().source;

@@ -571,8 +571,9 @@ export class Orchestrator {
   }
 
   async #completeStopOnce(launchId: string): Promise<LaunchFile> {
-    // Read before the sets are let go: from then on an edit of the owner's is no longer the launch's.
-    const reviewWrites = this.#current?.launchId === launchId ? this.#reviewWritesOf(this.#current) : undefined;
+    // Frozen in a write of its own BEFORE the sets are let go (F1): from then on an edit of the owner's is no longer the launch's. A write that fails here releases nothing, and the repeated
+    // «Стоп» (or the next start) tries again; one that succeeded stays whatever happens after the release.
+    await this.#freezeReviewWrites(launchId);
     try {
       await this.#d.steps.release(this.#ctx(launchId));
     } catch {
@@ -588,7 +589,6 @@ export class Orchestrator {
       activeSince: null,
       paused: null,
       spentMicros: spent,
-      ...(reviewWrites === undefined ? {} : { reviewWritesMicros: reviewWrites }),
       avatars: f.avatars.map((a) => ({
         ...a,
         videos: a.videos.map((v) => (v.state === "done" || v.state === "dropped" ? v : { ...v, state: "dropped" as const, dropReason: "launch-stopped" as const })),
@@ -729,16 +729,22 @@ export class Orchestrator {
     return { requests: inFlight.requests + unsettled.requests, openMicros: inFlight.openMicros + unsettled.openMicros };
   }
 
-  /** What the owner's paid edits on the launch's sets committed (outside the group); 0 when the ledger cannot be read. Frozen in the file when the launch ends. */
+  /** What the owner's paid edits on the launch's sets committed (outside the group); 0 when the ledger cannot be read. Frozen in the file just before the sets are released. */
   #reviewWritesOf(file: LaunchFile): number {
-    // An ended launch keeps the figure it ended with: the sets are the owner's again, and what they write next is not the launch's.
-    if (isEnded(file.status)) return file.reviewWritesMicros ?? 0;
+    // A frozen figure stands: once the sets go back to the owner, what they write next is not the launch's (F1). An ended launch of an older file has none: 0.
+    if (file.reviewWritesMicros !== undefined) return file.reviewWritesMicros;
+    if (isEnded(file.status)) return 0;
     const budget = this.#d.budget();
     if (budget === null) return 0;
     return reviewWritesMicrosOf(
       budget.ledger,
       file.avatars.flatMap((a) => (a.generation === null ? [] : [a.generation.sceneSetId])),
     );
+  }
+
+  /** Writes the review-write figure into the launch file, once (a figure already there stands). Reads the fresh file and the ledger inside the store's write; rejects when the write does. */
+  async #freezeReviewWrites(launchId: string): Promise<void> {
+    await this.#write(launchId, (f) => (f.reviewWritesMicros !== undefined || isEnded(f.status) ? null : { ...f, reviewWritesMicros: this.#reviewWritesOf(f) }));
   }
 
   // ---------- the file ----------
@@ -835,7 +841,8 @@ export class Orchestrator {
     if (flight.requests > 0 || flight.renders > 0) throw new Error(`launch ${launchId} still has work in flight (${flight.requests} requests, ${flight.renders} renders): it cannot finish`);
     // A pause (or a stop) that landed first wins: nothing is released for a launch that is not running now.
     if (this.#current?.launchId !== launchId || this.#current.status !== "running" || this.#pausing) throw new Error(`launch ${launchId} is not running: only a running launch finishes`);
-    const reviewWrites = this.#reviewWritesOf(this.#current);
+    // Frozen before the sets are let go, in a write of its own (F1): a final write that fails afterwards cannot fold the owner's later edits into the figure.
+    await this.#freezeReviewWrites(launchId);
     try {
       await this.#d.steps.complete?.(this.#ctx(launchId));
     } catch {
@@ -846,7 +853,7 @@ export class Orchestrator {
     const at = this.#nowIso();
     const done = await this.#write(launchId, (f) => {
       if (f.status !== "running") throw new Error(`launch ${launchId} is ${f.status}: only a running launch finishes`);
-      return { ...closeActive(f, now), status: "done", endedAt: at, spentMicros: spent, reviewWritesMicros: reviewWrites };
+      return { ...closeActive(f, now), status: "done", endedAt: at, spentMicros: spent };
     });
     const videosDone = done.avatars.reduce((sum, a) => sum + a.videos.filter((v) => v.state === "done").length, 0);
     await this.#log(launchId, { at, kind: "done", videosDone, videosPlanned: done.plan.videos });

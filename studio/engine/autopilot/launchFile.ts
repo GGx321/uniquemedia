@@ -148,8 +148,8 @@ export const LaunchFile = z
     /** The ledger's sum over the launch's group when the file was last written; the live figure is the ledger's, this is read when the ledger cannot be, and after the end. */
     spentMicros: Micros,
     /**
-     * S4.6v fix round 1: what the owner's paid review edits on the launch's sets committed, frozen when the launch ends (the sets go back to the owner then, and their later edits are
-     * not the launch's). Absent while the launch is unfinished (the live figure is the ledger's) and in a file that ended before this field; optional, no schema bump.
+     * S4.6v fix round 1: what the owner's paid review edits on the launch's sets committed, frozen in a write of its own just BEFORE the sets are released (S4.6d F1): present from the first step of the end: `stopping`, or `running` (`paused` after a restart) when a finish was cut short after its freeze
+     * (a repeated finish keeps it). The sets go back to the owner then, and their later edits are not the launch's. Absent while the launch is running and nothing is being released, and in a file that ended before this field; optional, no schema bump.
      */
     reviewWritesMicros: Micros.optional(),
     avatars: z.array(FileAvatar).min(1),
