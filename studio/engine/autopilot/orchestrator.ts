@@ -1,4 +1,5 @@
 import type { AvatarAllocation, LaunchEstimate } from "../../shared/autopilot/estimate";
+import { isRemoved, joinVideoFacts, publishedOverall } from "../../shared/autopilot/videoFacts";
 import type { EngineError } from "../../shared/engine";
 import {
   LaunchView,
@@ -15,6 +16,7 @@ import {
 } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
 import type { Budget } from "../money/budget";
+import type { PublishedRead } from "../videos/published";
 import type { LaunchRegistry } from "../sceneSets/launchRegistry";
 import { EventCoalescer, COALESCE_INTERVAL_MS } from "./coalescer";
 import { launchGroupKey, type LaunchGroups, type LaunchGroupSpec } from "./groups";
@@ -98,6 +100,14 @@ export interface OrchestratorDeps {
   warn?(line: string): void;
   /** The title and artist of a track the free steps gave a video, for the results list; null or absent: the list titles it by the track's id. */
   trackLabel?(music: FileMusic): { title: string; artist: string | null } | null;
+  /**
+   * S4.6g: the ids of the video records an avatar has now, or null when they could not be looked at. A finished video of a launch whose id is not among them was deleted since
+   * (`videos.delete`, or its avatar): `get` marks it `removed` and the history stops counting it. Absent (a double): nothing is ever removed. `root` is the library root of the
+   * store the launch was read from, never looked up at call time, so a library switch under a read cannot make a launch's videos look deleted.
+   */
+  recordIds?(root: string, avatarId: string): Promise<ReadonlySet<string> | null>;
+  /** S4.6g: the avatar's «Опубликовано» marks as the published log says now (`readPublished`); absent: the launch's videos carry no marks. A call that throws reads as `unknown`. */
+  publishedMarks?(root: string, avatarId: string): Promise<PublishedRead>;
   /** Test seam: the view builder. */
   viewOf?: (file: LaunchFile, ctx: ViewContext) => unknown;
 }
@@ -496,7 +506,10 @@ export class Orchestrator {
     const store = this.#needStore();
     await Promise.allSettled([...this.#recovering]);
     const scan = await store.scan();
-    const launches = scan.launches.slice(0, MAX_LISTED).map((file): LaunchSummary => {
+    const listed = scan.launches.slice(0, MAX_LISTED);
+    // S4.6g: a finished video whose record was deleted since is not one of «N из M». The records are looked at once per avatar that has a finished video in the listing.
+    const records = await this.#recordsOf(store.root, listed.flatMap((file) => file.avatars.filter((a) => a.videos.some((v) => v.state === "done")).map((a) => a.avatarId)));
+    const launches = listed.map((file): LaunchSummary => {
       const current = this.#current?.launchId === file.launchId ? this.#current : file;
       return {
         launchId: file.launchId,
@@ -505,14 +518,36 @@ export class Orchestrator {
         status: this.#status(current),
         avatarCount: file.avatars.length,
         avatarIds: file.avatars.map((a) => a.avatarId),
-        videosDone: file.avatars.reduce((sum, a) => sum + a.videos.filter((v) => v.state === "done").length, 0),
+        videosDone: file.avatars.reduce((sum, a) => sum + a.videos.filter((v) => v.state === "done" && !isRemoved(records.get(a.avatarId), v.videoId)).length, 0),
         videosPlanned: file.plan.videos,
         spentMicros: this.#spentOf(file),
         acceptedMicros: file.acceptedMicros,
         plannedWorstMicros: file.plannedWorstMicros,
       };
     });
-    return { launches, unreadable: scan.unreadable.slice(0, MAX_LISTED).map(({ entryId, reason }) => ({ entryId, reason })) };
+    return { launches, unreadable: scan.unreadable.slice(0, MAX_LISTED).map(({ entryId, reason, scope }) => ({ entryId, reason, ...(scope === undefined ? {} : { scope }) })) };
+  }
+
+  /** The record ids of each of `avatarIds` (asked once each); an avatar whose records could not be looked at is not in the map, and nothing of it reads as deleted. Never throws. */
+  async #recordsOf(root: string, avatarIds: readonly string[]): Promise<Map<string, ReadonlySet<string>>> {
+    const found = new Map<string, ReadonlySet<string>>();
+    const look = this.#d.recordIds;
+    if (look === undefined) return found;
+    // Together, not one after another: each read is bounded and single-flight in the engine, and a slow share is waited on once.
+    const asked = [...new Set(avatarIds)];
+    const answers = await Promise.all(asked.map((avatarId) => look(root, avatarId).catch(() => null)));
+    asked.forEach((avatarId, i) => {
+      const ids = answers[i];
+      if (ids !== undefined && ids !== null) found.set(avatarId, ids);
+    });
+    return found;
+  }
+
+  /** The avatar's published log as it reads now; a log that cannot even be looked at reads `unknown`, like a torn one. Null: no way to look. */
+  async #marksOf(root: string, avatarId: string): Promise<PublishedRead | null> {
+    const look = this.#d.publishedMarks;
+    if (look === undefined) return null;
+    return look(root, avatarId).catch((): PublishedRead => ({ state: "unknown", reason: "corrupt" }));
   }
 
   async get(launchId: string): Promise<GetResult> {
@@ -524,7 +559,18 @@ export class Orchestrator {
     const file = this.#current?.launchId === launchId ? this.#current : read.file;
     const view = this.#validView(file, log.slice(-TAIL));
     if (view === null) throw fail({ code: "INTERNAL", detail: "the launch's view does not fit the contract" });
-    return { launch: view, log, videos: read.file.avatars.flatMap((a) => a.videos.flatMap((v) => videoOf(a.avatarId, v, this.#d.trackLabel))) };
+    const rows = read.file.avatars.map((a) => ({ avatarId: a.avatarId, videos: a.videos.flatMap((v) => videoOf(a.avatarId, v, this.#d.trackLabel)) }));
+    // S4.6g: the records and the owner's marks are joined to the finished videos; only an avatar with a finished video is looked at.
+    const withDone = rows.filter((row) => row.videos.some((v) => v.state === "done")).map((row) => row.avatarId);
+    const [records, markAnswers] = await Promise.all([this.#recordsOf(store.root, withDone), Promise.all(withDone.map((avatarId) => this.#marksOf(store.root, avatarId)))]);
+    const marks = new Map<string, PublishedRead>();
+    withDone.forEach((avatarId, i) => {
+      const avatarMarks = markAnswers[i];
+      if (avatarMarks !== undefined && avatarMarks !== null) marks.set(avatarId, avatarMarks);
+    });
+    const videos = rows.flatMap((row) => row.videos.map((v) => joinVideoFacts(v, records.get(row.avatarId), marks.get(row.avatarId))));
+    const published = publishedOverall([...marks.values()]);
+    return { launch: view, log, videos, ...(published === undefined ? {} : { published }) };
   }
 
   /** `NOT_FOUND` when no plain unreadable entry matches the id, or the file reads fine now (it is never moved). */

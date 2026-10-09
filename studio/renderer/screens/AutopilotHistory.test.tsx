@@ -105,6 +105,22 @@ describe("«История запусков»", () => {
     expect(callsOf(engine, "autopilot.removeUnreadable")).toHaveLength(0);
   });
 
+  test("S4.6g: an io-error that says its scope is worded for it — a file names the file, the folder names the folder — and neither offers «Убрать запись»", async () => {
+    await openHistory([
+      { entryId: "1b2c3d4e5f607182", reason: "io-error", scope: "file" },
+      { entryId: "2c3d4e5f60718293", reason: "io-error", scope: "folder" },
+    ]);
+    const [file, folder] = within(rowsCard()).getAllByRole("group");
+    expect(file?.textContent).toContain("Studio не смог открыть файл записи запуска: диск не ответил или нет доступа.");
+    expect(file?.textContent).not.toContain("папк");
+    expect(folder?.textContent).toContain("Studio не смог прочитать папку запусков в библиотеке: диск не ответил или нет доступа.");
+    expect(folder?.textContent).not.toContain("файл");
+    for (const row of [file, folder]) {
+      expect(row === undefined || within(row).queryByRole("button", { name: "Убрать запись" }) === null).toBe(true);
+      expect(row === undefined || within(row).queryByRole("button", { name: "Прочитать снова" }) !== null).toBe(true);
+    }
+  });
+
   test("a refused «Убрать запись» (the file reads now) reads the list again instead of saying an error", async () => {
     const { engine } = await openHistory([{ entryId: "0a1b2c3d4e5f6071", reason: "invalid" }]);
     engine.failNext("autopilot.removeUnreadable", { code: "NOT_FOUND", detail: "no unreadable launch entry matches" });

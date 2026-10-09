@@ -1,4 +1,5 @@
 import { raiseBudgetToMicros } from "../../shared/autopilot/money";
+import { isRemoved, joinVideoFacts, publishedOverall, type MarksRead } from "../../shared/autopilot/videoFacts";
 import {
   LAUNCH_SLICE_MAX_PHOTOS,
   LaunchBlocker,
@@ -60,6 +61,13 @@ export interface MockAutopilotWorld {
   exportFreeBytes(): number | null;
   music(): { candidates: number; ownFlagged: number; explicitSkipped: number; autoRefresh: AutoRefresh; quotaRemaining: number | null };
   balance(): { micros: number; asOf: string } | null;
+  /**
+   * S4.6g: the ones of `videoIds` that have a record in the mock. A video the mock deleted (or its avatar's) has none, and neither has a finished video of the launch the mock
+   * runs itself (a canned stand-in, no file): both read removed, so the window never draws a tile it cannot act on. Undefined: the records cannot be looked at, so nothing reads as removed.
+   */
+  recordsOf(avatarId: string, videoIds: readonly string[]): ReadonlySet<string> | undefined;
+  /** S4.6g: the avatar's «Опубликовано» marks as its log reads (`absent` before the first mark, `unknown` while it is torn). */
+  marksOf(avatarId: string): MarksRead;
 }
 
 /** The mock's fixed unit prices, as the mock prices a run: an attempt, a photo (up to three attempts), the writer's chunk. */
@@ -339,7 +347,7 @@ export class MockAutopilot {
         status: l.status,
         avatarCount: l.draft.avatarIds.length,
         avatarIds: [...l.draft.avatarIds],
-        videosDone: l.videos.filter((v) => v.state === "done").length,
+        videosDone: l.videos.filter((v) => v.state === "done" && !isRemoved(this.#recordsOf(l, v.avatarId), v.videoId)).length,
         videosPlanned: l.plan.videos,
         spentMicros: l.spentMicros,
         acceptedMicros: l.acceptedMicros,
@@ -349,11 +357,24 @@ export class MockAutopilot {
     return { launches, unreadable: [...this.#unreadable] };
   }
 
-  get(launchId: string): Outcome<{ launch: LaunchView; log: LogLine[]; videos: LaunchVideo[] }> {
+  get(launchId: string): Outcome<{ launch: LaunchView; log: LogLine[]; videos: LaunchVideo[]; published?: "ok" | "unknown" }> {
     const found = this.#find(launchId);
     if (!found.ok) return found;
     const launch = found.result;
-    return done({ launch: this.#view(launch), log: launch.log.slice(-500), videos: [...launch.videos] });
+    // S4.6g: the same join as the engine's (shared/autopilot/videoFacts.ts): the log's marks, and the videos whose records are gone.
+    const avatars = [...new Set(launch.videos.filter((v) => v.state === "done").map((v) => v.avatarId))];
+    const marks = new Map(avatars.map((avatarId) => [avatarId, this.#world.marksOf(avatarId)] as const));
+    const videos = launch.videos.map((v) => joinVideoFacts(v, this.#recordsOf(launch, v.avatarId), marks.get(v.avatarId)));
+    const published = publishedOverall([...marks.values()]);
+    return done({ launch: this.#view(launch), log: launch.log.slice(-500), videos, ...(published === undefined ? {} : { published }) });
+  }
+
+  /** The records the launch's videos of one avatar still have. */
+  #recordsOf(launch: MockLaunch, avatarId: string): ReadonlySet<string> | undefined {
+    return this.#world.recordsOf(
+      avatarId,
+      launch.videos.flatMap((v) => (v.avatarId === avatarId && v.videoId !== null ? [v.videoId] : [])),
+    );
   }
 
   removeUnreadable(entryId: string): Outcome<Record<string, never>> {

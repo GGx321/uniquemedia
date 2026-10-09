@@ -64,6 +64,11 @@ const FORBIDDEN_DEBUG_MARKERS = [
   "mineDemoSeeds",
   "mineDemoPicks",
   "mockDropDoor",
+  // Stage 4 (S4.9c, S4.6g): the mock's launch history and delete controls: a launch seeded into the history, a torn «Опубликовано» log, a delete that times out, records the engine cannot look at.
+  "seedLaunch",
+  "tearPublishedLog",
+  "timeOutNextDelete",
+  "loseTrackOfRecords",
   // 3c.4: the mock CDN's E2E-only switch (main.ts's musicCdnBaseUrlForTests).
   "studio-music-cdn-base-url",
   "ELECTRON_RENDERER_URL",

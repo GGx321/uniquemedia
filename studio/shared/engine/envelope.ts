@@ -60,6 +60,14 @@ import { z } from "zod";
 //   process after a restart, and those a drop or a timeout left), counted at their worst case inside `spentMicros` until a reconcile settles them. It is DISJOINT from `inFlight`
 //   (one open reserve is in exactly one of the two, the engine splits them by whether the Budget has a request out for the attempt) and the contract refuses a view where the two
 //   together pass `spentMicros`. The engine and the mock always fill it; a view without it reads as none, and the window then falls back to `inFlight` alone.
+// Stage 4, S4.6g (additive, no bump; every field optional, so an answer from before it parses unchanged):
+//  - `autopilot.get`: a finished `LaunchVideo` carries the owner's mark from `published.jsonl` (`publishedAt`, no longer always null), `removed: true` when its record has been
+//    deleted since (`videos.delete`, or its avatar), and `publishedUnknown: true` when the avatar's marks could not be read (then `publishedAt` is null and says nothing). The
+//    result's `published` (`ok` / `unknown`, absent while no avatar of the launch has a log) mirrors `videos.list`'s. `autopilot.list`'s `LaunchSummary.videosDone` counts
+//    only the finished videos whose records stand, so a deleted video leaves «N из M».
+//  - `autopilot.list`'s `UnreadableLaunch.scope` (`folder` / `file`, only on an `io-error`): the `autopilot/` folder could not be listed, or one launch file could not be opened.
+//  - `EngineError.outcome` (`unknown`, only on EXPORT_UNAVAILABLE): a `videos.delete` that did not answer in time; its work was not cancelled and may have finished, so the answer
+//    promises neither that the video is still there nor that it is gone.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

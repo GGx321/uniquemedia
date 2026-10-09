@@ -37,7 +37,7 @@ import { useAvatarVideoLists, useLaunchDetail } from "./useLaunches";
 // S4.9c: one launch's page (AutopilotS4.dc.html states launch and delete-published; LaunchStates «Результаты», «Удалить видео», «Журнал»): its settings in a
 // line, its videos as tiles — shape, length, size, track, «Опубликовано» (`videos.setPublished`), the trash with its two-way dialog (`videos.delete`,
 // «и отклонить фото» chosen for a published video, Q4 = A) — «Скрыть опубликованные», a filter by avatar, what did not come out, and the whole log with
-// «Потрачено $S из $W′». The marks and the records are `videos.list`'s; the launch file says which videos are the launch's.
+// «Потрачено $S из $W′». Since S4.6g the marks and the deleted videos are `autopilot.get`'s word on each video; `videos.list` only gives a finished one its picture.
 
 /** The log shows this many lines at first, and as many more on each «Показать раньше». */
 export const LOG_PAGE = 100;
@@ -60,11 +60,11 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
   const { view: categorySlice } = useCategoryLibrary();
   const customs = categorySlice.list.status === "ready" ? categorySlice.list.categories : null;
 
-  const { detail, reread: rereadDetail } = useLaunchDetail(launchId);
+  const { detail, reread: rereadDetail, reads } = useLaunchDetail(launchId);
   const got = detail.state === "ready" ? detail.detail : null;
   const launch = got?.launch ?? null;
   const avatarIds = launch?.draft.avatarIds ?? NO_AVATARS;
-  const { lists: answered, reads, reread: rereadList, apply } = useAvatarVideoLists(avatarIds);
+  const { lists: answered, reread: rereadList } = useAvatarVideoLists(avatarIds);
   const names = useMemo(() => new Map(view.avatars.map((a) => [a.avatarId, a.name])), [view.avatars]);
   // Fix round 1: an avatar deleted since the launch answers NOT_FOUND for good — that is the avatar gone (inert tiles), not an error to retry.
   const lists = useMemo(() => {
@@ -93,11 +93,11 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
   const trashRefs = useRef(new Map<string, HTMLButtonElement>());
   /**
    * A tile about to leave the screen (deleted, or marked while «Скрыть опубликованные» is on): the focus goes to the tile that takes its place. `read` is how
-   * many answers of its avatar's list had landed when it was armed: a later one that still shows the tile disarms it (fix round 1).
+   * many answers of `autopilot.get` had landed when it was armed: a later one that still shows the tile disarms it (fix round 1).
    */
-  const pendingFocus = useRef<{ readonly key: string; readonly index: number; readonly avatarId: string; readonly read: number } | null>(null);
+  const pendingFocus = useRef<{ readonly key: string; readonly index: number; readonly read: number } | null>(null);
   const arm = (tile: ResultTile): void => {
-    pendingFocus.current = { key: tile.key, index: shown.indexOf(tile), avatarId: tile.avatarId, read: reads.get(tile.avatarId) ?? 0 };
+    pendingFocus.current = { key: tile.key, index: shown.findIndex((t) => t.key === tile.key), read: reads };
   };
   const deleted = useRef(false);
 
@@ -113,7 +113,7 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
     const now = shownKeys === "" ? [] : shownKeys.split(" ");
     if (now.includes(want.key)) {
       // The list was read again and the tile is still there (the mark or the delete did not take): nothing to hand the focus on for.
-      if ((reads.get(want.avatarId) ?? 0) !== want.read) pendingFocus.current = null;
+      if (reads !== want.read) pendingFocus.current = null;
       return;
     }
     pendingFocus.current = null;
@@ -141,13 +141,11 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
     if (!reply.ok) {
       pendingFocus.current = null;
       setError(reply.error);
-      rereadList(tile.avatarId);
-      return;
+      rereadDetail();
+    } else if (tile.markUnknown) {
+      // A mark that changed is announced (`video.changed`) and the launch is read again by that; one made over an unreadable log heals it and may change nothing, so announces nothing.
+      rereadDetail();
     }
-    apply(reply.result.video);
-    // Under an unreadable log the mark heals it, and the list then says what stands (a mark the window did not see may be in it too).
-    const list = lists.get(tile.avatarId);
-    if (list === undefined || list.state !== "ready" || list.marks === "unknown") rereadList(tile.avatarId);
   };
 
   const remove = async (tile: ResultTile, choice: DeleteChoice): Promise<void> => {
@@ -172,10 +170,12 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
       deleted.current = false;
       const failed = deleteFailedText(reply.error, rejecting);
       setOutcome({ tone: "warn", title: failed.title, text: failed.text });
-      // A delete that timed out reads as refused while its work may still go on: the records and the photos are read again.
+      // A delete that timed out reads as refused while its work may still go on (`outcome: "unknown"`): the records, the launch and the photos are read again.
       void store.refreshAvatars();
     }
     rereadList(tile.avatarId);
+    // A delete that went through is announced (`video.changed`), which reads the launch again; one that did not may still go on, and is asked after.
+    if (!reply.ok) rereadDetail();
     setAsking(null);
   };
 
@@ -190,10 +190,8 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
   };
 
   const back = (): void => navigate(from === "history" ? { name: "launches", focus: launchId } : { name: "section", id: "autopilot" });
-  const unknownMarks = avatarIds.filter((id) => {
-    const list = lists.get(id);
-    return list !== undefined && list.state === "ready" && list.marks === "unknown";
-  });
+  // The avatars whose marks the engine could not read (S4.6g): their finished videos say so, whether or not their records were listed.
+  const unknownMarks = avatarIds.filter((id) => tiles.some((t) => t.avatarId === id && t.markUnknown));
   const failedLists = avatarIds.flatMap((id) => {
     const list = lists.get(id);
     return list !== undefined && list.state === "failed" ? [{ id, error: list.error }] : [];
@@ -394,10 +392,7 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
         <DeleteVideoDialog
           label={asking.label}
           published={asking.published}
-          marksUnknown={(() => {
-            const list = lists.get(asking.avatarId);
-            return list !== undefined && list.state === "ready" && list.marks === "unknown";
-          })()}
+          marksUnknown={asking.markUnknown}
           photos={asking.photos}
           busy={deleting}
           onCancel={() => setAsking(null)}

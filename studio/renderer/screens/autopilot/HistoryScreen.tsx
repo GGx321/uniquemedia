@@ -168,7 +168,7 @@ function UnreadableRow({ entry, rowRef, onRemoved, onReread }: { entry: Unreadab
   const { client } = useEngine();
   const mounted = useMounted();
   const ids = useId();
-  const text = unreadableEntry(entry.reason);
+  const text = unreadableEntry(entry.reason, entry.scope);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<EngineError | null>(null);
 

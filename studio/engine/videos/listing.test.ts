@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { VideoSummary } from "../../shared/engine";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
-import { MAX_RECORD_FILES_READ, readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
+import { listVideoRecordIds, MAX_RECORD_FILES_READ, readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
 import { videoPaths, type VideoRecord } from "./record";
 import { sampleRecord, specOf, useWorld, type World } from "./testing/kit";
 useNativeGlobals();
@@ -106,6 +106,60 @@ describe("readVideoRecordFile", () => {
 
     expect(await readVideoRecordFile(w.libraryRoot, w.avatar.id, "video-0000000a")).toBeNull();
     expect(await readVideoRecordFile(w.libraryRoot, w.avatar.id, "video-0000000b")).toBeNull();
+  });
+});
+
+describe("listVideoRecordIds (S4.6g)", () => {
+  test("names the records an avatar has, by their file names alone", async () => {
+    const w = world();
+    await commit(w, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    await commit(w, sampleRecord(w, { videoId: "video-0000000b", jobId: "job-0000000b" }));
+
+    expect([...((await listVideoRecordIds(w.libraryRoot, w.avatar.id)) ?? [])].sort()).toEqual(["video-0000000a", "video-0000000b"]);
+  });
+
+  test("a record file that cannot be used is still there: a video that is damaged is not a video that was deleted", async () => {
+    const w = world();
+    const dir = videoPaths(w.libraryRoot, w.avatar.id).videosDir;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${dir}/video-0000000b.json`, "{ not json");
+
+    expect([...((await listVideoRecordIds(w.libraryRoot, w.avatar.id)) ?? [])]).toEqual(["video-0000000b"]);
+  });
+
+  test("ignores what is not a record's name: notes, temp files, an intent still pending", async () => {
+    const w = world();
+    await commit(w, sampleRecord(w, { videoId: "video-0000000a", jobId: "job-0000000a" }));
+    const paths = videoPaths(w.libraryRoot, w.avatar.id);
+    writeFileSync(`${paths.videosDir}/notes.txt`, "hello");
+    writeFileSync(`${paths.videosDir}/.video-0000000b.json.tmp-1`, "half");
+    mkdirSync(paths.pendingDir, { recursive: true });
+    writeFileSync(paths.intent("video-0000000b"), JSON.stringify(sampleRecord(w, { videoId: "video-0000000b" })));
+
+    expect([...((await listVideoRecordIds(w.libraryRoot, w.avatar.id)) ?? [])]).toEqual(["video-0000000a"]);
+  });
+
+  test("an avatar with no videos folder, or no folder at all, has no records: the empty set, not null", async () => {
+    const w = world();
+
+    expect(await listVideoRecordIds(w.libraryRoot, w.avatar.id)).toEqual(new Set());
+    expect(await listVideoRecordIds(w.libraryRoot, "avatar-nobody-0000")).toEqual(new Set());
+  });
+
+  test("L1: when the library has no avatars folder at all the answer is null, not an empty set: an ancestor that is gone is not a deleted avatar", async () => {
+    const w = world();
+
+    rmSync(`${w.libraryRoot}/avatars`, { recursive: true, force: true });
+
+    expect(await listVideoRecordIds(w.libraryRoot, w.avatar.id)).toBeNull();
+  });
+
+  test("a folder that cannot be listed is null: not knowing is not an empty library", async () => {
+    const w = world();
+    const paths = videoPaths(w.libraryRoot, w.avatar.id);
+    writeFileSync(paths.videosDir, "I am a file");
+
+    expect(await listVideoRecordIds(w.libraryRoot, w.avatar.id)).toBeNull();
   });
 });
 

@@ -2,6 +2,7 @@ import type { SliceStatus } from "../sceneSets/launchDraw";
 import type { RenderLife } from "./freeSteps";
 import { NETWORK_WAITS_MS } from "./paidFailures";
 import { UNTITLED } from "../music/trackRecord";
+import type { PublishedRead } from "../videos/published";
 import { capFundsResume } from "../runs/remaining";
 
 // Stage 4, S4.6w (plan §25): the pure parts of the engine's DEFAULT wiring of the autopilot steps. The engine builds `composeSteps(createPaidSteps(...), createFreeSteps(...))` out of its own
@@ -53,6 +54,34 @@ export function boundedSingleFlight<T>(ms: number, what: string): (key: string, 
     }
     const joined = flight;
     return boundedRead(() => joined, ms, what);
+  };
+}
+
+// ---------- the results' reads of the library (S4.6g) ----------
+
+export interface BoundedVideoFactsDeps {
+  readonly timeoutMs: number;
+  /** Whether `root` is the library that is open now: a read for a library that has been switched away from says nothing. */
+  isLive(root: string): boolean;
+  listRecordIds(root: string, avatarId: string): Promise<Set<string> | null>;
+  readMarks(root: string, avatarId: string): Promise<PublishedRead>;
+}
+
+/**
+ * The two reads `autopilot.get` / `autopilot.list` make of an avatar (its record ids, its published log), each bounded for every caller and single-flight per `[root, avatarId]`, so a
+ * share that does not answer leaves one hung call, not one per `autopilot.changed`, in the thread pool the ledger's writes share. A timeout, a failure or a root that is no longer the
+ * open library reads as «cannot tell»: `null` records (never «removed») and an `unknown` log.
+ */
+export function boundedVideoFacts(deps: BoundedVideoFactsDeps): {
+  recordIds(root: string, avatarId: string): Promise<Set<string> | null>;
+  publishedMarks(root: string, avatarId: string): Promise<PublishedRead>;
+} {
+  const recordsRead = boundedSingleFlight<Set<string> | null>(deps.timeoutMs, "the record ids of the avatar");
+  const marksRead = boundedSingleFlight<PublishedRead>(deps.timeoutMs, "the published marks of the avatar");
+  const unknown: PublishedRead = { state: "unknown", reason: "corrupt" };
+  return {
+    recordIds: (root, avatarId) => (deps.isLive(root) ? recordsRead(JSON.stringify([root, avatarId]), () => deps.listRecordIds(root, avatarId)).catch(() => null) : Promise.resolve(null)),
+    publishedMarks: (root, avatarId) => (deps.isLive(root) ? marksRead(JSON.stringify([root, avatarId]), () => deps.readMarks(root, avatarId)).catch(() => unknown) : Promise.resolve(unknown)),
   };
 }
 

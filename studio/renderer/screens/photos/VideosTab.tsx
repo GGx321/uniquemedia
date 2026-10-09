@@ -147,9 +147,10 @@ export function VideosTab({ avatar, view }: { avatar: AvatarSummary; view: Engin
     if (!mounted.current) return;
     markBusy(video.videoId, false);
     if (!reply.ok) {
-      if (reject) {
-        // S4.9c: a delete that timed out reads as refused while its work may still go on (the photos already rejected): the list and the photos are read again.
-        setFailure(deleteFailedText(reply.error, true));
+      if (reject || reply.error.outcome === "unknown") {
+        // S4.9c: a delete that timed out reads as refused while its work may still go on (the photos already rejected): the list and the photos are read again. The engine says so
+        // with `outcome: "unknown"` (S4.6g), in every mode, and then it is never worded as a definite failure of the export folder with a link to Settings.
+        setFailure(deleteFailedText(reply.error, reject));
         void store.refreshAvatars();
       } else setError(reply.error);
       setReread((n) => n + 1);

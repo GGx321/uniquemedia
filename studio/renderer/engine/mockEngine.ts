@@ -1,3 +1,4 @@
+import type { MarksRead } from "../../shared/autopilot/videoFacts";
 import {
   AvatarDescriptor,
   checkImageChoice,
@@ -776,6 +777,12 @@ export class MockEngine implements EngineBridge {
    * next mark of that avatar heals the log by its append (the engine's `markPublished`), and the marks read again.
    */
   private readonly tornPublished = new Set<string>();
+  /** S4.6g: the video records the mock has deleted (a delete, or its avatar's), each with the mark it had: the mark stays, as the engine's log outlives the record. */
+  private readonly removedVideoIds = new Map<string, string | null>();
+  /** S4.6g: the next `videos.delete` does its work and answers as a timeout whose outcome is unknown (`timeOutNextDelete`). */
+  private deleteTimesOut = false;
+  /** S4.6g: the records cannot be looked at (`loseTrackOfRecords`): nothing reads as removed. */
+  private recordsUnreadable = false;
   /** Stage 4 (S4.1): the batch autopilot's stubs: the plan, the price and a launch held in a canned state. */
   private readonly autopilot: MockAutopilot;
   private categoryPriceValue: Pick<Estimate, "expectedMicros" | "worstMicros"> = { ...MOCK_CATEGORY_PRICE };
@@ -844,6 +851,8 @@ export class MockEngine implements EngineBridge {
         exportFreeBytes: () => this.exportFreeBytes,
         music: () => this.autopilotMusic(),
         balance: () => (this.settings.apiKey.stored && !this.settings.apiKey.rejected ? { micros: 12_400_000, asOf: new Date(this.clock).toISOString() } : null),
+        recordsOf: (_avatarId, videoIds) => (this.recordsUnreadable ? undefined : new Set(videoIds.filter((id) => this.videos.some((v) => v.summary.videoId === id)))),
+        marksOf: (avatarId) => this.publishedMarksOf(avatarId),
       },
       options.unreadableLaunches ?? [],
     );
@@ -1635,7 +1644,7 @@ export class MockEngine implements EngineBridge {
    * Stage 4 (S4.9c): a launch put into the history as if it had run (`MockLaunchSeed`), for the history and results screens. Every finished video becomes a
    * real record of the library (`origin: "autopilot"`, the launch's id, photos of its avatar taken and marked used, a file in the export folder), so
    * `videos.list`, «Опубликовано» and the delete reach it like any other video; `published` marks it in the avatar's log. The launch file says what the engine's
-   * says (`autopilot.get` keeps `publishedAt: null`, as the engine's does: the marks are `videos.list`'s). Answers the launch's id and the records' ids in order.
+   * says (`autopilot.get` joins the log's marks and the deleted records to its videos, as the engine's does since S4.6g). Answers the launch's id and the records' ids in order.
    */
   seedLaunch(seed: MockLaunchSeed): { launchId: string; videoIds: string[] } {
     const status = seed.status ?? "done";
@@ -1802,6 +1811,32 @@ export class MockEngine implements EngineBridge {
   tearPublishedLog(avatarId: string): void {
     this.publishedLogUsed = true;
     this.tornPublished.add(avatarId);
+  }
+
+  /**
+   * Stage 4 (S4.6g): the next `videos.delete` does its work and then answers as the engine's timeout does, `EXPORT_UNAVAILABLE` `not-writable` with `outcome: "unknown"` — the
+   * work was not cancelled, so the video is gone (and its photos rejected, when asked) while the answer says nothing of it.
+   */
+  timeOutNextDelete(): void {
+    this.deleteTimesOut = true;
+  }
+
+  /**
+   * Stage 4 (S4.6g): from now on the mock cannot look at the video records, as the engine's `recordIds` answers null when a folder will not list: `autopilot.get` and
+   * `autopilot.list` call nothing removed, whatever was deleted. The window then keeps what it can tell for itself (an avatar `videos.list` no longer knows is «gone»).
+   */
+  loseTrackOfRecords(): void {
+    this.recordsUnreadable = true;
+  }
+
+  /** The avatar's marks as `published.jsonl` reads (S4.6g): none before the first mark, unknown while torn, else the time of each marked video's mark. */
+  private publishedMarksOf(avatarId: string): MarksRead {
+    if (!this.publishedLogUsed) return { state: "absent" };
+    if (this.tornPublished.has(avatarId)) return { state: "unknown" };
+    const at = new Map<string, string>();
+    for (const v of this.videos) if (v.summary.avatarId === avatarId && typeof v.summary.publishedAt === "string") at.set(v.summary.videoId, v.summary.publishedAt);
+    for (const [videoId, mark] of this.removedVideoIds) if (mark !== null) at.set(videoId, mark);
+    return { state: "ok", at };
   }
 
   get currentBootId(): string {
@@ -2601,6 +2636,7 @@ export class MockEngine implements EngineBridge {
     this.checkExport();
     const present = this.videos.filter((v) => v.summary.avatarId === avatarId && this.fileStateOf(v) === "present");
     for (const video of present) this.exportFiles.delete(video.summary.relPath);
+    for (const video of this.videos) if (video.summary.avatarId === avatarId) this.removedVideoIds.set(video.summary.videoId, video.summary.publishedAt ?? null);
     const mine = new Set(this.photos.filter((p) => p.avatarId === avatarId).map((p) => p.photoId));
     this.avatars = this.avatars.filter((a) => a.avatarId !== avatarId);
     this.drafts = this.drafts.filter((d) => d.avatarId !== avatarId);
@@ -3385,9 +3421,20 @@ export class MockEngine implements EngineBridge {
       this.videos = this.videos.filter((v) => v !== video);
       if (fileDeleted) this.exportFiles.delete(video.summary.relPath);
     });
+    this.removedVideoIds.set(videoId, video.summary.publishedAt ?? null);
     this.adjustAvatar(avatarId, { videoCount: -1 });
-    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId } });
-    this.announceAvatar(avatarId);
+    const announce = (): void => {
+      this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId } });
+      this.announceAvatar(avatarId);
+    };
+    // S4.6g: a delete that timed out in the engine did its work all the same; the answer says only that its outcome is not known, and the work's end is announced AFTER it, as the
+    // engine's late finish is (a window that was told before the refusal would converge only because of the mock).
+    if (this.deleteTimesOut) {
+      this.deleteTimesOut = false;
+      this.scheduler.schedule(this.stepMs, announce);
+      return this.fail(c, { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown", detail: "the export folder did not answer in time; look at the video list before trying again" });
+    }
+    announce();
     return this.ok(c, { videoId, fileDeleted, fileState: state, ...(rejectedPhotoIds === undefined ? {} : { rejectedPhotoIds }) });
   }
 

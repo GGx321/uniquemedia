@@ -125,6 +125,39 @@ describe("«Видео» on «Фото» with the autopilot", () => {
     expect(within(card("Видео 1")).getByRole("switch", { name: "Опубликовано: Видео 1" }).getAttribute("aria-checked")).toBe("false");
   });
 
+  // S4.6g round 1, M3: a delete that timed out says `outcome: "unknown"` in every mode; none of them reads as a definite failure of the export folder, with a link to Settings.
+  test("a plain delete that timed out (outcome unknown): the unconfirmed words, no Settings link, the list and the photos read again", async () => {
+    const { engine } = await openVideos();
+    engine.failNext("videos.delete", { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown" });
+    const reads = callsOf(engine, "videos.list").length;
+    fireEvent.click(within(card("Видео 2")).getByRole("button", { name: /^Удалить видео / }));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Удалить видео" }));
+    await flush();
+    await flush();
+    const alert = screen.getByRole("alert");
+    expect(alert.querySelector(".notice-title")?.textContent).toBe("Удаление не подтвердилось — списки прочитаны заново");
+    expect(alert.textContent).toContain("а удаление могло дойти до конца");
+    expect(alert.textContent ?? "").not.toContain("нельзя записывать");
+    expect(screen.queryByRole("button", { name: /в Настройках/ }) === null).toBe(true);
+    expect(callsOf(engine, "videos.list").length).toBeGreaterThan(reads);
+  });
+
+  test("«Удалить запись» that timed out (outcome unknown): the same, not a definite failure of the folder", async () => {
+    const { engine, videoIds } = await openVideos();
+    engine.setVideoFileState(videoIds[1] ?? "", "missing");
+    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Видео" }));
+    await flush();
+    engine.failNext("videos.delete", { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown" });
+    fireEvent.click(within(card("Видео 2")).getByRole("button", { name: "Удалить запись" }));
+    await flush();
+    await flush();
+    const alert = screen.getByRole("alert");
+    expect(alert.querySelector(".notice-title")?.textContent).toBe("Удаление не подтвердилось — списки прочитаны заново");
+    expect(alert.textContent).toContain("а удаление могло дойти до конца");
+    expect(screen.queryByRole("button", { name: /в Настройках/ }) === null).toBe(true);
+  });
+
   test("a delete with the photos rejected that fails: its own words, and the list and the avatar's photos are read again", async () => {
     const { engine } = await openVideos();
     engine.failNext("videos.delete", { code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" });

@@ -8,8 +8,9 @@ import { LOG_PAGE } from "./autopilot/LaunchScreen";
 
 // S4.9c: a launch's page against the mock (AutopilotS4.dc.html states launch and delete-published; LaunchStates «Результаты», «Удалить видео», «Журнал»;
 // plan §8.4, §8.5, §17 Q4): the settings in a line, the videos as tiles with «Опубликовано» (`videos.setPublished`) and the two-way delete (`videos.delete`,
-// «и отклонить фото» chosen for a published video), «Скрыть опубликованные», a filter by avatar, what did not come out, and the whole log. The marks and the
-// records are `videos.list`'s; an unreadable log is said and healed by a mark; a delete that fails reads the lists again.
+// «и отклонить фото» chosen for a published video), «Скрыть опубликованные», a filter by avatar, what did not come out, and the whole log. Since S4.6g the marks and the
+// deleted videos are `autopilot.get`'s word on each video (`videos.list` only draws the finished ones); an unreadable log is said and healed by a mark; a delete that
+// fails or times out reads the lists again.
 
 const NBSP = " ";
 
@@ -96,9 +97,10 @@ describe("a launch's page", () => {
     expect(within(dropped).queryByRole("button", { name: /^Удалить/ }) === null).toBe(true);
   });
 
-  test("an avatar deleted after the launch: its tiles stay, inert — «аватар удалён», no «Опубликовано», no trash, no error to retry (fix round 1)", async () => {
+  test("an avatar deleted after the launch, when the engine cannot look at the records: its tiles stay, inert — «аватар удалён», no «Опубликовано», no trash, no error to retry (fix round 1)", async () => {
     const h = setup(historyLibrary());
     seedHistory(h.engine);
+    h.engine.loseTrackOfRecords();
     await act(async () => {
       const deleted = await h.client.request("avatars.delete", { avatarId: LINA.avatarId });
       if (!deleted.ok) throw new Error(deleted.error.code);
@@ -123,6 +125,32 @@ describe("a launch's page", () => {
     expect(within(results()).queryByRole("alert") === null).toBe(true);
     // Mia's tile is as live as ever.
     expect(within(tile("видео 1 · Mia")).getByRole("switch", { name: "Опубликовано: видео 1 · Mia" })).toBeDefined();
+  });
+
+  test("S4.6g (N7): an avatar deleted after the launch took its videos with it — the engine calls them removed, so no tile is left and «Все N» does not count them", async () => {
+    const h = setup(historyLibrary());
+    seedHistory(h.engine);
+    await act(async () => {
+      const deleted = await h.client.request("avatars.delete", { avatarId: LINA.avatarId });
+      if (!deleted.ok) throw new Error(deleted.error.code);
+    });
+    await flush();
+    await openSection("Автопилот");
+    await screen.findByRole("heading", { level: 1, name: "Автопилот" });
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^История запусков/ }));
+    await screen.findByRole("heading", { level: 1, name: "История запусков" });
+    await flush();
+    // The history counts what stands: Mia's one video of the two the launch made.
+    expect(within(screen.getByRole("region", { name: "Запуски" })).getAllByRole("button", { name: /^Запуск 7 окт\./ })[0]?.textContent).toContain("1 из 2");
+    fireEvent.click(within(screen.getByRole("region", { name: "Запуски" })).getAllByRole("button", { name: /^Запуск 7 окт\./ })[0] ?? document.body);
+    await screen.findByRole("heading", { level: 1, name: "Запуск 7 окт., 18:40" });
+    await flush();
+    await flush();
+    expect(tiles()).toEqual(["видео 1 · Mia"]);
+    expect(within(results()).getByRole("button", { name: "Все 1" })).toBeDefined();
+    expect(within(results()).getByRole("button", { name: "удалённый аватар 0" })).toBeDefined();
+    expect(within(results()).queryByRole("alert") === null).toBe(true);
   });
 
   test("the filter by avatar shows one avatar's videos", async () => {
@@ -179,12 +207,12 @@ describe("«Опубликовано» and «Скрыть опубликован
     expect(focusedLabel()).toBe(describeElement(tile("видео 3 · Mia")));
   });
 
-  test("a tile marked while hidden that does not leave (its list read again, and still there) hands the focus nowhere later (fix round 1)", async () => {
+  test("a tile marked while hidden that does not leave (the launch read again, and still shows it) hands the focus nowhere later (fix round 1)", async () => {
     const { engine } = await openLatest((mock) => mock.tearPublishedLog(MIA.avatarId));
     fireEvent.click(within(results()).getByRole("switch", { name: /^Скрыть опубликованные/ }));
-    // The mark goes, but both reads of Mia's list after it fail: the tile stays as the launch file says (unmarked).
-    engine.failNext("videos.list", { code: "INTERNAL", detail: "a record could not be read" });
-    engine.failNext("videos.list", { code: "INTERNAL", detail: "a record could not be read" });
+    // The mark goes, but both reads of the launch after it fail: the tile stays as the last answer says (unmarked).
+    engine.failNext("autopilot.get", { code: "INTERNAL", detail: "the launch could not be read" });
+    engine.failNext("autopilot.get", { code: "INTERNAL", detail: "the launch could not be read" });
     const second = publishedSwitch("видео 2 · Mia");
     second.focus();
     fireEvent.click(second);
@@ -200,16 +228,16 @@ describe("«Опубликовано» and «Скрыть опубликован
     expect(focusedLabel()).toBe(describeElement(sofia));
   });
 
-  test("marks that cannot be read: a notice, every tile unmarked; a mark heals the log, the list is read again and the marks are back", async () => {
+  test("marks that cannot be read: a notice, every tile unmarked; a mark heals the log, the launch is read again and the marks are back", async () => {
     const { engine } = await openLatest((mock) => mock.tearPublishedLog(MIA.avatarId));
     const notice = within(results()).getByRole("status");
     expect(notice.textContent).toBe("Отметки «Опубликовано» у Mia не читаются — эти видео показаны без отметки. Studio по ним ничего не удаляет; новая отметка допишется.");
     expect(checked(publishedSwitch("видео 1 · Mia"))).toBe("false");
-    const reads = callsOf(engine, "videos.list").filter((c) => c.payload.avatarId === MIA.avatarId).length;
+    const reads = callsOf(engine, "autopilot.get").length;
     fireEvent.click(publishedSwitch("видео 2 · Mia"));
     await flush();
     await flush();
-    expect(callsOf(engine, "videos.list").filter((c) => c.payload.avatarId === MIA.avatarId).length).toBeGreaterThan(reads);
+    expect(callsOf(engine, "autopilot.get").length).toBeGreaterThan(reads);
     await waitFor(() => expect(checked(publishedSwitch("видео 1 · Mia"))).toBe("true"));
     expect(checked(publishedSwitch("видео 2 · Mia"))).toBe("true");
     expect(within(results()).queryByText(/не читаются/) === null).toBe(true);
@@ -354,6 +382,25 @@ describe("«Удалить видео»", () => {
   });
 });
 
+describe("S4.6g: a delete whose outcome is not known", () => {
+  test("a timeout says the delete may have gone on, reads the launch again, and the tile that is gone leaves", async () => {
+    const { engine } = await openLatest();
+    engine.timeOutNextDelete();
+    const trash = within(tile("видео 2 · Mia")).getByRole("button", { name: "Удалить видео 2 · Mia" });
+    trash.focus();
+    fireEvent.click(trash);
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Удалить видео" }));
+    await flush();
+    await flush();
+    const alert = within(results()).getByRole("alert");
+    expect(alert.querySelector(".notice-title")?.textContent).toBe("Удаление не подтвердилось — списки прочитаны заново");
+    expect(alert.textContent).toContain("Папка «Готовые видео» не ответила вовремя, а удаление могло дойти до конца: видео могло уже удалиться.");
+    expect(alert.textContent).not.toContain("нельзя записывать");
+    // The mock did the work after all: the engine's word on the launch, read again, drops the tile.
+    await waitFor(() => expect(tiles().includes("видео 2 · Mia")).toBe(false));
+  });
+});
+
 describe("«Журнал» of the launch", () => {
   test("«Потрачено $S из $W′», the lines newest first, «Показать раньше» past the first page", async () => {
     const h = setup(historyLibrary());
@@ -436,6 +483,22 @@ describe("from the launch card", () => {
     expect(callsOf(engine, "autopilot.get").some((c) => c.payload.launchId === launchId)).toBe(true);
     fireEvent.click(within(screen.getByRole("main")).getByRole("button", { name: "Автопилот" }));
     expect(await screen.findByRole("heading", { level: 1, name: "Автопилот" })).toBeDefined();
+  });
+
+  test("S4.6g: the ended card's «Результаты · N» is the history's count — the videos whose records stand — not the launch view's own count of what it made", async () => {
+    wideWindow();
+    const { client, launchId } = await started();
+    await act(async () => {
+      await client.request("autopilot.stop", { launchId });
+    });
+    await flush();
+    await flush();
+    const card = document.getElementById("ap-live") ?? document.body;
+    // The mock's canned launch made finished videos (the view counts them) that have no record in the mock, which the engine's count leaves out.
+    const history = await client.request("autopilot.list", {});
+    const counted = history.ok ? (history.result.launches.find((l) => l.launchId === launchId)?.videosDone ?? -1) : -1;
+    expect(counted).toBe(0);
+    expect(within(card).getByRole("button", { name: `Результаты · ${counted}` })).toBeDefined();
   });
 
   test("a launch that ended: «Результаты · N» and «Журнал» at 1440, «Результаты · N» in the folded line at 1200", async () => {

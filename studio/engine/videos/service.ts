@@ -930,13 +930,12 @@ export class VideoService {
       }
       let outcome;
       let rejectedPhotoIds: string[] | undefined;
+      let timedOut = false;
       try {
         // Bounded: a hung stat or hash on a dropped drive must not hold the library (`withLibrary` counts this as a write, which
         // a library switch waits for) for ever. What was done before the bound stays done: every step of a delete leaves a state
         // the next one finishes, and the answer says the outcome is not known.
-        outcome = await within(
-          this.#deps.deleteTimeoutMs ?? DELETE_TIMEOUT_MS,
-          () =>
+        const work = Promise.resolve().then(() =>
             deleteVideo(videoId, {
               mode,
               library,
@@ -948,7 +947,32 @@ export class VideoService {
               // «Удалить видео и отклонить фото» (Stage 4, §8.5): the folder has answered and the file is reachable (the refusals are made), and the video is still whole.
               ...(options.rejectPhotos === true ? { beforeRemoval: async (record: VideoRecord) => void (rejectedPhotoIds = await rejectScenePhotos(library, record)) } : {}),
             }),
-          () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time; look at the video list before trying again" }),
+        );
+        // S4.6g (round 1, M2): the work is not cancelled by the bound, so it may finish AFTER the answer went out. When it does, the windows are told as for any delete, or they would
+        // keep showing the video until something else made them read again.
+        void work.then(
+          (late) => {
+            if (!timedOut) return;
+            // The work outlived its answer: the windows may be on another library by now (or the engine stopping), and an announce of this one's avatar would put a foreign avatar in their grid.
+            if (this.#closing || this.#deps.openLibrary() !== library) {
+              this.#deps.log(`videos.delete: ${videoId} finished after its answer, ${this.#closing ? "while the engine was stopping" : "in a library that is no longer open"}; nothing was announced`);
+              return;
+            }
+            this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId: late.avatarId } });
+            this.#announce(library, late.avatarId);
+          },
+          (error: unknown) => {
+            if (timedOut) this.#deps.log(`videos.delete: ${videoId} timed out and then failed (${kindOf(error)})`);
+          },
+        ).catch(() => undefined);
+        outcome = await within(
+          this.#deps.deleteTimeoutMs ?? DELETE_TIMEOUT_MS,
+          () => work,
+          // S4.6g: the work was not cancelled, so it may still finish (the marks, the file, the record): the answer says the outcome is not known.
+          () => {
+            timedOut = true;
+            return new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown", detail: "the export folder did not answer in time; look at the video list before trying again" });
+          },
         );
       } catch (error) {
         throw this.#deleteFailure(videoId, error);

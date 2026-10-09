@@ -69,9 +69,14 @@ export interface LaunchCardProps {
   readonly nameOf: (avatarId: string) => string;
   /** S4.9c: «Мои треки…» of the waiting-music notice opens the music chip's window. */
   readonly onMusic?: () => void;
+  /**
+   * S4.6g: the finished videos of this launch whose records stand, as the history counts them (`LaunchSummary.videosDone`). The view's own count is of what the launch
+   * made, a video the owner deleted since included; once the history has answered, «Результаты · N» is this one.
+   */
+  readonly resultsDone?: number | undefined;
 }
 
-export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMusic }: LaunchCardProps) {
+export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMusic, resultsDone }: LaunchCardProps) {
   const ids = useId();
   const { client } = useEngine();
   const { money, settings } = useEngineView();
@@ -336,7 +341,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
           {ended && compact && (
             <div className="ap-live-actions">
               <button type="button" className="btn btn-p btn-xs" onClick={openLaunch}>
-                Результаты · {videosOf(launch).done}
+                Результаты · {resultsDone ?? videosOf(launch).done}
               </button>
             </div>
           )}
@@ -374,7 +379,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
             {/* S4.9c (ApDone): the launch's results and its whole log, on its own page. */}
             <div className="ap-live-ended-acts">
               <button type="button" className="btn btn-p btn-s" onClick={openLaunch}>
-                Результаты · {videosOf(launch).done}
+                Результаты · {resultsDone ?? videosOf(launch).done}
               </button>
               <button type="button" className="btn btn-s" onClick={openLaunch}>
                 Журнал
