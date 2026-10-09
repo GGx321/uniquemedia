@@ -64,6 +64,15 @@ describe("buildLaunchPreview", () => {
     expect(preview.month.fit).toBe(_name);
   });
 
+  test("the raise «поднимите бюджет до $X» is answered by the engine: null when the room covers the worst case, else the budget in whole dollars that does", () => {
+    const base = previewInput();
+    const W = base.estimate.worstMicros;
+    expect(buildLaunchPreview({ ...base, month: { budgetMicros: 100_000_000, committedMicros: 100_000_000 - W, freeMicros: W } }).month.raiseToMicros).toBeNull();
+    const short = buildLaunchPreview({ ...base, month: { budgetMicros: 10_000_000, committedMicros: 9_500_000, freeMicros: 500_000 } });
+    expect(short.month.raiseToMicros).toBe(Math.ceil((9_500_000 + W) / 1_000_000) * 1_000_000);
+    expect(short.month.raiseToMicros !== null && short.month.raiseToMicros % 1_000_000).toBe(0);
+  });
+
   test("an avatar the plan blocks is a blocker of its own, and counts for nothing in the totals", () => {
     const draft = settings({ avatarIds: [A, B] });
     const plan = planLaunch(input({ draft, avatars: [avatar([], { avatarId: A, hasOpenSet: true }), avatar([], { avatarId: B })] }));

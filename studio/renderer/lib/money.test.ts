@@ -100,6 +100,16 @@ test("formatUsdTiered shows three decimals below $0.10 and two from $0.10, round
   expect(formatUsdTiered(0, "nearest")).toBe("$0.000");
 });
 
+// S4.9a: what is left (the month's room, the OpenRouter balance) is never overstated: rounded down, in the same tiers.
+test("formatUsdTiered rounds what is left down, three decimals below $0.10", () => {
+  expect(formatUsdTiered(8_360_000, "down")).toBe("$8.36");
+  expect(formatUsdTiered(619_999, "down")).toBe("$0.61");
+  expect(formatUsdTiered(45_999, "down")).toBe("$0.045");
+  expect(formatUsdTiered(99_999, "down")).toBe("$0.099");
+  expect(formatUsdTiered(100_000, "down")).toBe("$0.10");
+  expect(formatUsdTiered(0, "down")).toBe("$0.000");
+});
+
 test("formatUsdTiered refuses what formatUsd refuses", () => {
   expect(() => formatUsdTiered(-1, "up")).toThrow(RangeError);
   expect(() => formatUsdTiered(0.5, "nearest")).toThrow(RangeError);

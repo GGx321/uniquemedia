@@ -68,6 +68,25 @@ export function monthFit(freeMicros: number, expectedMicros: number, worstMicros
   return freeMicros >= expectedMicros ? "fits-expected" : "short";
 }
 
+const MICROS_PER_DOLLAR = 1_000_000;
+
+/**
+ * The budget of «поднимите бюджет до $X» (plan §4.4, `$⌈W − R + B⌉`): in whole dollars rounded up, the monthly budget at which the room covers the launch's
+ * worst case W — what the month has committed already plus W. That is the plan's W − R + B whenever the month is not overspent, and it stays right when it
+ * is (R is then 0, and B alone would not cover what is committed). Null when the room already covers W (`fits`): there is nothing to raise. The engine and
+ * the mock answer it in `LaunchPreview.month.raiseToMicros`; the window shows it as it comes (the renderer computes no money, §4.2).
+ */
+export function raiseBudgetToMicros(month: { budgetMicros: number; committedMicros: number; freeMicros: number }, worstMicros: number): number | null {
+  checkMicros("budgetMicros", month.budgetMicros);
+  checkMicros("committedMicros", month.committedMicros);
+  checkMicros("freeMicros", month.freeMicros);
+  checkMicros("worstMicros", worstMicros);
+  if (month.freeMicros >= worstMicros) return null;
+  const need = safe(month.committedMicros + worstMicros);
+  const rest = need % MICROS_PER_DOLLAR;
+  return rest === 0 ? need : safe(need - rest + MICROS_PER_DOLLAR);
+}
+
 // ---------- the launch's own scopes ----------
 
 /** A scope the launch created: a finished one has spent what it committed, a live one may still spend up to its cap. */

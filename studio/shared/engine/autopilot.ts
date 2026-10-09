@@ -11,6 +11,7 @@ import { AvatarUsage, Estimate, MUSIC_QUOTA_LIMIT, RunPoses } from "./state";
 // (`LogLine`, the holds, the reasons).
 
 const IsoDateTime = z.iso.datetime();
+const MICROS_PER_DOLLAR = 1_000_000;
 const unique = (items: readonly unknown[]): boolean => new Set(items).size === items.length;
 
 // ---------- bounds ----------
@@ -530,7 +531,17 @@ export const LaunchPreview = z
     estimate: Estimate,
     /** What a video of each shape costs when its photos are new: 1, 3 and 5 times the expected price of a photo. */
     perShapeExpectedMicros: z.strictObject({ single: Micros, collage: Micros, slides: Micros }),
-    month: z.strictObject({ budgetMicros: Micros, committedMicros: Micros, freeMicros: Micros, fit: MonthFit }),
+    month: z.strictObject({
+      budgetMicros: Micros,
+      committedMicros: Micros,
+      freeMicros: Micros,
+      fit: MonthFit,
+      /**
+       * «поднимите бюджет до $X» (§4.4, `$⌈W − R + B⌉`): the monthly budget, in whole dollars rounded up, at which the room covers the worst case — what is
+       * committed plus W (`raiseBudgetToMicros`, shared/autopilot/money.ts). Null when the room already covers W. The window shows it as it comes.
+       */
+      raiseToMicros: Micros.nullable(),
+    }),
     /** The OpenRouter balance (a warning only, never a gate); null without a key or when it could not be read. */
     balance: z.strictObject({ micros: Micros, asOf: IsoDateTime }).nullable(),
     music: z.strictObject({
@@ -559,6 +570,9 @@ export const LaunchPreview = z
     const expected = freeMicros >= p.estimate.expectedMicros;
     const worst = freeMicros >= p.estimate.worstMicros;
     if (fit !== (worst ? "fits" : expected ? "fits-expected" : "short")) fail("month", "the fit follows from the room, the expected cost and the worst case");
+    const need = committedMicros + p.estimate.worstMicros;
+    const raise = worst ? null : need % MICROS_PER_DOLLAR === 0 ? need : need - (need % MICROS_PER_DOLLAR) + MICROS_PER_DOLLAR;
+    if (p.month.raiseToMicros !== raise) fail("month", "the raise is the budget in whole dollars that covers what is committed and the worst case, and none when the room covers it");
     for (const avatar of p.avatars) {
       if (avatar.blocked !== null && !p.blockers.some((b) => b.code === avatar.blocked && "avatarId" in b && b.avatarId === avatar.avatarId)) fail("blockers", "a blocked avatar has its blocker");
     }

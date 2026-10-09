@@ -1,0 +1,1047 @@
+/* S4.9a · «Автопилот»: the launch form, the plan card and the sidebar's mark (.omc/stage4/design/AutopilotS4.dc.html and its README «Классы»).
+   Three columns as in the owner's mockup: 288 / 404 / the rest at 1440, 240 / 308 / the rest at 1200. Every value is a theme.css token or the
+   artboard's own size. */
+
+/* ── the page: the columns fill the window and scroll inside ── */
+
+.ap-page {
+  flex: 1 1 0;
+  min-height: 0;
+  gap: 18px;
+}
+
+.ap-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-shrink: 0;
+}
+
+.ap-head-text {
+  min-width: 0;
+}
+
+.ap-head-sub {
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.ap-cols {
+  display: flex;
+  gap: 20px;
+  flex: 1 1 0;
+  min-height: 520px;
+}
+
+.ap-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex-shrink: 0;
+}
+
+.ap-h2 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.ap-h3 {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+/* A heading takes the focus only to land the keyboard there (the launch's row after «Запустить»), as the screen's own title does: no ring. */
+.ap-h2:focus,
+.ap-h2:focus-visible {
+  outline: none;
+}
+
+/* A scrolling area and its fade at the foot, shown only while the content is longer than the area (decision 1, round 1 M6). */
+.ap-fw {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.ap-sc {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.ap-sc::-webkit-scrollbar {
+  display: none;
+}
+
+.ap-fd {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 56px;
+  background: linear-gradient(180deg, rgba(20, 20, 27, 0) 0%, var(--panel) 92%);
+  pointer-events: none;
+}
+
+.ap-fd-page {
+  height: 36px;
+  background: linear-gradient(180deg, rgba(9, 9, 12, 0) 0%, var(--bg) 92%);
+}
+
+/* ── column 1 · avatars ── */
+
+.ap-avatars {
+  width: 288px;
+  gap: 10px;
+  padding: 14px;
+  overflow: hidden;
+}
+
+.ap-avatars-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+
+.ap-avatars-title {
+  white-space: nowrap;
+}
+
+.ap-avatars-count {
+  font-weight: 400;
+}
+
+.ap-bulk {
+  display: flex;
+  gap: 4px;
+}
+
+.ap-bulk-chip {
+  height: 26px;
+  padding: 0 10px;
+}
+
+.ap-avatars-hint {
+  margin: -6px 4px 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.ap-avatar-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.ap-avatar-list::-webkit-scrollbar {
+  display: none;
+}
+
+.ap-av {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  height: 50px;
+  flex-shrink: 0;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ap-av:hover:not([aria-disabled="true"]) {
+  background: var(--panel-2);
+}
+
+.ap-av-on {
+  border-color: var(--accent-45);
+  background: var(--accent-06);
+}
+
+.ap-av-on:hover:not([aria-disabled="true"]) {
+  background: var(--accent-08);
+}
+
+.ap-av[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* A running launch's list: the avatars it does not take are dimmed. */
+.ap-av-out {
+  opacity: 0.4;
+}
+
+.ap-cb {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 1.5px solid var(--faint);
+  border-radius: 5px;
+  color: var(--accent-ink);
+}
+
+.ap-av-on .ap-cb {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.ap-av-face {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border-radius: 9px;
+}
+
+.ap-av-face .portrait-silhouette {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 90%;
+}
+
+.ap-av-name {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.ap-av-side {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: auto;
+}
+
+.ap-tag {
+  height: 18px;
+  padding: 0 7px;
+  font-size: 10.5px;
+}
+
+.ap-tag-warn {
+  background: var(--warn-12);
+  color: var(--warn);
+}
+
+.ap-tag-danger {
+  background: var(--danger-14);
+  color: var(--danger);
+}
+
+.ap-av-free {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* No free photo, or none that can be trusted («— своб.», ApPlanBlocked). */
+.ap-av-free-warn {
+  color: var(--danger);
+}
+
+.ap-avatars-empty {
+  display: flex;
+  flex-grow: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 12px;
+  text-align: center;
+}
+
+.ap-empty-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
+  background: var(--accent-soft);
+  color: var(--link);
+}
+
+.ap-empty-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.ap-empty-text {
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+/* ── column 2 · «Настройки запуска» ── */
+
+.ap-settings {
+  position: relative;
+  width: 404px;
+  padding: 16px 20px 0;
+}
+
+.ap-settings > .ap-h2 {
+  margin-bottom: 10px;
+  flex-shrink: 0;
+}
+
+.ap-lock-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  flex-shrink: 0;
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ap-lock-note > svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.ap-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  min-height: 48px;
+  padding: 6px 0;
+  border-top: 1px solid var(--line);
+}
+
+.ap-row .rl {
+  gap: 2px;
+  min-width: 0;
+}
+
+.ap-row .rl > span {
+  line-height: 1.35;
+}
+
+/* «тренды не обновим сами…», «нет ключа музыки…»: the row's sub line in amber. */
+.ap-row .rl > span.warn-text {
+  color: var(--warn);
+}
+
+.ap-row-wrap {
+  flex-wrap: wrap;
+  row-gap: 8px;
+}
+
+.ap-row-wrap > .rl {
+  flex: 1 1 140px;
+}
+
+.ap-row-note {
+  flex-basis: 100%;
+  margin-top: -2px;
+  font-size: 11.5px;
+  line-height: 1.35;
+}
+
+/* The CS.8b line under «Ракурсы» (AnglesLines.tsx), here the full width of the column and allowed to wrap. */
+.ap-angles .photos-angles-own {
+  margin: -2px 0 2px;
+}
+
+.ap-angles .photos-angles-own-text {
+  white-space: normal;
+}
+
+.ap-stepper {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.ap-stepper-value {
+  width: 32px;
+  color: var(--text);
+  font-size: 13px;
+  text-align: center;
+}
+
+.ap-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.ap-mix-block {
+  gap: 9px;
+}
+
+.ap-block-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+
+.ap-block-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ap-block-count {
+  margin-left: auto;
+}
+
+.ap-mix-reset {
+  margin-left: auto;
+}
+
+.ap-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.ap-music-label {
+  flex: 1 1 150px;
+}
+
+/* The chip «Тренды + мои» only says what the launch has until its window lands (S4.9c). */
+.ap-chip-static {
+  flex-shrink: 0;
+  cursor: default;
+}
+
+.ap-limit {
+  color: var(--text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.ap-sc-end {
+  height: 8px;
+}
+
+.ap-note {
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* A launch's settings, read only (.ap-lockd): the controls at 55 %, no hand. */
+.ap-lockd .sw,
+.ap-lockd .chip,
+.ap-lockd .ibtn,
+.ap-lockd .ap-mix,
+.ap-lockd .lbtn {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.ap-lockd .chip:hover,
+.ap-lockd .ibtn:hover {
+  background: transparent;
+}
+
+.ap-lockd .ap-thumb {
+  cursor: default;
+}
+
+.sw-dim {
+  opacity: 0.45;
+}
+
+.sw[aria-disabled="true"] {
+  cursor: default;
+}
+
+.chip[aria-disabled="true"],
+.lbtn[aria-disabled="true"] {
+  cursor: default;
+}
+
+/* The mix: the mockup's bar with two handles (role slider). */
+.ap-mix {
+  position: relative;
+  display: flex;
+  align-items: center;
+  height: 18px;
+}
+
+.ap-mix-track {
+  display: flex;
+  gap: 2px;
+  width: 100%;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.ap-mix-seg {
+  display: block;
+  height: 100%;
+}
+
+.ap-mix-single {
+  background: var(--accent);
+}
+
+.ap-mix-collage {
+  background: var(--info);
+}
+
+.ap-mix-slides {
+  background: var(--ok);
+}
+
+.ap-thumb {
+  position: absolute;
+  top: 0;
+  width: 8px;
+  height: 18px;
+  margin-left: -4px;
+  padding: 0;
+  border: 2px solid var(--bg);
+  border-radius: 4px;
+  background: var(--text);
+  cursor: ew-resize;
+  touch-action: none;
+}
+
+.ap-thumb[aria-disabled="true"] {
+  cursor: default;
+}
+
+.ap-leg {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px 12px;
+  font-size: 12px;
+}
+
+.ap-leg-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.ap-leg-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 2px;
+}
+
+.ap-leg-label {
+  white-space: nowrap;
+}
+
+.ap-leg-price {
+  flex-basis: 100%;
+  padding-left: 14px;
+  white-space: nowrap;
+}
+
+/* ── column 3 · the plan ── */
+
+.ap-col3 {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.ap-col3-in {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ap-plan {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex-shrink: 0;
+  padding: 18px 20px;
+}
+
+.ap-plan-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ap-plan-source {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.ap-tiles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ap-tile {
+  min-width: 0;
+}
+
+.ap-tile-label {
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.ap-tile-value {
+  color: var(--text);
+  font-size: 18px;
+  white-space: nowrap;
+}
+
+.ap-tone-text {
+  color: var(--text);
+}
+
+.ap-tone-ok {
+  color: var(--ok);
+}
+
+.ap-tone-acc {
+  color: var(--accent-text);
+}
+
+.ap-tone-warn {
+  color: var(--warn);
+}
+
+.ap-tone-faint {
+  color: var(--faint);
+}
+
+.ap-tone-danger {
+  color: var(--danger);
+}
+
+/* The month's bar (decision 5): the whole budget; grey committed, solid the expected cost, hatched up to the worst case. */
+.ap-month {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.ap-month-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ap-month-free {
+  color: var(--text);
+  white-space: nowrap;
+}
+
+/* `short`: the room in red (declared after .ap-month-free, which would otherwise win at the same weight). */
+.ap-month-free.ap-tone-danger {
+  color: var(--danger);
+}
+
+.ap-meter {
+  position: relative;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: var(--track);
+}
+
+.ap-meter > span {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+}
+
+.ap-meter-used {
+  background: var(--tick-after);
+}
+
+.ap-meter-expected {
+  background: var(--accent);
+}
+
+.ap-meter-worst {
+  background: repeating-linear-gradient(135deg, rgba(255, 122, 89, 0.62) 0 3px, rgba(255, 122, 89, 0.2) 3px 6px);
+}
+
+.ap-meter-over {
+  right: 0;
+  width: 3px;
+  background: var(--warn);
+}
+
+.ap-meter-short .ap-meter-expected,
+.ap-meter-short .ap-meter-over {
+  background: var(--danger);
+}
+
+.ap-meter-short .ap-meter-worst {
+  background: repeating-linear-gradient(135deg, var(--danger-70) 0 3px, rgba(255, 138, 155, 0.22) 3px 6px);
+}
+
+.ap-month-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 12px;
+  font-size: 10.5px;
+}
+
+.ap-month-legend > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.ap-key {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+.ap-plan .notice {
+  padding: 10px 12px;
+}
+
+.ap-plan .notice-text {
+  line-height: 1.45;
+}
+
+.ap-plan .reason-list {
+  gap: 3px;
+  margin-top: 2px;
+  padding-left: 16px;
+}
+
+.ap-note-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ap-go {
+  width: 100%;
+}
+
+.ap-go[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.ap-go[aria-busy="true"] {
+  opacity: 1;
+  cursor: progress;
+}
+
+.btn-p.ap-go[aria-disabled="true"]:hover {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.ap-go-spin {
+  width: 14px;
+  height: 14px;
+}
+
+.ap-go-why {
+  margin: -4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+.ap-disk {
+  margin: -4px 0 0;
+  font-size: 10.5px;
+}
+
+/* «План запуска», folded while the launch runs (decision 3). */
+.ap-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 14px 20px;
+}
+
+.ap-mini-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ap-mini-at {
+  margin-left: auto;
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.ap-mini-bits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  line-height: 1.6;
+}
+
+.ap-mini-bits > span {
+  white-space: nowrap;
+}
+
+/* The launch's row: where S4.9b's live card goes. */
+.ap-live {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 16px 20px;
+}
+
+.ap-live-done {
+  border-color: var(--ok-35);
+}
+
+.ap-live-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+}
+
+.ap-live-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.ap-live-spin {
+  width: 13px;
+  height: 13px;
+  color: var(--warn);
+}
+
+.ap-live-line {
+  margin: 0;
+  line-height: 1.6;
+}
+
+.ap-live-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.ap-live-sub {
+  margin: -2px 0 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.4;
+}
+
+/* «Остановить запуск?» (ApStopConfirm, short form): what stays and what was spent; «Остановить» first, the focus on «Отмена». */
+.ap-stop {
+  width: 520px;
+}
+
+.ap-stop-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 20px 20px 16px;
+}
+
+.ap-stop-text {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.ap-stop-text p {
+  margin: 0;
+}
+
+.ap-stop-stays {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ap-stop-stays ul {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.ap-stop-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+}
+
+/* ── the sidebar's mark at «Автопилот» (decision 12) ── */
+
+.ap-side-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+  white-space: nowrap;
+}
+
+.ap-side-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+}
+
+.ap-side-run {
+  color: var(--accent-text);
+}
+
+.ap-side-run .ap-side-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-18);
+}
+
+.ap-side-review {
+  color: var(--info);
+}
+
+.ap-side-review .ap-side-dot {
+  background: var(--info);
+  box-shadow: 0 0 0 3px var(--info-16);
+}
+
+.ap-side-paused,
+.ap-side-hold {
+  color: var(--warn);
+}
+
+.ap-side-paused .ap-side-dot,
+.ap-side-hold .ap-side-dot {
+  background: var(--warn);
+  box-shadow: 0 0 0 3px var(--warn-16);
+}
+
+.ap-side-done {
+  color: var(--ok);
+}
+
+.ap-side-done .ap-side-dot {
+  background: var(--ok);
+  box-shadow: 0 0 0 3px var(--ok-14);
+}
+
+/* ── 1200: 240 / 308 / the rest, rows of 44, tiles in two columns, the legend in rows, the folded plan not drawn ── */
+
+@media (max-width: 1439px) {
+  .ap-cols {
+    gap: 16px;
+  }
+
+  .ap-avatars {
+    width: 240px;
+    padding: 14px 10px;
+  }
+
+  .ap-bulk-chip {
+    padding: 0 8px;
+  }
+
+  .ap-av {
+    gap: 8px;
+    height: 44px;
+  }
+
+  .ap-av-face {
+    width: 30px;
+    height: 30px;
+  }
+
+  /* A tag says it all at this width: the count makes room. */
+  .ap-av-tagged .ap-av-free {
+    display: none;
+  }
+
+  .ap-settings {
+    width: 308px;
+    padding: 16px 16px 0;
+  }
+
+  .ap-leg {
+    grid-template-columns: 1fr;
+  }
+
+  .ap-leg-item {
+    flex-wrap: nowrap;
+  }
+
+  .ap-leg-price {
+    flex-basis: auto;
+    margin-left: auto;
+    padding-left: 0;
+  }
+
+  .ap-col3-in {
+    gap: 12px;
+  }
+
+  .ap-plan {
+    padding: 14px 16px;
+  }
+
+  .ap-tiles {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ap-tile-value {
+    font-size: 16px;
+  }
+
+  .ap-live {
+    padding: 16px;
+  }
+}

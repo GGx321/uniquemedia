@@ -1,5 +1,5 @@
 import type { LaunchEstimate, LaunchUnitPrices } from "../../shared/autopilot/estimate";
-import { monthFit } from "../../shared/autopilot/money";
+import { monthFit, raiseBudgetToMicros } from "../../shared/autopilot/money";
 import { LaunchPreview, type LaunchBlocker, type LaunchBlockerCode, type LaunchDraft } from "../../shared/engine/autopilot";
 import type { LaunchPlan } from "./planner";
 
@@ -53,7 +53,7 @@ export function buildLaunchPreview(input: PreviewInput): LaunchPreview {
     totals: plan.totals,
     estimate: { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.prices, pricesAsOf: estimate.pricesAsOf },
     perShapeExpectedMicros: { single: photo, collage: 3 * photo, slides: 5 * photo },
-    month: { ...month, fit: monthFit(month.freeMicros, estimate.expectedMicros, estimate.worstMicros) },
+    month: { ...month, fit: monthFit(month.freeMicros, estimate.expectedMicros, estimate.worstMicros), raiseToMicros: raiseBudgetToMicros(month, estimate.worstMicros) },
     balance: input.balance,
     music: input.music,
     disk: { neededBytes: plan.totals.videos * DISK_PER_VIDEO_BYTES, freeBytes: input.freeBytes },

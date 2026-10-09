@@ -1,3 +1,4 @@
+import { raiseBudgetToMicros } from "../../shared/autopilot/money";
 import {
   LAUNCH_SLICE_MAX_PHOTOS,
   LaunchBlocker,
@@ -223,7 +224,7 @@ export class MockAutopilot {
       totals,
       estimate: { expectedMicros: expected, worstMicros: worst, prices: prices.prices, pricesAsOf: prices.pricesAsOf },
       perShapeExpectedMicros: { single: SIZE.single * unit.photoExpectedMicros, collage: SIZE.collage * unit.photoExpectedMicros, slides: SIZE.slides * unit.photoExpectedMicros },
-      month: { budgetMicros: month.budgetMicros, committedMicros, freeMicros, fit },
+      month: { budgetMicros: month.budgetMicros, committedMicros, freeMicros, fit, raiseToMicros: raiseBudgetToMicros({ budgetMicros: month.budgetMicros, committedMicros, freeMicros }, worst) },
       balance: this.#world.balance(),
       music: this.#world.music(),
       disk: { neededBytes: totals.videos * DISK_PER_VIDEO, freeBytes: this.#world.exportFreeBytes() },

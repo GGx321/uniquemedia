@@ -10,6 +10,7 @@ import {
   MAX_LISTED_LAUNCHES,
   PaidHold,
 } from "./autopilot";
+import { raiseBudgetToMicros } from "../autopilot/money";
 import { OkResponse, Snapshot } from "./commands";
 import { EventMessage } from "./events";
 import { parseEngineCommand } from "./messages";
@@ -707,8 +708,11 @@ describe("LaunchPreview", () => {
   });
 
   describe("the month's fit follows from its numbers (§4.4)", () => {
-    const fitted = (freeMicros: number, fit: string) =>
-      LaunchPreview.safeParse(previewWith({ month: { budgetMicros: 10_000_000, committedMicros: 10_000_000 - freeMicros, freeMicros, fit } })).success;
+    const monthOf = (freeMicros: number, fit: string) => {
+      const room = { budgetMicros: 10_000_000, committedMicros: 10_000_000 - freeMicros, freeMicros };
+      return { ...room, fit, raiseToMicros: raiseBudgetToMicros(room, preview.estimate.worstMicros) };
+    };
+    const fitted = (freeMicros: number, fit: string) => LaunchPreview.safeParse(previewWith({ month: monthOf(freeMicros, fit) })).success;
 
     test("fits when the room covers the worst case", () => {
       expect(fitted(3_000_000, "fits")).toBe(true);
@@ -730,15 +734,27 @@ describe("LaunchPreview", () => {
     test("a free launch always fits", () => {
       const free = previewWith({
         estimate: { expectedMicros: 0, worstMicros: 0, prices: "live", pricesAsOf: "2026-10-08" },
-        month: { budgetMicros: 10_000_000, committedMicros: 10_000_000, freeMicros: 0, fit: "fits" },
+        month: { budgetMicros: 10_000_000, committedMicros: 10_000_000, freeMicros: 0, fit: "fits", raiseToMicros: null },
       });
       expect(LaunchPreview.safeParse(free).success).toBe(true);
+    });
+
+    test("the raise «поднимите бюджет до $X» is the engine's: the budget in whole dollars that covers the worst case, null when it fits", () => {
+      // W $3.00 with $2.999999 free: committed $7.000001 + W = $10.000001 → $11.
+      expect(monthOf(2_999_999, "fits-expected").raiseToMicros).toBe(11_000_000);
+      expect(fitted(2_999_999, "fits-expected")).toBe(true);
+      expect(LaunchPreview.safeParse(previewWith({ month: { ...monthOf(2_999_999, "fits-expected"), raiseToMicros: 10_000_000 } })).success).toBe(false);
+      expect(LaunchPreview.safeParse(previewWith({ month: { ...monthOf(2_999_999, "fits-expected"), raiseToMicros: 10_500_000 } })).success).toBe(false);
+      expect(LaunchPreview.safeParse(previewWith({ month: { ...monthOf(3_000_000, "fits"), raiseToMicros: 3_000_000 } })).success).toBe(false);
+      expect(LaunchPreview.safeParse(previewWith({ month: { ...monthOf(699_999, "short"), raiseToMicros: null } })).success).toBe(false);
+      const { raiseToMicros: _gone, ...without } = preview.month;
+      expect(LaunchPreview.safeParse(previewWith({ month: without })).success).toBe(false);
     });
 
     test("an unknown fit and a room that is not budget less committed are refused", () => {
       expect(fitted(3_000_000, "plenty")).toBe(false);
       expect(LaunchPreview.safeParse(previewWith({ month: { ...preview.month, freeMicros: 8_360_001 } })).success).toBe(false);
-      expect(LaunchPreview.safeParse(previewWith({ month: { budgetMicros: 1_000_000, committedMicros: 2_000_000, freeMicros: 0, fit: "short" } })).success).toBe(true);
+      expect(LaunchPreview.safeParse(previewWith({ month: { budgetMicros: 1_000_000, committedMicros: 2_000_000, freeMicros: 0, fit: "short", raiseToMicros: 5_000_000 } })).success).toBe(true);
     });
   });
 

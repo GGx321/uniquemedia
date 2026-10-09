@@ -11,6 +11,7 @@ import "./montage.css";
 import "./videos.css";
 import "./categories.css";
 import "./scenes.css";
+import "./autopilot.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("#root is missing from studio/renderer/index.html");
