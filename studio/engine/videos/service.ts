@@ -1,7 +1,8 @@
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileState, VideoSummary, CommandPayload, EngineError, MediaKind, PhotoUnavailableReason, UnsequencedEvent } from "../../shared/engine";
-import { commonPhotoReason, EXPORT_CHANGING_DETAIL, LIBRARY_TOO_NEW_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail, usageUntrustedDetail } from "../../shared/engine";
+import { LaunchId, LaunchVideoKey, commonPhotoReason, EXPORT_CHANGING_DETAIL, LIBRARY_TOO_NEW_DETAIL, MAX_LISTED_VIDEOS, PROTOCOL_VERSION, RENDER_NOT_QUEUED_DETAIL, renderQueueFullDetail, usageUntrustedDetail } from "../../shared/engine";
+import { AUTOPILOT_MAX_TOTAL_MS } from "../../shared/autopilot/spec";
 import { draftCaptionIssues } from "../../shared/text/draftCaptionIssues";
 import { MAX_MONTAGE_ISSUES, montageIssues, type MontageDraft, type MontageIssue } from "../../shared/engine/montage";
 import { notYetSupportedIssues } from "../../shared/montage/notYetSupported";
@@ -37,7 +38,8 @@ import { newHashBudget, recordFilePath, type FileStateChecker } from "./fileStat
 import type { LayerDeps } from "./layers";
 import { MAX_RECORD_FILES_READ, readVideoRecordFile, readVideoRecordFiles, videoSummaryOf } from "./listing";
 import type { CommitTracker, LiveCommits } from "./live";
-import { scenePhotoIds, videoPaths, type VideoRecord } from "./record";
+import { scenePhotoIds, videoPaths, type VideoProvenance, type VideoRecord } from "./record";
+import { markPublished, PublishedUnreadableError, readPublished, type PublishedRead } from "./published";
 import { recoverVideos, type ExportRootRef, type RecoverDeps } from "./recovery";
 import { CASE_PROBE_TIMEOUT_MS, DELETE_TIMEOUT_MS, LIST_BUDGET_MS, RECORD_CHECK_TIMEOUT_MS } from "./timeouts";
 
@@ -146,6 +148,15 @@ export interface VideoServiceDeps {
   readonly intentLstat?: (path: string) => Promise<unknown>;
   /** How the records of an avatar are read for a listing; `readVideoRecordFiles` when absent (a test plays a library disk that does not answer). */
   readonly readRecordFiles?: typeof readVideoRecordFiles;
+  /** How the owner's «Опубликовано» marks are read; `readPublished` when absent (a test plays a disk that does not answer). */
+  readonly readMarks?: typeof readPublished;
+}
+
+/** What the batch autopilot hands the video service to render: a headless spec and the provenance its record will carry (plan §8.1). */
+export interface InternalRenderInput {
+  readonly montageId: null;
+  readonly spec: MontageDraft;
+  readonly provenance: VideoProvenance;
 }
 
 /** Waits before the background retries of a stale used index; the last one repeats until the records are read. */
@@ -196,6 +207,8 @@ export function videoKindOf(clips: readonly { readonly kind: string; readonly la
 
 /** What a render starts from: a headless spec, or a saved draft's spec with the draft's id and the library it was read from. */
 interface RenderSource {
+  /** Stage 4: the autopilot's provenance; absent for every render the commands ask for. */
+  readonly provenance?: VideoProvenance;
   readonly montageId: string | null;
   /** The draft's name as it was read (K12): the record keeps it. Null for an unnamed draft and a headless spec. */
   readonly title: string | null;
@@ -221,6 +234,19 @@ function sceneCells(spec: Pick<MontageDraft, "clips">): SceneCell[] {
     }
   });
   return cells;
+}
+
+/**
+ * What the engine refuses an AUTOPILOT render (A8, A9, plan §8.3): a total above `AUTOPILOT_MAX_TOTAL_MS` (refused, never clamped) and any text layer. They are the montage's own
+ * issue codes: `duration-too-long` at the clips, and `too-many-text-layers` at each text layer (the autopilot allows none).
+ */
+function autopilotIssues(spec: Pick<MontageDraft, "clips" | "layers">): MontageIssue[] {
+  const issues: MontageIssue[] = [];
+  if (spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0) > AUTOPILOT_MAX_TOTAL_MS) issues.push({ code: "duration-too-long", path: ["clips"] });
+  spec.layers.forEach((layer, i) => {
+    if (layer.kind === "text") issues.push({ code: "too-many-text-layers", path: ["layers", i] });
+  });
+  return issues;
 }
 
 /** `spec` with every null focus set to the stand-in point: what a render uses when the focus could not be judged in time. */
@@ -267,6 +293,29 @@ async function within<T>(ms: number, work: () => Promise<T>, onTimeout: () => Er
   }
 }
 
+/**
+ * Marks every scene photo of `record` rejected (`rejected.jsonl`) and answers their ids, in the order the video shows them: those that were already rejected are listed too, since
+ * they are rejected afterwards. A photo the library no longer has is skipped (there is nothing to reject). Any other failure ends the delete before it removes anything.
+ */
+async function rejectScenePhotos(library: Library, record: VideoRecord): Promise<string[]> {
+  const rejected: string[] = [];
+  for (const photoId of scenePhotoIds(record.spec.clips)) {
+    try {
+      await library.setRejected(record.avatarId, photoId, true);
+    } catch (error) {
+      if (error instanceof LibraryError && error.code === "photo-not-found") continue;
+      throw error;
+    }
+    rejected.push(photoId);
+  }
+  return rejected;
+}
+
+/** The time a video was marked «Опубликовано» in `marks`, or undefined when it is not marked or the marks cannot be read (then it reads unmarked). */
+function markOf(marks: PublishedRead, videoId: string): string | undefined {
+  return marks.state === "ok" ? marks.at.get(videoId) : undefined;
+}
+
 // ---------- the service ----------
 
 export class VideoService {
@@ -304,7 +353,24 @@ export class VideoService {
     }
   }
 
-  async #prepareAndSubmit(payload: CommandPayload<"videos.render">): Promise<{ jobId: string; videoId: string }> {
+  /**
+   * The batch autopilot's render (Stage 4, plan §8.1): a headless spec with the provenance its record and intent will carry. It is the same path as `render`, so it is held to
+   * the same rules, and to the autopilot's (a total of at most 10 000 ms, no text layer). The contract command `videos.render` cannot carry provenance.
+   */
+  async renderInternal(input: InternalRenderInput): Promise<{ jobId: string; videoId: string }> {
+    // A provenance the record's schema would refuse is refused here, before a render is queued and an export name claimed (the intent would fail its write at the end of the render).
+    if (!LaunchId.safeParse(input.provenance.launchId).success || !LaunchVideoKey.safeParse(input.provenance.launchVideoKey).success) {
+      throw new EngineFailure({ code: "INTERNAL", detail: "the autopilot render's launch id or video key is malformed" });
+    }
+    this.#preparing++;
+    try {
+      return await this.#prepareAndSubmit({ spec: input.spec }, input.provenance);
+    } finally {
+      this.#preparing--;
+    }
+  }
+
+  async #prepareAndSubmit(payload: CommandPayload<"videos.render">, provenance?: VideoProvenance): Promise<{ jobId: string; videoId: string }> {
     const entered = performance.now();
     const budgetMs = this.#deps.commandDeadlineMs ?? RENDER_COMMAND_DEADLINE_MS;
     const marginMs = this.#deps.commandMarginMs ?? RENDER_COMMAND_MARGIN_MS;
@@ -313,12 +379,12 @@ export class VideoService {
     // A saved draft is read first: its spec is what everything after judges, and a draft that is gone or unreadable
     // refuses before the export folder or anything else is looked at. The job keeps THIS copy: a save or a delete after
     // it does not reach the render.
-    const source: RenderSource = "montageId" in payload ? await this.#loadDraft(payload.montageId) : { montageId: null, title: null, spec: payload.spec, library: null };
+    const source: RenderSource = "montageId" in payload ? await this.#loadDraft(payload.montageId) : { montageId: null, title: null, spec: payload.spec, library: null, ...(provenance === undefined ? {} : { provenance }) };
     const { spec } = source;
     // The read waited in the draft's queue: whatever it used of the command's time is gone, so out of time is said as that.
     if (source.library !== null && remaining() <= marginMs) throw new EngineFailure({ code: "INTERNAL", detail: RENDER_NOT_QUEUED_DETAIL });
     // In the order `montages.get` reports them: structure, what has not landed (N9), the stickers the set lacks, the captions that break the rules, the music track.
-    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...draftCaptionIssues(spec), ...this.#trackIssues(spec)].slice(0, MAX_MONTAGE_ISSUES);
+    const issues = [...montageIssues(spec, "spec"), ...notYetSupportedIssues(spec), ...stickerIssues(spec), ...draftCaptionIssues(spec), ...this.#trackIssues(spec), ...(source.provenance === undefined ? [] : autopilotIssues(spec))].slice(0, MAX_MONTAGE_ISSUES);
     if (issues.length > 0) throw new EngineFailure({ code: "MONTAGE_INVALID", issues });
     const renderTmpDir = this.#deps.renderTmpDir;
     if (renderTmpDir === undefined) throw new EngineFailure({ code: "INTERNAL", detail: "no render folder is configured, so nothing can be rendered" });
@@ -473,7 +539,7 @@ export class VideoService {
   async #render(
     library: Library,
     spec: MontageDraft,
-    source: Pick<RenderSource, "montageId" | "title">,
+    source: Pick<RenderSource, "montageId" | "title" | "provenance">,
     renderTmpDir: string,
     check: Extract<ExportRootCheck, { ok: true }>,
     ownPhotos: ReadonlyMap<string, OwnPhotoSource>,
@@ -564,6 +630,7 @@ export class VideoService {
       ...(filled.music?.source === "own" && ownTrack !== null ? { ownTrack: { source: ownTrack, startMs: filled.music.startMs } } : {}),
       montageId,
       title: source.title,
+      ...(source.provenance === undefined ? {} : { provenance: source.provenance }),
       videoKind: videoKindOf(filled.clips),
       music: null,
     };
@@ -656,6 +723,14 @@ export class VideoService {
   // ---------- videos.list ----------
 
   async list(avatarId: string): Promise<VideoSummary[]> {
+    return (await this.listWithMarks(avatarId)).videos;
+  }
+
+  /**
+   * `list`, and whether the owner's «Опубликовано» marks could be read (Stage 4, plan §8.4): `published` is `ok` once the avatar has a log of marks, `unknown` when the log is torn or
+   * unreadable (then every video is listed unmarked and the window shows a notice), and ABSENT while nothing was ever marked, like a producer with no marks. A read never repairs a log.
+   */
+  async listWithMarks(avatarId: string): Promise<{ videos: VideoSummary[]; published?: "ok" | "unknown" }> {
     const enteredAt = performance.now();
     const listBudgetMs = this.#deps.listBudgetMs ?? LIST_BUDGET_MS;
     const library = this.#deps.openLibrary();
@@ -691,6 +766,7 @@ export class VideoService {
       rootJudged = false;
       this.#deps.log(`videos.list: the export folder could not be looked at (${kindOf(error)}); the files of avatar ${avatarId} are left unchecked`);
     }
+    const marks = await this.#readMarks(avatarId, library, listBudgetMs - (performance.now() - enteredAt));
     const budget = newHashBudget();
     const checkMs = this.#deps.recordCheckTimeoutMs ?? RECORD_CHECK_TIMEOUT_MS;
     const summaries: VideoSummary[] = [];
@@ -721,9 +797,23 @@ export class VideoService {
       }
       // The draft lookups are disk calls too: once the budget is spent the record keeps the draft id as written (the same answer as a lookup that failed).
       const spent = cutByBudget || performance.now() - enteredAt >= listBudgetMs;
-      summaries.push(videoSummaryOf(spent ? record : await this.#withLiveDraft(library, record, drafts), state));
+      summaries.push(videoSummaryOf(spent ? record : await this.#withLiveDraft(library, record, drafts), state, markOf(marks, record.id)));
     }
-    return summaries;
+    return { videos: summaries, ...(marks.state === "absent" ? {} : { published: marks.state === "ok" ? ("ok" as const) : ("unknown" as const) }) };
+  }
+
+  /** The avatar's marks as the log says now. A log that cannot be read is logged by its kind (never its text); it is not repaired here. Never throws. */
+  async #readMarks(avatarId: string, library: Library, budgetMs?: number): Promise<PublishedRead> {
+    try {
+      const read = this.#deps.readMarks ?? readPublished;
+      // Inside the listing's budget: a log on a drive that stopped answering reads `unknown` at the budget, and the list still comes.
+      const marks = budgetMs === undefined ? await read(library.root, avatarId) : await within(budgetMs, () => read(library.root, avatarId), () => Object.assign(new Error("the marks read did not answer"), { code: "ETIMEDOUT" }));
+      if (marks.state === "unknown") this.#deps.log(`the published marks of avatar ${avatarId} cannot be read (${marks.reason}); its videos are listed unmarked`);
+      return marks;
+    } catch (error) {
+      this.#deps.log(`the published marks of avatar ${avatarId} could not be looked at (${kindOf(error)}); its videos are listed unmarked`);
+      return { state: "unknown", reason: "corrupt" };
+    }
   }
 
   // ---------- videos.get ----------
@@ -762,7 +852,35 @@ export class VideoService {
       this.#deps.log(`videos.get: the file of ${record.id} could not be checked (${kindOf(error)})`);
       state = "unchecked";
     }
-    return videoSummaryOf(await this.#withLiveDraft(library, record, new Map()), state);
+    const marks = await this.#readMarks(record.avatarId, library);
+    return videoSummaryOf(await this.#withLiveDraft(library, record, new Map()), state, markOf(marks, record.id));
+  }
+
+  // ---------- videos.setPublished ----------
+
+  /**
+   * The owner's «Опубликовано» mark on a video, set or cleared (Stage 4, plan §8.4). The record is never rewritten: the mark is a line in the avatar's `published.jsonl`. Answers the
+   * video as `videos.get` shows it and announces it (`video.changed`) when the mark changed; a mark that already is what is asked changes and announces nothing. NOT_FOUND for an unknown
+   * video; INTERNAL, naming no path, when the avatar's log has a complete line that is not a mark (nothing is written then).
+   */
+  async setPublished(videoId: string, published: boolean): Promise<VideoSummary> {
+    return this.#deps.withLibrary(async (library) => {
+      const before = await this.get(videoId);
+      let marked: { changed: boolean; at: string | null };
+      try {
+        marked = await markPublished(library.root, before.avatarId, videoId, published, this.#deps.now().toISOString());
+      } catch (error) {
+        if (error instanceof PublishedUnreadableError) throw new EngineFailure({ code: "INTERNAL", detail: "the published marks of this avatar cannot be read, so the mark was not saved" });
+        this.#deps.log(`videos.setPublished: ${videoId} could not be marked (${kindOf(error)})`);
+        throw new EngineFailure({ code: "INTERNAL", detail: `the mark could not be saved (${codeOf(error)})` });
+      }
+      // The answer is built from what the mark itself answered, not from a second read of the log: a torn log that was healed by this very call, or a mark made meanwhile, cannot
+      // make it say something else.
+      const { publishedAt: _before, ...rest } = before;
+      const video: VideoSummary = marked.at === null ? rest : { ...rest, publishedAt: marked.at };
+      if ((before.publishedAt ?? null) !== marked.at) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "upserted", video } });
+      return video;
+    });
   }
 
   /**
@@ -797,7 +915,7 @@ export class VideoService {
    * - `record` («Удалить запись»): ONLY the record, whatever the file's state, and never the file. For `elsewhere` that frees
    *   the photos while the file lives on in the other folder, which is what the owner asked for.
    */
-  async delete(videoId: string, mode: "video" | "record"): Promise<{ videoId: string; fileDeleted: boolean; fileState: FileState }> {
+  async delete(videoId: string, mode: "video" | "record", options: { rejectPhotos?: true } = {}): Promise<{ videoId: string; fileDeleted: boolean; fileState: FileState; rejectedPhotoIds?: string[] }> {
     return this.#deps.withLibrary(async (library) => {
       let root: ExportRootRef | null;
       let rootUnanswered = false;
@@ -811,13 +929,25 @@ export class VideoService {
         root = look.kind === "root" ? look.ref : null;
       }
       let outcome;
+      let rejectedPhotoIds: string[] | undefined;
       try {
         // Bounded: a hung stat or hash on a dropped drive must not hold the library (`withLibrary` counts this as a write, which
         // a library switch waits for) for ever. What was done before the bound stays done: every step of a delete leaves a state
         // the next one finishes, and the answer says the outcome is not known.
         outcome = await within(
           this.#deps.deleteTimeoutMs ?? DELETE_TIMEOUT_MS,
-          () => deleteVideo(videoId, { mode, library, exportRoot: root, rootUnanswered, checker: this.#deps.checker, ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }), log: this.#deps.log }),
+          () =>
+            deleteVideo(videoId, {
+              mode,
+              library,
+              exportRoot: root,
+              rootUnanswered,
+              checker: this.#deps.checker,
+              ...(this.#deps.fs === undefined ? {} : { fs: this.#deps.fs }),
+              log: this.#deps.log,
+              // «Удалить видео и отклонить фото» (Stage 4, §8.5): the folder has answered and the file is reachable (the refusals are made), and the video is still whole.
+              ...(options.rejectPhotos === true ? { beforeRemoval: async (record: VideoRecord) => void (rejectedPhotoIds = await rejectScenePhotos(library, record)) } : {}),
+            }),
           () => new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", detail: "the export folder did not answer in time; look at the video list before trying again" }),
         );
       } catch (error) {
@@ -825,7 +955,7 @@ export class VideoService {
       }
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "video.changed", payload: { change: "removed", videoId, avatarId: outcome.avatarId } });
       this.#announce(library, outcome.avatarId);
-      return { videoId, fileDeleted: outcome.fileDeleted, fileState: outcome.fileState };
+      return { videoId, fileDeleted: outcome.fileDeleted, fileState: outcome.fileState, ...(rejectedPhotoIds === undefined ? {} : { rejectedPhotoIds }) };
     });
   }
 
@@ -896,6 +1026,8 @@ export class VideoService {
     if (error instanceof VideoRecordUnreadableError) return new EngineFailure({ code: "INTERNAL", detail: "the video's record cannot be read" });
     if (error instanceof VideoFileUnreachableError) return new EngineFailure({ code: "EXPORT_UNAVAILABLE", exportReason: "missing", detail: "the video's file is not in the current export folder" });
     if (error instanceof LibraryError && error.code === "library-too-new") return new EngineFailure({ code: "LIBRARY_TOO_NEW", detail: "this video's record was written by a newer version of Studio" });
+    // The reject marks cannot be written: nothing was rejected and nothing was deleted. The library's message names a file, so it is not repeated.
+    if (error instanceof LibraryError && error.code === "log-needs-repair") return new EngineFailure({ code: "INTERNAL", detail: "the reject marks of this avatar need repair, so nothing was rejected or deleted" });
     // Its message names no path: `VideoDiskError` builds it from a fixed phrase and the disk's code.
     if (error instanceof VideoDiskError) return new EngineFailure({ code: "INTERNAL", detail: error.message });
     // Anything else is a raw Node error, whose message names the owner's path: only its code is told.

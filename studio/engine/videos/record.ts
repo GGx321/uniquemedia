@@ -83,6 +83,16 @@ export const VideoRecordSchema = z.looseObject({
 });
 export type VideoRecord = z.infer<typeof VideoRecordSchema>;
 
+/**
+ * Who made a video and under which launch (Stage 4, plan §8.3): the three fields together, which is how `VideoRecordWriteSchema` accepts them. A manual render has none. The batch
+ * autopilot gives one to its renders so that a crash between the intent and the record is resolved by what the record says, never by guessing from photo usage (§3.6 step 9).
+ */
+export interface VideoProvenance {
+  readonly origin: "autopilot";
+  readonly launchId: string;
+  readonly launchVideoKey: string;
+}
+
 /** A clip as far as "used" goes, structurally, so the contract's `Clip` and a record's loose clip both fit. */
 interface ClipLike {
   readonly kind: string;

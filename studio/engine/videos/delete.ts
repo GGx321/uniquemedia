@@ -97,6 +97,12 @@ export interface DeleteVideoDeps {
   readonly fs?: CommitFs;
   /** Ids and states only. */
   readonly log?: (line: string) => void;
+  /**
+   * Stage 4 (plan §8.5): runs once the record is read and every refusal has been made, and before anything is removed: the file is untouched, the record is in place. «Удалить видео и
+   * отклонить фото» marks the record's photos rejected here, so a refusal (the folder, a file in another root) changes nothing, and a delete that fails afterwards leaves a video whose
+   * photos are rejected, never free photos with no video. A throw ends the delete with nothing removed.
+   */
+  readonly beforeRemoval?: (record: VideoRecord) => Promise<void>;
 }
 
 export interface DeleteOutcome {
@@ -173,6 +179,7 @@ export async function deleteVideo(videoId: string, deps: DeleteVideoDeps): Promi
       // The file cannot be reached: the record alone would orphan it. Nothing has been removed yet.
       if (fileState === "elsewhere") throw new VideoFileUnreachableError(videoId);
     }
+    await deps.beforeRemoval?.(record);
     let fileDeleted = false;
     if (!recordOnly && fileState === "present" && deps.exportRoot !== null) {
       const file = recordFilePath(record, deps.exportRoot).file;

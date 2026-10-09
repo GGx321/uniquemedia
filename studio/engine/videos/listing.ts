@@ -118,7 +118,7 @@ function firstClipOf(spec: VideoRecord["spec"]): z.infer<typeof Clip> | null {
  * route that has nothing. The title and the first clip are only shown, so a value this build cannot read is null, never
  * a reason to leave the record out.
  */
-export function videoSummaryOf(record: VideoRecord, fileState: FileState): VideoSummary {
+export function videoSummaryOf(record: VideoRecord, fileState: FileState, publishedAt?: string): VideoSummary {
   const title = MontageName.safeParse(record.title);
   return {
     videoId: record.id,
@@ -135,5 +135,9 @@ export function videoSummaryOf(record: VideoRecord, fileState: FileState): Video
     hasPoster: false,
     title: title.success ? title.data : null,
     firstClip: firstClipOf(record.spec),
+    // Stage 4: who made it. A launch id without an origin is not a summary the contract accepts, so it is shown only beside one.
+    ...(record.origin === undefined ? {} : { origin: record.origin, ...(record.launchId === undefined ? {} : { launchId: record.launchId }) }),
+    // Stage 4: the owner's «Опубликовано» mark, from `published.jsonl` (the record is write-once and never says it). Absent for a video not marked.
+    ...(publishedAt === undefined ? {} : { publishedAt }),
   };
 }

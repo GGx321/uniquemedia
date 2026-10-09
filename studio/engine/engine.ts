@@ -1955,12 +1955,20 @@ export class Engine {
       case "videos.cancel":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: this.#videos.cancel(command.payload.jobId) };
       case "videos.list":
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { videos: await this.#videos.list(command.payload.avatarId) } };
+        // Stage 4 (S4.5c): `published` says whether the owner's «Опубликовано» marks could be read; absent while nothing was ever marked.
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.listWithMarks(command.payload.avatarId) };
+      case "videos.setPublished":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { video: await this.#videos.setPublished(command.payload.videoId, command.payload.published) } };
       case "videos.delete":
-        // Stage 4 (S4.1): the contract already carries `rejectPhotos`, the engine does not act on it until S4.5c. Refused before anything is looked at or touched, so a
-        // video is never deleted while the owner is told its photos were rejected.
-        if (command.payload.rejectPhotos === true) return errorResponseFor(command, { code: "INTERNAL", detail: "videos.delete with rejectPhotos is not implemented yet" });
-        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#videos.delete(command.payload.videoId, command.payload.mode) };
+        // Stage 4 (S4.5c): `rejectPhotos` marks the video's scene photos rejected after the export folder has answered and before the video goes (the service holds the order).
+        return {
+          v,
+          id: command.id,
+          kind: "response",
+          type: command.type,
+          ok: true,
+          result: await this.#videos.delete(command.payload.videoId, command.payload.mode, command.payload.rejectPhotos === true ? { rejectPhotos: true } : {}),
+        };
       case "montages.create":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#montages.create(command.payload) };
       case "montages.get":
@@ -2053,7 +2061,6 @@ export class Engine {
       case "autopilot.list":
       case "autopilot.get":
       case "autopilot.removeUnreadable":
-      case "videos.setPublished":
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
