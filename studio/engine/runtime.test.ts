@@ -55,12 +55,13 @@ const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@j
 
 /**
  * Where engine code may live: its own tree, studio/node, the pure contract, the pure montage, sticker, text (the caption
- * rules, segmenter and layout) and music (a track's highlights and waveform window) modules, which the dev mock shares,
+ * rules, segmenter and layout), music (a track's highlights and waveform window) and autopilot (the launch's money arithmetic,
+ * spec generator and track chooser) modules, which the dev mock shares,
  * and the uniquifier's src/core and src/node, which Studio may import (never
  * edit) — held to the same rules below.
  */
 const ALLOWED_ROOTS = [
-  ...["engine", "node", join("shared", "engine"), join("shared", "montage"), join("shared", "stickers"), join("shared", "text"), join("shared", "music")].map((d) => join(STUDIO_DIR, d)),
+  ...["engine", "node", join("shared", "engine"), join("shared", "montage"), join("shared", "stickers"), join("shared", "text"), join("shared", "music"), join("shared", "autopilot")].map((d) => join(STUDIO_DIR, d)),
   ...[join("src", "core"), join("src", "node")].map((d) => join(STUDIO_DIR, "..", d)),
 ];
 
