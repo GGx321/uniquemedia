@@ -774,3 +774,54 @@ describe("runs.startFromScenes", () => {
     });
   });
 });
+
+// ---------- soft stop before the job exists (S4.5b fix round 1, M2) ----------
+
+describe("a soft stop that arrives while a start is still being made", () => {
+  async function readyToStart(net: ReturnType<typeof network>) {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 4 });
+    const started = await engineOver(net);
+    return { ...started, avatarId, revision: (await setOf(started.engine, avatarId)).revision };
+  }
+
+  test("is remembered and applied the moment the run's job exists: no image is sent, the job ends cancelled, the run is resumable", async () => {
+    const held = heldPrices();
+    const net = network({ prices: held.prices });
+    const { engine, events, revision } = await readyToStart(net);
+    const starting = engine.handle(startCommand(revision, 4 * 3 * IMAGE));
+    await until(() => held.asked(), "the price request");
+
+    expect(engine.softStopRun(RUN)).toBe(true);
+    held.release();
+    const { jobId } = startedOf(await starting);
+    const end = await jobEnd(events, jobId);
+
+    expect(end).toMatchObject({ type: "job.cancelled", payload: { kind: "run", runId: RUN } });
+    expect(net.imageCalls()).toHaveLength(0);
+    expect(reserves()).toEqual([]);
+  });
+
+  test("does not leak: a later manual runs.resume of the same run is not stopped", async () => {
+    const held = heldPrices();
+    const net = network({ prices: held.prices });
+    const { engine, events, revision } = await readyToStart(net);
+    const starting = engine.handle(startCommand(revision, 4 * 3 * IMAGE));
+    await until(() => held.asked(), "the price request");
+    engine.softStopRun(RUN);
+    held.release();
+    await jobEnd(events, startedOf(await starting).jobId);
+
+    const answer = ok(await engine.handle(command("runs.resume", { runId: RUN, acceptedWorstMicros: 10_000_000 })));
+    if (answer.type !== "runs.resume") throw new Error(`expected a resume, got ${answer.type}`);
+    const end = await jobEnd(events, answer.result.jobId);
+
+    expect(end).toMatchObject({ type: "job.done" });
+    expect(net.imageCalls()).toHaveLength(4);
+  });
+
+  test("false for a run nobody is starting or running", async () => {
+    const { engine } = await readyToStart(network());
+    expect(engine.softStopRun(RUN)).toBe(false);
+  });
+});

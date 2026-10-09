@@ -111,6 +111,9 @@ export function createAgeGate(deps: AgeGateDeps = {}): QaGate {
         return { verdict: "reject", reason: `the image could not be prepared for the age check: ${messageOf(error)}` };
       }
 
+      // A stop seen during the downscale: no reserve is written for a request that would be released unsent.
+      if (!input.beforeSend()) throw new Error("the age check was not sent: the run had already stopped sending");
+
       const result = await input.chat({
         attemptId: ageGateAttemptId(input.attemptId),
         jobId: input.jobId,

@@ -47,11 +47,13 @@ export interface ReviewWriteRequest {
   /** The job's cap scope; the Budget holds its cap (the accepted worst case). */
   scope: Scope;
   signal: AbortSignal;
+  /** S4.5b, the soft stop: no attempt is started once it fires; the request already out finishes and an accepted answer is stored. The job ends `cancelled`, resumable. */
+  stop?: AbortSignal;
 }
 
 /**
  * How the job ended. `done`: the answer is in the set. `failed`: stopped by a failure or given up on; `resolved` says nothing can be resumed (the write was
- * closed), and `stoppedBy` is why, for the write's record. `cancelled`: the owner's cancel; the reserve of a request in flight stays open.
+ * closed), and `stoppedBy` is why, for the write's record. `cancelled`: the owner's cancel (the reserve of a request in flight stays open) or the soft stop (nothing was aborted: the request in flight settled, or none was started).
  */
 export type ReviewWriteEnd =
   | { status: "done"; written: number; unwritten: number }
@@ -99,7 +101,7 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     if (reviewWriteState(record, ledger).attemptsLeft === 0) await deps.giveUp(record.k);
     return { status: "cancelled" };
   };
-  if (request.signal.aborted) return cancelled();
+  if (request.signal.aborted || request.stop?.aborted === true) return cancelled();
 
   const asked = askedOf(set, record);
   const base = {
@@ -107,6 +109,7 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     scope: request.scope,
     textModel: set.models.text,
     signal: request.signal,
+    ...(request.stop === undefined ? {} : { stop: request.stop }),
     sentences: new Map<number, string>(),
     writerDone: new Set<number>(),
     ledger,
@@ -142,7 +145,7 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
     deps.progress(asked.slots.length);
     return { status: "done", written: asked.slots.length, unwritten: 0 };
   }
-  if (result.stop === "cancelled") return cancelled();
+  if (result.stop === "cancelled" || result.stop === "soft-stopped") return cancelled();
   if (result.stop === "stopped") {
     // An attempt that got no answer stops the job. When no attempt is left (the answers before it used them up), nothing could be resumed: resolve it.
     const resolved = reviewWriteState(record, ledger).attemptsLeft === 0;

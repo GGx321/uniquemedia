@@ -14,7 +14,7 @@ import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type
 import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
 import { CAMERA_REALISM_CLAUSE, plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
-import { RunEventSchema, type RunEvent } from "./journal";
+import { attemptPaid, RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
 import { CpuPool, NetworkPool } from "./pools";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaVerdict } from "./qa";
@@ -207,6 +207,8 @@ function start(
     pool?: NetworkPool;
     gates?: QaGate[];
     signal?: AbortSignal;
+    /** The soft stop (S4.5b): no new attempt or chunk once it fires; what is in flight finishes. */
+    softStop?: AbortSignal;
     budget?: Budget;
     library?: RunJobDeps["library"];
     jobId?: string;
@@ -250,7 +252,7 @@ function start(
       ...(opts.referenceTimeoutMs === undefined ? {} : { referenceTimeoutMs: opts.referenceTimeoutMs }),
       ...(opts.gateTimeout === undefined ? {} : { gateTimeout: opts.gateTimeout }),
     },
-    { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal },
+    { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal, ...(opts.softStop === undefined ? {} : { softStop: opts.softStop }) },
   );
   return { net, pool, progress, sent, started, end };
 }
@@ -1533,6 +1535,305 @@ describe("cancel", () => {
   test("the after-cancel bound is short: five seconds, far under the gates' default", () => {
     expect(CANCELLED_GATE_TIMEOUT_MS).toBe(5_000);
     expect(CANCELLED_GATE_TIMEOUT_MS).toBeLessThan(QA_GATE_TIMEOUT_MS);
+  });
+});
+
+// ---------- soft stop (S4.5b) ----------
+
+/** A handler whose answers arrive only when the test lets them, after their requests were sent. */
+function held(answer: Handler): { handler: Handler; release: () => void; arrived: () => number } {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let arrived = 0;
+  return {
+    handler: async (call, n) => {
+      arrived++;
+      await gate;
+      return answer(call, n);
+    },
+    release,
+    arrived: () => arrived,
+  };
+}
+
+/** A Budget whose image-attempt reserves reach the disk and then the stop fires: the window between a reserve and its send. */
+function stoppingAfterImageReserve(real: Budget, stop: AbortController): Budget {
+  return new Proxy(real, {
+    get(target, prop) {
+      if (prop === "tryReserve") {
+        return async (req: Parameters<Budget["tryReserve"]>[0]) => {
+          const reserved = await target.tryReserve(req);
+          if (req.attemptId.includes(":slot-")) stop.abort();
+          return reserved;
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+describe("soft stop, the residual windows (S4.5b fix round 1, M1)", () => {
+  test("a stop after an image attempt's reserve is on disk releases it unsent: journaled aborted, no open reserve, not a paid attempt, and a resume takes the slot's next id", async () => {
+    const run = await newRun(1);
+    const stop = new AbortController();
+    const { end, net } = start(run, { softStop: stop.signal, budget: stoppingAfterImageReserve(budget, stop) });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.imageCalls()).toHaveLength(0);
+    expect(ledger.openReserves()).toEqual([]);
+    expect(attemptPaid(ledger, `${RUN_ID}:slot-1#1`)).toBe(false);
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["aborted"]);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(reservedIds().filter((id) => id.includes(":slot-"))).toEqual([`${RUN_ID}:slot-1#1`, `${RUN_ID}:slot-1#2`]);
+  });
+
+  test("S4.5b L1: a run queued behind other holders of the network pool ends at once on a stop, with nothing reserved", async () => {
+    const run = await newRun(2);
+    const pool = new NetworkPool({ max: 1 });
+    const holder = await pool.acquire(new AbortController().signal);
+    const stop = new AbortController();
+    const { end, net } = start(run, { softStop: stop.signal, pool });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    stop.abort();
+
+    const result = await endWithin(end, 2_000);
+    holder();
+    expect(result).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(0);
+    expect(ledgerLines()).toEqual([]);
+  });
+
+  test("S4.5b L1: a resumed run whose writer is done, with its slots queued behind other holders of the pool, ends at once on a stop", async () => {
+    const run = await newRun(2);
+    // A first job that stopped after the writer left the chunk journaled: pre-journal it by running the writer to its end under a stop that fires during it.
+    const writer = held((call) => writerReply(call));
+    const firstStop = new AbortController();
+    const firstNet = network({ writer: writer.handler });
+    const one = start(run, { net: firstNet, softStop: firstStop.signal });
+    await until(() => writer.arrived() === 1, "the writer request");
+    firstStop.abort();
+    writer.release();
+    expect(await one.end).toEqual({ status: "cancelled" });
+
+    const pool = new NetworkPool({ max: 1 });
+    const holder = await pool.acquire(new AbortController().signal);
+    const stop = new AbortController();
+    const second = start(run, { jobId: "job-00000002", softStop: stop.signal, pool });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    stop.abort();
+
+    const result = await endWithin(second.end, 2_000);
+    holder();
+    expect(result).toEqual({ status: "cancelled" });
+    expect(second.net.imageCalls()).toHaveLength(0);
+    expect(ledger.openReserves()).toEqual([]);
+  });
+});
+
+describe("soft stop", () => {
+  test("with six attempts in flight no seventh is sent; the six settle normally and the run ends cancelled", async () => {
+    const run = await newRun(8);
+    const stop = new AbortController();
+    const images = held(() => imageReply());
+    const net = network({ image: images.handler });
+    const { end, sent, progress } = start(run, { net, softStop: stop.signal, pool: new NetworkPool({ max: 6 }) });
+    await until(() => images.arrived() === 6, "six image requests in flight");
+
+    stop.abort();
+    images.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.imageCalls()).toHaveLength(6);
+    expect(sent).toHaveLength(6);
+    expect(reservedIds().filter((id) => id.includes(":slot-"))).toHaveLength(6);
+    expect(progress).toHaveLength(6);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(7); // the master and six kept photos
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(Array(6).fill("passed"));
+  });
+
+  test("the attempts in flight settle at their real cost and the stop leaves no open reserve", async () => {
+    const run = await newRun(4);
+    const stop = new AbortController();
+    const images = held(() => imageReply(0.04));
+    const { end } = start(run, { net: network({ image: images.handler }), softStop: stop.signal, pool: new NetworkPool({ max: 2 }) });
+    await until(() => images.arrived() === 2, "two image requests in flight");
+
+    stop.abort();
+    images.release();
+    await end;
+
+    expect(ledger.openReserves()).toEqual([]);
+    const settles = ledgerLines().filter((l) => l.type === "settle" && typeof l.attemptId === "string" && l.attemptId.includes(":slot-"));
+    expect(settles.map((l) => l.costMicros)).toEqual([40_000, 40_000]);
+    expect(budget.inFlightCount()).toBe(0);
+  });
+
+  test("a free gate still judges and stores an image that lands during the stop, on a signal the stop did not abort", async () => {
+    const run = await newRun(2);
+    const stop = new AbortController();
+    const images = held(() => imageReply());
+    const aborted: boolean[] = [];
+    const pdq = gate("pdq", (input) => {
+      aborted.push(input.signal.aborted);
+      return { verdict: "pass", qa: { pdq: "d".repeat(64) } };
+    });
+    const { end } = start(run, { net: network({ image: images.handler }), softStop: stop.signal, gates: [pdq], pool: new NetworkPool({ max: 1 }) });
+    await until(() => images.arrived() === 1, "the first image request");
+
+    stop.abort();
+    images.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(aborted).toEqual([false]);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(2);
+  });
+
+  test("a stop leaves the slots it did not start open, and a resume finishes them within the cap, every attempt id sent once", async () => {
+    const run = await newRun(4);
+    const stop = new AbortController();
+    const images = held(() => imageReply());
+    const first = start(run, { net: network({ image: images.handler }), softStop: stop.signal, pool: new NetworkPool({ max: 2 }) });
+    await until(() => images.arrived() === 2, "two image requests in flight");
+    stop.abort();
+    images.release();
+    expect(await first.end).toEqual({ status: "cancelled" });
+    const committedAtStop = scopeCommitted();
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    const end = await resumed.end;
+
+    expect(end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(library.photosByAvatar(avatarId)).toHaveLength(5);
+    expect(committedAtStop).toBeLessThanOrEqual(run.capMicros);
+    expect(scopeCommitted()).toBeLessThanOrEqual(run.capMicros);
+    expect(caps.get(scopeKey(SCOPE))).toBe(run.capMicros); // the cap is the plan's, unchanged by the stop
+    const ids = reservedIds();
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  test("a stop before the first attempt ends the job at once: no writer call, no image, no reserve", async () => {
+    const run = await newRun(3);
+    const stop = new AbortController();
+    stop.abort();
+    const { end, net } = start(run, { softStop: stop.signal });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(0);
+    expect(ledgerLines()).toEqual([]);
+    expect((await journal()).at(-1)).toMatchObject({ type: "job", status: "cancelled" });
+  });
+
+  test("a stop during the writer lets that request finish and be journaled, and no image follows", async () => {
+    const run = await newRun(3);
+    const stop = new AbortController();
+    const writer = held((call) => writerReply(call));
+    const net = network({ writer: writer.handler });
+    const { end } = start(run, { net, softStop: stop.signal });
+    await until(() => writer.arrived() === 1, "the writer request");
+
+    stop.abort();
+    writer.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.imageCalls()).toHaveLength(0);
+    expect((await journal()).some((e) => e.type === "writer")).toBe(true);
+    expect(ledger.openReserves()).toEqual([]);
+  });
+
+  test("a stop during the writer's first chunk asks no second chunk", async () => {
+    const run = await newRun(30); // two chunks: 25 + 5
+    const stop = new AbortController();
+    const writer = held((call) => writerReply(call));
+    const net = network({ writer: writer.handler });
+    const { end } = start(run, { net, softStop: stop.signal });
+    await until(() => writer.arrived() === 1, "the first writer request");
+
+    stop.abort();
+    writer.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.writerCalls()).toHaveLength(1);
+    expect((await journal()).filter((e) => e.type === "writer")).toHaveLength(1);
+    expect(net.imageCalls()).toHaveLength(0);
+  });
+
+  test("a stop that lands while the last slot's photo is being judged changes nothing: the run is done", async () => {
+    const run = await newRun(2);
+    const stop = new AbortController();
+    const lastSlotGate = gate("pdq", (input) => {
+      if (input.slot.slotIndex === 2) stop.abort();
+      return { verdict: "pass" };
+    });
+    const { end } = start(run, { softStop: stop.signal, gates: [lastSlotGate], pool: new NetworkPool({ max: 1 }) });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+  });
+
+  test("with a paid gate registered, an image that lands during the stop is dropped and the gate is never sent", async () => {
+    const run = await newRun(2);
+    const stop = new AbortController();
+    const images = held(() => imageReply());
+    const age = gate("age", () => ({ verdict: "pass" }), { paid: true });
+    const { end } = start(run, { net: network({ image: images.handler }), softStop: stop.signal, gates: [age], pool: new NetworkPool({ max: 1 }) });
+    await until(() => images.arrived() === 1, "the first image request");
+
+    stop.abort();
+    images.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(age.inputs).toHaveLength(0);
+    expect(library.photosByAvatar(avatarId)).toHaveLength(1);
+    expect((await journal()).flatMap((e) => (e.type === "attempt" ? [e.outcome] : []))).toEqual(["dropped"]);
+    expect(ledger.openReserves()).toEqual([]);
+  });
+
+  test("the real age gate sends no request for an image that lands during the stop", async () => {
+    const run = await newRun(2);
+    const stop = new AbortController();
+    const images = held(() => imageReply());
+    const net = network({ image: images.handler });
+    const { end } = start(run, { net, softStop: stop.signal, gates: [createAgeGate({ downscale: async () => JPEG })], pool: new NetworkPool({ max: 1 }) });
+    await until(() => images.arrived() === 1, "the first image request");
+
+    stop.abort();
+    images.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.ageCalls()).toHaveLength(0);
+  });
+
+  test("a fatal error is not hidden by the stop: the run still ends failed", async () => {
+    const run = await newRun(2);
+    const stop = new AbortController();
+    const images = held(() => ({ status: 401, body: { error: { message: "bad key" } } }));
+    const { end } = start(run, { net: network({ image: images.handler }), softStop: stop.signal, pool: new NetworkPool({ max: 1 }) });
+    await until(() => images.arrived() === 1, "the first image request");
+
+    stop.abort();
+    images.release();
+
+    expect(await end).toMatchObject({ status: "failed", error: { code: "AUTH_INVALID" } });
+  });
+
+  test("the hard cancel after a soft stop still aborts the requests in flight", async () => {
+    const run = await newRun(2);
+    const stop = new AbortController();
+    const cancel = new AbortController();
+    const net = network({ image: () => ({ hang: true }) });
+    const { end } = start(run, { net, softStop: stop.signal, signal: cancel.signal, pool: new NetworkPool({ max: 1 }) });
+    await until(() => net.imageCalls().length === 1, "the image request");
+
+    stop.abort();
+    cancel.abort(new Error("cancelled by the user"));
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(ledger.openReserves()).toHaveLength(1); // the hard cancel leaves its reserve open; the soft stop alone never does
   });
 });
 

@@ -68,6 +68,11 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
   read?: (content: string, slots: readonly S[]) => PhaseRead;
   /** The run job's cancel. */
   signal: AbortSignal;
+  /**
+   * S4.5b, the soft stop: once it fires no new attempt and no new chunk is asked; a request already out finishes and is settled and kept as usual.
+   * Absent, the phase can only be stopped by the hard cancel.
+   */
+  stop?: AbortSignal;
   /** The plan's slots, in plan order. */
   slots: readonly S[];
   /** The plan's writer chunks, with their pre-allocated ids. */
@@ -82,7 +87,8 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
 
 /**
  * - ok: every slot's sentence, the journal's earlier ones included.
- * - not ok, the phase stopped: `cancelled` by the user; `stopped` by a failure
+ * - not ok, the phase stopped: `cancelled` by the user; `soft-stopped` by the soft stop (S4.5b: nothing was lost,
+ *   the next chunk or attempt is simply not asked, and a later job asks it under its next unused id); `stopped` by a failure
  *   a later job may get past (a rate limit, an outage, the network, the key,
  *   the run's cap, a ledger halt) — the run stays resumable; `exhausted`: a
  *   chunk used every answer it may have, or every id it has, so no job will
@@ -91,7 +97,7 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
  */
 export type WriterPhaseResult =
   | { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> }
-  | { ok: false; stop: "cancelled" | "stopped" | "exhausted"; error: EngineError };
+  | { ok: false; stop: "cancelled" | "soft-stopped" | "stopped" | "exhausted"; error: EngineError };
 
 /** The shot and the pose a reader settled on for one scene (an idea write's, CS.8a). */
 export interface PhaseAngle {
@@ -106,13 +112,23 @@ function cancelled(): Extract<WriterPhaseResult, { ok: false }> {
   return { ok: false, stop: "cancelled", error: { code: "INTERNAL", detail: "the run was cancelled while its scenes were being written" } };
 }
 
-/** One call under `attemptId`, inside a network slot; null when the cancel came first. */
-async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>, attemptId: string, slots: readonly S[], feedback: WriterRefusal | undefined): Promise<ChatResult | null> {
+function softStopped(): Extract<WriterPhaseResult, { ok: false }> {
+  return { ok: false, stop: "soft-stopped", error: { code: "INTERNAL", detail: "the scene writer was stopped before its next request" } };
+}
+
+/** One call under `attemptId`, inside a network slot; null when the cancel came first, "soft-stopped" when the soft stop did (before a reserve was made). */
+async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>, attemptId: string, slots: readonly S[], feedback: WriterRefusal | undefined): Promise<ChatResult | null | "soft-stopped"> {
   let release: Release;
   try {
-    release = await deps.acquire(phase.signal);
+    // A call still queued for its slot gives way to the soft stop too: it has not started, nothing is reserved.
+    release = await deps.acquire(phase.stop === undefined ? phase.signal : AbortSignal.any([phase.signal, phase.stop]));
   } catch {
-    return null;
+    return phase.signal.aborted ? null : "soft-stopped";
+  }
+  // The soft stop may have come while this call waited for its slot: nothing is reserved yet, so nothing is left behind.
+  if (phase.stop?.aborted === true) {
+    release();
+    return "soft-stopped";
   }
   try {
     return await deps.chat({
@@ -123,6 +139,8 @@ async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterP
       budget: deps.budget,
       priceBook: deps.priceBook,
       signal: phase.signal,
+      // A stop between the reserve reaching the disk and the send releases the reserve unsent (free), never leaves it open.
+      ...(phase.stop === undefined ? {} : { beforeSend: () => phase.stop?.aborted !== true }),
       messages: phase.messages(slots, feedback),
       jsonSchema: phase.jsonSchema ?? WRITER_JSON_SCHEMA,
       maxTokens: phase.call.maxTokens,
@@ -153,8 +171,12 @@ async function writeChunk<S extends ReadableSlot>(
     if (answered >= phase.call.maxAttempts) break;
     if (phase.ledger.reserveOf(attemptId) !== undefined) continue;
     if (phase.signal.aborted) return cancelled();
+    if (phase.stop?.aborted === true) return softStopped();
     const result = await ask(deps, phase, attemptId, slots, feedback);
-    if (result === null || result.status === "aborted") return cancelled();
+    if (result === "soft-stopped") return softStopped();
+    if (result === null) return cancelled();
+    // An abort with no hard cancel behind it is the soft stop releasing a reserve before the send.
+    if (result.status === "aborted") return phase.signal.aborted ? cancelled() : softStopped();
     if (result.status === "ok" && !result.aboveWorst) {
       answered++;
       const reader: (content: string, slots: readonly S[]) => PhaseRead = phase.read ?? readWriterAnswer;
@@ -193,6 +215,7 @@ export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: Wr
   const bySlot = new Map(phase.slots.map((slot) => [slot.slotIndex, slot]));
   for (const chunk of phase.chunks) {
     if (phase.writerDone.has(chunk.chunk)) continue;
+    if (phase.stop?.aborted === true) return softStopped();
     const slots = chunk.slotIndexes.map((slotIndex) => {
       const slot = bySlot.get(slotIndex);
       if (slot === undefined) throw new Error(`the writer's chunk ${chunk.chunk} names slot ${slotIndex}, which the plan does not have`);

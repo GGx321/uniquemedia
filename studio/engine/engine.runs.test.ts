@@ -782,6 +782,113 @@ describe("runs.cancel", () => {
   });
 });
 
+// ---------- soft stop (S4.5b) ----------
+
+describe("a soft stop of a run (engine-internal: the autopilot calls it, no command)", () => {
+  /** Image answers held until `release`, after their requests have been sent and their reserves are on disk. */
+  function heldImages() {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const handler: Handler = async () => {
+      await gate;
+      return { status: 200, body: imageBody(portraitPng(2), { cost: 0.04 }) };
+    };
+    return { handler, release };
+  }
+
+  test("sends nothing new, lets the requests in flight settle, ends job.cancelled, and leaves no open reserve for a reconcile", async () => {
+    const avatarId = await seedAvatar();
+    const images = heldImages();
+    const net = runNetwork({ image: images.handler });
+    const { engine, events } = await engineOver(net, { network: 2 });
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    await until(() => net.imageCalls().length === 2, "two image requests in flight");
+
+    expect(engine.softStopRun(runId)).toBe(true);
+    images.release();
+    const end = await jobEnd(events, jobId);
+
+    expect(end).toMatchObject({ type: "job.cancelled", payload: { kind: "run", jobId, runId, avatarId } });
+    expect(net.imageCalls()).toHaveLength(2);
+    expect(ok(await engine.handle(command("money.status")))).toMatchObject({ result: { unsettledCount: 0, unsettledMicros: 0, reconcileNeeded: false } });
+  });
+
+  test("the run is resumable at once, with no reconcile, and the resume finishes the slots the stop left", async () => {
+    const avatarId = await seedAvatar();
+    const images = heldImages();
+    const net = runNetwork({ image: images.handler });
+    const { engine, events } = await engineOver(net, { network: 2 });
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    await until(() => net.imageCalls().length === 2, "two image requests in flight");
+    engine.softStopRun(runId);
+    images.release();
+    await jobEnd(events, jobId);
+
+    const second = started(await resume(engine, runId));
+    await jobEnd(events, second.jobId);
+
+    expect(net.imageCalls()).toHaveLength(4);
+    expect(new Set(net.received).size).toBe(net.received.length);
+  });
+
+  test("a stop that arrives while a resume awaits the prices is applied when its job exists: no image is sent, the job ends cancelled, and a later manual resume is not stopped", async () => {
+    const avatarId = await seedAvatar();
+    const images = heldImages();
+    let mono = 0;
+    let holdPrices = false;
+    let priceAsked = false;
+    let releasePrices: () => void = () => {};
+    const pricesGate = new Promise<void>((resolve) => {
+      releasePrices = resolve;
+    });
+    const net = runNetwork({
+      image: images.handler,
+      prices: async () => {
+        if (holdPrices) {
+          priceAsked = true;
+          await pricesGate;
+        }
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net, { network: 2, monotonic: () => mono });
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    await until(() => net.imageCalls().length === 2, "two image requests in flight");
+    engine.softStopRun(runId);
+    images.release();
+    await jobEnd(events, jobId);
+    mono += 10 * 60_000; // the cached prices are due: the resume loads them again
+
+    holdPrices = true;
+    const resuming = engine.handle(resumeAnyway(runId));
+    await until(() => priceAsked, "the resume's price request");
+    expect(engine.softStopRun(runId)).toBe(true);
+    releasePrices();
+    const stopped = started(await resuming);
+    const end = await jobEnd(events, stopped.jobId);
+
+    expect(end).toMatchObject({ type: "job.cancelled", payload: { kind: "run", runId } });
+    expect(net.imageCalls()).toHaveLength(2);
+
+    holdPrices = false;
+    const manual = started(await resume(engine, runId));
+    expect(await jobEnd(events, manual.jobId)).toMatchObject({ type: "job.done" });
+    expect(net.imageCalls()).toHaveLength(4);
+  });
+
+  test("false for a run that is not running", async () => {
+    const avatarId = await seedAvatar();
+    const { engine, events } = await engineOver(runNetwork());
+    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    await jobEnd(events, jobId);
+
+    expect(engine.softStopRun(runId)).toBe(false);
+    expect(engine.softStopRun("run-00000404")).toBe(false);
+  });
+});
+
 // ---------- runs.resume ----------
 
 describe("runs.resume", () => {

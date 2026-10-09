@@ -526,6 +526,8 @@ interface RunningRun {
   library: Library;
   priceBook: PriceBook;
   signal: AbortSignal;
+  /** S4.5b: fires on a soft stop (`softStopRun`); the run starts nothing new and lets what is in flight finish. */
+  softStop: AbortSignal;
 }
 
 /** A library, the identity of its folder, and the whole avatar folders quarantined (bounded) when it was opened. */
@@ -706,6 +708,12 @@ export class Engine {
   readonly #dismissingCalls = new Set<string>();
   /** The avatar jobs of this engine's life, as `Snapshot.jobs` lists them. */
   readonly #jobs: JobRegistry;
+  /**
+   * S4.5b: runs whose start-from-scenes or resume is being made (prices, preflight, files: no job exists yet), by run id. `softStopRun` on such a run
+   * records the stop here and `#launchRun` applies it the moment the job is registered; every start and resume clears its entry in a `finally`, so a stop
+   * never leaks into a later manual resume. (A plain `runs.start` is not listed: its run id is made inside the call, so no caller can name it before it returns.)
+   */
+  readonly #pendingRunStops = new Map<string, { depth: number; stop: boolean }>();
   /** CS.4a: the scene sets' commands and their writer job (an avatar's planned run held before its images are paid for). */
   readonly #sceneSets: SceneSetService;
   /** The job states the snapshot guard has already logged, so a snapshot asked for again and again says it once per job. */
@@ -1050,6 +1058,41 @@ export class Engine {
     if (this.#musicKey === null || this.#musicKey !== rejectedKey || this.#musicKeyRejected) return;
     this.#musicKeyRejected = true;
     this.#emitSettings();
+  }
+
+  /**
+   * S4.5b, the soft stop of a photo run: no new slot attempt is sent, the attempts in flight finish and settle under the ordinary rules, and the job ends
+   * cancelled with its slots left open for `runs.resume`. It aborts nothing, so the stop itself opens no reserve (an attempt in flight may still time out or lose the network by the ordinary
+   * rules, unlike `runs.cancel`, which aborts it); a resume needs no reconcile on the stop's account. False when the run has no running job. Engine-internal: the autopilot's «Пауза» and «Стоп» call it; there is no command.
+   */
+  softStopRun(runId: string): boolean {
+    const jobId = this.#jobs.runningJobOf(runId);
+    if (jobId !== null) return this.#jobs.softStop(jobId);
+    // A start or resume of this run is still being made: remember the stop, `#launchRun` applies it when the job exists.
+    const pending = this.#pendingRunStops.get(runId);
+    if (pending === undefined) return false;
+    pending.stop = true;
+    return true;
+  }
+
+  /** Runs `work` (a start or resume of `runId`) with the run listed as pending, so a soft stop that arrives before its job exists is not lost. Cleared whatever happens. */
+  async #pendingRun<T>(runId: string, work: () => Promise<T>): Promise<T> {
+    const entry = this.#pendingRunStops.get(runId) ?? { depth: 0, stop: false };
+    entry.depth++;
+    this.#pendingRunStops.set(runId, entry);
+    try {
+      return await work();
+    } finally {
+      if (--entry.depth === 0) this.#pendingRunStops.delete(runId);
+    }
+  }
+
+  /**
+   * S4.5b, the soft stop of a scenes job (compose, «Дописать», rewrite, idea write): the request in flight finishes and an accepted chunk is saved, no new
+   * chunk or attempt starts, and no reserve is left open. False when the set has no live job. Engine-internal, like `softStopRun`.
+   */
+  softStopScenes(sceneSetId: string): boolean {
+    return this.#sceneSets.softStop(sceneSetId);
   }
 
   /** The RapidAPI key the flashapi client will use; never sent anywhere but flashapi. */
@@ -2204,6 +2247,18 @@ export class Engine {
     const library = await this.#liveLibrary();
     const approvalDeps = { library, isLive: (id: string) => this.#sceneSets.isLive(id) };
     const approved = await loadApprovable(approvalDeps, sceneSetId, revision);
+    // The set's run id is known now (the owner's autopilot names the run by it): a soft stop from here on is kept until the job exists.
+    return this.#pendingRun(approved.set.runId, () => this.#startApproved(payload, library, approvalDeps, approved, claim));
+  }
+
+  async #startApproved(
+    payload: CommandPayload<"runs.startFromScenes">,
+    library: Library,
+    approvalDeps: Parameters<typeof loadApprovable>[0],
+    approved: Awaited<ReturnType<typeof loadApprovable>>,
+    claim: (avatarId: string) => void,
+  ): Promise<{ runId: string; jobId: string }> {
+    const { sceneSetId, revision } = payload;
     const { avatarId } = approved;
     claim(avatarId);
     const key = this.#usableKey("start a photo run");
@@ -2268,7 +2323,12 @@ export class Engine {
    * ledger's open reserves refuse this with RECONCILE_REQUIRED until the user
    * reconciles (invariant 4). VALIDATION when every slot already ended.
    */
-  async #resumeRun(payload: CommandPayload<"runs.resume">): Promise<{ runId: string; jobId: string }> {
+  #resumeRun(payload: CommandPayload<"runs.resume">): Promise<{ runId: string; jobId: string }> {
+    // Listed as pending before the first await, so a soft stop during the key, library, price and ledger checks is not lost.
+    return this.#pendingRun(payload.runId, () => this.#resumeRunNow(payload));
+  }
+
+  async #resumeRunNow(payload: CommandPayload<"runs.resume">): Promise<{ runId: string; jobId: string }> {
     const { runId } = payload;
     const key = this.#usableKey("resume a photo run");
     this.#paidBudget();
@@ -2308,9 +2368,13 @@ export class Engine {
   }
 
   /** Registers the run's job under its own scope, capped by its plan, and runs it on after the answer. */
-  #launchRun(run: Omit<RunningRun, "signal">, done: number): void {
+  #launchRun(run: Omit<RunningRun, "signal" | "softStop">, done: number): void {
     const { plan } = run;
     const signal = this.#jobs.startRun(run.jobId, { runId: plan.runId, avatarId: plan.avatarId, total: plan.scenes.slots.length, done });
+    const softStop = this.#jobs.softStopSignal(run.jobId);
+    if (softStop === null) throw new Error(`run job ${run.jobId} was not registered`);
+    // A soft stop that came while this start or resume was being made: the job begins stopped, before its writer or any slot sends anything.
+    if (this.#pendingRunStops.get(plan.runId)?.stop === true) this.#jobs.softStop(run.jobId);
     this.#caps.set(scopeKey({ runId: plan.runId }), plan.capMicros);
     // Announced now, not at the first slot's end: the writer phase can take a while, and another window can only see
     // (and cancel) a run it has been told about.
@@ -2320,7 +2384,7 @@ export class Engine {
     } catch (error) {
       console.error(`studio engine: the launch of run job ${run.jobId} could not be announced (${errorKind(error)})`);
     }
-    void this.#runPhotos({ ...run, signal });
+    void this.#runPhotos({ ...run, signal, softStop });
   }
 
   /**
@@ -2354,7 +2418,7 @@ export class Engine {
           onSlot: (progress) => this.#runSlotDone(run, progress),
           warn: (line) => console.warn(line),
         },
-        { plan, jobId: run.jobId, descriptor: run.descriptor, signal: run.signal },
+        { plan, jobId: run.jobId, descriptor: run.descriptor, signal: run.signal, softStop: run.softStop },
       );
     } catch (error) {
       end = { status: "failed", error: engineErrorFrom(error) };

@@ -165,6 +165,29 @@ describe("createAgeGate: against the real client, a fake fetch and a real ledger
     expect(net.calls).toHaveLength(0);
   });
 
+  test("S4.5b L6: a stop seen after the downscale means the chat is never called, so no reserve is written at all", async () => {
+    const m = await money();
+    const net = fakeFetch([]);
+    const { client } = makeClient(net.fetch);
+    let chatCalls = 0;
+    const gate = createAgeGate({ downscale: async () => JPEG_OUT });
+
+    await rejectionOf(
+      gate.check(
+        input(m, {
+          chat: (params) => {
+            chatCalls++;
+            return client.chat(params);
+          },
+          beforeSend: () => false,
+        }),
+      ),
+    );
+
+    expect(chatCalls).toBe(0);
+    expect(m.lines()).toEqual([]);
+  });
+
   test("rejects (never retries, never throws) a clear no", async () => {
     const m = await money();
     const net = fakeFetch([ageAnswer(false, 0.95, "Facial proportions consistent with a minor.")]);

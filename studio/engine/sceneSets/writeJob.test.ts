@@ -7,6 +7,8 @@ import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
 import { withChunkGivenUp, withChunkWritten } from "./mutations";
+import type { Budget } from "../money/budget";
+import { chunkState } from "./chunks";
 import { runSceneWrite, type SceneWriteEnd } from "./writeJob";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -56,10 +58,10 @@ const rateLimited: Step = { status: 429, headers: { "retry-after": "120" }, body
 const unavailable: Step = { status: 503, body: { error: { message: "upstream unavailable" } } };
 const offline: Step = { reject: new TypeError("fetch failed") };
 
-function run(steps: Step[], opts: { jobId?: string; signal?: AbortSignal; scope?: Scope } = {}) {
+function run(steps: Step[], opts: { jobId?: string; signal?: AbortSignal; stop?: AbortSignal; scope?: Scope; afterSave?: (chunk: number) => void; budget?: Budget; pool?: NetworkPool; afterAcquire?: () => void } = {}) {
   const net = fakeFetch(steps);
   const { client } = makeClient(net.fetch);
-  const pool = new NetworkPool({ max: 6 });
+  const pool = opts.pool ?? new NetworkPool({ max: 6 });
   const progress: number[] = [];
   const saves: { chunk: number; size: number; callsSoFar: number }[] = [];
   const gaveUp: { chunk: number; by: string }[] = [];
@@ -67,9 +69,13 @@ function run(steps: Step[], opts: { jobId?: string; signal?: AbortSignal; scope?
   const end = runSceneWrite(
     {
       chat: client.chat,
-      budget: money.budget,
+      budget: opts.budget ?? money.budget,
       priceBook: money.priceBook,
-      acquire: (signal) => pool.acquire(signal),
+      acquire: async (signal) => {
+        const release = await pool.acquire(signal);
+        opts.afterAcquire?.();
+        return release;
+      },
       load: async () => {
         const set = await store.get(AVATAR, SET);
         if (set === null) throw new Error("the set is gone");
@@ -78,6 +84,7 @@ function run(steps: Step[], opts: { jobId?: string; signal?: AbortSignal; scope?
       saveChunk: async (chunk, sentences) => {
         saves.push({ chunk, size: sentences.size, callsSoFar: net.calls.length });
         await store.update(AVATAR, SET, (s) => withChunkWritten(s, sentences));
+        opts.afterSave?.(chunk);
       },
       giveUp: async (chunk, by) => {
         gaveUp.push({ chunk, by });
@@ -85,7 +92,7 @@ function run(steps: Step[], opts: { jobId?: string; signal?: AbortSignal; scope?
       },
       progress: (done) => progress.push(done),
     },
-    { jobId, scope: opts.scope ?? { avatarJobId: jobId }, signal: opts.signal ?? new AbortController().signal },
+    { jobId, scope: opts.scope ?? { avatarJobId: jobId }, signal: opts.signal ?? new AbortController().signal, ...(opts.stop === undefined ? {} : { stop: opts.stop }) },
   );
   return { net, end, progress, saves, gaveUp, pool };
 }
@@ -265,6 +272,182 @@ describe("runSceneWrite: cancel", () => {
     const { net, end } = run([good], { signal: controller.signal });
     expect(await end).toEqual({ status: "cancelled" });
     expect(net.calls).toHaveLength(0);
+  });
+});
+
+/** A writer answer that arrives only when the test lets it, after its request has been sent. */
+function heldAnswer(): { step: (call: FetchCall) => Promise<Reply>; release: () => void; arrived: () => number } {
+  let release: () => void = () => {};
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let arrived = 0;
+  return {
+    step: async (call) => {
+      arrived++;
+      await gate;
+      return answerFor(call);
+    },
+    release,
+    arrived: () => arrived,
+  };
+}
+
+/** A Budget whose reserve reaches the disk and then the stop fires: the window between a reserve and its send. */
+function stoppingAfterReserve(budget: Budget, stop: AbortController): Budget {
+  return new Proxy(budget, {
+    get(target, prop) {
+      if (prop === "tryReserve") {
+        return async (req: Parameters<Budget["tryReserve"]>[0]) => {
+          const reserved = await target.tryReserve(req);
+          stop.abort();
+          return reserved;
+        };
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+}
+
+describe("runSceneWrite: soft stop, the residual windows (S4.5b fix round 1, M1)", () => {
+  test("a stop that lands after the reserve is on disk releases it unsent: no request, no open reserve, the id is spent but not counted as answered, the next job takes the next id", async () => {
+    await seed(3);
+    const stop = new AbortController();
+    const { net, end } = run([good], { stop: stop.signal, budget: stoppingAfterReserve(money.budget, stop) });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(money.lines().map((l) => l.type)).toEqual(["reserve", "release"]);
+    expect(net.calls).toHaveLength(0);
+    expect(money.budget.status().openAttempts).toBe(0);
+    const set = await setNow();
+    const chunk = set.chunks[0];
+    if (chunk === undefined) throw new Error("no chunk");
+    expect(chunkState(set, chunk, money.budget.ledger).answered).toBe(0);
+
+    const later = run([good], { jobId: "job-aaaa-0002" });
+    expect(await later.end).toEqual({ status: "done", written: 3, unwritten: 0 });
+    expect(reserveIds()).toEqual([id(1, 1), id(1, 2)]);
+  });
+
+  test("a stop that lands right after the network slot is granted writes no reserve at all", async () => {
+    await seed(3);
+    const stop = new AbortController();
+    const { net, end } = run([good], { stop: stop.signal, afterAcquire: () => stop.abort() });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(money.lines()).toEqual([]);
+    expect(net.calls).toHaveLength(0);
+  });
+
+  test("S4.5b L1: a job queued behind other holders of the network pool ends at once on a stop, with nothing reserved", async () => {
+    await seed(3);
+    const pool = new NetworkPool({ max: 1 });
+    const holder = await pool.acquire(new AbortController().signal);
+    const stop = new AbortController();
+    const { net, end } = run([good], { stop: stop.signal, pool });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    stop.abort();
+
+    const result = await Promise.race([end, new Promise<string>((resolve) => setTimeout(() => resolve("still queued"), 2_000))]);
+    holder();
+    expect(result).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(0);
+    expect(money.lines()).toEqual([]);
+  });
+});
+
+describe("runSceneWrite: soft stop (S4.5b)", () => {
+  test("a stop during a chunk's request lets that attempt finish, saves the accepted chunk, and asks no next chunk", async () => {
+    await seed(55); // three chunks: 25 + 25 + 5
+    const stop = new AbortController();
+    const held = heldAnswer();
+    const { net, saves, end } = run([good, held.step, good], { stop: stop.signal });
+    await until(() => held.arrived() === 1, "the second chunk's request");
+
+    stop.abort();
+    held.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(saves.map((s) => s.chunk)).toEqual([1, 2]);
+    expect(net.calls).toHaveLength(2);
+    expect(reserveIds()).toEqual([id(1, 1), id(2, 1)]);
+    const set = await setNow();
+    expect(textsOf(set).slice(0, 50).every((t) => t === SENTENCE)).toBe(true);
+    expect(textsOf(set).slice(50).every((t) => t === null)).toBe(true);
+  });
+
+  test("the request in flight settles normally: the stop leaves no open reserve", async () => {
+    await seed(30);
+    const stop = new AbortController();
+    const held = heldAnswer();
+    const { end } = run([held.step, good], { stop: stop.signal });
+    await until(() => held.arrived() === 1, "the first request");
+
+    stop.abort();
+    held.release();
+    await end;
+
+    expect(money.budget.status().openAttempts).toBe(0);
+    expect(money.lines().map((l) => l.type)).toEqual(["reserve", "settle"]);
+  });
+
+  test("a stop between a rejected answer and its re-ask sends no second attempt; the chunk stays pending for the next job's next unused id", async () => {
+    await seed(3);
+    const stop = new AbortController();
+    const held = heldAnswer();
+    const { net, gaveUp, end } = run([async (call) => {
+      await held.step(call);
+      return rejected as Reply;
+    }, good], { stop: stop.signal });
+    await until(() => held.arrived() === 1, "the first request");
+
+    stop.abort();
+    held.release();
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(1);
+    expect(gaveUp).toEqual([]);
+    expect((await setNow()).chunks[0]?.gaveUp).toBeUndefined();
+
+    const later = run([good], { jobId: "job-aaaa-0002" });
+    expect(await later.end).toEqual({ status: "done", written: 3, unwritten: 0 });
+    expect(reserveIds()).toEqual([id(1, 1), id(1, 2)]);
+  });
+
+  test("a stop before the first request sends nothing and reserves nothing", async () => {
+    await seed(30);
+    const stop = new AbortController();
+    stop.abort();
+    const { net, end } = run([good], { stop: stop.signal });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(0);
+    expect(money.lines()).toEqual([]);
+  });
+
+  test("a stop that lands as the last chunk is saved changes nothing: the job is done, not cancelled", async () => {
+    await seed(30);
+    const stop = new AbortController();
+    const { end } = run([good, good], { stop: stop.signal, afterSave: (chunk) => chunk === 2 && stop.abort() });
+
+    expect(await end).toEqual({ status: "done", written: 30, unwritten: 0 });
+  });
+
+  test("a stop that lands after chunk 1 is saved leaves chunk 2 unasked and unreserved", async () => {
+    await seed(30);
+    const stop = new AbortController();
+    const { net, end } = run([good, good], { stop: stop.signal, afterSave: (chunk) => chunk === 1 && stop.abort() });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(1);
+    expect(reserveIds()).toEqual([id(1, 1)]);
+  });
+
+  test("a stop that is never given changes nothing: the signal is optional", async () => {
+    await seed(3);
+    expect(await run([good]).end).toEqual({ status: "done", written: 3, unwritten: 0 });
   });
 });
 

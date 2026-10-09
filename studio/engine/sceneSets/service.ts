@@ -100,6 +100,8 @@ interface LiveJob {
   readonly inFlight: Set<string>;
   /** A cancel arrived before the job was registered (the prices were still loading): the job is cancelled the moment it is, before any reserve. */
   cancelled?: boolean;
+  /** S4.5b: a soft stop arrived before the job was registered: it is stopped the moment it is, before any reserve. */
+  softStopped?: boolean;
 }
 
 function detailOfError(error: unknown): string {
@@ -293,6 +295,21 @@ export class SceneSetService {
     }
   }
 
+  /**
+   * S4.5b, the soft stop of a scenes job (compose, «Дописать», a rewrite or an idea write): the request in flight finishes and an accepted chunk is saved, no
+   * new chunk and no new attempt starts. It aborts nothing, so the stop itself opens no reserve (a request in flight may still time out or lose the network by the ordinary rules, unlike `cancel`, which aborts it); the job ends cancelled and the set reads stopped.
+   * True when the set has a live job. Engine-internal (the autopilot's «Пауза»/«Стоп» call it): there is no command for it.
+   */
+  softStop(sceneSetId: string): boolean {
+    const jobId = this.#deps.jobs.runningJobOfSet(sceneSetId);
+    if (jobId !== null) return this.#deps.jobs.softStop(jobId);
+    // The set is live but its job is not registered yet (the prices load): remember the stop instead of dropping it.
+    const live = this.#live.get(sceneSetId);
+    if (live === undefined) return false;
+    live.softStopped = true;
+    return true;
+  }
+
   // ---------- compose ----------
 
   /**
@@ -429,7 +446,7 @@ export class SceneSetService {
       deps.checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
       deps.checkMonthlyRoom(budget, estimate.worstMicros);
       // A cancel that came while the prices loaded ends the job before the file is touched: no write number, no marker, no reserve held.
-      if (mine.cancelled === true) {
+      if (mine.cancelled === true || mine.softStopped === true) {
         deps.jobs.startScenes(jobId, { sceneSetId, avatarId, total: 0 });
         cancelledJob = { jobId, avatarId };
         return { jobId };
@@ -502,6 +519,7 @@ export class SceneSetService {
     const signal = deps.jobs.startScenes(jobId, { sceneSetId: set.sceneSetId, avatarId: set.avatarId, total });
     // A cancel that came before the job existed aborts it now: its runner sees an aborted signal and reserves nothing.
     if (live.cancelled === true) deps.jobs.cancel(jobId);
+    if (live.softStopped === true) deps.jobs.softStop(jobId);
     deps.setCap(scopeKey({ avatarJobId: jobId }), job.capMicros);
     try {
       const progress = deps.jobs.progress(jobId, 0);
@@ -543,6 +561,7 @@ export class SceneSetService {
       const payload = deps.jobs.progress(jobId, done);
       if (payload !== null) deps.emit({ v: PROTOCOL_VERSION, id: deps.newId(), kind: "event", type: "job.progress", payload });
     };
+    const stop = deps.jobs.softStopSignal(jobId);
     try {
       const client = deps.openRouter(job.key);
       if (live.k !== undefined) {
@@ -573,7 +592,7 @@ export class SceneSetService {
             },
             progress,
           },
-          { k, jobId, scope, signal: job.signal },
+          { k, jobId, scope, signal: job.signal, ...(stop === null ? {} : { stop }) },
         );
         if (reviewed.status === "failed") resolved = reviewed.resolved;
         end =
@@ -602,7 +621,7 @@ export class SceneSetService {
             },
             progress,
           },
-          { jobId, scope, signal: job.signal },
+          { jobId, scope, signal: job.signal, ...(stop === null ? {} : { stop }) },
         );
       }
     } catch (error) {

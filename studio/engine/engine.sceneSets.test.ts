@@ -910,6 +910,108 @@ describe("scenes.write: «Дописать»", () => {
     expect(ok(await engine.handle(command("money.status")))).toMatchObject({ result: { reconcileNeeded: true } });
   });
 
+  test("a soft stop lets the request in flight finish and saves its chunk, asks no next chunk, leaves no open reserve, and the set reads stopped", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 60, write: compose }); // three chunks: 25 + 25 + 10
+    const second = held();
+    const net = sceneNetwork({ writer: (call, n) => (n === 2 ? second.handler(call, n) : goodAnswer(call, n)) });
+    const { engine, events } = await engineOver(net);
+    const jobId = jobOf(await engine.handle(writeCommand((await setOf(engine, avatarId)).revision, 6 * ATTEMPT)));
+    await until(() => second.arrived() === 1, "the second chunk's request");
+
+    expect(engine.softStopScenes(SET)).toBe(true);
+    second.release();
+    const end = await jobEnd(events, jobId);
+
+    expect(end).toMatchObject({ type: "job.cancelled", payload: { kind: "scenes", jobId, sceneSetId: SET, avatarId } });
+    expect(net.writerCalls()).toHaveLength(2);
+    const view = await setOf(engine, avatarId);
+    expect(view).toMatchObject({ status: "stopped", stoppedBy: "cancelled", openReserveMicros: 0 });
+    expect(view.scenes.slice(0, 50).every((s) => s.text !== null)).toBe(true);
+    expect(view.scenes.slice(50).every((s) => s.text === null)).toBe(true);
+    expect(ok(await engine.handle(command("money.status")))).toMatchObject({ result: { reconcileNeeded: false } });
+  });
+
+  test("a «Дописать» after a soft stop takes the next unused id of the chunk that was left", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 35, write: compose });
+    const first = held(() => rejectedAnswer);
+    const net = sceneNetwork({ writer: (call, n) => (n === 1 ? first.handler(call, n) : goodAnswer(call, n)) });
+    const { engine, events } = await engineOver(net);
+    const jobId = jobOf(await engine.handle(writeCommand((await setOf(engine, avatarId)).revision, 4 * ATTEMPT)));
+    await until(() => first.arrived() === 1, "the first request");
+    engine.softStopScenes(SET);
+    first.release();
+    await jobEnd(events, jobId);
+    expect(net.writerCalls()).toHaveLength(1);
+
+    const again = jobOf(await engine.handle(writeCommand((await setOf(engine, avatarId)).revision, 4 * ATTEMPT)));
+    await until(() => events().some((e) => e.type === "job.done" && e.payload.jobId === again), "the second job's end");
+
+    expect(ledgerReserves()).toContain(attemptId(1, 2));
+    expect(ledgerReserves().filter((id) => id === attemptId(1, 1))).toHaveLength(1);
+  });
+
+  test("a soft stop that comes while the prices load ends the job before its first request, with no reserve", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, write: compose });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let priceRequested = false;
+    const net = sceneNetwork({
+      prices: async () => {
+        priceRequested = true;
+        await gate;
+        return OFFLINE;
+      },
+    });
+    const { engine, events } = await engineOver(net);
+    const revision = (await setOf(engine, avatarId)).revision;
+    const writing = engine.handle(writeCommand(revision, 2 * ATTEMPT));
+    await until(() => priceRequested, "the price request");
+
+    expect(engine.softStopScenes(SET)).toBe(true);
+    release();
+    expect(jobOf(await writing)).toBeTruthy();
+    await until(() => events().some((e) => e.type === "job.cancelled"), "job.cancelled");
+
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
+  });
+
+  test("a soft stop that arrives while the write is being recorded in the set (before its job exists) is applied when the job is registered: no request, job.cancelled", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, write: compose });
+    const net = sceneNetwork();
+    let engineRef: Engine | null = null;
+    const stops: boolean[] = [];
+    const { engine, events } = await engineOver(net, {
+      beforeRename: (path) => {
+        // The only rename of the set's file after the engine opened is the write's own record (beginWrite).
+        if (stops.length === 0 && path.includes(SET)) stops.push(engineRef?.softStopScenes(SET) ?? false);
+      },
+    });
+    engineRef = engine;
+    const revision = (await setOf(engine, avatarId)).revision;
+    const jobId = jobOf(await engine.handle(writeCommand(revision, 2 * ATTEMPT)));
+    await jobEnd(events, jobId);
+
+    expect(stops).toEqual([true]);
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(events().some((e) => e.type === "job.cancelled" && e.payload.jobId === jobId)).toBe(true);
+    expect(ledgerReserves()).toEqual([]);
+  });
+
+  test("a soft stop of a set with no running job is false", async () => {
+    const avatarId = await seedAvatar();
+    await seedSet(avatarId, { count: 3, write: compose });
+    const { engine } = await engineOver(sceneNetwork());
+    expect(engine.softStopScenes(SET)).toBe(false);
+    expect(engine.softStopScenes("set-unknown-0001")).toBe(false);
+  });
+
   test("PRICE_CHANGED above the accepted worst case, nothing is sent; BUDGET_EXCEEDED when the month has no room", async () => {
     const avatarId = await seedAvatar();
     await seedSet(avatarId, { count: 3, write: compose });
