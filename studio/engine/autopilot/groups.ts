@@ -51,6 +51,11 @@ export class LaunchGroups {
     this.#bySet.set(setId, entry);
   }
 
+  /** Whether the launch is registered (a finished or unknown one is not). */
+  has(launchId: string): boolean {
+    return this.#launches.has(launchId);
+  }
+
   addRun(launchId: string, runId: string): void {
     const entry = this.#entry(launchId);
     entry.runIds.add(runId);

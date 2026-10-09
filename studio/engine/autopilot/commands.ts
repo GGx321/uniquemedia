@@ -143,10 +143,10 @@ export class AutopilotCommands {
     const plan = planLaunch({ draft, avatars, draftHeldPhotoIds: holds.held, customPoses: await this.#customPoses(library, draft.categories) });
     const needs = plan.avatars.filter((a) => a.blocked === null).map((a) => ({ avatarId: a.avatarId, photos: a.toGenerate }));
     const generates = needs.some((n) => n.photos > 0);
-    // A plan that generates nothing needs no price: the unit prices are read for the card's per-shape figures when they can be, and their absence is not an error.
+    // A plan that generates nothing (Σn = 0, a library-only launch) needs no price and asks for none (§19): `unitPricesOf` wants the text model's price, which such a launch has
+    // no use for, and a price list that cannot be read must not refuse a launch that spends nothing. Its estimate is zero.
     let unit: LaunchUnitPrices | null = null;
     if (generates) unit = await this.#unitPrices();
-    else unit = await this.#unitPrices().catch(() => null);
     const estimate = unit === null ? { avatars: [], worstMicros: 0, expectedMicros: 0, prices: "fallback" as const, pricesAsOf: new Date(this.#d.clock()).toISOString().slice(0, 10) } : launchEstimate(needs, unit);
     return { draft, plan, unit, estimate };
   }

@@ -39,8 +39,49 @@ export interface LaunchStepsContext {
   setFreeHold(hold: FreeHold | null): Promise<LaunchFile>;
   /** Appends a typed line to the launch's «Журнал». Never rejects: a log that cannot be written is told in the console and the launch goes on. */
   log(line: LogLine): Promise<void>;
-  /** Every video is done or dropped: the launch is done, its group is finished and its sum is final. */
+  /**
+   * Every video is done or dropped: the launch is done, its group is finished and its sum is final. Refused (rejects) while anything of the launch is in flight (`steps.inFlight()`
+   * above 0), because the group is closed and the sum read at this moment. Runs in the core's queue. Behind the composer this is a VOTE (see stepsComposer.ts).
+   */
   finish(): Promise<LaunchFile>;
+  /** S4.6b1: an avatar whose scene sets could not all be read at open (its allocation counts as spent in full): it does no paid work, whatever its own set reads like. */
+  isCut(avatarId: string): boolean;
+  /** S4.6b1: the steps changed something the view shows (a set mirror) without writing the file: announce the launch again. */
+  touch(): void;
+}
+
+/** What `autopilot.continueAfterReview` hands the steps (S4.6b1): the avatar's set as the owner reviewed it. */
+export interface ContinueInput {
+  avatarId: string;
+  sceneSetId: string;
+  revision: number;
+}
+
+/** The steps' answer to the owner's «Продолжить запуск»: whether the draw starts now, or the approval is only recorded (the launch is paused or pausing), and how many photos the frozen list holds. */
+export interface ContinueOutcome {
+  draw: "started" | "waits-for-resume";
+  photos: number;
+}
+
+/** What the window shows of an avatar's scene set, kept by the paid steps in memory (never in the launch file): the view fills the avatar row's set mirrors from it. */
+/** What the mirrors are built from: a scene set as the library lists it (`StoredSceneSet` satisfies it). */
+export interface MirrorSource {
+  sceneSetId: string;
+  avatarId: string;
+  revision: number;
+  scenes: readonly { origin: string; removed: boolean; text: string | null }[];
+  launchDraw?: { sceneIds: readonly number[]; slices: readonly { sceneIds: readonly number[] }[] } | undefined;
+}
+
+export interface AvatarMirror {
+  sceneSetId: string;
+  setRevision: number;
+  scenes: number;
+  scenesWithoutText: number;
+  continuePhotos: number;
+  slice: { index: number; total: number } | null;
+  undrawnScenes: number;
+  resumableSlots: number;
 }
 
 export interface LaunchSteps {
@@ -48,6 +89,26 @@ export interface LaunchSteps {
   drain(): Promise<void>;
   release(ctx: LaunchStepsContext): Promise<void>;
   inFlight(): { requests: number; renders: number };
+  /**
+   * S4.6b1: the owner's «Продолжить запуск» for an avatar that waits in `awaiting-review`. The orchestrator has already checked the launch and the phase; the steps approve the set (the
+   * frozen list: `SCENES_CHANGED` and `over-plan` come from there) and, while the launch runs, start the draw. Absent: the launch has no review step (the orchestrator answers `not-awaiting`).
+   */
+  continueAfterReview?(ctx: LaunchStepsContext, input: ContinueInput): Promise<ContinueOutcome>;
+  /** The avatar's set mirrors for the view, or null when the steps know none (before the set was read in this process). Pure and synchronous. */
+  mirror?(launchId: string, avatarId: string): AvatarMirror | null;
+  /** S4.6b1: the sets a library open found for an unfinished launch, so the mirrors are there before «Продолжить». Synchronous. */
+  restore?(launchId: string, sets: readonly MirrorSource[]): void;
+  /** S4.6b1: the launch is done: release what it holds (unlink its sets, clear its mirrors). Idempotent. Not «Стоп»: nothing is dropped. */
+  complete?(ctx: LaunchStepsContext): Promise<void>;
+  /**
+   * S4.6b1, the composer's finish gate: a PASSIVE voter answers whether it has nothing left to do for this launch (no worker, no live job, every avatar final). A part without it
+   * is an ACTIVE voter and says so by calling `ctx.finish()` itself.
+   */
+  finishReady?(launchId: string): boolean;
+  /** S4.6b1: the composer registers here; a passive voter calls it whenever its `finishReady` may have turned true. */
+  onReadyChange?(listener: () => void): void;
+  /** S4.6b1: whether the part has live work for this avatar now (a worker, a job); the composer lets the free part finish an avatar (`montage` to `done`) only when it is idle. */
+  active?(launchId: string, avatarId: string): boolean;
 }
 
 /** No work at all: a launch started with these stays in its first step. S4.6a's default, until S4.6b and S4.6c plug theirs in. */

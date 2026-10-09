@@ -56,6 +56,8 @@ export function memoryLaunch(initial: LaunchFile, clock: () => number = () => Da
       // The steps under test never touch the registry or the groups (those are the paid path's).
       registry: undefined as never,
       groups: undefined as never,
+      isCut: () => false,
+      touch: () => undefined,
       file: () => file,
       isRunning: () => !pausing && !paused && !done && file.status === "running",
       update: async (change) => {

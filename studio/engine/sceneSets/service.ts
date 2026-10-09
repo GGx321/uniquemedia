@@ -90,6 +90,8 @@ export interface SceneSetServiceDeps {
   warn: (line: string) => void;
   /** Stage 4 (S4.5a): which sets and runs belong to an unfinished launch. Every refusal and mark asks it, through the unlinked rule. */
   launches: LaunchRegistry;
+  /** Told of every set announced to the windows (S4.6b1: the paid steps keep a launch set's mirror from it). Must not throw into the announcement. */
+  onSetAnnounced?: (set: StoredSceneSet) => void;
 }
 
 /** S4.5a, internal (the launch's orchestrator, never a command): what a launch's compose adds to the ordinary one. */
@@ -138,6 +140,11 @@ export class SceneSetService {
     return this.#live.has(sceneSetId);
   }
 
+  /** Resolves when no job of the set runs and its end has been announced (S4.6b1: the launch's steps wait for a compose or a «Дописать» to be over). */
+  idle(sceneSetId: string): Promise<void> {
+    return this.#whenIdle(sceneSetId);
+  }
+
   /** Wakes whoever waits for the set's job to be completely over (`unlinkSet`). */
   #notifyIdle(sceneSetId: string): void {
     const waiters = this.#idleWaiters.get(sceneSetId);
@@ -183,6 +190,12 @@ export class SceneSetService {
   }
 
   async #announce(library: Library, set: StoredSceneSet): Promise<void> {
+    // The listener first, on its own: a defect in it must never swallow the event the windows are waiting for.
+    try {
+      this.#deps.onSetAnnounced?.(set);
+    } catch (error) {
+      this.#deps.warn(`studio engine: a listener of scene set ${set.sceneSetId} failed (${detailOfError(error)})`);
+    }
     try {
       const sceneSet = await this.#view(library, set);
       this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "upserted", sceneSet } });
@@ -488,7 +501,7 @@ export class SceneSetService {
    * set BEFORE its first call (its number, its ids, and for a redraw or an idea its draw), on the revision the window showed (SCENES_CHANGED when it moved,
    * even while the prices were awaited).
    */
-  async write(payload: { sceneSetId: string; revision: number; target: SceneWriteTarget; acceptedWorstMicros: number }): Promise<{ jobId: string }> {
+  async write(payload: { sceneSetId: string; revision: number; target: SceneWriteTarget; acceptedWorstMicros: number }, launch?: { launchId: string }): Promise<{ jobId: string }> {
     const { sceneSetId, revision, target } = payload;
     const deps = this.#deps;
     // Counted before the first await (the set's avatar is only known once it is found): a library switch is refused from here on.
@@ -510,8 +523,11 @@ export class SceneSetService {
       const { set, avatarId } = await this.#find(library, sceneSetId);
       // S4.5a (plan §4.7): the launch does its own «Дописать», and an idea write is an own scene, which a launch never draws. A rewrite or a resume is the owner's
       // own paid click while the launch waits for the review, and is closed once the launch froze the set.
-      if (target.kind === "unwritten") this.#refuseLaunchSet(set, "the launch writes what is missing itself");
-      else if (target.kind === "idea") this.#refuseLaunchSet(set, "the scenes of a launch are its own; an own scene would never be drawn");
+      if (target.kind === "unwritten") {
+        // S4.6b1: the launch's OWN «Дописать» (internal, never a command) is the one write the launch's set accepts; any other caller is refused as before.
+        if (launch === undefined) this.#refuseLaunchSet(set, "the launch writes what is missing itself");
+        else if (this.#launchOf(set) !== launch.launchId) throw sceneRefusal(`scene set ${sceneSetId} is not waiting for launch ${launch.launchId}`, "not-awaiting");
+      } else if (target.kind === "idea") this.#refuseLaunchSet(set, "the scenes of a launch are its own; an own scene would never be drawn");
       else if (set.launchDraw !== undefined) this.#refuseLaunchSet(set, "its scenes are frozen");
       deps.claimAvatar(avatarId, "a photo run or another job is already changing this avatar; wait for it to finish");
       claimed = avatarId;

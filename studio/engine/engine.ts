@@ -83,11 +83,12 @@ import { looksLikeRunPhoto, pagePhotoList, photoSummaryFrom, type PhotoPage } fr
 import { STUDIO_E2E } from "./buildFlags";
 import { budgetHoldDetail, type BudgetHoldDetail, type MonthRoom } from "../shared/autopilot/money";
 import { AutopilotCommands } from "./autopilot/commands";
-import { LaunchGroups } from "./autopilot/groups";
+import { LaunchGroups, launchGroupKey } from "./autopilot/groups";
 import { LaunchStores } from "./autopilot/lookup";
 import { Orchestrator, type Admission, type Prepared } from "./autopilot/orchestrator";
 import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
+import { NOT_PAYABLE_DETAIL, type LaunchSliceStart } from "./autopilot/paidPort";
 import { IDLE_STEPS, type LaunchSteps } from "./autopilot/steps";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
@@ -241,6 +242,8 @@ export interface EngineDeps {
   launches?: LaunchLookup;
   /** S4.6a: the work a launch does, plugged into the orchestrator core (autopilot/steps.ts). Absent, a started launch stays in its first step (S4.6b, S4.6c replace it). */
   launchSteps?: LaunchSteps;
+  /** Test seam: whether a launch may pay now. Absent: the orchestrator's answer (a running launch with no paid hold). The S4.5a seam tests run launches that only the lookup knows. */
+  launchMayPay?: (launchId: string) => boolean;
   /**
    * Downscales a tiny built-in image through the same ffmpeg path a real
    * slot's image would take (M8's `generateCandidates` preflight). Defaults
@@ -549,6 +552,8 @@ interface RunningRun {
   signal: AbortSignal;
   /** S4.5b: fires on a soft stop (`softStopRun`); the run starts nothing new and lets what is in flight finish. */
   softStop: AbortSignal;
+  /** S4.6b1: told how the job ended, after the registry and the windows have heard it. Set for a launch's slice run only. */
+  onEnd?: (end: RunJobEnd) => void;
 }
 
 /** A library, the identity of its folder, and the whole avatar folders quarantined (bounded) when it was opened. */
@@ -706,6 +711,7 @@ export class Engine {
    * launch here before its first reserve and restores the registry from the launch files when the library opens.
    */
   readonly launchGroups: LaunchGroups;
+  readonly #setListeners = new Set<(set: StoredSceneSet) => void>();
   /** Prices for the engine's life, fetched (free, no key) through the injected fetch. */
   readonly #prices: PriceCache;
   /** The image models Settings offers (imageModels/catalogue.ts): live from OpenRouter, cached, the bundled list when it cannot be read. */
@@ -1013,6 +1019,9 @@ export class Engine {
       errorOf: (error) => engineErrorFrom(error),
       warn: (line) => console.warn(line),
       launches: this.#launches,
+      onSetAnnounced: (set) => {
+        for (const listener of [...this.#setListeners]) listener(set);
+      },
     });
     // S4.6a: the orchestrator core. It gets the registry and the Budget groups through its constructor; the engine keeps no public handle on it.
     this.#orchestrator = new Orchestrator({
@@ -1251,7 +1260,8 @@ export class Engine {
    * A compose under ids the launch issued, with an exact per-category split (plan §3.4). Made again after a crash it creates no second set and sends no
    * attempt id again (`jobId` is then null). A soft stop or cancel that arrives before its job exists is honoured (the live entry is made before the first await).
    */
-  composeLaunchSet(payload: Parameters<SceneSetService["compose"]>[0], launch: LaunchComposeOptions): Promise<{ sceneSetId: string; jobId: string | null }> {
+  async composeLaunchSet(payload: Parameters<SceneSetService["compose"]>[0], launch: LaunchComposeOptions): Promise<{ sceneSetId: string; jobId: string | null }> {
+    this.#assertLaunchMayPay(launch.launchId);
     return this.#sceneSets.compose(payload, launch);
   }
 
@@ -1278,7 +1288,7 @@ export class Engine {
       const statuses = await this.#sliceStatuses(library, set);
       const createdAt = new Date(this.#deps.clock()).toISOString();
       const drawn = await drawLaunchSlice(
-        { library, isLive: (id) => this.#sceneSets.isLive(id), registry: this.#launches },
+        { library, isLive: (id) => this.#sceneSets.isLive(id), registry: this.#launches, onRun: (runId, launchId) => this.#addRunToGroup(runId, launchId) },
         {
           ...input,
           capFor: (count) => runEstimateFromScenes(priced, models, { count }, imageAgeCheck).worstMicros,
@@ -1319,6 +1329,93 @@ export class Engine {
     return this.#sceneSets.unlinkSet(sceneSetId);
   }
 
+  /** Every scene set the engine announces from now on, to the listener (S4.6b1); returns the way to stop. */
+  onSetChanged(listener: (set: StoredSceneSet) => void): () => void {
+    this.#setListeners.add(listener);
+    return () => void this.#setListeners.delete(listener);
+  }
+
+  /** A launch's paid entry points work only for a launch that RUNS now and is not held (fix round 1): a paused, stopping or held launch spends nothing, whoever calls. */
+  #assertLaunchMayPay(launchId: string): void {
+    if (!(this.#deps.launchMayPay ?? ((id: string) => this.#orchestrator.mayPay(id)))(launchId)) throw new EngineFailure({ code: "VALIDATION", detail: `${NOT_PAYABLE_DETAIL}: launch ${launchId} is not running, or is held` });
+  }
+
+  /** Adds a slice run to its launch's Budget group, before the run's folder is made; a launch that is not registered (finished, unknown) has no group to join. */
+  #addRunToGroup(runId: string, launchId: string): void {
+    if (this.launchGroups.has(launchId)) this.launchGroups.addRun(launchId, runId);
+  }
+
+  // ---------- S4.6b1: what the launch's paid steps need beyond the S4.5a seam (engine-internal; there is no command for any of these) ----------
+
+  /** What composing `count` scenes could cost now: the `scenes.estimateCompose` figure, free. */
+  composeEstimate(request: { avatarId: string; count: number; categories: readonly CategoryRef[] }): Promise<Estimate> {
+    return this.#sceneSets.estimateCompose(request);
+  }
+
+  /** What the set's «Дописать» could cost now (free). */
+  writeEstimate(sceneSetId: string): Promise<Estimate> {
+    return this.#sceneSets.estimateWrite(sceneSetId, { kind: "unwritten" });
+  }
+
+  /**
+   * The launch's OWN «Дописать» (plan §3.6 row 2): writes the scenes still waiting from each chunk's next unused attempt id. `acceptedWorstMicros` is the launch's, not the
+   * owner's: PRICE_CHANGED when the write's worst case at today's prices is above it. Refused (`not-awaiting`) for a set that is not this unfinished launch's.
+   */
+  async writeLaunchScenes(input: { sceneSetId: string; launchId: string; revision: number; acceptedWorstMicros: number }): Promise<{ jobId: string }> {
+    const { sceneSetId, launchId, revision, acceptedWorstMicros } = input;
+    this.#assertLaunchMayPay(launchId);
+    return this.#sceneSets.write({ sceneSetId, revision, target: { kind: "unwritten" }, acceptedWorstMicros }, { launchId });
+  }
+
+  /** Resolves when no job of the set runs and the end of the last one has been announced. */
+  whenSceneSetIdle(sceneSetId: string): Promise<void> {
+    return this.#sceneSets.idle(sceneSetId);
+  }
+
+  /** Which of the set's slices have a run, whether each is finished and what it committed. */
+  async sliceStatuses(set: StoredSceneSet): Promise<Map<string, SliceStatus>> {
+    return this.#sliceStatuses(await this.#liveLibrary(), set);
+  }
+
+  /** One photo's worst case at today's prices for the avatars' models: priced as a run prices it, without the text model's price (a library-only launch never asks for it). */
+  async photoWorstMicros(): Promise<number> {
+    const models = this.#avatarModels();
+    const { imageAgeCheck } = this.#settings;
+    const priced = await this.#prices.get(sceneRunPriceModels(models, imageAgeCheck));
+    return runEstimateFromScenes(priced, models, { count: 1 }, imageAgeCheck).worstMicros;
+  }
+
+  /**
+   * Starts a launch's slice run, or resumes it, inside its own cap (plan §3.6 row 5): the launch's acceptance covers it, so there is no click and no accepted sum, and the
+   * cap is never raised (`runs.resume`'s own arithmetic: the remaining worst case at today's prices within what the cap leaves). `ended` settles when the job is over,
+   * after the registry and the windows have heard it. A run with nothing left to spend is `finished`. Refused for a run that is not an unfinished launch's slice (A1).
+   * IN_FLIGHT while the avatar is held by another job or the run's job runs; BUDGET_EXCEEDED, RECONCILE_REQUIRED and the key's refusals as for any paid start.
+   */
+  async startLaunchSlice(runId: string): Promise<LaunchSliceStart> {
+    // Counted before the first await, like every paid command: a library switch is refused from here on.
+    this.#paidCommands++;
+    let launched = false;
+    try {
+      const launchId = this.#launches.launchOfRun(runId);
+      if (launchId === undefined) throw new EngineFailure({ code: "VALIDATION", detail: `run ${runId} is not a slice of an unfinished launch` });
+      this.#assertLaunchMayPay(launchId);
+      if (this.launchGroups.groupOf({ attemptId: `${runId}#group-probe`, scope: { runId } })?.key !== launchGroupKey(launchId)) {
+        throw new EngineFailure({ code: "VALIDATION", detail: `run ${runId} is not in the Budget group of launch ${launchId}: nothing may be reserved outside it` });
+      }
+      if (this.#jobs.runningJobOf(runId) !== null) throw new EngineFailure({ code: "IN_FLIGHT", detail: `run ${runId} is already running` });
+      let finish: (end: RunJobEnd) => void = () => undefined;
+      const ended = new Promise<RunJobEnd>((resolve) => {
+        finish = resolve;
+      });
+      const started = await this.#pendingRun(runId, () => this.#resumeRunNow({ runId, acceptedWorstMicros: 0 }, { onEnd: finish }));
+      if (started === null) return { kind: "finished" };
+      launched = true;
+      return { kind: "started", jobId: started.jobId, ended };
+    } finally {
+      if (!launched) this.#paidCommands--;
+    }
+  }
+
   /** Whether each of the set's slices is finished (every slot closed: `runs.resume` then refuses) and what it committed, for the slices that have a run. */
   async #sliceStatuses(library: Library, set: StoredSceneSet): Promise<Map<string, SliceStatus>> {
     const statuses = new Map<string, SliceStatus>();
@@ -1330,10 +1427,12 @@ export class Engine {
         const plan = await library.readRun(runId, RunPlanSchema);
         const { events } = await library.readJournal(runId, RunEventSchema);
         const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
-        const finished = !state.slots.some((slot) => slot.end === undefined || slot.end === null) && this.#jobs.runningJobOf(runId) === null;
-        statuses.set(runId, finished ? { finished: true, committedMicros: scopeCommitted(money.budget.ledger, { runId }) } : { finished: false });
+        const openSlots = state.slots.filter((slot) => slot.end === undefined || slot.end === null).length;
+        const finished = openSlots === 0 && this.#jobs.runningJobOf(runId) === null;
+        statuses.set(runId, finished ? { finished: true, committedMicros: scopeCommitted(money.budget.ledger, { runId }) } : { finished: false, openSlots });
       } catch {
-        // A slice entry whose run cannot be read is live: its whole cap stays counted (never over-allocate).
+        // A slice entry whose run cannot be read is live: its whole cap stays counted (never over-allocate). Only a run with NO FOLDER is absent ('pending': its entry is finished by the draw).
+        if (await library.runFolderExists(runId).catch(() => true)) statuses.set(runId, { finished: false });
       }
     }
     return statuses;
@@ -2154,7 +2253,7 @@ export class Engine {
       }
       // Stage 4 (S4.1): the commands of the batch autopilot and the two marks. INTERNAL «<type> is not implemented yet» is this switch's one answer for a command it cannot
         // serve (the `default` below says the same), listed here so each service that lands (S4.5c published marks, S4.5d the track flag, S4.6 the orchestrator) takes its case out.
-      // S4.6a serves the orchestrator core's commands; `autopilot.continueAfterReview` is the paid path's (S4.6b1) and stays «not implemented yet» until then.
+      // S4.6a serves the orchestrator core's commands; S4.6b1 adds `autopilot.continueAfterReview`, the paid path's review hand-off.
       case "autopilot.estimate":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { preview: await this.#autopilot.estimate(command.payload.draft) } };
       case "autopilot.start": {
@@ -2186,8 +2285,12 @@ export class Engine {
         await this.#orchestrator.removeUnreadable(command.payload.entryId);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: {} };
       }
-      case "autopilot.continueAfterReview":
-        return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
+      case "autopilot.continueAfterReview": {
+        // S4.6b1: the owner's «Продолжить запуск». The answer says whether the draw starts now or waits for «Продолжить» (a paused launch, §18 item 9).
+        const { launchId, avatarId, sceneSetId, revision } = command.payload;
+        await this.#liveLibrary();
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#launchCommand(() => this.#orchestrator.continueAfterReview({ launchId, avatarId, sceneSetId, revision })) };
+      }
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -2688,10 +2791,19 @@ export class Engine {
    */
   #resumeRun(payload: CommandPayload<"runs.resume">): Promise<{ runId: string; jobId: string }> {
     // Listed as pending before the first await, so a soft stop during the key, library, price and ledger checks is not lost.
-    return this.#pendingRun(payload.runId, () => this.#resumeRunNow(payload));
+    return this.#pendingRun(payload.runId, async () => {
+      const resumed = await this.#resumeRunNow(payload);
+      if (resumed === null) throw new Error(`run ${payload.runId} was neither resumed nor refused`);
+      return resumed;
+    });
   }
 
-  async #resumeRunNow(payload: CommandPayload<"runs.resume">): Promise<{ runId: string; jobId: string }> {
+  /**
+   * The resume itself. `launch` (S4.6b1) is the launch's own: the run is resumed inside its cap on the launch's acceptance, so there is no accepted amount to compare
+   * (`acceptedWorstMicros` is ignored), `onEnd` hears how the job ends, and a run with nothing left to spend (every slot ended, or its cap cannot fund another attempt)
+   * answers null instead of a refusal. The cap is never raised.
+   */
+  async #resumeRunNow(payload: CommandPayload<"runs.resume">, launch?: { onEnd: (end: RunJobEnd) => void }): Promise<{ runId: string; jobId: string } | null> {
     const { runId } = payload;
     const key = this.#usableKey("resume a photo run");
     this.#paidBudget();
@@ -2704,13 +2816,20 @@ export class Engine {
       await this.#assertAvatarOnDisk(library, plan.avatarId);
       this.#assertAgeGate(plan.imageAgeCheck);
       this.#assertFaceGate();
-      const { state, estimate, priced, budget } = await this.#remaining(library, plan);
-      Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
+      let remaining: { state: RunState; estimate: Estimate; priced: PricedBook; budget: Budget };
+      try {
+        remaining = await this.#remaining(library, plan);
+      } catch (error) {
+        if (launch !== undefined && error instanceof EngineFailure && (error.error.code === "VALIDATION" || error.error.code === "RUN_CAP_EXCEEDED")) return null;
+        throw error;
+      }
+      const { state, estimate, priced, budget } = remaining;
+      Engine.#checkAccepted(estimate.worstMicros, launch === undefined ? payload.acceptedWorstMicros : estimate.worstMicros);
       // A free resume (nothing left it could send: it only closes slots) spends nothing, so a month already over budget cannot refuse it.
       if (estimate.worstMicros > 0) Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
       const done =state.slots.filter((s) => s.end !== null).length;
       const jobId = this.#deps.newId();
-      this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, done);
+      this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book, ...(launch === undefined ? {} : { onEnd: launch.onEnd }) }, done);
       launched = true;
       return { runId, jobId };
     } finally {
@@ -2805,6 +2924,11 @@ export class Engine {
       }
     } catch (error) {
       console.error(`studio engine: the end of run job ${run.jobId} could not be announced (${errorKind(error)})`);
+    }
+    try {
+      run.onEnd?.(end);
+    } catch (error) {
+      console.error(`studio engine: the end of run job ${run.jobId} could not be handed to its launch (${errorKind(error)})`);
     }
   }
 

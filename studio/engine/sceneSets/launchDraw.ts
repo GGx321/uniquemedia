@@ -23,6 +23,8 @@ export interface LaunchSetDeps {
   isLive: (sceneSetId: string) => boolean;
   /** Told of each slice's run before its folder is made, and of every link a stop removes. Absent: nothing is told. */
   registry?: LaunchRegistry | undefined;
+  /** S4.6b1: told of each slice run next to the registry, BEFORE its folder is made: the launch's Budget group must know the run before its first reserve. */
+  onRun?: ((runId: string, launchId: string) => void) | undefined;
 }
 
 export interface SliceEntry {
@@ -32,7 +34,7 @@ export interface SliceEntry {
 }
 
 /** What the caller knows of a slice that has a run: live (it runs, or can be resumed) or finished (every slot closed) and what it committed. */
-export type SliceStatus = { finished: false } | { finished: true; committedMicros: number };
+export type SliceStatus = { finished: false; /** Slots of the run that are still open, when the caller knows (the window's «осталось»). */ openSlots?: number } | { finished: true; committedMicros: number };
 
 export interface DrawSliceInput {
   sceneSetId: string;
@@ -183,6 +185,7 @@ export async function drawLaunchSlice(deps: LaunchSetDeps, input: DrawSliceInput
   if (decided.kind !== "drawn") return decided;
   // The entry is in the set; its run is linked now, before its folder exists, so a refusal can never miss a run that is about to be.
   registry?.linkRun(decided.runId, launchId);
+  deps.onRun?.(decided.runId, launchId);
   const made = await ensureSliceRuns(deps, { sceneSetId, launchId, build: input.build });
   return { ...decided, created: made.created.includes(decided.runId) };
 }
@@ -201,6 +204,7 @@ export async function ensureSliceRuns(deps: LaunchSetDeps, input: { sceneSetId: 
     const created: string[] = [];
     for (const entry of current.launchDraw.slices) {
       registry?.linkRun(entry.runId, input.launchId);
+      deps.onRun?.(entry.runId, input.launchId);
       if (await library.runFolderExists(entry.runId)) continue;
       try {
         await library.createRun(entry.runId, input.build(current, entry), RunPlanSchema);

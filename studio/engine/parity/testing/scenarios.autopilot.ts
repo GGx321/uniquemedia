@@ -132,8 +132,11 @@ const PARITY_NOW: Scenario[] = [
 ];
 
 const AUTOPILOT_COMMANDS = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.continueAfterReview", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
-/** The commands the real engine serves since S4.6a, the orchestrator core. `autopilot.continueAfterReview` is the paid path's (S4.6b1) and is still «not implemented yet». */
-const CORE_COMMANDS = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
+/**
+ * The commands the real engine serves: the orchestrator core's since S4.6a, and since S4.6b1 `autopilot.continueAfterReview`. The parity engine plugs in no steps, so no avatar ever waits for a
+ * review there: the engine answers `not-awaiting` where the mock (which holds a launch in a canned state) draws. That is why the story below stays pending.
+ */
+const CORE_COMMANDS = ["autopilot.estimate", "autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.continueAfterReview", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"];
 /**
  * The orchestrator's commands a story uses. The real engine serves the core ones (`served`: held to ANY answer but «not implemented yet») and refuses the rest. The story stays
  * pending until S4.8 completes the mock (the mock holds a launch in a canned state, the engine's is a real one, with its own figures and ids): it is not lifted from pending
