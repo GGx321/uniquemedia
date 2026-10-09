@@ -1050,7 +1050,7 @@ export class Engine {
       monthRoom: () => this.monthRoom(),
       monthlyBudgetMicros: () => this.#settings.monthlyBudgetMicros,
       isBusy: (avatarId) => this.#busyAvatars.has(avatarId) || this.#jobs.hasLiveJobFor(avatarId),
-      listDrafts: (library, avatarId) => this.#drafts.list(library, avatarId),
+      photoIdsInDrafts: (library, avatarId) => this.#drafts.photoIdsInDrafts(library, avatarId),
       paidGate: () => this.#launchPaidGate(),
       exportStatus: () => this.#exportStatus,
       musicKeyStored: () => this.#musicKey !== null,

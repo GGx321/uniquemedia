@@ -15,7 +15,7 @@ export interface LibraryReads {
 
 type AvatarUsageReason = Extract<AvatarUsage, { state: "unknown" }>["reasons"][number];
 
-export function planAvatarInput(library: LibraryReads, avatarId: string, hasOpenSet: boolean): PlanAvatarInput {
+export function planAvatarInput(library: LibraryReads, avatarId: string, hasOpenSet: boolean, draftsKnown: boolean): PlanAvatarInput {
   const reasons = library.usageReasons(avatarId);
   const usage: AvatarUsage = reasons.length === 0 ? { state: "ok" } : { state: "unknown", reasons };
   const states = library.photoStates(avatarId);
@@ -34,5 +34,5 @@ export function planAvatarInput(library: LibraryReads, avatarId: string, hasOpen
       usedIn: state?.usedIn ?? [],
     };
   });
-  return { avatarId, usage, hasOpenSet, photos };
+  return { avatarId, usage, hasOpenSet, draftsKnown, photos };
 }

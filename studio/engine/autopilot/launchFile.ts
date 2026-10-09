@@ -13,6 +13,7 @@ import {
   type LaunchStatus,
 } from "../../shared/engine/autopilot";
 import { CategoryRef } from "../../shared/engine/categories";
+import { MontageMusic } from "../../shared/engine/montage";
 import { Count, Id, LaunchId, LaunchVideoKey, Micros } from "../../shared/engine/primitives";
 import { PriceSource } from "../../shared/engine/state";
 import type { LaunchPlan } from "./planner";
@@ -23,7 +24,8 @@ import type { LaunchPlan } from "./planner";
 // is never half-read and rewritten without what it held.
 
 // The schema is strict: a build refuses a field it does not know, and an older build refuses a newer `schemaVersion` (it would lose the field on its next rewrite).
-// So ANY new field of S4.6b / S4.6c (the set's mirrors, a video's result, a music mark...) must bump this version, or an older build would call the file unreadable.
+// S4.6c1 added two OPTIONAL fields to a video (`music`, `previousStickerId`) WITHOUT a bump: Studio is unreleased and no launch file of an older shape exists outside
+// tests, the same reasoning as D5/T6c for the video record (plan §8.3). A field an older build must not ignore, once Studio ships, bumps this version.
 export const LAUNCH_FILE_SCHEMA_VERSION = 1;
 
 const IsoDateTime = z.iso.datetime();
@@ -48,6 +50,10 @@ export type Generation = z.infer<typeof Generation>;
 /** The states a planned video passes through (plan §3.5). Only the planner's (`planned`) and the drop at plan time are written by S4.6a. */
 export const FILE_VIDEO_STATES = ["planned", "waiting-photos", "assigned", "rendering", "done", "waiting-music", "dropped"] as const;
 
+/** The track a video was given, with the point it starts at: chosen once, at assignment, so a re-submit after a crash renders the same video (plan §3.3). */
+export const FileMusic = MontageMusic.unwrap();
+export type FileMusic = z.infer<typeof FileMusic>;
+
 const FileVideo = z
   .strictObject({
     key: LaunchVideoKey,
@@ -59,6 +65,14 @@ const FileVideo = z
     state: z.enum(FILE_VIDEO_STATES),
     dropReason: DropReason.nullable(),
     videoId: Id.nullable(),
+    /** Written with the assignment (S4.6c1): absent until a track is chosen. A video with photos and no music is not rendered (never silent, A9). */
+    music: FileMusic.optional(),
+    /** The built-in sticker of the avatar's video before this one, which the spec avoids; null when there is none. Written with the music. */
+    previousStickerId: z
+      .string()
+      .regex(/^[a-z0-9-]{1,64}$/)
+      .nullable()
+      .optional(),
   })
   .superRefine((v, ctx) => {
     const fail = (path: string, message: string): void => void ctx.addIssue({ code: "custom", path: [path], message });

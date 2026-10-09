@@ -29,6 +29,11 @@ export interface PlanAvatarInput {
   usage: AvatarUsage;
   /** The avatar has an open scene set of the owner's own: a plan that needs new photos cannot start. */
   hasOpenSet: boolean;
+  /**
+   * The avatar's saved montage drafts were listed in full (`readDraftHolds`). False fails closed for this avatar alone: none of its library photos is taken (§19), whatever
+   * `draftHeldPhotoIds` says; the avatar can still generate.
+   */
+  draftsKnown: boolean;
   /** All the avatar's photos, with their states (the planner does the filtering itself). */
   photos: readonly PlanPhoto[];
 }
@@ -219,8 +224,12 @@ function posesFor(category: CategoryRef, input: PlanInput): readonly ScenePose[]
   return [...BASE_POSES, ...(profile ? (["profile"] as const) : []), ...(back ? (["back"] as const) : [])];
 }
 
-function poolOf(avatar: PlanAvatarInput, input: PlanInput): PlanPhoto[] {
-  if (avatar.usage.state !== "ok") return [];
+/**
+ * The avatar's FREE library photos in the launch's categories (§5.1): the planner's pool, and, with the launch's own photos marked `reserved`, the candidates of every later pick of the
+ * free steps. One definition (A7): eligible, not rejected, not used, not reserved, not held by a saved draft, of the avatar, with a category the launch chose.
+ */
+export function poolOf(avatar: PlanAvatarInput, input: Pick<PlanInput, "draft" | "draftHeldPhotoIds">): PlanPhoto[] {
+  if (avatar.usage.state !== "ok" || !avatar.draftsKnown) return [];
   const chosen = new Set<string>(input.draft.categories);
   return uniqueById(
     avatar.photos.filter(
