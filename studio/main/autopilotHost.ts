@@ -23,9 +23,9 @@ export interface HostPolicy {
   blockCommandsWhileAsleep: boolean;
   /** Send `host.power resume` once more at the next sign of life after a `resume` (L-c). */
   resendResumeOnActivity: boolean;
-  /** Signs of life (a key press, a focus, an unlock) within this many ms of monotonic time after a `suspend` are ignored: the key-up of the shortcut that put the Mac to sleep is not a wake. */
+  /** Signs of life (a key press or a focus, not an unlock) within this many ms of monotonic time after a `suspend` are ignored: the key-up of the shortcut that put the Mac to sleep is not a wake. */
   activityIgnoreMs: number;
-  /** A window command that arrives this many ms (monotonic) after a `suspend` with no `resume` proves the Mac is awake: a sleeping Mac sends none. A mouse-only owner needs it. */
+  /** A held command (`heldWhileAsleep`) that arrives this many ms (monotonic) after a `suspend` with no `resume` proves the Mac is awake: a sleeping Mac sends none. A mouse-only owner needs it. */
   commandRecoveryMs: number;
 }
 
@@ -127,7 +127,7 @@ export function quitDialogOf(question: QuitQuestion, platform: NodeJS.Platform =
   return {
     ...base,
     message: "Запросы автопилота ещё в работе",
-    detail: `${lead}, но ${n} ${plural(n, "запрос ещё ждёт", "запроса ещё ждут", "запросов ещё ждут")} ответа. Если выйти сейчас, ${n % 10 === 1 && n % 100 !== 11 ? "он прервётся и до сверки будет считаться по худшей цене" : `они ${worst}`}. Обычно ответы приходят за минуту.`,
+    detail: `${lead}, но ${n} ${plural(n, "запрос ещё ждёт", "запроса ещё ждут", "запросов ещё ждут")} ответа. Если выйти сейчас, ${n === 1 ? "он прервётся и до сверки будет считаться по худшей цене" : `они ${worst}`}. Обычно ответы приходят за минуту.`,
   };
 }
 
@@ -309,6 +309,10 @@ export class AutopilotHost {
   #blockerId: number | null = null;
   #asleep = false;
   #suspendedAt = 0;
+  /** Wall clock (ms since the epoch) of the last `suspend`, or null before the first: the log compares it with the monotonic delta (does `performance.now()` run in sleep?). */
+  #suspendedWall: number | null = null;
+  /** The held command types already logged in this sleep: one line each. */
+  #heldLogged = new Set<CommandType>();
   #resumePending = false;
 
   constructor(deps: AutopilotHostDeps) {
@@ -407,14 +411,21 @@ export class AutopilotHost {
 
   // ---- sleep ----
 
-  #note(line: string): void {
-    (this.#deps.log ?? console.warn)(`studio: autopilot host: ${line}`);
+  /** One log line of the sleep: wall time, then the monotonic ms since the last `suspend` (n/a before any), then the event. Never a payload. */
+  #note(event: string, wallDelta = false): void {
+    const wall = Date.now();
+    const mono = this.#suspendedWall === null ? "n/a" : `+${Math.round(this.#deps.now() - this.#suspendedAt)}ms`;
+    const wallPart = wallDelta && this.#suspendedWall !== null ? ` wall +${wall - this.#suspendedWall}ms` : "";
+    (this.#deps.log ?? console.warn)(`studio: autopilot host: ${new Date(wall).toISOString()} mono ${mono}${wallPart} ${event}`);
   }
 
   /** `powerMonitor` `suspend`: the engine sends no new attempt, the window's paid starts wait, and the blocker is let go. */
   suspend(): void {
     this.#asleep = true;
+    this.#heldLogged.clear();
     this.#suspendedAt = this.#deps.now();
+    this.#suspendedWall = Date.now();
+    this.#note("suspend");
     this.#guard("power blocker", () => this.#syncBlocker());
     this.#guard("host.power", () => this.#deps.sendPower("suspend"));
   }
@@ -422,6 +433,7 @@ export class AutopilotHost {
   /** `powerMonitor` `resume`: sending goes on. Armed to be said once more at the next sign of life (L-c). */
   resume(): void {
     const slept = this.#asleep;
+    this.#note(slept ? "resume" : "resume (already awake)", true);
     this.#asleep = false;
     this.#resumePending = this.#policy.resendResumeOnActivity;
     this.#guard("power blocker", () => this.#syncBlocker());
@@ -446,9 +458,14 @@ export class AutopilotHost {
   activity(source: ActivitySource): void {
     if (this.#asleep) {
       const early = this.#deps.now() - this.#suspendedAt < this.#policy.activityIgnoreMs;
-      if (early && (source === "key" || source === "focus")) return;
+      if (early && (source === "key" || source === "focus")) {
+        this.#note(`dropped early ${source}`);
+        return;
+      }
       this.#wake(source);
     } else if (this.#resumePending) {
+      // Once per wake: which sign of life came after the `resume` (SP1 reads the order of the wake's events from these lines).
+      this.#note(`activity after resume: ${source}`);
       this.#resumePending = false;
       this.#guard("host.power", () => this.#deps.sendPower("resume"));
     }
@@ -464,7 +481,11 @@ export class AutopilotHost {
     const held = heldWhileAsleep(type);
     if (this.#asleep && held && this.#deps.now() - this.#suspendedAt >= this.#policy.commandRecoveryMs) this.#wake("command");
     const refused = this.#policy.blockCommandsWhileAsleep && this.#asleep && held;
-    if (refused) this.#note(`held ${type}`);
+    // One line per command type per sleep: a window that repeats a held command while the `resume` is lost must not flood the log.
+    if (refused && !this.#heldLogged.has(type)) {
+      this.#heldLogged.add(type);
+      this.#note(`held ${type}`);
+    }
     return refused;
   }
 }

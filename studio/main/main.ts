@@ -126,8 +126,8 @@ function isDevServer(url: string): boolean {
 /** Whether the quit is agreed (quitFlow.ts's `isQuitting`); set once the quit flow exists. */
 let quitAgreed: () => boolean = () => false;
 
-/** A window got focus or input (autopilotHost.ts's `activity`: the Mac is awake); set once the autopilot host exists. */
-let windowActivity: (source: "key" | "focus") => void = () => undefined;
+/** A window got a key press (autopilotHost.ts's `activity`: the Mac is awake); set once the autopilot host exists. */
+let windowActivity: (source: "key") => void = () => undefined;
 
 /** Focuses the window, or opens one: a notification's click, and the owner staying after the last window closed on Windows. */
 function focusOrOpenWindow(): void {
@@ -159,9 +159,9 @@ function createWindow(): void {
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-  // S4.7 (L-c): a focus or a key press is proof that someone is at the Mac, whatever the power events said. `before-input-event` is the keyboard only (a mouse-only owner
+  // S4.7 (L-c): a key press is proof that someone is at the Mac, whatever the power events said. `before-input-event` is the keyboard only (a mouse-only owner
   // is covered by powerMonitor's unlock-screen / user-did-become-active and by the host's command-time recovery); a key-up is the tail of the shortcut that may have slept the Mac.
-  win.on("focus", () => windowActivity("focus"));
+  // Focus is not wired here: `app`'s `browser-window-focus` (below) covers every window, recreated ones included.
   win.webContents.on("before-input-event", (_event, input) => {
     if (input.type === "keyDown") windowActivity("key");
   });

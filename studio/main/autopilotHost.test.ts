@@ -1,7 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, setSystemTime, test } from "bun:test";
 import { COMMAND_TYPES, ENGINE_COMMAND_TYPES, EventMessage, HOST_ASLEEP_DETAIL, LaunchView, MAIN_ONLY_COMMANDS, PROTOCOL_VERSION, type CommandType, type EngineCommandMessage, type ResponseMessage } from "../shared/engine";
-import { heldWhileAsleep } from "../shared/engine";
+import { errorResponseFor, heldWhileAsleep } from "../shared/engine";
 import { formatUsdTiered } from "../shared/engine/usd";
+import { APP_PAGE_URL } from "./appProtocol";
+import { handleRendererRequest, type RequestRoutes, type SenderFrame, type TrustedRenderer } from "./requests";
 import { A, B, avatarRow, budgetHold, libraryRow, NOW, view as baseView, viewWith } from "../shared/engine/autopilot.fixtures";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 import {
@@ -274,6 +276,13 @@ describe("the quit question", () => {
     );
     expect(quitDialogOf({ kind: "stopping", requests: 1 }).detail).toContain("но 1 запрос ещё ждёт ответа. Если выйти сейчас, он прервётся и до сверки будет считаться по худшей цене.");
     expect(quitDialogOf({ kind: "stopping", requests: 5 }).detail).toContain("но 5 запросов ещё ждут ответа");
+    // 11 is "many" and 21 agrees with "запрос" but there are many of them: only exactly one request is "он".
+    expect(quitDialogOf({ kind: "stopping", requests: 11 }).detail).toBe(
+      "Запуск останавливается, но 11 запросов ещё ждут ответа. Если выйти сейчас, они прервутся и до сверки будут считаться по худшей цене. Обычно ответы приходят за минуту.",
+    );
+    expect(quitDialogOf({ kind: "pausing", requests: 21 }).detail).toBe(
+      "Запуск ставится на паузу, но 21 запрос ещё ждёт ответа. Если выйти сейчас, они прервутся и до сверки будут считаться по худшей цене. Обычно ответы приходят за минуту.",
+    );
     expect(quitDialogOf({ kind: "stopping", requests: 2 }).detail).toContain("Запуск останавливается");
     expect(quitDialogOf({ kind: "pausing", requests: 4 }).detail).toContain("Запуск ставится на паузу");
   });
@@ -601,7 +610,7 @@ describe("the sleep", () => {
     expect(r.power).toEqual(["suspend", "resume", "suspend", "resume"]);
   });
 
-  test("M2: a lost resume with a mouse-only owner: any command after the recovery time wakes the host and goes through", () => {
+  test("M2: a lost resume with a mouse-only owner: a held command after the recovery time wakes the host and goes through", () => {
     const r = rig();
     r.host.suspend();
     r.clock.value = DEFAULT_HOST_POLICY.commandRecoveryMs - 1;
@@ -719,6 +728,45 @@ describe("L-d: the window's commands between suspend and resume", () => {
     r.host.suspend();
     await route(command());
     expect(sent).toHaveLength(1);
+  });
+});
+
+describe("LOW-4: the settings route is outside the gate", () => {
+  test("a settings command asleep reaches routes.settings, never the gate, and no settings.* command is held", async () => {
+    const r = rig();
+    r.host.suspend();
+    const engineSeen: string[] = [];
+    const settingsSeen: string[] = [];
+    const answer = (c: { id: string; type: CommandType }): ResponseMessage => errorResponseFor(c, { code: "INTERNAL", detail: "stub" });
+    const routes: RequestRoutes = {
+      mainOnly: async (c) => answer(c),
+      musicKey: async (c) => answer(c),
+      settings: async (c) => {
+        settingsSeen.push(c.type);
+        return answer(c);
+      },
+      importPhoto: async (c) => answer(c),
+      mediaImport: async (c) => answer(c),
+      exportFolder: async (c) => answer(c),
+      reveal: async (c) => answer(c),
+      revealFolder: async (c) => answer(c),
+      avatarDelete: async (c) => answer(c),
+      stickerBytes: async (c) => answer(c),
+      ownStickerBytes: async (c) => answer(c),
+      engine: gateWhileAsleep(r.host, async (c) => {
+        engineSeen.push(c.type);
+        return answer(c);
+      }),
+    };
+    const frame: SenderFrame = { url: APP_PAGE_URL, isTopFrame: true, isAppWindow: true };
+    const packaged: TrustedRenderer = {};
+    const raw = { v: PROTOCOL_VERSION, id: "cmd-00000001", kind: "command", type: "settings.setBudget", payload: { monthlyBudgetMicros: 5_000_000 } };
+    const response = await handleRendererRequest(raw, frame, packaged, routes);
+    expect(settingsSeen).toEqual(["settings.setBudget"]);
+    expect(engineSeen).toEqual([]);
+    expect(response.ok).toBe(false);
+    if (!response.ok) expect(response.error.detail).toBe("stub"); // the settings route's own answer, not HOST_ASLEEP_DETAIL
+    expect(COMMAND_TYPES.filter((type) => type.startsWith("settings.") && heldWhileAsleep(type))).toEqual([]);
   });
 });
 
@@ -848,32 +896,124 @@ describe("a port that throws", () => {
 });
 
 describe("R2: the log SP1 reads, and a sendPower that throws", () => {
-  test("the wake reason and each refusal are logged, the type only", () => {
+  afterEach(() => setSystemTime());
+  const T0 = Date.parse("2026-10-10T12:00:00.000Z");
+  const at = (r: Rig, mono: number, wallMs: number): void => {
+    r.clock.value = mono;
+    setSystemTime(new Date(T0 + wallMs));
+  };
+  const P = "studio: autopilot host: ";
+
+  test("MEDIUM-1: a suspend, an early dropped key, a wake by unlock, a late resume: each line has the time, the monotonic delta and, on a resume, the wall delta", () => {
     const r = rig();
+    at(r, 1_000, 0);
     r.host.suspend();
-    r.clock.value = 5_000;
-    r.host.refuses("autopilot.get");
-    expect(r.host.refuses("runs.start")).toBe(false);
-    expect(r.logs).toContain("studio: autopilot host: woke by command");
+    at(r, 1_500, 500);
+    r.host.activity("key");
+    at(r, 3_000, 2_000);
+    r.host.activity("unlock");
+    at(r, 61_000, 600_000);
+    r.host.resume();
+    expect(r.logs).toEqual([
+      `${P}2026-10-10T12:00:00.000Z mono +0ms suspend`,
+      `${P}2026-10-10T12:00:00.500Z mono +500ms dropped early key`,
+      `${P}2026-10-10T12:00:02.000Z mono +2000ms woke by unlock`,
+      `${P}2026-10-10T12:10:00.000Z mono +60000ms wall +600000ms resume (already awake)`,
+    ]);
+  });
 
-    const q = rig();
-    q.host.suspend();
-    expect(q.host.refuses("runs.start")).toBe(true);
-    q.clock.value = 2_000;
-    q.host.activity("focus");
-    expect(q.logs).toEqual(["studio: autopilot host: held runs.start", "studio: autopilot host: woke by focus"]);
+  test("MEDIUM-1: an early focus is logged as dropped too; a resume that ends the sleep logs itself and then the wake", () => {
+    const r = rig();
+    at(r, 10, 0);
+    r.host.suspend();
+    at(r, 110, 100);
+    r.host.activity("focus");
+    at(r, 5_010, 9_000);
+    r.host.resume();
+    expect(r.logs).toEqual([
+      `${P}2026-10-10T12:00:00.000Z mono +0ms suspend`,
+      `${P}2026-10-10T12:00:00.100Z mono +100ms dropped early focus`,
+      `${P}2026-10-10T12:00:09.000Z mono +5000ms wall +9000ms resume`,
+      `${P}2026-10-10T12:00:09.000Z mono +5000ms woke by resume`,
+    ]);
+  });
 
-    const w = rig();
-    w.host.suspend();
-    w.host.resume();
-    expect(w.logs).toEqual(["studio: autopilot host: woke by resume"]);
-    for (const source of ["key", "unlock", "active"] as const) {
-      const x = rig();
-      x.host.suspend();
-      x.clock.value = 2_000;
-      x.host.activity(source);
-      expect(x.logs).toEqual([`studio: autopilot host: woke by ${source}`]);
+  test("MEDIUM-1: a held click is logged with its type only; a wake by a held click after the recovery time is logged as the wake", () => {
+    const r = rig();
+    at(r, 0, 0);
+    r.host.suspend();
+    at(r, 100, 100);
+    expect(r.host.refuses("runs.start")).toBe(true);
+    at(r, 5_000, 5_200);
+    expect(r.host.refuses("autopilot.resume")).toBe(false);
+    expect(r.logs).toEqual([
+      `${P}2026-10-10T12:00:00.000Z mono +0ms suspend`,
+      `${P}2026-10-10T12:00:00.100Z mono +100ms held runs.start`,
+      `${P}2026-10-10T12:00:05.200Z mono +5000ms woke by command`,
+    ]);
+  });
+
+  test("the first sign of life after a resume is logged once, so SP1 sees the order of the wake's events", () => {
+    const r = rig();
+    at(r, 0, 0);
+    r.host.suspend();
+    at(r, 4_000, 60_000);
+    r.host.resume();
+    at(r, 4_500, 60_500);
+    r.host.activity("focus");
+    at(r, 4_600, 60_600);
+    r.host.activity("key");
+    expect(r.logs).toEqual([
+      `${P}2026-10-10T12:00:00.000Z mono +0ms suspend`,
+      `${P}2026-10-10T12:01:00.000Z mono +4000ms wall +60000ms resume`,
+      `${P}2026-10-10T12:01:00.000Z mono +4000ms woke by resume`,
+      `${P}2026-10-10T12:01:00.500Z mono +4500ms activity after resume: focus`,
+    ]);
+  });
+
+  test("a held command repeated while asleep is logged once per type per sleep, and again in the next sleep", () => {
+    const r = rig();
+    at(r, 0, 0);
+    r.host.suspend();
+    for (const ms of [100, 200, 300]) {
+      at(r, ms, ms);
+      expect(r.host.refuses("scenes.write")).toBe(true);
     }
+    at(r, 400, 400);
+    expect(r.host.refuses("music.refresh")).toBe(true);
+    at(r, 500, 500);
+    r.host.resume();
+    at(r, 600, 600);
+    r.host.suspend();
+    at(r, 700, 700);
+    expect(r.host.refuses("scenes.write")).toBe(true);
+    expect(r.logs.filter((l) => l.endsWith("held scenes.write"))).toHaveLength(2);
+    expect(r.logs.filter((l) => l.endsWith("held music.refresh"))).toHaveLength(1);
+  });
+
+  test("MEDIUM-1: a late key, focus or active after the ignore window wake with the same prefix", () => {
+    for (const source of ["key", "focus", "active"] as const) {
+      const x = rig();
+      at(x, 0, 0);
+      x.host.suspend();
+      at(x, 2_000, 2_000);
+      x.host.activity(source);
+      expect(x.logs).toEqual([`${P}2026-10-10T12:00:00.000Z mono +0ms suspend`, `${P}2026-10-10T12:00:02.000Z mono +2000ms woke by ${source}`]);
+    }
+  });
+
+  test("LOW-4: a command that is free is never logged as held, asleep or not", () => {
+    const r = rig();
+    at(r, 0, 0);
+    r.host.suspend();
+    for (const type of ["autopilot.get", "autopilot.pause", "autopilot.stop", "engine.snapshot", "settings.setBudget", "montages.save"] as const) {
+      at(r, 100, 100);
+      expect(r.host.refuses(type)).toBe(false);
+    }
+    expect(r.logs).toEqual([`${P}2026-10-10T12:00:00.000Z mono +0ms suspend`]);
+    const awake = rig();
+    expect(awake.host.refuses("runs.start")).toBe(false);
+    expect(awake.logs).toEqual([]);
   });
 
   test("a sendPower that throws leaves no blocker held and does not escape suspend, resume, activity or refuses", () => {
