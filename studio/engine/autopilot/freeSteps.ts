@@ -264,7 +264,8 @@ class FreeRun {
   }
 
   #checkIdle(): void {
-    if (this.#loop !== null || this.#inflight.size > 0 || this.#submitting.size > 0) return;
+    // A launch that is over (`ended`) is not waited for, whatever it still has in flight: those renders end by themselves (see `#file`), and a drain asked before the launch went must not outlive it.
+    if (this.#loop !== null || (!this.ended && (this.#inflight.size > 0 || this.#submitting.size > 0))) return;
     for (const resolve of this.#idle.splice(0)) resolve();
   }
 
@@ -298,8 +299,9 @@ class FreeRun {
   #sleep(): Promise<void> {
     return new Promise<void>((resolve) => {
       const ms = this.#inflight.size > 0 ? (this.#d.pollMs ?? DEFAULT_POLL_MS) : (this.#d.idlePollMs ?? DEFAULT_IDLE_POLL_MS);
+      // Not `unref`ed: a drain (and a release) wait on this loop, and while it sleeps THIS timer is what the process is waiting for. With an unref'd one Bun on Windows idles for ever with the
+      // drain's promise pending, and not even a test's own timeout fires. The loop sleeps only while work is outstanding (`#waitsOnTheWorld`), and `dispose` wakes it, so it never holds a finished launch open.
       const timer = setTimeout(done, ms);
-      timer.unref?.();
       function done(): void {
         clearTimeout(timer);
         resolve();

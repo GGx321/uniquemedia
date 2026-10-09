@@ -1,4 +1,5 @@
 import { afterEach } from "bun:test";
+import { within } from "../../testing/within";
 import { emptyUsage } from "../../../shared/autopilot/track";
 import type { LaunchDraft } from "../../../shared/engine/autopilot";
 import { createFreeSteps, type FreeStepsDeps } from "../freeSteps";
@@ -31,7 +32,7 @@ const active: Array<() => Promise<void>> = [];
 /** Call at the top of a test file: steps still polling when a test ends are told to stop, so no timer outlives its test. */
 export function useRigCleanup(): void {
   afterEach(async () => {
-    for (const stop of active.splice(0)) await stop().catch(() => undefined);
+    for (const stop of active.splice(0)) await within(stop(), 4_000, "a steps object to stop at the end of the test").catch(() => undefined);
   });
 }
 
