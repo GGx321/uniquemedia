@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { LAUNCH_SLICE_MAX_PHOTOS, type MonthFit } from "../engine/autopilot";
-import { budgetHoldCleared, budgetHoldDetail, drawAllocationLeft, launchCommittedMicros, monthFit, monthRoomMicros, sliceSize, withinLaunchCeiling, type LaunchScopeMoney } from "./money";
+import { budgetHoldCleared, budgetHoldDetail, drawAllocationLeft, launchCommittedMicros, monthFit, monthRoomMicros, SLICE_MAX_PHOTOS, sliceSize, withinLaunchCeiling, type LaunchScopeMoney } from "./money";
 
 // Stage 4, S4.2 (plan §4.3, §4.4, amendments §18; invariants A2 and A21): the month's room, the fit, the slice size and the budget hold's threshold, as pure
 // functions over integer micro-dollars.
@@ -266,4 +266,8 @@ describe("budgetHoldDetail (plan §18: one threshold, needMicros)", () => {
     expect(budgetHoldCleared(hold, 5_249_999)).toBe(false);
     expect(budgetHoldCleared(hold, 5_250_000)).toBe(true);
   });
+});
+
+test("the slice limit mirrors the contract's", () => {
+  expect(SLICE_MAX_PHOTOS).toBe(LAUNCH_SLICE_MAX_PHOTOS);
 });

@@ -1,7 +1,10 @@
-import { LAUNCH_SLICE_MAX_PHOTOS, type BudgetHoldKind, type MonthFit } from "../engine/autopilot";
+import type { BudgetHoldKind, MonthFit } from "../engine/autopilot";
 
 // Stage 4 (plan §4.3, §4.4, §18; invariants A2, A21): the launch's money arithmetic as pure functions over whole micro-dollars. The engine feeds them its ledger
 // and caps (`engine/autopilot/room.ts`), the orchestrator (S4.6) feeds them the set files' slices; none of them reads a clock, a file or a price.
+
+/** The contract's `LAUNCH_SLICE_MAX_PHOTOS`, mirrored so this pure module imports no value from the contract (zod stays out); `money.test.ts` pins the two equal. */
+export const SLICE_MAX_PHOTOS = 25;
 
 function checkMicros(name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) throw new TypeError(`${name} must be a non-negative whole number of micro-dollars, got ${value}`);
@@ -122,7 +125,7 @@ export function sliceSize(input: { scenesLeft: number; drawLeftMicros: number; r
   const price = input.photoWorstMicros;
   const byAllocation = price === 0 ? Number.POSITIVE_INFINITY : Math.floor(input.drawLeftMicros / price);
   const byRoom = price === 0 ? Number.POSITIVE_INFINITY : Math.floor(input.roomMicros / price);
-  const photos = Math.min(LAUNCH_SLICE_MAX_PHOTOS, input.scenesLeft, byAllocation, byRoom);
+  const photos = Math.min(SLICE_MAX_PHOTOS, input.scenesLeft, byAllocation, byRoom);
   if (photos === 0) return { photos: 0, capMicros: 0, blockedBy: byAllocation === 0 ? "allocation" : "room" };
   return { photos, capMicros: safe(photos * price), blockedBy: null };
 }
