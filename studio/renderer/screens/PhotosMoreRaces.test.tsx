@@ -157,11 +157,22 @@ describe("the focus after «Показать ещё»", () => {
   test("an empty last page (its photos went meanwhile): the button goes, the focus to the last tile, and it is said (LOW-2)", async () => {
     const { engine } = await openGallery(library(501));
     engine.setPhotoSidecarReadable("photo-mia-0001", false);
-    await press(moreButton());
-    await waitFor(() => expect(moreButton() === null).toBe(true));
-    expect(tiles()).toHaveLength(500);
-    expect(focusedLabel()).toBe(describeElement(tileOf("photo-mia-0002")));
-    expect(document.querySelector(".photos-gallery .photos-more-said")?.textContent).toBe("Больше фото нет");
+    // The announcer clears its text after ANNOUNCE_MS, which a slow runner can pass before the button is seen gone (macOS CI
+    // 37891591934): so everything the live region ever said is recorded, and the words are looked for there.
+    const region = document.querySelector(".photos-gallery .photos-more-said");
+    if (region === null) throw new Error("the gallery's live region is not on screen");
+    const said: string[] = [];
+    const watch = new MutationObserver(() => said.push(region.textContent ?? ""));
+    watch.observe(region, { childList: true, characterData: true, subtree: true });
+    try {
+      await press(moreButton());
+      await waitFor(() => expect(moreButton() === null).toBe(true));
+      expect(tiles()).toHaveLength(500);
+      expect(focusedLabel()).toBe(describeElement(tileOf("photo-mia-0002")));
+      await waitFor(() => expect(said).toContain("Больше фото нет"));
+    } finally {
+      watch.disconnect();
+    }
   });
 });
 
