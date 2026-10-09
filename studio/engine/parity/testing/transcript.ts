@@ -519,6 +519,8 @@ export interface Recorded {
   settle(): Promise<void>;
   /** Stage 4 (S4.8): lets a RUNNING launch move a little: the mock runs the next task of its clock, the real engine gets a few milliseconds. Both parity rigs have it; a stub need not. */
   pump?(): Promise<void>;
+  /** Stage 4 (S4.8): what the rig can tell of a launch that did not move, written into the error of `untilLaunch`. Only the real rig has it. */
+  diagnose?(): Promise<string>;
 }
 
 export class Transcript {
@@ -601,7 +603,11 @@ export class Transcript {
       if (launch !== null && want(launch)) break;
       if (Date.now() > deadline || i > 20_000) {
         const seen = launch === null ? "an error" : `${String(launch.status)}, ${JSON.stringify(Array.isArray(launch.avatars) ? launch.avatars.map((a) => objectOf(a).phase) : [])}, hold ${JSON.stringify(launch.paidHold)}`;
-        throw new Error(`the launch never reached ${what} (it said ${seen})`);
+        // What the rig can tell of a launch that did not move (its jobs' ends, the requests, the run journals): a CI log that holds only this error still says why.
+        const diagnose = this.#rig.diagnose;
+        const told = diagnose === undefined ? "" : await diagnose.call(this.#rig).catch((error: unknown) => `the rig could not tell why (${error instanceof Error ? error.message : String(error)})`);
+        const refused = answer.ok ? "" : `; autopilot.get answered ${JSON.stringify(answer.error).slice(0, 400)}`;
+        throw new Error(`the launch never reached ${what} (it said ${seen}${refused})${told === "" ? "" : `\n${told}`}`);
       }
       await pump.call(this.#rig);
     }

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, open, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type CategoryInterrupted, type CategorySummary, type PhotoSummary } from "../../../shared/engine";
 import { handleExportFolderCommand, isExportFolderCommand, type ExportFolderFlowDeps } from "../../../main/exportFolderFlow";
@@ -1160,6 +1160,29 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     settle,
     async pump() {
       await new Promise<void>((resolve) => setTimeout(resolve, 15));
+    },
+    // What a launch that did not move leaves behind: every job's end as the windows heard it (a failed run says its error), the jobs the engine holds, the
+    // requests the fake OpenRouter was asked, and the last lines of each run journal. Read only when a story gives up waiting.
+    async diagnose() {
+      const lines: string[] = [`platform ${process.platform}, boots ${boots}, clock moved ${shifted} ms`];
+      for (const message of posted) {
+        if (typeof message !== "object" || message === null || !("type" in message) || typeof message.type !== "string") continue;
+        if (/^job\.(failed|cancelled|done)$/.test(message.type)) lines.push(`event ${JSON.stringify(message).slice(0, 700)}`);
+      }
+      const snapshot = ResponseMessage.parse(await engine.handle(command("engine.snapshot", {})));
+      lines.push(`jobs ${snapshot.ok && "jobs" in snapshot.result ? JSON.stringify(snapshot.result.jobs).slice(0, 1500) : "no snapshot"}`);
+      if (launchNet !== undefined) {
+        const counts = new Map<string, number>();
+        for (const call of launchNet.calls) counts.set(`${call.method} ${call.url}`, (counts.get(`${call.method} ${call.url}`) ?? 0) + 1);
+        lines.push(`network ${JSON.stringify([...counts])}`);
+      }
+      const library = join(dir, "library");
+      const files = await readdir(library, { recursive: true }).catch(() => []);
+      for (const file of files.filter((f) => f.endsWith("journal.jsonl"))) {
+        const text = await readFile(join(library, file), "utf8").catch((error: unknown) => `unreadable (${error instanceof Error ? error.message : String(error)})`);
+        lines.push(`journal ${file}: ${text.split("\n").filter((l) => l !== "").slice(-10).map((l) => l.slice(0, 500)).join(" | ")}`);
+      }
+      return lines.join("\n");
     },
     control: {
       launch: {
