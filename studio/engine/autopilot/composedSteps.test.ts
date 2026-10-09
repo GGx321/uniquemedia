@@ -38,6 +38,8 @@ function drawnPort(set: StoredSceneSet, runId: string): PaidPort {
     photoWorstMicros: async () => refuse("photoWorstMicros"),
     monthRoom: (): MonthRoom | null => null,
     resumeSliceHold: async (): Promise<BudgetHoldDetail> => refuse("resumeSliceHold"),
+    admitted: () => true,
+    sliceOutcome: async () => null,
     softStopScenes: () => false,
     softStopRun: () => false,
     whenSceneSetIdle: async () => undefined,

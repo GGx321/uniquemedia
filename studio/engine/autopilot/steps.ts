@@ -20,8 +20,15 @@ import type { LaunchFile } from "./launchFile";
 //   - `release(ctx)` follows `drain()` on «Стоп» (and on a restart that finds the launch `stopping`): it releases what the launch holds (unlinks its scene sets, drops what
 //     is not done). Idempotent: a crash can repeat it.
 //   - `inFlight()` counts what a drain would wait for now.
-// Contract of the steps towards the core: `ctx.update` and `ctx.setPaidHold` are refused while the launch is paused or ended (nothing continues during «Пауза», A13);
+// Contract of the steps towards the core: `ctx.update`, `ctx.raisePaidHold` and `ctx.clearPaidHold` are refused while the launch is paused or ended (nothing continues during «Пауза», A13);
 // `ctx.finish()` is refused unless the launch is running or pausing; a paid hold leaves the launch `running` and free work goes on through it (A13).
+
+/** The steps' timers (the bounded automatic continues, the busy wait, the composer's finish retry): injectable so a test owns the clock. */
+export type TimerHandle = ReturnType<typeof setTimeout> | number;
+export interface StepTimers {
+  set(run: () => void, ms: number): TimerHandle;
+  clear(handle: TimerHandle): void;
+}
 
 export interface LaunchStepsContext {
   readonly launchId: string;
@@ -34,8 +41,14 @@ export interface LaunchStepsContext {
   isRunning(): boolean;
   /** A whole-file rewrite under the store's queue: `change` gets the file as it is on disk and returns the next one (null: no change). */
   update(change: (file: LaunchFile) => LaunchFile | null): Promise<LaunchFile>;
-  /** Sets or clears the paid hold (and logs it). Free work goes on. */
-  setPaidHold(hold: PaidHold | null): Promise<LaunchFile>;
+  /**
+   * S4.6b2: raises a paid hold, decided INSIDE the file's own write (compare-and-set on the fresh file, never on a copy read before an await). The hold is set when none stands, or when it
+   * outranks the one that stands (`holdRank`: 0 a waiting hold, 1 credits / key / price / budget / a price list that stayed unavailable, 2 a network hold with no retry, 3 halt / internal), which it displaces. Among equals the first stays.
+   * `won` says whether this hold is the one that stands now. Refused like `update` while the launch is paused or ended.
+   */
+  raisePaidHold(hold: PaidHold): Promise<{ won: boolean }>;
+  /** S4.6b2: clears the hold only if it is still `expected` (the same hold, not one that replaced it meanwhile). True when it was cleared. */
+  clearPaidHold(expected: PaidHold): Promise<boolean>;
   setFreeHold(hold: FreeHold | null): Promise<LaunchFile>;
   /** Appends a typed line to the launch's «Журнал». Never rejects: a log that cannot be written is told in the console and the launch goes on. */
   log(line: LogLine): Promise<void>;
@@ -107,6 +120,16 @@ export interface LaunchSteps {
   finishReady?(launchId: string): boolean;
   /** S4.6b1: the composer registers here; a passive voter calls it whenever its `finishReady` may have turned true. */
   onReadyChange?(listener: () => void): void;
+  /**
+   * S4.6b2, `host.power` `suspend`: the Mac is going to sleep. From this instant the context reports the launch as not running, so nothing new is sent; this is the part's chance to
+   * soft-stop the jobs it has in flight (no new attempt leaves; an attempt already sent ends under the ordinary rules) and to hold its timers. Synchronous; never rejects.
+   */
+  suspend?(): void;
+  /**
+   * S4.6b2, `host.power` `resume`, for a launch that ran when the Mac slept: put right what the sleep interrupted (a waiting hold's timer, the passes), then go on. The context is running again. A part without it is begun
+   * again (`begin` is idempotent for a running launch).
+   */
+  wake?(ctx: LaunchStepsContext): Promise<void>;
   /** S4.6b1: whether the part has live work for this avatar now (a worker, a job); the composer lets the free part finish an avatar (`montage` to `done`) only when it is idle. */
   active?(launchId: string, avatarId: string): boolean;
 }

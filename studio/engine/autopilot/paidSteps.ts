@@ -1,4 +1,5 @@
-import { drawAllocationLeft, sliceSize, SLICE_MAX_PHOTOS, type LaunchScopeMoney } from "../../shared/autopilot/money";
+import { budgetHoldDetail, drawAllocationLeft, sliceSize, SLICE_MAX_PHOTOS, type LaunchScopeMoney } from "../../shared/autopilot/money";
+import { ErrorCode } from "../../shared/engine";
 import type { PaidHold, SkipReason } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
 import type { StoredSceneSet } from "../library/sceneSets";
@@ -8,8 +9,9 @@ import { sceneRefusal } from "../sceneSets/refusal";
 import { pendingChunks } from "../sceneSets/chunks";
 import type { LiveScope } from "./room";
 import type { FileAvatar, LaunchFile } from "./launchFile";
+import { causeOf, failureRateTripped, isWaitingHold, NETWORK_WAITS_MS, PRICE_WAITS_MS, sameHold } from "./paidFailures";
 import { NOT_PAYABLE_DETAIL, type PaidPort } from "./paidPort";
-import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchStepsContext, MirrorSource } from "./steps";
+import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchStepsContext, MirrorSource, StepTimers, TimerHandle } from "./steps";
 
 // Stage 4, S4.6b1 (plan §3.2, §3.4, §3.6 rows 2–5, §4.3, §4.4, §4.7, §18, §19): the launch's PAID path, plugged in behind `LaunchSteps`. Per avatar that generates:
 //
@@ -30,8 +32,15 @@ import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchS
 // FINISH. This file never calls `ctx.finish()`: it is a PASSIVE voter (`finishReady`): ready when no worker or job is live and every generating avatar is in
 // `montage`/`done`/`skipped`. The composer finishes the launch when the free part has voted too.
 //
-// NOT here (S4.6b2): the failure table of §4.6 (credits, key, network, halts, the bounded automatic continues), the failure-rate guard, `host.power`. A job that ends in a way this
-// file has no rule for leaves the avatar where it is (`#stuck`: a warning in the console, nothing sent), so S4.6b2 has one place to plug the table in.
+// THE FAILURE TABLE (S4.6b2, plan §4.6). A paid job that fails, or cannot start, is classified by its error code (`paidFailures.ts`) and `#raise` does what the row says: credits, key and halt
+// hold the launch for a person; a request that got no answer continues by itself after 1 and after 5 minutes and then holds (`#networkDrop`, the count per job in the launch file); an
+// unavailable price list is retried after 5, 15 and 60 minutes (`#priceUnavailable`); an avatar's own refusal skips it; the month and the allocation hold as before. Free work goes on
+// through every hold. The timer of an automatic continue is armed before its hold is written, cancelled by a drain, a suspend, a begin and a release, and checks the admission rule (A19)
+// when it fires. The failure-rate guard reads the finished slice's outcome before another slice is bought. `suspend` / `wake` are the engine's side of `host.power`.
+// A job that ends in a way the table has no row for leaves the avatar where it is (`#stuck`: a warning in the console, nothing sent): the contract has no hold for it.
+
+/** The steps' timers (the bounded automatic continues, the wait for a busy avatar): injectable so a test owns the clock. The default is the global `setTimeout`, NOT unref'd: a drain waits on these. */
+const REAL_TIMERS: StepTimers = { set: (run, ms) => setTimeout(run, ms), clear: (handle) => clearTimeout(handle) };
 
 export interface PaidStepsDeps {
   /** The engine, behind the port. Lazy: the steps are built before the engine they serve. */
@@ -41,6 +50,13 @@ export interface PaidStepsDeps {
   retryMs?: number;
   /** Epoch milliseconds, for the time of a hold. */
   clock?: () => number;
+  /** The timers of the automatic continues and the busy wait. */
+  timers?: StepTimers;
+  /**
+   * How long a job that got no answer waits before it continues by itself, one entry per automatic continue. The default is the plan's Q2 = A: after 1 and after 5 minutes. Q2 = Б (the owner's
+   * other answer) is `[]`: the first drop holds for a person. The owner has not answered; the plan's default stands.
+   */
+  networkWaitsMs?: readonly number[];
 }
 
 const DEFAULT_RETRY_MS = 3_000;
@@ -56,6 +72,30 @@ const isFailure = (error: unknown, code: string): error is EngineFailure => erro
 const isNotPayable = (error: unknown): boolean => isFailure(error, "VALIDATION") && (error.error.detail ?? "").startsWith(NOT_PAYABLE_DETAIL);
 const plannedOf = (set: MirrorSource) => set.scenes.filter((s) => s.origin === "planned" && !s.removed);
 const FINAL_PHASES: readonly string[] = ["montage", "done", "skipped"];
+/** The price request of a slice's sizing, in the same counters. */
+const PRICES_JOB = "prices";
+
+/**
+ * The retry timer of a waiting hold, bound to THAT hold (S4.6b2, fix round 1): it fires only if it is still the launch's armed timer and the very hold it was made for stands. `decided` settles
+ * once the write that raised the hold has answered, true when this hold won it.
+ */
+interface Arm {
+  hold: PaidHold;
+  handle: TimerHandle | null;
+  decided: Promise<boolean>;
+  decide: (won: boolean) => void;
+  cancelled: boolean;
+}
+
+/** The error code of whatever a step caught: an engine refusal's, or an `EngineError` carried in a job's end. Undefined for anything else (a defect). */
+function codeOf(error: unknown): ErrorCode | undefined {
+  if (error instanceof EngineFailure) return error.error.code;
+  if (typeof error === "object" && error !== null && "code" in error) {
+    const parsed = ErrorCode.safeParse(error.code);
+    return parsed.success ? parsed.data : undefined;
+  }
+  return undefined;
+}
 
 /** What the set's earlier writer scopes committed: every writer attempt `<setId>:writer-*`, settled at its cost, open at its worst case (plan §3.6 row 2). */
 export function writerCommittedMicros(ledger: Pick<Ledger, "lines" | "closeOf">, sceneSetId: string): number {
@@ -93,6 +133,14 @@ export class PaidSteps implements LaunchSteps {
   #startWaiters: (() => void)[] = [];
   #composeLane: Promise<unknown> = Promise.resolve();
   #drawLane: Promise<unknown> = Promise.resolve();
+  /** The timer of the one automatic continue a launch waits for, by launch id (S4.6b2). At most one: a launch has at most one paid hold. */
+  readonly #armed = new Map<string, Arm>();
+  /** Timers made for a hold whose write has not come back yet (S4.6b2): a drain must take these back too. */
+  readonly #pending = new Set<Arm>();
+  /** Waits (a busy avatar) that a drain, a suspend or a stop must be able to end early. */
+  readonly #sleepers = new Set<() => void>();
+  /** `host.power` `suspend`: the Mac sleeps. Nothing is sent and no timer is held until `wake` (or the owner's own `begin`). */
+  #suspended = false;
 
   constructor(deps: PaidStepsDeps) {
     this.#d = deps;
@@ -101,8 +149,16 @@ export class PaidSteps implements LaunchSteps {
   // ---------- the seam ----------
 
   begin(ctx: LaunchStepsContext): void {
+    // A begin is the owner's «Продолжить» (or the start): the Mac is awake, and a wait for an automatic continue is over (the owner took over).
+    this.#suspended = false;
+    this.#cancelTimers();
     this.#ctxs.set(ctx.launchId, ctx);
     this.#subscribe();
+    this.#restart(ctx);
+  }
+
+  /** Starts the pass of every avatar that still has paid work; a pass that runs already starts once more when it ends. */
+  #restart(ctx: LaunchStepsContext): void {
     for (const row of ctx.file().avatars) {
       if (row.generation === null) continue;
       if (row.phase === "skipped" || row.phase === "done" || row.phase === "montage") continue;
@@ -111,15 +167,40 @@ export class PaidSteps implements LaunchSteps {
   }
 
   async drain(): Promise<void> {
+    // «Пауза», «Стоп» and a quit: no wait for an automatic continue outlives them (A6), and a busy avatar's wait ends at once.
+    this.#cancelTimers();
     for (;;) {
       this.#softStopAll();
+      this.#wakeSleepers();
       const workers = [...this.#workers.values()];
       if (workers.length === 0) return;
       await Promise.allSettled(workers);
     }
   }
 
+  /** `host.power` `suspend` (plan §3.8): no new attempt leaves, the jobs in flight are soft-stopped (an attempt already sent ends under the ordinary rules), and no timer fires meanwhile. */
+  suspend(): void {
+    this.#suspended = true;
+    this.#cancelTimers();
+    this.#softStopAll();
+    this.#wakeSleepers();
+  }
+
+  /**
+   * `host.power` `resume` for a launch that ran. It does NOT claim to check the network: the price list is served from a cache and a dated book when it cannot be fetched, so reading it proves
+   * nothing, and a probe of its own would be a request outside the launch's accounting. What it does is put right what the sleep interrupted: a waiting hold whose timer was cancelled is armed
+   * again for the remainder, one that came due goes through the very check the timer makes (`#fire`: the admission rule), and a launch with no hold starts its passes again. A network that is
+   * still down shows up as the next drop of a job, on the bounded continues.
+   */
+  async wake(ctx: LaunchStepsContext): Promise<void> {
+    this.#suspended = false;
+    this.#ctxs.set(ctx.launchId, ctx);
+    if (!ctx.isRunning()) return;
+    await this.#resumeWait(ctx);
+  }
+
   async release(ctx: LaunchStepsContext): Promise<void> {
+    this.#cancelTimers();
     const port = this.#d.port();
     for (const row of ctx.file().avatars) {
       if (row.generation === null) continue;
@@ -234,7 +315,8 @@ export class PaidSteps implements LaunchSteps {
     };
     while (moves < MAX_MOVES) {
       moves += 1;
-      if (!this.#mayPay(ctx)) return;
+      // A job that has just ended is read even when another hold stands now: its drop must be counted in its own job (a hold is no reason to forget it).
+      if (!ctx.isRunning() || (!this.#mayPay(ctx) && !ranJob)) return;
       const row = this.#rowOf(ctx, avatarId);
       const generation = row.generation;
       if (generation === null || row.phase === "skipped") return;
@@ -251,12 +333,14 @@ export class PaidSteps implements LaunchSteps {
       if (set.launchDraw !== undefined) return this.#draw(ctx, avatarId);
       if (this.#pendingWrites(set) > 0) {
         if (ranJob) {
-          this.#stuck(avatarId, "the scenes of the set are not all written");
+          // The job ended and scenes are still missing: why it stopped is in the set (§4.6), and that decides the hold. This pass is over either way.
+          await this.#sceneStepStopped(ctx, avatarId, set);
           return;
         }
         if (!(await settle(await this.#write(ctx, row, set)))) return;
         continue;
       }
+      if (!this.#mayPay(ctx)) return;
       if (generation.review) {
         await this.#awaitReview(ctx, avatarId, set);
         return;
@@ -294,7 +378,7 @@ export class PaidSteps implements LaunchSteps {
       } catch (error) {
         this.#startEnded();
         this.#liveSets.delete(generation.sceneSetId);
-        return this.#startFailed(ctx, row, error, async () => {
+        return this.#startFailed(ctx, row, `${generation.sceneSetId}:scenes`, error, async () => {
           const estimate = await port.composeEstimate({ avatarId: row.avatarId, count, categories: split.map((s) => s.ref) });
           return { stage: "compose" as const, needMicros: estimate.worstMicros, leftMicros: row.allocation.composeMicros };
         });
@@ -336,7 +420,7 @@ export class PaidSteps implements LaunchSteps {
       } catch (error) {
         this.#startEnded();
         this.#liveSets.delete(generation.sceneSetId);
-        return this.#startFailed(ctx, row, error, async () => {
+        return this.#startFailed(ctx, row, `${generation.sceneSetId}:scenes`, error, async () => {
           const again = await port.writeEstimate(generation.sceneSetId);
           return { stage: "rewrite" as const, needMicros: again.worstMicros, leftMicros: allowed };
         });
@@ -352,6 +436,20 @@ export class PaidSteps implements LaunchSteps {
       }
       return "ran";
     });
+  }
+
+  /**
+   * A compose or «Дописать» ended and scenes are still missing. The set keeps why its write stopped (`write.stoppedBy`): a failure carries the error and decides by the table; a soft stop
+   * (a pause, a stop, a sleep) is no failure and leaves the pass; anything else is a state this file has no rule for.
+   */
+  async #sceneStepStopped(ctx: LaunchStepsContext, avatarId: string, set: StoredSceneSet): Promise<void> {
+    if (!ctx.isRunning()) return;
+    const write = set.write;
+    if (write?.stoppedBy === "failed" && write.stoppedError !== undefined) {
+      await this.#raise(ctx, avatarId, `${set.sceneSetId}:scenes`, write.stoppedError);
+      return;
+    }
+    this.#stuck(avatarId, `the scenes of the set are not all written (the write stopped: ${write?.stoppedBy ?? "no record"})`);
   }
 
   async #awaitReview(ctx: LaunchStepsContext, avatarId: string, set: StoredSceneSet): Promise<void> {
@@ -423,7 +521,7 @@ export class PaidSteps implements LaunchSteps {
       // A slice that has a run and is not finished is resumed inside its own cap, before anything new is drawn.
       const open = draw.slices.find((entry) => statuses.get(entry.runId)?.finished === false && !spent.has(entry.runId));
       if (open !== undefined) {
-        const outcome = await this.#runSlice(ctx, row, open.runId);
+        const outcome = await this.#runSlice(ctx, row, set, open.runId, statuses.get(open.runId));
         if (outcome === "end") return "done";
         if (outcome === "busy") return "busy";
         if (outcome === "spent") spent.add(open.runId);
@@ -441,6 +539,17 @@ export class PaidSteps implements LaunchSteps {
       if (pending === undefined && scenesLeft === 0) {
         await this.#setPhase(ctx, avatarId, "montage");
         return "done";
+      }
+      // The failure-rate guard (§4.6): before another slice is bought, the one just finished is looked at. Half of its slots failing the gates or moderation means the master portrait is the
+      // problem, not luck: the avatar's remaining slices are not drawn. (Read here, not at the slice's end, so a pause that landed first cannot lose it.)
+      const last = draw.slices.at(-1);
+      if (pending === undefined && last !== undefined) {
+        const outcome = await port.sliceOutcome(last.runId);
+        if (outcome !== null && failureRateTripped(outcome)) {
+          if (!this.#mayPay(ctx)) return "done";
+          await this.#skip(ctx, avatarId, "failure-rate", { failed: outcome.checkFailures, total: outcome.slots });
+          return "done";
+        }
       }
       const size = pending === undefined ? await this.#sizeOf(ctx, row, set, statuses, scenesLeft) : { photos: Math.min(SLICE_MAX_PHOTOS, pending.sceneIds.length) };
       if (size === "end") return "done";
@@ -471,8 +580,10 @@ export class PaidSteps implements LaunchSteps {
     try {
       photoWorst = await port.photoWorstMicros();
     } catch (error) {
-      return this.#stuck(row.avatarId, `the price of a photo could not be read (${error instanceof Error ? error.name : typeof error})`);
+      // PRICE_UNAVAILABLE retries after 5, 15 and 60 minutes; a drop of the price request is a drop like any other; anything else is told and left.
+      return this.#raise(ctx, row.avatarId, PRICES_JOB, error);
     }
+    await this.#pricesWork(ctx);
     const live = await this.#liveSlices(ctx);
     await this.#composeSettled();
     if (!this.#mayPay(ctx)) return "end";
@@ -510,8 +621,11 @@ export class PaidSteps implements LaunchSteps {
     return live;
   }
 
-  /** Starts (or resumes) one slice run and waits for its end. "spent": nothing is left to run in it. "busy": the avatar is held. "end": stop this pass. */
-  async #runSlice(ctx: LaunchStepsContext, row: FileAvatar, runId: string): Promise<"again" | "spent" | "busy" | "end"> {
+  /**
+   * Starts (or resumes) one slice run and waits for its end. "spent": nothing is left to run in it. "busy": the avatar is held. "end": stop this pass (a hold, a skip, a stop).
+   * A run that ends failed is a row of the §4.6 table: the month (a resume needs the room), the cap (the slice is finished), or a cause for `#raise`.
+   */
+  async #runSlice(ctx: LaunchStepsContext, row: FileAvatar, set: StoredSceneSet, runId: string, status: SliceStatus | undefined): Promise<"again" | "spent" | "busy" | "end"> {
     const port = this.#d.port();
     if (!this.#mayPay(ctx)) return "end";
     this.#liveRuns.add(runId);
@@ -522,20 +636,19 @@ export class PaidSteps implements LaunchSteps {
       this.#liveRuns.delete(runId);
       if (isNotPayable(error)) return "end";
       if (isFailure(error, "IN_FLIGHT")) return "busy";
-      if (isFailure(error, "BUDGET_EXCEEDED")) {
-        try {
-          const detail = await port.resumeSliceHold(runId, await this.#liveSlices(ctx));
-          await this.#hold(ctx, row.avatarId, { reason: "budget", at: this.#now(), detail });
-          return "end";
-        } catch {
-          return this.#stuck(row.avatarId, "the month has no room for the slice and its hold could not be read");
-        }
+      if (isFailure(error, "BUDGET_EXCEEDED")) return this.#budgetStopped(ctx, row, set, runId, false);
+      if (isFailure(error, "PRICE_CHANGED")) {
+        // The slice is already started: it cannot shrink, so at today's price what is left of it no longer fits its cap. Nothing is raised (A3).
+        const open = status !== undefined && !status.finished ? (status.openSlots ?? 1) : 1;
+        await this.#hold(ctx, row.avatarId, { reason: "price", at: this.#now(), detail: { stage: "slice", fromPhotos: Math.max(1, open), toPhotos: 0 } });
+        return "end";
       }
-      return this.#stuck(row.avatarId, `the slice could not be started (${error instanceof EngineFailure ? error.error.code : error instanceof Error ? error.name : "unknown"})`);
+      return this.#raise(ctx, row.avatarId, runId, error);
     }
     // The start has returned: a soft stop that found no job before this instant is sent again.
     if (!ctx.isRunning()) port.softStopRun(runId);
     this.#busyKeys.delete(this.#key(ctx.launchId, row.avatarId));
+    await this.#pricesWork(ctx);
     if (started.kind === "finished") {
       this.#liveRuns.delete(runId);
       return "spent";
@@ -552,9 +665,34 @@ export class PaidSteps implements LaunchSteps {
       await this.#rewrite(ctx, (file) => this.#patchRow(file, row.avatarId, (a) => ({ ...a, photosDone: a.photosDone + arrived })));
       return "again";
     }
-    // A soft stop ends the run cancelled with its slots open: «Продолжить» resumes it. Any other end is S4.6b2's table.
+    // A soft stop (a pause, a stop, a sleep) ends the run cancelled with its slots open: «Продолжить» or the wake-up resumes it.
     if (!ctx.isRunning()) return "end";
-    return this.#stuck(row.avatarId, `the slice ended ${end.status === "failed" ? `failed (${end.error.code})` : end.status}`);
+    if (end.status === "cancelled") return this.#stuck(row.avatarId, "the slice was cancelled and nothing asked for a stop");
+    const cause = causeOf(end.error.code);
+    if (cause.kind === "cap") return "spent";
+    if (cause.kind === "budget") return this.#budgetStopped(ctx, row, set, runId, true);
+    return this.#raise(ctx, row.avatarId, runId, end.error);
+  }
+
+  /**
+   * The month has no room for the slice's next attempt (refused at its start, or mid-run as a `limit` that ended it): `paidHold { budget }` for a resume, naming the room the resume needs
+   * (`Engine.resumeSliceHold`). Mid-run the log says how far the slice got («бюджет месяца закончился»).
+   */
+  async #budgetStopped(ctx: LaunchStepsContext, row: FileAvatar, set: StoredSceneSet, runId: string, midRun: boolean): Promise<"end"> {
+    const port = this.#d.port();
+    try {
+      const detail = await port.resumeSliceHold(runId, await this.#liveSlices(ctx));
+      if (midRun) {
+        const total = set.launchDraw?.slices.find((entry) => entry.runId === runId)?.sceneIds.length ?? 0;
+        const left = (await port.sliceStatuses(set)).get(runId);
+        const open = left !== undefined && !left.finished ? (left.openSlots ?? total) : 0;
+        await this.#log(ctx, { at: this.#now(), kind: "budget-ended", avatarId: row.avatarId, done: Math.max(0, total - open), total });
+      }
+      await this.#hold(ctx, row.avatarId, { reason: "budget", at: this.#now(), detail });
+      return "end";
+    } catch {
+      return this.#stuck(row.avatarId, "the month has no room for the slice and its hold could not be read");
+    }
   }
 
   // ---------- holds, waits, skips ----------
@@ -563,6 +701,7 @@ export class PaidSteps implements LaunchSteps {
   async #startFailed(
     ctx: LaunchStepsContext,
     row: FileAvatar,
+    jobKey: string,
     error: unknown,
     price: () => Promise<{ stage: "compose" | "rewrite"; needMicros: number; leftMicros: number }>,
   ): Promise<Move> {
@@ -578,12 +717,259 @@ export class PaidSteps implements LaunchSteps {
       return "retry";
     }
     if (isFailure(error, "SCENES_CHANGED")) return "retry";
-    return this.#stuck(row.avatarId, `the set could not be written (${error instanceof EngineFailure ? error.error.code : error instanceof Error ? error.name : "unknown"})`);
+    if (isFailure(error, "BUDGET_EXCEEDED")) {
+      // §4.6, BUDGET_EXCEEDED at a step start: the month has no room for the step. It needs the room for its own worst case; «Продолжить» is admitted once that much is free.
+      const need = await price();
+      const room = this.#d.port().monthRoom();
+      await this.#hold(ctx, row.avatarId, { reason: "budget", at: this.#now(), detail: budgetHoldDetail({ kind: "new-slice", freeMicros: room?.freeMicros ?? 0, photoWorstMicros: need.needMicros }) });
+      return "end";
+    }
+    return this.#raise(ctx, row.avatarId, jobKey, error);
   }
 
-  async #hold(ctx: LaunchStepsContext, avatarId: string, hold: PaidHold): Promise<void> {
-    await ctx.setPaidHold(hold);
-    await this.#setPhase(ctx, avatarId, "waiting", { reason: "paid-hold" });
+  /**
+   * Raises the launch's paid hold and parks the avatar as waiting. The hold is decided inside the file's own write (`raisePaidHold`) by rank (`holdRank`): it stands when nothing stood or when it
+   * outranks what stood (which it displaces, timer and all). Otherwise the one that stands stays: the cause is met again, at no cost, by the pass that follows the hold. True when this hold stands.
+   */
+  async #hold(ctx: LaunchStepsContext, avatarId: string | null, hold: PaidHold): Promise<boolean> {
+    // The avatar parks first: whoever sees the hold finds the row already waiting behind it.
+    if (avatarId !== null) await this.#setPhase(ctx, avatarId, "waiting", { reason: "paid-hold" });
+    const { won } = await ctx.raisePaidHold(hold);
+    // A hold that won took the place of whatever stood: a waiting hold's timer belongs to a hold that is gone.
+    if (won) this.#cancelTimers(ctx.launchId);
+    return won;
+  }
+
+  // ---------- the failure table (plan §4.6) ----------
+
+  /**
+   * A paid job failed, or could not start, for a cause the table has a row for: credits, key, halt, no answer, reconcile, prices unavailable, or the avatar itself. Sets the hold (or skips the
+   * avatar) and returns "end": this pass has nothing more to send. A cause with no row is left where it is, with a warning (`#stuck`). Nothing is raised or sent here (A3, A6).
+   * Not for a launch that stopped running meanwhile (a pause, a stop, a sleep): the resume meets the same state, and a 402 or a 401 then costs nothing.
+   */
+  async #raise(ctx: LaunchStepsContext, avatarId: string | null, jobKey: string, error: unknown): Promise<"end"> {
+    if (!ctx.isRunning()) return "end";
+    const code = codeOf(error);
+    const cause = code === undefined ? ({ kind: "unknown" } as const) : causeOf(code);
+    const at = this.#now();
+    switch (cause.kind) {
+      case "credits":
+        await this.#hold(ctx, avatarId, { reason: "credits", at, detail: {} });
+        return "end";
+      case "key":
+        await this.#hold(ctx, avatarId, { reason: "key", at, detail: {} });
+        return "end";
+      case "halt":
+        await this.#hold(ctx, avatarId, { reason: "halt", at, detail: { code: cause.code } });
+        return "end";
+      case "network":
+        return this.#networkDrop(ctx, avatarId, jobKey);
+      case "reconcile": {
+        // The ledger holds reserves it cannot vouch for: the same exit as a network hold (a reconcile, then «Продолжить»), with no retry. A request that was not answered is a drop of its job.
+        const counted = await this.#countDrop(ctx, jobKey, false);
+        await this.#hold(ctx, avatarId, { reason: "network", at, detail: { drops: counted.drops, attempt: counted.continues, nextAt: null } });
+        return "end";
+      }
+      case "price-unavailable":
+        return this.#priceUnavailable(ctx, avatarId);
+      case "avatar":
+        if (avatarId === null) return this.#stuck("the launch", `a launch-wide step met an avatar's refusal (${code})`);
+        await this.#skip(ctx, avatarId, cause.reason);
+        return "end";
+      default:
+        return this.#stuck(avatarId ?? "the launch", `the job ended in a way the table has no row for (${code ?? (error instanceof Error ? error.name : typeof error)})`);
+    }
+  }
+
+  /**
+   * Counts a drop in its own job's entry, on the fresh file, whatever hold stands. `spend` says whether this drop also uses one of the job's automatic continues; a job that has used them all
+   * does not (its entry keeps `continues` at the most it was given).
+   */
+  async #countDrop(ctx: LaunchStepsContext, jobKey: string, spend: boolean): Promise<{ drops: number; continues: number; spent: boolean }> {
+    const waits = this.#d.networkWaitsMs ?? NETWORK_WAITS_MS;
+    let result = { drops: 1, continues: 0, spent: false };
+    await this.#rewrite(ctx, (f) => {
+      const cur = f.autoContinues?.[jobKey] ?? { drops: 0, continues: 0 };
+      // By the drop's number, not by the continues left: a drop that landed under a hold for a person spent none, and must not push the third drop out to a fourth.
+      const spent = spend && cur.continues < waits.length && cur.drops + 1 <= waits.length;
+      result = { drops: cur.drops + 1, continues: cur.continues + (spent ? 1 : 0), spent };
+      return { ...f, autoContinues: { ...f.autoContinues, [jobKey]: { drops: result.drops, continues: result.continues } } };
+    });
+    return result;
+  }
+
+  /**
+   * No answer (network, a timeout, a final 429 or 5xx): the job continues by itself after its first drop (1 minute) and its second (5 minutes), then waits for a person. Every drop is counted in
+   * its own job whatever hold stands. The third drop is a hold for a person and displaces a waiting hold of another job. While a hold for a person stands, a drop does not use a continue (no wait
+   * will serve it) and only parks its avatar. The wait is a hold with `nextAt`; its timer checks the admission rule before it clears the hold.
+   */
+  async #networkDrop(ctx: LaunchStepsContext, avatarId: string | null, jobKey: string): Promise<"end"> {
+    const waits = this.#d.networkWaitsMs ?? NETWORK_WAITS_MS;
+    const standing = ctx.file().paidHold;
+    const personHolds = standing !== null && !isWaitingHold(standing);
+    const counted = await this.#countDrop(ctx, jobKey, !personHolds);
+    const at = this.#now();
+    if (counted.spent) {
+      const afterMs = waits[counted.continues - 1] ?? 0;
+      const hold: PaidHold = { reason: "network", at, detail: { drops: counted.drops, attempt: counted.continues, nextAt: new Date(this.#clock() + afterMs).toISOString() } };
+      await this.#log(ctx, { at, kind: "network-retry", ...(avatarId === null ? {} : { avatarId }), attempt: counted.continues, attempts: waits.length, afterMs });
+      await this.#holdWithRetry(ctx, avatarId, hold, afterMs);
+      return "end";
+    }
+    if (personHolds && counted.drops <= waits.length) {
+      // A hold for a person stands and this job still has continues: no wait would serve it, so it only parks, and the pass after that hold meets whatever is still wrong.
+      if (avatarId !== null) await this.#setPhase(ctx, avatarId, "waiting", { reason: "paid-hold" });
+      return "end";
+    }
+    // The job has used its continues: this is the third drop. It is raised whatever stands (the rank decides: it displaces a waiting hold and every hold a click would clear at once), because
+    // otherwise «Продолжить» would be admitted with this job's requests unanswered and no reconcile (A19).
+    await this.#hold(ctx, avatarId, { reason: "network", at, detail: { drops: counted.drops, attempt: counted.continues, nextAt: null } });
+    return "end";
+  }
+
+  /** The price list did not load: retry after 5, 15 and 60 minutes (the launch's count, in the file), then hold for a person. A retry is used only when its wait is the one that stands. */
+  async #priceUnavailable(ctx: LaunchStepsContext, avatarId: string | null): Promise<"end"> {
+    const used = ctx.file().priceRetries ?? 0;
+    const at = this.#now();
+    if (used >= PRICE_WAITS_MS.length) {
+      await this.#hold(ctx, avatarId, { reason: "price-unavailable", at, detail: { attempt: used, nextAt: null } });
+      return "end";
+    }
+    if (ctx.file().paidHold !== null) {
+      // Something already holds the launch (a wait that will restart this pass, or a person's hold): no retry is spent on a wait that will not be ours.
+      if (avatarId !== null) await this.#setPhase(ctx, avatarId, "waiting", { reason: "paid-hold" });
+      return "end";
+    }
+    const afterMs = PRICE_WAITS_MS[used] ?? 0;
+    const hold: PaidHold = { reason: "price-unavailable", at, detail: { attempt: used + 1, nextAt: new Date(this.#clock() + afterMs).toISOString() } };
+    await this.#rewrite(ctx, (f) => ({ ...f, priceRetries: Math.max(f.priceRetries ?? 0, used) + 1 }));
+    await this.#holdWithRetry(ctx, avatarId, hold, afterMs);
+    return "end";
+  }
+
+  /** The prices were read: the retries of the price list start over (a hold from last week must not shorten today's). */
+  async #pricesWork(ctx: LaunchStepsContext): Promise<void> {
+    if ((ctx.file().priceRetries ?? 0) === 0) return;
+    await this.#rewrite(ctx, (f) => ((f.priceRetries ?? 0) === 0 ? null : { ...f, priceRetries: 0 }));
+  }
+
+  // ---------- the timer of a waiting hold ----------
+
+  /**
+   * A waiting hold with its timer. The timer is created BEFORE the hold is written (nobody can see the hold and find no timer behind it) and is bound to the hold that WON the write: if the hold
+   * lost (another one stands), the timer is taken back; if it won, it replaces the timer of whatever it displaced. It fires only if it is still the launch's armed timer and its hold still stands.
+   */
+  async #holdWithRetry(ctx: LaunchStepsContext, avatarId: string | null, hold: PaidHold, afterMs: number): Promise<void> {
+    const arm = this.#makeArm(ctx, hold, afterMs);
+    let won = false;
+    try {
+      if (avatarId !== null) await this.#setPhase(ctx, avatarId, "waiting", { reason: "paid-hold" });
+      ({ won } = await ctx.raisePaidHold(hold));
+    } catch (error) {
+      this.#dropArm(arm, false);
+      throw error;
+    }
+    if (won) this.#install(ctx.launchId, arm);
+    else this.#dropArm(arm, false);
+    arm.decide(won && !arm.cancelled);
+  }
+
+  #makeArm(ctx: LaunchStepsContext, hold: PaidHold, afterMs: number): Arm {
+    let decide: (won: boolean) => void = () => undefined;
+    const decided = new Promise<boolean>((resolve) => {
+      decide = resolve;
+    });
+    const arm: Arm = { hold, handle: null, decided, decide, cancelled: false };
+    // A pause, a stop or a sleep that landed first has already cancelled what it found: nothing is armed behind it.
+    if (!ctx.isRunning()) {
+      arm.cancelled = true;
+      return arm;
+    }
+    arm.handle = this.#timers().set(() => {
+      void (async () => {
+        if (!(await arm.decided) || arm.cancelled || this.#armed.get(ctx.launchId) !== arm) return;
+        this.#armed.delete(ctx.launchId);
+        await this.#fire(ctx, arm.hold);
+      })().catch((error: unknown) => this.#warn(`studio engine: an automatic continue of launch ${ctx.launchId} failed (${error instanceof Error ? error.name : typeof error})`));
+    }, afterMs);
+    this.#pending.add(arm);
+    return arm;
+  }
+
+  /** The hold of `arm` stands: its timer is the launch's, and the timer of whatever it replaced is gone. */
+  #install(launchId: string, arm: Arm): void {
+    this.#pending.delete(arm);
+    // A timer that was taken back (a pause, a sleep) installs nothing: it must not take a newer timer away either.
+    if (arm.cancelled) return;
+    const old = this.#armed.get(launchId);
+    if (old !== undefined && old !== arm) this.#dropArm(old, false);
+    this.#armed.set(launchId, arm);
+  }
+
+  #dropArm(arm: Arm, decision: boolean): void {
+    arm.cancelled = true;
+    this.#pending.delete(arm);
+    if (arm.handle !== null) this.#timers().clear(arm.handle);
+    arm.decide(decision);
+  }
+
+  /**
+   * The wait is over. The launch must still run (not paused, stopped or asleep: those cancelled the timer, this is the second line), and the hold must still be this very one. Under the admission
+   * rule (A19) the hold is cleared and the passes start again; with the ledger closed the wait ends and a person decides (the same hold, with no retry left, which displaces the waiting one).
+   */
+  async #fire(ctx: LaunchStepsContext, hold: PaidHold): Promise<void> {
+    if (this.#suspended || !ctx.isRunning()) return;
+    const current = ctx.file().paidHold;
+    if (current === null || !sameHold(current, hold)) return;
+    if (!this.#d.port().admitted()) {
+      if (current.reason === "network") await this.#hold(ctx, null, { ...current, detail: { ...current.detail, nextAt: null } });
+      else if (current.reason === "price-unavailable") await this.#hold(ctx, null, { ...current, detail: { ...current.detail, nextAt: null } });
+      return;
+    }
+    if (await ctx.clearPaidHold(hold)) this.#restart(ctx);
+  }
+
+  /**
+   * After a sleep (or any moment the timer of a standing waiting hold is gone): a wait with time left is armed again for the remainder; one that came due goes through `#fire`, the very check
+   * the timer makes. A launch with no hold simply starts its passes again; a hold for a person is left to the person.
+   */
+  async #resumeWait(ctx: LaunchStepsContext): Promise<void> {
+    const hold = ctx.file().paidHold;
+    if (hold === null) {
+      this.#restart(ctx);
+      return;
+    }
+    if (!isWaitingHold(hold)) return;
+    const remaining = Date.parse(hold.detail.nextAt ?? "") - this.#clock();
+    if (remaining > 0) {
+      const arm = this.#makeArm(ctx, hold, remaining);
+      this.#install(ctx.launchId, arm);
+      arm.decide(true);
+      return;
+    }
+    await this.#fire(ctx, hold);
+  }
+
+  #cancelTimers(launchId?: string): void {
+    for (const [id, arm] of [...this.#armed]) {
+      if (launchId !== undefined && id !== launchId) continue;
+      this.#dropArm(arm, false);
+      this.#armed.delete(id);
+    }
+    // Timers created for a hold whose write has not come back yet.
+    for (const arm of [...this.#pending]) this.#dropArm(arm, false);
+  }
+
+  #wakeSleepers(): void {
+    for (const wake of [...this.#sleepers]) wake();
+  }
+
+  #timers(): StepTimers {
+    return this.#d.timers ?? REAL_TIMERS;
+  }
+
+  #clock(): number {
+    return (this.#d.clock ?? Date.now)();
   }
 
   /** Another job holds the avatar: it waits as «avatar-busy» and tries again, never fails (plan §3.8). The line is logged once per episode. */
@@ -594,30 +980,46 @@ export class PaidSteps implements LaunchSteps {
       await this.#log(ctx, { at: this.#now(), kind: "avatar-busy", avatarId });
     }
     await this.#setPhase(ctx, avatarId, "waiting", { reason: "avatar-busy" });
-    const wait = this.#d.retryMs ?? DEFAULT_RETRY_MS;
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, wait);
-      timer.unref();
+    await this.#sleep(this.#d.retryMs ?? DEFAULT_RETRY_MS);
+  }
+
+  /**
+   * A wait that a drain, a suspend or a stop ends at once. Not `unref`ed: a drain waits on the pass that sleeps here, and with an unref'd timer Bun on Windows idles for ever with that drain's
+   * promise pending (the same reason as freeSteps' `#sleep`). Nothing outlives the wait: it clears its own timer however it ends.
+   */
+  #sleep(ms: number): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const timers = this.#timers();
+      const done = (): void => {
+        this.#sleepers.delete(done);
+        timers.clear(handle);
+        resolve();
+      };
+      const handle = timers.set(done, ms);
+      this.#sleepers.add(done);
     });
   }
 
   /** The avatar leaves the launch; its allocation stays (nothing is released). Only generated videos that have no photos yet are dropped: a library or a rendering video is the free path's. */
-  async #skip(ctx: LaunchStepsContext, avatarId: string, reason: Extract<SkipReason, "set-unreadable">): Promise<void> {
+  async #skip(ctx: LaunchStepsContext, avatarId: string, reason: Exclude<SkipReason, "failure-rate">): Promise<void>;
+  async #skip(ctx: LaunchStepsContext, avatarId: string, reason: "failure-rate", counts: { failed: number; total: number }): Promise<void>;
+  async #skip(ctx: LaunchStepsContext, avatarId: string, reason: SkipReason, counts?: { failed: number; total: number }): Promise<void> {
+    const skipped = reason === "failure-rate" ? { reason, failed: counts?.failed ?? 0, total: counts?.total ?? 0 } : { reason };
     await this.#rewrite(ctx, (file) =>
       this.#patchRow(file, avatarId, (a) => ({
         ...a,
         phase: "skipped",
         waiting: null,
-        skipped: { reason },
+        skipped,
         videos: a.videos.map((v) =>
           v.source === "generated" && (v.state === "planned" || v.state === "waiting-photos") ? { ...v, state: "dropped" as const, dropReason: "avatar-skipped" as const } : v,
         ),
       })),
     );
-    await this.#log(ctx, { at: this.#now(), kind: "skipped", avatarId, reason });
+    await this.#log(ctx, { at: this.#now(), kind: "skipped", avatarId, reason, ...(reason === "failure-rate" ? { failed: counts?.failed ?? 0, total: counts?.total ?? 0 } : {}) });
   }
 
-  /** An end this file has no rule for (S4.6b2's table): the avatar stays where it is and nothing more is sent. */
+  /** An end the table has no row for (a defect, or a cause that is not this file's): the avatar stays where it is and nothing more is sent. */
   #stuck(avatarId: string, why: string): "end" {
     this.#warn(`studio engine: the paid path of avatar ${avatarId} waits: ${why}`);
     return "end";

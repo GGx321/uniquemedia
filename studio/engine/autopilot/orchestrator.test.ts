@@ -289,7 +289,7 @@ describe("autopilot.pause", () => {
     await r.orchestrator.pause(started.launchId);
     expect(ctx.isRunning()).toBe(false);
     await expect(ctx.update((f) => ({ ...f, photosDone: 0 }) as LaunchFile)).rejects.toThrow();
-    await expect(ctx.setPaidHold({ reason: "credits", at: AT, detail: {} })).rejects.toThrow();
+    await expect(ctx.raisePaidHold({ reason: "credits", at: AT, detail: {} })).rejects.toThrow();
     await expect(ctx.finish()).rejects.toThrow();
     expect(r.fileOf(started.launchId).status).toBe("paused");
   });
@@ -301,7 +301,7 @@ describe("a paid hold (A13)", () => {
   test("keeps the launch running: free work goes on, the soft stop is not asked for, and the hold is in the view and the log", async () => {
     const r = await rig();
     const started = await r.start();
-    await r.steps.ctx.setPaidHold({ reason: "key", at: AT, detail: {} });
+    await r.steps.ctx.raisePaidHold({ reason: "key", at: AT, detail: {} });
     const view = r.orchestrator.snapshotView();
     expect(view).toMatchObject({ status: "running", paidHold: { reason: "key" } });
     expect(view?.logTail.at(-1)?.kind).toBe("hold-key");
@@ -313,7 +313,7 @@ describe("a paid hold (A13)", () => {
   test("a step can still write through a hold", async () => {
     const r = await rig();
     await r.start();
-    await r.steps.ctx.setPaidHold({ reason: "credits", at: AT, detail: {} });
+    await r.steps.ctx.raisePaidHold({ reason: "credits", at: AT, detail: {} });
     const written = await r.steps.ctx.update((f) => ({ ...f, avatars: f.avatars.map((a) => ({ ...a, photosDone: 3 })) }));
     expect(written.avatars[0]?.photosDone).toBe(3);
   });
@@ -321,8 +321,8 @@ describe("a paid hold (A13)", () => {
   test("clearing the hold removes it", async () => {
     const r = await rig();
     await r.start();
-    await r.steps.ctx.setPaidHold({ reason: "key", at: AT, detail: {} });
-    await r.steps.ctx.setPaidHold(null);
+    await r.steps.ctx.raisePaidHold({ reason: "key", at: AT, detail: {} });
+    await r.steps.ctx.clearPaidHold({ reason: "key", at: AT, detail: {} });
     expect(r.orchestrator.snapshotView()?.paidHold).toBeNull();
   });
 });
@@ -444,7 +444,7 @@ describe("autopilot.resume", () => {
 
     async function heldAndPaused(r: Rig, h: (typeof hold)[keyof typeof hold]): Promise<LaunchView> {
       const started = await r.start();
-      await r.steps.ctx.setPaidHold(h);
+      await r.steps.ctx.raisePaidHold(h);
       return r.orchestrator.pause(started.launchId);
     }
 
@@ -471,7 +471,7 @@ describe("autopilot.resume", () => {
       const r = await rig();
       const started = await r.start();
       await openReserve(r, started, 40_000);
-      await r.steps.ctx.setPaidHold(hold.network);
+      await r.steps.ctx.raisePaidHold(hold.network);
       const view = await r.orchestrator.pause(started.launchId);
       expect(view.resumeBlockedBy).toBe("network");
       expect((await failure(r.orchestrator.resume(view.launchId, view.remainingMicros))).code).toBe("VALIDATION");
@@ -494,7 +494,7 @@ describe("autopilot.resume", () => {
     test("«Продолжить» on a RUNNING launch with a hold clears the hold by the same rule and begins the steps again", async () => {
       const r = await rig();
       const started = await r.start();
-      await r.steps.ctx.setPaidHold(hold.credits);
+      await r.steps.ctx.raisePaidHold(hold.credits);
       const resumed = await r.orchestrator.resume(started.launchId, started.remainingMicros);
       expect(resumed).toMatchObject({ status: "running", paidHold: null });
       expect(r.steps.calls).toEqual(["begin", "begin"]);
@@ -920,10 +920,10 @@ describe("M1: «Продолжить» re-checks the hold on the FRESH file", ()
     const r = await rig();
     const started = await r.start();
     const ctx = r.steps.ctx;
-    await ctx.setPaidHold({ reason: "credits", at: AT, detail: {} });
+    await ctx.raisePaidHold({ reason: "credits", at: AT, detail: {} });
     // The step's write is queued before the click's: the click saw «credits» in memory, the file says «internal» when its write runs.
     const click = r.orchestrator.resume(started.launchId, started.plannedWorstMicros);
-    const step = ctx.setPaidHold({ reason: "internal", at: AT, detail: { kind: "allocation-exceeded" } });
+    const step = ctx.raisePaidHold({ reason: "internal", at: AT, detail: { kind: "allocation-exceeded" } });
     expect((await failure(click)).code).toBe("VALIDATION");
     await step;
     expect(r.fileOf(started.launchId).paidHold).toMatchObject({ reason: "internal" });
@@ -935,9 +935,9 @@ describe("M1: «Продолжить» re-checks the hold on the FRESH file", ()
     const started = await r.start();
     const ctx = r.steps.ctx;
     await openReserve(r, started, 40_000);
-    await ctx.setPaidHold({ reason: "credits", at: AT, detail: {} });
+    await ctx.raisePaidHold({ reason: "credits", at: AT, detail: {} });
     const click = r.orchestrator.resume(started.launchId, started.plannedWorstMicros);
-    const step = ctx.setPaidHold({ reason: "network", at: AT, detail: { drops: 3, attempt: 2, nextAt: null } });
+    const step = ctx.raisePaidHold({ reason: "network", at: AT, detail: { drops: 3, attempt: 2, nextAt: null } });
     expect((await failure(click)).code).toBe("VALIDATION");
     await step;
     expect(r.fileOf(started.launchId).paidHold).toMatchObject({ reason: "network" });
@@ -1272,5 +1272,206 @@ describe("ctx.finish: a pause that landed first wins (LOW)", () => {
     await expect(r.steps.ctx.finish()).rejects.toThrow();
     expect(r.steps.completed).toBe(0);
     expect(r.fileOf(started.launchId).status).not.toBe("done");
+  });
+});
+
+describe("host.power (plan §3.8, S4.6b2): the engine's side", () => {
+  test("suspend tells the steps at once, before the queue; the launch no longer counts as running, and no paid entry point admits", async () => {
+    const r = await rig();
+    r.steps.suspend = () => void r.steps.calls.push("suspend");
+    const started = await r.start();
+    expect(r.orchestrator.mayPay(started.launchId)).toBe(true);
+    expect(r.steps.ctx.isRunning()).toBe(true);
+    const sleeping = r.orchestrator.power("suspend");
+    expect(r.steps.calls).toContain("suspend");
+    expect(r.steps.ctx.isRunning()).toBe(false);
+    expect(r.orchestrator.mayPay(started.launchId)).toBe(false);
+    await sleeping;
+    expect(r.fileOf(started.launchId).status).toBe("running");
+  });
+
+  test("resume gives the steps their re-check when they have one, else begins them again; the launch runs again", async () => {
+    const woken = await rig();
+    woken.steps.wake = async () => void woken.steps.calls.push("wake");
+    const first = await woken.start();
+    await woken.orchestrator.power("suspend");
+    await woken.orchestrator.power("resume");
+    await woken.orchestrator.settled();
+    expect(woken.steps.calls).toEqual(["begin", "wake"]);
+    expect(woken.orchestrator.mayPay(first.launchId)).toBe(true);
+
+    const begun = await rig();
+    await begun.start();
+    await begun.orchestrator.power("suspend");
+    await begun.orchestrator.power("resume");
+    await begun.orchestrator.settled();
+    expect(begun.steps.calls).toEqual(["begin", "begin"]);
+  });
+
+  test("the steps get a running context when they wake", async () => {
+    const r = await rig();
+    let runningAtWake: boolean | null = null;
+    r.steps.wake = async (ctx) => {
+      runningAtWake = ctx.isRunning();
+    };
+    await r.start();
+    await r.orchestrator.power("suspend");
+    await r.orchestrator.power("resume");
+    await r.orchestrator.settled();
+    expect(runningAtWake as boolean | null).toBe(true);
+  });
+
+  test("a resume with no suspend before it changes nothing", async () => {
+    const r = await rig();
+    await r.start();
+    await r.orchestrator.power("resume");
+    await r.orchestrator.settled();
+    expect(r.steps.calls).toEqual(["begin"]);
+  });
+
+  test("a launch that is paused when the Mac wakes stays paused: nothing is begun", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.orchestrator.pause(started.launchId);
+    await r.orchestrator.power("suspend");
+    await r.orchestrator.power("resume");
+    await r.orchestrator.settled();
+    expect(r.steps.calls.filter((c) => c === "begin")).toHaveLength(1);
+    expect(r.fileOf(started.launchId).status).toBe("paused");
+  });
+
+  test("a launch that is pausing when the Mac wakes is not begun again either", async () => {
+    const r = await rig();
+    const started = await r.start();
+    r.steps.inflight = { requests: 1, renders: 0 };
+    const gate = deferred();
+    r.steps.drainGate = gate.promise;
+    await r.orchestrator.pause(started.launchId);
+    await r.orchestrator.power("suspend");
+    await r.orchestrator.power("resume");
+    expect(r.steps.calls.filter((c) => c === "begin")).toHaveLength(1);
+    gate.resolve();
+    await r.orchestrator.settled();
+  });
+
+  test("the owner's «Продолжить» ends a sleep whose wake-up never came", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.steps.ctx.raisePaidHold({ reason: "credits", at: AT, detail: {} });
+    await r.orchestrator.power("suspend");
+    expect(r.orchestrator.mayPay(started.launchId)).toBe(false);
+    await r.orchestrator.resume(started.launchId, started.remainingMicros);
+    expect(r.steps.ctx.isRunning()).toBe(true);
+    expect(r.orchestrator.mayPay(started.launchId)).toBe(true);
+  });
+
+  test("a new launch starts awake", async () => {
+    const r = await rig();
+    const first = await r.start();
+    await r.orchestrator.power("suspend");
+    await r.orchestrator.stop(first.launchId);
+    const second = await r.start();
+    expect(r.orchestrator.mayPay(second.launchId)).toBe(true);
+  });
+
+  test("a steps part that throws when told of the sleep does not stop the sleep", async () => {
+    const r = await rig();
+    r.steps.suspend = () => {
+      throw new Error("a part that cannot be told");
+    };
+    const started = await r.start();
+    await r.orchestrator.power("suspend");
+    expect(r.orchestrator.mayPay(started.launchId)).toBe(false);
+  });
+});
+
+describe("a network hold that waits for an automatic continue (S4.6b2, A19)", () => {
+  test("a hold with a retry still to come is admitted by «Продолжить» with no reconcile, even with the launch's reserves open", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await openReserve(r, started, 40_000);
+    await r.steps.ctx.raisePaidHold({ reason: "network", at: AT, detail: { drops: 1, attempt: 1, nextAt: "2026-10-09T10:06:00.000Z" } });
+    const view = await r.orchestrator.pause(started.launchId);
+    expect(view.resumeBlockedBy).toBeNull();
+    expect((await r.orchestrator.resume(view.launchId, view.remainingMicros)).paidHold).toBeNull();
+  });
+
+  test("the ledger test still applies to it: a previous process's reserves close the ledger to the click as to every other", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.steps.ctx.raisePaidHold({ reason: "network", at: AT, detail: { drops: 1, attempt: 1, nextAt: "2026-10-09T10:06:00.000Z" } });
+    const view = await r.orchestrator.pause(started.launchId);
+    r.state.admission = { blockedBy: "reconcile-required", error: { code: "RECONCILE_REQUIRED", detail: "open reserves of a previous process" } };
+    expect((await failure(r.orchestrator.resume(view.launchId, view.remainingMicros))).code).toBe("RECONCILE_REQUIRED");
+  });
+});
+
+describe("raisePaidHold and clearPaidHold: decided in the file's own write, by rank (S4.6b2, fix round 1)", () => {
+  const waiting = { reason: "network", at: AT, detail: { drops: 1, attempt: 1, nextAt: "2026-10-09T10:06:00.000Z" } } as const;
+  const waiting2 = { reason: "network", at: AT, detail: { drops: 2, attempt: 2, nextAt: "2026-10-09T10:11:00.000Z" } } as const;
+  const forPerson = { reason: "network", at: AT, detail: { drops: 3, attempt: 2, nextAt: null } } as const;
+  const credits = { reason: "credits", at: AT, detail: {} } as const;
+  const key = { reason: "key", at: AT, detail: {} } as const;
+
+  test("a hold is raised when none stands, and the log says so", async () => {
+    const r = await rig();
+    const started = await r.start();
+    expect((await r.steps.ctx.raisePaidHold(credits)).won).toBe(true);
+    expect(r.fileOf(started.launchId).paidHold).toEqual(credits);
+    expect((await r.orchestrator.get(started.launchId)).log.some((l) => l.kind === "hold-credits")).toBe(true);
+  });
+
+  test("a hold for a person displaces a waiting one", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.steps.ctx.raisePaidHold(waiting);
+    expect((await r.steps.ctx.raisePaidHold(forPerson)).won).toBe(true);
+    expect(r.fileOf(started.launchId).paidHold).toEqual(forPerson);
+  });
+
+  test("a waiting hold never displaces a hold for a person, and the loser is not logged", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.steps.ctx.raisePaidHold(credits);
+    expect((await r.steps.ctx.raisePaidHold(waiting)).won).toBe(false);
+    expect(r.fileOf(started.launchId).paidHold).toEqual(credits);
+    expect((await r.orchestrator.get(started.launchId)).log.some((l) => l.kind === "hold-network")).toBe(false);
+  });
+
+  test("among equals the first stays", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.steps.ctx.raisePaidHold(credits);
+    expect((await r.steps.ctx.raisePaidHold(key)).won).toBe(false);
+    await r.steps.ctx.clearPaidHold(credits);
+    await r.steps.ctx.raisePaidHold(waiting);
+    expect((await r.steps.ctx.raisePaidHold(waiting2)).won).toBe(false);
+    expect(r.fileOf(started.launchId).paidHold).toEqual(waiting);
+  });
+
+  test("two raises at the same moment: exactly one wins", async () => {
+    const r = await rig();
+    const started = await r.start();
+    const [a, b] = await Promise.all([r.steps.ctx.raisePaidHold(credits), r.steps.ctx.raisePaidHold(key)]);
+    expect([a.won, b.won].filter(Boolean)).toHaveLength(1);
+    expect(["credits", "key"].includes(r.fileOf(started.launchId).paidHold?.reason ?? "")).toBe(true);
+  });
+
+  test("a hold is cleared only if it is still the one the caller means", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.steps.ctx.raisePaidHold(waiting);
+    await r.steps.ctx.raisePaidHold(forPerson);
+    expect(await r.steps.ctx.clearPaidHold(waiting)).toBe(false);
+    expect(r.fileOf(started.launchId).paidHold).toEqual(forPerson);
+    expect(await r.steps.ctx.clearPaidHold(forPerson)).toBe(true);
+    expect(r.fileOf(started.launchId).paidHold).toBeNull();
+  });
+
+  test("a paused launch takes no hold from a step", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.orchestrator.pause(started.launchId);
+    await expect(r.steps.ctx.raisePaidHold(credits)).rejects.toThrow();
   });
 });

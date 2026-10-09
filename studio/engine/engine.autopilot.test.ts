@@ -90,7 +90,7 @@ describe("host.power", () => {
   let warned: ReturnType<typeof spyOn> | null = null;
   afterEach(() => warned?.mockRestore());
 
-  test.each(["suspend", "resume"])("%s is a control message the engine accepts and, until the orchestrator exists, has nothing to do with", async (state) => {
+  test.each(["suspend", "resume"])("%s is a control message the engine accepts quietly when no launch runs (what it does to one is in engine.autopilotHolds.test.ts)", async (state) => {
     warned = spyOn(console, "error").mockImplementation(() => {});
     const { engine } = await startEngine(dir());
     await engine.applyControl({ kind: "control", type: "host.power", state });

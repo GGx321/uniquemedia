@@ -68,7 +68,19 @@ export function memoryLaunch(initial: LaunchFile, clock: () => number = () => Da
         self.updates += 1;
         return file;
       },
-      setPaidHold: async (hold) => self.ctx.update((f) => ({ ...f, paidHold: hold })),
+      raisePaidHold: async (hold) => {
+        let won = false;
+        await self.ctx.update((f) => {
+          if (f.paidHold !== null) return null;
+          won = true;
+          return { ...f, paidHold: hold };
+        });
+        return { won };
+      },
+      clearPaidHold: async () => {
+        await self.ctx.update((f) => ({ ...f, paidHold: null }));
+        return true;
+      },
       setFreeHold: async (hold) => self.ctx.update((f) => ({ ...f, freeHold: hold })),
       log: async (line) => {
         logs.push(line);
