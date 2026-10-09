@@ -23,6 +23,7 @@ import { createFaceQaGate } from "./runs/faceGate";
 import { createPdqGate } from "./runs/pdqGate";
 import type { QaGate, QaInput } from "./runs/qa";
 import type { Estimate, ImageAgeCheck, ImageQuality, ResponseMessage } from "../shared/engine";
+import { budgetHoldCleared } from "../shared/autopilot/money";
 import type { Engine, EngineDeps } from "./engine";
 import { command, engineSettings, failed, GOOD, jobEnd, MODERATION, NOW, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -1245,6 +1246,32 @@ describe("runs.resume", () => {
     expect(await jobEnd(events, resumed.jobId)).toMatchObject({ type: "job.done", payload: { result: { failedSlots: 0 } } });
     expect(new Set(received).size).toBe(received.length);
     expect(planOf(runId).capMicros).toBe(FOUR_WORST);
+  });
+
+  // Stage 4 (S4.2 review): the launch's `resume-slice` budget hold compares the remaining worst of `#remaining` (the very figure runs.resume checks) with the
+  // room WITHOUT the slice itself, so it clears exactly when `#checkMonthlyRoom` would pass.
+  const AROUND_THE_EDGE: [number, boolean][] = [
+    [0, true],
+    [-1, false],
+    [1, true],
+  ];
+  test.each(AROUND_THE_EDGE)("the resume-slice hold with the month %i µ$ from the remaining worst: cleared = %p, and runs.resume agrees", async (delta, cleared) => {
+    const { runId, received } = await interrupted({ hangFrom: 3 });
+    const second = await restarted(received);
+    second.advance(10 * 60_000);
+    ok(await second.engine.handle(command("money.reconcile")));
+    const status = ok(await second.engine.handle(command("money.status")));
+    if (status.type !== "money.status" || status.result.ledger !== "open") throw new Error("expected an open ledger");
+    const { worstMicros } = await remainingWorst(second.engine, runId);
+    const budgetMicros = status.result.spentMicros + status.result.unsettledMicros + worstMicros + delta;
+    await second.engine.applyControl({ kind: "control", type: "settings.update", settings: engineSettings(dir(), { imageAgeCheck: "off", monthlyBudgetMicros: budgetMicros }) });
+
+    const hold = await second.engine.resumeSliceHold(runId, [{ scope: { runId }, capMicros: planOf(runId).capMicros }]);
+    expect(hold).toMatchObject({ kind: "resume-slice", needMicros: worstMicros });
+    expect(budgetHoldCleared(hold, hold.freeMicros)).toBe(cleared);
+    const resumed = await resume(second.engine, runId);
+    if (cleared) started(resumed);
+    else expect(failed(resumed).error.code).toBe("BUDGET_EXCEEDED");
   });
 
   test("a resume the month has no room for is refused with BUDGET_EXCEEDED before anything is sent", async () => {

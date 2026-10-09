@@ -24,6 +24,11 @@ function ceilingOf(book: PriceBook, call: WriterCall): number {
   return book.chatWorstCase({ model: call.model, maxTokens: call.maxTokens, inputTokens: call.inputTokens, images: call.images });
 }
 
+/** One writer attempt at its ceiling on the settings' text model (the figure `composeEstimate` multiplies by the attempts per chunk and the chunks). */
+export function writerCeilingMicros(priced: PricedBook, textModel: string): number {
+  return ceilingOf(priced.book, writerCall(textModel));
+}
+
 function typicalOf(book: PriceBook, call: WriterCall, scenes: number): number {
   return book.chatCost({
     model: call.model,

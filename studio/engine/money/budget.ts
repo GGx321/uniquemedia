@@ -28,6 +28,19 @@ export interface BudgetLimits {
   clock: Clock;
   /** Monotonic ms (`performance.now`-like): quiet time that survives wall-clock jumps. */
   monotonic: Clock;
+  /**
+   * Stage 4 (plan §4.10): the group an attempt belongs to, with the group's cap, or null for none. A launch's writer attempts and slice runs are one group
+   * whose cap is the launch's recomputed worst case W′. Asked for the attempt being reserved or held (its id and scope) and, for the group's committed, for
+   * every reserve already in the ledger, so a group is restored by the mapping alone: the ledger format does not change. A group that maps nothing (a
+   * finished launch) limits nothing.
+   */
+  groupOf?: (req: { attemptId: string; scope: Scope }) => AttemptGroup | null;
+}
+
+/** A group of attempts that share one cap across scopes: `key` names it, `capMicros` is the most its attempts may commit together. */
+export interface AttemptGroup {
+  key: string;
+  capMicros: number;
 }
 
 export interface ReserveRequest {
@@ -120,6 +133,9 @@ interface Totals {
   openAttempts: number;
   scopeSpent: number;
   scopeOpenWorst: number;
+  /** Settled at cost (all time) and open at worst, over the ledger lines whose reserve maps to the requested group key. */
+  groupSpent: number;
+  groupOpenWorst: number;
 }
 
 /**
@@ -150,7 +166,7 @@ export class Budget {
   /** Monotonic time of this process's last ledger write or abandon. */
   private lastOwnActivityMono: number | null = null;
   /** Attempts admitted by `tryHold` and not yet reserved or released, by attempt id. */
-  private readonly holds = new Map<string, { scopeKey: string; worstMicros: number }>();
+  private readonly holds = new Map<string, { scopeKey: string; groupKey: string | null; worstMicros: number }>();
 
   constructor(ledger: Ledger, limits: BudgetLimits) {
     assertMicros("monthlyBudgetMicros", limits.monthlyBudgetMicros);
@@ -174,7 +190,8 @@ export class Budget {
       }
 
       // The attempt's own hold, if any, is what this reserve replaces: it is not counted twice.
-      const totals = this.totals(req.scope);
+      const group = this.groupOf(req);
+      const totals = this.totals(req.scope, group?.key ?? null);
       const monthCommitted = totals.spentThisMonth + totals.openWorst + this.heldMicros(null, req.attemptId);
       if (monthCommitted + req.worstMicros > this.monthlyBudgetMicros) {
         return { ok: false, reason: "BUDGET_EXCEEDED", limitMicros: this.monthlyBudgetMicros, committedMicros: monthCommitted, worstMicros: req.worstMicros };
@@ -183,6 +200,12 @@ export class Budget {
       const scopeCommitted = totals.scopeSpent + totals.scopeOpenWorst + this.heldMicros(scopeKey(req.scope), req.attemptId);
       if (scopeCommitted + req.worstMicros > cap) {
         return { ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: cap, committedMicros: scopeCommitted, worstMicros: req.worstMicros };
+      }
+      if (group !== null) {
+        const groupCommitted = totals.groupSpent + totals.groupOpenWorst + this.heldMicrosOfGroup(group.key, req.attemptId);
+        if (groupCommitted + req.worstMicros > group.capMicros) {
+          return { ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: group.capMicros, committedMicros: groupCommitted, worstMicros: req.worstMicros };
+        }
       }
 
       await this.#write({
@@ -308,9 +331,60 @@ export class Budget {
           return { ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: cap, committedMicros: scopeCommitted, worstMicros: scopeWorst };
         }
       }
-      for (const r of requests) this.holds.set(r.attemptId, { scopeKey: scopeKey(r.scope), worstMicros: r.worstMicros });
+      const groups = new Map<string, { group: AttemptGroup; worstMicros: number }>();
+      const groupKeyOf = new Map<string, string | null>();
+      for (const r of requests) {
+        const group = this.groupOf(r);
+        groupKeyOf.set(r.attemptId, group?.key ?? null);
+        if (group === null) continue;
+        const entry = groups.get(group.key);
+        if (entry === undefined) groups.set(group.key, { group, worstMicros: r.worstMicros });
+        else entry.worstMicros += r.worstMicros;
+      }
+      for (const { group, worstMicros: groupWorst } of groups.values()) {
+        const totals = this.totals(null, group.key);
+        const groupCommitted = totals.groupSpent + totals.groupOpenWorst + this.heldMicrosOfGroup(group.key);
+        if (groupCommitted + groupWorst > group.capMicros) {
+          return { ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: group.capMicros, committedMicros: groupCommitted, worstMicros: groupWorst };
+        }
+      }
+      for (const r of requests) this.holds.set(r.attemptId, { scopeKey: scopeKey(r.scope), groupKey: groupKeyOf.get(r.attemptId) ?? null, worstMicros: r.worstMicros });
       return { ok: true };
     });
+  }
+
+  /**
+   * What a group has committed: settled at cost (all time), open at worst and held, over every ledger line whose reserve maps to `key` — computed by the very
+   * `totals` the group's check uses, so a launch's «Потрачено» and R are exactly the sum the Budget enforces.
+   *
+   * Invariant: the group is registered (`groupOf` maps it) before the first hold or reserve of any of its attempts. A hold or reserve made while the
+   * mapping is absent is admitted outside the group and is counted in it only from the moment the mapping exists (a hold is remembered by the key it had then).
+   */
+  committedOfGroup(key: string): number {
+    const totals = this.totals(null, key);
+    return totals.groupSpent + totals.groupOpenWorst + this.heldMicrosOfGroup(key);
+  }
+
+  /**
+   * What each scope has committed, by `scopeKey`: settled at cost (all time), open at worst, and held. A scope the ledger and the holds have not seen is
+   * absent. The engine's month room (`room.ts`) subtracts, for every live scope, what is left of its cap, and this is the "committed" side of that.
+   * One walk over the ledger for every scope.
+   */
+  committedByScope(): Map<string, number> {
+    const committed = new Map<string, number>();
+    const add = (key: string, micros: number): void => void committed.set(key, (committed.get(key) ?? 0) + micros);
+    for (const line of this.ledger.lines) {
+      if (line.type !== "settle") continue;
+      const reserve = this.ledger.reserveOf(line.attemptId);
+      if (!reserve) throw new MoneyError("LEDGER_CORRUPT", `settle for ${line.attemptId} has no reserve`, { fatal: true });
+      add(scopeKey(reserve.scope), line.costMicros);
+    }
+    for (const reserve of this.ledger.openReserves()) add(scopeKey(reserve.scope), reserve.worstMicros);
+    for (const held of this.holds.values()) add(held.scopeKey, held.worstMicros);
+    for (const [key, value] of committed) {
+      if (!Number.isSafeInteger(value)) throw new MoneyError("LEDGER_CORRUPT", `ledger total for ${key} overflowed`, { fatal: true });
+    }
+    return committed;
   }
 
   /** Gives a held attempt's room back (it will not be sent); a reserved or unknown one is left as it is. */
@@ -463,16 +537,32 @@ export class Budget {
     return sum;
   }
 
+  /** Held micro-dollars of one group, leaving out the attempt a reserve is replacing. */
+  private heldMicrosOfGroup(key: string, except?: string): number {
+    let sum = 0;
+    for (const [attemptId, held] of this.holds) {
+      if (attemptId !== except && held.groupKey === key) sum += held.worstMicros;
+    }
+    return sum;
+  }
+
+  private groupOf(req: { attemptId: string; scope: Scope }): AttemptGroup | null {
+    const group = this.limits.groupOf?.({ attemptId: req.attemptId, scope: req.scope }) ?? null;
+    if (group !== null) assertMicros(`group cap for ${group.key}`, group.capMicros);
+    return group;
+  }
+
   private capOf(scope: Scope): number {
     const cap = typeof this.limits.runCapMicros === "number" ? this.limits.runCapMicros : this.limits.runCapMicros(scope);
     assertMicros(`runCapMicros for ${scopeKey(scope)}`, cap);
     return cap;
   }
 
-  private totals(scope: Scope | null): Totals {
+  private totals(scope: Scope | null, groupKey: string | null = null): Totals {
     const key = scope ? scopeKey(scope) : null;
     const monthStart = startOfUtcMonth(this.clock());
-    const t: Totals = { spentThisMonth: 0, openWorst: 0, openAttempts: 0, scopeSpent: 0, scopeOpenWorst: 0 };
+    const t: Totals = { spentThisMonth: 0, openWorst: 0, openAttempts: 0, scopeSpent: 0, scopeOpenWorst: 0, groupSpent: 0, groupOpenWorst: 0 };
+    const inGroup = (reserve: { attemptId: string; scope: Scope }): boolean => groupKey !== null && this.limits.groupOf?.({ attemptId: reserve.attemptId, scope: reserve.scope })?.key === groupKey;
     for (const line of this.ledger.lines) {
       if (line.type !== "settle") continue;
       const reserve = this.ledger.reserveOf(line.attemptId);
@@ -480,11 +570,13 @@ export class Budget {
       // No upper bound: a future-dated settle (clock skew) counts in every month until its date — conservative.
       if (Date.parse(line.at) >= monthStart) t.spentThisMonth += line.costMicros;
       if (scopeKey(reserve.scope) === key) t.scopeSpent += line.costMicros;
+      if (inGroup(reserve)) t.groupSpent += line.costMicros;
     }
     for (const reserve of this.ledger.openReserves()) {
       t.openWorst += reserve.worstMicros;
       t.openAttempts++;
       if (scopeKey(reserve.scope) === key) t.scopeOpenWorst += reserve.worstMicros;
+      if (inGroup(reserve)) t.groupOpenWorst += reserve.worstMicros;
     }
     for (const [name, value] of Object.entries(t)) {
       if (!Number.isSafeInteger(value)) throw new MoneyError("LEDGER_CORRUPT", `ledger total ${name} overflowed`, { fatal: true });
