@@ -5,7 +5,7 @@ import { useNativeGlobals } from "../../../testing/nativeGlobals";
 import { NoFaceInReferenceError } from "../gate";
 import { Behaviour } from "../testing/behaviour";
 import { EMBEDDING_LENGTH } from "./protocol";
-import { createWorkerFaceGate, type WorkerFaceGate } from "./workerGate";
+import { createWorkerFaceGate, FaceLaneFullError, type WorkerFaceGate } from "./workerGate";
 useNativeGlobals();
 
 // T7c: the face worker's lifecycle, against a scripted worker
@@ -58,7 +58,7 @@ afterEach(async () => {
   running.clear();
 });
 
-function harness(options: { startups?: Startup[]; loadTimeoutMs?: number; idleRecycleMs?: number; killTimeoutMs?: number; tamper?: (worker: Worker) => void } = {}): Harness {
+function harness(options: { startups?: Startup[]; detectComputeTimeoutMs?: number; loadTimeoutMs?: number; idleRecycleMs?: number; killTimeoutMs?: number; tamper?: (worker: Worker) => void } = {}): Harness {
   const probe = new SharedArrayBuffer(8);
   const probeView = new Int32Array(probe);
   const startups = [...(options.startups ?? [])];
@@ -68,6 +68,7 @@ function harness(options: { startups?: Startup[]; loadTimeoutMs?: number; idleRe
   const workers: Worker[] = [];
   const gate = createWorkerFaceGate({
     loadTimeoutMs: options.loadTimeoutMs,
+    detectComputeTimeoutMs: options.detectComputeTimeoutMs,
     idleRecycleMs: options.idleRecycleMs,
     killTimeoutMs: options.killTimeoutMs,
     spawnWorker: () => {
@@ -277,6 +278,191 @@ describe("the lane: one computation at a time, FIFO, cancellable while queued", 
     const h = harness();
     await Promise.all([h.gate.embed(script(Behaviour.slow), live()), h.gate.check(checkInput(Behaviour.slow), live())]);
     expect(h.maxInFlight()).toBe(1);
+  });
+});
+
+describe("the lane's priority (S4.P3): a run's checks go before focus detects, and few detects may wait", () => {
+  /** A holder keeps the lane busy for ~80 ms while the test queues the rest behind it. */
+  function holder(h: Harness): Promise<unknown> {
+    return h.gate.check(checkInput(Behaviour.slow), live());
+  }
+
+  function finishing<T>(done: string[], name: string, work: Promise<T>): Promise<void> {
+    return work.then(
+      () => {
+        done.push(name);
+      },
+      () => {
+        done.push(`${name}:rejected`);
+      },
+    );
+  }
+
+  test("a check queued behind two waiting detects runs before both", async () => {
+    const h = harness();
+    const done: string[] = [];
+    const running = finishing(done, "holder", holder(h));
+    const d1 = finishing(done, "d1", h.gate.detect(script(Behaviour.slow), live()));
+    const d2 = finishing(done, "d2", h.gate.detect(script(Behaviour.slow), live()));
+    const check = finishing(done, "check", h.gate.check(checkInput(), live()));
+    await Promise.all([running, d1, d2, check]);
+    expect(done).toEqual(["holder", "check", "d1", "d2"]);
+  });
+
+  test("an embed also goes before a waiting detect", async () => {
+    const h = harness();
+    const done: string[] = [];
+    const running = finishing(done, "holder", holder(h));
+    const d1 = finishing(done, "d1", h.gate.detect(script(Behaviour.ok), live()));
+    const embed = finishing(done, "embed", h.gate.embed(script(Behaviour.ok), live()));
+    await Promise.all([running, d1, embed]);
+    expect(done).toEqual(["holder", "embed", "d1"]);
+  });
+
+  test("with a check and five detects queued, the check runs before every detect that arrived after it, and the detects past the cap are refused", async () => {
+    const h = harness();
+    const done: string[] = [];
+    const running = finishing(done, "holder", holder(h));
+    const detects = [0, 1, 2, 3, 4].map((n) => finishing(done, `d${n}`, h.gate.detect(script(Behaviour.ok), live())));
+    const check = finishing(done, "check", h.gate.check(checkInput(), live()));
+    await Promise.all([running, check, ...detects]);
+    expect(done.indexOf("check")).toBeLessThan(done.indexOf("d0"));
+    expect(done.indexOf("check")).toBeLessThan(done.indexOf("d1"));
+    expect(done.filter((entry) => entry.endsWith(":rejected")).sort()).toEqual(["d2:rejected", "d3:rejected", "d4:rejected"]);
+  });
+
+  test("runs of checks that arrive later still go before detects that were already waiting, and keep their own arrival order", async () => {
+    const h = harness();
+    const done: string[] = [];
+    const running = finishing(done, "holder", holder(h));
+    const d1 = finishing(done, "d1", h.gate.detect(script(Behaviour.ok), live()));
+    const c1 = finishing(done, "c1", h.gate.check(checkInput(), live()));
+    const c2 = finishing(done, "c2", h.gate.check(checkInput(), live()));
+    await Promise.all([running, d1, c1, c2]);
+    expect(done).toEqual(["holder", "c1", "c2", "d1"]);
+  });
+
+  test("a third detect is refused with FaceLaneFullError while two wait", async () => {
+    const h = harness();
+    const running = holder(h);
+    const d1 = h.gate.detect(script(Behaviour.ok), live());
+    const d2 = h.gate.detect(script(Behaviour.ok), live());
+    await expect(h.gate.detect(script(Behaviour.ok), live())).rejects.toBeInstanceOf(FaceLaneFullError);
+    await Promise.all([running, d1, d2]);
+  });
+
+  test("a refused detect leaves the two waiting ones and the holder untouched", async () => {
+    const h = harness();
+    const running = holder(h);
+    const d1 = h.gate.detect(script(Behaviour.ok), live());
+    const d2 = h.gate.detect(script(Behaviour.ok), live());
+    await h.gate.detect(script(Behaviour.ok), live()).catch(() => undefined);
+    expect((await running) as { kind: string }).toMatchObject({ kind: "match" });
+    expect((await d1).face).not.toBeNull();
+    expect((await d2).face).not.toBeNull();
+    expect(h.spawned()).toBe(1);
+    expect(h.maxInFlight()).toBe(1);
+  });
+
+  test("the detect that is running does not count as waiting: one running and two waiting are all accepted", async () => {
+    const h = harness();
+    const first = h.gate.detect(script(Behaviour.slow), live());
+    const second = h.gate.detect(script(Behaviour.ok), live());
+    const third = h.gate.detect(script(Behaviour.ok), live());
+    expect((await Promise.all([first, second, third])).length).toBe(3);
+  });
+
+  test("a waiting detect that is cancelled frees its place for another", async () => {
+    const h = harness();
+    const running = holder(h);
+    const controller = new AbortController();
+    const d1 = h.gate.detect(script(Behaviour.ok), controller.signal).catch(() => "cancelled");
+    const d2 = h.gate.detect(script(Behaviour.ok), live());
+    controller.abort(new Error("gave up"));
+    expect(await d1).toBe("cancelled");
+    const d3 = h.gate.detect(script(Behaviour.ok), live());
+    await Promise.all([running, d2, d3]);
+  });
+
+  test("a detect with an already aborted signal rejects with its reason, not FaceLaneFullError, even when the lane is full", async () => {
+    const h = harness();
+    const running = holder(h);
+    const d1 = h.gate.detect(script(Behaviour.ok), live());
+    const d2 = h.gate.detect(script(Behaviour.ok), live());
+    const controller = new AbortController();
+    controller.abort(new Error("already gone"));
+    await expect(h.gate.detect(script(Behaviour.ok), controller.signal)).rejects.toThrow("already gone");
+    await Promise.all([running, d1, d2]);
+  });
+
+  test("detects complete one after another when no check is waiting", async () => {
+    const h = harness();
+    const first = h.gate.detect(script(Behaviour.slow), live());
+    const second = h.gate.detect(script(Behaviour.slow), live());
+    const third = h.gate.detect(script(Behaviour.slow), live());
+    for (const result of await Promise.all([first, second, third])) expect(result.face).not.toBeNull();
+    expect(h.maxInFlight()).toBe(1);
+  });
+
+  test("a waiting detect runs as soon as the last waiting check has finished", async () => {
+    const h = harness();
+    const done: string[] = [];
+    const checks = [0, 1, 2].map((n) => finishing(done, `c${n}`, h.gate.check(checkInput(Behaviour.slow), live())));
+    const detect = finishing(done, "d", h.gate.detect(script(Behaviour.ok), live()));
+    await settleWithin(Promise.all([...checks, detect]), LANE_WAIT_MS, "the waiting detect never ran after the checks");
+    expect(done).toEqual(["c0", "c1", "c2", "d"]);
+  });
+
+  test("a waiting detect that its caller gives up on while checks keep the lane leaves with the caller's reason", async () => {
+    const h = harness();
+    const checks = [0, 1, 2].map(() => h.gate.check(checkInput(Behaviour.slow), live()));
+    const controller = new AbortController();
+    const detect = h.gate.detect(script(Behaviour.ok), controller.signal);
+    const outcome = settleWithin(detect.then(() => "resolved", (error: unknown) => (error instanceof Error ? error.message : "not an error")), LANE_WAIT_MS, "the starved detect never left");
+    controller.abort(new Error("detect timeout"));
+    expect(await outcome).toBe("detect timeout");
+    await Promise.all(checks);
+  });
+
+  test("a check that arrives while a detect is running waits for it: a running computation is never preempted", async () => {
+    const h = harness();
+    const done: string[] = [];
+    const detect = finishing(done, "d", h.gate.detect(script(Behaviour.slow), live()));
+    await Bun.sleep(20);
+    const check = finishing(done, "c", h.gate.check(checkInput(), live()));
+    await Promise.all([detect, check]);
+    expect(done).toEqual(["d", "c"]);
+    expect(h.spawned()).toBe(1);
+  });
+});
+
+describe("a detect cannot hold the lane past a run check's timeout (S4.P3)", () => {
+  test("a wedged detect whose caller never gives up is killed by the compute bound, and the check queued behind it completes", async () => {
+    const h = harness({ detectComputeTimeoutMs: 300 });
+    const wedged = h.gate.detect(script(Behaviour.hang), live()).then(
+      () => "resolved",
+      (error: unknown) => (error instanceof Error ? error.message : "not an error"),
+    );
+    await Bun.sleep(30);
+    const startedAt = performance.now();
+    const verdict = await settleWithin(h.gate.check(checkInput(), live()), LANE_WAIT_MS, "the check behind the wedged detect never ran");
+    expect(verdict.kind).toBe("match");
+    expect(performance.now() - startedAt).toBeLessThan(PROMPTLY_MS * 2);
+    expect(await wedged).toMatch(/300 ms/);
+    expect(h.aliveAtSpawn).toEqual([0, 0]);
+  });
+
+  test("a detect that answers within the bound is unaffected", async () => {
+    const h = harness({ detectComputeTimeoutMs: 2_000 });
+    expect((await h.gate.detect(script(Behaviour.slow), live())).face).not.toBeNull();
+  });
+
+  test("the bound counts from the lane being granted, not from the call: a detect that waited its turn still gets its full compute time", async () => {
+    const h = harness({ detectComputeTimeoutMs: 400 });
+    const holder = h.gate.check(checkInput(Behaviour.slow), live());
+    const detect = h.gate.detect(script(Behaviour.slow), live());
+    await Promise.all([holder, detect]);
+    expect(h.spawned()).toBe(1);
   });
 });
 

@@ -3,7 +3,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { MontageDraft } from "../../shared/engine/montage";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import type { FaceDetection } from "../face/worker/workerGate";
+import { FaceLaneFullError, type FaceDetection } from "../face/worker/workerGate";
 import { LibraryError } from "../library/errors";
 import { FOCUS_FILE } from "../library/layout";
 import { openLibrary, type Library } from "../library/library";
@@ -745,5 +745,235 @@ describe("fillMissingFocus", () => {
     const f = await fixture();
     const { fillMissingFocus } = createFocusResolver({ library: f.library, faceGate: fakeGate() });
     await expect(fillMissingFocus(specOf(f.avatarId, [{ ...base(1), kind: "photo", motion: "static", cell: { photo: scene("no-such-photo"), focus: null } }]))).rejects.toMatchObject({ code: "photo-not-found" });
+  });
+});
+
+// S4.P3: the autopilot resolves focus AHEAD of rendering, behind paid face checks. A prefetch has its own (longer)
+// timeout, waits out a full lane instead of falling back, and shares the per-photo memo and cache with focusFor.
+describe("prefetchFocus (S4.P3)", () => {
+  /** A gate whose first `refusals` detects are refused because the lane is full. */
+  function refusingGate(refusals: number): FakeGate {
+    let left = refusals;
+    const inner = fakeGate();
+    return {
+      ...inner,
+      calls: inner.calls,
+      isBroken: () => false,
+      detect: (bytes, signal) => {
+        if (left > 0) {
+          left -= 1;
+          inner.calls.push(bytes);
+          return Promise.reject(new FaceLaneFullError());
+        }
+        return inner.detect(bytes, signal);
+      },
+    };
+  }
+
+  test("returns the same resolved answer focusFor would", async () => {
+    const f = await fixture();
+    const { prefetchFocus, flush } = createFocusResolver({ library: f.library, faceGate: fakeGate() });
+    expect(await prefetchFocus(f.avatarId, only(f.photoIds))).toEqual(RESOLVED(FACE_FOCUS));
+    await flush();
+  });
+
+  test("two concurrent prefetches of the same photo run one detection", async () => {
+    const f = await fixture();
+    const gate = fakeGate();
+    const { prefetchFocus, flush } = createFocusResolver({ library: f.library, faceGate: gate });
+    const [a, b] = await Promise.all([prefetchFocus(f.avatarId, only(f.photoIds)), prefetchFocus(f.avatarId, only(f.photoIds))]);
+    expect(a).toEqual(b);
+    expect(gate.calls).toHaveLength(1);
+    await flush();
+  });
+
+  test("a second prefetch of an already resolved photo does not touch the face lane", async () => {
+    const f = await fixture();
+    const gate = fakeGate();
+    const { prefetchFocus, flush } = createFocusResolver({ library: f.library, faceGate: gate });
+    await prefetchFocus(f.avatarId, only(f.photoIds));
+    await flush();
+    await prefetchFocus(f.avatarId, only(f.photoIds));
+    expect(gate.calls).toHaveLength(1);
+  });
+
+  test("a prefetch survives a restart: the answer is in focus.json, so a new resolver detects nothing", async () => {
+    const f = await fixture();
+    const first = createFocusResolver({ library: f.library, faceGate: fakeGate() });
+    await first.prefetchFocus(f.avatarId, only(f.photoIds));
+    await first.flush();
+    const gate = fakeGate();
+    const second = createFocusResolver({ library: f.library, faceGate: gate });
+    expect(await second.prefetchFocus(f.avatarId, only(f.photoIds))).toEqual(RESOLVED(FACE_FOCUS));
+    expect(gate.calls).toHaveLength(0);
+  });
+
+  test("a render's focusFor after the prefetch never touches the face lane", async () => {
+    const f = await fixture();
+    const gate = fakeGate();
+    const resolver = createFocusResolver({ library: f.library, faceGate: gate });
+    await resolver.prefetchFocus(f.avatarId, only(f.photoIds));
+    await resolver.flush();
+    expect(await resolver.focusFor(f.avatarId, only(f.photoIds))).toEqual(RESOLVED(FACE_FOCUS));
+    expect(gate.calls).toHaveLength(1);
+  });
+
+  test("a headless spec's fillMissingFocus after the prefetch makes no detection", async () => {
+    const f = await fixture();
+    const gate = fakeGate();
+    const resolver = createFocusResolver({ library: f.library, faceGate: gate });
+    await resolver.prefetchFocus(f.avatarId, only(f.photoIds));
+    await resolver.flush();
+    const filled = await resolver.fillMissingFocus(specOf(f.avatarId, [{ ...base(1), kind: "photo", motion: "kenburns", cell: { photo: scene(only(f.photoIds)), focus: null } }]));
+    expect(filled.unresolved).toEqual([]);
+    expect(gate.calls).toHaveLength(1);
+  });
+
+  test("waits out a full lane and retries until the photo is judged", async () => {
+    const f = await fixture();
+    const gate = refusingGate(3);
+    const { prefetchFocus, flush } = createFocusResolver({ library: f.library, faceGate: gate });
+    expect(await prefetchFocus(f.avatarId, only(f.photoIds), { retryMs: 10 })).toEqual(RESOLVED(FACE_FOCUS));
+    expect(gate.calls).toHaveLength(4);
+    await flush();
+  });
+
+  test("uses its own timeout, not detectTimeoutMs: a lane that stays full longer than detectTimeoutMs still gets judged", async () => {
+    const f = await fixture();
+    const gate = refusingGate(8);
+    const { prefetchFocus, flush } = createFocusResolver({ library: f.library, faceGate: gate, detectTimeoutMs: 40 });
+    expect(await prefetchFocus(f.avatarId, only(f.photoIds), { timeoutMs: 5_000, retryMs: 20 })).toEqual(RESOLVED(FACE_FOCUS));
+    await flush();
+  });
+
+  test("gives up at its own timeout with an unresolved fallback when the lane never frees, and remembers nothing", async () => {
+    const f = await fixture();
+    const gate = refusingGate(Number.POSITIVE_INFINITY);
+    const resolver = createFocusResolver({ library: f.library, faceGate: gate });
+    const startedAt = performance.now();
+    expect(await resolver.prefetchFocus(f.avatarId, only(f.photoIds), { timeoutMs: 200, retryMs: 20 })).toEqual(UNRESOLVED);
+    // It keeps asking until less than minStart (100 ms of a 200 ms bound) is left, so it waited at least that long.
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(90);
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+    const fresh = fakeGate();
+    const later = createFocusResolver({ library: f.library, faceGate: fresh });
+    const answer = await later.prefetchFocus(f.avatarId, only(f.photoIds));
+    await later.flush();
+    expect(answer).toEqual(RESOLVED(FACE_FOCUS));
+  });
+
+  test("a hung detection ends at the prefetch's timeout as unresolved, not at detectTimeoutMs", async () => {
+    const f = await fixture();
+    const { prefetchFocus } = createFocusResolver({ library: f.library, faceGate: fakeGate(() => "hang"), detectTimeoutMs: 20 });
+    const startedAt = performance.now();
+    expect(await prefetchFocus(f.avatarId, only(f.photoIds), { timeoutMs: 300 })).toEqual(UNRESOLVED);
+    expect(performance.now() - startedAt).toBeGreaterThanOrEqual(250);
+  });
+
+  test("a manual focusFor whose detect the gate refuses (another consumer filled the lane) falls back at once, unresolved, without retrying", async () => {
+    const f = await fixture();
+    const gate = refusingGate(Number.POSITIVE_INFINITY);
+    const { focusFor } = createFocusResolver({ library: f.library, faceGate: gate });
+    expect(await focusFor(f.avatarId, only(f.photoIds))).toEqual(UNRESOLVED);
+    expect(gate.calls).toHaveLength(1);
+  });
+
+  test("never has more than two detects at the gate (the lane's cap on waiting ones, whatever holds the lane) however many photos are asked for at once", async () => {
+    const f = await fixture(12);
+    let atGate = 0;
+    let most = 0;
+    const gate: FakeGate = {
+      ...fakeGate(),
+      detect: async () => {
+        atGate += 1;
+        most = Math.max(most, atGate);
+        await Bun.sleep(5);
+        atGate -= 1;
+        return FACE;
+      },
+    };
+    const { focusFor, flush } = createFocusResolver({ library: f.library, faceGate: gate });
+    const results = await Promise.all(f.photoIds.map((id) => focusFor(f.avatarId, id)));
+    await flush();
+    expect(results.every((r) => r.resolved)).toBe(true);
+    expect(most).toBe(2);
+  });
+
+  test("a photo waiting for admission has not been read yet: at most two photo reads are in flight", async () => {
+    const f = await fixture(10);
+    let reading = 0;
+    let most = 0;
+    const library: FocusLibrary = {
+      getPhoto: (id) => f.library.getPhoto(id),
+      photosByAvatar: (id) => f.library.photosByAvatar(id),
+      focusCachePath: (id) => f.library.focusCachePath(id),
+      readPhotoVerified: async (id) => {
+        reading += 1;
+        most = Math.max(most, reading);
+        await Bun.sleep(1);
+        reading -= 1;
+        return f.library.readPhotoVerified(id);
+      },
+    };
+    const gate = fakeGate(() => "hang");
+    const { focusFor } = createFocusResolver({ library, faceGate: gate, detectTimeoutMs: 150 });
+    await Promise.all(f.photoIds.map((id) => focusFor(f.avatarId, id)));
+    expect(gate.calls).toHaveLength(2);
+    expect(most).toBeLessThanOrEqual(2);
+  });
+
+  test("a photo waiting for admission gives up at its own bound, unresolved, and is never sent to the gate", async () => {
+    const f = await fixture(6);
+    const gate = fakeGate(() => "hang");
+    const { focusFor } = createFocusResolver({ library: f.library, faceGate: gate, detectTimeoutMs: 120 });
+    const startedAt = performance.now();
+    const results = await Promise.all(f.photoIds.map((id) => focusFor(f.avatarId, id)));
+    expect(results.every((r) => !r.resolved)).toBe(true);
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+    expect(gate.calls).toHaveLength(2);
+  });
+
+  test("a prefetch that joined a failed focusFor resolves again with what is left of its own budget", async () => {
+    const f = await fixture();
+    let n = 0;
+    const gate = fakeGate(() => (n++ === 0 ? new Error("decoder hiccup") : FACE));
+    const { focusFor, prefetchFocus, flush } = createFocusResolver({ library: f.library, faceGate: gate });
+    const manual = focusFor(f.avatarId, only(f.photoIds));
+    const prefetched = prefetchFocus(f.avatarId, only(f.photoIds));
+    expect(await manual).toEqual(UNRESOLVED);
+    expect(await prefetched).toEqual(RESOLVED(FACE_FOCUS));
+    expect(gate.calls).toHaveLength(2);
+    await flush();
+  });
+
+  test("a prefetch does not ask the gate again once less than the minimum start time of its bound is left", async () => {
+    const f = await fixture();
+    const gate = refusingGate(Number.POSITIVE_INFINITY);
+    const asked: number[] = [];
+    const watched: FakeGate = { ...gate, detect: (bytes, signal) => (asked.push(performance.now()), gate.detect(bytes, signal)) };
+    const { prefetchFocus } = createFocusResolver({ library: f.library, faceGate: watched });
+    const startedAt = performance.now();
+    expect(await prefetchFocus(f.avatarId, only(f.photoIds), { timeoutMs: 400, retryMs: 20 })).toEqual(UNRESOLVED);
+    expect(Math.max(...asked) - startedAt).toBeLessThan(260); // minStart(400 ms) = 200 ms
+  });
+
+  test("refuses a photo the avatar does not have", async () => {
+    const f = await fixture();
+    const { prefetchFocus } = createFocusResolver({ library: f.library, faceGate: fakeGate() });
+    await expect(prefetchFocus(f.avatarId, "no-such-photo")).rejects.toMatchObject({ code: "photo-not-found" });
+  });
+
+  test("rejects with the abort reason when the caller's signal aborts while the lane is full", async () => {
+    const f = await fixture();
+    const gate = refusingGate(Number.POSITIVE_INFINITY);
+    const { prefetchFocus } = createFocusResolver({ library: f.library, faceGate: gate });
+    const controller = new AbortController();
+    const pending = prefetchFocus(f.avatarId, only(f.photoIds), { signal: controller.signal, retryMs: 20, timeoutMs: 300 });
+    setTimeout(() => controller.abort(new Error("autopilot stopped")), 40);
+    await expect(pending).rejects.toThrow("autopilot stopped");
+    await Bun.sleep(350); // the shared computation outlives its caller until its own bound: let it finish before the fixture goes
+    const callsThen = gate.calls.length;
+    await Bun.sleep(100);
+    expect(gate.calls).toHaveLength(callsThen);
   });
 });
