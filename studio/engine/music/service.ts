@@ -1,4 +1,7 @@
+import { dirname, join } from "node:path";
 import { MUSIC_QUOTA_LIMIT, redactSecrets, type EngineError, type MusicQuotaLog, type MusicStatus, type MusicUnavailableReason, type TrackSummary } from "../../shared/engine";
+import { decideAutoRefresh, type AutoRefreshRefusal } from "./autoRefresh";
+import { AUTO_SENDS_FILE, AutoSendsLog, AutoSendsLogError } from "./autoSends";
 import { createFlashapiClient, FlashapiConfigError, FlashapiError, type FlashapiFetch, type FlashapiResponseInfo } from "./client";
 import type { ListParse, MusicTrack } from "./listSchema";
 import { CLOCK_MIN_MS, clockInRange, QuotaLedger, QuotaLogError, type QuotaLine, type QuotaOutcome, type QuotaSummary, type Recovery } from "./quotaLedger";
@@ -123,6 +126,28 @@ export interface MusicServiceDeps {
 }
 
 export type RefreshAnswer = { ok: true; status: MusicStatus } | { ok: false; error: EngineError };
+
+/** What `autoRefresh` answers: the refresh started, the rule said no (nothing was sent, nothing written), or the refresh was admitted by the rule and refused by the ledger or the disk. */
+export type AutoRefreshAnswer =
+  | { kind: "started"; status: MusicStatus }
+  | { kind: "declined"; reason: AutoRefreshRefusal }
+  | { kind: "failed"; error: EngineError };
+
+/** What the rule needs from the caller: the launch asking (one automatic refresh per launch) and how many tracks the autopilot could choose from now. */
+export interface AutoRefreshRequest {
+  readonly launchId: string;
+  readonly candidateCount: number;
+}
+
+/** Thrown inside an admission that the rule turned away; `autoRefresh` turns it into a `declined` answer. The admission's `finally` has already let the service go. */
+class AutoDeclined extends Error {
+  readonly reason: AutoRefreshRefusal;
+  constructor(reason: AutoRefreshRefusal) {
+    super(`the automatic refresh was declined (${reason})`);
+    this.name = "AutoDeclined";
+    this.reason = reason;
+  }
+}
 
 /**
  * A line the ledger could not take yet. `madeAt` is the moment it was made, so a held floor still counts its 31 days
@@ -250,6 +275,10 @@ export class MusicService {
   readonly #deps: MusicServiceDeps;
   readonly #ledger: QuotaLedger | null;
   readonly #sink: MusicListSink;
+  /** `userData/music/auto-sends.jsonl`; null with no music folder. */
+  readonly #autoSends: AutoSendsLog | null;
+  /** Launches that have had their one automatic refresh (or the attempt at it) in this process; the 72 h spacing in the log covers a restart. */
+  readonly #autoLaunches = new Set<string>();
   #refresh: MusicStatus["refresh"] = { state: "idle" };
   #busy = false;
   #task: Promise<void> = Promise.resolve();
@@ -274,6 +303,7 @@ export class MusicService {
     this.#deps = deps;
     this.#ledger = deps.quotaPath === null ? null : new QuotaLedger(deps.quotaPath, { clock: deps.clock });
     this.#sink = deps.sink ?? new MemoryListSink();
+    this.#autoSends = deps.quotaPath === null ? null : new AutoSendsLog(join(dirname(deps.quotaPath), AUTO_SENDS_FILE));
   }
 
   /**
@@ -467,7 +497,28 @@ export class MusicService {
    * request, the parse and the sink go on in the background, reporting through `emit`.
    */
   refresh(): Promise<RefreshAnswer> {
-    const admission = this.#admit();
+    return this.#track(this.#admit(null));
+  }
+
+  /**
+   * One AUTOMATIC refresh (Stage 4, S4.5d; a launch's, never the owner's click). It goes through the very admission of `refresh()`, with the rule of `autoRefresh.ts` added
+   * after the ledger has been read: a key, nothing running, a stale list or too few candidates, at most 9 automatic sends so far in 31 days and 19 in all, the server's
+   * `remaining` at least 11 when known, no automatic send in the last 72 h, and none yet for this launch. `declined` sends nothing and writes nothing. Otherwise the automatic
+   * line `{ id, at }` is appended to `auto-sends.jsonl` (fsynced) FIRST, and then the same id goes through the ledger's reserve: the ledger's lines are what a manual refresh
+   * writes. One attempt, never retried; a launch that has been given its one is not given another, whatever became of it. Never rejects for a decline.
+   */
+  async autoRefresh(request: AutoRefreshRequest): Promise<AutoRefreshAnswer> {
+    try {
+      const answer = await this.#track(this.#admit(request));
+      return answer.ok ? { kind: "started", status: answer.status } : { kind: "failed", error: answer.error };
+    } catch (error) {
+      if (error instanceof AutoDeclined) return { kind: "declined", reason: error.reason };
+      throw error;
+    }
+  }
+
+  /** Lets `stop()` wait for an admission that has not started its request yet. */
+  #track<T>(admission: Promise<T>): Promise<T> {
     this.#admissions.add(admission);
     void admission.then(
       () => this.#admissions.delete(admission),
@@ -476,17 +527,26 @@ export class MusicService {
     return admission;
   }
 
-  async #admit(): Promise<RefreshAnswer> {
+  async #admit(auto: AutoRefreshRequest | null): Promise<RefreshAnswer> {
     if (this.#closing) return unavailable("shutting-down", "the engine is shutting down, so nothing was sent");
     // Before anything else and at no cost: a list that would be lost at the next restart is not worth one of the 30.
     if (!this.#sink.persistent) return unavailable("not-available", "the music list is not available yet, so nothing was sent");
-    if (this.#busy) return fail("IN_FLIGHT", "a music refresh is already running");
+    if (this.#busy) {
+      if (auto !== null) throw new AutoDeclined("refresh-running");
+      return fail("IN_FLIGHT", "a music refresh is already running");
+    }
     this.#busy = true;
     let admitted = false;
     try {
       const key = this.#deps.key();
-      if (key === null) return fail("MUSIC_KEY_MISSING", "no RapidAPI key is stored");
-      if (this.#deps.keyRejected()) return fail("MUSIC_KEY_REJECTED", "the stored RapidAPI key was rejected; replace it");
+      if (key === null) {
+        if (auto !== null) throw new AutoDeclined("no-key");
+        return fail("MUSIC_KEY_MISSING", "no RapidAPI key is stored");
+      }
+      if (this.#deps.keyRejected()) {
+        if (auto !== null) throw new AutoDeclined("key-rejected");
+        return fail("MUSIC_KEY_REJECTED", "the stored RapidAPI key was rejected; replace it");
+      }
       if (this.#ledger === null) return unavailable("no-music-folder", "the music folder is not available, so nothing was sent");
       // A clock that is not a real date cannot date a send line (the ledger refuses one, and a window counted from 1970
       // is nonsense): nothing leaves until it is set right, and the owner is told why.
@@ -524,9 +584,14 @@ export class MusicService {
       if (before.rejectedKey === last4(key)) {
         // The engine must show the key as rejected too, so the settings say so without another request.
         this.#deps.markKeyRejected(key);
+        if (auto !== null) throw new AutoDeclined("key-rejected");
         return fail("MUSIC_KEY_REJECTED", "flashapi rejected this key on an earlier refresh; replace it");
       }
       const id = this.#deps.newId();
+      if (auto !== null) {
+        const failure = await this.#admitAuto(auto, id, clockNow, before);
+        if (failure !== null) return failure;
+      }
       let admission;
       try {
         admission = await this.#ledger.reserve({ id, key: last4(key) });
@@ -563,6 +628,45 @@ export class MusicService {
     } finally {
       if (!admitted) this.#busy = false;
     }
+  }
+
+  /**
+   * The automatic refresh's own gate, inside the admission (the service is busy, the ledger has been read). Throws `AutoDeclined` when the rule says no. Otherwise writes the
+   * automatic line (fsynced) and marks the launch as having had its one; a line that cannot be written is MUSIC_UNAVAILABLE and nothing is sent. The mark is made as soon as
+   * the line is down, so a ledger that then refuses cannot be asked again by the same launch, one automatic line per ask.
+   */
+  async #admitAuto(auto: AutoRefreshRequest, id: string, now: number, before: QuotaSummary): Promise<{ ok: false; error: EngineError } | null> {
+    const log = this.#autoSends;
+    if (log === null) return unavailable("no-music-folder", "the music folder is not available, so nothing was sent");
+    const sends = await log.summary(now);
+    let listFetchedAt: number | null;
+    try {
+      listFetchedAt = this.#sink.summary().listFetchedAt;
+    } catch {
+      listFetchedAt = null;
+    }
+    const verdict = decideAutoRefresh({
+      now,
+      hasKey: true,
+      keyRejected: false,
+      refreshRunning: false,
+      listFetchedAt,
+      candidateCount: auto.candidateCount,
+      autoSendsInWindow: sends.count,
+      autoLogDamaged: sends.damaged,
+      lastAutoSendAt: sends.lastAt,
+      totalSendsInWindow: before.sentInWindow,
+      serverRemaining: before.serverRemaining,
+      launchRefreshed: this.#autoLaunches.has(auto.launchId),
+    });
+    if (!verdict.ok) throw new AutoDeclined(verdict.reason);
+    try {
+      await log.record(id, now);
+    } catch (error) {
+      return unavailable("log-unwritable", error instanceof AutoSendsLogError ? `${error.message}; nothing was sent` : "the automatic sends file could not be written; nothing was sent");
+    }
+    this.#autoLaunches.add(auto.launchId);
+    return null;
   }
 
   async #run(job: { client: ReturnType<typeof createFlashapiClient>; key: string; id: string; hadOk: boolean; sent: number; sentAt: number; signal: AbortSignal }): Promise<void> {

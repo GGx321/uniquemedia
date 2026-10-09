@@ -22,7 +22,7 @@ const NEW_COMMANDS: [string, unknown][] = [
   ["autopilot.get", { launchId: LAUNCH }],
   ["autopilot.removeUnreadable", { entryId: "0123456789abcdef" }],
   ["videos.setPublished", { videoId: "video-00000001", published: true }],
-  ["media.setForAutopilot", { mediaId: "media-00000001", on: true }],
+  // `media.setForAutopilot` was served by S4.5d: engine.setForAutopilot.test.ts.
 ];
 
 describe("the new commands before their services exist", () => {

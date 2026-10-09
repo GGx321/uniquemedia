@@ -9,7 +9,10 @@ import {
   type UnsequencedEvent,
 } from "../../shared/engine";
 import type { JobRegistry } from "../jobs";
+import { join } from "node:path";
+import { MEDIA_DIR } from "../library/layout";
 import { MediaCommitError, MediaDiskError, MediaRecords, type MediaRecordsOptions } from "../library/mediaRecords";
+import { AUTOPILOT_TRACKS_FILE, AutopilotTrackFlags } from "../music/autopilotTrackFlags";
 import type { MediaImportCall, MediaImporters, MediaImportResult, PrepareReporter } from "./imports";
 import { open } from "node:fs/promises";
 import { formatOf, SNIFF_HEAD_BYTES, type MediaFormat } from "./sniff";
@@ -77,6 +80,8 @@ interface Area {
   active: number;
   readonly staging: MediaStaging;
   readonly records: MediaRecords;
+  /** The «для автопилота» flags of this library's own tracks (S4.5d): `media/autopilot-tracks.jsonl`. */
+  readonly flags: AutopilotTrackFlags;
   /** The library's crash windows are settled: nothing reads or writes the media folder before this. */
   readonly ready: Promise<void>;
   /** Fires when this area is replaced (the library opened again) or the engine stops: the recovery's hashing of quarantined copies stops with it. */
@@ -130,6 +135,9 @@ async function headOf(path: string): Promise<Uint8Array> {
   }
 }
 
+/** `setForAutopilot`: the track as it now stands, or why it cannot be marked: no such own track (or not a track), or a stored file the render cannot read as a track. */
+export type SetForAutopilotResult = { ok: true; media: MediaSummary } | { ok: false; reason: "not-found" | "format" };
+
 /** One stored media as `lookup` answers it. */
 export interface MediaLookup {
   readonly summary: MediaSummary;
@@ -182,7 +190,8 @@ export class MediaService {
       await records.recover({ signal: closing.signal });
       await staging.sweep();
     })().catch(() => this.#deps.log("a library's own media could not be read at its opening"));
-    return { active: 0, staging, records, ready, closing };
+    const flags = new AutopilotTrackFlags(join(root, MEDIA_DIR, AUTOPILOT_TRACKS_FILE), () => this.#deps.now().getTime());
+    return { active: 0, staging, records, flags, ready, closing };
   }
 
   #areaOf(root: string): Area {
@@ -291,7 +300,50 @@ export class MediaService {
     return this.#deps.withLibrary(async (library) => {
       const area = this.#areaOf(library.root);
       await area.ready;
-      return area.records.list(kind, mediaIds);
+      const listed = area.records.list(kind, mediaIds);
+      if (!listed.media.some((media) => media.kind === "audio")) return listed;
+      // A track the owner marked says so (S4.5d); every other record is as it was stored (the mark is absent, not false).
+      const flagged = await area.flags.flagged();
+      return { ...listed, media: listed.media.map((media) => (flagged.has(media.mediaId) && this.#isOwnTrack(area, media) ? { ...media, forAutopilot: true } : media)) };
+    });
+  }
+
+  /** Whether the record is an own track the render can read: audio, with a length, stored as the importer's m4a. The one rule of `ownTrack.ts`, from the record alone. */
+  #isOwnTrack(area: Area, media: MediaSummary): boolean {
+    return media.kind === "audio" && media.durationMs !== null && area.records.integrityOf(media.mediaId)?.format === "m4a";
+  }
+
+  /**
+   * Marks or unmarks an own track «для автопилота» (S4.5d): one line appended to the library's flag log. Only an own track the render can read may be marked. `not-found` for an id
+   * the library does not hold or holds as another kind; `format` for audio stored in a container the render cannot read. A flag log with a line that cannot be read refuses
+   * the write (`TrackFlagLogError`): nothing is appended to a log nobody can read. Free. The answer is the track as it now stands, and `media.changed` says the same.
+   */
+  async setForAutopilot(mediaId: string, on: boolean): Promise<SetForAutopilotResult> {
+    return this.#deps.withLibrary(async (library) => {
+      const area = this.#areaOf(library.root);
+      await area.ready;
+      const summary = area.records.get(mediaId);
+      if (summary === undefined || summary.kind !== "audio") return { ok: false, reason: "not-found" };
+      if (!this.#isOwnTrack(area, summary)) return { ok: false, reason: "format" };
+      // «Already stands» is judged inside the flag log's own lock (a flag that stands is not written again), so racing calls cannot leave the wrong state.
+      await area.flags.set(mediaId, on);
+      const media: MediaSummary = on ? { ...summary, forAutopilot: true } : summary;
+      this.#event("media.changed", { change: "upserted", media });
+      return { ok: true, media };
+    });
+  }
+
+  /** The own tracks the autopilot may use: flagged, and still valid own tracks (a deleted track, a photo or an mp3 named in the log is not one). By id. A damaged flag log offers none. */
+  async autopilotTracks(): Promise<{ mediaId: string; durationMs: number }[]> {
+    return this.#deps.withLibrary(async (library) => {
+      const area = this.#areaOf(library.root);
+      await area.ready;
+      const tracks: { mediaId: string; durationMs: number }[] = [];
+      for (const mediaId of [...(await area.flags.flagged())].sort()) {
+        const summary = area.records.get(mediaId);
+        if (summary !== undefined && summary.durationMs !== null && this.#isOwnTrack(area, summary)) tracks.push({ mediaId, durationMs: summary.durationMs });
+      }
+      return tracks;
     });
   }
 

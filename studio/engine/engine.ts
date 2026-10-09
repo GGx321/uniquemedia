@@ -115,7 +115,8 @@ import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./f
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
 import type { MediaImporters } from "./media/imports";
-import { MediaService } from "./media/service";
+import { MediaService, type SetForAutopilotResult } from "./media/service";
+import { TrackFlagLogError } from "./music/autopilotTrackFlags";
 import { MediaDiskError } from "./library/mediaRecords";
 import { pauseBeforeRetry } from "./library/durableFs";
 import type { MediaStagingOptions } from "./media/staging";
@@ -1834,8 +1835,23 @@ export class Engine {
         if (peaks === null) return errorResponseFor(command, { code: "NOT_FOUND", detail: `track ${track.trackId} is not stored` });
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { peaks } };
       }
-      // Stage 4 (S4.1): the commands of the batch autopilot and the two marks. INTERNAL «<type> is not implemented yet» is this switch's one answer for a command it cannot
-        // serve (the `default` below says the same), listed here so each service that lands (S4.5c published marks, S4.5d the track flag, S4.6 the orchestrator) takes its case out.
+      case "media.setForAutopilot": {
+        // Stage 4 (S4.5d): the owner's «для автопилота» flag on an own track; free, a line in the library's flag log. A media that is not an own track is NOT_FOUND with the
+        // detail `music.peaks` uses; audio the render cannot read as a track (not stored as the importer's m4a) is MEDIA_UNSUPPORTED (format).
+        const { mediaId, on } = command.payload;
+        let flagged: SetForAutopilotResult;
+        try {
+          flagged = await this.#media.setForAutopilot(mediaId, on);
+        } catch (error) {
+          if (error instanceof TrackFlagLogError) throw new EngineFailure({ code: "INTERNAL", detail: error.message });
+          throw error;
+        }
+        if (flagged.ok) return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { media: flagged.media } };
+        if (flagged.reason === "format") return errorResponseFor(command, { code: "MEDIA_UNSUPPORTED", mediaReason: "format", detail: "only an m4a track can be marked for the autopilot" });
+        return errorResponseFor(command, { code: "NOT_FOUND", detail: OWN_MUSIC_NOT_FOUND_DETAIL });
+      }
+      // Stage 4 (S4.1): the commands of the batch autopilot and the mark. INTERNAL «<type> is not implemented yet» is this switch's one answer for a command it cannot
+        // serve (the `default` below says the same), listed here so each service that lands (S4.5c published marks, S4.6 the orchestrator) takes its case out.
       case "autopilot.estimate":
       case "autopilot.start":
       case "autopilot.pause":
@@ -1846,7 +1862,6 @@ export class Engine {
       case "autopilot.get":
       case "autopilot.removeUnreadable":
       case "videos.setPublished":
-      case "media.setForAutopilot":
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });

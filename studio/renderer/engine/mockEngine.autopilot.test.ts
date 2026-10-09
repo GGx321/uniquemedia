@@ -559,9 +559,15 @@ describe("the marks on videos and tracks", () => {
       expect(await flag()).toBeFalsy();
     });
 
-    test("a track that is not an m4a is MEDIA_UNSUPPORTED (format); a photo and an unknown media are NOT_FOUND", async () => {
-      const { mock, mp3, photo } = await withTracks();
-      expect(await errorOf(mock.client.request("media.setForAutopilot", { mediaId: mp3, on: true }))).toMatchObject({ code: "MEDIA_UNSUPPORTED", mediaReason: "format" });
+    // S4.5d: the first version of the mock refused a track NAMED «.mp3» as MEDIA_UNSUPPORTED (format). The engine stores every imported track as an m4a whatever the file was
+    // called, so an mp3-named track is flagged there like any other, and parity (the story «an own track is flagged for the autopilot») showed the two answering differently.
+    test("a track named .mp3 is flagged like any other: the importer stores every track as an m4a", async () => {
+      const { mock, mp3 } = await withTracks();
+      expect((await unwrap(mock.client.request("media.setForAutopilot", { mediaId: mp3, on: true }))).media.forAutopilot).toBe(true);
+    });
+
+    test("a photo and an unknown media are NOT_FOUND", async () => {
+      const { mock, photo } = await withTracks();
       expect((await errorOf(mock.client.request("media.setForAutopilot", { mediaId: photo, on: true }))).code).toBe("NOT_FOUND");
       expect((await errorOf(mock.client.request("media.setForAutopilot", { mediaId: "media-nobody-0404", on: true }))).code).toBe("NOT_FOUND");
     });

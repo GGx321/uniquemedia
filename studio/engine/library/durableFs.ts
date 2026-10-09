@@ -157,6 +157,17 @@ async function healTornTail(path: string): Promise<boolean> {
   }
 }
 
+/**
+ * Heals a torn tail on its own (the same step `appendJsonLine` takes before it appends), under the log's lock: the tail goes to `<path>.torn` and is cut off. For a
+ * caller that must COUNT a log's whole lines before it appends. Nothing happens to a log with no torn tail, or to a missing one.
+ */
+export function healJsonlTail(path: string, options: LogAccessOptions = {}): Promise<void> {
+  return runExclusive(logLockKey(path), async () => {
+    await options.guard?.();
+    await healTornTail(path);
+  });
+}
+
 async function appendDurable(path: string, data: Uint8Array | string): Promise<void> {
   const handle = await open(path, "a");
   try {
