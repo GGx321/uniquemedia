@@ -1,6 +1,6 @@
 import { budgetHoldDetail, drawAllocationLeft, sliceSize, SLICE_MAX_PHOTOS, type LaunchScopeMoney } from "../../shared/autopilot/money";
 import { ErrorCode } from "../../shared/engine";
-import type { PaidHold, SkipReason } from "../../shared/engine/autopilot";
+import { INTERNAL_HOLD_MESSAGE_MAX, type PaidHold, type SkipReason } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
 import type { StoredSceneSet } from "../library/sceneSets";
 import type { Ledger } from "../money/ledger";
@@ -37,7 +37,8 @@ import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchS
 // unavailable price list is retried after 5, 15 and 60 minutes (`#priceUnavailable`); an avatar's own refusal skips it; the month and the allocation hold as before. Free work goes on
 // through every hold. The timer of an automatic continue is armed before its hold is written, cancelled by a drain, a suspend, a begin and a release, and checks the admission rule (A19)
 // when it fires. The failure-rate guard reads the finished slice's outcome before another slice is bought. `suspend` / `wake` are the engine's side of `host.power`.
-// A job that ends in a way the table has no row for leaves the avatar where it is (`#stuck`: a warning in the console, nothing sent): the contract has no hold for it.
+// A job that ends in a way the table has no row for (an INTERNAL, any code not listed) holds the launch as `internal { job-failed }` with the job's own words (S4.6r); «Продолжить» runs it again.
+// `#stuck` is left for a state that is no job's end (a defect of the steps themselves): a warning in the console, nothing sent.
 
 /** The steps' timers (the bounded automatic continues, the wait for a busy avatar): injectable so a test owns the clock. The default is the global `setTimeout`, NOT unref'd: a drain waits on these. */
 const REAL_TIMERS: StepTimers = { set: (run, ms) => setTimeout(run, ms), clear: (handle) => clearTimeout(handle) };
@@ -95,6 +96,28 @@ function codeOf(error: unknown): ErrorCode | undefined {
     return parsed.success ? parsed.data : undefined;
   }
   return undefined;
+}
+
+/**
+ * A failed job in a line for the log and the hold: `CODE: detail` for an engine error (a refusal, or the error a job's end carries: its detail is what the window shows anyway), the code alone
+ * when it has no detail, and for anything else only the error's name (a message of a foreign error can name a path). Cut to the contract's line.
+ */
+export function failureWords(error: unknown, code: ErrorCode | undefined): string {
+  let detail: string | undefined;
+  if (error instanceof EngineFailure) detail = error.error.detail;
+  else if (typeof error === "object" && error !== null && "detail" in error && typeof error.detail === "string") detail = error.detail;
+  const words = code === undefined ? (error instanceof Error ? error.name || "Error" : typeof error) : detail === undefined || detail === "" ? code : `${code}: ${scrubPaths(`${detail}`).trim()}`;
+  return words.slice(0, INTERNAL_HOLD_MESSAGE_MAX);
+}
+
+/**
+ * An engine error's detail is mostly the engine's own words, but a job that wraps a foreign error (`ENOENT: no such file or directory, open '/Users/…/master.png'`) carries the owner's
+ * absolute path in it. The words are written to the launch file and the log, so a quoted path (spaces and all) or a bare one with a separator is replaced by `<path>`.
+ */
+export function scrubPaths(text: string): string {
+  const quoted = /(['"`])(?:[A-Za-z]:)?[\\/][^'"`]*\1/g;
+  const bare = /(?:[A-Za-z]:)?[\\/][^\s'"`,;]*(?:[\\/][^\s'"`,;]*)+/g;
+  return text.replace(quoted, "<path>").replace(bare, "<path>");
 }
 
 /** What the set's earlier writer scopes committed: every writer attempt `<setId>:writer-*`, settled at its cost, open at its worst case (plan §3.6 row 2). */
@@ -479,7 +502,7 @@ export class PaidSteps implements LaunchSteps {
     if (!ctx.isRunning()) return;
     const write = set.write;
     if (write?.stoppedBy === "failed" && write.stoppedError !== undefined) {
-      await this.#raise(ctx, avatarId, `${set.sceneSetId}:scenes`, write.stoppedError);
+      await this.#raise(ctx, avatarId, `${set.sceneSetId}:scenes`, write.stoppedError, { sceneSetId: set.sceneSetId });
       return;
     }
     this.#stuck(avatarId, `the scenes of the set are not all written (the write stopped: ${write?.stoppedBy ?? "no record"})`);
@@ -771,10 +794,10 @@ export class PaidSteps implements LaunchSteps {
 
   /**
    * A paid job failed, or could not start, for a cause the table has a row for: credits, key, halt, no answer, reconcile, prices unavailable, or the avatar itself. Sets the hold (or skips the
-   * avatar) and returns "end": this pass has nothing more to send. A cause with no row is left where it is, with a warning (`#stuck`). Nothing is raised or sent here (A3, A6).
+   * avatar) and returns "end": this pass has nothing more to send. A cause with no row holds the launch as `internal { job-failed }` with the job's words (`#jobFailed`, S4.6r); `#stuck` is only for a state that is no job's end. Nothing is raised or sent here (A3, A6).
    * Not for a launch that stopped running meanwhile (a pause, a stop, a sleep): the resume meets the same state, and a 402 or a 401 then costs nothing.
    */
-  async #raise(ctx: LaunchStepsContext, avatarId: string | null, jobKey: string, error: unknown): Promise<"end"> {
+  async #raise(ctx: LaunchStepsContext, avatarId: string | null, jobKey: string, error: unknown, scene?: { sceneSetId: string }): Promise<"end"> {
     if (!ctx.isRunning()) return "end";
     const code = codeOf(error);
     const cause = code === undefined ? ({ kind: "unknown" } as const) : causeOf(code);
@@ -800,12 +823,59 @@ export class PaidSteps implements LaunchSteps {
       case "price-unavailable":
         return this.#priceUnavailable(ctx, avatarId);
       case "avatar":
-        if (avatarId === null) return this.#stuck("the launch", `a launch-wide step met an avatar's refusal (${code})`);
+        if (avatarId === null) return this.#stuck("the launch", `a launch-wide step met an avatar's refusal (${failureWords(error, code)})`);
         await this.#skip(ctx, avatarId, cause.reason);
         return "end";
+      case "budget": {
+        // A compose or «Дописать» stopped by the month: the hold of §4.6's «BUDGET_EXCEEDED at a step start», needing the room for the step's own worst case.
+        const port = this.#d.port();
+        try {
+          const need = scene === undefined ? await port.photoWorstMicros() : (await port.writeEstimate(scene.sceneSetId)).worstMicros;
+          const room = port.monthRoom();
+          await this.#hold(ctx, avatarId, { reason: "budget", at, detail: budgetHoldDetail({ kind: "new-slice", freeMicros: room?.freeMicros ?? 0, photoWorstMicros: need }) });
+          return "end";
+        } catch {
+          return this.#jobFailed(ctx, avatarId, error, code, at);
+        }
+      }
+      case "price": {
+        // A compose or «Дописать» stopped because the price rose: a price hold when the step no longer fits what its allocation leaves. When it does fit, there is nothing to wait for but a click.
+        const port = this.#d.port();
+        const budget = port.budget;
+        const generation = avatarId === null ? undefined : ctx.file().avatars.find((a) => a.avatarId === avatarId)?.generation;
+        const row = avatarId === null ? undefined : ctx.file().avatars.find((a) => a.avatarId === avatarId);
+        if (scene !== undefined && budget !== null && row !== undefined && generation !== null && generation !== undefined) {
+          try {
+            const allowed = Math.max(0, row.allocation.composeMicros - writerCommittedMicros(budget.ledger, generation.sceneSetId));
+            const need = (await port.writeEstimate(scene.sceneSetId)).worstMicros;
+            if (allowed < need) {
+              await this.#hold(ctx, avatarId, { reason: "price", at, detail: { stage: "rewrite", needMicros: need, leftMicros: allowed } });
+              return "end";
+            }
+          } catch {
+            // falls to the failed job's hold below
+          }
+        }
+        return this.#jobFailed(ctx, avatarId, error, code, at);
+      }
+      case "cap":
+      case "busy":
+        // No row of the table serves a compose or «Дописать» stopped by the launch's cap or by a busy avatar (the slice's rows are handled where the slice runs): it is named, and the click runs the job again.
+        return this.#jobFailed(ctx, avatarId, error, code, at);
       default:
-        return this.#stuck(avatarId ?? "the launch", `the job ended in a way the table has no row for (${code ?? (error instanceof Error ? error.name : typeof error)})`);
+        return this.#jobFailed(ctx, avatarId, error, code, at);
     }
+  }
+
+  /**
+   * S4.6r: a job that ended in a way the table has no row for (an INTERNAL: a master photo that cannot be prepared, say) is not left to hang: the launch holds as `internal` with the job's own words,
+   * and «Продолжить» runs the job again. Nothing is sent meanwhile, and the ledger's admission rule still applies to the click.
+   */
+  async #jobFailed(ctx: LaunchStepsContext, avatarId: string | null, error: unknown, code: ErrorCode | undefined, at: string): Promise<"end"> {
+    const words = failureWords(error, code);
+    this.#warn(`studio engine: the paid path of ${avatarId === null ? "the launch" : `avatar ${avatarId}`} stopped: a job ended in a way the table has no row for (${words})`);
+    await this.#hold(ctx, avatarId, { reason: "internal", at, detail: { kind: "job-failed", message: words } });
+    return "end";
   }
 
   /**

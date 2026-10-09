@@ -61,6 +61,7 @@ export const LOG_SAMPLES: Record<string, Record<string, unknown>> = {
   "hold-internal": { holdKind: "allocation-exceeded" },
   "hold-export": { exportReason: "not-enough-space" },
   "render-dropped": { key: "1-6" },
+  "render-retry": { key: "1-6" },
   "price-shrink": { fromPhotos: 5, toPhotos: 4 },
   "review-write": { write: "redraw", micros: 2_000 },
   pausing: { requests: 4, renders: 2 },

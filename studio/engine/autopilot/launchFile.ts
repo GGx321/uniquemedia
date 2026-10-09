@@ -28,6 +28,9 @@ import type { LaunchPlan } from "./planner";
 // tests, the same reasoning as D5/T6c for the video record (plan §8.3). A field an older build must not ignore, once Studio ships, bumps this version.
 export const LAUNCH_FILE_SCHEMA_VERSION = 1;
 
+/** How many free retries a failed render gets before its video is dropped (plan §4.6: one). */
+export const MAX_RENDER_RETRIES = 1;
+
 const IsoDateTime = z.iso.datetime();
 
 /** The statuses a file holds: `pausing` is a view state and is never written. */
@@ -140,6 +143,11 @@ export const LaunchFile = z
     autoContinues: z.record(z.string().min(1).max(160), AutoContinue).optional(),
     /** S4.6b2: how many of the three retries after «prices unavailable» (5, 15 and 60 minutes) the launch has used. */
     priceRetries: z.number().int().min(0).max(3).optional(),
+    /**
+     * S4.6r: the free retry a failed render has used, by the video's key (§4.6: «one free retry, then the video is dropped»). Written in the same write that puts the video back to `assigned`, so a restart
+     * cannot grant a second retry. Absent until a render fails. Optional, no schema bump (Studio is unreleased).
+     */
+    renderRetries: z.record(LaunchVideoKey, z.number().int().min(1).max(MAX_RENDER_RETRIES)).optional(),
     /**
      * Written BEFORE the launch's one automatic refresh of the trends is asked (A11, the A4 «id before the call» pattern): a launch that finds it set (after a restart, or a pause of any length)
      * never asks again. Cleared when the service answered that nothing was sent. Optional, no schema bump (Studio is unreleased).

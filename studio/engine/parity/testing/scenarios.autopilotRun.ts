@@ -288,4 +288,22 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
       await t.callLaunch("autopilot.get", { launchId: launch });
     },
   },
+  {
+    name: "autopilot (running): a slice job that ends INTERNAL holds the launch as «internal» (a failed job), «Продолжить» is open and runs the job again, and the launch ends done",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      t.note("the avatar's master photo cannot be prepared: the compose is paid, and the slice's job ends INTERNAL before any photo is requested");
+      control.launch.fault("job-failed");
+      const { launch } = await begin(t, w);
+      await t.untilLaunch(launch, "the internal hold", holds("internal"));
+      t.note("held, with «Продолжить» open: the hold is a failed job, not the launch's own check");
+      await t.callLaunch("autopilot.get", { launchId: launch });
+      t.note("the master is whole again; the owner continues and the job runs again");
+      await control.launch.repairMaster();
+      await t.callLaunch("autopilot.resume", { launchId: launch, acceptedRemainingMicros: ENOUGH }, { brief: true });
+      await t.untilLaunch(launch, "done", isDone);
+      await t.callLaunch("autopilot.get", { launchId: launch });
+    },
+  },
 ];

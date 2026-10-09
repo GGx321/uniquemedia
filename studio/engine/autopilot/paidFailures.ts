@@ -93,12 +93,13 @@ export function isWaitingHold(hold: PaidHold): hold is Extract<PaidHold, { reaso
  * - 1, a person must act, and the cause costs nothing to meet again (credits, key, price, a price list that stayed unavailable, the month);
  * - 2, a network hold with no retry: requests of the launch got no answer three times, and only a reconcile makes the launch safe to continue (A19). It is above the holds of rank 1, so a
  *   third drop is never hidden behind a 402 that «Продолжить» would clear at once;
- * - 3, the ledger is halted or the launch's own check failed: nothing displaces them.
+ * - 3, the ledger is halted or the launch's own allocation check failed: nothing displaces them. A failed job's `internal { job-failed }` (S4.6r) is rank 1: the click clears it, so it must never hide (or be hidden by the click over) a hold that needs a reconcile.
  */
 export function holdRank(hold: PaidHold): 0 | 1 | 2 | 3 {
   if (hold.reason === "network") return hold.detail.nextAt === null ? 2 : 0;
   if (hold.reason === "price-unavailable") return hold.detail.nextAt === null ? 1 : 0;
-  return hold.reason === "halt" || hold.reason === "internal" ? 3 : 1;
+  if (hold.reason === "internal") return hold.detail.kind === "job-failed" ? 1 : 3;
+  return hold.reason === "halt" ? 3 : 1;
 }
 
 /** A hold displaces the one that stands only by a higher rank; among equals the first stays. */

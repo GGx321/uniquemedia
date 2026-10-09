@@ -328,6 +328,27 @@ describe("the notice under the header: each hold with its own words and fix (Lau
     expect(internal).toMatchObject({ title: "Внутренняя ошибка учёта", tone: "danger", resume: true, actions: [{ kind: "stop", label: "Стоп" }], why: "Продолжить нельзя: выход — «Стоп»." });
   });
 
+  test("internal, a job that failed (S4.6r): the job's words are shown, «Продолжить» is open and runs it again", () => {
+    const failed = note({ paidHold: hold("internal", { detail: { kind: "job-failed", message: "INTERNAL: the master photo could not be prepared" } }), resumeBlockedBy: null });
+    expect(failed).toMatchObject({ title: "Задача остановилась с ошибкой", tone: "danger", resume: true, actions: [], why: null });
+    expect(failed?.text).toContain("INTERNAL: the master photo could not be prepared");
+    expect(failed?.text).toContain("«Продолжить» запустит её снова");
+    expect(failed?.text).not.toContain("Продолжить нельзя");
+  });
+
+  test("internal, a job that failed with no words of its own still says what to do", () => {
+    const failed = note({ paidHold: hold("internal", { detail: { kind: "job-failed" } }), resumeBlockedBy: null });
+    expect(failed?.title).toBe("Задача остановилась с ошибкой");
+    expect(failed?.text).toContain("«Продолжить» запустит её снова");
+  });
+
+  test("the log words an internal hold of a failed job with its detail, and the allocation check's without", () => {
+    const say = (over: Record<string, unknown>): string => logText(LogLine.parse(logLine("hold-internal", over)), true).text;
+    expect(say({ holdKind: "job-failed", detail: "INTERNAL: no master" })).toBe("задача остановилась с ошибкой · INTERNAL: no master · «Продолжить» запустит её снова");
+    expect(say({ holdKind: "job-failed" })).toBe("задача остановилась с ошибкой · «Продолжить» запустит её снова");
+    expect(say({ holdKind: "allocation-exceeded" })).toBe("внутренняя ошибка учёта · платная часть остановлена");
+  });
+
   test("a paused launch: what stops «Продолжить» (a quit with requests in flight → «Сначала сверка»), else the restart's words", () => {
     const reconcile = liveNote(paused("quit", { resumeBlockedBy: "reconcile-required", logTail: [logLine("host-quit")] }), "paused", nameOf);
     expect(reconcile).toMatchObject({ title: "Сначала сверка", resume: false, actions: [{ label: "Перейти к сверке" }] });

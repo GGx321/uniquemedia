@@ -1,3 +1,4 @@
+import { readFileSync, writeFileSync } from "node:fs";
 import { appendFile, mkdir, open, readdir, readFile, rename, rm, stat, truncate, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { CommandMessage, EventMessage, MEDIA_BYTE_CAPS, ResponseMessage, type AvatarSummary, type CategoryInterrupted, type CategorySummary, type PhotoSummary } from "../../../shared/engine";
@@ -106,8 +107,14 @@ export interface Control {
  * switch (`failLaunchPaidStep`, `quitLaunch`). Needs `RigOptions.launch`.
  */
 export interface LaunchControl {
-  /** The next paid request OpenRouter is asked gets a failure: `credits` (402) or `key` (401). Used once; the launch's next paid step meets it. */
-  fault(cause: "credits" | "key"): void;
+  /**
+   * The next paid request OpenRouter is asked gets a failure: `credits` (402) or `key` (401). Used once; the launch's next paid step meets it. `job-failed` (S4.6r) is a slice's job that
+   * ends INTERNAL: the real rig damages the main avatar's master photo on disk (its run cannot prepare it as the face reference), the mock arms its switch; the compose, which does not read
+   * the master, is not affected. `repairMaster` makes the master whole again.
+   */
+  fault(cause: "credits" | "key" | "job-failed"): void;
+  /** The master photo that `fault("job-failed")` damaged is whole again. Nothing to do for a rig that did not damage one. */
+  repairMaster(): Promise<void>;
   /** The owner has a key OpenRouter accepts again (a new key stored): what releases a key hold. */
   newKey(): Promise<void>;
   /** The next writer request leaves and gets no answer, for as long as the scenario lasts (a request in flight whose reserve a quit leaves open). */
@@ -531,6 +538,8 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     control: {
       launch: {
         fault: (cause) => engine.failLaunchPaidStep(cause),
+        // The mock's fault is consumed by the step that meets it: nothing was damaged, so nothing is repaired.
+        repairMaster: async () => undefined,
         newKey: async () => {
           await engine.request(CommandMessage.parse({ v: 5, id: `msg-${String(++messages).padStart(6, "0")}`, kind: "command", type: "settings.setApiKey", payload: { key: PARITY_OPENROUTER_KEY } }));
         },
@@ -749,6 +758,9 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   // masters are real portraits, as the wiring tests' are (testing/wiringKit.ts).
   const master = options.launch === true ? { bytes: portraitPng(1), width: 60, height: 80 } : TINY_MASTER;
   const avatarId = await seedAvatar(library, "Mia", master);
+  // S4.6r: where Mia's master lies, for the scenario that damages it (`LaunchControl.fault("job-failed")`), and the bytes to put back.
+  const masterPath = library.referencePhoto(avatarId)?.path ?? null;
+  let masterWhole: Buffer | null = null;
   const photoIds = await seedPhotos(library, avatarId, MAIN_PHOTOS, 1);
   const otherAvatarId = await seedAvatar(library, "Sofia", master);
   const otherPhotoIds = await seedPhotos(library, otherAvatarId, OTHER_PHOTOS, 2);
@@ -1188,7 +1200,22 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       launch: {
         fault: (cause) => {
           if (!launching) throw new Error("this rig has no launch");
-          faultNext = cause;
+          if (cause !== "job-failed") {
+            faultNext = cause;
+            return;
+          }
+          // Damaged on disk, same length: the library reads it and finds that its sha256 is not the sidecar's. The slice's run ends INTERNAL before any image is requested.
+          if (masterPath === null) throw new Error("the rig has no master photo to damage");
+          const whole = readFileSync(masterPath);
+          masterWhole ??= whole;
+          const damaged = Buffer.from(whole);
+          damaged[damaged.length - 1] = (damaged[damaged.length - 1] ?? 0) ^ 0xff;
+          writeFileSync(masterPath, damaged);
+        },
+        repairMaster: async () => {
+          if (masterPath === null || masterWhole === null) return;
+          await writeFile(masterPath, masterWhole);
+          masterWhole = null;
         },
         newKey: async () => {
           await within(engine.applyControl({ kind: "control", type: "apiKey.set", key: PARITY_OPENROUTER_KEY }), 30_000, "the new key to be stored");

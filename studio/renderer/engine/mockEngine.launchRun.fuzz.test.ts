@@ -72,6 +72,8 @@ function randomTracks(next: () => number): MockTrackSeed[] {
   return Array.from({ length: count }, (_, i) => track(i + 1, { durationMs: next() < 0.2 ? 3_000 : 12_000, explicit: next() < 0.15 }));
 }
 
+const DRAWN_FAULTS = PAID_FAULTS.filter((fault) => fault !== "job-failed");
+
 async function fuzzOne(seed: number, steps: number): Promise<void> {
   const next = mulberry32(seed);
   const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)] as T;
@@ -222,8 +224,11 @@ async function fuzzOne(seed: number, steps: number): Promise<void> {
     else await mock.client.request(type, { launchId: id });
   }
 
-  async function armAndMeet(fault = pick(PAID_FAULTS), times = pick([1, 1, 2, 3]), ticks = 4): Promise<void> {
-    mock.engine.failLaunchPaidStep(fault, times);
+  // The draws are over the faults the seeds were written for (a longer list would move every draw of every seed); S4.6r's `job-failed` takes every second turn of `internal`, so the launch's own
+  // check is still met first and the failed job is met too, with no draw of its own.
+  let internals = 0;
+  async function armAndMeet(fault = pick(DRAWN_FAULTS), times = pick([1, 1, 2, 3]), ticks = 4): Promise<void> {
+    mock.engine.failLaunchPaidStep(fault === "internal" && internals++ % 2 === 1 ? "job-failed" : fault, times);
     for (let i = 0; i < ticks; i++) {
       if (!mock.scheduler.next()) return;
       const id = await latest();

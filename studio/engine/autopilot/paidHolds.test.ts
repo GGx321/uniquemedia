@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { ErrorCode } from "../../shared/engine";
 import type { PaidHold } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
+import { failureWords } from "./paidSteps";
 import type { RunJobEnd } from "../runs/runJob";
 import type { DrawSliceResult } from "../sceneSets/launchDraw";
 import type { LaunchSliceStart } from "./paidPort";
@@ -48,7 +49,7 @@ function bothPath(r: Rig): void {
   };
 }
 
-type Step = RunJobEnd | EngineFailure | "done";
+type Step = RunJobEnd | Error | "done";
 
 /** The slice start answers the script in order (the last answer repeats). A `"done"` finishes the slice. Returns how many starts were made. */
 function scripted(r: Rig, script: readonly Step[], runId = RUN1): { starts: () => number } {
@@ -180,15 +181,139 @@ describe("§4.6: a slice run that ends failed", () => {
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
-  test("an end the table has no row for leaves the avatar where it is and warns, and holds nothing (the S4.6b1 behaviour is kept for a defect)", async () => {
+  // S4.6r: an end the table has no row for is no longer a silent hang. The launch holds as «internal» with the job's own words, and «Продолжить» runs the job again.
+  const failedWith = (code: ErrorCode, detail: string): RunJobEnd => ({ status: "failed", error: { code, detail } });
+  const MASTER = "the master photo could not be prepared as the face reference: it took longer than 15000 ms";
+
+  test("an INTERNAL end holds the launch as «internal» with the job's detail, logs it with that detail, sends nothing more, and free work goes on", async () => {
     const warnings: string[] = [];
     const r = await rig({ steps: { warn: (line) => warnings.push(line) } });
     drawnPath(r);
-    const run = scripted(r, [failedEnd("INTERNAL")]);
+    const run = scripted(r, [failedWith("INTERNAL", MASTER)]);
     const launch = await r.start({ sceneReview: false });
-    await until(() => warnings.length > 0, "the warning");
-    expect(holdOf(r, launch.launchId)).toBeNull();
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.detail).toEqual({ kind: "job-failed", message: `INTERNAL: ${MASTER}` });
+    expect((await logOf(r, launch.launchId)).find((l) => l.kind === "hold-internal")).toMatchObject({ holdKind: "job-failed", detail: `INTERNAL: ${MASTER}` });
+    expect(r.fileOf(launch.launchId).avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "paid-hold" } });
+    expect(warnings.some((w) => w.includes(MASTER))).toBe(true);
     await onlyOneStart(run.starts);
+    await expectFreeWorkGoesOn(r, launch.launchId);
+  });
+
+  test("«Продолжить» is open for it, retries the job, and the hold is gone when the job goes through (R is what the launch has left, nothing more)", async () => {
+    const r = await rig();
+    drawnPath(r);
+    const run = scripted(r, [failedWith("INTERNAL", MASTER), "done"]);
+    const launch = await r.start({ sceneReview: false });
+    await reachHold(r, launch.launchId, "internal");
+    const held = (await r.orchestrator.get(launch.launchId)).launch;
+    expect(held.resumeBlockedBy).toBeNull();
+    const view = await r.orchestrator.resume(launch.launchId, held.remainingMicros);
+    expect(view.status).toBe("running");
+    expect(view.remainingMicros).toBe(held.remainingMicros);
+    await until(() => run.starts() === 2, "the second start");
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    expect(holdOf(r, launch.launchId)).toBeNull();
+  });
+
+  test("a job that fails the same way again holds again: the owner is told, nothing loops", async () => {
+    const r = await rig();
+    drawnPath(r);
+    const run = scripted(r, [failedWith("INTERNAL", MASTER)]);
+    const launch = await r.start({ sceneReview: false });
+    await reachHold(r, launch.launchId, "internal");
+    const held = (await r.orchestrator.get(launch.launchId)).launch;
+    await r.orchestrator.resume(launch.launchId, held.remainingMicros);
+    await until(() => run.starts() === 2, "the second start");
+    await reachHold(r, launch.launchId, "internal");
+    await idle();
+    expect(run.starts()).toBe(2);
+  });
+
+  test.each(["NOT_FOUND", "VALIDATION", "LIBRARY_UNAVAILABLE"] as const)("%s, a code with no row either, holds the same way", async (code) => {
+    const r = await rig();
+    drawnPath(r);
+    const run = scripted(r, [failedWith(code, "no master")]);
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.detail).toEqual({ kind: "job-failed", message: `${code}: no master` });
+    await onlyOneStart(run.starts);
+  });
+
+  test("a detail longer than the contract's line is cut, not refused", async () => {
+    const r = await rig();
+    drawnPath(r);
+    scripted(r, [failedWith("INTERNAL", "x".repeat(900))]);
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.reason === "internal" && (hold.detail.message?.length ?? 0) <= 240).toBe(true);
+  });
+
+  test("a slice refused at its start with a code the table has no row for holds as «internal» too", async () => {
+    const r = await rig();
+    drawnPath(r);
+    scripted(r, [failure("INTERNAL", "the engine is shutting down")]);
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.detail).toEqual({ kind: "job-failed", message: "INTERNAL: the engine is shutting down" });
+  });
+
+  test.each([
+    ["a POSIX path", "ENOENT: no such file or directory, open '/Users/someone/Library/Studio/avatars/a/master.png'"],
+    ["a Windows path", "EPERM: operation not permitted, open 'C:\\Users\\someone\\Studio\\master.png'"],
+  ])("an absolute path in a job's detail (%s) never reaches the hold, the log or the file", async (_name, detail) => {
+    const r = await rig();
+    drawnPath(r);
+    scripted(r, [failedWith("INTERNAL", `the master photo could not be prepared as the face reference: ${detail}`)]);
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    const written = JSON.stringify([hold, (await logOf(r, launch.launchId)).filter((l) => l.kind === "hold-internal"), r.fileOf(launch.launchId).paidHold]);
+    expect(written).not.toContain("someone");
+    expect(written).toContain("<path>");
+    expect(written).toContain("the master photo could not be prepared as the face reference");
+  });
+
+  test("an Error whose name is empty is still held, as «Error»: the contract refuses an empty message, and a refused write would hang the launch again", async () => {
+    const nameless = new Error("x");
+    nameless.name = "";
+    expect(failureWords(nameless, undefined)).toBe("Error");
+    expect(failureWords(42, undefined)).toBe("number");
+    const r = await rig();
+    drawnPath(r);
+    scripted(r, [nameless]);
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.detail).toEqual({ kind: "job-failed", message: "Error" });
+  });
+
+  test("a failure that is not an engine error is held with its name only, never its message", async () => {
+    const r = await rig();
+    drawnPath(r);
+    scripted(r, [new TypeError("secret path /Users/someone/key")]);
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(JSON.stringify(hold)).not.toContain("secret");
+    expect(hold.detail).toEqual({ kind: "job-failed", message: "TypeError" });
+  });
+
+  test("a halt that stands is not displaced by a failed job's internal hold (rank 1 against rank 3)", async () => {
+    const r = await rig();
+    drawnPath(r);
+    scripted(r, [failedWith("SETTLE_ABOVE_WORST", "over")]);
+    const launch = await r.start({ sceneReview: false });
+    await reachHold(r, launch.launchId, "halt");
+    await r.ctx().raisePaidHold({ reason: "internal", at: "2026-10-09T10:00:00.000Z", detail: { kind: "job-failed", message: "INTERNAL: x" } });
+    expect(holdOf(r, launch.launchId)?.reason).toBe("halt");
+  });
+
+  test("the allocation check's own «internal» hold still closes «Продолжить»", async () => {
+    const r = await rig();
+    drawnPath(r);
+    scripted(r, [failedWith("INTERNAL", MASTER)]);
+    const launch = await r.start({ sceneReview: false });
+    await reachHold(r, launch.launchId, "internal");
+    await r.ctx().update((f) => ({ ...f, paidHold: { reason: "internal", at: "2026-10-09T10:00:00.000Z", detail: { kind: "allocation-exceeded" } } }));
+    expect((await r.orchestrator.get(launch.launchId)).launch.resumeBlockedBy).toBe("internal");
   });
 });
 
@@ -350,6 +475,57 @@ describe("§4.6: a scene step that fails (compose and the launch's own «Доп�
     const hold = await reachHold(r, launch.launchId, "network");
     expect(hold.detail).toEqual({ drops: 1, attempt: 1, nextAt: timers.iso(MIN) });
     expect(r.fileOf(launch.launchId).autoContinues).toEqual({ [`${SET1}:scenes`]: { drops: 1, continues: 1 } });
+  });
+
+  test("a compose that stopped on INTERNAL holds as «internal» with the job's detail, and «Продолжить» writes the scenes again", async () => {
+    const r = await rig();
+    let broken = true;
+    r.port.compose = async (_payload, ids) => {
+      const set = r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH, written: 0 });
+      if (broken) r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", stoppedBy: "failed", stoppedError: { code: "INTERNAL", detail: "the writer broke" } } } as typeof set);
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.detail).toEqual({ kind: "job-failed", message: "INTERNAL: the writer broke" });
+    expect(r.fileOf(launch.launchId).autoContinues).toBeUndefined();
+    broken = false;
+    // The writer is whole again: the set stands as the compose left it, with no stop recorded.
+    r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, written: 0 });
+    r.port.write = async () => {
+      r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
+      return { jobId: "job-write-0001" };
+    };
+    const held = (await r.orchestrator.get(launch.launchId)).launch;
+    expect(held.resumeBlockedBy).toBeNull();
+    await r.orchestrator.resume(launch.launchId, held.remainingMicros);
+    await until(() => r.port.calls.includes("writeLaunchScenes"), "the scenes written again");
+    expect(holdOf(r, launch.launchId)).toBeNull();
+  });
+
+  test("a compose stopped by BUDGET_EXCEEDED holds as «budget» for a new step with the writer's worst case as the need, not as a failed job", async () => {
+    const r = await rig();
+    composeStopped(r, { code: "BUDGET_EXCEEDED", detail: "the month is spent" });
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "budget");
+    expect(hold.detail).toMatchObject({ kind: "new-slice", needMicros: 75_000 });
+  });
+
+  test("a compose stopped by PRICE_CHANGED that no longer fits its allocation holds as «price» (rewrite), not as a failed job", async () => {
+    const r = await rig();
+    r.port.writeCost = () => 1_000_000_000;
+    composeStopped(r, { code: "PRICE_CHANGED", detail: "the price rose" });
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "price");
+    expect(hold.detail).toMatchObject({ stage: "rewrite", needMicros: 1_000_000_000 });
+  });
+
+  test.each(["RUN_CAP_EXCEEDED", "IN_FLIGHT"] as const)("a compose stopped by %s, which no scene row serves, says so in the failed job's hold", async (code) => {
+    const r = await rig();
+    composeStopped(r, { code, detail: "stopped" });
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.detail).toEqual({ kind: "job-failed", message: `${code}: stopped` });
   });
 
   test("the launch's own «Дописать» that is refused with a key error holds as «key»", async () => {

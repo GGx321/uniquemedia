@@ -97,6 +97,16 @@ describe("holdRank, displaces and sameHold (S4.6b2, fix rounds 1 and 2)", () => 
     expect([halt, internal].map(holdRank)).toEqual([3, 3]);
   });
 
+  test("a failed job's internal hold (S4.6r) is rank 1, below a network hold with no retry and below halt and the allocation check", () => {
+    const failed: PaidHold = { reason: "internal", at, detail: { kind: "job-failed", message: "INTERNAL: x" } };
+    expect(holdRank(failed)).toBe(1);
+    expect(displaces(reconcile, failed)).toBe(true);
+    expect(displaces(failed, reconcile)).toBe(false);
+    expect(displaces(halt, failed)).toBe(true);
+    expect(displaces(internal, failed)).toBe(true);
+    expect(displaces(failed, credits)).toBe(false);
+  });
+
   test.each([
     ["credits", credits],
     ["key", key],

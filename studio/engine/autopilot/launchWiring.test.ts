@@ -3,7 +3,7 @@ import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { within } from "../testing/within";
 import type { PublishedRead } from "../videos/published";
 import { NETWORK_WAITS_MS } from "./paidFailures";
-import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, boundedSingleFlight, boundedVideoFacts, createSpentSlices, isSpentSlice, liveRendersOf, normalizeTrackLabel, ownTrackTitle, trendTrackLabel, renderLifeOf, sliceFactsOf, UNTITLED_TRACK, type SliceFactsSet } from "./launchWiring";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, boundedSingleFlight, boundedVideoFacts, createSpentSlices, isSpentSlice, liveRendersOf, normalizeTrackLabel, ownTrackTitle, trendTrackLabel, renderFailureOf, renderLifeOf, sliceFactsOf, UNTITLED_TRACK, type SliceFactsSet } from "./launchWiring";
 useNativeGlobals();
 
 // Stage 4, S4.6w: the pure parts of the engine's default wiring of the autopilot steps. The wiring itself is tested in the engine (`engine.autopilotWiring.test.ts`).
@@ -128,6 +128,26 @@ describe("renderLifeOf and liveRendersOf", () => {
 
   test("a render of the owner's own (no launch id) is not the launch's to take back", () => {
     expect(liveRendersOf([{ kind: "render", jobId: "job-4", status: "running", videoId: "video-4" }])).toEqual([]);
+  });
+});
+
+describe("renderFailureOf (S4.6r)", () => {
+  const states = [
+    { kind: "render", jobId: "job-1", status: "failed", videoId: "video-1", error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" as const, detail: "gone" } },
+    { kind: "render", jobId: "job-2", status: "failed", videoId: "video-2", error: { code: "TIMEOUT", detail: "slow" } },
+    { kind: "render", jobId: "job-3", status: "running", videoId: "video-3" },
+    { kind: "run", jobId: "job-4", status: "failed", error: { code: "EXPORT_UNAVAILABLE", exportReason: "missing" as const, detail: "not a render" } },
+  ];
+
+  test("a failed render's error code and export reason are what the free steps read", () => {
+    expect(renderFailureOf(states, "job-1")).toEqual({ code: "EXPORT_UNAVAILABLE", exportReason: "missing" });
+    expect(renderFailureOf(states, "job-2")).toEqual({ code: "TIMEOUT", exportReason: undefined });
+  });
+
+  test("a job that has not failed, is not a render, or is forgotten has no failure", () => {
+    expect(renderFailureOf(states, "job-3")).toBeUndefined();
+    expect(renderFailureOf(states, "job-4")).toBeUndefined();
+    expect(renderFailureOf(states, "job-nobody")).toBeUndefined();
   });
 });
 

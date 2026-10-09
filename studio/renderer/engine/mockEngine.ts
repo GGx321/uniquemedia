@@ -1706,11 +1706,19 @@ export class MockEngine implements EngineBridge {
   /**
    * The next `times` paid steps of the launch (the compose and each draw) meet `cause`, as the engine's steps meet the same failure: `credits` (402), `key` (401: the stored key is also marked
    * rejected), `price` (the price rose), `budget`, `price-unavailable` (the price list did not load: the retries of 5, 15 and 60 minutes, then a hold), `network` (no answer: the first and
-   * second drop continue by themselves after 1 and 5 minutes, the third holds; one call with `times` 3 reaches it), `halt` (the ledger halts), `internal`. Armed before the start, the
+   * second drop continue by themselves after 1 and 5 minutes, the third holds; one call with `times` 3 reaches it), `halt` (the ledger halts), `internal` (the launch's own check: no exit but «Стоп»), `job-failed` (a job ended INTERNAL: «Продолжить» runs it again). Armed before the start, the
    * first paid step meets it.
    */
   failLaunchPaidStep(cause: PaidFault, times = 1): void {
     this.autopilot.failPaidStep(cause, times);
+  }
+
+  /**
+   * The next `times` renders of the launch that land fail instead (S4.6r, the engine's `RENDER_FAILED` or a timeout): the first failure of a video is submitted again free (one `render-retry`
+   * line), the second drops it as `render-failed` (one `render-dropped` line). A folder that goes away while a render runs (`setExportDisk`) is not one of these: it holds the renders.
+   */
+  failLaunchRender(times = 1): void {
+    this.autopilot.failRenders(times);
   }
 
   /** The owner has a job of their own running for the avatar (a photo run, a candidate batch): the launch's steps for it wait as «avatar-busy». */

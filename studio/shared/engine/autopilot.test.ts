@@ -223,6 +223,26 @@ describe("PaidHold: a strict union by reason", () => {
     expect(Object.keys(HOLDS).sort()).toEqual(["budget", "credits", "halt", "internal", "key", "network", "price", "price-unavailable"]);
   });
 
+  test("an internal hold of a failed job carries the job's words (S4.6r), up to the line the contract allows", () => {
+    const failed = (message?: string) => ({ reason: "internal", ...holdAt, detail: { kind: "job-failed", ...(message === undefined ? {} : { message }) } });
+    expect(PaidHold.safeParse(failed("INTERNAL: the master photo could not be prepared")).success).toBe(true);
+    expect(PaidHold.safeParse(failed()).success).toBe(true);
+    expect(PaidHold.safeParse(failed("x".repeat(240))).success).toBe(true);
+    expect(PaidHold.safeParse(failed("x".repeat(241))).success).toBe(false);
+    expect(PaidHold.safeParse(failed("")).success).toBe(false);
+  });
+
+  test("only a failed job has words: the allocation check's internal hold refuses a message", () => {
+    expect(PaidHold.safeParse({ reason: "internal", ...holdAt, detail: { kind: "allocation-exceeded", message: "INTERNAL: x" } }).success).toBe(false);
+  });
+
+  test("the internal log line carries the failed job's detail, optionally", () => {
+    expect(LogLine.safeParse(logLine("hold-internal", { holdKind: "job-failed", detail: "INTERNAL: x" })).success).toBe(true);
+    expect(LogLine.safeParse(logLine("hold-internal", { holdKind: "job-failed" })).success).toBe(true);
+    expect(LogLine.safeParse(logLine("hold-internal", { holdKind: "job-failed", detail: "x".repeat(241) })).success).toBe(false);
+    expect(LogLine.safeParse(logLine("hold-internal", { holdKind: "something-else" })).success).toBe(false);
+  });
+
   test("counters survive a reconcile and a «Продолжить», so a fourth drop and a fourth price retry are legal states", () => {
     expect(PaidHold.safeParse({ reason: "network", ...holdAt, detail: { drops: 4, attempt: 2, nextAt: null } }).success).toBe(true);
     expect(PaidHold.safeParse({ reason: "network", ...holdAt, detail: { drops: 9, attempt: 0, nextAt: null } }).success).toBe(true);
@@ -284,9 +304,9 @@ describe("PaidHold: a strict union by reason", () => {
 // ---------- the log ----------
 
 describe("LogLine", () => {
-  test("the kinds are the 23 rows of the design's log sheet (the plan counted 22), the 13 more the artboards draw (holds, a busy avatar, a restart, scenes being written, a dropped render) and the library-unknown wait (S4.6c2)", () => {
+  test("the kinds are the 23 rows of the design's log sheet (the plan counted 22), the 13 more the artboards draw (holds, a busy avatar, a restart, scenes being written, a dropped render) the library-unknown wait (S4.6c2) and the free retry of a failed render (S4.6r)", () => {
     expect<string[]>([...LOG_KINDS].sort()).toEqual(Object.keys(LOG_SAMPLES).sort());
-    expect(LOG_KINDS.length).toBe(37);
+    expect(LOG_KINDS.length).toBe(38);
   });
 
   test.each(Object.keys(LOG_SAMPLES))("accepts a %s line and round-trips it", (kind) => {

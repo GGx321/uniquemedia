@@ -706,6 +706,8 @@ export class Orchestrator {
           ? null
           : { by: "network", error: { code: "VALIDATION", detail: "requests of the launch got no answer; reconcile in Settings first, then continue" } };
       case "internal":
+        // A job that failed in a way no row covers (S4.6r) is retried by the click, under the ledger test above like every other; the launch's own allocation check has no exit but «Стоп».
+        if (hold.detail.kind === "job-failed") return null;
         return { by: "internal", error: { code: "VALIDATION", detail: "the launch's own check failed; its only exit is «Стоп»" } };
       case "credits":
       case "key":
@@ -1079,7 +1081,7 @@ function holdLine(hold: PaidHold, at: string): LogLine {
     case "price":
       return { at, kind: "hold-price", detail: hold.detail };
     case "internal":
-      return { at, kind: "hold-internal", holdKind: hold.detail.kind };
+      return { at, kind: "hold-internal", holdKind: hold.detail.kind, ...(hold.detail.message === undefined ? {} : { detail: hold.detail.message }) };
   }
 }
 

@@ -498,13 +498,16 @@ describe("the spec (A8, A9) and the focus (plan §8.2)", () => {
 });
 
 describe("a render that does not make a video", () => {
-  test("a job that failed with no record and no intent drops its video as render-failed, logs it, and the launch still ends", async () => {
+  test("a job that failed with no record and no intent, and again on its free retry (S4.6r), drops its video as render-failed, logs it, and the launch still ends", async () => {
     const r = rig({ auto: false, draft: { videosPerAvatar: 2 } });
     r.start();
     await until(() => r.videos.calls.length === 2, "both renders");
     const [one, two] = [...r.videos.jobs.values()];
     r.videos.finish(one?.jobId ?? "", "failed");
     r.videos.finish(two?.jobId ?? "", "done");
+    await until(() => r.videos.calls.length === 3, "the free retry of the failed video");
+    const retry = [...r.videos.jobs.values()][2];
+    r.videos.finish(retry?.jobId ?? "", "failed");
     await until(() => r.launch.finished(), "the launch to finish");
     const dropped = videosOf(r.launch).filter((v) => v.state === "dropped");
     expect(dropped).toHaveLength(1);

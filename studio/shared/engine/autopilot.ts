@@ -125,6 +125,20 @@ export type BudgetHoldKind = z.infer<typeof BudgetHoldKind>;
 /** The two ways the money stops: a settle above its reserve's worst case, or a ledger line that could not be written. Only a reconcile clears either. */
 export const HaltCode = z.enum(["SETTLE_ABOVE_WORST", "LEDGER_WRITE_FAILED"]);
 
+/**
+ * Why an `internal` hold stands: `allocation-exceeded` is the orchestrator's own check of the launch's allocation (no exit but «Стоп»); `job-failed` (S4.6r) is a paid job (a slice, a compose, a
+ * «Дописать») that ended in a way the failure table has no row for (an INTERNAL, say a master photo that cannot be prepared): «Продолжить» runs the job again.
+ */
+export const InternalHoldKind = z.enum(["allocation-exceeded", "job-failed"]);
+export type InternalHoldKind = z.infer<typeof InternalHoldKind>;
+
+/**
+ * The failed job's own words, `CODE: detail`, cut to a line. The engine's error details are what the window shows, but a job that wraps a foreign error can carry the owner's absolute path in
+ * its detail: the steps replace every path in it with `<path>` before it is written (`scrubPaths`), and a foreign error is held by its name only.
+ */
+export const INTERNAL_HOLD_MESSAGE_MAX = 240;
+const InternalHoldMessage = z.string().min(1).max(INTERNAL_HOLD_MESSAGE_MAX);
+
 const HoldAt = { at: IsoDateTime };
 const NoDetail = z.strictObject({});
 
@@ -151,7 +165,8 @@ export const PriceHoldDetail = z.discriminatedUnion("stage", [
  * - price-unavailable: the price list did not load. `attempt` (1 to 3) is the retry at 5, 15 and 60 minutes; at `nextAt: null` retries are used up.
  * - price: the price rose and the next step no longer fits its allocation (`PriceHoldDetail`: a slice shrunk as far as it can, or a compose / «Дописать» above what is left).
  * Counters (`drops`, the price retries) live across a reconcile and a «Продолжить», so none has an upper bound here.
- * - internal: the orchestrator's own check of the launch's allocation did not hold. Its only exit is «Стоп».
+ * - internal: `allocation-exceeded`: the orchestrator's own check of the launch's allocation did not hold; its only exit is «Стоп». `job-failed` (S4.6r): a paid job ended in a way no row of the
+ *   table covers; `message` is the job's own `CODE: detail`, and «Продолжить» runs the job again.
  */
 export const PaidHold = z.discriminatedUnion("reason", [
   z.strictObject({ reason: z.literal("budget"), ...HoldAt, detail: z.strictObject({ freeMicros: Micros, needMicros: Micros, kind: BudgetHoldKind }) }),
@@ -171,7 +186,13 @@ export const PaidHold = z.discriminatedUnion("reason", [
     detail: z.strictObject({ attempt: z.number().int().min(1), nextAt: IsoDateTime.nullable() }),
   }),
   z.strictObject({ reason: z.literal("price"), ...HoldAt, detail: PriceHoldDetail }),
-  z.strictObject({ reason: z.literal("internal"), ...HoldAt, detail: z.strictObject({ kind: z.enum(["allocation-exceeded"]) }) }),
+  z.strictObject({
+    reason: z.literal("internal"),
+    ...HoldAt,
+    detail: z
+      .strictObject({ kind: InternalHoldKind, message: InternalHoldMessage.optional() })
+      .refine((d) => d.message === undefined || d.kind === "job-failed", { message: "only a failed job has words of its own", path: ["message"] }),
+  }),
 ]);
 export type PaidHold = z.infer<typeof PaidHold>;
 
@@ -340,9 +361,11 @@ const LOG_LINES = [
   line("hold-halt", { code: HaltCode }),
   line("hold-price", { detail: PriceHoldDetail }),
   line("hold-price-unavailable", { attempt: z.number().int().min(1) }),
-  line("hold-internal", { holdKind: z.enum(["allocation-exceeded"]) }),
+  line("hold-internal", { holdKind: InternalHoldKind, detail: InternalHoldMessage.optional() }),
   line("hold-export", { exportReason: ExportUnavailableReason }),
   line("render-dropped", { key: LaunchVideoKey }),
+  // S4.6r: a render that failed is submitted once more, free (§4.6); the drop above comes after the second failure.
+  line("render-retry", { key: LaunchVideoKey }),
 ] as const;
 
 export const LogLine = z.discriminatedUnion("kind", LOG_LINES);

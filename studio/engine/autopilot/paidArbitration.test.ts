@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { PaidHold } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
 import type { RunJobEnd } from "../runs/runJob";
-import { A, ALL, B, cleanupRigs, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, rig, SET1, SET2, until, type Rig } from "./testing/paidRig";
+import { A, ALL, B, cleanupRigs, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, until, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -12,6 +12,15 @@ useNativeGlobals();
 
 afterEach(cleanupRigs);
 const MIN = 60_000;
+
+/** Fake timers that count the retry timers (a minute or more) ever armed, so a test can wait for the end of a drop instead of for a quiet period. */
+class ArmCounting extends FakeTimers {
+  armed = 0;
+  override set(run: () => void, ms: number): number {
+    if (ms >= MIN) this.armed += 1;
+    return super.set(run, ms);
+  }
+}
 const drop: RunJobEnd = { status: "failed", error: { code: "NETWORK", detail: "fetch failed" } };
 
 /** Avatar A has a drawn slice (RUN1) whose end the test controls; avatar B's compose stopped on a drop once `idleB` opens. */
@@ -101,42 +110,50 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
 
   test("H2: B's drop lands while A's retry hold is being written, on a clock that moves: the hold that stands has the timer that fires, and the launch goes on", async () => {
     const hook = { fire: (): void => undefined };
-    class Hooked extends FakeTimers {
-      armed = 0;
+    class Hooked extends ArmCounting {
       override set(run: () => void, ms: number): number {
         const id = super.set(run, ms);
         // B's drop lands the moment the first retry timer is armed, i.e. while that hold is being written.
-        if (ms >= MIN) {
-          this.armed += 1;
-          if (this.armed === 1) hook.fire();
-        }
+        if (ms >= MIN && this.armed === 1) hook.fire();
         return id;
       }
     }
     const timers = new Hooked();
     const setup = await twoJobs(timers);
     hook.fire = () => setup.idleB.resolve();
+    // B's restart after the hold must not fail again: its write reseeds the set without the stop it was left with (the test is about the timers of the FIRST two drops).
+    const countedWrite = setup.r.port.write;
+    setup.r.port.write = async (input) => {
+      setup.r.port.seed({ sceneSetId: SET2, runId: RUN2, avatarId: B, launchId: LAUNCH });
+      return countedWrite === null ? { jobId: "job-write" } : countedWrite(input);
+    };
     setup.endA.resolve(drop);
     await until(() => setup.r.ctx().file().paidHold?.reason === "network", "a network hold");
-    // Wait for the timer to exist (the observable), then let anything that would arm a second one do so before the exact count is taken.
-    await until(() => timers.pending() >= 1, "the retry timer");
-    await idle();
+    // Wait for B's drop to END (its observable: both timers were armed, B's drop is counted, and the loser's timer is taken back), not for a quiet period that a loaded machine can outlast.
+    await until(
+      () => timers.armed === 2 && timers.pending() === 1 && setup.r.ctx().file().autoContinues?.[`${SET2}:scenes`]?.drops === 1,
+      "B's drop to end with its timer taken back",
+    );
     expect(timers.pending()).toBe(1);
     timers.advance(10 * MIN);
     await until(() => setup.r.ctx().file().paidHold === null, "the hold cleared by the timer that belongs to it");
-    await until(() => setup.seen.startsA >= 2 || setup.seen.writesB >= 1, "a job started again");
-    expect(timers.pending()).toBe(0);
+    await until(() => setup.seen.startsA >= 2 && setup.seen.writesB >= 1, "both jobs started again");
+    // Every armed timer belongs to a standing waiting hold: with no hold standing none is armed.
+    await until(() => timers.pending() === 0, "no timer left armed", 1_000);
+    expect(setup.r.ctx().file().paidHold).toBeNull();
   });
 
   test("two concurrent drops on a moving clock: exactly one hold, exactly one timer, and it is the hold's own", async () => {
-    const timers = new FakeTimers();
+    const timers = new ArmCounting();
     const { r, endA, idleB } = await twoJobs(timers);
     endA.resolve(drop);
     idleB.resolve();
     await until(() => r.ctx().file().paidHold?.reason === "network", "a hold");
-    // Wait for the timer to exist (the observable), then let anything that would arm a second one do so before the exact count is taken.
-    await until(() => timers.pending() >= 1, "the retry timer");
-    await idle();
+    // Wait for both drops to END (both timers were armed, the loser's is taken back, both drops are counted), not for a quiet period that a loaded machine can outlast.
+    await until(
+      () => timers.armed === 2 && timers.pending() === 1 && r.ctx().file().autoContinues?.[RUN1]?.drops === 1 && r.ctx().file().autoContinues?.[`${SET2}:scenes`]?.drops === 1,
+      "both drops to end with one timer left",
+    );
     expect(timers.pending()).toBe(1);
     const nextAt = holdDetail(r)?.nextAt;
     expect(nextAt).toBeDefined();
@@ -362,6 +379,46 @@ describe("a job's third drop still demands «Сверка» under another task's
     const won = await r.ctx().raisePaidHold({ reason: "network", at: timers.iso(), detail: { drops: 3, attempt: 2, nextAt: null } });
     expect(won.won).toBe(false);
   });
+});
+
+// S4.6r fix round 1 (A19): a failed job's `internal` hold is cleared by the click, so it ranks with the holds a click clears (1) and never hides a network hold that needs a reconcile.
+describe("a failed job's internal hold never hides a network hold that needs a reconcile (A19, S4.6r)", () => {
+  const internalEnd: RunJobEnd = { status: "failed", error: { code: "INTERNAL", detail: "the master photo could not be prepared" } };
+
+  async function withOpenReserve() {
+    const timers = new FakeTimers();
+    const two = await twoJobs(timers);
+    two.r.port.writeCost = () => 1_000;
+    // B's scene step has already dropped twice and used both continues; its drops left a writer reserve open in the launch's group.
+    await two.r.ctx().update((f) => ({ ...f, autoContinues: { [`${SET2}:scenes`]: { drops: 2, continues: 2 } } }));
+    const reserved = await two.r.budget.tryReserve({ attemptId: `${SET2}:writer-1#1`, jobId: "job-compose-0002", scope: { avatarJobId: "job-compose-0002" }, model: "x-ai/grok-4.3", worstMicros: 37_500 });
+    if (!reserved.ok) throw new Error(`reserve refused: ${reserved.reason}`);
+    return two;
+  }
+
+  test("the network hold with no retry stands first; A's job then fails INTERNAL: the network hold stays, «Продолжить» is refused until a reconcile", async () => {
+    const { r, launch, endA, idleB } = await withOpenReserve();
+    idleB.resolve();
+    await until(() => r.ctx().file().paidHold?.reason === "network" && holdDetail(r)?.nextAt === null, "the network hold with no retry");
+    endA.resolve(internalEnd);
+    await idle();
+    expect(r.ctx().file().paidHold?.reason).toBe("network");
+    expect((await r.orchestrator.get(launch.launchId)).launch.resumeBlockedBy).toBe("network");
+    await expect(r.orchestrator.resume(launch.launchId, 10_000_000_000)).rejects.toBeInstanceOf(EngineFailure);
+  });
+
+  test("the failed job's hold stands first; B's third drop then takes the hold over: «Продолжить» is refused until a reconcile", async () => {
+    const { r, launch, endA, idleB } = await withOpenReserve();
+    endA.resolve(internalEnd);
+    await until(() => r.ctx().file().paidHold?.reason === "internal", "the failed job's hold");
+    expect((await r.orchestrator.get(launch.launchId)).launch.resumeBlockedBy).toBeNull();
+    idleB.resolve();
+    await until(() => r.ctx().file().paidHold?.reason === "network", "the network hold over it");
+    expect(holdDetail(r)).toMatchObject({ drops: 3, nextAt: null });
+    expect((await r.orchestrator.get(launch.launchId)).launch.resumeBlockedBy).toBe("network");
+    await expect(r.orchestrator.resume(launch.launchId, 10_000_000_000)).rejects.toBeInstanceOf(EngineFailure);
+  });
+
 });
 
 describe("the third drop is the third drop, whoever held the launch when the first one landed (M-R2)", () => {

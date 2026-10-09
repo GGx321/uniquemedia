@@ -90,7 +90,7 @@ import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
 import { exportGateOf } from "./autopilot/exportGate";
 import { createFreeSteps, freeLibraryOf, type FreeSteps, type FreeStepsDeps } from "./autopilot/freeSteps";
-import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedSingleFlight, boundedVideoFacts, createSpentSlices, liveRendersOf, normalizeTrackLabel, ownTrackTitle, renderLifeOf, sliceFactsOf, trendTrackLabel } from "./autopilot/launchWiring";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedSingleFlight, boundedVideoFacts, createSpentSlices, liveRendersOf, normalizeTrackLabel, ownTrackTitle, renderFailureOf, renderLifeOf, sliceFactsOf, trendTrackLabel } from "./autopilot/launchWiring";
 import { createMusicPorts } from "./autopilot/musicPorts";
 import { checkFailuresOf } from "./autopilot/paidFailures";
 import { NOT_PAYABLE_DETAIL, type LaunchSliceStart, type SliceOutcome } from "./autopilot/paidPort";
@@ -1135,6 +1135,7 @@ export class Engine {
       },
       videos: { renderInternal: (input) => this.#videos.renderInternal(input), settled: () => this.#videos.settled() },
       renderLife: (jobId) => renderLifeOf(this.#renders.states(), jobId),
+      renderFailure: (jobId) => renderFailureOf(this.#renders.states(), jobId),
       liveRenders: () => liveRendersOf(this.#renders.states()),
       focus: { prefetchFocus: (avatarId, photoId, options) => this.#focusOf(live()).prefetchFocus(avatarId, photoId, options) },
       photoIdsInDrafts: (avatarId) => draftsRead(keyOf(avatarId), () => this.#drafts.photoIdsInDrafts(live(), avatarId)),

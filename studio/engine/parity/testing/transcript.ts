@@ -292,7 +292,15 @@ function launchFacts(value: unknown): Record<string, unknown> {
     launchId: v.launchId,
     status: v.status,
     paused: v.paused === null ? null : objectOf(v.paused).cause,
-    paidHold: hold === null ? null : hold.reason === "network" || hold.reason === "price-unavailable" ? { reason: hold.reason, retryPending: objectOf(hold.detail).nextAt !== null } : hold.reason,
+    // An internal hold says which kind it is (S4.6r: a launch's own check has no exit but «Стоп», a failed job is retried by «Продолжить»), not the job's words: those are the engine's own.
+    paidHold:
+      hold === null
+        ? null
+        : hold.reason === "network" || hold.reason === "price-unavailable"
+          ? { reason: hold.reason, retryPending: objectOf(hold.detail).nextAt !== null }
+          : hold.reason === "internal"
+            ? { reason: hold.reason, kind: objectOf(hold.detail).kind }
+            : hold.reason,
     freeHold: free === null ? null : { reason: free.reason, exportReason: objectOf(free.detail).exportReason },
     resumeBlockedBy: v.resumeBlockedBy,
     planVideos: objectOf(v.plan).videos,

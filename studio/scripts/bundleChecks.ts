@@ -72,6 +72,8 @@ const FORBIDDEN_DEBUG_MARKERS = [
   // Stage 4 (S4.8): the launch the mock RUNS and its testkit switches: the paid faults (`failLaunchPaidStep`), the avatar another job holds, a library that cannot say which photos are
   // free, tracks held back, the owner's quit, and the classes that run it. These names exist nowhere else, so finding one in any bundle means the mock shipped.
   "failLaunchPaidStep",
+  // Stage 4 (S4.6r): the switch that makes the next renders of the launch fail (a free retry, then a drop); the mock is dev-only.
+  "failLaunchRender",
   "setAvatarBusy",
   "loseLaunchLibrary",
   "holdLaunchMusic",

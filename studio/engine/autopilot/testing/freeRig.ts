@@ -58,6 +58,7 @@ export function rig(options: Options = {}) {
     library: () => state.library,
     videos: videos.videos,
     renderLife: videos.lifeOf,
+    renderFailure: videos.failureOf,
     liveRenders: videos.live,
     focus: prefetching(focusLog),
     photoIdsInDrafts: noDrafts,

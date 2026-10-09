@@ -5,7 +5,7 @@ import { emptyUsage } from "../../../shared/autopilot/track";
 import { EngineFailure } from "../../engineFailure";
 import type { FocusResult } from "../../focus/focusResolver";
 import type { InternalRenderInput } from "../../videos/service";
-import type { FreeLibrary, FreeStepsDeps, RenderLife } from "../freeSteps";
+import type { FreeLibrary, FreeStepsDeps, RenderFailureFacts, RenderLife } from "../freeSteps";
 import { LaunchFile } from "../launchFile";
 import type { PlanPhoto } from "../planner";
 import type { KeyFinding, ProvenanceScan, VideoLookup } from "../provenanceScan";
@@ -181,6 +181,8 @@ export interface FakeJob {
   avatarId: string;
   input: InternalRenderInput;
   life: RenderLife;
+  /** How a failed job ended (what the registry's job state carries as its `error`). */
+  error?: RenderFailureFacts;
 }
 
 /** A video service whose renders the test ends. `auto` ends each one by itself on the next turn, as a fast render would. */
@@ -250,11 +252,15 @@ export class FakeVideos {
 
   lifeOf = (jobId: string): RenderLife => this.jobs.get(jobId)?.life ?? "gone";
 
+  /** How a failed job ended (`FreeStepsDeps.renderFailure`). */
+  failureOf = (jobId: string): RenderFailureFacts | undefined => this.jobs.get(jobId)?.error;
+
   /** Ends a job. A job that is done commits its record (into the provenance fake) unless `commit` is false. */
-  finish(jobId: string, life: "done" | "failed" | "cancelled", options: { commit?: boolean } = {}): void {
+  finish(jobId: string, life: "done" | "failed" | "cancelled", options: { commit?: boolean; error?: RenderFailureFacts } = {}): void {
     const job = this.jobs.get(jobId);
     if (job === undefined || (job.life !== "running" && job.life !== "queued")) return;
     job.life = life;
+    if (options.error !== undefined) job.error = options.error;
     if (life === "done" && options.commit !== false) {
       const total = job.input.spec.clips.reduce((sum, clip) => sum + clip.durationMs, 0);
       this.provenance?.records.set(job.key, { videoId: job.videoId, durationMs: total, bytes: 4096 });

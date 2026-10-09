@@ -211,6 +211,8 @@ export class MockAutopilot {
   #seedCount = 0;
   /** The faults armed for the paid steps (`MockEngine.failLaunchPaidStep`): shared with the run, so one armed before the start is met by the first paid step. */
   readonly #faults: PaidFault[] = [];
+  /** The renders armed to fail (`MockEngine.failLaunchRender`), shared with the run like the paid faults. */
+  readonly #renderFaults = { left: 0 };
   /** While a command or a pass is changing the launch, the money and the settings it causes do not announce it again (the pass announces once, at its end). */
   #depth = 0;
 
@@ -548,6 +550,11 @@ export class MockAutopilot {
     for (let i = 0; i < times; i++) this.#faults.push(fault);
   }
 
+  /** Arms the next `times` landings of the running launch's renders to fail (the engine's `RENDER_FAILED`): the first failure of a video is retried free, the second drops it. */
+  failRenders(times: number): void {
+    this.#renderFaults.left += times;
+  }
+
   /** The process ended (a crash or an automatic restart): the engine reads the running launch as paused by the restart, and its requests' reserves stay open. */
   engineRestarted(): void {
     this.#processEnded("engine-restart");
@@ -643,6 +650,8 @@ export class MockAutopilot {
         if (hold.detail.nextAt !== null) return null;
         return (launch.run?.openUnsettled() ?? 0) === 0 ? null : { by: "network", error: { code: "VALIDATION", detail: "requests of the launch got no answer; reconcile in Settings first, then continue" } };
       case "internal":
+        // A job that failed in a way no row covers is retried by the click; the launch's own allocation check has no exit but «Стоп».
+        if (hold.detail.kind === "job-failed") return null;
         return { by: "internal", error: { code: "VALIDATION", detail: "the launch's own check failed; its only exit is «Стоп»" } };
       case "credits":
       case "key":
@@ -735,6 +744,7 @@ export class MockAutopilot {
           this.#depth -= 1;
         },
         faults: this.#faults,
+        renderFaults: this.#renderFaults,
       },
       { avatars: planned.map((p) => ({ avatarId: p.row.avatarId, shapes: p.shapes, fromLibrary: p.row.fromLibrary, toGenerate: p.row.toGenerate })), categories: draft.categories, review: draft.sceneReview, number },
     );

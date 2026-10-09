@@ -27,7 +27,8 @@ import type { MockAutopilotWorld, MockLaunch } from "./mockAutopilot";
 //  - money is booked in the mock's ledger as the engine books it: a reserve at the attempt's worst case, settled at the expected cost on the next tick, so a launch's «Потрачено» moves.
 //
 // What it does NOT model (the engine does): the planner's seeded sizes and PDQ rules (the plan is the mock's own, mockAutopilot.ts), photos that fail the face or moderation gates (so the
-// failure-rate guard and a degraded video never happen), an owner's edit of the scenes during the review, a render that fails.
+// failure-rate guard and a degraded video never happen), an owner's edit of the scenes during the review. A render that fails is a testkit switch (`failLaunchRender`): one free retry, then the
+// video is dropped (S4.6r); a folder that goes away while a render runs holds the renders without using the retry.
 
 /** The photos a video of a shape has when its photos are generated, as the engine's planner draws them (`GENERATED_SIZE`). */
 export const GENERATED_SIZE: Readonly<Record<VideoShape, number>> = { single: 1, collage: 3, slides: 5 };
@@ -48,7 +49,7 @@ const RENDER_TICKS = 2;
 export const MOCK_DISK_PER_VIDEO = 9_000_000;
 
 /** What a paid step can meet that holds the launch (`MockEngine.failLaunchPaidStep`). */
-export const PAID_FAULTS = ["credits", "key", "price", "budget", "price-unavailable", "network", "halt", "internal"] as const;
+export const PAID_FAULTS = ["credits", "key", "price", "budget", "price-unavailable", "network", "halt", "internal", "job-failed"] as const;
 export type PaidFault = (typeof PAID_FAULTS)[number];
 
 type Track = NonNullable<LaunchVideo["track"]>;
@@ -67,6 +68,8 @@ interface Slot {
   videoId: string | null;
   track: Track | null;
   renderLeft: number;
+  /** The free retry of a failed render has been used (plan §4.6: one, then the video is dropped). Kept across a restart, as the engine keeps it in the launch file. */
+  retried: boolean;
   dropReason: DropReason | null;
 }
 
@@ -109,6 +112,8 @@ export interface RunHost {
   leave(): void;
   /** The faults the testkit armed for the paid steps, in order (shared, so one armed before the start is met by its first paid step). */
   readonly faults: PaidFault[];
+  /** The renders the testkit armed to fail (`MockEngine.failLaunchRender`): how many of the next landings fail. Shared, like `faults`. */
+  readonly renderFaults: { left: number };
 }
 
 export interface RunStart {
@@ -138,6 +143,8 @@ export class MockRun {
   /** «Продолжить» was accepted (or a wait ended): the next pass starts by putting the rows right. */
   #resumePending = false;
   #exportLogged: string | null = null;
+  /** Whether the hold the last `#raise` asked for is the one that stands now. */
+  #raiseWon = false;
   #worldWait = false;
   #lastView = "";
 
@@ -153,7 +160,7 @@ export class MockRun {
       const slots = a.shapes.map((shape, n): Slot => {
         const key = `${index}-${n + 1}`;
         const category = start.categories[0] ?? "home";
-        return { key, shape, size: 0, source: "library", category, needDrawn: 0, photoIds: [], state: "planned", videoId: null, track: null, renderLeft: 0, dropReason: null };
+        return { key, shape, size: 0, source: "library", category, needDrawn: 0, photoIds: [], state: "planned", videoId: null, track: null, renderLeft: 0, retried: false, dropReason: null };
       });
       // The plan fills the library first (slides, then collages, then singles), the rest is generated: the first videos of the list by `fromLibrary`.
       let libraryLeft = a.fromLibrary;
@@ -541,7 +548,10 @@ export class MockRun {
    * otherwise the step may go on ("clear").
    */
   #gate(work: Work, step: "compose" | "draw", needMicros: number, left: number): "clear" | "held" {
-    const fault = this.#host.faults.shift();
+    // A job that ends INTERNAL is a slice's run (its master photo cannot be prepared before the first image request): the compose, which does not read the master, never meets that fault.
+    // It does not block the faults armed behind it: the first fault this step can meet is the one taken.
+    const at0 = this.#host.faults.findIndex((f) => !(f === "job-failed" && step === "compose"));
+    const fault = at0 < 0 ? undefined : this.#host.faults.splice(at0, 1)[0];
     const at = this.#at();
     const job = step === "compose" ? `${work.avatarId}:scenes` : `${work.avatarId}:slice-${Math.floor(work.drawn / LAUNCH_SLICE_MAX_PHOTOS) + 1}`;
     if (fault !== undefined) {
@@ -559,6 +569,9 @@ export class MockRun {
           return this.#raise(work, { reason: "halt", at, detail: { code: "SETTLE_ABOVE_WORST" } });
         case "internal":
           return this.#raise(work, { reason: "internal", at, detail: { kind: "allocation-exceeded" } });
+        case "job-failed":
+          // S4.6r: a job that ended INTERNAL (a master photo that cannot be prepared) is a hold with the job's words; «Продолжить» runs it again.
+          return this.#raise(work, { reason: "internal", at, detail: { kind: "job-failed", message: "INTERNAL: the master photo could not be prepared as the face reference" } });
         case "price":
           return this.#raise(
             work,
@@ -599,9 +612,18 @@ export class MockRun {
 
   /** A hold for a person (or a wait): written, logged, the avatar parked, and the paid path ends for this pass. */
   #raise(work: Work, hold: PaidHold): "held" {
-    this.#launch.paidHold = hold;
+    // One hold stands, by rank (the engine's `holdRank`, S4.6b2 and S4.6r): a hold displaces the one that stands only by a higher rank, and among equals the first stays. The avatar is parked either way.
+    const standing = this.#launch.paidHold;
+    this.#raiseWon = standing === null || holdRank(hold) > holdRank(standing);
     work.waiting = "paid-hold";
     for (const other of this.#work) if (other !== work && other.toGenerate > 0 && other.skipped === null && other.phase !== "montage" && other.phase !== "done" && other.phase !== "awaiting-review") other.waiting = "paid-hold";
+    if (!this.#raiseWon) return "held";
+    // The timer of a waiting hold that this one displaces belongs to a hold that is gone.
+    if (standing !== null && holdRank(standing) === 0) {
+      this.#retry?.();
+      this.#retry = null;
+    }
+    this.#launch.paidHold = hold;
     this.#log(holdLine(hold, this.#at()));
     if (hold.reason === "budget" && hold.detail.kind === "resume-slice") this.#log({ at: this.#at(), kind: "budget-ended", done: work.drawn, total: work.toGenerate });
     return "held";
@@ -629,7 +651,7 @@ export class MockRun {
       this.#log({ at, kind: "network-retry", avatarId: work.avatarId, attempt: count.continues, attempts: waits.length, afterMs });
       const hold: PaidHold = { reason: "network", at, detail: { drops: count.drops, attempt: count.continues, nextAt: this.#w.isoAfter(afterMs) } };
       this.#raise(work, hold);
-      this.#armRetry(hold, afterMs);
+      if (this.#raiseWon) this.#armRetry(hold, afterMs);
       return "held";
     }
     this.#drops.set(job, count);
@@ -645,7 +667,7 @@ export class MockRun {
     const afterMs = MOCK_PRICE_WAITS_MS[used] ?? 0;
     const hold: PaidHold = { reason: "price-unavailable", at, detail: { attempt: used + 1, nextAt: this.#w.isoAfter(afterMs) } };
     this.#raise(work, hold);
-    this.#armRetry(hold, afterMs);
+    if (this.#raiseWon) this.#armRetry(hold, afterMs);
     return "held";
   }
 
@@ -800,9 +822,19 @@ export class MockRun {
     let moved = false;
     for (const slot of work.slots) {
       if (slot.state === "rendering") {
-        slot.renderLeft -= 1;
-        if (slot.renderLeft <= 0) this.#land(work, slot);
         moved = true;
+        // The folder went away while the render ran (the engine's job ends EXPORT_UNAVAILABLE): not a failed render. The video goes back with its photos and track, the folder holds the renders,
+        // and no retry is used.
+        if (folder !== null) {
+          this.#w.holdPhotos(slot.photoIds, false);
+          slot.state = "assigned";
+          slot.videoId = null;
+          continue;
+        }
+        slot.renderLeft -= 1;
+        if (slot.renderLeft > 0) continue;
+        if (this.#host.renderFaults.left > 0) this.#renderFailed(work, slot);
+        else this.#land(work, slot);
         continue;
       }
       if (slot.state !== "assigned" && slot.state !== "waiting-music") continue;
@@ -829,6 +861,22 @@ export class MockRun {
       moved = true;
     }
     return moved;
+  }
+
+  /** A render ended without a video (the engine's `RENDER_FAILED` / a timeout): the first time the video is submitted again, free; the second time it is dropped and its photos are free (§4.6). */
+  #renderFailed(work: Work, slot: Slot): void {
+    this.#host.renderFaults.left -= 1;
+    this.#w.holdPhotos(slot.photoIds, false);
+    slot.videoId = null;
+    if (!slot.retried) {
+      slot.retried = true;
+      slot.state = "assigned";
+      this.#log({ at: this.#at(), kind: "render-retry", avatarId: work.avatarId, key: slot.key });
+      return;
+    }
+    slot.state = "dropped";
+    slot.dropReason = "render-failed";
+    this.#log({ at: this.#at(), kind: "render-dropped", avatarId: work.avatarId, key: slot.key });
   }
 
   /** A render lands: the record is the library's, the log says so. */
@@ -861,7 +909,13 @@ export class MockRun {
     });
   }
 
+  /** A `job-failed` fault is for a draw step; a launch that ends without meeting it does not leave it armed for the next launch. */
+  #dropUnmetJobFaults(): void {
+    for (let i = this.#host.faults.length - 1; i >= 0; i--) if (this.#host.faults[i] === "job-failed") this.#host.faults.splice(i, 1);
+  }
+
   #finish(): void {
+    this.#dropUnmetJobFaults();
     this.#cancelAll();
     for (const work of this.#work) if (work.skipped === null) work.phase = "done";
     const launch = this.#launch;
@@ -924,6 +978,7 @@ export class MockRun {
 
   /** The end of a stop: what was not finished is dropped, the sets go back to the owner, the figure is what the ledger holds. */
   completeStop(): void {
+    this.#dropUnmetJobFaults();
     this.#cancelAll();
     this.#settleLive();
     for (const work of this.#work) for (const slot of work.slots) if (slot.state === "rendering") this.#land(work, slot);
@@ -1026,6 +1081,17 @@ export class MockRun {
   }
 }
 
+/**
+ * How much a hold must be respected, as the engine's `holdRank` has it: 0 a retry is scheduled; 1 a person acts and a click clears it (credits, key, price, the month, a price list that stayed
+ * unavailable, a failed job's `internal`); 2 a network hold with no retry (only a reconcile makes the click safe, A19); 3 halt and the allocation check. The mock cannot import the engine's.
+ */
+export function holdRank(hold: PaidHold): 0 | 1 | 2 | 3 {
+  if (hold.reason === "network") return hold.detail.nextAt === null ? 2 : 0;
+  if (hold.reason === "price-unavailable") return hold.detail.nextAt === null ? 1 : 0;
+  if (hold.reason === "internal") return hold.detail.kind === "job-failed" ? 1 : 3;
+  return hold.reason === "halt" ? 3 : 1;
+}
+
 /** The log line a hold writes when it is raised. */
 export function holdLine(hold: PaidHold, at: string): LogLine {
   switch (hold.reason) {
@@ -1044,6 +1110,6 @@ export function holdLine(hold: PaidHold, at: string): LogLine {
     case "price":
       return { at, kind: "hold-price", detail: hold.detail };
     case "internal":
-      return { at, kind: "hold-internal", holdKind: hold.detail.kind };
+      return { at, kind: "hold-internal", holdKind: hold.detail.kind, ...(hold.detail.message === undefined ? {} : { detail: hold.detail.message }) };
   }
 }

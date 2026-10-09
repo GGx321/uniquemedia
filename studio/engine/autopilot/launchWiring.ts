@@ -1,5 +1,6 @@
 import type { SliceStatus } from "../sceneSets/launchDraw";
-import type { RenderLife } from "./freeSteps";
+import type { ExportUnavailableReason } from "../../shared/engine";
+import type { RenderFailureFacts, RenderLife } from "./freeSteps";
 import { NETWORK_WAITS_MS } from "./paidFailures";
 import { UNTITLED } from "../music/trackRecord";
 import type { PublishedRead } from "../videos/published";
@@ -154,6 +155,8 @@ export interface JobFacts {
   readonly status: string;
   readonly videoId?: string | undefined;
   readonly launchId?: string | undefined;
+  /** How a failed job ended (the registry's job state carries it exactly when the job failed). */
+  readonly error?: { readonly code: string; readonly exportReason?: ExportUnavailableReason | undefined } | undefined;
 }
 
 const LIVES: readonly RenderLife[] = ["queued", "running", "done", "failed", "cancelled"];
@@ -163,6 +166,13 @@ const lifeOf = (status: string): RenderLife => LIVES.find((life) => life === sta
 export function renderLifeOf(states: readonly JobFacts[], jobId: string): RenderLife {
   const state = states.find((s) => s.kind === "render" && s.jobId === jobId);
   return state === undefined ? "gone" : lifeOf(state.status);
+}
+
+/** How a failed render job ended (S4.6r): its error's code and, for `EXPORT_UNAVAILABLE`, the folder's reason. Undefined for a job that did not fail, one that is not a render, and one the registry forgot. */
+export function renderFailureOf(states: readonly JobFacts[], jobId: string): RenderFailureFacts | undefined {
+  const state = states.find((s) => s.kind === "render" && s.jobId === jobId);
+  if (state === undefined || state.status !== "failed" || state.error === undefined) return undefined;
+  return { code: state.error.code, exportReason: state.error.exportReason };
 }
 
 /** The render jobs that are queued or running and carry a launch id: the ones a launch that lost track of its render can take back. */

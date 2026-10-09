@@ -2,7 +2,7 @@ import { autopilotSpec, autopilotTotalMs, videoSeed } from "../../shared/autopil
 import { trackKey, withUse, type TrackChoice, type TrackUsage } from "../../shared/autopilot/track";
 import { LogLine, type FreeHold } from "../../shared/engine/autopilot";
 import type { Cell, Clip, Focus, MontageSpec } from "../../shared/engine/montage";
-import type { MusicStatus } from "../../shared/engine";
+import type { ExportUnavailableReason, MusicStatus } from "../../shared/engine";
 import { estimateBytesUpper } from "../../shared/montage/estimate";
 import { EngineFailure } from "../engineFailure";
 import type { FocusResult } from "../focus/focusResolver";
@@ -10,7 +10,7 @@ import type { InternalRenderInput } from "../videos/service";
 import { readDraftHolds, type DraftHolds } from "./draftHolds";
 import type { ExportGate, ExportGateAnswer } from "./exportGate";
 import { assignArrived, assignLibrary, repick, type AvatarFacts, type PickOutcome } from "./freeAssign";
-import type { FileMusic, FileVideo, LaunchFile } from "./launchFile";
+import { MAX_RENDER_RETRIES, type FileMusic, type FileVideo, type LaunchFile } from "./launchFile";
 import { planAvatarInput, type LibraryReads } from "./libraryInput";
 import type { AutoRefreshDep, ChooseMusicInput } from "./musicPorts";
 import type { PlanPhoto } from "./planner";
@@ -41,6 +41,8 @@ export const FREE_IDLE_POLL_MS = 8_000;
 const DEFAULT_RECHECK_MS = 5_000;
 /** A render that fails for a reason that may pass is tried this many times before the video is dropped. */
 const MAX_ATTEMPTS = 3;
+/** With no export check to ask, a video whose render ended `EXPORT_UNAVAILABLE` this many times in a row is treated as a failed render (S4.6r). */
+const MAX_EXPORT_LOSSES = 3;
 /** Every pass of every launch gets its own number, so a port shared by launches never serves one launch the candidates another read. */
 let passSequence = 0;
 const STAND_IN_NOTE = "no-focus";
@@ -68,6 +70,12 @@ export function freeLibraryOf(library: LibraryReads & { readonly root: string; p
 
 export type RenderLife = "queued" | "running" | "done" | "failed" | "cancelled" | "gone";
 
+/** How a failed render job ended, as much as the free steps need of it: the error's code, and for `EXPORT_UNAVAILABLE` which of the folder's troubles it was. */
+export interface RenderFailureFacts {
+  readonly code: string;
+  readonly exportReason?: ExportUnavailableReason | undefined;
+}
+
 export interface FreeStepsDeps {
   /** The live library; null while none is open (the steps wait). */
   library(): FreeLibrary | null;
@@ -78,6 +86,11 @@ export interface FreeStepsDeps {
   };
   /** Where a render job stands; `gone` for a job the registry has forgotten. */
   renderLife(jobId: string): RenderLife;
+  /**
+   * How a render job that failed ended (S4.6r). A render that failed with `EXPORT_UNAVAILABLE` (the folder was renamed, moved, unmounted, or could not be written) is not a failed render: the
+   * launch holds on the folder and the video is submitted again, with no retry used. Absent, or `undefined` for a job: the failure counts as a failed render.
+   */
+  renderFailure?(jobId: string): RenderFailureFacts | undefined;
   /** The render jobs the queue holds live now (queued or running), with the video each makes: a render this launch lost track of is found here and taken back, never rendered twice. */
   liveRenders?(): ReadonlyArray<{ jobId: string; videoId: string; life: RenderLife }>;
   focus: { prefetchFocus(avatarId: string, photoId: string, options?: { signal?: AbortSignal }): Promise<FocusResult> };
@@ -253,6 +266,14 @@ class FreeRun {
   /** Keys that wait on the library's answer (an intent, an unreadable record): when last looked at, and whose they are. */
   readonly #parked = new Map<string, { at: number; avatarId: string }>();
   readonly #failed = new Set<string>();
+  /** Keys whose render ended because the export folder went away: not a failed render, so no retry is used and no video is dropped for it. */
+  readonly #exportFailed = new Map<string, ExportUnavailableReason>();
+  /** Keys whose render was cancelled: dropped, never retried. */
+  readonly #cancelled = new Set<string>();
+  /** Set by `#exportAnswers` when the gate threw (its answer is «yes, the engine checks again» for a submit, but «unknown» for a render's end). */
+  #gateThrew = false;
+  /** Consecutive losses of the folder per key when there is no check to confirm them (see `#endedWithoutVideo`). */
+  readonly #exportLosses = new Map<string, number>();
   readonly #retryAt = new Map<string, number>();
   readonly #attempts = new Map<string, number>();
   readonly #focus = new Map<string, Focus>();
@@ -490,7 +511,15 @@ class FreeRun {
       if (life === "queued" || life === "running") continue;
       this.#inflight.delete(flight.key);
       progressed = true;
-      if (life === "failed" || life === "cancelled") this.#failed.add(flight.key);
+      if (life === "cancelled") {
+        // The owner (or a shutdown) cancelled it: the video is dropped, not resubmitted against their wish.
+        this.#cancelled.add(flight.key);
+        this.#failed.add(flight.key);
+      } else if (life === "failed") {
+        const why = this.#d.renderFailure?.(flight.jobId);
+        if (why?.code === "EXPORT_UNAVAILABLE") this.#exportFailed.set(flight.key, why.exportReason ?? "not-writable");
+        else this.#failed.add(flight.key);
+      }
       if (library === null) continue;
       const videoId = this.#videoIdOf(flight.avatarId, flight.key);
       const found = await this.#look(library, flight.avatarId, flight.key, videoId, scans);
@@ -534,6 +563,8 @@ class FreeRun {
     switch (found.kind) {
       case "record":
         this.#parked.delete(key);
+        this.#exportFailed.delete(key);
+        this.#exportLosses.delete(key);
         return this.#markDone(avatarId, key, found);
       case "intent":
       case "unknown":
@@ -542,10 +573,90 @@ class FreeRun {
         return false;
       case "none":
         this.#parked.delete(key);
-        if (how === "ended" || this.#failed.has(key)) return this.#drop(avatarId, key, "render-failed", true);
+        if (this.#cancelled.delete(key)) {
+          this.#failed.delete(key);
+          return this.#renderFailed(avatarId, key, false);
+        }
+        if (this.#exportFailed.has(key) || how === "ended" || this.#failed.has(key)) return this.#endedWithoutVideo(avatarId, key);
         // Neither an intent nor a record, in a scan that read everything: the render never happened. Submit it again.
         return this.#write((file) => mapVideo(file, avatarId, key, (v) => (v.state === "rendering" ? { ...v, state: "assigned", videoId: null } : null)));
     }
+  }
+
+  /**
+   * A render ended without a video and the library says «none». Whether the FOLDER is to blame is decided by the folder's own check at this moment, not by the job's word: what the job reports
+   * (`EXPORT_UNAVAILABLE`, or an ffmpeg write that failed as `RENDER_FAILED` when a volume went away) can be a cause the check cannot see (a subfolder taken by a file, a commit past its deadline), and
+   * resubmitting for ever on it would flood the launch.
+   * - the check refuses (or a drain aborted it): the folder holds the renders, the video goes back, no retry is used;
+   * - the check answers, and the job said `EXPORT_UNAVAILABLE`: a failed render (one retry, then the drop);
+   * - there is no check to ask (a test, never the engine) and the job said `EXPORT_UNAVAILABLE`: the folder holds, but only `MAX_EXPORT_LOSSES - 1` times in a row for a video; then it is a failed render;
+   * - anything else: a failed render.
+   */
+  async #endedWithoutVideo(avatarId: string, key: string): Promise<boolean> {
+    const said = this.#exportFailed.get(key);
+    const file = this.#file();
+    const video = file?.avatars.find((row) => row.avatarId === avatarId)?.videos.find((v) => v.key === key);
+    if (this.#d.exportGate !== undefined && file !== null && video !== undefined) {
+      this.#gateThrew = false;
+      const open = await this.#exportAnswers(file, avatarId, video);
+      if (this.#gateThrew) {
+        // The check itself failed: «unknown» is not «the folder answered». The folder holds and no retry is used, but not for ever: the same bound as with no check to ask.
+        const losses = (this.#exportLosses.get(key) ?? 0) + 1;
+        this.#exportLosses.set(key, losses);
+        if (losses < MAX_EXPORT_LOSSES) return this.#exportLost(avatarId, key, said ?? "not-writable", true);
+      } else if (!open) {
+        return this.#exportLost(avatarId, key, said ?? this.#file()?.freeHold?.detail.exportReason ?? "not-writable", false);
+      }
+    } else if (said !== undefined) {
+      const losses = (this.#exportLosses.get(key) ?? 0) + 1;
+      this.#exportLosses.set(key, losses);
+      if (losses < MAX_EXPORT_LOSSES) return this.#exportLost(avatarId, key, said, true);
+    }
+    this.#exportFailed.delete(key);
+    return this.#renderFailed(avatarId, key, true);
+  }
+
+  /**
+   * The render ended because the export folder went away (§4.6, `EXPORT_UNAVAILABLE`): not the video's fault. It goes back to `assigned` with its photos and track, the launch holds on the folder
+   * (`freeHold { export }`), and it is submitted again when the folder answers. No retry is used and nothing is dropped. `writeHold`: the hold is not written by the check that refused.
+   */
+  async #exportLost(avatarId: string, key: string, exportReason: ExportUnavailableReason, writeHold: boolean): Promise<boolean> {
+    this.#exportFailed.delete(key);
+    this.#failed.delete(key);
+    const ok = await this.#write((file) => mapVideo(file, avatarId, key, (v) => (v.state === "rendering" ? { ...v, state: "assigned", videoId: null } : null)));
+    // The hold is written even when the video was already put back: the folder is the reason renders wait. A pass that finds the folder open again clears it (the gate, or the next render the engine takes).
+    this.#gateRefused = true;
+    if (writeHold) await this.#setHold(exportReason, { neededBytes: null, freeBytes: null });
+    return ok;
+  }
+
+  /**
+   * A render ended without a video (§4.6, `RENDER_FAILED` / a timeout): the first time the same assignment is submitted again, free; the second time the video is dropped and its photos are free. The
+   * count is written in the SAME write that decides, so a restart cannot grant another retry. One log line for the retry, one for the drop.
+   */
+  async #renderFailed(avatarId: string, key: string, mayRetry: boolean): Promise<boolean> {
+    const verdict: { kind: "retry" | "drop" | null } = { kind: null };
+    const ok = await this.#write((file) => {
+      verdict.kind = null;
+      const video = file.avatars.find((row) => row.avatarId === avatarId)?.videos.find((v) => v.key === key);
+      if (video === undefined || isFinal(video)) return null;
+      const used = file.renderRetries?.[key] ?? 0;
+      if (mayRetry && used < MAX_RENDER_RETRIES && video.state === "rendering") {
+        const back = mapVideo(file, avatarId, key, (v) => ({ ...v, state: "assigned", videoId: null }));
+        if (back === null) return null;
+        verdict.kind = "retry";
+        return { ...back, renderRetries: { ...file.renderRetries, [key]: used + 1 } };
+      }
+      const dropped = mapVideo(file, avatarId, key, (v) => ({ ...v, state: "dropped", dropReason: "render-failed" }));
+      if (dropped !== null) verdict.kind = "drop";
+      return dropped;
+    });
+    if (ok && verdict.kind === "retry") {
+      this.#failed.delete(key);
+      await this.#log({ at: this.#at(), avatarId, kind: "render-retry", key });
+    }
+    if (ok && verdict.kind === "drop") await this.#log({ at: this.#at(), avatarId, kind: "render-dropped", key });
+    return ok;
   }
 
   async #markDone(avatarId: string, key: string, found: Extract<Found, { kind: "record" }>): Promise<boolean> {
@@ -911,6 +1022,7 @@ class FreeRun {
     } catch {
       // No answer is not a refusal: the engine checks again at the submit.
       this.#warn("the export folder could not be asked");
+      this.#gateThrew = true;
       return true;
     }
     if (answer.ok) {

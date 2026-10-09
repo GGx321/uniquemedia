@@ -598,6 +598,20 @@ function holdNote(launch: LaunchView, hold: PaidHold, running: boolean, nameOf: 
         actions: [],
       };
     case "internal":
+      if (hold.detail.kind === "job-failed") {
+        // S4.6r: a paid job ended in a way no row of the table covers. The click is open and runs the job again; the job's own words say what it met.
+        const met = hold.detail.message === undefined ? "" : ` Она ответила: ${hold.detail.message}.`;
+        const job = who === null ? "Платная задача" : `Платная задача ${who}`;
+        return {
+          ...base,
+          id: "hold-internal-job",
+          tone: "danger",
+          icon: "alert",
+          title: "Задача остановилась с ошибкой",
+          text: `${job} закончилась ошибкой, которой нет в таблице известных.${met} «Продолжить» запустит её снова; «Стоп» сохранит всё, что готово.${goesOn}`,
+          actions: [],
+        };
+      }
       return {
         ...base,
         id: "hold-internal",
@@ -957,11 +971,14 @@ export function logText(line: LogLine, sceneReview: boolean): { text: string; to
     case "hold-price-unavailable":
       return { text: `цены не загрузились · повтор ${line.attempt} из 3`, tone: "warn" };
     case "hold-internal":
+      if (line.holdKind === "job-failed") return { text: `задача остановилась с ошибкой · ${line.detail === undefined ? "" : `${line.detail} · `}«Продолжить» запустит её снова`, tone: "danger" };
       return { text: "внутренняя ошибка учёта · платная часть остановлена", tone: "danger" };
     case "hold-export":
       return { text: line.exportReason === "not-enough-space" ? "мало места на диске · рендеры ждут" : "папка «Готовые видео» недоступна · рендеры ждут", tone: "warn" };
     case "render-dropped":
       return { text: `${videoLabel(line.key)} не собралось: рендер не удался дважды`, tone: "warn" };
+    case "render-retry":
+      return { text: `${videoLabel(line.key)}: рендер не удался · пробуем ещё раз`, tone: "warn" };
   }
 }
 
