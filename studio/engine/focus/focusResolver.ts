@@ -1,6 +1,6 @@
 import type { Cell, Clip, Focus, MontageDraft } from "../../shared/engine/montage";
 import { resolveFocus } from "../../shared/montage/crop";
-import type { WorkerFaceGate } from "../face/worker/workerGate";
+import { FACE_LANE_MAX_WAITING_DETECTS, FaceLaneFullError, type FaceDetection, type WorkerFaceGate } from "../face/worker/workerGate";
 import { LibraryError } from "../library/errors";
 import type { Library } from "../library/library";
 import type { PhotoSidecar } from "../library/schemas";
@@ -47,6 +47,10 @@ import { focusFromFace } from "./focusPoint";
 
 /** One `focusFor` computation, queueing behind the run's face checks included; the gate kills the worker when it fires. */
 export const FOCUS_DETECT_TIMEOUT_MS = 20_000;
+/** One `prefetchFocus`: it queues behind the run's paid face checks, so it gets far longer than a render's `FOCUS_DETECT_TIMEOUT_MS`. */
+export const FOCUS_PREFETCH_TIMEOUT_MS = 120_000;
+/** How long a prefetch waits before asking again when the face lane refused its detect although the resolver kept to its own admission (another consumer of the gate filled the lane). */
+export const FOCUS_PREFETCH_RETRY_MS = 500;
 /** One `fillMissingFocus`; a cell reached (or still running) after it is spent takes the fallback. */
 export const FOCUS_FILL_BUDGET_MS = 60_000;
 /** Below this much of a bound, no new work is started under it (halved for a bound shorter than 2 s, so tests can use small ones). */
@@ -123,6 +127,16 @@ export interface FocusResolver {
    */
   focusForOwn(mediaId: string, signal?: AbortSignal): Promise<FocusResult>;
   /**
+   * `focusFor` for the autopilot, ahead of rendering (plan §8.2): the answer lands in the per-photo memo and in
+   * `focus.json`, so the render's `fillMissingFocus` finds it and never touches the face lane. Differences from `focusFor`:
+   * its own bound (`timeoutMs`, `FOCUS_PREFETCH_TIMEOUT_MS`) instead of the render's, and a detect the face lane refuses
+   * because it is full is asked again every `retryMs` (`FOCUS_PREFETCH_RETRY_MS`) until that bound, not given the stand-in.
+   * Idempotent per photo: concurrent calls share one detection, and a judged photo is answered from the cache. Like
+   * `focusFor`, `resolved: false` means nothing was judged (the bound ran out, no gate, a failure); nothing is remembered then.
+   * If a manual `focusFor` of the same photo is already in flight, the prefetch joins it and takes its bound and its answer.
+   */
+  prefetchFocus(avatarId: string, photoId: string, options?: { signal?: AbortSignal; timeoutMs?: number; retryMs?: number }): Promise<FocusResult>;
+  /**
    * `spec` with every null focus filled (a scene photo's from `focusFor`, the fallback for the rest),
    * and the scene-photo cells that could not be judged. A focus that is already set is returned
    * untouched. `spec` itself is not modified.
@@ -140,6 +154,36 @@ interface Computed extends FocusResult {
 const fallback = (): Focus => resolveFocus(null);
 const unresolved = (): Computed => ({ focus: fallback(), resolved: false, cacheable: false });
 
+/** Resolves after `ms`, or rejects with the signal's reason as soon as it aborts. */
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+type DetectPriority = "manual" | "prefetch";
+
+/** How one computation is bounded and ordered: its whole bound, who it yields to, and whether it asks again when the lane turns it away. */
+interface Mode {
+  boundMs: number;
+  priority: DetectPriority;
+  retryMs: number | null;
+}
+
+interface Admission {
+  readonly priority: DetectPriority;
+  grant(): void;
+}
+
 const realCache: FocusCacheStore = { read: readFocusCache, remember: rememberFocus };
 
 export function createFocusResolver(deps: FocusDeps): FocusResolver {
@@ -150,6 +194,58 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
   /** In-memory answers (and computations still running, so concurrent callers share one), keyed by photo id and valid only for the sha256 they were made for. */
   const memo = new Map<string, { sha256: string; promise: Promise<FocusResult> }>();
   const saves = new Set<Promise<void>>();
+
+  // ---- admission to the face lane -------------------------------------------
+  // The gate turns away a detect when `FACE_LANE_MAX_WAITING_DETECTS` others wait (so a run's checks are never crowded out), but
+  // a burst of placements (montages.create asks for up to 20 photos at once) must be judged, not refused. So the resolver keeps its
+  // own FIFO in front of the gate: at most `FACE_LANE_MAX_WAITING_DETECTS` detects are AT the gate (the gate would turn a third away whenever a run check holds the lane, so the resolver never exceeds its cap), the rest
+  // wait here, each within its own bound, holding no bytes. A manual placement goes before every waiting prefetch.
+  const MAX_AT_GATE = FACE_LANE_MAX_WAITING_DETECTS;
+  const admissionQueue: Admission[] = [];
+  let atGate = 0;
+
+  function pumpAdmissions(): void {
+    while (atGate < MAX_AT_GATE) {
+      const next = admissionQueue.shift();
+      if (next === undefined) return;
+      next.grant();
+    }
+  }
+
+  /** A place at the gate, or the signal's reason when `signal` aborts first (the waiter then leaves the queue). The release must be called once the gate's answer is in. */
+  function admit(priority: DetectPriority, signal: AbortSignal): Promise<() => void> {
+    if (signal.aborted) return Promise.reject(signal.reason);
+    let released = false;
+    const release = (): void => {
+      if (released) return;
+      released = true;
+      atGate -= 1;
+      pumpAdmissions();
+    };
+    if (atGate < MAX_AT_GATE && admissionQueue.length === 0) {
+      atGate += 1;
+      return Promise.resolve(release);
+    }
+    return new Promise<() => void>((resolve, reject) => {
+      const onAbort = (): void => {
+        const index = admissionQueue.indexOf(waiter);
+        if (index >= 0) admissionQueue.splice(index, 1);
+        reject(signal.reason);
+      };
+      const waiter: Admission = {
+        priority,
+        grant: () => {
+          signal.removeEventListener("abort", onAbort);
+          atGate += 1;
+          resolve(release);
+        },
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      const firstPrefetch = admissionQueue.findIndex((waiting) => waiting.priority === "prefetch");
+      if (priority === "manual" && firstPrefetch >= 0) admissionQueue.splice(firstPrefetch, 0, waiter);
+      else admissionQueue.push(waiter);
+    });
+  }
 
   function save(avatarId: string, photo: PhotoSidecar, focus: Focus | null): void {
     const isLive = (id: string): boolean => {
@@ -166,18 +262,40 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     saves.add(pending);
   }
 
-  async function compute(avatarId: string, photo: PhotoSidecar): Promise<Computed> {
-    const bound = timeoutSignal(detectTimeoutMs);
+  /**
+   * One detection of the photo `read` returns, through the admission queue. Null when the bound has too little left to start one. A refusal by the
+   * gate itself (another consumer filled the lane) is the caller's answer ("not now") for a manual placement and is asked again every
+   * `retryMs` by a prefetch, until the bound has less than `minStartMs` left.
+   */
+  async function detectAdmitted(read: () => Promise<Uint8Array>, mode: Mode, bound: AbortSignal, startedAt: number, gate: FocusFaceGate): Promise<FaceDetection | null> {
+    const canStart = (): boolean => mode.boundMs - (performance.now() - startedAt) >= minStartMs(mode.boundMs);
+    for (;;) {
+      if (!canStart()) return null;
+      const release = await untilAborted(admit(mode.priority, bound), bound);
+      try {
+        if (!canStart()) return null;
+        const bytes = await untilAborted(read(), bound);
+        if (!canStart()) return null;
+        return await untilAborted(gate.detect(bytes, bound), bound);
+      } catch (error) {
+        if (mode.retryMs === null || !(error instanceof FaceLaneFullError)) throw error;
+      } finally {
+        release();
+      }
+      await pause(mode.retryMs, bound);
+    }
+  }
+
+  async function compute(avatarId: string, photo: PhotoSidecar, mode: Mode): Promise<Computed> {
+    const bound = timeoutSignal(mode.boundMs);
     const startedAt = performance.now();
     try {
       const cached = (await untilAborted(cache.read(library.focusCachePath(avatarId)), bound.signal)).get(photo.id);
       if (cached !== undefined && cached.sha256 === photo.sha256) return { focus: resolveFocus(cached.focus), resolved: true, cacheable: true };
 
       if (faceGate === null || faceGate.isBroken()) return unresolved();
-      const bytes = await untilAborted(library.readPhotoVerified(photo.id), bound.signal);
-      if (detectTimeoutMs - (performance.now() - startedAt) < minStartMs(detectTimeoutMs)) return unresolved();
-
-      const detection = await untilAborted(faceGate.detect(bytes, bound.signal), bound.signal);
+      const detection = await detectAdmitted(() => library.readPhotoVerified(photo.id), mode, bound.signal, startedAt, faceGate);
+      if (detection === null) return unresolved();
       const focus = detection.face === null ? null : focusFromFace(detection.face, detection);
       const answer = { focus: resolveFocus(focus), resolved: true };
       // The library's own record of the size is the cross-check: a detection made on an image of another size is not this photo's answer to keep.
@@ -192,7 +310,7 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     }
   }
 
-  async function focusFor(avatarId: string, photoId: string, signal?: AbortSignal): Promise<FocusResult> {
+  async function resolveFor(avatarId: string, photoId: string, signal: AbortSignal | undefined, mode: Mode): Promise<FocusResult> {
     signal?.throwIfAborted();
     const photo = library.getPhoto(photoId);
     if (photo === undefined || photo.avatarId !== avatarId) throw new LibraryError("photo-not-found", `avatar ${avatarId} has no photo ${photoId}`);
@@ -201,7 +319,7 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     if (entry === undefined || entry.sha256 !== photo.sha256) {
       const started: { sha256: string; promise: Promise<FocusResult> } = {
         sha256: photo.sha256,
-        promise: compute(avatarId, photo).then(
+        promise: compute(avatarId, photo, mode).then(
           ({ focus, resolved, cacheable }) => {
             if (!cacheable && memo.get(photoId) === started) memo.delete(photoId);
             return { focus, resolved };
@@ -218,6 +336,20 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     return signal === undefined ? entry.promise : untilAborted(entry.promise, signal);
   }
 
+  const focusFor = (avatarId: string, photoId: string, signal?: AbortSignal): Promise<FocusResult> => resolveFor(avatarId, photoId, signal, { boundMs: detectTimeoutMs, priority: "manual", retryMs: null });
+
+  const prefetchFocus: FocusResolver["prefetchFocus"] = async (avatarId, photoId, options = {}) => {
+    const boundMs = options.timeoutMs ?? FOCUS_PREFETCH_TIMEOUT_MS;
+    const mode: Mode = { boundMs, priority: "prefetch", retryMs: options.retryMs ?? FOCUS_PREFETCH_RETRY_MS };
+    const startedAt = performance.now();
+    const first = await resolveFor(avatarId, photoId, options.signal, mode);
+    if (first.resolved) return first;
+    // The photo may have been joined from a `focusFor` already in flight, which has the shorter bound and the manual priority; its miss is not this prefetch's.
+    const left = boundMs - (performance.now() - startedAt);
+    if (left < minStartMs(boundMs)) return first;
+    return resolveFor(avatarId, photoId, options.signal, { ...mode, boundMs: left });
+  };
+
   /** One own photo's judgement: the bytes the reader verified, looked at by the face detector, all under ONE bound. */
   async function computeOwn(mediaId: string): Promise<FocusResult> {
     const own = deps.ownMedia;
@@ -228,7 +360,13 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
       const photo = await untilAborted(own.read(mediaId, bound.signal), bound.signal);
       if (photo === undefined) return { focus: fallback(), resolved: false };
       if (detectTimeoutMs - (performance.now() - startedAt) < minStartMs(detectTimeoutMs)) return { focus: fallback(), resolved: false };
-      const detection = await untilAborted(faceGate.detect(photo.bytes, bound.signal), bound.signal);
+      const release = await untilAborted(admit("manual", bound.signal), bound.signal);
+      let detection: FaceDetection;
+      try {
+        detection = await untilAborted(faceGate.detect(photo.bytes, bound.signal), bound.signal);
+      } finally {
+        release();
+      }
       // The record's own size is the cross-check: a detection made on a picture of another size is not this photo's answer.
       if (detection.width !== photo.width || detection.height !== photo.height) return { focus: fallback(), resolved: false };
       return { focus: resolveFocus(detection.face === null ? null : focusFromFace(detection.face, detection)), resolved: true };
@@ -313,5 +451,5 @@ export function createFocusResolver(deps: FocusDeps): FocusResolver {
     while (saves.size > 0) await Promise.allSettled([...saves]);
   }
 
-  return { focusFor, focusForOwn, fillMissingFocus, flush };
+  return { focusFor, focusForOwn, prefetchFocus, fillMissingFocus, flush };
 }

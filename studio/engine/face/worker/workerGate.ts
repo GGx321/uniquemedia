@@ -23,8 +23,20 @@ import { FaceWorkerRequestSchema, FaceWorkerResponseSchema, type FaceWorkerReque
 // check lazily spawns a fresh worker (~0.2 s to load; the models are read
 // from the page cache).
 //
-// The lane is a plain FIFO: one worker is one computation at a time. A
-// caller cancelled while still queued leaves the queue at once (removed by
+// The lane is one computation at a time, FIFO within a class and with two
+// classes (S4.P3). A run's work (check, embed, start, the gate's own kills)
+// always goes before a focus detect: the autopilot draws and renders at once,
+// and a run's check left waiting past its timeout is GateBroken — it stops the
+// run and loses a paid image. At most `FACE_LANE_MAX_WAITING_DETECTS` detects
+// wait at a time; one more is refused with `FaceLaneFullError` (its caller
+// falls back or retries — a detect is never worth a queue). Nothing is ever
+// preempted: a detect already running finishes first (bounded by one
+// detection), and detects are not starved by an idle lane — they wait only
+// while run work is waiting; a detect that still waits when its caller's
+// bound expires leaves the queue by its signal. A detect also never holds the
+// lane for long: its computation (worker load included) has its own bound,
+// `FACE_DETECT_COMPUTE_TIMEOUT_MS`, after which the worker is terminated like
+// any interrupted computation. A caller cancelled while still queued leaves the queue at once (removed by
 // identity, so nothing behind it is disturbed — the T7b re-review's B1
 // hazard cannot arise from a chained-promise design it no longer has) and
 // never touches the worker that is busy for someone else.
@@ -44,6 +56,16 @@ export const FACE_WORKER_LOAD_TIMEOUT_MS = 25_000;
 /** A terminate is milliseconds; this only bounds a worker that will not die (a wedged runtime), which the gate then refuses to live alongside. */
 export const FACE_WORKER_KILL_TIMEOUT_MS = 5_000;
 
+/**
+ * How long a focus detect may HOLD the lane (from being granted it: the worker's load, if it must respawn, included), whatever its
+ * caller's own bound. A run's face check waits at most `QA_GATE_TIMEOUT_MS` = 60 s (runs/qa.ts) and a timed-out check is GateBroken —
+ * the run stops and a paid image is lost — while a prefetch may wait 120 s. Run checks go before waiting detects, so a check ever waits
+ * behind ONE detect: at most this bound (10 s) + the kill (a terminate is milliseconds; at worst `FACE_WORKER_KILL_TIMEOUT_MS` = 5 s)
+ * = 15 s before its own turn, which leaves 45 s of its 60 s for its own respawn (typically 0.2 s, at worst
+ * `FACE_WORKER_LOAD_TIMEOUT_MS` = 25 s) and inference. A real YuNet detect of a 12 MP photo takes about a second.
+ */
+export const FACE_DETECT_COMPUTE_TIMEOUT_MS = 10_000;
+
 export interface WorkerFaceGateOptions {
   /** Starts one worker thread. The engine's entry supplies `new Worker(<built faceWorker entry>, { workerData })`; tests supply a scripted one. */
   spawnWorker: () => Worker;
@@ -59,6 +81,18 @@ export interface WorkerFaceGateOptions {
   idleRecycleMs?: number;
   /** How long `worker.terminate()` may take before the gate gives up on the worker and declares itself broken. `FACE_WORKER_KILL_TIMEOUT_MS` unless a test overrides it. */
   killTimeoutMs?: number;
+  /** How long a detect may hold the lane. `FACE_DETECT_COMPUTE_TIMEOUT_MS` unless a test overrides it. */
+  detectComputeTimeoutMs?: number;
+}
+
+/** How many focus detects may wait for the lane at once (the one running does not count). */
+export const FACE_LANE_MAX_WAITING_DETECTS = 2;
+
+/** `detect` was refused because `FACE_LANE_MAX_WAITING_DETECTS` detects are already waiting for the lane. An answer to the caller ("not now"), never a fault of the gate or the worker. */
+export class FaceLaneFullError extends Error {
+  constructor() {
+    super("the face lane already has its limit of detects waiting");
+  }
 }
 
 /** What `detect` answers: the decoded source's size and its largest face (or none), both in source pixels. */
@@ -79,8 +113,11 @@ export interface WorkerFaceGate {
    * S8 (focus): decodes `bytes`, normalises, runs YuNet only, and returns the
    * largest face's box in SOURCE-image pixels (`face: null` when there is none —
    * an answer, not an error) with the source's size. No pose, no embedding.
-   * Same lane, bounds, cancellation and validation as `check`/`embed`; a failure
-   * to decode rejects with an ordinary Error (the worker stays alive).
+   * Same lane, bounds, cancellation and validation as `check`/`embed`, but the
+   * lowest priority on it (S4.P3): run work goes first, and a detect arriving
+   * while `FACE_LANE_MAX_WAITING_DETECTS` others wait rejects with
+   * `FaceLaneFullError`. A failure to decode rejects with an ordinary Error
+   * (the worker stays alive).
    */
   detect(bytes: Uint8Array, signal: AbortSignal): Promise<FaceDetection>;
   /** Terminates the worker for good; a computation in flight fails, and every later call rejects. */
@@ -105,7 +142,11 @@ interface Live {
   onDeath: ((error: Error) => void) | null;
 }
 
+/** "run": a run's check/embed, start-up, the gate's own kills. "detect": a focus detect, which always yields to run work. */
+type Lane = "run" | "detect";
+
 interface Waiter {
+  readonly lane: Lane;
   grant(): void;
   reject(error: Error): void;
 }
@@ -129,7 +170,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
   let busy = false;
   const queue: Waiter[] = [];
 
-  function acquire(signal: AbortSignal): Promise<() => void> {
+  function acquire(signal: AbortSignal, lane: Lane): Promise<() => void> {
     if (signal.aborted) return Promise.reject(signal.reason);
     let released = false;
     const release = (): void => {
@@ -143,6 +184,9 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
       busy = true;
       return Promise.resolve(release);
     }
+    if (lane === "detect" && queue.filter((waiting) => waiting.lane === "detect").length >= FACE_LANE_MAX_WAITING_DETECTS) {
+      return Promise.reject(new FaceLaneFullError());
+    }
     return new Promise<() => void>((resolve, reject) => {
       const onAbort = (): void => {
         const index = queue.indexOf(waiter);
@@ -150,6 +194,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
         reject(signal.reason);
       };
       const waiter: Waiter = {
+        lane,
         grant: () => {
           signal.removeEventListener("abort", onAbort);
           resolve(release);
@@ -160,7 +205,10 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
         },
       };
       signal.addEventListener("abort", onAbort, { once: true });
-      queue.push(waiter);
+      // Run work goes after the run work already waiting (FIFO) and before every waiting detect.
+      const firstDetect = queue.findIndex((waiting) => waiting.lane === "detect");
+      if (lane === "run" && firstDetect >= 0) queue.splice(firstDetect, 0, waiter);
+      else queue.push(waiter);
     });
   }
 
@@ -185,7 +233,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
     idleTimer = setTimeout(() => {
       idleTimer = null;
       if (busy || live === null) return;
-      acquire(NEVER_ABORTED)
+      acquire(NEVER_ABORTED, "run")
         .then(async (release) => {
           try {
             if (live !== null) await kill(live);
@@ -292,7 +340,7 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
 
   /** Kills an idle `entry` while holding the lane, so a check arriving meanwhile waits for it to be gone before a new worker starts. */
   function killUnderLane(entry: Live): void {
-    acquire(NEVER_ABORTED)
+    acquire(NEVER_ABORTED, "run")
       .then(async (release) => {
         try {
           await kill(entry);
@@ -324,31 +372,38 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
   }
 
   /** Runs `body` on the live worker, alone (the lane), and interruptibly: abort — or any failure that is not the worker's own clean report — terminates the worker before this settles. */
-  async function inLane<T>(signal: AbortSignal, body: (entry: Live) => Promise<Outcome<T>>): Promise<T> {
+  async function inLane<T>(lane: Lane, signal: AbortSignal, body: (entry: Live) => Promise<Outcome<T>>, computeMs?: number): Promise<T> {
     if (disposed) throw new Error("the face worker gate is disposed");
     if (broken !== null) throw broken;
     cancelIdleTimer();
     let release: () => void;
     try {
-      release = await acquire(signal);
+      release = await acquire(signal, lane);
     } catch (error) {
       scheduleIdleRecycle(); // cancelled while queued: whoever holds the lane re-arms it; when nobody does, re-arm here
       throw error;
     }
+    // The compute bound starts when the lane is GRANTED, and covers the worker's load as well as the body.
+    const compute = computeMs === undefined ? null : timeoutSignal(computeMs);
+    const work = compute === null ? signal : AbortSignal.any([signal, compute.signal]);
     try {
-      signal.throwIfAborted();
+      work.throwIfAborted();
       if (disposed) throw new Error("the face worker gate is disposed");
-      const entry = await liveWorker(signal);
+      const entry = await liveWorker(work);
       let outcome: Outcome<T>;
       try {
-        outcome = await untilAborted(body(entry), signal);
+        outcome = await untilAborted(body(entry), work);
       } catch (error) {
         await kill(entry);
         throw error;
       }
       if (!outcome.ok) throw outcome.error;
       return outcome.value;
+    } catch (error) {
+      if (compute !== null && compute.signal.aborted && !signal.aborted) throw new Error(`the face worker did not finish the detect within ${computeMs} ms; it was terminated`);
+      throw error;
     } finally {
+      compute?.clear();
       release();
       scheduleIdleRecycle();
     }
@@ -395,29 +450,37 @@ export function createWorkerFaceGate(options: WorkerFaceGateOptions): WorkerFace
     isBroken: () => broken !== null,
 
     async start(signal: AbortSignal = NEVER_ABORTED): Promise<void> {
-      await inLane(signal, async () => ({ ok: true, value: undefined }));
+      await inLane("run", signal, async () => ({ ok: true, value: undefined }));
     },
 
     async check(input, signal) {
       const id = nextRequestId++;
       const bytes = copyForTransfer(input.bytes);
       const message = FaceWorkerRequestSchema.parse({ type: "check", id, pose: input.pose, bytes, masterEmbedding: input.masterEmbedding });
-      return await inLane(signal, (entry) => request(entry, message, [bytes], (r) => (r.type === "checked" && r.id === id ? r.verdict : undefined)));
+      return await inLane("run", signal, (entry) => request(entry, message, [bytes], (r) => (r.type === "checked" && r.id === id ? r.verdict : undefined)));
     },
 
     async embed(bytes, signal) {
       const id = nextRequestId++;
       const copy = copyForTransfer(bytes);
       const message = FaceWorkerRequestSchema.parse({ type: "embed", id, bytes: copy });
-      return await inLane(signal, (entry) => request(entry, message, [copy], (r) => (r.type === "embedded" && r.id === id ? r.embedding : undefined)));
+      return await inLane("run", signal, (entry) => request(entry, message, [copy], (r) => (r.type === "embedded" && r.id === id ? r.embedding : undefined)));
     },
 
     async detect(bytes, signal) {
-      const id = nextRequestId++;
-      const copy = copyForTransfer(bytes);
-      const message = FaceWorkerRequestSchema.parse({ type: "detect", id, bytes: copy });
-      return await inLane(signal, (entry) =>
-        request(entry, message, [copy], (r) => (r.type === "detected" && r.id === id ? { width: r.width, height: r.height, face: r.face } : undefined)),
+      // Nothing is copied or validated until the lane is granted: a detect that waits (or is refused) costs no memory.
+      return await inLane(
+        "detect",
+        signal,
+        (entry) => {
+          const id = nextRequestId++;
+          const copy = copyForTransfer(bytes);
+          const parsed = FaceWorkerRequestSchema.safeParse({ type: "detect", id, bytes: copy });
+          // A request the worker would never understand is the caller's failure, not the worker's: it must not cost the worker its life.
+          if (!parsed.success) return Promise.resolve<Outcome<FaceDetection>>({ ok: false, error: new Error(`the detect request is invalid: ${parsed.error.message}`) });
+          return request(entry, parsed.data, [copy], (r) => (r.type === "detected" && r.id === id ? { width: r.width, height: r.height, face: r.face } : undefined));
+        },
+        options.detectComputeTimeoutMs ?? FACE_DETECT_COMPUTE_TIMEOUT_MS,
       );
     },
 
