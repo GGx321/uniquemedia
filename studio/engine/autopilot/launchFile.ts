@@ -147,6 +147,11 @@ export const LaunchFile = z
     autoRefreshAskedAt: IsoDateTime.optional(),
     /** The ledger's sum over the launch's group when the file was last written; the live figure is the ledger's, this is read when the ledger cannot be, and after the end. */
     spentMicros: Micros,
+    /**
+     * S4.6v fix round 1: what the owner's paid review edits on the launch's sets committed, frozen when the launch ends (the sets go back to the owner then, and their later edits are
+     * not the launch's). Absent while the launch is unfinished (the live figure is the ledger's) and in a file that ended before this field; optional, no schema bump.
+     */
+    reviewWritesMicros: Micros.optional(),
     avatars: z.array(FileAvatar).min(1),
   })
   .superRefine((f, ctx) => {

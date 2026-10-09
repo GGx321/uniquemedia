@@ -382,8 +382,23 @@ export class MockAutopilot {
 
   #inFlight(launch: MockLaunch): { requests: number; openMicros: number } {
     if (launch.status !== "running") return { requests: 0, openMicros: 0 };
-    const requests = launch.avatars.filter((a) => a.phase === "drawing").length * 2;
-    return { requests, openMicros: requests * this.#world.unit().attemptWorstMicros };
+    // Open reserves are part of what the launch spent (the contract checks it), so no more requests are out than that sum can hold.
+    const worst = this.#world.unit().attemptWorstMicros;
+    const requests = Math.min(launch.avatars.filter((a) => a.phase === "drawing").length * 2, worst > 0 ? Math.floor(launch.spentMicros / worst) : 0);
+    return { requests, openMicros: requests * worst };
+  }
+
+  /**
+   * S4.6v: the open reserves no request is out for. The mock has no process to die, so they exist only on a PAUSED launch while the ledger asks for a reconcile (what a restart leaves);
+   * a running launch has its requests in `#inFlight` instead, so the two never meet. One request per drawing avatar's pair, none invented when no avatar draws, and bounded by
+   * what the launch spent, which holds them.
+   */
+  #unsettled(launch: MockLaunch): { requests: number; openMicros: number } {
+    const none = { requests: 0, openMicros: 0 };
+    if (launch.status !== "paused" || this.#world.paidGate()?.code !== "RECONCILE_REQUIRED") return none;
+    const worst = this.#world.unit().attemptWorstMicros;
+    const requests = Math.min(launch.avatars.filter((a) => a.phase === "drawing" || a.phase === "approved-waiting").length * 2, worst > 0 ? Math.floor(launch.spentMicros / worst) : 0);
+    return requests > 0 ? { requests, openMicros: requests * worst } : none;
   }
 
   /** What stops «Продолжить · до $R» now, from the key and the ledger as they stand. */
@@ -416,6 +431,7 @@ export class MockAutopilot {
       remainingMicros: Math.max(0, launch.plannedWorstMicros - launch.spentMicros),
       reviewWritesMicros: 0,
       inFlight: this.#inFlight(launch),
+      unsettled: this.#unsettled(launch),
       waitingMusic: 0,
       resumeBlockedBy: this.#resumeBlockedBy(launch),
       avatars: launch.avatars,
@@ -498,7 +514,8 @@ export class MockAutopilot {
       plannedWorstMicros: preview.estimate.worstMicros,
       plannedExpectedMicros: preview.estimate.expectedMicros,
       plan: { videos: preview.totals.videos, photos: preview.totals.photosNeeded, fromLibrary: preview.totals.fromLibrary, toGenerate: preview.totals.toGenerate },
-      spentMicros: Math.min(preview.estimate.worstMicros, Math.round(preview.estimate.expectedMicros / 5)),
+      // A fifth of the expected cost is spent, and the requests in flight (two per drawing avatar) are open reserves inside it.
+      spentMicros: Math.min(preview.estimate.worstMicros, Math.max(Math.round(preview.estimate.expectedMicros / 5), avatars.filter((a) => a.phase === "drawing").length * 2 * this.#world.unit().attemptWorstMicros)),
       activeMs: 60_000,
       avatars,
       videos,

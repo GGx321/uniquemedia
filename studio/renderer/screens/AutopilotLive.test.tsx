@@ -253,6 +253,8 @@ describe("«Пауза» and «Продолжить · до $R»", () => {
       vary(launch, {
         ...money,
         inFlight: { requests: 0, openMicros: 0 },
+        // The four requests the quit cut off are open reserves with no request out: the engine tells them as `unsettled` (S4.6v).
+        unsettled: { requests: 4, openMicros: 280_000 },
         status: "paused",
         paused: { cause: "quit", at: AT },
         resumeBlockedBy: "reconcile-required",
@@ -266,10 +268,10 @@ describe("«Пауза» and «Продолжить · до $R»", () => {
     expect(resume.getAttribute("aria-disabled")).toBe("true");
     expect(descriptionOf(resume)).toBe("Сверить можно через 2 минуты после последнего запроса. Потом «Продолжить» покажет новый остаток.");
     expect(noteTitled("Сначала сверка").textContent).toContain(`Studio закрылся, когда 4${NBSP}запроса были в работе. Пока OpenRouter не сверен, они считаются по худшей цене, и запуск не продолжить.`);
-    // M1: paused, nothing is hatched as in flight; the open reserves are inside «Потрачено», said once.
-    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe("Прерванные запросы уже в «Потрачено» по худшей цене — до сверки.");
-    expect(card().querySelector(".ap-spent-bar .ap-hatch")?.getAttribute("style")).toBe("width: 0%;");
-    expect(within(card()).getByRole("img", { name: "Потрачено $1.25 из $4.14" })).toBeDefined();
+    // Paused: nothing is in flight; the open reserves are inside «Потрачено», hatched and said once, from `unsettled`.
+    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
+    expect(card().querySelector(".ap-spent-bar .ap-hatch")?.getAttribute("style")).toBe("width: 6.8%;");
+    expect(within(card()).getByRole("img", { name: "Потрачено $1.25 из $4.14, из них до $0.28 — запросы без ответа" })).toBeDefined();
     fireEvent.click(resume);
     await flush();
     expect(callsOf(engine, "autopilot.resume")).toHaveLength(0);
@@ -291,6 +293,18 @@ describe("«Пауза» and «Продолжить · до $R»", () => {
     expect(noteTitled("Studio перезапустил движок после сбоя")).toBeDefined();
     const rows = within(card()).getAllByRole("row").slice(1);
     expect(rows.map((r) => r.querySelector(".ap-row-phase")?.textContent)).toEqual(["на паузе", "на паузе · 9 из 14 фото", "на паузе"]);
+  });
+
+  test("after a restart the reserves of the earlier process are hatched «без ответа, до сверки» from `unsettled`, and a reconcile takes the line away (ApPausedReconcile)", async () => {
+    const { engine, client, launch } = await started();
+    await act(async () => {
+      await client.request("autopilot.pause", { launchId: launch.launchId });
+    });
+    const restarted = { ...money, inFlight: { requests: 0, openMicros: 0 }, status: "paused", paused: { cause: "engine-restart", at: AT }, avatars: designRows(launch), resumeBlockedBy: "reconcile-required" } as const;
+    announce(engine, vary(launch, { ...restarted, unsettled: { requests: 4, openMicros: 280_000 } }));
+    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
+    announce(engine, vary(launch, { ...restarted, resumeBlockedBy: null, unsettled: { requests: 0, openMicros: 0 } }));
+    expect(card().querySelector(".ap-spent-sub")?.textContent).toBeUndefined();
   });
 });
 
@@ -461,8 +475,8 @@ describe("the holds: each reason with its banner and its fix (LaunchStates «П�
     const rows = designRows(launch).map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, phase: "waiting" as const, waiting: { reason: "paid-hold" as const } } : r));
     announce(
       engine,
-      // While the launch is live its open reserves are `inFlight` — here the requests that got no answer.
-      vary(launch, { ...money, avatars: rows, paidHold: { reason: "network", at: AT, detail: { drops: 3, attempt: 2, nextAt: null } }, resumeBlockedBy: "network" }),
+      // The requests the drops left without an answer are no request in flight any more: they are `unsettled` (S4.6v), and the hold says so.
+      vary(launch, { ...money, inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 4, openMicros: 280_000 }, avatars: rows, paidHold: { reason: "network", at: AT, detail: { drops: 3, attempt: 2, nextAt: null } }, resumeBlockedBy: "network" }),
     );
     const note = noteTitled("Нет ответа от OpenRouter");
     expect(note.textContent).toContain(`Связь пропала 3${NBSP}раза: 2 повтора (через 1 и 5 мин) не помогли — платная часть ждёт. 4${NBSP}запроса без ответа до сверки считаются по худшей цене, до $0.28.`);

@@ -459,3 +459,49 @@ describe("a launch that is not payable now is left quietly (LOW)", () => {
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 });
+
+// ---------- S4.6v: the restore's background read of the slice runs ----------
+
+describe("restore: the slots a started slice could still draw (S4.6v)", () => {
+  const draw = { sceneIds: [1, 2], slices: [{ runId: RUN1, sceneIds: [1, 2], capMicros: 420_000 }] };
+  const sourceOf = (set: ReturnType<FakePort["seed"]>, revision: number) => ({ sceneSetId: set.sceneSetId, avatarId: set.avatarId, revision, scenes: set.scenes, launchDraw: set.launchDraw });
+
+  test("is read in the background and the row shows it", async () => {
+    const r = await rig();
+    const set = r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, count: 2, draw });
+    r.port.statuses.set(RUN1, { finished: false, openSlots: 2 });
+    r.steps.restore(LAUNCH, [sourceOf(set, 1)]);
+    expect(r.steps.mirror(LAUNCH, A)?.resumableSlots).toBe(0);
+    await r.steps.settled();
+    expect(r.steps.mirror(LAUNCH, A)?.resumableSlots).toBe(2);
+  });
+
+  test("with no library behind the port yet, the read waits for the next view of the row instead of giving up", async () => {
+    const r = await rig();
+    const set = r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, count: 2, draw });
+    r.port.statuses.set(RUN1, { finished: false, openSlots: 2 });
+    r.port.libraryOpen = false;
+    r.steps.restore(LAUNCH, [sourceOf(set, 1)]);
+    await r.steps.settled();
+    expect(r.steps.mirror(LAUNCH, A)?.resumableSlots).toBe(0);
+    r.port.libraryOpen = true;
+    r.steps.mirror(LAUNCH, A);
+    await r.steps.settled();
+    expect(r.steps.mirror(LAUNCH, A)?.resumableSlots).toBe(2);
+  });
+
+  test("a set read older than the mirror (the owner edited meanwhile) does not take the revision back", async () => {
+    const r = await rig();
+    const set = r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, count: 2, draw });
+    r.port.statuses.set(RUN1, { finished: false, openSlots: 2 });
+    const gate = deferred();
+    r.port.readGate = gate.promise;
+    r.steps.restore(LAUNCH, [sourceOf(set, 1)]);
+    // The edit lands while the read is pending: the mirror moves to revision 4.
+    r.steps.restore(LAUNCH, [{ ...sourceOf(set, 4), launchDraw: undefined }]);
+    expect(r.steps.mirror(LAUNCH, A)?.setRevision).toBe(4);
+    gate.resolve();
+    await r.steps.settled();
+    expect(r.steps.mirror(LAUNCH, A)?.setRevision).toBe(4);
+  });
+});

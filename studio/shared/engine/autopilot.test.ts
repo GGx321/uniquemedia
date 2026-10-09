@@ -438,6 +438,36 @@ describe("LaunchView", () => {
     expect(LaunchView.safeParse(viewWith({ inFlight: { requests: 1 } })).success).toBe(false);
   });
 
+  describe("unsettled: the open reserves with no request out (S4.6v)", () => {
+    test("is optional, so a view from before it stays valid", () => {
+      expect("unsettled" in view).toBe(false);
+      expect(LaunchView.safeParse(view).success).toBe(true);
+    });
+
+    test("is a count and whole micro-dollars", () => {
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: 2, openMicros: 140_000 } })).success).toBe(true);
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: -1, openMicros: 0 } })).success).toBe(false);
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: 1, openMicros: 0.5 } })).success).toBe(false);
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: 1 } })).success).toBe(false);
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: 1, openMicros: 1, extra: 1 } })).success).toBe(false);
+    });
+
+    test("money without a request is no reserve", () => {
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: 0, openMicros: 1 } })).success).toBe(false);
+    });
+
+    test("it and what is in flight together never exceed what the launch spent, because both are inside it: a reserve counted twice shows here", () => {
+      // spent 1_210_000, in flight 280_000: 930_000 is the most that can be left unsettled.
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: 3, openMicros: 930_000 } })).success).toBe(true);
+      expect(LaunchView.safeParse(viewWith({ unsettled: { requests: 3, openMicros: 930_001 } })).success).toBe(false);
+    });
+
+    test("alone it may use all of the spent sum, with nothing in flight", () => {
+      expect(LaunchView.safeParse(viewWith({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 5, openMicros: 1_210_000 } })).success).toBe(true);
+      expect(LaunchView.safeParse(viewWith({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 5, openMicros: 1_210_001 } })).success).toBe(false);
+    });
+  });
+
   test.each(["reconcile-required", "halt", "ledger", "key", "budget", "network", "internal"])("a resume can be blocked by %s", (resumeBlockedBy) => {
     expect(LaunchView.safeParse(viewWith({ resumeBlockedBy })).success).toBe(true);
   });

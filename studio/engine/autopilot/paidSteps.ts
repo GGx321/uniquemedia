@@ -109,6 +109,14 @@ export function writerCommittedMicros(ledger: Pick<Ledger, "lines" | "closeOf">,
   return sum;
 }
 
+/** The slots the unfinished slices could still draw: a slice with no run folder, or a finished one, has none to give. */
+function openSlotsOf(slices: readonly { runId: string }[], statuses: ReadonlyMap<string, SliceStatus>): number {
+  return slices.reduce((sum, entry) => {
+    const status = statuses.get(entry.runId);
+    return sum + (status !== undefined && !status.finished ? (status.openSlots ?? 0) : 0);
+  }, 0);
+}
+
 export class PaidSteps implements LaunchSteps {
   readonly #d: PaidStepsDeps;
   /** The pass over one avatar that is under way, by `<launchId>:<avatarId>`. */
@@ -121,6 +129,11 @@ export class PaidSteps implements LaunchSteps {
   /** The launches this instance serves (set mirrors are kept for them only), with the latest context of each. */
   readonly #ctxs = new Map<string, LaunchStepsContext>();
   readonly #restored = new Set<string>();
+  /** S4.6v: the restore's background reads of the slices (`resumableSlots`), and who hears that a mirror changed. */
+  readonly #background = new Set<Promise<void>>();
+  /** Restored sets whose slice runs have not been read yet (the engine was not behind the port when the library opened): the first view that asks for the mirror reads them. */
+  readonly #unread = new Map<string, { launchId: string; source: MirrorSource }>();
+  readonly #mirrorListeners: ((launchId: string) => void)[] = [];
   /** Avatars that are in an «avatar-busy» episode: the line is logged once per episode, and the phase is left alone until a job starts. */
   readonly #busyKeys = new Set<string>();
   readonly #readyListeners: (() => void)[] = [];
@@ -212,6 +225,7 @@ export class PaidSteps implements LaunchSteps {
       }
       this.#mirrors.delete(this.#key(ctx.launchId, row.avatarId));
       this.#resumable.delete(this.#key(ctx.launchId, row.avatarId));
+      this.#unread.delete(this.#key(ctx.launchId, row.avatarId));
     }
   }
 
@@ -226,13 +240,32 @@ export class PaidSteps implements LaunchSteps {
 
   mirror(launchId: string, avatarId: string): AvatarMirror | null {
     this.#subscribe();
-    return this.#mirrors.get(this.#key(launchId, avatarId)) ?? null;
+    const key = this.#key(launchId, avatarId);
+    const parked = this.#unread.get(key);
+    if (parked !== undefined) {
+      this.#unread.delete(key);
+      this.#track(this.#refreshResumable(parked.launchId, parked.source));
+    }
+    return this.#mirrors.get(key) ?? null;
   }
 
   /** The sets a library open found: the mirrors are there before «Продолжить», and the launch's set changes are followed from now on. */
   restore(launchId: string, sets: readonly MirrorSource[]): void {
     this.#restored.add(launchId);
+    // A read parked for a library that was left is of no launch of this one.
+    for (const [key, parked] of this.#unread) if (parked.launchId !== launchId) this.#unread.delete(key);
+    this.#subscribe();
     for (const set of sets) this.#remember(launchId, set);
+    // `resumableSlots` needs the slice runs' folders: read in the background, the row shows 0 until then and the launch is announced when they are in (S4.6v).
+    for (const set of sets) if ((set.launchDraw?.slices.length ?? 0) > 0) this.#track(this.#refreshResumable(launchId, set));
+  }
+
+  onMirrorChange(listener: (launchId: string) => void): void {
+    this.#mirrorListeners.push(listener);
+  }
+
+  async settled(): Promise<void> {
+    while (this.#background.size > 0) await Promise.allSettled([...this.#background]);
   }
 
   finishReady(launchId: string): boolean {
@@ -510,13 +543,7 @@ export class PaidSteps implements LaunchSteps {
       }
       limit = Math.max(40, draw.sceneIds.length * 4 + 20);
       const statuses = await port.sliceStatuses(set);
-      this.#resumable.set(
-        this.#key(ctx.launchId, avatarId),
-        draw.slices.reduce((sum, entry) => {
-          const status = statuses.get(entry.runId);
-          return sum + (status !== undefined && !status.finished ? (status.openSlots ?? 0) : 0);
-        }, 0),
-      );
+      this.#resumable.set(this.#key(ctx.launchId, avatarId), openSlotsOf(draw.slices, statuses));
       this.#remember(ctx.launchId, set);
       // A slice that has a run and is not finished is resumed inside its own cap, before anything new is drawn.
       const open = draw.slices.find((entry) => statuses.get(entry.runId)?.finished === false && !spent.has(entry.runId));
@@ -1110,6 +1137,45 @@ export class PaidSteps implements LaunchSteps {
     });
   }
 
+  /** The restore's read of one set's slice runs: how many slots a started slice could still draw. A launch released meanwhile, or a read that fails, leaves the row as it was. */
+  async #refreshResumable(launchId: string, source: MirrorSource): Promise<void> {
+    try {
+      const port = this.#d.port();
+      // No library behind the port yet (it is opening, or being left): not a set that is gone. The next view of the row reads again.
+      if (port.library === null) throw new Error("no library");
+      const stored = await port.library.sceneSets.get(source.avatarId, source.sceneSetId);
+      if (stored === null || stored.launchDraw === undefined) return;
+      const statuses = await port.sliceStatuses(stored);
+      const key = this.#key(launchId, source.avatarId);
+      // Released (stopped, done) or replaced by another set while the folders were read: there is no row to fill.
+      if (this.#mirrors.get(key)?.sceneSetId !== stored.sceneSetId) return;
+      this.#resumable.set(key, openSlotsOf(stored.launchDraw.slices, statuses));
+      // The read is older than the mirror when an edit landed meanwhile: it keeps its newer revision and only the slots are new.
+      const current = this.#mirrors.get(key);
+      if (current === undefined || stored.revision >= current.setRevision) this.#remember(launchId, stored);
+      else this.#mirrors.set(key, { ...current, resumableSlots: this.#resumable.get(key) ?? 0 });
+      this.#notifyMirror(launchId);
+    } catch {
+      // The engine is not behind the port yet, or the library is switching: the next view that asks for this row reads again.
+      this.#unread.set(this.#key(launchId, source.avatarId), { launchId, source });
+    }
+  }
+
+  #track(work: Promise<void>): void {
+    this.#background.add(work);
+    void work.finally(() => this.#background.delete(work));
+  }
+
+  #notifyMirror(launchId: string): void {
+    for (const listener of this.#mirrorListeners) {
+      try {
+        listener(launchId);
+      } catch (error) {
+        this.#warn(`studio engine: a listener of the set mirrors failed (${error instanceof Error ? error.name : typeof error})`);
+      }
+    }
+  }
+
   /** Follows the sets of this instance's launches: an owner's edit during the review moves the revision the view names, and the launch is announced again. */
   #subscribe(): void {
     if (this.#subscribed) return;
@@ -1120,6 +1186,8 @@ export class PaidSteps implements LaunchSteps {
         if (set.launchId === undefined || !(this.#ctxs.has(set.launchId) || this.#restored.has(set.launchId))) return;
         this.#remember(set.launchId, set);
         this.#ctxs.get(set.launchId)?.touch();
+        // A launch restored after a restart has no context to touch until «Продолжить»: the orchestrator hears of it here (S4.6v).
+        if (!this.#ctxs.has(set.launchId)) this.#notifyMirror(set.launchId);
       });
       this.#subscribed = true;
     } catch {

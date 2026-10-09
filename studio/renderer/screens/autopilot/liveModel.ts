@@ -150,12 +150,28 @@ export interface SpentBlock {
 
 const pctOf = (part: number, whole: number): number => (whole <= 0 ? 0 : Math.round(Math.max(0, Math.min(100, (part / whole) * 100)) * 10) / 10);
 
-/** Whether the launch is live (working, or finishing a pause or a stop): only then are its open reserves «in flight» (`inFlight`; 0 while paused). */
+/** Whether the launch is live (working, or finishing a pause or a stop): only then does the card show `inFlight`; a paused launch shows `unsettled` instead. */
 const isLive = (launch: LaunchView): boolean => launch.status === "running" || launch.status === "pausing" || launch.status === "stopping";
 
 /** The launch's requests in flight now: the view's `inFlight` while it is live, none otherwise (round 1 M1: never summed with anything). */
 export function liveRequests(launch: LaunchView): { requests: number; openMicros: number } {
   return isLive(launch) ? launch.inFlight : { requests: 0, openMicros: 0 };
+}
+
+/**
+ * S4.6v: the requests that got no answer and wait for a reconcile: the view's `unsettled` (open reserves no request of the engine is out for, disjoint from `inFlight`), on a paused
+ * launch and under a network hold alike. A view from before `unsettled` has none, and its in-flight requests are the only open reserves it names (the old reading).
+ */
+export function unansweredRequests(launch: LaunchView): { requests: number; openMicros: number } {
+  return launch.unsettled ?? liveRequests(launch);
+}
+
+/** The open part of «Потрачено»: what is hatched and how it is worded. Never the sum of the two figures (round 1 M1): requests in flight while the launch is live, else the unanswered ones. */
+function openPart(launch: LaunchView): { requests: number; openMicros: number; word: "working" | "unanswered" } {
+  const flight = liveRequests(launch);
+  if (launch.unsettled === undefined) return { ...flight, word: launch.paidHold?.reason === "network" ? "unanswered" : "working" };
+  if (flight.requests > 0) return { ...flight, word: "working" };
+  return { ...launch.unsettled, word: "unanswered" };
 }
 
 /**
@@ -166,23 +182,25 @@ const RECONCILE_FIRST = new Set<ResumeBlockedBy>(["reconcile-required", "network
 
 /**
  * «Потрачено $S из $W′» (§4.8: the ledger's, open reserves at worst), the bar with the open part hatched, and what the open part is. While the launch is live
- * the open part is `inFlight`: «вкл. до $0.28 — 4 запроса в работе…», or «без ответа» under a network hold. Paused, nothing is in flight and nothing is hatched;
- * when a reconcile is required one plain line says the open reserves are already inside «Потрачено» (round 1 M1).
+ * and requests are out, the open part is `inFlight`: «вкл. до $0.28 — 4 запроса в работе…». Paused, or under a network hold with nothing out, it is `unsettled`:
+ * «вкл. до $0.28 — 4 запроса без ответа, до сверки» (S4.6v, ApPausedReconcile / ApHoldNetwork); the two are disjoint and never added (round 1 M1). A reconcile that is
+ * required in a view from before `unsettled` keeps one plain line saying the open reserves are already inside «Потрачено».
  */
 export function spentBlock(launch: LaunchView): SpentBlock {
   const free = launch.plannedWorstMicros === 0;
-  const flight = liveRequests(launch);
-  const network = launch.paidHold?.reason === "network";
+  const part = openPart(launch);
+  const unanswered = part.word === "unanswered";
   let sub: string | null = null;
-  if (flight.requests > 0 && flight.openMicros > 0) {
-    sub = network
-      ? `вкл. до ${ceilingUsd(flight.openMicros)} — ${countOf(flight.requests, REQUESTS)} без ответа, до сверки`
-      : `вкл. до ${ceilingUsd(flight.openMicros)} — ${countOf(flight.requests, REQUESTS)} в работе, по худшей цене до ответа`;
-  } else if (launch.status === "paused" && launch.resumeBlockedBy !== null && RECONCILE_FIRST.has(launch.resumeBlockedBy)) {
+  if (part.requests > 0 && part.openMicros > 0) {
+    sub = unanswered
+      ? `вкл. до ${ceilingUsd(part.openMicros)} — ${countOf(part.requests, REQUESTS)} без ответа, до сверки`
+      : `вкл. до ${ceilingUsd(part.openMicros)} — ${countOf(part.requests, REQUESTS)} в работе, по худшей цене до ответа`;
+  } else if (launch.unsettled === undefined && launch.status === "paused" && launch.resumeBlockedBy !== null && RECONCILE_FIRST.has(launch.resumeBlockedBy)) {
+    // Only a view from before `unsettled` has no better word: with it, a reconcile that is required while nothing is unsettled is for something else (a torn line, another job), and no reserve is claimed.
     const restart = launch.paused !== null && launch.paused.cause !== "owner" && launch.resumeBlockedBy === "reconcile-required";
     sub = `${restart ? "Прерванные запросы" : "Запросы без ответа"} уже в «Потрачено» по худшей цене — до сверки.`;
   }
-  const open = Math.min(flight.openMicros, launch.spentMicros);
+  const open = Math.min(part.openMicros, launch.spentMicros);
   const spent = free ? null : spentUsd(launch.spentMicros);
   const of = free ? "бесплатно" : `из ${ceilingUsd(launch.plannedWorstMicros)}`;
   return {
@@ -194,7 +212,7 @@ export function spentBlock(launch: LaunchView): SpentBlock {
     reviewWrites: launch.reviewWritesMicros > 0 ? spentUsd(launch.reviewWritesMicros) : null,
     label: free
       ? "Потрачено: ничего — запуск бесплатный"
-      : `Потрачено ${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}${open > 0 ? `, из них до ${ceilingUsd(open)} — ${network ? "запросы без ответа" : "запросы в работе"}` : ""}`,
+      : `Потрачено ${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}${open > 0 ? `, из них до ${ceilingUsd(open)} — ${unanswered ? "запросы без ответа" : "запросы в работе"}` : ""}`,
   };
 }
 
@@ -358,8 +376,8 @@ export function resumeWhy(launch: LaunchView, blocked: ResumeBlockedBy): string 
         : `«Продолжить» откроется, когда в месяце будет свободно ${need}.`;
     }
     case "network": {
-      const flight = liveRequests(launch);
-      const which = flight.requests > 0 ? `эти ${countOf(flight.requests, REQUESTS)}` : "запросы без ответа";
+      const unanswered = unansweredRequests(launch);
+      const which = unanswered.requests > 0 ? `эти ${countOf(unanswered.requests, REQUESTS)}` : "запросы без ответа";
       return `Сначала сверка — она закроет ${which}. Потом «Продолжить» покажет новый остаток.`;
     }
     case "internal":
@@ -488,10 +506,10 @@ function holdNote(launch: LaunchView, hold: PaidHold, running: boolean, nameOf: 
       }
       const drops = hold.detail.drops;
       const lead = drops >= 3 ? `Связь пропала ${countOf(drops, TIMES)}: 2 повтора (через 1 и 5 мин) не помогли — платная часть ждёт.` : "Связь пропала — платная часть ждёт.";
-      const flight = liveRequests(launch);
+      const unanswered = unansweredRequests(launch);
       const open =
-        flight.requests > 0 && flight.openMicros > 0
-          ? ` ${countOf(flight.requests, REQUESTS)} без ответа до сверки считаются по худшей цене, до ${ceilingUsd(flight.openMicros)}.`
+        unanswered.requests > 0 && unanswered.openMicros > 0
+          ? ` ${countOf(unanswered.requests, REQUESTS)} без ответа до сверки считаются по худшей цене, до ${ceilingUsd(unanswered.openMicros)}.`
           : " Запросы без ответа до сверки считаются по худшей цене.";
       return { ...base, id: "hold-network", tone: "warn", icon: "alert", title: "Нет ответа от OpenRouter", text: `${lead}${open}${goesOn}`, actions: [RECONCILE] };
     }

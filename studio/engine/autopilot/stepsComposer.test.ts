@@ -119,6 +119,33 @@ describe("composeSteps: the parts", () => {
     const steps = composeSteps(IDLE_STEPS, IDLE_STEPS);
     expect(steps.continueAfterReview).toBeUndefined();
     expect(steps.mirror).toBeUndefined();
+    expect(steps.onMirrorChange).toBeUndefined();
+  });
+
+  test("a part's mirror change reaches the one listener the orchestrator registered (S4.6v)", () => {
+    const paid = new FakeSteps();
+    const steps = composeSteps(paid, IDLE_STEPS);
+    const heard: string[] = [];
+    steps.onMirrorChange?.((launchId) => heard.push(launchId));
+    for (const listener of paid.mirrorListeners) listener("launch-x");
+    expect(heard).toEqual(["launch-x"]);
+  });
+
+  test("settled waits for a part's background work, not only for a finish (S4.6v)", async () => {
+    const paid = new FakeSteps();
+    let release = (): void => undefined;
+    paid.settledGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let ended = false;
+    const waiting = composeSteps(paid, IDLE_STEPS).settled().then(() => {
+      ended = true;
+    });
+    await Promise.resolve();
+    expect(ended).toBe(false);
+    release();
+    await waiting;
+    expect(ended).toBe(true);
   });
 });
 

@@ -605,3 +605,61 @@ describe("the marks on videos and tracks", () => {
     });
   });
 });
+
+// S4.6v: the engine's `unsettled` and `inFlight` are disjoint, and the mock plays them the same way.
+describe("the open reserves of a launch (S4.6v)", () => {
+  test("a running launch has its requests in flight and none unsettled", async () => {
+    const mock = world();
+    const launch = await start(mock);
+    expect(launch.status).toBe("running");
+    expect(launch.inFlight.requests).toBeGreaterThan(0);
+    expect(launch.unsettled).toEqual({ requests: 0, openMicros: 0 });
+  });
+
+  test("a paused launch whose ledger needs a reconcile has unsettled reserves and nothing in flight, inside what it spent", async () => {
+    const mock = world();
+    const launch = await start(mock);
+    await unwrap(mock.client.request("autopilot.pause", { launchId: launch.launchId }));
+    mock.engine.requireReconcile(["open-reserves"]);
+    const paused = (await unwrap(mock.client.request("autopilot.get", { launchId: launch.launchId }))).launch;
+    expect(paused.inFlight).toEqual({ requests: 0, openMicros: 0 });
+    expect(paused.unsettled?.requests).toBeGreaterThan(0);
+    expect(paused.unsettled?.openMicros).toBeGreaterThan(0);
+    expect(paused.unsettled?.openMicros).toBeLessThanOrEqual(paused.spentMicros);
+  });
+
+  test("a RUNNING launch while the ledger asks for a reconcile still builds a valid view: the snapshot and the read answer, with nothing unsettled", async () => {
+    const mock = world();
+    const launch = await start(mock);
+    mock.engine.requireReconcile(["open-reserves"]);
+    const snapshot = (await unwrap(mock.client.request("engine.snapshot", {}))).autopilot;
+    expect(snapshot?.unsettled).toEqual({ requests: 0, openMicros: 0 });
+    const read = (await unwrap(mock.client.request("autopilot.get", { launchId: launch.launchId }))).launch;
+    expect(read.inFlight.openMicros + (read.unsettled?.openMicros ?? 0)).toBeLessThanOrEqual(read.spentMicros);
+  });
+
+  test("a paused launch with no avatar drawing invents no unsettled request when the reconcile is not its own", async () => {
+    const mock = world();
+    const launch = await start(mock, { library: true, generate: false });
+    await unwrap(mock.client.request("autopilot.pause", { launchId: launch.launchId }));
+    mock.engine.requireReconcile(["open-reserves"]);
+    const paused = (await unwrap(mock.client.request("autopilot.get", { launchId: launch.launchId }))).launch;
+    expect(paused.unsettled).toEqual({ requests: 0, openMicros: 0 });
+  });
+
+  test("a paused launch with a clean ledger has none", async () => {
+    const mock = world();
+    const launch = await start(mock);
+    const paused = (await unwrap(mock.client.request("autopilot.pause", { launchId: launch.launchId }))).launch;
+    expect(paused.unsettled).toEqual({ requests: 0, openMicros: 0 });
+  });
+
+  test("a reconcile closes them: the next read has none (the mock announces nothing on a money change, as the window's H1 fallback assumes)", async () => {
+    const mock = world();
+    const launch = await start(mock);
+    await unwrap(mock.client.request("autopilot.pause", { launchId: launch.launchId }));
+    mock.engine.requireReconcile(["open-reserves"]);
+    await unwrap(mock.client.request("money.reconcile", {}));
+    expect((await unwrap(mock.client.request("autopilot.get", { launchId: launch.launchId }))).launch.unsettled).toEqual({ requests: 0, openMicros: 0 });
+  });
+});

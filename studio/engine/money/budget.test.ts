@@ -769,3 +769,20 @@ test("nothing is held while a reconcile is required", async () => {
   expect(await budget.tryHold([hold("img#1", 1)])).toMatchObject({ ok: false, reason: "RECONCILE_REQUIRED" });
   expect(budget.status().heldMicros).toBe(0);
 });
+
+// ---------- isInFlight (S4.6v: the launch card tells a live request from an unsettled one) ----------
+
+test("isInFlight is true only for this process's attempt that waits for its response", async () => {
+  const { budget } = await setup();
+  const live = handleOf(await budget.tryReserve(req("live#1", 10_000)));
+  const timedOut = handleOf(await budget.tryReserve(req("timeout#1", 10_000)));
+  const settled = handleOf(await budget.tryReserve(req("done#1", 10_000)));
+  await budget.abandon(timedOut);
+  await budget.settle(settled, { costMicros: 5_000, estimated: false });
+
+  expect(budget.isInFlight("live#1")).toBe(true);
+  expect(budget.isInFlight("timeout#1")).toBe(false);
+  expect(budget.isInFlight("done#1")).toBe(false);
+  expect(budget.isInFlight("never#1")).toBe(false);
+  expect(live.attemptId).toBe("live#1");
+});

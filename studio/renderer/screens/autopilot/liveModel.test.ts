@@ -116,6 +116,75 @@ describe("«Потрачено»", () => {
   });
 });
 
+describe("«Потрачено» from `unsettled` (S4.6v: ApPausedReconcile, ApHoldNetwork)", () => {
+  const OPEN = { requests: 4, openMicros: 280_000 };
+  const NONE = { requests: 0, openMicros: 0 };
+
+  test("paused: the open reserves with no request out are hatched and said «без ответа, до сверки»", () => {
+    const block = spentBlock(paused("quit", { inFlight: NONE, unsettled: OPEN, resumeBlockedBy: "reconcile-required" }));
+    expect(block.sub).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
+    expect(block.openPct).toBe(6.8);
+    expect(block.settledPct + block.openPct).toBe(30.2);
+    expect(block.label).toBe("Потрачено $1.25 из $4.14, из них до $0.28 — запросы без ответа");
+  });
+
+  test("paused: whatever `inFlight` says, a paused launch shows only what is unsettled", () => {
+    const block = spentBlock(paused("owner", { inFlight: { requests: 9, openMicros: 999_000 }, unsettled: { requests: 1, openMicros: 70_000 } }));
+    expect(block.sub).toBe(`вкл. до $0.070 — 1${NBSP}запрос без ответа, до сверки`);
+    expect(block.openPct).toBe(1.7);
+  });
+
+  test("a network hold on a running launch: the requests the drop left are «без ответа», nothing is in flight", () => {
+    const held = launch({ paidHold: hold("network", { detail: { drops: 3, attempt: 2, nextAt: null } }), resumeBlockedBy: "network", inFlight: NONE, unsettled: OPEN });
+    expect(spentBlock(held)).toMatchObject({ sub: `вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`, openPct: 6.8 });
+  });
+
+  test("running: requests in flight are «в работе», and nothing unsettled changes that", () => {
+    const block = spentBlock(launch({ inFlight: OPEN, unsettled: NONE }));
+    expect(block.sub).toBe(`вкл. до $0.28 — 4${NBSP}запроса в работе, по худшей цене до ответа`);
+    expect(block.label).toBe("Потрачено $1.25 из $4.14, из них до $0.28 — запросы в работе");
+  });
+
+  test("running with both: the card shows what is in flight and does not add the unsettled to it", () => {
+    const block = spentBlock(launch({ inFlight: { requests: 2, openMicros: 140_000 }, unsettled: { requests: 2, openMicros: 140_000 } }));
+    expect(block.sub).toBe(`вкл. до $0.14 — 2${NBSP}запроса в работе, по худшей цене до ответа`);
+    expect(block.openPct).toBe(3.4);
+  });
+
+  test("running with nothing in flight shows the unsettled the last drop left, even without a hold", () => {
+    expect(spentBlock(launch({ inFlight: NONE, unsettled: { requests: 1, openMicros: 70_000 } })).sub).toBe(`вкл. до $0.070 — 1${NBSP}запрос без ответа, до сверки`);
+  });
+
+  test("after a reconcile (nothing unsettled) the hatched part and its line are gone", () => {
+    const reconciled = spentBlock(paused("quit", { inFlight: NONE, unsettled: NONE }));
+    expect(reconciled).toMatchObject({ sub: null, openPct: 0, settledPct: 30.2 });
+    expect(reconciled.label).toBe("Потрачено $1.25 из $4.14");
+  });
+
+  test("a reconcile that is required while `unsettled` says there is nothing open claims no reserves: the line is gone (a torn line or another job's reserve)", () => {
+    expect(spentBlock(paused("quit", { inFlight: NONE, unsettled: NONE, resumeBlockedBy: "reconcile-required" })).sub).toBeNull();
+    expect(spentBlock(paused("owner", { inFlight: NONE, unsettled: NONE, resumeBlockedBy: "network" })).sub).toBeNull();
+  });
+
+  test("a view from before `unsettled` keeps the plain line for a required reconcile", () => {
+    expect(spentBlock(paused("quit", { resumeBlockedBy: "reconcile-required" })).sub).toBe("Прерванные запросы уже в «Потрачено» по худшей цене — до сверки.");
+  });
+
+  test("the reconcile first: «она закроет эти N запроса» counts the unsettled ones, on a paused launch too", () => {
+    const l = paused("quit", { inFlight: NONE, unsettled: { requests: 2, openMicros: 140_000 }, resumeBlockedBy: "network" });
+    expect(resumeWhy(l, "network")).toBe(`Сначала сверка — она закроет эти 2${NBSP}запроса. Потом «Продолжить» покажет новый остаток.`);
+  });
+
+  test("the network hold's notice counts the unsettled requests and their ceiling", () => {
+    const stuck = liveNote(
+      launch({ paidHold: hold("network", { detail: { drops: 3, attempt: 2, nextAt: null } }), resumeBlockedBy: "network", inFlight: NONE, unsettled: OPEN, avatars: [libraryRow(A), row(B, { phase: "waiting", slice: null, waiting: { reason: "paid-hold" } })] }),
+      "running",
+      nameOf,
+    );
+    expect(stuck?.text).toContain(`4${NBSP}запроса без ответа до сверки считаются по худшей цене, до $0.28.`);
+  });
+});
+
 describe("the avatars' rows", () => {
   const line = (r: LaunchAvatarView, over: Record<string, unknown> = {}) => {
     const l = launch({ avatars: [libraryRow(A), r], ...over });

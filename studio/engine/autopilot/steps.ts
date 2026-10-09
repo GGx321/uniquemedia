@@ -111,6 +111,13 @@ export interface LaunchSteps {
   mirror?(launchId: string, avatarId: string): AvatarMirror | null;
   /** S4.6b1: the sets a library open found for an unfinished launch, so the mirrors are there before «Продолжить». Synchronous. */
   restore?(launchId: string, sets: readonly MirrorSource[]): void;
+  /**
+   * S4.6v: the composer's and the orchestrator's way to hear that a mirror changed without a context to `touch()` (a restored launch has none until «Продолжить»): called after a mirror was
+   * rebuilt from a changed set, or filled by the restore's background read. The orchestrator announces the launch again.
+   */
+  onMirrorChange?(listener: (launchId: string) => void): void;
+  /** S4.6v: resolves once the part's background bookkeeping is done (the restore's read of the slices). Tests wait on it through `Orchestrator.settled`. Never rejects. */
+  settled?(): Promise<void>;
   /** S4.6b1: the launch is done: release what it holds (unlink its sets, clear its mirrors). Idempotent. Not «Стоп»: nothing is dropped. */
   complete?(ctx: LaunchStepsContext): Promise<void>;
   /**

@@ -6,11 +6,12 @@ import { LaunchView, type LaunchDraftInput, type ResponseMessage } from "../shar
 import { manifestTraits } from "./avatars/records";
 import { createPaidSteps } from "./autopilot/paidSteps";
 import type { LaunchFile } from "./autopilot/launchFile";
+import type { EngineDeps } from "./engine";
 import { openLibrary } from "./library";
 import type { StoredSceneSet } from "./library/sceneSets";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { chatBody, fakeFetch, imageBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
-import { command, engineSettings, failed, GOOD, ledgerLines, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
+import { command, engineSettings, failed, GOOD, ledgerLines, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger, NOW } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -102,7 +103,7 @@ const draftOf = (avatarIds: string[], over: Partial<LaunchDraftInput> = {}): Lau
 type Started = Awaited<ReturnType<typeof boot>>;
 
 /** An engine over the test folders with the paid steps plugged in. `steps: false` leaves the seam idle (a launch that only started). */
-async function boot(net: ReturnType<typeof network>, opts: { budget?: number; steps?: boolean } = {}) {
+async function boot(net: ReturnType<typeof network>, opts: { budget?: number; steps?: boolean; deps?: Partial<EngineDeps> } = {}) {
   await mkdir(join(dir(), "export"), { recursive: true });
   const holder: { engine: Started["engine"] | null } = { engine: null };
   const steps = createPaidSteps({
@@ -114,7 +115,7 @@ async function boot(net: ReturnType<typeof network>, opts: { budget?: number; st
   const started = await startEngine(dir(), {
     init: { settings: engineSettings(dir(), { imageAgeCheck: "off", monthlyBudgetMicros: opts.budget ?? 10_000_000 }) },
     net,
-    deps: { qaGates: FACE, ...(opts.steps === false ? {} : { launchSteps: steps }) },
+    deps: { qaGates: FACE, ...(opts.steps === false ? {} : { launchSteps: steps }), ...opts.deps },
   });
   holder.engine = started.engine;
   return started;
@@ -681,5 +682,116 @@ describe("a listener of the set announcements cannot swallow the event (LOW)", (
     const revision = (await setOf(started, avatarId, sceneSetId))?.revision ?? 0;
     ok(await call(started, "scenes.edit", { sceneSetId, revision, op: { op: "text", sceneId: 1, text: `${SENTENCE} Again.` } }));
     expect(started.events().filter((e) => e.type === "scenes.changed").length).toBeGreaterThan(before);
+  });
+});
+
+// ---------- S4.6v: what the live card reads of the engine ----------
+
+describe("the avatar row right after a restart (S4.6v)", () => {
+  /** A review-ON launch whose set is approved and whose first slice is drawn (its run folder exists, its job never started), then the engine is killed. */
+  async function killedWithADrawnSlice() {
+    const avatarId = await seedAvatar();
+    const first = await boot(network());
+    const launch = await startLaunch(first, draftOf([avatarId], { sceneReview: true }));
+    await reachPhase(launch.launchId, "awaiting-review");
+    const { sceneSetId, setRunId } = generationOf(launch.launchId);
+    const revision = (await setOf(first, avatarId, sceneSetId))?.revision ?? 0;
+    await first.engine.approveLaunchSet({ sceneSetId, launchId: launch.launchId, revision, plannedCount: 3 });
+    await first.engine.drawLaunchSlice({ sceneSetId, launchId: launch.launchId, size: 25, drawMicros: fileOf(launch.launchId).avatars[0]?.allocation.drawMicros ?? 0 });
+    await kill(first);
+    return { avatarId, launch, sceneSetId, setRunId };
+  }
+
+  test("names the slice drawn so far and the slots a started slice could still draw, before «Продолжить»", async () => {
+    const { launch, sceneSetId } = await killedWithADrawnSlice();
+    const second = await boot(network());
+    // The first view asks for the row; the slices' folders are read behind it and the launch is announced when they are in.
+    await viewOf(second, launch.launchId);
+    await second.engine.settled();
+    const view = await viewOf(second, launch.launchId);
+    expect(LaunchView.safeParse(view).success).toBe(true);
+    expect(view.status).toBe("paused");
+    expect(view.avatars[0]).toMatchObject({ sceneSetId, scenes: 3, continuePhotos: 3, slice: { index: 1, total: 1 }, undrawnScenes: 0, resumableSlots: 3 });
+  });
+
+  test("the paused launch is announced again when the set changes after the restart", async () => {
+    const avatarId = await seedAvatar();
+    const first = await boot(network());
+    const launch = await startLaunch(first, draftOf([avatarId], { sceneReview: true }));
+    await reachPhase(launch.launchId, "awaiting-review");
+    const { sceneSetId } = generationOf(launch.launchId);
+    await kill(first);
+    const second = await boot(network());
+    // The window shows the paused card before the owner touches the set.
+    await viewOf(second, launch.launchId);
+    await second.engine.settled();
+    const before = (await setOf(second, avatarId, sceneSetId))?.revision ?? 0;
+    const announcedAt = (): number[] =>
+      second
+        .events()
+        .flatMap((e) => (e.type === "autopilot.changed" ? [e.payload.launch.avatars[0]?.setRevision ?? 0] : []));
+    const seen = announcedAt().length;
+    ok(await call(second, "scenes.edit", { sceneSetId, revision: before, op: { op: "text", sceneId: 1, text: `${SENTENCE} Edited after the restart.` } }));
+    await second.engine.settled();
+    expect(announcedAt().length).toBeGreaterThan(seen);
+    expect(announcedAt().at(-1)).toBeGreaterThan(before);
+  });
+});
+
+describe("the launch id on sets and runs lasts as long as the launch (S4.6v)", () => {
+  test("a launch's set and slice run name it while it is unfinished, and neither does once it is stopped", async () => {
+    const avatarId = await seedAvatar();
+    const started = await boot(network());
+    const launch = await startLaunch(started, draftOf([avatarId], { sceneReview: true }));
+    await reachPhase(launch.launchId, "awaiting-review");
+    const { sceneSetId, setRunId } = generationOf(launch.launchId);
+    const revision = (await setOf(started, avatarId, sceneSetId))?.revision ?? 0;
+    await started.engine.approveLaunchSet({ sceneSetId, launchId: launch.launchId, revision, plannedCount: 3 });
+    await started.engine.drawLaunchSlice({ sceneSetId, launchId: launch.launchId, size: 25, drawMicros: fileOf(launch.launchId).avatars[0]?.allocation.drawMicros ?? 0 });
+
+    const setLaunch = async (): Promise<string | undefined> => {
+      const answer = ok(await call(started, "scenes.get", { avatarId }));
+      return answer.type === "scenes.get" ? answer.result.sceneSet?.launchId : "wrong answer";
+    };
+    const runLaunch = async (): Promise<string | undefined> => {
+      const answer = ok(await call(started, "runs.list", {}));
+      return answer.type === "runs.list" ? answer.result.runs.find((r) => r.runId === setRunId)?.launchId : "wrong answer";
+    };
+    expect(await setLaunch()).toBe(launch.launchId);
+    expect(await runLaunch()).toBe(launch.launchId);
+
+    await launchCommand(started, "autopilot.stop", launch.launchId);
+    expect(await setLaunch()).toBeUndefined();
+    expect(await runLaunch()).toBeUndefined();
+  });
+});
+
+describe("open reserves of an earlier process on the card (S4.6v)", () => {
+  test("a reserve left by the previous process is unsettled, never in flight, and a reconcile clears it from the card", async () => {
+    const avatarId = await seedAvatar();
+    const first = await boot(network());
+    const launch = await startLaunch(first, draftOf([avatarId], { sceneReview: true }));
+    await reachPhase(launch.launchId, "awaiting-review");
+    const { sceneSetId, setRunId } = generationOf(launch.launchId);
+    await kill(first);
+    // The previous process died with a request out: its reserve is open in the ledger, long enough ago for a reconcile to be allowed.
+    await writeLedger(dir(), [
+      { type: "reserve", attemptId: `${sceneSetId}:writer-9#1`, jobId: "job-dead-0001", scope: { runId: setRunId }, model: "x-ai/grok-4.3", worstMicros: 30_000, at: "2026-09-24T09:00:00.000Z" },
+    ]);
+    const clock = { mono: 0, wall: 0 };
+    const second = await boot(network(), { deps: { monotonic: () => clock.mono, clock: () => NOW + clock.wall } });
+    const paused = await viewOf(second, launch.launchId);
+    expect(LaunchView.safeParse(paused).success).toBe(true);
+    expect(paused).toMatchObject({ status: "paused", inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 1, openMicros: 30_000 }, resumeBlockedBy: "reconcile-required" });
+
+    clock.mono = 10 * 60_000;
+    clock.wall = 10 * 60_000;
+    const reconciled = ok(await call(second, "money.reconcile", {}));
+    expect(reconciled.type).toBe("money.reconcile");
+    const announced = (): LaunchView[] => second.events().flatMap((e) => (e.type === "autopilot.changed" ? [e.payload.launch] : []));
+    await second.engine.settled();
+    expect(announced().at(-1)?.unsettled?.requests).toBe(0);
+    const after = await viewOf(second, launch.launchId);
+    expect(after).toMatchObject({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 }, spentMicros: paused.spentMicros, resumeBlockedBy: null });
   });
 });
