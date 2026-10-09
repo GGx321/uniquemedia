@@ -103,6 +103,25 @@ describe("«Видео» on «Фото» with the autopilot", () => {
     expect(within(card("Видео 1")).getByRole("button", { name: /^Удалить видео / }).classList.contains("video-trash-on")).toBe(false);
   });
 
+  test("S4.9d (S4.9c N5): a mark that flips while the delete dialog is open changes nothing in it — the dialog stays as it opened, its words and its way agreeing", async () => {
+    const { client, videoIds } = await openVideos();
+    fireEvent.click(within(card("Видео 1")).getByRole("button", { name: /^Удалить видео / }));
+    const dialog = await screen.findByRole("alertdialog", { name: "Удалить видео 1?" });
+    const lead = (): string => dialog.querySelector(".ap-del-lead")?.textContent ?? "";
+    expect(dialog.querySelector(".ap-del-head .tag")?.textContent).toBe("опубликовано");
+    expect(lead()).toContain("Видео уже опубликовано");
+    // Another window takes the mark off while the owner reads the dialog.
+    await act(async () => {
+      const unmarked = await client.request("videos.setPublished", { videoId: videoIds[0] ?? "", published: false });
+      if (!unmarked.ok) throw new Error(unmarked.error.code);
+    });
+    await flush();
+    expect(within(card("Видео 1")).getByRole("switch", { name: "Опубликовано: Видео 1" }).getAttribute("aria-checked")).toBe("false");
+    expect(dialog.querySelector(".ap-del-head .tag")?.textContent).toBe("опубликовано");
+    expect(lead()).toContain("Видео уже опубликовано");
+    expect(within(dialog).getByRole("radio", { name: /^Удалить видео и отклонить фото/ }).getAttribute("aria-checked")).toBe("true");
+  });
+
   test("marks that read: the dialog says nothing of them", async () => {
     await openVideos();
     fireEvent.click(within(card("Видео 2")).getByRole("button", { name: /^Удалить видео / }));

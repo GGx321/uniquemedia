@@ -9,7 +9,7 @@ import { freePhotos, MIA, NORA, SOFIA } from "../engine/mockEngine.testkit";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
 import { formatUsdTiered } from "../lib/money";
-import { callsOf, describeElement, flush, openSection, setup, tick, type SetupOptions } from "../testing";
+import { callsOf, describeElement, flush, openSection, setup, tick, withText, type SetupOptions } from "../testing";
 import { MIX_KEY } from "./autopilot/launchForm";
 import { GO_WHY } from "./autopilot/planModel";
 import { WORLD_DEBOUNCE_MS } from "./autopilot/useLaunchPlan";
@@ -541,7 +541,10 @@ describe("«Стоп»", () => {
     const dialog = await screen.findByRole("alertdialog", { name: "Остановить запуск?" });
     expect(within(dialog).getByText(/^Новых запросов и рендеров не будет/)).toBeDefined();
     expect(within(dialog).getByText("Останется")).toBeDefined();
-    expect(within(dialog).getByText(/^Потрачено \$[\d.]+ из \$[\d.]+ — остальное запуск уже не потратит\.$/)).toBeDefined();
+    // S4.9d (S4.9b L4): the sums drawn mono, as ApStopConfirm draws them.
+    const spent = within(dialog).getByText(withText(/^Потрачено \$[\d.]+ из \$[\d.]+ — остальное запуск уже не потратит\.$/));
+    expect(Array.from(spent.querySelectorAll(".mono"), (el) => el.textContent ?? "").every((t) => /^\$[\d.]+$/.test(t))).toBe(true);
+    expect(spent.querySelectorAll(".mono").length).toBe(2);
     await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" }))));
     fireEvent.keyDown(window, { key: "Escape" });
     await waitFor(() => expect(screen.queryByRole("alertdialog") === null).toBe(true));

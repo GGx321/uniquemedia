@@ -156,6 +156,19 @@ describe("choosing avatars on «Аватары»", () => {
     expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 2 (2 скрыто фильтром)");
   });
 
+  test("S4.9d (S4.9c N4): «Архив» with a search typed — the filter is what hides the chosen ones, and the bar says so", async () => {
+    await openAvatars();
+    fireEvent.click(box("Mia"));
+    fireEvent.click(box("Sofia"));
+    fireEvent.click(screen.getByRole("radio", { name: "Архив" }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "o" } });
+    expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 2 (2 скрыто фильтром)");
+    // «Активные» with the search: the search is what hides them.
+    fireEvent.click(screen.getByRole("radio", { name: "Активные" }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "sof" } });
+    expect(bar().querySelector(".avatars-sel-n")?.textContent).toBe("Выбрано: 2 (1 скрыто поиском)");
+  });
+
   test("an avatar archived while chosen leaves the choice", async () => {
     const { client } = await openAvatars();
     fireEvent.click(box("Mia"));

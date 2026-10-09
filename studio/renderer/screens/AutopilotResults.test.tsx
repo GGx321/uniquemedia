@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { LaunchDraftInput, LogLine } from "../../shared/engine";
+import { App } from "../App";
+import type { EngineClient } from "../engine/client";
+import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { MIA, SOFIA } from "../engine/mockEngine.testkit";
+import { ManualScheduler } from "../engine/scheduler";
 import { callsOf, describeElement, flush, focusedLabel, openSection, setup } from "../testing";
 import { ELENA, historyLibrary, LINA, octAt, seedHistory } from "./autopilot/historyTestkit";
 import { LOG_PAGE } from "./autopilot/LaunchScreen";
@@ -148,8 +152,14 @@ describe("a launch's page", () => {
     await flush();
     await flush();
     expect(tiles()).toEqual(["видео 1 · Mia"]);
-    expect(within(results()).getByRole("button", { name: "Все 1" })).toBeDefined();
-    expect(within(results()).getByRole("button", { name: "удалённый аватар 0" })).toBeDefined();
+    expect(results().querySelector(".ap-res-bar > .mono")?.textContent).toMatch(/^1 · /);
+    // S4.9d (S4.6g L8): no empty chip for an avatar the library no longer holds and whose videos are all gone; with one avatar left there is nothing to filter
+    // (review L6): no group at all, and «Папка «Готовые видео»» is that avatar's.
+    expect(within(results()).queryByRole("button", { name: /^удалённый аватар/ }) === null).toBe(true);
+    expect(within(results()).queryByRole("group", { name: "Аватар" }) === null).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Папка «Готовые видео»" }));
+    await flush();
+    expect(callsOf(h.engine, "videos.revealFolder").map((c) => c.payload)).toEqual([{ avatarId: MIA.avatarId }]);
     expect(within(results()).queryByRole("alert") === null).toBe(true);
   });
 
@@ -516,5 +526,107 @@ describe("from the launch card", () => {
     await screen.findByRole("heading", { level: 1, name: /^Запуск / });
     await flush();
     expect(document.querySelector(".ap-launch-title .ap-st")?.textContent).toBe("остановлен");
+  });
+});
+
+describe("S4.9d: what the S4.6g review left on a launch's page", () => {
+  /** «видео 2 · Mia», not published: its trash, then «Удалить видео» (the plain way, chosen for it). */
+  async function deletePlain(label: string): Promise<void> {
+    const trash = within(tile(label)).getByRole("button", { name: `Удалить ${label}` });
+    trash.focus();
+    fireEvent.click(trash);
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Удалить видео" }));
+    await flush();
+    await flush();
+  }
+
+  test("L9: after a delete the header counts what the results count — the videos whose records stand — not what the launch made", async () => {
+    await openLatest();
+    expect(document.querySelector(".ap-launch-meta")?.textContent).toContain(` · 6 из 9${NBSP}видео · `);
+    await deletePlain("видео 2 · Mia");
+    await waitFor(() => expect(tiles().includes("видео 2 · Mia")).toBe(false));
+    expect(results().querySelector(".ap-res-bar > .mono")?.textContent).toMatch(/^5 · /);
+    expect(document.querySelector(".ap-launch-meta")?.textContent).toBe(`3${NBSP}аватара · 5 из 9${NBSP}видео · потрачено $1.69 из $4.14 · 14:02–14:31`);
+  });
+
+  test("L3: after the reply «Опубликовано» stays busy until the launch is read again — a quick second click sends nothing, never the same value twice; then the engine's mark shows", async () => {
+    const { engine, scheduler, history } = await openLatest();
+    // No `video.changed` reaches the window, and the next read of the launch answers late: between the reply and that read the page knows only the reply.
+    engine.setDelivery(false);
+    engine.delayNext("autopilot.get", 1_000);
+    fireEvent.click(publishedSwitch("видео 2 · Mia"));
+    await flush();
+    expect(callsOf(engine, "videos.setPublished")).toHaveLength(1);
+    expect(publishedSwitch("видео 2 · Mia").getAttribute("aria-busy")).toBe("true");
+    fireEvent.click(publishedSwitch("видео 2 · Mia"));
+    await flush();
+    expect(callsOf(engine, "videos.setPublished")).toHaveLength(1);
+    // The read the mark asked for lands: the mark shows, and the switch is the owner's again.
+    act(() => scheduler.runAll());
+    await flush();
+    await waitFor(() => expect(checked(publishedSwitch("видео 2 · Mia"))).toBe("true"));
+    expect(publishedSwitch("видео 2 · Mia").getAttribute("aria-busy")).toBeNull();
+    expect(results().querySelector(".ap-res-hide")?.textContent).toBe("Скрыть опубликованные 2");
+    fireEvent.click(publishedSwitch("видео 2 · Mia"));
+    await flush();
+    expect(callsOf(engine, "videos.setPublished").map((c) => c.payload)).toEqual([
+      { videoId: history.latest.videoIds[1], published: true },
+      { videoId: history.latest.videoIds[1], published: false },
+    ]);
+  });
+
+  test("the focus after a delete waits for an answer to a read asked after it: an answer to a read asked before the click cannot call the hand-over off", async () => {
+    // The window's client, with the answers of `autopilot.get` held back while `holding`: each is the engine's answer at the moment it was asked, delivered late.
+    const engine = new MockEngine({ scheduler: new ManualScheduler(), latencyMs: 0, ...historyLibrary() });
+    const history = seedHistory(engine);
+    const base = mockEngineClient(engine);
+    const held: (() => void)[] = [];
+    let holding = false;
+    const client: EngineClient = {
+      ...base,
+      request(type, payload) {
+        const reply = base.request(type, payload);
+        if (type !== "autopilot.get" || !holding) return reply;
+        return new Promise((resolve) => held.push(() => void reply.then(resolve)));
+      },
+    };
+    render(<App client={client} />);
+    await flush();
+    await openSection("Автопилот");
+    await screen.findByRole("heading", { level: 1, name: "Автопилот" });
+    await flush();
+    fireEvent.click(screen.getByRole("button", { name: /^История запусков/ }));
+    await screen.findByRole("heading", { level: 1, name: "История запусков" });
+    await flush();
+    fireEvent.click(within(screen.getByRole("region", { name: "Запуски" })).getAllByRole("button", { name: /^Запуск / })[0] ?? document.body);
+    await screen.findByRole("heading", { level: 1, name: "Запуск 8 окт., 14:02" });
+    await flush();
+    await flush();
+    // The records of the finished videos, in order: Elena's is the last.
+    const elena = history.latest.videoIds.at(-1) ?? "";
+    // A read of the launch is asked before the click (another window marked Elena's video), and its answer is late.
+    holding = true;
+    await act(async () => {
+      await base.request("videos.setPublished", { videoId: elena, published: true });
+    });
+    await flush();
+    holding = false;
+    expect(held).toHaveLength(1);
+    // The delete's own `video.changed` does not reach this window: the late answer lands first, from before the delete, still showing the tile.
+    engine.setDelivery(false);
+    await deletePlain("видео 2 · Mia");
+    await act(async () => {
+      for (const release of held.splice(0)) release();
+    });
+    await flush();
+    expect(tiles().includes("видео 2 · Mia")).toBe(true);
+    // Then a read asked after the delete: the tile has gone, and the focus goes to the one that took its place.
+    engine.setDelivery(true);
+    await act(async () => {
+      await base.request("videos.setPublished", { videoId: elena, published: false });
+    });
+    await flush();
+    await waitFor(() => expect(tiles().includes("видео 2 · Mia")).toBe(false));
+    expect(focusedLabel()).toBe(describeElement(tile("видео 3 · Mia")));
   });
 });

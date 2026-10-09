@@ -9,6 +9,7 @@ import { paidBlockedReason } from "./runForm";
 import { SceneCard, ScenePlaceholder, type SceneWriting } from "./SceneCard";
 import { type IdeaStart, SceneIdeaForm } from "./SceneIdeaForm";
 import { SceneNotices } from "./SceneNotices";
+import { launchWriteHint } from "./launchSet";
 import { focusLost } from "./scenePaid";
 import { ScenePopover } from "./ScenePopover";
 import { placeholderIds } from "./sceneReview";
@@ -264,7 +265,7 @@ export function SceneSetPanel({
               {progressLabel(write, done, total, set.scenes)}
             </span>
             {inLaunch ? (
-              <span className="ap-in" title="Отменить и продолжить — в «Автопилоте»: «Пауза», «Стоп»">
+              <span className="ap-in" title={launchWriteHint(write.kind)}>
                 в запуске автопилота
               </span>
             ) : (

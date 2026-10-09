@@ -2,8 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { HOLDS, LOG_SAMPLES, drawingRow, libraryRow as fixtureLibraryRow, logLine, view as baseView } from "../../../shared/engine/autopilot.fixtures";
 import { LOG_KINDS, LaunchView, LogLine, PaidHold, type LaunchAvatarView } from "../../../shared/engine";
 import {
+  askedView,
   avatarLine,
   durationLabel,
+  endedLine,
   headerMeta,
   headerSub,
   liveNote,
@@ -17,7 +19,9 @@ import {
   shownStatus,
   spentBlock,
   stopSetLine,
+  stopSetLines,
 } from "./liveModel";
+import { sidebarMark } from "./planModel";
 
 // S4.9b: the live card's words for every state the design draws (AutopilotS4.dc.html review-wait … paused-reviewed; LaunchStates «Продолжить», «Пока ждём»,
 // «Пауза и стоп», «Аватары», «Журнал»). Every fixture is parsed by the contract first, so each is a view the engine could send.
@@ -95,7 +99,7 @@ describe("«Потрачено»", () => {
 
   test("a network hold words the open reserves «без ответа», not «в работе»; a free launch reads «бесплатно»", () => {
     const network = launch({ paidHold: hold("network", { detail: { drops: 3, attempt: 2, nextAt: null } }), resumeBlockedBy: "network" });
-    expect(spentBlock(network).sub).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
+    expect(spentBlock(network).sub).toBe(`вкл. до $0.28 за 4${NBSP}запроса без ответа — до сверки`);
     expect(spentBlock(network).openPct).toBe(6.8);
     expect(spentBlock(launch({ inFlight: { requests: 0, openMicros: 0 } })).sub).toBeNull();
     const free = launch({ acceptedMicros: 0, plannedWorstMicros: 0, plannedExpectedMicros: 0, spentMicros: 0, remainingMicros: 0, inFlight: { requests: 0, openMicros: 0 } });
@@ -120,23 +124,25 @@ describe("«Потрачено» from `unsettled` (S4.6v: ApPausedReconcile, ApH
   const OPEN = { requests: 4, openMicros: 280_000 };
   const NONE = { requests: 0, openMicros: 0 };
 
-  test("paused: the open reserves with no request out are hatched and said «без ответа, до сверки»", () => {
+  test("paused after a quit: the open reserves the quit cut off are hatched and said as the mockup does, «за N прерванных запроса — до сверки» (S4.9d)", () => {
     const block = spentBlock(paused("quit", { inFlight: NONE, unsettled: OPEN, resumeBlockedBy: "reconcile-required" }));
-    expect(block.sub).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
+    expect(block.sub).toBe(`вкл. до $0.28 за 4${NBSP}прерванных запроса — до сверки`);
     expect(block.openPct).toBe(6.8);
     expect(block.settledPct + block.openPct).toBe(30.2);
-    expect(block.label).toBe("Потрачено $1.25 из $4.14, из них до $0.28 — запросы без ответа");
+    // The bar's label says what the line under it says.
+    expect(block.label).toBe(`Потрачено $1.25 из $4.14, из них до $0.28 за 4${NBSP}прерванных запроса — до сверки`);
   });
 
   test("paused: whatever `inFlight` says, a paused launch shows only what is unsettled", () => {
     const block = spentBlock(paused("owner", { inFlight: { requests: 9, openMicros: 999_000 }, unsettled: { requests: 1, openMicros: 70_000 } }));
-    expect(block.sub).toBe(`вкл. до $0.070 — 1${NBSP}запрос без ответа, до сверки`);
+    expect(block.sub).toBe(`вкл. до $0.070 за 1${NBSP}запрос без ответа — до сверки`);
     expect(block.openPct).toBe(1.7);
   });
 
   test("a network hold on a running launch: the requests the drop left are «без ответа», nothing is in flight", () => {
     const held = launch({ paidHold: hold("network", { detail: { drops: 3, attempt: 2, nextAt: null } }), resumeBlockedBy: "network", inFlight: NONE, unsettled: OPEN });
-    expect(spentBlock(held)).toMatchObject({ sub: `вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`, openPct: 6.8 });
+    expect(spentBlock(held)).toMatchObject({ sub: `вкл. до $0.28 за 4${NBSP}запроса без ответа — до сверки`, openPct: 6.8 });
+    expect(spentBlock(held).label).toBe(`Потрачено $1.25 из $4.14, из них до $0.28 за 4${NBSP}запроса без ответа — до сверки`);
   });
 
   test("running: requests in flight are «в работе», and nothing unsettled changes that", () => {
@@ -152,7 +158,7 @@ describe("«Потрачено» from `unsettled` (S4.6v: ApPausedReconcile, ApH
   });
 
   test("running with nothing in flight shows the unsettled the last drop left, even without a hold", () => {
-    expect(spentBlock(launch({ inFlight: NONE, unsettled: { requests: 1, openMicros: 70_000 } })).sub).toBe(`вкл. до $0.070 — 1${NBSP}запрос без ответа, до сверки`);
+    expect(spentBlock(launch({ inFlight: NONE, unsettled: { requests: 1, openMicros: 70_000 } })).sub).toBe(`вкл. до $0.070 за 1${NBSP}запрос без ответа — до сверки`);
   });
 
   test("after a reconcile (nothing unsettled) the hatched part and its line are gone", () => {
@@ -487,3 +493,160 @@ describe("«Остановить запуск?» by the phase of each set (round
     expect(namesList(["Mia", "Elena", "Nora"])).toBe("Mia, Elena и Nora");
   });
 });
+
+// ---------- S4.9d: the polish the S4.9b, S4.9c and S4.6g reviews left ----------
+
+describe("S4.9d: «Потрачено» as the mockup words it — the request a quit cut off, the request a drop left (item 1)", () => {
+  const NONE = { requests: 0, openMicros: 0 };
+
+  test("a restart's cut-off requests read «прерванных», one, a few or many, and the label of the bar follows the line", () => {
+    const one = spentBlock(paused("engine-restart", { inFlight: NONE, unsettled: { requests: 1, openMicros: 70_000 }, resumeBlockedBy: "reconcile-required" }));
+    expect(one.sub).toBe(`вкл. до $0.070 за 1${NBSP}прерванный запрос — до сверки`);
+    expect(one.label).toBe(`Потрачено $1.25 из $4.14, из них до $0.070 за 1${NBSP}прерванный запрос — до сверки`);
+    const many = spentBlock(paused("quit", { inFlight: NONE, unsettled: { requests: 5, openMicros: 350_000 }, resumeBlockedBy: "reconcile-required" }));
+    expect(many.sub).toBe(`вкл. до $0.35 за 5${NBSP}прерванных запросов — до сверки`);
+    expect(spentBlock(paused("quit", { inFlight: NONE, unsettled: { requests: 21, openMicros: 350_000 } })).sub).toBe(`вкл. до $0.35 за 21${NBSP}прерванный запрос — до сверки`);
+  });
+
+  test("the owner's own pause, or a network hold kept over a restart: the requests had no answer, they were not cut off", () => {
+    expect(spentBlock(paused("owner", { inFlight: NONE, unsettled: { requests: 4, openMicros: 280_000 }, resumeBlockedBy: "network" })).sub).toBe(`вкл. до $0.28 за 4${NBSP}запроса без ответа — до сверки`);
+    const kept = paused("quit", { inFlight: NONE, unsettled: { requests: 4, openMicros: 280_000 }, resumeBlockedBy: "network", paidHold: hold("network", { detail: { drops: 3, attempt: 2, nextAt: null } }) });
+    expect(spentBlock(kept).sub).toBe(`вкл. до $0.28 за 4${NBSP}запроса без ответа — до сверки`);
+    expect(spentBlock(kept).label).toBe(`Потрачено $1.25 из $4.14, из них до $0.28 за 4${NBSP}запроса без ответа — до сверки`);
+  });
+
+  test("the line and the bar's label name one figure: the hatched part, never more than «Потрачено» holds", () => {
+    // The contract keeps the open reserves inside `spentMicros`; the card's H1 interim takes `spentMicros` from `autopilot.get` over an announced view, so the
+    // two can disagree for a moment — drawn and said capped, the same in both places.
+    const announced = paused("quit", { inFlight: NONE, unsettled: { requests: 4, openMicros: 280_000 }, resumeBlockedBy: "reconcile-required" });
+    const block = spentBlock({ ...announced, spentMicros: 250_000, remainingMicros: 3_890_000 });
+    expect(block.sub).toBe(`вкл. до $0.25 за 4${NBSP}прерванных запроса — до сверки`);
+    expect(block.label).toBe(`Потрачено $0.25 из $4.14, из них до $0.25 за 4${NBSP}прерванных запроса — до сверки`);
+  });
+
+  test("requests in flight keep their words («в работе, по худшей цене до ответа»), and their label", () => {
+    const block = spentBlock(launch({ inFlight: { requests: 4, openMicros: 280_000 }, unsettled: NONE }));
+    expect(block.sub).toBe(`вкл. до $0.28 — 4${NBSP}запроса в работе, по худшей цене до ответа`);
+    expect(block.label).toBe("Потрачено $1.25 из $4.14, из них до $0.28 — запросы в работе");
+  });
+});
+
+describe("S4.9d: the one «бесплатно» rule, and «из $0» for an A2 breach (S4.9c N2, N3)", () => {
+  const FREE = { acceptedMicros: 0, plannedWorstMicros: 0, plannedExpectedMicros: 0, remainingMicros: 0, inFlight: { requests: 0, openMicros: 0 } };
+  const ENDED = { status: "done", endedAt: "2026-10-08T14:31:00.000Z", paused: null };
+
+  test("«Потрачено»: free only when nothing was planned AND nothing spent; a spend over a W′ of 0 shows the engine's figures «из $0»", () => {
+    expect(spentBlock(launch({ ...FREE, spentMicros: 0 }))).toMatchObject({ spent: null, of: "бесплатно", label: "Потрачено: ничего — запуск бесплатный" });
+    const breach = spentBlock(launch({ ...FREE, spentMicros: 300_000 }));
+    expect(breach).toMatchObject({ spent: "$0.30", of: "из $0", label: "Потрачено $0.30 из $0" });
+    // Planned, nothing spent yet: never «бесплатно».
+    expect(spentBlock(launch({ spentMicros: 0, inFlight: { requests: 0, openMicros: 0 } }))).toMatchObject({ of: "из $4.14" });
+  });
+
+  test("the folded line of an ended card (1200): the same rule", () => {
+    const span = /\d\d:\d\d–\d\d:\d\d$/;
+    const free = endedLine(launch({ ...FREE, ...ENDED, spentMicros: 0 }));
+    expect(free).toMatch(/^10 из 20 видео · бесплатно · /);
+    expect(free).toMatch(span);
+    expect(endedLine(launch({ ...FREE, ...ENDED, spentMicros: 300_000 }))).toMatch(/^10 из 20 видео · \$0\.30 из \$0 · \d\d:\d\d–\d\d:\d\d$/);
+    expect(endedLine(launch({ ...ENDED, spentMicros: 1_690_000 }))).toMatch(/^10 из 20 видео · \$1\.69 из \$4\.14 · /);
+  });
+
+  test("a stopped launch's line and «Продолжить» of a free one say the same of the money", () => {
+    const stopped = { status: "stopped", endedAt: "2026-10-08T14:09:00.000Z", paused: null };
+    expect(headerSub(launch({ ...FREE, ...stopped, spentMicros: 0 }), "stopped", nameOf)).toBe(`10 из 20${NBSP}видео готовы.`);
+    expect(headerSub(launch({ ...FREE, ...stopped, spentMicros: 300_000 }), "stopped", nameOf)).toBe(`10 из 20${NBSP}видео готовы. Потрачено $0.30 из $0.`);
+  });
+});
+
+describe("S4.9d: log tones as the design colours them (item 2, LaunchStates «Журнал»)", () => {
+  test("a slot that used up its tries and a launch made smaller are orange (warn), not plain", () => {
+    expect(logText(LogLine.parse(logLine("photo-failed")), true).tone).toBe("warn");
+    expect(logText(LogLine.parse(logLine("degrade")), true).tone).toBe("warn");
+    expect(logText(LogLine.parse(logLine("degrade", { fewerVideos: 0 })), true).tone).toBe("warn");
+    // Their neighbours on the sheet stay plain.
+    expect(logText(LogLine.parse(logLine("photo-retry")), true).tone).toBe("plain");
+    expect(logText(LogLine.parse(logLine("video-done")), true).tone).toBe("plain");
+  });
+});
+
+describe("S4.9d: the export folder's wait only while the launch runs (item 6, S4.9b note)", () => {
+  const FREE_HOLD = { reason: "export", at: "2026-10-08T14:02:00.000Z", detail: { exportReason: "missing", neededBytes: null, freeBytes: null } };
+
+  test("running: the notice; pausing, paused, stopping, ended: none of it, and the sidebar does not say «ждёт»", () => {
+    expect(liveNote(launch({ freeHold: FREE_HOLD }), "running", nameOf)?.id).toBe("free-export-missing");
+    expect(liveNote(launch({ freeHold: FREE_HOLD }), "pausing", nameOf)).toBeNull();
+    expect(liveNote(launch({ freeHold: FREE_HOLD, status: "stopping" }), "stopping", nameOf)).toBeNull();
+    expect(liveNote(paused("owner", { freeHold: FREE_HOLD }), "paused", nameOf)).toBeNull();
+    expect(liveNote(paused("quit", { freeHold: FREE_HOLD }), "paused", nameOf)?.id).toBe("restart-quit");
+    expect(sidebarMark(paused("owner", { freeHold: FREE_HOLD }), null)?.text).toBe("пауза");
+    expect(sidebarMark(launch({ freeHold: FREE_HOLD }), null)?.text).toBe("ждёт");
+  });
+});
+
+describe("S4.9d: «Остановить запуск?» lists the sets that change first (S4.9b L4, ApStopConfirm)", () => {
+  test("a set back on «Фото» and a set drawn in part before an avatar whose nothing changes; the launch's order kept inside each", () => {
+    const E = "avatar-elena-0003";
+    const N = "avatar-nora-0004";
+    const l = launch({
+      draft: { ...baseView.draft, avatarIds: [A, B, E, N] },
+      avatars: [
+        libraryRow(A),
+        row(B, { phase: "awaiting-review", slice: null, photos: { done: 0, total: 14 } }),
+        row(E, { slice: { index: 1, total: 1 }, photos: { done: 3, total: 5 }, undrawnScenes: 0, resumableSlots: 2 }),
+        row(N, { phase: "montage", photos: { done: 14, total: 14 }, undrawnScenes: 0, resumableSlots: 0 }),
+      ],
+    });
+    const names: Record<string, string> = { [A]: "Mia", [B]: "Sofia", [E]: "Elena", [N]: "Nora" };
+    expect(stopSetLines(l, (id) => names[id] ?? "?").map((s) => `${s.name}: ${s.phase}`)).toEqual(["Sofia: ждёт проверки", "Elena: рисуется 3 из 5", "Mia: только библиотека", "Nora: нарисован"]);
+  });
+});
+
+// ---------- S4.9d review LOWs ----------
+
+describe("S4.9d review LOWs on the card's money", () => {
+  const NONE = { requests: 0, openMicros: 0 };
+  const OPEN = { requests: 4, openMicros: 280_000 };
+  const FREE = { acceptedMicros: 0, plannedWorstMicros: 0, plannedExpectedMicros: 0, remainingMicros: 0, inFlight: NONE };
+
+  test("L1: while the H1 interim stands, the open reserves come from the same answer as the spend — a reconcile done reads «до сверки» no more", () => {
+    const announced = paused("quit", { inFlight: NONE, unsettled: OPEN, resumeBlockedBy: "reconcile-required" });
+    const answer = paused("quit", { inFlight: NONE, unsettled: NONE, resumeBlockedBy: null });
+    const shown = askedView(announced, answer);
+    expect([shown.resumeBlockedBy, shown.spentMicros, shown.remainingMicros]).toEqual([null, answer.spentMicros, answer.remainingMicros]);
+    expect(shown.unsettled).toEqual(NONE);
+    expect(spentBlock(shown).sub).toBeNull();
+    // A running launch's requests in flight are the answer's too.
+    const flying = askedView(launch({ inFlight: OPEN }), launch({ inFlight: { requests: 1, openMicros: 70_000 } }));
+    expect(flying.inFlight).toEqual({ requests: 1, openMicros: 70_000 });
+  });
+
+  test("L3: «Сначала сверка» names the ceiling of the cut-off requests, as ApPausedReconcile does (and as the network hold's banner does)", () => {
+    const cut = liveNote(paused("quit", { inFlight: NONE, unsettled: OPEN, resumeBlockedBy: "reconcile-required", logTail: [logLine("host-quit")] }), "paused", nameOf);
+    expect(cut?.text).toBe(`Studio закрылся, когда 4${NBSP}запроса были в работе. Пока OpenRouter не сверен, они считаются по худшей цене — до $0.28, — и запуск не продолжить.`);
+    const unnamed = liveNote(paused("quit", { inFlight: NONE, unsettled: OPEN, resumeBlockedBy: "reconcile-required" }), "paused", nameOf);
+    expect(unnamed?.text).toBe("В журнале расходов остались запросы прошлого запуска Studio. Пока OpenRouter не сверен, они считаются по худшей цене — до $0.28, — и запуск не продолжить.");
+    // Nothing unsettled (or a view from before `unsettled`): no sum is claimed.
+    expect(liveNote(paused("quit", { inFlight: NONE, unsettled: NONE, resumeBlockedBy: "reconcile-required", logTail: [logLine("host-quit")] }), "paused", nameOf)?.text).toBe(
+      `Studio закрылся, когда 4${NBSP}запроса были в работе. Пока OpenRouter не сверен, они считаются по худшей цене, и запуск не продолжить.`,
+    );
+  });
+
+  test("L10: a paused launch reads «бесплатный» only when nothing was planned and nothing spent; an A2 breach says it may spend nothing more", () => {
+    expect(headerSub(paused("owner", { ...FREE, spentMicros: 0 }), "paused", nameOf)).toBe("Ничего не рендерится. «Продолжить» соберёт остальные видео — запуск бесплатный.");
+    expect(headerSub(paused("owner", { ...FREE, spentMicros: 300_000 }), "paused", nameOf)).toBe(
+      "Ничего не тратится и не рендерится. «Продолжить» не разрешит новых трат — от предела $0 ничего не осталось.",
+    );
+    expect(resumeTitle(0, 0, 0)).toBe("Продолжить · бесплатно");
+    expect(resumeTitle(0, 0, 300_000)).toBe("Продолжить · без трат");
+  });
+
+  test("L11: «$0.30 из $0» fills the bar, as the month's bar does with a spend over a budget of 0; a spend over W′ never draws past the end", () => {
+    const breach = spentBlock(paused("owner", { ...FREE, spentMicros: 300_000 }));
+    expect([breach.settledPct, breach.openPct]).toEqual([100, 0]);
+    const over = spentBlock({ ...paused("owner", { inFlight: NONE, unsettled: { requests: 1, openMicros: 70_000 } }), plannedWorstMicros: 1_000_000, spentMicros: 1_400_000 });
+    expect(over.settledPct + over.openPct).toBe(100);
+    expect(over.openPct).toBe(5);
+  });
+});
+

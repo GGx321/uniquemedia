@@ -7,7 +7,9 @@ import { ErrorNotice, Notice } from "../../ui/Notice";
 import { useMounted } from "../photos/shared";
 import { useOverflows } from "./layout";
 import {
+  askedView,
   avatarLine,
+  endedLine,
   headerMeta,
   headerSub,
   liveNote,
@@ -17,12 +19,11 @@ import {
   resumeWhy,
   shownStatus,
   spentBlock,
-  spentUsd,
   type AvatarLine,
   type LiveNote,
   type NoteAction,
 } from "./liveModel";
-import { ceilingUsd, clockLabel, launchTitle, videosOf } from "./planModel";
+import { ceilingUsd, launchTitle, videosOf } from "./planModel";
 import { StopDialog } from "./StopDialog";
 
 // S4.9b: the live launch card (AutopilotS4.dc.html, states review-wait … paused-reviewed; LaunchStates; README decisions 6–9 and round 1 M6). Its header —
@@ -103,11 +104,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
   const sending = useRef(false);
 
   const current = asked !== null && asked.base === engineLaunch ? asked : null;
-  // From the engine's answer only what decides «Продолжить»: what closes it, and R with the spend it is made of (one R everywhere, L10).
-  const launch: LaunchView =
-    current === null
-      ? engineLaunch
-      : { ...engineLaunch, resumeBlockedBy: current.view.resumeBlockedBy, spentMicros: current.view.spentMicros, remainingMicros: current.view.remainingMicros };
+  const launch: LaunchView = current === null ? engineLaunch : askedView(engineLaunch, current.view);
   const status = shownStatus(launch, { pause: pauseSent === launch.launchId, stop: stopSent === launch.launchId });
   const ended = status === "done" || status === "stopped";
   const note = liveNote(launch, status, nameOf);
@@ -283,7 +280,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
       onClick={resumeOpen ? () => void resume() : undefined}
     >
       {resuming && <span className="spin ap-btn-spin" aria-hidden="true" />}
-      {resumeTitle(remaining, launch.plannedWorstMicros)}
+      {resumeTitle(remaining, launch.plannedWorstMicros, launch.spentMicros)}
     </button>
   );
 
@@ -410,15 +407,6 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
   );
 }
 
-/** At 1200 the ended card folds to a line (decision 1), so «Запустить» stays on screen: «28 из 30 видео · $1.69 из $4.14». */
-function endedLine(launch: LaunchView): string {
-  const { done, planned } = videosOf(launch);
-  const spent = launch.plannedWorstMicros === 0 && launch.spentMicros === 0 ? "бесплатно" : `${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}`;
-  // S4.9c fix round 1 (ApDone at 1200): the span joins the line, so the header keeps the title and «Результаты · N» on one row.
-  const span = launch.endedAt === null ? null : `${clockLabel(launch.createdAt)}–${clockLabel(launch.endedAt)}`;
-  return [`${done} из ${planned} видео`, spent, span].filter((part) => part !== null).join(" · ");
-}
-
 function LiveNoteView({
   note,
   textId,
@@ -542,12 +530,21 @@ function SpentView({ launch }: { launch: LaunchView }) {
   );
 }
 
-/** «Фото · Монтаж · Готово» for every avatar of the launch: its phase in words and colour, three bars, and its one action. */
+/**
+ * «Фото · Монтаж · Готово» for every avatar of the launch: its phase in words and colour, three bars, and its one action. A table of five columns (S4.9b L14):
+ * the avatar (the row's header), its phase with the action, then the three bars; the first two headers are for a screen reader only, the design draws none.
+ */
 function AvatarRows({ launch, nameOf, onOpen }: { launch: LaunchView; nameOf: (avatarId: string) => string; onOpen: (avatarId: string, kind: "photos" | "avatars") => void }) {
   const lines: AvatarLine[] = launch.avatars.map((row) => avatarLine(launch, row, nameOf(row.avatarId)));
   return (
     <div className="ap-rows" role="table" aria-label="Ход по аватарам">
       <div className="ap-grid3 ap-rows-head" role="row">
+        <span role="columnheader" className="sr-only">
+          Аватар
+        </span>
+        <span role="columnheader" className="sr-only">
+          Ход
+        </span>
         <span role="columnheader" className="faint">
           Фото
         </span>
@@ -564,14 +561,16 @@ function AvatarRows({ launch, nameOf, onOpen }: { launch: LaunchView; nameOf: (a
             <span role="rowheader" className="ap-row-name">
               {line.name}
             </span>
-            <span className={`ap-row-phase ap-fg-${line.tone}`} title={line.phase}>
-              {line.phase}
-            </span>
-            {line.action !== null && (
-              <button type="button" className="btn btn-xs ap-row-act" onClick={() => onOpen(line.avatarId, line.action?.kind ?? "photos")} aria-label={`${line.action.label} · ${line.name}`}>
-                {line.action.label}
-              </button>
-            )}
+            <div role="cell" className="ap-row-state">
+              <span className={`ap-row-phase ap-fg-${line.tone}`} title={line.phase}>
+                {line.phase}
+              </span>
+              {line.action !== null && (
+                <button type="button" className="btn btn-xs ap-row-act" onClick={() => onOpen(line.avatarId, line.action?.kind ?? "photos")} aria-label={`${line.action.label} · ${line.name}`}>
+                  {line.action.label}
+                </button>
+              )}
+            </div>
           </div>
           <div className="ap-grid3">
             {line.cells.map((cell, i) => (

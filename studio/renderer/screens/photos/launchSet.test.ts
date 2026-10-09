@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { drawingRow, view } from "../../../shared/engine/autopilot.fixtures";
 import { LaunchView, type RunSummary } from "../../../shared/engine";
-import { isLaunchBatch, launchGo, type LaunchLink } from "./launchSet";
+import { emptySetToFill, isLaunchBatch, launchGo, launchWriteHint, type LaunchLink } from "./launchSet";
+import { sceneSet, written } from "./sceneFixtures";
 
 // S4.9b round 1: which batch on «Фото» is the launch's (M2), and what the launch's strip offers while «Стоп» is on its way (L1).
 
@@ -47,5 +48,27 @@ describe("the strip while «Стоп» is on its way (L1)", () => {
   test("no «Продолжить запуск»: the set goes back to «Фото» as an ordinary one", () => {
     const awaiting = link({ status: "stopping", avatars: view.avatars.map((a) => (a.avatarId === A ? { ...a, phase: "awaiting-review", slice: null } : a)) });
     expect(launchGo(awaiting)).toEqual({ kind: "stopping", text: "Запуск останавливается — набор вернётся на «Фото» обычным." });
+  });
+});
+
+// ---------- S4.9d: what the S4.9b review left on «Фото» ----------
+
+describe("S4.9d (S4.9b L2): an empty set opens «по описанию» by itself only when it is the owner's", () => {
+  test("the owner's empty set with nothing written: yes; a launch's: never — a launch draws no own scene, and the form would sit armed until the set came back", () => {
+    const empty = sceneSet([], { sceneSetId: "set-0009" });
+    expect(emptySetToFill(empty, null)).toBe("set-0009");
+    expect(emptySetToFill(empty, link())).toBeNull();
+    expect(emptySetToFill(sceneSet(written(3)), null)).toBeNull();
+    expect(emptySetToFill(sceneSet([], { write: { kind: "compose", count: 14 } }), null)).toBeNull();
+    expect(emptySetToFill(null, null)).toBeNull();
+  });
+});
+
+describe("S4.9d (S4.9b L8): the hint where a write of a launch's set has no «Отменить»", () => {
+  test("the launch's own writes are stopped from «Автопилот»; the owner's rewrite during the review is not, and the hint says what is true of it", () => {
+    expect(launchWriteHint("compose")).toBe("Отменить и продолжить — в «Автопилоте»: «Пауза», «Стоп»");
+    expect(launchWriteHint("unwritten")).toBe("Отменить и продолжить — в «Автопилоте»: «Пауза», «Стоп»");
+    expect(launchWriteHint("rewrite")).toBe("Ваша правка сцен: платится отдельно от запуска («Правки сцен»). «Пауза» и «Стоп» её не останавливают — она допишется сама.");
+    expect(launchWriteHint("rewrite")).not.toContain("«Пауза», «Стоп»");
   });
 });

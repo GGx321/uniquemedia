@@ -5,7 +5,7 @@ import type { EngineClient } from "../engine/client";
 import type { MockEngine } from "../engine/mockEngine";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import { formatUsdTiered } from "../lib/money";
-import { callsOf, describeElement, flush, openSection, setup } from "../testing";
+import { callsOf, describeElement, flush, openSection, setup, withText } from "../testing";
 
 // S4.9b: the live launch card of «Автопилот» against the mock engine (AutopilotS4.dc.html, states review-wait … paused-reviewed; LaunchStates; plan §3.5–§3.8,
 // §4.6–§4.8, §18). The mock moves a launch only by the owner's clicks (pause, resume, stop, the review hand-off); every other state the engine can send — a
@@ -268,11 +268,12 @@ describe("«Пауза» and «Продолжить · до $R»", () => {
     expect(resume.textContent).toBe("Продолжить · до $2.89");
     expect(resume.getAttribute("aria-disabled")).toBe("true");
     expect(descriptionOf(resume)).toBe("Сверить можно через 2 минуты после последнего запроса. Потом «Продолжить» покажет новый остаток.");
-    expect(noteTitled("Сначала сверка").textContent).toContain(`Studio закрылся, когда 4${NBSP}запроса были в работе. Пока OpenRouter не сверен, они считаются по худшей цене, и запуск не продолжить.`);
+    // S4.9d review L3: the banner names the ceiling, as ApPausedReconcile does.
+    expect(noteTitled("Сначала сверка").textContent).toContain(`Studio закрылся, когда 4${NBSP}запроса были в работе. Пока OpenRouter не сверен, они считаются по худшей цене — до $0.28, — и запуск не продолжить.`);
     // Paused: nothing is in flight; the open reserves are inside «Потрачено», hatched and said once, from `unsettled`.
-    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
+    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 за 4${NBSP}прерванных запроса — до сверки`);
     expect(card().querySelector(".ap-spent-bar .ap-hatch")?.getAttribute("style")).toBe("width: 6.8%;");
-    expect(within(card()).getByRole("img", { name: "Потрачено $1.25 из $4.14, из них до $0.28 — запросы без ответа" })).toBeDefined();
+    expect(within(card()).getByRole("img", { name: `Потрачено $1.25 из $4.14, из них до $0.28 за 4${NBSP}прерванных запроса — до сверки` })).toBeDefined();
     fireEvent.click(resume);
     await flush();
     expect(callsOf(engine, "autopilot.resume")).toHaveLength(0);
@@ -296,14 +297,14 @@ describe("«Пауза» and «Продолжить · до $R»", () => {
     expect(rows.map((r) => r.querySelector(".ap-row-phase")?.textContent)).toEqual(["на паузе", "на паузе · 9 из 14 фото", "на паузе"]);
   });
 
-  test("after a restart the reserves of the earlier process are hatched «без ответа, до сверки» from `unsettled`, and a reconcile takes the line away (ApPausedReconcile)", async () => {
+  test("after a restart the reserves of the earlier process are hatched «за N прерванных запроса — до сверки» from `unsettled`, and a reconcile takes the line away (ApPausedReconcile)", async () => {
     const { engine, client, launch } = await started();
     await act(async () => {
       await client.request("autopilot.pause", { launchId: launch.launchId });
     });
     const restarted = { ...money, inFlight: { requests: 0, openMicros: 0 }, status: "paused", paused: { cause: "engine-restart", at: AT }, avatars: designRows(launch), resumeBlockedBy: "reconcile-required" } as const;
     announce(engine, vary(launch, { ...restarted, unsettled: { requests: 4, openMicros: 280_000 } }));
-    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
+    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 за 4${NBSP}прерванных запроса — до сверки`);
     announce(engine, vary(launch, { ...restarted, resumeBlockedBy: null, unsettled: { requests: 0, openMicros: 0 } }));
     expect(card().querySelector(".ap-spent-sub")?.textContent).toBeUndefined();
   });
@@ -487,8 +488,8 @@ describe("the holds: each reason with its banner and its fix (LaunchStates «П�
     expect(within(note).getByRole("button", { name: "Перейти к сверке" })).toBeDefined();
     expect(descriptionOf(within(note).getByRole("button", { name: /^Продолжить/ }))).toBe(`Сначала сверка — она закроет эти 4${NBSP}запроса. Потом «Продолжить» покажет новый остаток.`);
     // M1: «без ответа», not «в работе»; counted once.
-    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 — 4${NBSP}запроса без ответа, до сверки`);
-    expect(within(card()).getByRole("img", { name: "Потрачено $1.25 из $4.14, из них до $0.28 — запросы без ответа" })).toBeDefined();
+    expect(card().querySelector(".ap-spent-sub")?.textContent).toBe(`вкл. до $0.28 за 4${NBSP}запроса без ответа — до сверки`);
+    expect(within(card()).getByRole("img", { name: `Потрачено $1.25 из $4.14, из них до $0.28 за 4${NBSP}запроса без ответа — до сверки` })).toBeDefined();
   });
 
   test("credits: «Продолжить» stays open (a 402 brings the hold back at no cost) and sends R", async () => {
@@ -603,7 +604,7 @@ describe("the review hand-off", () => {
 });
 
 describe("«Стоп» says what becomes of each set (ApStopConfirm, round 1 M2)", () => {
-  test("by the phase of each set, from `undrawnScenes` and `resumableSlots`", async () => {
+  test("by the phase of each set, from `undrawnScenes` and `resumableSlots`; the sets that change first, the figures mono (S4.9d, S4.9b L4)", async () => {
     const { engine, launch } = await started();
     const rows = designRows(launch).map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, phase: "awaiting-review" as const, slice: null, photos: { done: 0, total: 14 } } : r.avatarId === ELENA.avatarId ? { ...r, phase: "drawing" as const, photos: { done: 3, total: 5 }, slice: { index: 1, total: 1 }, resumableSlots: 2 } : r));
     announce(engine, vary(launch, { ...money, inFlight: { requests: 2, openMicros: 140_000 }, avatars: rows }));
@@ -611,12 +612,17 @@ describe("«Стоп» says what becomes of each set (ApStopConfirm, round 1 M2)
     const dialog = await screen.findByRole("alertdialog", { name: "Остановить запуск?" });
     const sets = within(dialog).getByRole("list", { name: "Наборы сцен" });
     const items = Array.from(sets.querySelectorAll("li")).map((li) => li.textContent);
+    // ApStopConfirm's order: the sets «Стоп» changes (Sofia's back on «Фото», Elena's drawn in part), then Mia, whose library nothing changes.
     expect(items).toEqual([
-      "Miaтолько библиотекаНаборов сцен нет — ничего не меняется.",
       "Sofiaждёт проверкиНабор вернётся на «Фото» обычным: отрисовать его или удалить — решите там. За составление уже заплачено.",
       `Elenaрисуется 3 из 5Набор останется отрисованным частично. Начатую партию (осталось 2${NBSP}фото) можно доделать на «Фото» своим кликом; других сцен в наборе нет.`,
+      "Miaтолько библиотекаНаборов сцен нет — ничего не меняется.",
     ]);
-    expect(within(dialog).getByText(/^Новых запросов и рендеров не будет\. Запросы, что уже в работе \(2\), закончатся сами/)).toBeDefined();
+    const lead = within(dialog).getByText(withText(/^Новых запросов и рендеров не будет\. Запросы, что уже в работе \(2\), закончатся сами/));
+    expect(Array.from(lead.querySelectorAll(".mono"), (el) => el.textContent)).toEqual(["2"]);
+    const stays = dialog.querySelector(".ap-stop-stays li");
+    expect(stays?.querySelector(".mono")?.textContent).toMatch(/^\d+$/);
+    expect(Array.from(dialog.querySelectorAll(".ap-stop-spent .mono"), (el) => el.textContent)).toEqual(["$1.25", "$4.14"]);
     await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" }))));
   });
 });
@@ -658,5 +664,25 @@ describe("the sidebar's mark, from the view", () => {
     await openSection("Автопилот");
     await openSection("Аватары");
     expect(nav().getAttribute("aria-describedby")).toBeNull();
+  });
+});
+
+describe("S4.9d: the avatars' rows as a table a screen reader can walk (S4.9b L14)", () => {
+  test("five column headers — the avatar, its phase, Фото, Монтаж, Готово — and in every row one header and four cells; the row's action sits in its phase's cell", async () => {
+    const { engine, launch } = await started();
+    const rows = designRows(launch).map((r) => (r.avatarId === SOFIA.avatarId ? { ...r, phase: "awaiting-review" as const, slice: null, photos: { done: 0, total: 14 } } : r));
+    announce(engine, vary(launch, { ...money, avatars: rows }));
+    const table = within(card()).getByRole("table", { name: "Ход по аватарам" });
+    const [head, ...body] = within(table).getAllByRole("row");
+    expect(within(head ?? document.body).getAllByRole("columnheader").map((c) => c.textContent)).toEqual(["Аватар", "Ход", "Фото", "Монтаж", "Готово"]);
+    expect(body.map((r) => within(r).getAllByRole("rowheader").map((h) => h.textContent))).toEqual([["Mia"], ["Sofia"], ["Elena"]]);
+    expect(body.map((r) => within(r).getAllByRole("cell").length)).toEqual([4, 4, 4]);
+    const sofia = body.find((r) => r.getAttribute("data-avatar") === SOFIA.avatarId) ?? document.body;
+    const [phase] = within(sofia).getAllByRole("cell");
+    expect(phase?.textContent).toBe("ждёт проверки сцен · 14Открыть «Фото»");
+    expect(within(phase ?? document.body).queryByRole("button", { name: "Открыть «Фото» · Sofia" }) !== null).toBe(true);
+    // Nothing of a row's content stands outside its header and its cells.
+    const loose = body.flatMap((r) => Array.from(r.querySelectorAll("button, .ap-row-phase, .ap-cell-text")).filter((el) => el.closest('[role="cell"], [role="rowheader"]') === null));
+    expect(loose.length).toBe(0);
   });
 });

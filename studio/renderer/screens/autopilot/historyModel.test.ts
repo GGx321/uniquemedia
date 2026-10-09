@@ -67,10 +67,12 @@ describe("a row of «История запусков»", () => {
 
   test("«бесплатно» only when nothing was planned and nothing spent: a spend above a W′ of 0 (an A2 breach) shows the engine's figures (fix round 1)", () => {
     expect(spentOf(0, 0)).toEqual({ spent: "$0", of: "бесплатно" });
-    expect(spentOf(300_000, 0)).toEqual({ spent: "$0.30", of: "из $0.000" });
+    // S4.9d (S4.9c N3): the limit of 0 reads «$0», not «$0.000».
+    expect(spentOf(300_000, 0)).toEqual({ spent: "$0.30", of: "из $0" });
     const breach = summary({ plannedWorstMicros: 0, acceptedMicros: 0, spentMicros: 300_000 });
-    expect([historyRow(breach, nameOf).spent, historyRow(breach, nameOf).of]).toEqual(["$0.30", "из $0.000"]);
-    expect(lastLaunchLine(breach, nameOf)).toEndWith("$0.30 из $0.000");
+    expect([historyRow(breach, nameOf).spent, historyRow(breach, nameOf).of]).toEqual(["$0.30", "из $0"]);
+    expect(historyRow(breach, nameOf).aria).toContain(" · $0.30 из $0 · ");
+    expect(lastLaunchLine(breach, nameOf)).toEndWith("$0.30 из $0");
     expect(lastLaunchLine(summary({ plannedWorstMicros: 0, acceptedMicros: 0, spentMicros: 0 }), nameOf)).toEndWith("· бесплатно");
   });
 
@@ -160,7 +162,15 @@ describe("a launch's page", () => {
     expect(launchMeta(view)).toBe(`2${NBSP}аватара · 10 из 20${NBSP}видео · потрачено $1.69 из $4.14 · 14:02–14:31`);
     expect(launchMeta({ ...view, plannedWorstMicros: 0, acceptedMicros: 0, plannedExpectedMicros: 0, spentMicros: 0, remainingMicros: 0 })).toContain(" · бесплатно · ");
     // A W′ of 0 that still spent is never «бесплатно» (fix round 1).
-    expect(launchMeta({ ...view, plannedWorstMicros: 0, acceptedMicros: 0, plannedExpectedMicros: 0, spentMicros: 300_000, remainingMicros: 0 })).toContain(" · потрачено $0.30 из $0.000 · ");
+    expect(launchMeta({ ...view, plannedWorstMicros: 0, acceptedMicros: 0, plannedExpectedMicros: 0, spentMicros: 300_000, remainingMicros: 0 })).toContain(" · потрачено $0.30 из $0 · ");
+  });
+
+  test("S4.9d (S4.6g L9): an ended launch's header counts the videos the results show — the engine's word on each, deleted ones out — not what the view says it made", () => {
+    // The view says 10 were made; the owner deleted three since: the results show 7, and so does the header.
+    expect(launchMeta(view, 7)).toBe(`2${NBSP}аватара · 7 из 20${NBSP}видео · потрачено $1.69 из $4.14 · 14:02–14:31`);
+    expect(launchMeta(view, 0)).toContain(` · 0 из 20${NBSP}видео · `);
+    // Without the engine's count (a launch that still runs), the view's own.
+    expect(launchMeta(view, undefined)).toContain(` · 10 из 20${NBSP}видео · `);
   });
 
   test("the settings line says what the launch ran with", () => {

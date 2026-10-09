@@ -1061,6 +1061,15 @@
   font-weight: 600;
 }
 
+/* The phase and the row's action: one cell of the table (S4.9b L14), laid out as the line it always was. */
+.ap-row-state {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .ap-row-phase {
   min-width: 0;
   overflow: hidden;

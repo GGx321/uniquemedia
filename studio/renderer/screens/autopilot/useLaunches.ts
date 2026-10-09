@@ -8,7 +8,8 @@ import type { AvatarVideos } from "./historyModel";
 // - The list: on open, whenever the library's launch moves (another launch, another status), on `reread` (after «Убрать запись»), and for another library.
 // - A launch: on open and whenever the engine's word on it changes (`autopilot.changed` of that launch), so the results of a launch that runs fill in. Since S4.6g its
 //   answer carries the owner's marks and the deleted videos, so it is read again for a `video.changed` of one of its avatars (a mark, a delete, a render that landed), after
-//   a resync and when an avatar leaves the library; and the screen asks again by itself after a mark and after a delete, failed or not (the work may still go on).
+//   a resync and when an avatar leaves the library; and the screen asks again by itself after every mark (one that changed nothing announces nothing) and after a
+//   delete that failed (its work may still go on) — a delete that went through is announced (`video.changed`), which asks again.
 // - The avatars' records (`videos.list`), only to draw a finished video (poster, time, music): each on open, again for a `video.changed` of that avatar and after a resync.
 
 export type LaunchListState =
@@ -45,12 +46,18 @@ export type LaunchDetailState =
   | { readonly state: "ready"; readonly detail: AutopilotGetResult }
   | { readonly state: "failed"; readonly error: EngineError };
 
-/** `autopilot.get` of one launch: its view, its log (the newest ≤ 500) and its videos. The last answer stays on screen while the next is asked. */
+/**
+ * `autopilot.get` of one launch: its view, its log (the newest ≤ 500) and its videos. The last answer stays on screen while the next is asked. Every read is numbered
+ * as it is SENT (S4.9d, the S4.6g review): a screen that waits for the engine's word after an action takes `requested()` once the action is answered, and waits for
+ * `answered` to pass it — an answer to a read sent before (late, or overtaken) cannot pass for it.
+ */
 export function useLaunchDetail(launchId: string): {
   readonly detail: LaunchDetailState;
   readonly reread: () => void;
-  /** How many answers (good or not) have landed: a screen that waits for a re-read to show a change tells it from the one before. */
-  readonly reads: number;
+  /** The number of the read whose answer (good or not) landed last; 0 before any. */
+  readonly answered: number;
+  /** How many reads have been sent so far: the number the next answer has to pass. */
+  readonly requested: () => number;
 } {
   const { client, store } = useEngine();
   const view = useEngineView();
@@ -60,7 +67,8 @@ export function useLaunchDetail(launchId: string): {
   // An avatar that leaves the library takes its videos with it: the engine then calls them removed.
   const avatarsKnown = view.avatars.map((a) => a.avatarId).join("\n");
   const [attempt, setAttempt] = useState(0);
-  const [reads, setReads] = useState(0);
+  const sent = useRef(0);
+  const [answered, setAnswered] = useState(0);
   const [detail, setDetail] = useState<LaunchDetailState>({ state: "loading" });
   const avatarKey = detail.state === "ready" ? detail.detail.launch.draft.avatarIds.join("\n") : "";
   useEffect(
@@ -76,17 +84,20 @@ export function useLaunchDetail(launchId: string): {
   useEffect(() => {
     if (!ready) return;
     let alive = true;
+    sent.current += 1;
+    const number = sent.current;
     void client.request("autopilot.get", { launchId }).then((reply) => {
       if (!alive) return;
       setDetail((now) => (reply.ok ? { state: "ready", detail: reply.result } : now.state === "ready" ? now : { state: "failed", error: reply.error }));
-      setReads((n) => n + 1);
+      setAnswered(number);
     });
     return () => {
       alive = false;
     };
   }, [ready, client, launchId, live, attempt, avatarsKnown]);
   const reread = useCallback(() => setAttempt((n) => n + 1), []);
-  return { detail, reread, reads };
+  const requested = useCallback(() => sent.current, []);
+  return { detail, reread, answered, requested };
 }
 
 /** The records `videos.list` answered for each of `avatarIds`, by video id, to draw the finished videos with; `reread` asks one avatar again. */

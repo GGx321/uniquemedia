@@ -8,7 +8,8 @@ import { useNavigate } from "../../navigation";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { bandText, launchGo, launchSetMeta, overPlanText, type LaunchLink } from "./launchSet";
-import { about, useImagesPrice } from "./scenePaid";
+import { ceiling, focusLost, usePriceSource } from "./scenePaid";
+import { focusSceneCard } from "./SceneSetPanel";
 import { setCategoryTags } from "./sceneReview";
 import { modelSegments, setMetaText, Step } from "./SceneStrip";
 import { MODELS_LINE_TITLE, priceSourceText, SCENES_CHANGED_APPROVE, stepScenes, stripAnglesText } from "./sceneText";
@@ -18,7 +19,8 @@ import { useMounted } from "./shared";
 // band «Набор запуска от 14:02 · в пределах запуска · до $Y» with «Открыть «Автопилот»». No «Сцены на проверку» switch (the launch has its own), no
 // «Пересоставить…» and no «Мои категории»: the set is the launch's. The price column ends on «Предел до $Y — в пределах запуска, новых денег нет». The
 // one button is «Продолжить запуск: M фото» (`autopilot.continueAfterReview` with the view's set and revision), or «Сцены принять» while the launch is
-// paused; after it, «принято — ждёт «Продолжить»» or «в запуске автопилота».
+// paused; after it, «принято — ждёт «Продолжить»» or «в запуске автопилота». S4.9d: the focus as the design's keyboard table moves it (S4.9b L5), and no money the
+// window works out (S4.9b L15): step 2 is the launch view's allocation for the draw, the price column says only where today's prices come from.
 
 const PHOTOS = ["фото", "фото", "фото"] as const;
 
@@ -38,26 +40,53 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
   const ids = useId();
   const goRef = useRef<HTMLButtonElement>(null);
   const acceptedRef = useRef<HTMLSpanElement>(null);
+  const markRef = useRef<HTMLSpanElement>(null);
   const [sending, setSending] = useState<{ pending: boolean; over: LaunchView } | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
   const [overPlan, setOverPlan] = useState(false);
   const [changed, setChanged] = useState(false);
   const [focusAccepted, setFocusAccepted] = useState(false);
+  /** «Продолжить запуск» accepted with the draw starting: the focus is on its way to the batch's progress. */
+  const [focusBatch, setFocusBatch] = useState(false);
 
   const { row, launch } = link;
   const go = launchGo(link);
   const band = bandText(link);
   const photos = go.kind === "continue" ? go.photos : (row.continuePhotos ?? row.photos.total);
-  // The images' own estimate (free, the same as the set's «Отрисовать» would show): the price column's source and step 2 while the scenes wait.
-  const images = useImagesPrice(avatar.avatarId, photos, view);
+  // Where today's prices come from, for the price column; no sum of it is shown (S4.9b L15).
+  const source = usePriceSource(avatar.avatarId, view);
+  const firstWithoutText = set.scenes.find((s) => !s.removed && s.text === null)?.sceneId ?? null;
+  const lastScene = set.scenes.findLast((s) => !s.removed)?.sceneId ?? null;
 
-  // Opened from «Автопилот» («Открыть «Фото»»): the focus starts on the button, once.
+  // Opened from «Автопилот» («Открыть «Фото»», the design's keyboard table): the focus starts on «Продолжить запуск: M фото» — or, when M is less than the plan
+  // because scenes have no text, on the first of them, for the owner to write it (S4.9b L5). Once; a card the column has not drawn yet is waited for.
   const focusedOnce = useRef(false);
   useEffect(() => {
     if (!focusGo || focusedOnce.current || go.kind !== "continue") return;
+    if (photos < row.photos.total && firstWithoutText !== null) {
+      if (document.querySelector(`[data-scene="${firstWithoutText}"]`) === null) return;
+      focusedOnce.current = true;
+      focusSceneCard(firstWithoutText);
+      return;
+    }
     focusedOnce.current = true;
     goRef.current?.focus();
-  }, [focusGo, go.kind]);
+  });
+  // «Продолжить запуск» accepted, the draw starting (the keyboard table): the focus goes to the batch's progress in «Сцены». The button goes first and the batch
+  // takes a moment to draw: meanwhile «в запуске автопилота», where the button stood, holds the focus — unless the owner has put it somewhere else.
+  useEffect(() => {
+    if (!focusBatch || go.kind === "continue") return;
+    const mark = markRef.current;
+    const holding = mark !== null && document.activeElement === mark;
+    const bar = document.querySelector<HTMLElement>(`[data-launch-batch="${avatar.avatarId}"]`);
+    if (bar !== null) {
+      if (holding || focusLost()) bar.focus();
+      setFocusBatch(false);
+    } else if (!holding) {
+      if (focusLost() && mark !== null) mark.focus();
+      else setFocusBatch(false);
+    }
+  });
   // «Сцены принять» recorded the approval: the button gives way to «принято — ждёт «Продолжить»», which takes the focus (README «Клавиатура и фокус»).
   useEffect(() => {
     if (!focusAccepted || go.kind !== "accepted") return;
@@ -91,6 +120,7 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
     setSending(reply.ok ? { pending: false, over } : null);
     if (reply.ok) {
       if (reply.result.draw === "waits-for-resume") setFocusAccepted(true);
+      else setFocusBatch(true);
       return;
     }
     if (reply.error.code === "SCENES_CHANGED") {
@@ -113,7 +143,9 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
   const step1 = stepScenes(set);
   const allocation = row.drawAllocationMicros;
   const drawing = go.kind === "in-launch" && row.photos.done > 0;
-  const step2Value = drawing ? `${row.photos.done} из ${row.photos.total}` : images === null ? "≈ …" : about(images.expectedMicros);
+  // The draw's own figure while the scenes wait: the allocation the launch view gives it (S4.9b L15). The engine has no expected price of a launch's draw (the
+  // mockup's «≈ $0.84»): `runs.estimateFromScenes` refuses a launch's set, and run − compose would be money the window works out.
+  const step2Value = drawing ? `${row.photos.done} из ${row.photos.total}` : allocation === null ? "—" : ceiling(allocation);
   const step2State = drawing ? (row.photos.done >= row.photos.total ? "done" : "current") : go.kind === "continue" ? "current" : "next";
   const whyId = `${ids}-why`;
   const reason = overPlan ? overPlanText(row) : go.kind === "continue" ? go.why : null;
@@ -168,7 +200,7 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
           <div className="photos-gen-side scene-strip-prices">
             <div className="mono photos-cost-row">
               <span>Цены</span>
-              <span className={images?.prices === "fallback" ? "warn-text" : "faint"}>{priceSourceText(images?.prices ?? null, images?.pricesAsOf ?? null)}</span>
+              <span className={source?.prices === "fallback" ? "warn-text" : "faint"}>{priceSourceText(source?.prices ?? null, source?.pricesAsOf ?? null)}</span>
             </div>
             <Step row={{ n: "1", state: step1.done ? "done" : "current", label: step1.label, value: step1.value }} />
             <Step row={{ n: "2", state: step2State, label: countOf(photos, PHOTOS), value: step2Value }} />
@@ -208,8 +240,17 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
                   )}
                 </button>
                 {reason !== null && (
-                  <p id={whyId} className={overPlan ? "ap-launch-why danger-text" : "faint ap-launch-why"}>
-                    {reason}
+                  <p className={overPlan ? "ap-launch-why danger-text" : "faint ap-launch-why"}>
+                    <span id={whyId}>{reason}</span>
+                    {/* The keyboard table: over the plan, a link to a scene to take out (the last one standing); the button is described by the reason alone. */}
+                    {overPlan && lastScene !== null && (
+                      <>
+                        {" "}
+                        <button type="button" className="link-btn ap-launch-scene" onClick={() => focusSceneCard(lastScene)}>
+                          Сцена {String(lastScene).padStart(2, "0")}
+                        </button>
+                      </>
+                    )}
                   </p>
                 )}
               </>
@@ -225,7 +266,7 @@ export function LaunchSetStrip({ avatar, view, set, link, focusGo }: LaunchSetSt
             )}
             {(go.kind === "in-launch" || go.kind === "writing") && (
               <>
-                <span className="ap-in ap-launch-mark" tabIndex={-1}>
+                <span ref={markRef} className="ap-in ap-launch-mark" tabIndex={-1}>
                   <Icon name="bolt" size={12} />в запуске автопилота
                 </span>
                 <span className="faint ap-launch-help">{go.text}</span>

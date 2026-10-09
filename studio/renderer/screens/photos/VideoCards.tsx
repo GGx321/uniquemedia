@@ -104,7 +104,11 @@ export function videoLabel(video: VideoSummary, ordinal: number): string {
 export function VideoCard({ video, exportStatus, tracks, now, busy, ordinal, published, publishing, marksUnknown, onPlay, onReveal, onEdit, onDelete, onPublished, onRecheck }: VideoCardProps) {
   const titleId = useId();
   const [asking, setAsking] = useState<"record" | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  /**
+   * The delete dialog, open with what it was opened on (S4.9c N5): a mark that flips meanwhile (another window) changes neither its words nor its way — the launch's
+   * results page holds its tile the same way.
+   */
+  const [deleting, setDeleting] = useState<{ readonly published: boolean; readonly marksUnknown: boolean } | null>(null);
   const view = videoCardView(video, exportStatus);
   const number = video.relPath.slice(video.relPath.lastIndexOf("_") + 1, -".mp4".length);
   const autopilot = video.origin === "autopilot";
@@ -123,8 +127,8 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, ordinal, pub
   const trashRef = useRef<HTMLButtonElement>(null);
   const recordRef = useRef<HTMLButtonElement>(null);
   const ask = (mode: "video" | "record"): void => {
-    if (asking !== null || deleting || busy) return;
-    if (mode === "video") setDeleting(true);
+    if (asking !== null || deleting !== null || busy) return;
+    if (mode === "video") setDeleting({ published, marksUnknown });
     else if (view.recordDelete?.confirm === null) onDelete(video, "record", false);
     else {
       setAsking(mode);
@@ -175,10 +179,10 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, ordinal, pub
             <button
               ref={trashRef}
               type="button"
-              className={deleting ? "ibtn video-trash video-trash-on" : "ibtn video-trash"}
+              className={deleting !== null ? "ibtn video-trash video-trash-on" : "ibtn video-trash"}
               aria-label={autopilot && video.title === null ? `Удалить видео ${ordinal}` : `Удалить видео ${number}`}
               aria-haspopup="dialog"
-              aria-disabled={busy || asking !== null || deleting}
+              aria-disabled={busy || asking !== null || deleting !== null}
               onClick={() => ask("video")}
             >
               <Icon name="trash" size={13} />
@@ -240,16 +244,16 @@ export function VideoCard({ video, exportStatus, tracks, now, busy, ordinal, pub
           </>
         )}
       </div>
-      {deleting && (
+      {deleting !== null && (
         <DeleteVideoDialog
           label={videoLabel(video, ordinal)}
-          published={published}
-          marksUnknown={marksUnknown}
+          published={deleting.published}
+          marksUnknown={deleting.marksUnknown}
           photos={video.photoCount}
           busy={false}
-          onCancel={() => setDeleting(false)}
+          onCancel={() => setDeleting(null)}
           onDelete={(choice) => {
-            setDeleting(false);
+            setDeleting(null);
             onDelete(video, "video", choice === "reject");
           }}
           returnFocus={() => trashRef.current}

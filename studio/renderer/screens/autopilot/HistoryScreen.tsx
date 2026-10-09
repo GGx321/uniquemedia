@@ -12,8 +12,9 @@ import { useLaunchList } from "./useLaunches";
 
 // S4.9c: «История запусков» (AutopilotS4.dc.html state history; LaunchStates «История»): every launch of the library, newest first — when, whose faces and
 // names, videos done of planned, «Потрачено $S из $W′», its status — each row a button to its page. An entry the engine cannot read as a launch blocks a new
-// one until it is gone: «Убрать запись» moves its file to the library's quarantine (`autopilot.removeUnreadable` by its opaque `entryId`); a folder that could
-// not be read at all (`io-error`) has no file to move, and says so instead. The rows sit first: they are what stands in the way.
+// one until it is gone: «Убрать запись» moves its file to the library's quarantine (`autopilot.removeUnreadable` by its opaque `entryId`). An entry that did not
+// read from the disk at all (`io-error`) — the `autopilot/` folder, or one launch file (S4.6g `scope`) — has nothing to move: it offers «Прочитать снова» and says
+// which of the two failed. The rows sit first: they are what stands in the way.
 
 export function HistoryScreen({ focus }: { focus: string | null }) {
   const view = useEngineView();

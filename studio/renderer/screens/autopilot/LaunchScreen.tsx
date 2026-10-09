@@ -60,7 +60,7 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
   const { view: categorySlice } = useCategoryLibrary();
   const customs = categorySlice.list.status === "ready" ? categorySlice.list.categories : null;
 
-  const { detail, reread: rereadDetail, reads } = useLaunchDetail(launchId);
+  const { detail, reread: rereadDetail, answered: readAnswered, requested } = useLaunchDetail(launchId);
   const got = detail.state === "ready" ? detail.detail : null;
   const launch = got?.launch ?? null;
   const avatarIds = launch?.draft.avatarIds ?? NO_AVATARS;
@@ -80,7 +80,14 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
 
   const [filter, setFilter] = useState<string | null>(null);
   const [hide, setHide] = useState(false);
-  const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
+  /**
+   * The «Опубликовано» marks (S4.6g L3), by tile: null while the command is on its way; then how many reads of the launch had been sent when it was answered. The
+   * switch stays busy until a read sent after that has answered (the page asks for one after every mark), so between the reply and the engine's word on the launch it
+   * never shows the old state to a second click, which would send the same value again.
+   */
+  const [marking, setMarking] = useState<ReadonlyMap<string, number | null>>(() => new Map());
+  /** The marks on their way: a second click before React draws the first one's busy state sends nothing. */
+  const markSending = useRef(new Set<string>());
   const [asking, setAsking] = useState<ResultTile | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [outcome, setOutcome] = useState<Outcome | null>(null);
@@ -92,18 +99,22 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
   const tileRefs = useRef(new Map<string, HTMLElement>());
   const trashRefs = useRef(new Map<string, HTMLButtonElement>());
   /**
-   * A tile about to leave the screen (deleted, or marked while «Скрыть опубликованные» is on): the focus goes to the tile that takes its place. `read` is how
-   * many answers of `autopilot.get` had landed when it was armed: a later one that still shows the tile disarms it (fix round 1).
+   * A tile about to leave the screen (deleted, or marked while «Скрыть опубликованные» is on): the focus goes to the tile that takes its place. `after` is how many
+   * reads of the launch had been sent when the action was answered (null while it is on its way): the answer to a read sent after that which still shows the tile
+   * disarms it (fix round 1). An answer to a read sent before — late, from before the action took effect — cannot (S4.9d, the S4.6g review).
    */
-  const pendingFocus = useRef<{ readonly key: string; readonly index: number; readonly read: number } | null>(null);
-  const arm = (tile: ResultTile): void => {
-    pendingFocus.current = { key: tile.key, index: shown.findIndex((t) => t.key === tile.key), read: reads };
+  const pendingFocus = useRef<{ readonly key: string; readonly index: number; readonly after: number | null } | null>(null);
+  const arm = (tile: ResultTile, after: number | null): void => {
+    pendingFocus.current = { key: tile.key, index: shown.findIndex((t) => t.key === tile.key), after };
   };
   const deleted = useRef(false);
 
   const tiles = useMemo(() => (got === null ? [] : resultTiles(got.videos, lists, nameOf)), [got, lists, nameOf]);
   const counts = resultCounts(tiles);
-  const shown = tiles.filter((t) => (filter === null || t.avatarId === filter) && !(hide && t.published));
+  // S4.6g L8: an avatar the library no longer holds and the launch has no tile of any more (its videos went with it) has no chip, and a filter on it is let go.
+  const chips = avatarIds.filter((id) => names.has(id) || tiles.some((t) => t.avatarId === id));
+  const avatarFilter = filter !== null && chips.includes(filter) ? filter : null;
+  const shown = tiles.filter((t) => (avatarFilter === null || t.avatarId === avatarFilter) && !(hide && t.published));
   const shownKeys = shown.map((t) => t.key).join(" ");
 
   // The tile with the focus left (the design's keyboard table, «Результаты»): the focus goes to the next one, or the last, or the section's heading.
@@ -112,40 +123,38 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
     if (want === null) return;
     const now = shownKeys === "" ? [] : shownKeys.split(" ");
     if (now.includes(want.key)) {
-      // The list was read again and the tile is still there (the mark or the delete did not take): nothing to hand the focus on for.
-      if (reads !== want.read) pendingFocus.current = null;
+      // The launch was read again after the action and the tile is still there (the mark or the delete did not take): nothing to hand the focus on for.
+      if (want.after !== null && readAnswered > want.after) pendingFocus.current = null;
       return;
     }
     pendingFocus.current = null;
     const next = now[Math.min(want.index, now.length - 1)];
     (next === undefined ? resultsTitle.current : (tileRefs.current.get(next) ?? resultsTitle.current))?.focus();
-  }, [shownKeys, reads]);
+  }, [shownKeys, readAnswered]);
 
-  const mark = (key: string, on: boolean): void =>
-    setBusy((now) => {
-      const next = new Set(now);
-      if (on) next.add(key);
-      else next.delete(key);
-      return next;
-    });
+  const markBusy = (key: string): boolean => {
+    const at = marking.get(key);
+    return at !== undefined && (at === null || readAnswered <= at);
+  };
 
   const togglePublished = async (tile: ResultTile): Promise<void> => {
-    if (tile.videoId === null || busy.has(tile.key)) return;
+    if (tile.videoId === null || markSending.current.has(tile.key) || markBusy(tile.key)) return;
+    markSending.current.add(tile.key);
     const published = !tile.published;
-    if (hide && published) arm(tile);
-    mark(tile.key, true);
+    if (hide && published) arm(tile, null);
+    setMarking((now) => new Map(now).set(tile.key, null));
     setError(null);
     const reply = await client.request("videos.setPublished", { videoId: tile.videoId, published });
+    markSending.current.delete(tile.key);
     if (!mounted.current) return;
-    mark(tile.key, false);
-    if (!reply.ok) {
-      pendingFocus.current = null;
-      setError(reply.error);
-      rereadDetail();
-    } else if (tile.markUnknown) {
-      // A mark that changed is announced (`video.changed`) and the launch is read again by that; one made over an unreadable log heals it and may change nothing, so announces nothing.
-      rereadDetail();
-    }
+    const after = requested();
+    const want = pendingFocus.current;
+    if (want !== null && want.key === tile.key) pendingFocus.current = reply.ok ? { ...want, after } : null;
+    setMarking((now) => new Map(now).set(tile.key, after));
+    if (!reply.ok) setError(reply.error);
+    // The launch is read again after every mark, whatever came of it: one that changed is also announced (`video.changed`), but one that changed nothing (it already
+    // stood) or healed an unreadable log announces nothing, and the switch waits for this read.
+    rereadDetail();
   };
 
   const remove = async (tile: ResultTile, choice: DeleteChoice): Promise<void> => {
@@ -159,7 +168,7 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
     setDeleting(false);
     if (reply.ok) {
       deleted.current = true;
-      arm(tile);
+      arm(tile, requested());
       const text = rejecting
         ? rejectDoneText(tile.label, reply.result)
         : reply.result.fileDeleted
@@ -179,7 +188,8 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
     setAsking(null);
   };
 
-  const folderAvatar = filter ?? (avatarIds.length === 1 ? (avatarIds[0] ?? null) : null);
+  // One avatar to show (review L6): its folder, with no filter to choose it by.
+  const folderAvatar = avatarFilter ?? (chips.length === 1 ? (chips[0] ?? null) : null);
   const openFolder = async (avatarId: string): Promise<void> => {
     setOpening(true);
     setError(null);
@@ -216,7 +226,8 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
                 <ScreenTitle>{launchHeading(launch.createdAt)}</ScreenTitle>
                 <span className={`tag ap-st ap-st-${statusTag(launch.status).tone}`}>{statusTag(launch.status).text}</span>
               </div>
-              <p className="mono muted ap-launch-meta">{launchMeta(launch)}</p>
+              {/* S4.6g L9: an ended launch counts what the results count (the engine's word on each video); one that runs, what it has made so far. */}
+              <p className="mono muted ap-launch-meta">{launchMeta(launch, isUnfinished(launch) ? undefined : counts.done)}</p>
             </>
           )}
         </div>
@@ -273,13 +284,13 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
                 <span className="mono muted">
                   {counts.done} · {counts.megabytes}
                 </span>
-                {avatarIds.length > 1 && (
+                {chips.length > 1 && (
                   <div className="seg ap-res-seg" role="group" aria-label="Аватар">
-                    <button type="button" className={filter === null ? "on" : undefined} aria-pressed={filter === null} onClick={() => setFilter(null)}>
+                    <button type="button" className={avatarFilter === null ? "on" : undefined} aria-pressed={avatarFilter === null} onClick={() => setFilter(null)}>
                       Все <span className="mono ap-seg-n">{counts.done}</span>
                     </button>
-                    {avatarIds.map((avatarId) => (
-                      <button key={avatarId} type="button" className={filter === avatarId ? "on" : undefined} aria-pressed={filter === avatarId} onClick={() => setFilter(avatarId)}>
+                    {chips.map((avatarId) => (
+                      <button key={avatarId} type="button" className={avatarFilter === avatarId ? "on" : undefined} aria-pressed={avatarFilter === avatarId} onClick={() => setFilter(avatarId)}>
                         {nameOf(avatarId)} <span className="mono ap-seg-n">{counts.byAvatar.get(avatarId) ?? 0}</span>
                       </button>
                     ))}
@@ -362,7 +373,7 @@ export function LaunchScreen({ launchId, from }: { launchId: string; from: "hist
                       key={tile.key}
                       tile={tile}
                       jobs={view.jobs}
-                      busy={busy.has(tile.key)}
+                      busy={markBusy(tile.key)}
                       asking={asking !== null && asking.key === tile.key}
                       tileRef={(el) => {
                         if (el === null) tileRefs.current.delete(tile.key);
