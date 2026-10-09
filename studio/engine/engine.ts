@@ -4837,7 +4837,11 @@ export class Engine {
       throw new EngineFailure({ code: "IN_FLIGHT", detail: `${result.inFlight} paid request(s) of this engine are still in flight; reconcile when they end` });
     }
     const answer = reconcileResultOf(result);
-    if (answer.status === "done") this.#emitMoney();
+    if (answer.status === "done") {
+      this.#emitMoney();
+      // The reconcile settled the open reserves, which a launch counts as «без ответа» until then: its card is told (S4.6v).
+      this.#orchestrator.refresh();
+    }
     return answer;
   }
 

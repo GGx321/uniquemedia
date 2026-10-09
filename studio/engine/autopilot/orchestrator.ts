@@ -22,6 +22,7 @@ import { buildLaunchFile, isEnded, type FileMusic, type LaunchFile } from "./lau
 import { entryIdOf, type LaunchStore, type StoreScan } from "./launchStore";
 import { launchViewOf, minimalViewOf, type ViewContext } from "./launchView";
 import type { LaunchStores } from "./lookup";
+import { reviewWritesMicrosOf } from "./launchMoney";
 import { displaces, sameHold } from "./paidFailures";
 import type { LaunchPlan } from "./planner";
 import { persistedStatus, transition, type LaunchEvent } from "./states";
@@ -157,6 +158,10 @@ export class Orchestrator {
         }),
       fire: () => this.#fire(),
     });
+    // S4.6v: a mirror the steps rebuilt (a set changed, the restore read the slices) moves the card even where no step holds a context, e.g. a restored launch before «Продолжить».
+    deps.steps.onMirrorChange?.((launchId) => {
+      if (!this.#closing && this.#current?.launchId === launchId) this.#announce(this.#current);
+    });
   }
 
   // ---------- the library ----------
@@ -242,10 +247,15 @@ export class Orchestrator {
   /** Resolves once the background work is done (the restart's rewrites, a drain that ended) and the announcements are out. Tests wait on it. */
   async settled(): Promise<void> {
     for (;;) {
-      await Promise.allSettled([...this.#background, ...this.#recovering, this.#chain]);
+      await Promise.allSettled([...this.#background, ...this.#recovering, this.#chain, this.#d.steps.settled?.()]);
       if (this.#background.size === 0 && this.#recovering.size === 0) break;
     }
     this.flushEvents();
+  }
+
+  /** Tells the window the unfinished launch again: what the ledger says of it changed without a write of the launch (a reconcile closed its open reserves). */
+  refresh(): void {
+    if (!this.#closing && this.#current !== null) this.#announce(this.#current);
   }
 
   flushEvents(): void {
@@ -561,6 +571,8 @@ export class Orchestrator {
   }
 
   async #completeStopOnce(launchId: string): Promise<LaunchFile> {
+    // Read before the sets are let go: from then on an edit of the owner's is no longer the launch's.
+    const reviewWrites = this.#current?.launchId === launchId ? this.#reviewWritesOf(this.#current) : undefined;
     try {
       await this.#d.steps.release(this.#ctx(launchId));
     } catch {
@@ -576,6 +588,7 @@ export class Orchestrator {
       activeSince: null,
       paused: null,
       spentMicros: spent,
+      ...(reviewWrites === undefined ? {} : { reviewWritesMicros: reviewWrites }),
       avatars: f.avatars.map((a) => ({
         ...a,
         videos: a.videos.map((v) => (v.state === "done" || v.state === "dropped" ? v : { ...v, state: "dropped" as const, dropReason: "launch-stopped" as const })),
@@ -692,18 +705,40 @@ export class Orchestrator {
     }
   }
 
-  #openReservesOf(launchId: string): { requests: number; openMicros: number } {
+  /**
+   * The launch's open reserves (its Budget group's), split by whether THIS process has a request out for each (S4.6v): `inFlight` are the live attempts, `unsettled` are the
+   * rest (a previous process's after a restart, or one a drop or a timeout left). One reserve is in exactly one of them, so the two never add a reserve twice.
+   */
+  #reservesOf(launchId: string): { inFlight: { requests: number; openMicros: number }; unsettled: { requests: number; openMicros: number } } {
+    const split = { inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 } };
     const budget = this.#d.budget();
-    if (budget === null) return { requests: 0, openMicros: 0 };
+    if (budget === null) return split;
     const key = launchGroupKey(launchId);
-    let requests = 0;
-    let openMicros = 0;
     for (const reserve of budget.ledger.openReserves()) {
       if (this.#d.groups.groupOf({ attemptId: reserve.attemptId, scope: reserve.scope })?.key !== key) continue;
-      requests += 1;
-      openMicros += reserve.worstMicros;
+      const side = budget.isInFlight(reserve.attemptId) ? split.inFlight : split.unsettled;
+      side.requests += 1;
+      side.openMicros += reserve.worstMicros;
     }
-    return { requests, openMicros };
+    return split;
+  }
+
+  /** Every open reserve of the launch, in flight or not: what a network hold waits for a reconcile to close, and what a restart found. */
+  #openReservesOf(launchId: string): { requests: number; openMicros: number } {
+    const { inFlight, unsettled } = this.#reservesOf(launchId);
+    return { requests: inFlight.requests + unsettled.requests, openMicros: inFlight.openMicros + unsettled.openMicros };
+  }
+
+  /** What the owner's paid edits on the launch's sets committed (outside the group); 0 when the ledger cannot be read. Frozen in the file when the launch ends. */
+  #reviewWritesOf(file: LaunchFile): number {
+    // An ended launch keeps the figure it ended with: the sets are the owner's again, and what they write next is not the launch's.
+    if (isEnded(file.status)) return file.reviewWritesMicros ?? 0;
+    const budget = this.#d.budget();
+    if (budget === null) return 0;
+    return reviewWritesMicrosOf(
+      budget.ledger,
+      file.avatars.flatMap((a) => (a.generation === null ? [] : [a.generation.sceneSetId])),
+    );
   }
 
   // ---------- the file ----------
@@ -800,6 +835,7 @@ export class Orchestrator {
     if (flight.requests > 0 || flight.renders > 0) throw new Error(`launch ${launchId} still has work in flight (${flight.requests} requests, ${flight.renders} renders): it cannot finish`);
     // A pause (or a stop) that landed first wins: nothing is released for a launch that is not running now.
     if (this.#current?.launchId !== launchId || this.#current.status !== "running" || this.#pausing) throw new Error(`launch ${launchId} is not running: only a running launch finishes`);
+    const reviewWrites = this.#reviewWritesOf(this.#current);
     try {
       await this.#d.steps.complete?.(this.#ctx(launchId));
     } catch {
@@ -810,7 +846,7 @@ export class Orchestrator {
     const at = this.#nowIso();
     const done = await this.#write(launchId, (f) => {
       if (f.status !== "running") throw new Error(`launch ${launchId} is ${f.status}: only a running launch finishes`);
-      return { ...closeActive(f, now), status: "done", endedAt: at, spentMicros: spent };
+      return { ...closeActive(f, now), status: "done", endedAt: at, spentMicros: spent, reviewWritesMicros: reviewWrites };
     });
     const videosDone = done.avatars.reduce((sum, a) => sum + a.videos.filter((v) => v.state === "done").length, 0);
     await this.#log(launchId, { at, kind: "done", videosDone, videosPlanned: done.plan.videos });
@@ -844,12 +880,16 @@ export class Orchestrator {
 
   #viewContext(file: LaunchFile, tail?: readonly LogLine[]): ViewContext {
     const status = this.#status(file);
-    const live = status === "running" || status === "pausing" || status === "stopping";
+    // An ended launch has no open reserves to show: its group is closed right after the write that announces it, so the view must not wait for that (0 once ended).
+    const none = { requests: 0, openMicros: 0 };
+    const { inFlight, unsettled } = isEnded(file.status) ? { inFlight: none, unsettled: none } : this.#reservesOf(file.launchId);
     return {
       status,
       nowMs: this.#nowMs(),
       spentMicros: this.#spentOf(file),
-      inFlight: live ? this.#openReservesOf(file.launchId) : { requests: 0, openMicros: 0 },
+      inFlight,
+      unsettled,
+      reviewWritesMicros: this.#reviewWritesOf(file),
       resumeBlockedBy: this.#resumeBlockedBy(file),
       logTail: tail ?? (this.#tail?.id === file.launchId ? this.#tail.lines : []),
       mirror: (avatarId) => this.#d.steps.mirror?.(file.launchId, avatarId) ?? null,

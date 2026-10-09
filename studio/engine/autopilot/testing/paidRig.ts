@@ -125,7 +125,11 @@ export class FakePort implements PaidPort {
     this.budget = budget;
   }
 
+  /** False: the engine has no library behind the port yet (the library is opening or being left). */
+  libraryOpen = true;
+
   get library(): PaidPort["library"] {
+    if (!this.libraryOpen) return null;
     return {
       sceneSets: {
         get: async (_avatarId, sceneSetId) => {

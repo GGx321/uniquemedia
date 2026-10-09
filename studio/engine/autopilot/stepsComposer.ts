@@ -206,9 +206,14 @@ export function composeSteps(paid: LaunchSteps, free: LaunchSteps, options: Comp
     },
     active: (launchId: string, avatarId: string): boolean => parts.some((part) => part.active?.(launchId, avatarId) === true),
     settled: async (): Promise<void> => {
-      await Promise.allSettled([...finishing.values()]);
+      await Promise.allSettled([...finishing.values(), ...parts.map((part) => part.settled?.())]);
     },
   };
+  if (parts.some((part) => part.onMirrorChange !== undefined)) {
+    composed.onMirrorChange = (listener: (launchId: string) => void): void => {
+      for (const part of parts) part.onMirrorChange?.(listener);
+    };
+  }
   if (parts.some((part) => part.suspend !== undefined)) {
     composed.suspend = (): void => {
       for (const part of parts) {

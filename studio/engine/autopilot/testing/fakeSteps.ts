@@ -35,6 +35,15 @@ export class FakeSteps implements LaunchSteps {
   onReadyChange(listener: () => void): void {
     this.readyListeners.push(listener);
   }
+  /** S4.6v: who hears that a mirror changed, and the background work `settled` waits for. */
+  mirrorListeners: ((launchId: string) => void)[] = [];
+  onMirrorChange(listener: (launchId: string) => void): void {
+    this.mirrorListeners.push(listener);
+  }
+  settledGate: Promise<void> | null = null;
+  settled(): Promise<void> {
+    return this.settledGate ?? Promise.resolve();
+  }
   /** Avatars this part has live work for. */
   busyAvatars = new Set<string>();
   active(_launchId: string, avatarId: string): boolean {

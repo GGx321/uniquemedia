@@ -41,7 +41,7 @@ interface Rig {
   budget: Budget;
   emitted: LaunchView[];
   sets: ListedSet[];
-  state: { now: number; admission: Admission | null; key: "ok" | "missing" | "rejected"; room: number | null; degraded: number };
+  state: { now: number; wall: number; mono: number; admission: Admission | null; key: "ok" | "missing" | "rejected"; room: number | null; degraded: number };
   unreadableSets: Set<string>;
   library: { root: string; sceneSets: { list(avatarId: string): Promise<{ sets: readonly ListedSet[]; unreadable: number }> } };
   adopt(): Promise<void>;
@@ -55,14 +55,14 @@ async function rig(opts: { root?: string; deps?: Partial<OrchestratorDeps>; stor
   if (opts.root === undefined) roots.push(root);
   const libraryRoot = join(root, "library");
   await mkdir(libraryRoot, { recursive: true });
+  const state: Rig["state"] = { now: T0, wall: T0, mono: 0, admission: null, key: "ok", room: 1_000_000_000, degraded: 0 };
   const groups = new LaunchGroups();
   const ledger = await Ledger.open(join(root, "ledger.jsonl"));
-  const budget = new Budget(ledger, { runCapMicros: () => 1_000_000_000, groupOf: (req) => groups.groupOf(req), monthlyBudgetMicros: 1_000_000_000, clock: () => T0, monotonic: () => 0 });
+  const budget = new Budget(ledger, { runCapMicros: () => 1_000_000_000, groupOf: (req) => groups.groupOf(req), monthlyBudgetMicros: 1_000_000_000, clock: () => state.wall, monotonic: () => state.mono });
   const stores = new LaunchStores(opts.storeDeps);
   const registry = new LaunchRegistry(stores);
   const steps = new FakeSteps();
   const emitted: LaunchView[] = [];
-  const state: Rig["state"] = { now: T0, admission: null, key: "ok", room: 1_000_000_000, degraded: 0 };
   let n = 0;
   const orchestrator = new Orchestrator({
     stores,
@@ -1509,5 +1509,239 @@ describe("raisePaidHold and clearPaidHold: decided in the file's own write, by r
     const started = await r.start();
     await r.orchestrator.pause(started.launchId);
     await expect(r.steps.ctx.raisePaidHold(credits)).rejects.toThrow();
+  });
+});
+
+// ---------- S4.6v: `unsettled` (open reserves with no request out) and `reviewWritesMicros` ----------
+
+describe("LaunchView.unsettled and inFlight: one open reserve is in exactly one of them", () => {
+  const WORST = 40_000;
+
+  /** A reserve of the launch's group that this process sent, and the handle to end it the way a request ends. */
+  async function sent(r: Rig, launch: LaunchView, worst: number, attempt: string) {
+    const setId = r.fileOf(launch.launchId).avatars[0]?.generation?.sceneSetId ?? "";
+    const reserved = await r.budget.tryReserve({ attemptId: `${setId}:${attempt}`, jobId: "job-fixture-0001", scope: { runId: "run-fixture-0001" }, model: "x-ai/grok-4.3", worstMicros: worst });
+    if (!reserved.ok) throw new Error(`the reserve was refused: ${reserved.reason}`);
+    return reserved.handle;
+  }
+
+  const viewOf = (r: Rig): LaunchView => {
+    const view = r.orchestrator.snapshotView();
+    if (view === null) throw new Error("no launch");
+    expect(LaunchView.safeParse(view).success).toBe(true);
+    return view;
+  };
+
+  test("a launch with nothing open has neither", async () => {
+    const r = await rig();
+    await r.start();
+    expect(viewOf(r)).toMatchObject({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 } });
+  });
+
+  test("after a restart, an open reserve of the previous process is unsettled and nothing is in flight", async () => {
+    const first = await rig();
+    const started = await first.start();
+    await openReserve(first, started, WORST);
+    const second = await rig({ root: first.root });
+    await second.orchestrator.settled();
+    expect(viewOf(second)).toMatchObject({ status: "paused", inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 1, openMicros: WORST }, spentMicros: WORST });
+  });
+
+  test("while running with a live attempt, the attempt is in flight and nothing is unsettled", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await sent(r, started, WORST, "writer-1#2");
+    expect(viewOf(r)).toMatchObject({ status: "running", inFlight: { requests: 1, openMicros: WORST }, unsettled: { requests: 0, openMicros: 0 } });
+  });
+
+  test("an attempt that timed out on a held launch is unsettled, not in flight", async () => {
+    const r = await rig();
+    const started = await r.start();
+    const handle = await sent(r, started, WORST, "writer-1#2");
+    await r.budget.abandon(handle);
+    await r.steps.ctx.raisePaidHold({ reason: "network", at: AT, detail: { drops: 1, attempt: 1, nextAt: AT } });
+    expect(viewOf(r)).toMatchObject({ status: "running", inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 1, openMicros: WORST } });
+  });
+
+  test("an attempt that timed out on a paused launch is unsettled, not in flight", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.budget.abandon(await sent(r, started, WORST, "writer-1#2"));
+    const view = await r.orchestrator.pause(started.launchId);
+    expect(view).toMatchObject({ status: "paused", inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 1, openMicros: WORST } });
+  });
+
+  test("a live attempt and a timed-out one are split, and together they are the launch's open reserves", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await sent(r, started, 25_000, "writer-1#2");
+    await r.budget.abandon(await sent(r, started, 15_000, "writer-1#3"));
+    const view = viewOf(r);
+    expect(view.inFlight).toEqual({ requests: 1, openMicros: 25_000 });
+    expect(view.unsettled).toEqual({ requests: 1, openMicros: 15_000 });
+    expect(view.inFlight.openMicros + (view.unsettled?.openMicros ?? -1)).toBe(view.spentMicros);
+  });
+
+  test("a settled attempt is neither", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await spend(r, started, 30_000);
+    expect(viewOf(r)).toMatchObject({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 }, spentMicros: 30_000 });
+  });
+
+  test("an open reserve of another job, outside the launch's group, is neither", async () => {
+    const r = await rig();
+    await r.start();
+    const other = await r.budget.tryReserve({ attemptId: "manual#1", jobId: "job-manual-0001", scope: { runId: "run-manual-0001" }, model: "x-ai/grok-4.3", worstMicros: 5_000 });
+    expect(other.ok).toBe(true);
+    expect(viewOf(r)).toMatchObject({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 } });
+  });
+
+  test("after a reconcile the unsettled reserves are closed: none left, and their money stays in what was spent", async () => {
+    const first = await rig();
+    const started = await first.start();
+    await openReserve(first, started, WORST);
+    const second = await rig({ root: first.root });
+    await second.orchestrator.settled();
+    expect(viewOf(second).unsettled).toEqual({ requests: 1, openMicros: WORST });
+    second.state.mono = 10 * 60_000;
+    second.state.wall = T0 + 10 * 60_000;
+    const result = await second.budget.reconcile({ fetchCredits: async () => ({ data: { total_usage: 0.04 } }) });
+    expect(result.ok).toBe(true);
+    expect(viewOf(second)).toMatchObject({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 }, spentMicros: WORST });
+  });
+
+  test("no view of an ended launch names open reserves, not even the one announced before its group is closed", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.budget.abandon(await sent(r, started, WORST, "writer-1#2"));
+    await r.orchestrator.stop(started.launchId);
+    r.orchestrator.flushEvents();
+    const ended = r.emitted.filter((v) => v.status === "stopped");
+    expect(ended.length).toBeGreaterThan(0);
+    for (const view of ended) expect(view).toMatchObject({ inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 } });
+  });
+
+  test("a launch that ended has none of either, and its view still passes the contract", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await r.budget.abandon(await sent(r, started, WORST, "writer-1#2"));
+    const stopped = await r.orchestrator.stop(started.launchId);
+    expect(LaunchView.safeParse(stopped).success).toBe(true);
+    expect(stopped).toMatchObject({ status: "stopped", inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 } });
+  });
+});
+
+describe("LaunchView.reviewWritesMicros: the owner's paid edits on the launch's sets, apart from the limit", () => {
+  /** A review write's attempt (`<setId>:write-<k>#<n>`), under its own job's scope as the scene-set service makes it: outside the launch's group. */
+  async function reviewWrite(r: Rig, launch: LaunchView, attempt: string, worst: number, cost: number | null, setIndex = 0) {
+    const setId = r.fileOf(launch.launchId).avatars[setIndex]?.generation?.sceneSetId ?? "";
+    const reserved = await r.budget.tryReserve({ attemptId: `${setId}:${attempt}`, jobId: "job-review-0001", scope: { avatarJobId: "job-review-0001" }, model: "x-ai/grok-4.3", worstMicros: worst });
+    if (!reserved.ok) throw new Error(`the reserve was refused: ${reserved.reason}`);
+    if (cost !== null) await r.budget.settle(reserved.handle, { costMicros: cost, estimated: false });
+  }
+
+  const reviewMicros = (r: Rig): number => {
+    const view = r.orchestrator.snapshotView();
+    if (view === null) throw new Error("no launch");
+    expect(LaunchView.safeParse(view).success).toBe(true);
+    return view.reviewWritesMicros;
+  };
+
+  test("is 0 when the owner wrote nothing", async () => {
+    const r = await rig();
+    await r.start();
+    expect(reviewMicros(r)).toBe(0);
+  });
+
+  test("sums the settled cost of a rewrite and the worst case of one still open", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    await reviewWrite(r, started, "write-2#1", 7_000, null);
+    expect(reviewMicros(r)).toBe(10_000);
+  });
+
+  test("stays outside the launch's spent sum and its limit", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await spend(r, started, 20_000);
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    expect(r.orchestrator.snapshotView()).toMatchObject({ spentMicros: 20_000, reviewWritesMicros: 3_000 });
+  });
+
+  test("leaves out the launch's own compose writes (`writer-`) and another set's writes", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await spend(r, started, 20_000, "writer-1#1");
+    const setId = r.fileOf(started.launchId).avatars[0]?.generation?.sceneSetId ?? "";
+    const other = await r.budget.tryReserve({ attemptId: `${setId}x:write-1#1`, jobId: "job-review-0002", scope: { avatarJobId: "job-review-0002" }, model: "x-ai/grok-4.3", worstMicros: 4_000 });
+    expect(other.ok).toBe(true);
+    expect(reviewMicros(r)).toBe(0);
+  });
+
+  test("a write released before it reached the network costs nothing", async () => {
+    const r = await rig();
+    const started = await r.start();
+    const setId = r.fileOf(started.launchId).avatars[0]?.generation?.sceneSetId ?? "";
+    const reserved = await r.budget.tryReserve({ attemptId: `${setId}:write-1#1`, jobId: "job-review-0001", scope: { avatarJobId: "job-review-0001" }, model: "x-ai/grok-4.3", worstMicros: 9_000 });
+    if (!reserved.ok) throw new Error("refused");
+    await r.budget.release(reserved.handle, "never sent");
+    expect(reviewMicros(r)).toBe(0);
+  });
+
+  test("an ended launch keeps what the owner wrote during it", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    const stopped = await r.orchestrator.stop(started.launchId);
+    expect(stopped.reviewWritesMicros).toBe(3_000);
+  });
+
+  test("an edit the owner makes after the launch ended is not the launch's: the stopped launch's figure stays", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    const stopped = await r.orchestrator.stop(started.launchId);
+    expect(stopped.reviewWritesMicros).toBe(3_000);
+    await reviewWrite(r, started, "write-2#1", 7_000, 5_000);
+    const later = await r.orchestrator.get(started.launchId);
+    expect(later.launch.reviewWritesMicros).toBe(3_000);
+  });
+
+  test("the same for a launch that finished", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await reviewWrite(r, started, "write-1#1", 9_000, 3_000);
+    const done = await r.steps.ctx.finish();
+    expect(done.status).toBe("done");
+    await reviewWrite(r, started, "write-2#1", 7_000, 5_000);
+    expect((await r.orchestrator.get(started.launchId)).launch.reviewWritesMicros).toBe(3_000);
+  });
+});
+
+describe("announcing a launch the window must read again (S4.6v)", () => {
+  test("a mirror change of the current launch announces it; another launch's does not", async () => {
+    const r = await rig();
+    const started = await r.start();
+    const before = r.emitted.length;
+    for (const listener of r.steps.mirrorListeners) listener("launch-someone-else");
+    r.orchestrator.flushEvents();
+    expect(r.emitted.length).toBe(before);
+    for (const listener of r.steps.mirrorListeners) listener(started.launchId);
+    r.orchestrator.flushEvents();
+    expect(r.emitted.length).toBe(before + 1);
+  });
+
+  test("refresh announces the current launch, and a library with none announces nothing", async () => {
+    const r = await rig();
+    r.orchestrator.refresh();
+    r.orchestrator.flushEvents();
+    expect(r.emitted).toHaveLength(0);
+    await r.start();
+    const before = r.emitted.length;
+    r.orchestrator.refresh();
+    r.orchestrator.flushEvents();
+    expect(r.emitted.length).toBe(before + 1);
   });
 });

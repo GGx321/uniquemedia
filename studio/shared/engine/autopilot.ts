@@ -384,8 +384,14 @@ export const LaunchView = z
     remainingMicros: Micros,
     /** Paid edits made on «Фото» during the review (a redraw, a rewrite): their own sum, outside the limit. */
     reviewWritesMicros: Micros,
-    /** Requests in flight now and what their reserves stand at. */
+    /** Requests in flight now (this process has a request out for each) and what their reserves stand at. */
     inFlight: z.strictObject({ requests: Count, openMicros: Micros }),
+    /**
+     * S4.6v: the launch's open reserves that NO request of this process is out for: those of a previous process after a restart, and those a drop or a timeout left on a
+     * paused or held launch. They count at their worst case, inside `spentMicros`, until a reconcile settles them. DISJOINT from `inFlight` (one open reserve is in exactly one
+     * of the two), so the window may show either or both and never adds a reserve twice. 0 once the launch has ended (as `inFlight`). Optional for a view from before it; the engine always fills it.
+     */
+    unsettled: z.strictObject({ requests: Count, openMicros: Micros }).optional(),
     /** Videos waiting for a track, over all avatars. */
     waitingMusic: Count,
     resumeBlockedBy: ResumeBlockedBy.nullable(),
@@ -399,6 +405,11 @@ export const LaunchView = z
     if (v.plannedWorstMicros > v.acceptedMicros) fail("plannedWorstMicros", "the planned worst case never exceeds what the click accepted");
     if (v.plannedExpectedMicros > v.plannedWorstMicros) fail("plannedExpectedMicros", "the expected cost never exceeds the worst case");
     if (v.remainingMicros !== Math.max(0, v.plannedWorstMicros - v.spentMicros)) fail("remainingMicros", "the remaining worst case is the planned worst case less what was spent");
+    if (v.unsettled !== undefined) {
+      if (v.unsettled.requests === 0 && v.unsettled.openMicros > 0) fail("unsettled", "open money needs a request");
+      // Both are open reserves, which `spentMicros` counts at their worst case: together they cannot pass it, so a reserve listed in both shows up as a sum above it.
+      if (v.inFlight.openMicros + v.unsettled.openMicros > v.spentMicros) fail("unsettled", "the open reserves in flight and unsettled are part of what was spent, each reserve in one of them");
+    }
     const rows = v.avatars.map((a) => a.avatarId);
     if (!unique(rows) || rows.length !== v.draft.avatarIds.length || !rows.every((id) => v.draft.avatarIds.includes(id))) fail("avatars", "the rows are the draft's avatars, each once");
   });

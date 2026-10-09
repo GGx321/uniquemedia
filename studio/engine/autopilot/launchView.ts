@@ -3,7 +3,7 @@ import type { FileAvatar, LaunchFile } from "./launchFile";
 import type { AvatarMirror } from "./steps";
 
 // Stage 4 (plan §9, §19): a launch file as the window sees it. Pure: the orchestrator hands it the ledger's sum, what is in flight and the clock, so the same file and context
-// always give the same view. The mirror fields of the paid path (the set, its revision, the scene counts, the slice) are null here until S4.6b1 records them in the file.
+// always give the same view. The mirror fields of the paid path (the set, its revision, the scene counts, the slice) come from the steps' mirrors (S4.6b1, filled at adopt by S4.6v); the avatar's own counts come from the file.
 
 export interface ViewContext {
   /** The status as the window reads it: the file's, or `pausing` while the requests in flight finish. */
@@ -11,7 +11,11 @@ export interface ViewContext {
   nowMs: number;
   /** The ledger's sum over the launch's group (the very sum the Budget enforces), or the file's last one when the ledger cannot be read or the launch is over. */
   spentMicros: number;
+  /** The launch's open reserves that this process has a request out for, and those it has none for (S4.6v): disjoint, so the window never adds a reserve twice. */
   inFlight: { requests: number; openMicros: number };
+  unsettled?: { requests: number; openMicros: number };
+  /** What the owner's paid edits on the launch's sets committed, outside the limit (`launchMoney.ts`); absent: none. */
+  reviewWritesMicros?: number;
   resumeBlockedBy: ResumeBlockedBy | null;
   logTail: readonly LogLine[];
   /** The avatar's set mirrors the paid steps keep in memory (S4.6b1); absent or null: the row's set fields stay null. */
@@ -38,8 +42,9 @@ export function launchViewOf(file: LaunchFile, ctx: ViewContext): unknown {
     plan: file.plan,
     spentMicros: ctx.spentMicros,
     remainingMicros: Math.max(0, file.plannedWorstMicros - ctx.spentMicros),
-    reviewWritesMicros: 0,
+    reviewWritesMicros: ctx.reviewWritesMicros ?? 0,
     inFlight: ctx.inFlight,
+    unsettled: ctx.unsettled ?? { requests: 0, openMicros: 0 },
     waitingMusic: avatars.reduce((sum, a) => sum + a.waitingMusic, 0),
     resumeBlockedBy: ctx.resumeBlockedBy,
     avatars,
@@ -79,11 +84,12 @@ function avatarView(row: FileAvatar, mirror: AvatarMirror | null): LaunchAvatarV
 
 /**
  * L2 (S4.6b1): the smallest view that still tells the owner a paid launch exists and lets «Стоп» be clicked. Built when the full view broke the contract (a mirror, a log line or
- * a figure that does not fit): no log, no set mirrors, nothing of the steps. Everything it keeps comes from the launch file, which is strict, or from the ledger.
+ * a figure that does not fit): no log, no set mirrors, no split of the open reserves, nothing of the steps. Everything it keeps comes from the launch file, which is strict, or from the ledger.
  */
 export function minimalViewOf(file: LaunchFile, ctx: ViewContext): unknown {
   const { mirror: _mirror, ...bare } = ctx;
-  return launchViewOf(file, { ...bare, logTail: [] });
+  // The open reserves are told as none: the smallest view must not depend on a split of the ledger that could not agree with the sum it falls back to.
+  return launchViewOf(file, { ...bare, logTail: [], inFlight: { requests: 0, openMicros: 0 }, unsettled: { requests: 0, openMicros: 0 } });
 }
 
 /** How many videos were dropped and why: the reason most of them share (the first met on a tie). */

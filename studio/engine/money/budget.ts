@@ -399,6 +399,11 @@ export class Budget {
     return n;
   }
 
+  /** Whether this process has a request out for the attempt right now (not one it abandoned, closed, or never made: a reserve of an earlier process is not). */
+  isInFlight(attemptId: string): boolean {
+    return this.own.get(attemptId)?.state === "in-flight";
+  }
+
   /**
    * Whether `scope` has an open reserve that only a user's reconcile can close: one this process has no request
    * in flight for (left by a crash, an abort or a timeout). Other scopes' reserves and a torn line are the

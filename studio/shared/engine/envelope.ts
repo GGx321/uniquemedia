@@ -56,6 +56,10 @@ import { z } from "zod";
 //    `launchVideoKey` and the scene set file's `launchId` / `launchDraw` are on-disk fields, all optional, with no schema version bumped.
 // Stage 4, S4.9a (additive, no bump): `LaunchPreview.month.raiseToMicros` — the budget of «поднимите бюджет до $X», answered by the engine so the window computes no
 //   money (§4.2). Required, like S4.P2's fields: the engine and the mock, its only producers, ship with the window in one bundle.
+// Stage 4, S4.6v (additive, no bump): `LaunchView.unsettled { requests, openMicros }`, OPTIONAL — the launch's open reserves that no request of the engine is out for (those of a previous
+//   process after a restart, and those a drop or a timeout left), counted at their worst case inside `spentMicros` until a reconcile settles them. It is DISJOINT from `inFlight`
+//   (one open reserve is in exactly one of the two, the engine splits them by whether the Budget has a request out for the attempt) and the contract refuses a view where the two
+//   together pass `spentMicros`. The engine and the mock always fill it; a view without it reads as none, and the window then falls back to `inFlight` alone.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
