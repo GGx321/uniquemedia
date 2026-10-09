@@ -820,6 +820,42 @@ describe("autopilot.list and autopilot.get", () => {
     expect((await failure(r.orchestrator.get("launch-broken-0001"))).code).toBe("NOT_FOUND");
   });
 
+  describe("get lists the finished videos (S4.6c2 fix round 1, M5)", () => {
+    const MUSIC = { source: "trending" as const, trackId: "track-00000001", startMs: 1500 };
+    const markDone = async (r: Awaited<ReturnType<typeof rig>>, launchId: string, extra: Record<string, unknown>): Promise<void> => {
+      const ctx = r.steps.contexts.at(-1);
+      if (ctx === undefined) throw new Error("the steps were never begun");
+      await ctx.update((file) => ({
+        ...file,
+        avatars: file.avatars.map((row, i) => (i === 0 ? { ...row, videos: row.videos.map((v, j) => (j === 0 ? { ...v, state: "done" as const, videoId: "video-0000ad04", music: MUSIC, ...extra } : v)) } : row)),
+      }));
+      expect(launchId).toBe(ctx.launchId);
+    };
+
+    test("a done video carries its length, size, track and file", async () => {
+      const r = await rig({ deps: { trackLabel: () => ({ title: "Night Drive", artist: "Alba" }) } });
+      const started = await r.start();
+      await markDone(r, started.launchId, { durationMs: 7_000, bytes: 4_096 });
+      const done = (await r.orchestrator.get(started.launchId)).videos.find((v) => v.state === "done");
+      expect(done).toMatchObject({ durationMs: 7_000, bytes: 4_096, videoId: "video-0000ad04", publishedAt: null, track: { source: "trending", title: "Night Drive", artist: "Alba" } });
+    });
+
+    test("with no label for the track the video still lists, titled by the track's id", async () => {
+      const r = await rig();
+      const started = await r.start();
+      await markDone(r, started.launchId, { durationMs: 7_000, bytes: 4_096 });
+      const done = (await r.orchestrator.get(started.launchId)).videos.find((v) => v.state === "done");
+      expect(done?.track).toEqual({ source: "trending", title: "track-00000001", artist: null });
+    });
+
+    test("a done video the file has no length for (it was done before the fields existed) is not listed", async () => {
+      const r = await rig();
+      const started = await r.start();
+      await markDone(r, started.launchId, {});
+      expect((await r.orchestrator.get(started.launchId)).videos.some((v) => v.state === "done")).toBe(false);
+    });
+  });
+
   test("get on the pausing launch says pausing", async () => {
     const r = await rig();
     const started = await r.start();

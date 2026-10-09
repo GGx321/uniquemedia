@@ -336,3 +336,31 @@ describe("the counts (A11)", () => {
     expect(mock?.requests).toHaveLength(0);
   });
 });
+
+describe("a launch that closes is forgotten (S4.6c2)", () => {
+  test("after releaseLaunch the service no longer remembers that the launch refreshed", async () => {
+    const h = harness();
+    expect((await ask(h, "launch-0001")).kind).toBe("started");
+    await h.service.settled();
+    now += 200 * HOUR;
+    h.service.releaseLaunch("launch-0001");
+    expect((await ask(h, "launch-0001")).kind).toBe("started");
+    await h.service.settled();
+  });
+
+  test("releasing another launch leaves this one's refresh remembered", async () => {
+    const h = harness();
+    expect((await ask(h, "launch-0001")).kind).toBe("started");
+    await h.service.settled();
+    now += 200 * HOUR;
+    h.service.releaseLaunch("launch-0002");
+    expect(declinedFor(await ask(h, "launch-0001"))).toBe("launch-already-refreshed");
+  });
+
+  test("releasing a launch that never refreshed is harmless", async () => {
+    const h = harness();
+    h.service.releaseLaunch("launch-0009");
+    expect((await ask(h, "launch-0009")).kind).toBe("started");
+    await h.service.settled();
+  });
+});

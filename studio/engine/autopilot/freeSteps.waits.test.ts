@@ -56,7 +56,8 @@ describe("A7: a draft saved after the assignment", () => {
     let ready = false;
     const r = rig({ photos: 4, draft: { videosPerAvatar: 1 }, deps: { chooseMusic: waitingMusic(() => ready), photoIdsInDrafts: async () => ({ photoIds: held, complete: true }) } });
     r.start();
-    await until(() => videosOf(r.launch)[0]?.state === "assigned", "assigned");
+    // With no track yet the video waits for music (S4.6c2) with its photos kept: «assigned» is «has its photos».
+    await until(() => (videosOf(r.launch)[0]?.photoIds.length ?? 0) > 0, "assigned");
     const assigned = videosOf(r.launch)[0]?.photoIds[0] ?? "";
     held = new Set([assigned]);
     ready = true;
@@ -71,7 +72,8 @@ describe("A7: a draft saved after the assignment", () => {
     let ready = false;
     const r = rig({ draft: { videosPerAvatar: 1 }, deps: { chooseMusic: waitingMusic(() => ready), photoIdsInDrafts: async () => ({ photoIds: new Set<string>(), complete }) } });
     r.start();
-    await until(() => videosOf(r.launch)[0]?.state === "assigned", "assigned");
+    // With no track yet the video waits for music (S4.6c2) with its photos kept: «assigned» is «has its photos».
+    await until(() => (videosOf(r.launch)[0]?.photoIds.length ?? 0) > 0, "assigned");
     complete = false;
     ready = true;
     await settleFor(60);
@@ -101,7 +103,8 @@ describe("a stale index at the submit is not a failed render", () => {
     let ready = false;
     const r = rig({ draft: { videosPerAvatar: 1 }, deps: { chooseMusic: waitingMusic(() => ready) } });
     r.start();
-    await until(() => videosOf(r.launch)[0]?.state === "assigned", "assigned");
+    // With no track yet the video waits for music (S4.6c2) with its photos kept: «assigned» is «has its photos».
+    await until(() => (videosOf(r.launch)[0]?.photoIds.length ?? 0) > 0, "assigned");
     r.library.breakUsage(A);
     ready = true;
     await settleFor(60);
@@ -183,9 +186,10 @@ describe("a wait the owner can see in the log", () => {
     const r = rig({ draft: { videosPerAvatar: 1 }, file: rendering });
     r.provenance.intents.set("0-1", "video-0000ad04");
     r.start();
-    await until(() => r.launch.logs.some((l) => l.kind === "avatar-busy"), "the log line");
+    await until(() => r.launch.logs.some((l) => l.kind === "library-unknown"), "the log line");
     await settleFor(60);
-    expect(r.launch.logs.filter((l) => l.kind === "avatar-busy")).toHaveLength(1);
+    expect(r.launch.logs.filter((l) => l.kind === "library-unknown")).toHaveLength(1);
+    expect(r.launch.logs.some((l) => l.kind === "avatar-busy")).toBe(false);
 
     r.provenance.intents.delete("0-1");
     r.provenance.records.set("0-1", { videoId: "video-0000ad04", durationMs: 7000, bytes: 4096 });

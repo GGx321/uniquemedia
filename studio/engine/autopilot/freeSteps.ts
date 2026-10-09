@@ -1,14 +1,18 @@
 import { autopilotSpec, autopilotTotalMs, videoSeed } from "../../shared/autopilot/spec";
 import { trackKey, withUse, type TrackChoice, type TrackUsage } from "../../shared/autopilot/track";
-import { LogLine } from "../../shared/engine/autopilot";
+import { LogLine, type FreeHold } from "../../shared/engine/autopilot";
 import type { Cell, Clip, Focus, MontageSpec } from "../../shared/engine/montage";
+import type { MusicStatus } from "../../shared/engine";
+import { estimateBytesUpper } from "../../shared/montage/estimate";
 import { EngineFailure } from "../engineFailure";
 import type { FocusResult } from "../focus/focusResolver";
 import type { InternalRenderInput } from "../videos/service";
 import { readDraftHolds, type DraftHolds } from "./draftHolds";
+import type { ExportGate, ExportGateAnswer } from "./exportGate";
 import { assignArrived, assignLibrary, repick, type AvatarFacts, type PickOutcome } from "./freeAssign";
 import type { FileMusic, FileVideo, LaunchFile } from "./launchFile";
 import { planAvatarInput, type LibraryReads } from "./libraryInput";
+import type { AutoRefreshDep, ChooseMusicInput } from "./musicPorts";
 import type { PlanPhoto } from "./planner";
 import { lookupVideo, scanProvenance, type KeyFinding } from "./provenanceScan";
 import type { LaunchSteps, LaunchStepsContext } from "./steps";
@@ -16,9 +20,12 @@ import type { LaunchSteps, LaunchStepsContext } from "./steps";
 // Stage 4, S4.6c1 (plan §3.2, §3.6 rows 7-10, §5, §6, §8.1-§8.3): the FREE path of the orchestrator, plugged in behind `LaunchSteps`.
 //
 //   photos: library videos get their photos from a FRESH snapshot (the planner again, on what is free now); generated videos get theirs as slices arrive (`Library.photoIdsOfRun`);
-//   track:  chosen once, with the assignment, from the avatar's usage read ONCE per launch and advanced with `withUse`; the choice itself is a port (`chooseMusic`, S4.6c2);
+//   track:  chosen once, with the assignment, from the avatar's usage read ONCE per launch and advanced with `withUse`; the choice itself is a port (`chooseMusic`, `musicPorts.ts`).
+//           With no fitting track the video WAITS (`waiting-music`, photos kept) and is never rendered silent (A9); it goes on by itself when a track appears. A launch asks for ONE automatic
+//           refresh of the trends (`autoRefresh`, A11): at its start and when videos wait, never retried;
 //   spec:   `autopilotSpec` with the object input, focus prefetched (`prefetchFocus`) so the render never touches the face lane;
-//   render: `VideoService.renderInternal` with the video's provenance, at most 8 unfinished at once;
+//   render: `VideoService.renderInternal` with the video's provenance, at most 8 unfinished at once; while the export folder or the disk cannot take a video (`exportGate`) the renders wait under
+//           `freeHold { export }` (photos are not spent) and the hold clears by itself;
 //   adopt:  after `videos.settled()`, by the provenance a record or a pending intent carries. «The record exists but does not read» is NOT «no record»: wait, never render again.
 //
 // The free path goes on while paid work is held (A13); it starts nothing while the launch is not running; it writes only free-path fields of the launch file, always on the file as it is.
@@ -30,7 +37,11 @@ const DEFAULT_IDLE_POLL_MS = 8_000;
 const DEFAULT_RECHECK_MS = 5_000;
 /** A render that fails for a reason that may pass is tried this many times before the video is dropped. */
 const MAX_ATTEMPTS = 3;
+/** Every pass of every launch gets its own number, so a port shared by launches never serves one launch the candidates another read. */
+let passSequence = 0;
 const STAND_IN_NOTE = "no-focus";
+/** `MUSIC_UNAVAILABLE` reasons of an automatic refresh that failed BEFORE the request left: nothing was sent, so the launch keeps its attempt. */
+const NOT_SENT: ReadonlySet<string> = new Set(["shutting-down", "not-available", "no-music-folder", "clock", "config", "log-held", "log-missing", "log-unwritable"]);
 
 /** The library as the free steps read it. A snapshot is read NOW on every call, never kept (§19). */
 export interface FreeLibrary {
@@ -72,8 +83,12 @@ export interface FreeStepsDeps {
   sliceRuns(avatarId: string): Promise<{ runIds: readonly string[]; over: boolean }>;
   /** `trackUsage(root, avatarId)`: called once per avatar per launch. */
   trackUsage(avatarId: string): Promise<TrackUsage>;
-  /** The track for one video (S4.6c2 plugs in `chooseTrack`). Absent: no video gets a track, and none is rendered (never silent, A9). */
-  chooseMusic?(input: { avatarId: string; totalMs: number; seed: number; usage: TrackUsage }): Promise<TrackChoice>;
+  /** The track for one video (`createMusicPorts`: `chooseTrack` over the candidates). Absent: no video gets a track, and none is rendered (never silent, A9). */
+  chooseMusic?(input: ChooseMusicInput): Promise<TrackChoice>;
+  /** The launch's one automatic refresh of the trends (`MusicService.autoRefresh`) and the service's memory of a closed launch. Absent: the videos just wait. */
+  autoRefresh?: AutoRefreshDep;
+  /** Whether the export folder and the disk can take a video of `requiredBytes` (`exportGateOf`). Absent: the engine's own refusal at the submit is the only check. */
+  exportGate?: ExportGate;
   provenance?: { scan: typeof scanProvenance; lookup: typeof lookupVideo };
   maxRenders?: number;
   /** How often to look while renders are in flight. */
@@ -97,6 +112,14 @@ export function createFreeSteps(deps: FreeStepsDeps): FreeSteps {
   const prune = (): void => {
     for (const [id, run] of runs) if (run.ended && run.unfinished() === 0) runs.delete(id);
   };
+  /** The launch has closed (done or stopped): the music service forgets that it refreshed. A pause is not a close. */
+  const closeLaunch = (launchId: string): void => {
+    try {
+      deps.autoRefresh?.release(launchId);
+    } catch {
+      // The service's memory is a courtesy to a long session; the launch closes either way.
+    }
+  };
   return {
     begin(ctx) {
       prune();
@@ -114,6 +137,16 @@ export function createFreeSteps(deps: FreeStepsDeps): FreeSteps {
     async release(ctx) {
       runs.get(ctx.launchId)?.dispose();
       runs.delete(ctx.launchId);
+      closeLaunch(ctx.launchId);
+      // «Стоп»: nothing of the launch waits on the export folder any more.
+      try {
+        if (ctx.file().freeHold !== null) await ctx.setFreeHold(null);
+      } catch {
+        // The launch is already over, or the write was refused: a stopped launch holds nothing either way.
+      }
+    },
+    async complete(ctx) {
+      closeLaunch(ctx.launchId);
     },
     inFlight: () => {
       prune();
@@ -214,14 +247,29 @@ class FreeRun {
   readonly #holds = new Map<string, Promise<DraftHolds>>();
   /** Avatars the library said «not ready» (usage or drafts unknown) in this pass. */
   readonly #notReady = new Set<string>();
-  /** Avatars whose wait is already in the log (one line per wait). */
-  readonly #loggedWait = new Set<string>();
+  /**
+   * Avatars in a `library-unknown` wait: one log line when it begins, and it ends only when the avatar is OBSERVED ready (a look that does not reach it, a backoff, does not end it), so a
+   * long wait writes one line, not one per recheck.
+   */
+  readonly #episode = new Set<string>();
+  /** The pass number: the music port reads its sources once per pass. It is unique across launches (see `passSequence`). */
+  #pass = 0;
+  /** The launch's automatic refresh: asked at its start and when videos wait (each at most once), and never again once it was attempted (A11: one attempt, never retried). */
+  #askedAtStart = false;
+  #askedWhileWaiting = false;
+  #refreshAttempted = false;
+  /** The refresh this launch started and has not yet told the log about: the tracks the store held before it. */
+  #refreshWatch: { before: ReadonlySet<string> } | null = null;
+  /** The export gate refused in this pass. */
+  #gateRefused = false;
   #finishPending = false;
   #idle: Array<() => void> = [];
 
   constructor(deps: FreeStepsDeps, ctx: LaunchStepsContext) {
     this.#d = deps;
     this.#ctx = ctx;
+    // The launch's one automatic refresh may already have been asked (a restart, a long pause): the file says so.
+    this.#refreshAttempted = this.#file()?.autoRefreshAskedAt !== undefined;
   }
 
   // ----- the steps' contract -----
@@ -373,8 +421,10 @@ class FreeRun {
 
   async #tick(): Promise<boolean> {
     if (this.#file() === null) return false;
+    this.#pass = ++passSequence;
     this.#holds.clear();
     this.#notReady.clear();
+    this.#gateRefused = false;
     this.#settled ??= this.#d.videos.settled().catch(() => undefined);
     await this.#settled;
     let progressed = await this.#finalizeEnded();
@@ -384,8 +434,10 @@ class FreeRun {
     if (await this.#resolveOrphans(library)) progressed = true;
     if (await this.#assign(library)) progressed = true;
     if (await this.#decorate()) progressed = true;
+    await this.#askForRefresh();
+    await this.#tellRefresh();
     if (await this.#submit(library)) progressed = true;
-    if (await this.#tidy()) progressed = true;
+    if (await this.#tidy(library)) progressed = true;
     return progressed;
   }
 
@@ -488,7 +540,8 @@ class FreeRun {
         if (v.state === "done" || v.state === "dropped") return null;
         shape = v.shape;
         size = v.size;
-        return { ...v, state: "done", videoId: found.videoId };
+        // The finished file's length and size stay with the video, for the results list (`autopilot.get.videos`).
+        return { ...v, state: "done", videoId: found.videoId, durationMs: Math.max(1, Math.round(found.durationMs)), bytes: Math.max(1, Math.round(found.bytes)) };
       }),
     );
     if (ok && shape !== null) await this.#log({ at: this.#at(), avatarId, kind: "video-done", key, shape, size, durationMs: found.durationMs, bytes: found.bytes });
@@ -661,7 +714,8 @@ class FreeRun {
     let progressed = false;
     for (const row of file.avatars) {
       if (row.phase === "skipped") continue;
-      const targets = row.videos.filter((v) => v.state === "assigned" && v.music === undefined && v.photoIds.length === v.size).sort(byKey);
+      // A video that waits for a track is looked at again at every pass: a track may have appeared (a finished refresh, a newly flagged own track).
+      const targets = row.videos.filter((v) => (v.state === "assigned" || v.state === "waiting-music") && v.music === undefined && v.photoIds.length === v.size).sort(byKey);
       if (targets.length === 0) continue;
       let working: TrackUsage;
       try {
@@ -670,6 +724,8 @@ class FreeRun {
         continue;
       }
       const given = new Map<string, { music: FileMusic; previousStickerId: string | null }>();
+      /** Videos the chooser said «waiting» for: with the length each would need. Nothing but this is written for them. */
+      const waits = new Map<string, number>();
       const decorated = (video: FileVideo): { music: FileMusic; previousStickerId: string | null } | null => {
         const fresh = given.get(video.key);
         if (fresh !== undefined) return fresh;
@@ -680,11 +736,16 @@ class FreeRun {
         const totalMs = autopilotTotalMs(video.shape, video.size, seed);
         let choice: TrackChoice;
         try {
-          choice = await choose({ avatarId: row.avatarId, totalMs, seed, usage: working });
+          choice = await choose({ avatarId: row.avatarId, totalMs, seed, usage: working, pass: this.#pass });
         } catch {
+          // The sources could not be read: nothing is known, so the video neither waits nor gets a track; the next pass asks again.
           continue;
         }
-        if (choice.kind !== "chosen") continue;
+        if (choice.kind !== "chosen") {
+          // No candidate, or none long enough: the video waits, with its photos. It is never rendered without a track (A9).
+          waits.set(video.key, totalMs);
+          continue;
+        }
         const music: FileMusic = choice.music;
         // The sticker avoids the one the avatar's video just before this one carries.
         const before = row.videos
@@ -697,21 +758,109 @@ class FreeRun {
         given.set(video.key, { music, previousStickerId: file.draft.stickers ? previousStickerId : null });
         working = withUse(working, musicKey(music));
       }
-      if (given.size === 0) continue;
-      const ok = await this.#write((current) => {
-        let next: LaunchFile | null = null;
-        for (const [key, value] of given) {
-          const changed = mapVideo(next ?? current, row.avatarId, key, (v) => (v.state === "assigned" && v.music === undefined ? { ...v, music: value.music, previousStickerId: value.previousStickerId } : null));
-          if (changed !== null) next = changed;
+      if (given.size > 0) {
+        const ok = await this.#write((current) => {
+          let next: LaunchFile | null = null;
+          for (const [key, value] of given) {
+            const changed = mapVideo(next ?? current, row.avatarId, key, (v) =>
+              (v.state === "assigned" || v.state === "waiting-music") && v.music === undefined ? { ...v, state: "assigned", music: value.music, previousStickerId: value.previousStickerId } : null,
+            );
+            if (changed !== null) next = changed;
+          }
+          return next;
+        });
+        if (ok) {
+          this.#usage.set(row.avatarId, Promise.resolve(working));
+          progressed = true;
         }
-        return next;
-      });
-      if (ok) {
-        this.#usage.set(row.avatarId, Promise.resolve(working));
-        progressed = true;
       }
+      if (waits.size > 0 && (await this.#markWaitingMusic(row.avatarId, waits))) progressed = true;
     }
     return progressed;
+  }
+
+  /** The videos that found no track go to `waiting-music` (the ones already there are left alone), and each is logged once, when it begins to wait. */
+  async #markWaitingMusic(avatarId: string, waits: ReadonlyMap<string, number>): Promise<boolean> {
+    const begun: string[] = [];
+    const ok = await this.#write((file) => {
+      begun.length = 0;
+      let next: LaunchFile | null = null;
+      for (const key of waits.keys()) {
+        const changed = mapVideo(next ?? file, avatarId, key, (v) => {
+          if (v.state !== "assigned" || v.music !== undefined) return null;
+          begun.push(key);
+          return { ...v, state: "waiting-music" };
+        });
+        if (changed !== null) next = changed;
+      }
+      return next;
+    });
+    if (!ok) return false;
+    for (const key of begun) await this.#log({ at: this.#at(), avatarId, kind: "waiting-music", key, neededMs: waits.get(key) ?? 0 });
+    return true;
+  }
+
+  // ----- the one automatic refresh of the trends (A11) -----
+
+  /** Once the refresh this launch started has ended (done or failed), the log tells what it brought and what quota is left. One line; a launch that ends first never writes it. */
+  async #tellRefresh(): Promise<void> {
+    const watch = this.#refreshWatch;
+    const dep = this.#d.autoRefresh;
+    if (watch === null || dep === undefined) return;
+    let status: MusicStatus;
+    let now: readonly string[];
+    try {
+      status = await dep.status();
+      if (status.refresh.state === "running") return;
+      now = await dep.candidateKeys();
+    } catch {
+      return;
+    }
+    this.#refreshWatch = null;
+    const local = Math.max(0, status.limit - status.sentLast31d);
+    const remaining = status.serverRemaining === null ? local : Math.min(local, status.serverRemaining);
+    await this.#log({ at: this.#at(), kind: "music-refresh", added: now.filter((key) => !watch.before.has(key)).length, remaining });
+  }
+
+  /**
+   * Asks the music service for the launch's one automatic refresh: at the launch's start, and when videos wait for music (each at most once; the service's own rule decides whether anything is
+   * sent). A refresh that started, failed or threw is the launch's attempt and is never repeated. Nothing is asked while the launch does not run, so a restart asks nothing before «Продолжить».
+   */
+  async #askForRefresh(): Promise<void> {
+    const dep = this.#d.autoRefresh;
+    if (dep === undefined || this.#refreshAttempted || !this.#canStart()) return;
+    const file = this.#file();
+    if (file === null) return;
+    const rows = file.avatars.filter((row) => row.phase !== "skipped");
+    if (!rows.some((row) => row.videos.some((v) => !isFinal(v)))) return;
+    const waiting = rows.some((row) => row.videos.some((v) => v.state === "waiting-music"));
+    if (this.#askedAtStart && !(waiting && !this.#askedWhileWaiting)) return;
+    this.#askedAtStart = true;
+    if (waiting) this.#askedWhileWaiting = true;
+    let written = false;
+    try {
+      const candidateCount = await dep.candidateCount();
+      // The tracks the store holds now, to tell the owner later which ones the refresh brought.
+      const before = await dep.candidateKeys().then((keys) => new Set(keys), () => new Set<string>());
+      // The pause that landed while the question was prepared: nothing is asked (the check is repeated right before the write).
+      if (!this.#canStart()) return;
+      // A4: the attempt is on disk BEFORE the request leaves, so a restart or a pause of any length finds it. A write that fails sends nothing.
+      const stamp = this.#at();
+      if ((await this.#writeState((f) => (f.autoRefreshAskedAt === undefined ? { ...f, autoRefreshAskedAt: stamp } : null))) === "refused") return;
+      written = true;
+      const answer = await dep.request({ launchId: this.#ctx.launchId, candidateCount });
+      if (answer.kind === "declined" || (answer.kind === "failed" && NOT_SENT.has(answer.error.musicReason ?? ""))) {
+        // Nothing was sent, so this was not the launch's attempt.
+        await this.#write((f) => (f.autoRefreshAskedAt === undefined ? null : without(f, "autoRefreshAskedAt")));
+        return;
+      }
+      this.#refreshAttempted = true;
+      if (answer.kind === "started") this.#refreshWatch = { before };
+    } catch (error) {
+      // Whether the request left is not known: once the attempt is written it is not made again.
+      if (written) this.#refreshAttempted = true;
+      this.#warn(`the automatic music refresh could not be asked (${error instanceof Error ? error.name : typeof error})`);
+    }
   }
 
   // ----- steps 8 and 9: focus, then the render -----
@@ -725,11 +874,78 @@ class FreeRun {
     return this.#inflight.size > 0 ? (this.#d.pollMs ?? DEFAULT_POLL_MS) : (this.#d.recheckMs ?? DEFAULT_RECHECK_MS);
   }
 
+  // ----- the export folder and the disk: `freeHold { export }` -----
+
+  /** True when the folder can take the video (an absent gate answers yes: the engine's own check at the submit decides). A refusal sets the hold; an answer clears it. */
+  async #exportAnswers(file: LaunchFile, avatarId: string, video: FileVideo): Promise<boolean> {
+    const gate = this.#d.exportGate;
+    if (gate === undefined) return true;
+    const seed = videoSeed(file.draft.planSeed, avatarId, video.key);
+    const requiredBytes = estimateBytesUpper([{ durationMs: autopilotTotalMs(video.shape, video.size, seed) }]);
+    let answer: ExportGateAnswer;
+    try {
+      // A folder that does not answer must not hold a pause or a stop: the wait ends with the abort of a drain (the gate has its own deadline too).
+      const raced = await this.#abortable(gate({ requiredBytes }));
+      if (raced === null) return false;
+      answer = raced.value;
+    } catch {
+      // No answer is not a refusal: the engine checks again at the submit.
+      this.#warn("the export folder could not be asked");
+      return true;
+    }
+    if (answer.ok) {
+      await this.#clearHold();
+      return true;
+    }
+    this.#gateRefused = true;
+    await this.#setHold(answer.exportReason, answer.exportReason === "not-enough-space" ? { neededBytes: answer.neededBytes, freeBytes: answer.freeBytes } : { neededBytes: null, freeBytes: null });
+    return false;
+  }
+
+  /** Writes the hold only when it is new or its reason changed: the figures move with every look and are not worth a write (every write is an `autopilot.changed`). */
+  async #setHold(exportReason: Extract<FreeHold, { reason: "export" }>["detail"]["exportReason"], figures: { neededBytes: number | null; freeBytes: number | null }): Promise<void> {
+    const held = this.#file()?.freeHold;
+    // Rewritten when the reason changes, or when figures arrive for a hold that had none.
+    if (held?.detail.exportReason === exportReason && (held.detail.neededBytes !== null || figures.neededBytes === null)) return;
+    try {
+      await this.#ctx.setFreeHold({ reason: "export", at: this.#at(), detail: { exportReason, ...figures } });
+    } catch (error) {
+      this.#warn(`the export hold could not be written (${error instanceof Error ? error.name : typeof error})`);
+    }
+  }
+
+  /** The promise's value, or null when a drain or a stop aborted the wait first. */
+  async #abortable<T>(promise: Promise<T>): Promise<{ value: T } | null> {
+    const signal = this.#abort.signal;
+    if (signal.aborted) return null;
+    let onAbort = (): void => undefined;
+    const aborted = new Promise<null>((resolve) => {
+      onAbort = () => resolve(null);
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+    try {
+      return await Promise.race([promise.then((value) => ({ value })), aborted]);
+    } finally {
+      signal.removeEventListener("abort", onAbort);
+    }
+  }
+
+  async #clearHold(): Promise<void> {
+    if (this.#file()?.freeHold == null) return;
+    try {
+      await this.#ctx.setFreeHold(null);
+    } catch (error) {
+      this.#warn(`the export hold could not be cleared (${error instanceof Error ? error.name : typeof error})`);
+    }
+  }
+
   async #submit(library: FreeLibrary): Promise<boolean> {
     let progressed = false;
     const max = this.#d.maxRenders ?? MAX_AUTOPILOT_RENDERS;
     // A video is taken once per call, whatever came of it: a refused step must not send the loop round to the same one again.
     const tried = new Set<string>();
+    // The folder is asked once per call; a fresh answer for every render is the engine's own check inside `renderInternal`.
+    let folderAnswered = false;
     for (;;) {
       if (!this.#canStart() || this.#inflight.size + this.#submitting.size >= max || this.#now() < this.#submitBackoffUntil) break;
       const file = this.#file();
@@ -747,6 +963,11 @@ class FreeRun {
         }
       }
       if (next === null) break;
+      // The export folder and the disk are asked before a video is marked or a photo spent. A refusal holds the renders (not the free work, not the paid work) until it passes.
+      if (!folderAnswered) {
+        if (!(await this.#exportAnswers(file, next.avatarId, next.video))) break;
+        folderAnswered = true;
+      }
       this.#submitting.add(next.video.key);
       tried.add(next.video.key);
       let outcome: Outcome;
@@ -824,6 +1045,8 @@ class FreeRun {
       this.#inflight.set(video.key, { key: video.key, avatarId, jobId });
       this.#attempts.delete(video.key);
       await this.#write((current) => mapVideo(current, avatarId, video.key, (v) => (v.state === "rendering" && v.videoId === null ? { ...v, videoId } : null)));
+      // The engine took a render, so the folder answered: a hold the gate could not clear (no gate, or a refusal of the engine's own) is over.
+      await this.#clearHold();
       return "go";
     } catch (error) {
       return this.#submitFailed(library, avatarId, video.key, error);
@@ -864,9 +1087,13 @@ class FreeRun {
     if (!(error instanceof EngineFailure)) return transient();
     const e = error.error;
     switch (e.code) {
+      case "EXPORT_UNAVAILABLE":
+        // The engine's own check refused the folder or the disk (a folder that went away between the gate and the submit): the same hold, and the video goes back to «assigned».
+        this.#gateRefused = true;
+        await this.#setHold(e.exportReason ?? "not-writable", { neededBytes: null, freeBytes: null });
+        return wait();
       case "RENDER_QUEUE_FULL":
         // The owner's renders fill the queue: wait for a render's end.
-      case "EXPORT_UNAVAILABLE":
       case "INTERNAL":
       case "IN_FLIGHT":
         return wait();
@@ -926,19 +1153,48 @@ class FreeRun {
 
   // ----- the end -----
 
-  async #tidy(): Promise<boolean> {
+  /**
+   * Who waits on the library's answer: an avatar the library said «not ready» in this pass, or one with a key held by recovery. A wait begins with ONE log line (`library-unknown`); it ends
+   * when the avatar has no open video left, or when the library is looked at and can say (usage known, drafts listed). A pass that does not reach the avatar leaves the wait as it is.
+   */
+  async #trackLibraryWaits(library: FreeLibrary, file: LaunchFile): Promise<void> {
+    const blocked = new Set<string>([...this.#notReady, ...[...this.#parked.values()].map((p) => p.avatarId)]);
+    for (const id of blocked) {
+      if (this.#episode.has(id)) continue;
+      this.#episode.add(id);
+      await this.#log({ at: this.#at(), avatarId: id, kind: "library-unknown" });
+    }
+    for (const id of [...this.#episode]) {
+      if (blocked.has(id)) continue;
+      const open = file.avatars.find((row) => row.avatarId === id)?.videos.some((v) => !isFinal(v)) === true;
+      if (open && !(await this.#libraryAnswers(library, id))) continue;
+      this.#episode.delete(id);
+    }
+  }
+
+  /** Whether the library can say which photos of the avatar are free now: its usage reads, and its drafts list. */
+  async #libraryAnswers(library: FreeLibrary, avatarId: string): Promise<boolean> {
+    try {
+      if (!library.snapshot(avatarId).usageOk) return false;
+      return !(await this.#holdsOf(avatarId)).unknown.has(avatarId);
+    } catch {
+      return false;
+    }
+  }
+
+  async #tidy(library: FreeLibrary): Promise<boolean> {
     const file = this.#file();
     if (file === null) return false;
-    // Who waits on the library's answer: ONE log line per wait, for the owner to see. (The avatar row keeps its phase: the contract has no reason for this wait yet.)
-    const waiting = new Set<string>([...this.#notReady, ...[...this.#parked.values()].map((p) => p.avatarId)]);
-    for (const id of [...this.#loggedWait]) if (!waiting.has(id)) this.#loggedWait.delete(id);
-    for (const id of waiting) {
-      if (this.#loggedWait.has(id)) continue;
-      this.#loggedWait.add(id);
-      await this.#log({ at: this.#at(), avatarId: id, kind: "avatar-busy" });
-    }
+    // Who waits on the library's answer (`library-unknown`): ONE log line per wait, and the wait ends only when the avatar is observed ready.
+    await this.#trackLibraryWaits(library, file);
+    // A hold the gate did not refuse in this pass, with no video left that needs the folder, is over (a launch whose videos are all waiting for music or are done holds nothing).
+    if (file.freeHold !== null && !this.#gateRefused && this.#ctx.isRunning() && !this.draining && !needsFolder(file)) await this.#clearHold();
     // A pass that has nothing to tidy writes nothing: every write is an `autopilot.changed`.
-    const changed = tidied(file) === null ? false : await this.#write((current) => tidied(current));
+    const settled = (current: LaunchFile): LaunchFile | null => {
+      const shown = waitsShown(current, this.#episode);
+      return tidied(shown ?? current) ?? shown;
+    };
+    const changed = settled(file) === null ? false : await this.#write((current) => settled(current));
     const after = this.#file();
     if (after === null) return changed;
     const everyFinal = after.avatars.every((row) => row.videos.every(isFinal));
@@ -966,6 +1222,32 @@ interface SliceInfo {
   sig: string;
 }
 
+/** Whether any video is ready to go to the export folder (photos, a track, not yet submitted). With none, a hold on the folder has nothing to hold. */
+function needsFolder(file: LaunchFile): boolean {
+  return file.avatars.some((row) => row.phase !== "skipped" && row.videos.some((v) => v.state === "assigned" && v.music !== undefined && v.photoIds.length === v.size));
+}
+
+/**
+ * What the avatar rows say of a `library-unknown` wait, on the file as it is. Only a row with no generation is the free path's own (the composer restores what the paid path owns on the
+ * others, and a paid row keeps its phase): it shows `waiting { library-unknown }` while the wait lasts and goes back to where its videos are when it ends. Null when nothing changes.
+ */
+function waitsShown(file: LaunchFile, episode: ReadonlySet<string>): LaunchFile | null {
+  let changed = false;
+  const avatars = file.avatars.map((row) => {
+    if (row.generation !== null || row.phase === "skipped") return row;
+    if (episode.has(row.avatarId) && (row.phase === "planned" || row.phase === "montage")) {
+      changed = true;
+      return { ...row, phase: "waiting" as const, waiting: { reason: "library-unknown" as const } };
+    }
+    if (!episode.has(row.avatarId) && row.phase === "waiting" && row.waiting?.reason === "library-unknown") {
+      changed = true;
+      return { ...row, phase: "planned" as const, waiting: null };
+    }
+    return row;
+  });
+  return changed ? { ...file, avatars } : null;
+}
+
 /**
  * The end-of-pass bookkeeping, on the file as it is: the videos of a skipped avatar that have not started are dropped (`avatar-skipped`), an avatar whose videos are all final is `done`, and an
  * avatar that has begun its montage says so. A row that has a `generation` is the paid path's: only its videos are touched, never its phase to anything but `done`/`montage`. Null when
@@ -978,7 +1260,7 @@ function tidied(file: LaunchFile): LaunchFile | null {
     const allFinal = videos.length > 0 && videos.every(isFinal);
     let phase = row.phase;
     if (row.phase !== "skipped" && row.phase !== "waiting" && allFinal) phase = "done";
-    else if (phase === "planned" && videos.some((v) => v.state === "assigned" || v.state === "rendering" || v.state === "done")) phase = "montage";
+    else if (phase === "planned" && videos.some((v) => v.state === "assigned" || v.state === "waiting-music" || v.state === "rendering" || v.state === "done")) phase = "montage";
     if (phase === row.phase && videos.every((v, i) => v === row.videos[i])) return row;
     changed = true;
     return { ...row, phase, videos };

@@ -213,8 +213,11 @@ export const AVATAR_PHASES = ["planned", "composing", "awaiting-review", "approv
 export const AvatarPhase = z.enum(AVATAR_PHASES);
 export type AvatarPhase = z.infer<typeof AvatarPhase>;
 
-/** Why an avatar waits: another job of its own holds it, the owner has an open scene set of their own for it, or the launch's paid work is held. */
-export const WaitingReason = z.enum(["avatar-busy", "open-set", "paid-hold"]);
+/**
+ * Why an avatar waits: another job of its own holds it, the owner has an open scene set of their own for it, the launch's paid work is held, or the library cannot say
+ * which of its photos are free (unknown usage or drafts, a record that does not read, recovery still running): nothing is picked or dropped until it can.
+ */
+export const WaitingReason = z.enum(["avatar-busy", "open-set", "paid-hold", "library-unknown"]);
 export type WaitingReason = z.infer<typeof WaitingReason>;
 
 /**
@@ -327,6 +330,8 @@ const LOG_LINES = [
   // The kinds the artboards draw beyond the log sheet: the holds, a busy avatar, a restart, scenes being written, the month ending mid-slice, a dropped render.
   line("hold-network", { drops: z.number().int().min(1) }),
   line("avatar-busy", {}),
+  // The library cannot tell which photos are free (S4.6c2): once per wait, not per look.
+  line("library-unknown", {}),
   line("app-restarted", { cause: z.enum(["quit", "engine-restart"]), requests: Count }),
   line("scenes-writing", { scenes: Count }),
   line("budget-ended", { done: Count, total: Count }),

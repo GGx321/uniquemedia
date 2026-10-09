@@ -111,18 +111,18 @@ describe("a pass that changes nothing writes nothing", () => {
   });
 });
 
-describe("the wait is in the log, not in the avatar's phase", () => {
-  test("a key held by recovery logs one line and leaves the row's phase alone", async () => {
+describe("the wait is in the log and on the avatar's row (S4.6c2: `library-unknown`)", () => {
+  test("a key held by recovery logs one line and the row waits with its own reason, not as avatar-busy", async () => {
     const r = rig({
       draft: { videosPerAvatar: 1 },
       file: (file) => ({ ...file, avatars: file.avatars.map((a) => ({ ...a, videos: a.videos.map((v) => ({ ...v, state: "rendering" as const, photoIds: ["photo-held-0001"], videoId: null, music: { source: "trending" as const, trackId: "track-00000001", startMs: 1500 } })) })) }),
     });
     r.provenance.intents.set("0-1", "video-0000ad04");
     r.start();
-    await until(() => r.launch.logs.some((l) => l.kind === "avatar-busy"), "the log line");
+    await until(() => r.launch.logs.some((l) => l.kind === "library-unknown"), "the log line");
     await settleFor(60);
-    expect(r.launch.logs.filter((l) => l.kind === "avatar-busy")).toHaveLength(1);
-    expect(r.launch.file().avatars[0]?.waiting).toBeNull();
-    expect(r.launch.file().avatars[0]?.phase).not.toBe("waiting");
+    expect(r.launch.logs.filter((l) => l.kind === "library-unknown")).toHaveLength(1);
+    expect(r.launch.logs.some((l) => l.kind === "avatar-busy")).toBe(false);
+    expect(r.launch.file().avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "library-unknown" } });
   });
 });

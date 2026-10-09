@@ -517,6 +517,14 @@ export class MusicService {
     }
   }
 
+  /**
+   * A launch has closed (done or stopped): the service forgets that it refreshed, so the set does not grow with every launch of a long session. The launch's one automatic
+   * refresh was spent when it was admitted; the 72 h spacing and the quota counts, which live on disk, are what hold the next launch back, not this memory.
+   */
+  releaseLaunch(launchId: string): void {
+    this.#autoLaunches.delete(launchId);
+  }
+
   /** Lets `stop()` wait for an admission that has not started its request yet. */
   #track<T>(admission: Promise<T>): Promise<T> {
     this.#admissions.add(admission);

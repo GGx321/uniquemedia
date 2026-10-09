@@ -49,6 +49,7 @@ export const LOG_SAMPLES: Record<string, Record<string, unknown>> = {
   degrade: { fewerVideos: 2, missingPhotos: 3 },
   "hold-network": { drops: 3 },
   "avatar-busy": {},
+  "library-unknown": {},
   "app-restarted": { cause: "engine-restart", requests: 4 },
   "scenes-writing": { scenes: 14 },
   "budget-ended": { done: 9, total: 14 },

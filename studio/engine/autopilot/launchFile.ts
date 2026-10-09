@@ -75,6 +75,9 @@ const FileVideo = z
     videoId: Id.nullable(),
     /** Written with the assignment (S4.6c1): absent until a track is chosen. A video with photos and no music is not rendered (never silent, A9). */
     music: FileMusic.optional(),
+    /** Written when the video is done (S4.6c2 fix round 1): the finished file's length and size, for the results list. Absent on a video done before this field existed. */
+    durationMs: z.number().int().min(1).optional(),
+    bytes: z.number().int().min(1).optional(),
     /** The built-in sticker of the avatar's video before this one, which the spec avoids; null when there is none. Written with the music. */
     previousStickerId: z
       .string()
@@ -137,6 +140,11 @@ export const LaunchFile = z
     autoContinues: z.record(z.string().min(1).max(160), AutoContinue).optional(),
     /** S4.6b2: how many of the three retries after «prices unavailable» (5, 15 and 60 minutes) the launch has used. */
     priceRetries: z.number().int().min(0).max(3).optional(),
+    /**
+     * Written BEFORE the launch's one automatic refresh of the trends is asked (A11, the A4 «id before the call» pattern): a launch that finds it set (after a restart, or a pause of any length)
+     * never asks again. Cleared when the service answered that nothing was sent. Optional, no schema bump (Studio is unreleased).
+     */
+    autoRefreshAskedAt: IsoDateTime.optional(),
     /** The ledger's sum over the launch's group when the file was last written; the live figure is the ledger's, this is read when the ledger cannot be, and after the end. */
     spentMicros: Micros,
     avatars: z.array(FileAvatar).min(1),
