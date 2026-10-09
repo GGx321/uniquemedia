@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { within } from "./within";
+useNativeGlobals();
 
 describe("within: a promise a test awaits has a bound", () => {
   test("resolves with the value of a promise that settles in time", async () => {
