@@ -27,7 +27,7 @@ import { copyOwnVideos, ownVideoCopyName, OwnVideoUnavailableError, type OwnVide
 import type { OwnStickerSource } from "./ownStickers";
 import { resolveLayers, type LayerDeps } from "./layers";
 import { CommitTracker } from "./live";
-import { partNameOf, scenePhotoIds, type VideoRecord } from "./record";
+import { partNameOf, scenePhotoIds, type VideoProvenance, type VideoRecord } from "./record";
 import type { ExportRootRef } from "./recovery";
 import { readRootId } from "./rootMarker";
 import { createTempExclusive } from "./tempFile";
@@ -118,6 +118,8 @@ export interface RenderPlan {
   readonly montageId: string | null;
   /** The draft's name when the render was asked for (K12); the record keeps it. Null for an unnamed draft or a headless spec. */
   readonly title: string | null;
+  /** Stage 4: the autopilot's provenance (origin, launch, video key), carried into the intent and the record; absent for a manual render. */
+  readonly provenance?: VideoProvenance;
   /** The kind token of the file name. */
   readonly videoKind: string;
   /** The tile's music (title, artist); for a plan with a `track` the job fills it from the track it opened. */
@@ -507,6 +509,7 @@ export function createRenderExecute(deps: VideoRenderDeps): (plan: RenderPlan) =
           // What the render resolved for the music: where it started, the gain the true-peak pass chose, the file it read.
           ...(track === null || music === null || outcome.music === undefined ? {} : { audio: { trackSha: track.sha256, startMs: music.startMs, gainDb: outcome.music.gainDb } }),
           spec: plan.spec,
+          ...(plan.provenance === undefined ? {} : { provenance: plan.provenance }),
           forbiddenStrings,
         },
         {

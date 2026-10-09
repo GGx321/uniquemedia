@@ -2992,10 +2992,15 @@ export class MockEngine implements EngineBridge {
 
   /** `videos.setPublished`: the owner's «Опубликовано» mark, kept in the video's summary (the engine keeps it beside the write-once records); announced like any change of a record. */
   private videosSetPublished(c: CommandMessage, videoId: string, published: boolean): ResponseMessage {
-    const gone = this.libraryGate();
+    // A mark is a write of the library's records: it waits during a library switch (the engine's `withLibrary`).
+    const gone = this.writeLibraryGate();
     if (gone) return this.fail(c, gone);
     const video = this.videos.find((v) => v.summary.videoId === videoId);
     if (video === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no video ${videoId}` });
+    // A mark that already is what is asked changes nothing, writes no line and announces nothing (the engine's `markPublished`).
+    if ((video.summary.publishedAt !== undefined && video.summary.publishedAt !== null) === published) {
+      return this.ok(c, { video: { ...video.summary, fileState: this.fileStateOf(video), montageId: this.liveDraft(video.montageId) } });
+    }
     this.publishedLogUsed = true;
     const { publishedAt: _before, ...rest } = video.summary;
     const summary: VideoSummary = published ? { ...rest, publishedAt: this.nowIso() } : rest;

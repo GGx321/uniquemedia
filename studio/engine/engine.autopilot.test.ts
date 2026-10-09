@@ -5,7 +5,7 @@ import { ledgerLines, command, failed, ok, startEngine, useEngineDir } from "./t
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
-// Stage 4, S4.1: until the orchestrator lands (S4.6) and the video and media services learn their marks (S4.5c, S4.5d), the engine answers every new command with
+// Stage 4, S4.1: until the orchestrator lands (S4.6) and the media service learns its track flag (S4.5d), the engine answers every new command with
 // INTERNAL «<type> is not implemented yet», the engine's one wording for a command it has no handler for (its `default` branch). A payload that breaks the contract is
 // still VALIDATION, so a forged amount or path never reaches a handler that does not exist yet. Nothing is written, spent or announced.
 
@@ -21,7 +21,6 @@ const NEW_COMMANDS: [string, unknown][] = [
   ["autopilot.list", {}],
   ["autopilot.get", { launchId: LAUNCH }],
   ["autopilot.removeUnreadable", { entryId: "0123456789abcdef" }],
-  ["videos.setPublished", { videoId: "video-00000001", published: true }],
   ["media.setForAutopilot", { mediaId: "media-00000001", on: true }],
 ];
 
@@ -62,12 +61,27 @@ describe("the new commands before their services exist", () => {
   });
 });
 
-describe("videos.delete with rejectPhotos before S4.5c", () => {
-  test("is refused up front, so the owner is never told photos were rejected when the engine would only delete the video", async () => {
+describe("videos.setPublished (S4.5c)", () => {
+  test("is served: an unknown video is NOT_FOUND, not «not implemented yet»", async () => {
     const { engine } = await startEngine(dir());
-    // Were the flag ignored the answer would be EXPORT_UNAVAILABLE here (no export folder) or NOT_FOUND. The refusal comes before anything is looked at or touched.
-    const response = failed(await engine.handle(command("videos.delete", { videoId: "video-00000001", mode: "video", rejectPhotos: true })));
-    expect(response.error).toEqual({ code: "INTERNAL", detail: "videos.delete with rejectPhotos is not implemented yet" });
+    expect(failed(await engine.handle(command("videos.setPublished", { videoId: "video-00000001", published: true }))).error.code).toBe("NOT_FOUND");
+  });
+
+  test("a mark that is not a boolean is VALIDATION", async () => {
+    const { engine } = await startEngine(dir());
+    expect(failed(await engine.handle(command("videos.setPublished", { videoId: "video-00000001", published: "yes" }))).error.code).toBe("VALIDATION");
+  });
+});
+
+describe("videos.delete with rejectPhotos (S4.5c)", () => {
+  test("is served: the flag changes nothing about what is checked first, and an unknown video is NOT_FOUND", async () => {
+    const { engine } = await startEngine(dir());
+    expect(failed(await engine.handle(command("videos.delete", { videoId: "video-00000001", mode: "record", rejectPhotos: true }))).error.code).toBe("NOT_FOUND");
+  });
+
+  test("«Удалить видео и отклонить фото» asks the export folder first, like «Удалить»: nothing is looked for or rejected when the folder cannot answer", async () => {
+    const { engine } = await startEngine(dir());
+    expect(failed(await engine.handle(command("videos.delete", { videoId: "video-00000001", mode: "video", rejectPhotos: true }))).error.code).toBe("EXPORT_UNAVAILABLE");
   });
 
   test("a delete without the flag is the delete it was: an unknown video is NOT_FOUND, and «Удалить» still asks the export folder first", async () => {

@@ -58,6 +58,20 @@ function reviewRowOf(answer: Answer): { avatarId: string; sceneSetId: string; re
   return null;
 }
 
+/** Renders one video from two photos and answers its id (the story's first video in the list). */
+async function renderedVideoOf(t: Parameters<Scenario["run"]>[0], w: World): Promise<string> {
+  const photo = (n: number): string => w.photoIds[n - 1] ?? "";
+  const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(1), photo(2)] });
+  const montageId = created.ok ? String(record(created.result.montage)?.montageId ?? "") : "";
+  await t.call("videos.render", { montageId });
+  await t.advance("progress");
+  await t.advance("saving");
+  await t.settle();
+  const listed = await t.call("videos.list", { avatarId: w.avatarId });
+  const first = listed.ok && Array.isArray(listed.result.videos) ? record(listed.result.videos[0]) : null;
+  return typeof first?.videoId === "string" ? first.videoId : "video-00000001";
+}
+
 const PARITY_NOW: Scenario[] = [
   {
     name: "autopilot: what the contract refuses is refused by both engines before any lookup, and a name or a path is never an entry",
@@ -89,6 +103,29 @@ const PARITY_NOW: Scenario[] = [
       await t.call("videos.delete", { videoId: "video-00000001", mode: "video", rejectPhotos: false });
       await t.call("videos.setPublished", { videoId: "video-00000001", published: "yes" });
       await t.call("media.setForAutopilot", { mediaId: "media-00000001", on: 1 });
+    },
+  },
+  {
+    name: "videos: the owner's «Опубликовано» mark is set and cleared, and «Удалить видео и отклонить фото» rejects the photos before the video goes",
+    async run(t, w) {
+      const videoId = await renderedVideoOf(t, w);
+      t.note("clearing a video that was never marked changes and announces nothing");
+      await t.call("videos.setPublished", { videoId, published: false });
+      t.note("the owner's mark, set and cleared and set again; asking for the mark it already has changes and announces nothing; an unknown video");
+      await t.call("videos.setPublished", { videoId, published: true });
+      await t.call("videos.setPublished", { videoId, published: true });
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("videos.setPublished", { videoId, published: false });
+      await t.call("videos.list", { avatarId: w.avatarId });
+      await t.call("videos.setPublished", { videoId, published: true });
+      await t.call("videos.setPublished", { videoId: "video-nobody-0404", published: true });
+      t.note("«Удалить видео и отклонить фото» on an unknown video rejects nothing");
+      await t.call("videos.delete", { videoId: "video-nobody-0404", mode: "video", rejectPhotos: true });
+      await t.call("photos.list", { avatarId: w.avatarId });
+      t.note("the video's photos are rejected, then the video goes; a published video is deleted like any other");
+      await t.call("videos.delete", { videoId, mode: "video", rejectPhotos: true });
+      await t.call("photos.list", { avatarId: w.avatarId });
+      await t.call("videos.list", { avatarId: w.avatarId });
     },
   },
 ];
@@ -186,7 +223,8 @@ const PENDING: Scenario[] = [
   },
   {
     name: "autopilot (pending the marks): a video is marked published, an own track for the autopilot, and a delete rejects the photos first",
-    pending: { until: "S4.5c", commands: ["videos.setPublished", "media.setForAutopilot", "videos.delete"] },
+    // S4.5c serves `videos.setPublished` and `videos.delete { rejectPhotos }` (compared line for line by the story above); the own-track flag is S4.5d's.
+    pending: { until: "S4.5d", commands: ["media.setForAutopilot"] },
     async run(t, w) {
       const photo = (n: number): string => w.photoIds[n - 1] ?? "";
       const created = await t.call("montages.create", { avatarId: w.avatarId, photoIds: [photo(1), photo(2)] });

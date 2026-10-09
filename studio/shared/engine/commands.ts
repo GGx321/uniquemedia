@@ -482,7 +482,8 @@ const ENGINE_SPECS = [
   // for a record that cannot be read or a disk that fails.
   // Stage 4 (additive): `rejectPhotos: true` («Удалить видео и отклонить фото», on every video, autopilot or not) first marks every scene photo of the record rejected
   // (`rejected.jsonl`), then deletes as above, so a crash between the two leaves a video with rejected photos (harmless; delete again) and never free photos the
-  // next launch could take. A delete refused by EXPORT_UNAVAILABLE leaves the photos rejected and the video in place. The result then lists `rejectedPhotoIds`.
+  // next launch could take. The export folder is checked FIRST: a refusal (EXPORT_UNAVAILABLE) changes nothing, and neither does any other refusal before the marks. The photos stay rejected
+  // with the video still in place only when the delete itself failed, or timed out with its outcome unknown (delete again). The result then lists `rejectedPhotoIds`.
   defineCommand(
     "videos.delete",
     z.strictObject({ videoId: Id, mode: z.enum(["video", "record"]), rejectPhotos: z.literal(true).optional() }),

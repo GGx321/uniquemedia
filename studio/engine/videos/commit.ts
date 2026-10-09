@@ -12,7 +12,7 @@ import { verifyAndHashMp4, type VerifiedFile, type VerifyExpected, type VerifyRe
 import type { CommitFs, FileFacts, FileIdentity } from "./commitFs";
 import { highestNamedNumber, type ExportNumberLibrary, type NumberFs } from "./exportNumbers";
 import { commitIntent, writeIntent } from "./intents";
-import { parseRecordSpec, partNameOf, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
+import { parseRecordSpec, partNameOf, videoPaths, VideoRecordSchema, type VideoProvenance, type VideoRecord } from "./record";
 import { withRootLock } from "./rootLock";
 
 // The commit of one finished render (Stage 3 plan, "Commit" row, steps 2-6 and
@@ -137,6 +137,8 @@ export interface CommitInput {
   readonly audio?: VideoRecord["audio"];
   /** The RESOLVED spec: what was rendered. Kept whole in the record. */
   readonly spec: z.infer<typeof MontageShape>;
+  /** Stage 4: the autopilot's provenance, written into the intent and so into the record; absent for a manual render, which then carries none of the three fields. */
+  readonly provenance?: VideoProvenance;
   /** From `collectForbiddenStrings`. */
   readonly forbiddenStrings: readonly string[];
 }
@@ -436,6 +438,7 @@ export async function commitVideo(target: CommitTarget, input: CommitInput, deps
             ...(input.audio === undefined ? {} : { audio: input.audio }),
             file: { rootId: target.rootId, relPath: claim.relPath, bytes, sha256, mtimeMs: Math.floor(before.mtimeMs) },
             spec,
+            ...(input.provenance === undefined ? {} : { origin: input.provenance.origin, launchId: input.provenance.launchId, launchVideoKey: input.provenance.launchVideoKey }),
           });
           intentMayExist = true;
           intentWriteBegan = true;

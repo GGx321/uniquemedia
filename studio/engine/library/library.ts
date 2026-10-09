@@ -775,6 +775,19 @@ export class Library {
     return [...this.#photos.values()].filter((p) => p.avatarId === avatarId).sort(byCreation);
   }
 
+  /**
+   * The ids of the photos a photo run made for an avatar, in the order they were made (Stage 4, plan §3.6 step 6). A photo does not store its run: it is the prefix of the photo's own
+   * `attemptId`, `${runId}:slot-N#k`, so the run id AND the colon decide (`run-00000001` is not `run-000000010`). Only run photos count (a generated photo with a scene category): an
+   * import and a candidate portrait are no run's. Rejected and used photos are listed too, since eligibility is the caller's question (`photoStates`). An id that is not a library id
+   * matches nothing.
+   */
+  photoIdsOfRun(avatarId: string, runId: string): string[] {
+    if (!isLibraryId(runId)) return [];
+    return this.photosByAvatar(avatarId)
+      .filter((photo) => looksLikeRunPhoto(photo) && photo.source.kind === "generated" && photo.source.attemptId.split(":")[0] === runId)
+      .map((photo) => photo.id);
+  }
+
   photosByCategory(avatarId: string, category: string): PhotoSidecar[] {
     // An imported photo (T6c) has no category: it never matches a category filter.
     return this.photosByAvatar(avatarId).filter((p) => p.source.kind === "generated" && p.source.category === category);

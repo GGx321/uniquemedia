@@ -508,6 +508,30 @@ describe("the marks on videos and tracks", () => {
     expect((await errorOf(mock.client.request("videos.setPublished", { videoId: "video-nobody-0404", published: true }))).code).toBe("NOT_FOUND");
   });
 
+  test("a mark that already is what is asked keeps its first time and announces nothing, as the engine does", async () => {
+    const { mock, videoId } = await oneVideo();
+    const first = (await unwrap(mock.client.request("videos.setPublished", { videoId, published: true }))).video;
+    const before = mock.events.length;
+    const again = (await unwrap(mock.client.request("videos.setPublished", { videoId, published: true }))).video;
+    expect(again.publishedAt).toBe(first.publishedAt);
+    expect(mock.events.length).toBe(before);
+  });
+
+  test("clearing a video that was never marked announces nothing and leaves the list without a marks field", async () => {
+    const { mock, videoId } = await oneVideo();
+    const before = mock.events.length;
+    const answer = (await unwrap(mock.client.request("videos.setPublished", { videoId, published: false }))).video;
+    expect(answer).not.toHaveProperty("publishedAt");
+    expect(mock.events.length).toBe(before);
+    expect("published" in (await unwrap(mock.client.request("videos.list", { avatarId: MIA.avatarId })))).toBe(false);
+  });
+
+  test("a mark waits with IN_FLIGHT while a library switch is being surveyed: it is a write", async () => {
+    const { mock, videoId } = await oneVideo();
+    mock.engine.setLibrarySwitching(true);
+    expect((await errorOf(mock.client.request("videos.setPublished", { videoId, published: true }))).code).toBe("IN_FLIGHT");
+  });
+
   test("a delete that rejects the photos marks every scene photo of the video rejected first and lists them", async () => {
     const { mock, videoId } = await oneVideo();
     const answer = await unwrap(mock.client.request("videos.delete", { videoId, mode: "video", rejectPhotos: true }));

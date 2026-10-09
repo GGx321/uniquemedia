@@ -9,6 +9,7 @@ import { runExclusive } from "../library/keyedMutex";
 import { isFromNewerVersion, MONTAGE_FILE_SCHEMA_VERSION } from "../library/layout";
 import type { Library } from "../library/library";
 import { openRegularNoFollow, UnsafeOpenError, type OpenRegularOptions } from "../library/openRegular";
+import { scenePhotoIds } from "../videos/record";
 import { unlinkWithRetry } from "../library/unlinkRetry";
 
 // The montage drafts on disk (Stage 3 plan, "Library, storage and contract additions"):
@@ -253,6 +254,18 @@ export class DraftStore {
     if (truncated) this.#deps.log(`the drafts folders hold more draft files than one listing reads (${MAX_DRAFT_FILES_READ}); the rest are left out`);
     montages.sort(newestFirst);
     return { montages, skipped, notRead, truncated };
+  }
+
+  /**
+   * The scene photos the saved drafts of one avatar name (Stage 4, plan §5.1), for the batch autopilot: a draft reserves nothing, so a photo it holds could be taken for a launch video
+   * and the owner's render of the draft would then hit PHOTO_UNAVAILABLE. Own photos are no scene photos and are not listed. `complete` is false when a draft file could not be read or
+   * more draft files exist than one listing reads (`list`'s own bounds): the answer is then what is KNOWN, and the caller that must not take a held photo treats it as unknown.
+   */
+  async photoIdsInDrafts(library: Library, avatarId: string): Promise<{ photoIds: ReadonlySet<string>; complete: boolean }> {
+    const listing = await this.list(library, avatarId);
+    const photoIds = new Set<string>();
+    for (const montage of listing.montages) for (const photoId of scenePhotoIds(montage.spec.clips)) photoIds.add(photoId);
+    return { photoIds, complete: listing.skipped === 0 && listing.notRead === 0 && !listing.truncated };
   }
 
   /** `entries` by modification time, newest first, ties by name; a file that cannot be looked at goes last. */
