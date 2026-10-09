@@ -7,7 +7,7 @@ import { countOf } from "../../lib/format";
 import { formatUsd } from "../../lib/money";
 import { Icon, Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
-import { batchNote, frozenNote, isLaunchBatch, isLaunchRun, launchPaused, launchRowOf, type LaunchLink } from "./launchSet";
+import { batchNote, emptySetToFill, frozenNote, isLaunchBatch, isLaunchRun, launchPaused, launchRowOf, type LaunchLink } from "./launchSet";
 import { modelName } from "./runForm";
 import { EMPTY_IDEA, type IdeaStart } from "./SceneIdeaForm";
 import { about, focusLost } from "./scenePaid";
@@ -424,7 +424,7 @@ export function ScenesColumn({
   // Never on a launch's set (§4.7, M8 option б): its own scenes would not be drawn.
   const canAdd = shownSet !== null && !used && launchLink === null;
   const addOff = live || idea !== null;
-  const emptySetId = openSet !== null && openSet.scenes.length === 0 && openSet.write === null ? openSet.sceneSetId : null;
+  const emptySetId = emptySetToFill(openSet, launchLink);
   useEffect(() => {
     if (emptySetId !== null) setIdea((now) => now ?? EMPTY_IDEA);
   }, [emptySetId]);
@@ -502,7 +502,17 @@ export function ScenesColumn({
               </button>
             )}
           </div>
-          <div className="bar" role="progressbar" aria-labelledby={progressId} aria-valuemin={0} aria-valuemax={total} aria-valuenow={runJob.done}>
+          {/* S4.9d (S4.9b L5): a launch's batch takes the focus from the strip's «Продолжить запуск» once it draws. */}
+          <div
+            className="bar"
+            role="progressbar"
+            aria-labelledby={progressId}
+            aria-valuemin={0}
+            aria-valuemax={total}
+            aria-valuenow={runJob.done}
+            tabIndex={launchBatch ? -1 : undefined}
+            data-launch-batch={launchBatch ? avatar.avatarId : undefined}
+          >
             <span style={{ width: `${total > 0 ? (runJob.done / total) * 100 : 0}%` }} />
           </div>
           {launchBatch && launchRow !== null && <span className="mono faint scene-progress-note">{batchNote(launchRow)}</span>}

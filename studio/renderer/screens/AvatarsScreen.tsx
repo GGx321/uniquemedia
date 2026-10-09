@@ -713,7 +713,8 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
       {ready && chosenAvatars.length > 0 && (
         <SelectionBar
           chosen={chosenAvatars}
-          hidden={{ count: chosenAvatars.filter((a) => !shownActive.includes(a.avatarId)).length, by: query === "" ? "filter" : "search" }}
+          // S4.9c N4: the chosen are active, so «Архив» hides every one of them whatever the search says; with the other filters only the search can hide one.
+          hidden={{ count: chosenAvatars.filter((a) => !shownActive.includes(a.avatarId)).length, by: filter === "archived" ? "filter" : "search" }}
           running={isUnfinished(view.autopilot)}
           onClear={clearChosen}
           onAutopilot={() => navigate({ name: "section", id: "autopilot", chosen: chosenAvatars.map((a) => a.avatarId) })}

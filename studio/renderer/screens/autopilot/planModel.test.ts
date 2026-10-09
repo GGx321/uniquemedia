@@ -18,6 +18,7 @@ import {
   stoppingLine,
   stopTexts,
   timeLabel,
+  wordsText,
 } from "./planModel";
 
 // S4.9a: the plan card's words for every state the design draws (LaunchStates «Бюджет месяца», «Почему не собрать», «Музыка»; HostStates «Боковая панель»),
@@ -376,16 +377,29 @@ describe("a launch that runs", () => {
   });
 
   test("«Остановить запуск?» says what stops, what stays and what was spent of W′ (ApStopConfirm, short form)", () => {
-    expect(stopTexts(launch())).toEqual({
-      lead: "Новых запросов и рендеров не будет. Запросы, что уже в работе (4), закончатся сами — ничего не обрывается. Вернуть запуск после «Стоп» нельзя.",
-      stays: [`14${NBSP}готовых видео — в «Готовых видео»;`, "все новые фото — в библиотеке, свободными для следующего запуска."],
-      spent: "Потрачено $1.25 из $4.14 — остальное запуск уже не потратит.",
-    });
+    const texts = stopTexts(launch());
+    expect(wordsText(texts.lead)).toBe("Новых запросов и рендеров не будет. Запросы, что уже в работе (4), закончатся сами — ничего не обрывается. Вернуть запуск после «Стоп» нельзя.");
+    expect(texts.stays.map(wordsText)).toEqual([`14${NBSP}готовых видео — в «Готовых видео»;`, "все новые фото — в библиотеке, свободными для следующего запуска."]);
+    expect(texts.spent === null ? null : wordsText(texts.spent)).toBe("Потрачено $1.25 из $4.14 — остальное запуск уже не потратит.");
     const quiet = launch({ inFlight: { requests: 0, openMicros: 0 }, avatars: [row("avatar-mia", { videos: { done: 1, total: 10 } }), row("avatar-sofia", { videos: { done: 0, total: 10 } }), row("avatar-elena", { videos: { done: 0, total: 10 } })] });
-    expect(stopTexts(quiet).lead).toBe("Новых запросов и рендеров не будет. Вернуть запуск после «Стоп» нельзя.");
-    expect(stopTexts(quiet).stays[0]).toBe(`1${NBSP}готовое видео — в «Готовых видео»;`);
+    expect(wordsText(stopTexts(quiet).lead)).toBe("Новых запросов и рендеров не будет. Вернуть запуск после «Стоп» нельзя.");
+    expect(wordsText(stopTexts(quiet).stays[0] ?? [])).toBe(`1${NBSP}готовое видео — в «Готовых видео»;`);
     expect(stoppingLine(launch())).toBe(`Новых трат не будет. Ждём ответов на 4${NBSP}запроса — обычно до минуты, не дольше 3 минут.`);
     expect(stoppingLine(quiet)).toBe("Новых трат не будет.");
+  });
+
+  test("S4.9d (S4.9b L4): the figures of «Остановить запуск?» are drawn mono, as ApStopConfirm draws them", () => {
+    const texts = stopTexts(launch());
+    expect(texts.lead).toContainEqual({ mono: "4" });
+    expect(texts.stays[0]?.[0]).toEqual({ mono: "14" });
+    expect(texts.spent).toEqual(["Потрачено ", { mono: "$1.25" }, " из ", { mono: "$4.14" }, " — остальное запуск уже не потратит."]);
+  });
+
+  test("S4.9d (S4.9c N2, N3): «Остановить запуск?» of a free launch says nothing of money; an A2 breach shows its figures «из $0»", () => {
+    const free = { acceptedMicros: 0, plannedWorstMicros: 0, plannedExpectedMicros: 0, remainingMicros: 0 };
+    expect(stopTexts(launch({ ...free, spentMicros: 0 })).spent).toBeNull();
+    const breach = stopTexts(launch({ ...free, spentMicros: 300_000 })).spent;
+    expect(breach === null ? null : wordsText(breach)).toBe("Потрачено $0.30 из $0 — остальное запуск уже не потратит.");
   });
 
   test("the sidebar's mark: the count, «сцены», «ждёт», «пауза», «стоп», «готово» until seen, nothing once stopped", () => {

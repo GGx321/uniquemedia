@@ -161,6 +161,29 @@ export function useImagesPrice(avatarId: string, photos: number, view: EngineVie
   return shown !== null && shown.key === key ? shown.estimate : null;
 }
 
+/**
+ * S4.9d (S4.9b L15): where today's prices come from («OpenRouter · 8 окт.», «резервные · …») for a launch's strip, and nothing else. A launch's set has no free price
+ * of its own draw (`runs.estimateFromScenes` refuses a launch's set), and the strip shows no money the window works out: its figure is the launch view's allocation.
+ * The source is the run estimate's own, read free at the current Settings; its sums are not used.
+ */
+export function usePriceSource(avatarId: string, view: EngineView): Pick<Estimate, "prices" | "pricesAsOf"> | null {
+  const { client } = useEngine();
+  const settings = view.settings;
+  const key = settings !== null ? `${avatarId}|${settings.imageModel}|${settings.imageQuality ?? ""}|${settings.imageAgeCheck}` : null;
+  const [shown, setShown] = useState<{ key: string; source: Pick<Estimate, "prices" | "pricesAsOf"> } | null>(null);
+  useEffect(() => {
+    if (key === null) return;
+    let alive = true;
+    void client.request("runs.estimate", { avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false } }).then((reply) => {
+      if (alive && reply.ok) setShown({ key, source: { prices: reply.result.estimate.prices, pricesAsOf: reply.result.estimate.pricesAsOf } });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [client, key, avatarId]);
+  return shown !== null && shown.key === key ? shown.source : null;
+}
+
 /** The free price of a review write, asked for one key; null while asked or refused (the refusal is answered). */
 export function useWritePrice(key: string | null, ask: () => Promise<Reply<{ estimate: Estimate }>>): { estimate: Estimate | null; error: EngineError | null } {
   const [shown, setShown] = useState<{ key: string; estimate: Estimate | null; error: EngineError | null } | null>(null);

@@ -10,9 +10,10 @@ import type {
   SkipReason,
   VideoShape,
 } from "../../../shared/engine";
-import { countOf, NBSP } from "../../lib/format";
+import { countOf, NBSP, plural } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 import type { SettingsFocus } from "../../navigation";
+import { isFree, limitUsd } from "./launchMoney";
 import { ceilingUsd, clockLabel, leftUsd, stoppingLine, videosOf } from "./planModel";
 
 // S4.9b: the live launch card of «Автопилот» worded from the engine's view (AutopilotS4.dc.html states review-wait … paused-reviewed; LaunchStates
@@ -20,6 +21,8 @@ import { ceilingUsd, clockLabel, leftUsd, stoppingLine, videosOf } from "./planM
 // only formatted («Деньги на экране»); the renderer computes no money. Counts (videos, photos, requests) are only said, or added up for a sentence.
 
 const REQUESTS = ["запрос", "запроса", "запросов"] as const;
+/** «за 1 прерванный запрос», «за 4 прерванных запроса», «за 5 прерванных запросов» (ApPausedReconcile). */
+const CUT_OFF_REQUESTS = ["прерванный запрос", "прерванных запроса", "прерванных запросов"] as const;
 const VIDEOS = ["видео", "видео", "видео"] as const;
 const PHOTOS = ["фото", "фото", "фото"] as const;
 const SCENES = ["сцена", "сцены", "сцен"] as const;
@@ -64,6 +67,22 @@ export function shownStatus(launch: LaunchView, asked: { pause: boolean; stop: b
   return launch.status;
 }
 
+/**
+ * The card's launch while the H1 interim stands: the engine's last announcement, with what decides «Продолжить» taken from the engine's direct answer
+ * (`autopilot.get`) — what closes it, and R with the spend it is made of (one R everywhere, round 1 L10) — and the open reserves that spend holds, `inFlight`
+ * and `unsettled`, from the same answer (S4.9d review L1): «Потрачено» is one view's, so a reconcile done no longer reads «до сверки».
+ */
+export function askedView(announced: LaunchView, answer: LaunchView): LaunchView {
+  return {
+    ...announced,
+    resumeBlockedBy: answer.resumeBlockedBy,
+    spentMicros: answer.spentMicros,
+    remainingMicros: answer.remainingMicros,
+    inFlight: answer.inFlight,
+    unsettled: answer.unsettled,
+  };
+}
+
 /** The mono line beside the title: since when and how long it worked, the requests a pause or a stop waits for, why it is paused, or its span. */
 export function headerMeta(launch: LaunchView, status: LaunchStatus, activeMs: number): string | null {
   switch (status) {
@@ -99,19 +118,30 @@ export function headerSub(launch: LaunchView, status: LaunchStatus, nameOf: (ava
         const names = namesList(approved.map((a) => nameOf(a.avatarId)));
         return `Ничего не тратится и не рендерится. Сцены ${names} приняты — ${countOf(photos, PHOTOS)} нарисуем после «Продолжить».`;
       }
-      if (launch.plannedWorstMicros === 0) return "Ничего не рендерится. «Продолжить» соберёт остальные видео — запуск бесплатный.";
-      return `Ничего не тратится и не рендерится. «Продолжить» разрешит запуску потратить ещё до ${ceilingUsd(launch.remainingMicros)} — остаток предела ${ceilingUsd(launch.plannedWorstMicros)}.`;
+      // «бесплатный» by the one rule (S4.9d review L10): an A2 breach of a launch planned free has spent, and may spend nothing more.
+      if (isFree(launch.spentMicros, launch.plannedWorstMicros)) return "Ничего не рендерится. «Продолжить» соберёт остальные видео — запуск бесплатный.";
+      if (launch.remainingMicros === 0) return `Ничего не тратится и не рендерится. «Продолжить» не разрешит новых трат — от предела ${limitUsd(launch.plannedWorstMicros)} ничего не осталось.`;
+      return `Ничего не тратится и не рендерится. «Продолжить» разрешит запуску потратить ещё до ${ceilingUsd(launch.remainingMicros)} — остаток предела ${limitUsd(launch.plannedWorstMicros)}.`;
     }
     case "done":
       return doneLine(launch, nameOf);
     case "stopped": {
       const { done, planned } = videosOf(launch);
-      const spent = launch.plannedWorstMicros === 0 ? "" : ` Потрачено ${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}.`;
+      const spent = isFree(launch.spentMicros, launch.plannedWorstMicros) ? "" : ` Потрачено ${spentUsd(launch.spentMicros)} из ${limitUsd(launch.plannedWorstMicros)}.`;
       return `${done} из ${planned}${NBSP}видео готовы.${spent}`;
     }
     case "running":
       return null;
   }
+}
+
+/** At 1200 the ended card folds to a line (decision 1), so «Запустить» stays on screen: «28 из 30 видео · $1.69 из $4.14». */
+export function endedLine(launch: LaunchView): string {
+  const { done, planned } = videosOf(launch);
+  const spent = isFree(launch.spentMicros, launch.plannedWorstMicros) ? "бесплатно" : `${spentUsd(launch.spentMicros)} из ${limitUsd(launch.plannedWorstMicros)}`;
+  // S4.9c fix round 1 (ApDone at 1200): the span joins the line, so the header keeps the title and «Результаты · N» on one row.
+  const span = launch.endedAt === null ? null : `${clockLabel(launch.createdAt)}–${clockLabel(launch.endedAt)}`;
+  return [`${done} из ${planned} видео`, spent, span].filter((part) => part !== null).join(" · ");
 }
 
 const DROP_TEXT: Record<DropReason, string> = {
@@ -166,12 +196,22 @@ export function unansweredRequests(launch: LaunchView): { requests: number; open
   return launch.unsettled ?? liveRequests(launch);
 }
 
-/** The open part of «Потрачено»: what is hatched and how it is worded. Never the sum of the two figures (round 1 M1): requests in flight while the launch is live, else the unanswered ones. */
-function openPart(launch: LaunchView): { requests: number; openMicros: number; word: "working" | "unanswered" } {
+/**
+ * The open part of «Потрачено»: what is hatched and how it is worded. Never the sum of the two figures (round 1 M1): requests in flight while the launch is live,
+ * else the unanswered ones. Those a quit or an engine restart cut off are «прерванные» (S4.9d, ApPausedReconcile); those a drop left — under a network hold, kept
+ * over a restart too, or on the owner's own pause — had no answer («без ответа», ApHoldNetwork).
+ */
+function openPart(launch: LaunchView): { requests: number; openMicros: number; word: "working" | "unanswered" | "cut-off" } {
   const flight = liveRequests(launch);
   if (launch.unsettled === undefined) return { ...flight, word: launch.paidHold?.reason === "network" ? "unanswered" : "working" };
   if (flight.requests > 0) return { ...flight, word: "working" };
-  return { ...launch.unsettled, word: "unanswered" };
+  const restarted = launch.status === "paused" && (launch.paused?.cause === "quit" || launch.paused?.cause === "engine-restart");
+  return { ...launch.unsettled, word: restarted && launch.paidHold?.reason !== "network" ? "cut-off" : "unanswered" };
+}
+
+/** «за 4 запроса без ответа», «за 1 прерванный запрос»: the open requests a reconcile is to close, after their ceiling. */
+function awaitingReconcile(requests: number, word: "unanswered" | "cut-off"): string {
+  return word === "cut-off" ? `за ${requests}${NBSP}${plural(requests, CUT_OFF_REQUESTS)}` : `за ${countOf(requests, REQUESTS)} без ответа`;
 }
 
 /**
@@ -182,38 +222,43 @@ const RECONCILE_FIRST = new Set<ResumeBlockedBy>(["reconcile-required", "network
 
 /**
  * «Потрачено $S из $W′» (§4.8: the ledger's, open reserves at worst), the bar with the open part hatched, and what the open part is. While the launch is live
- * and requests are out, the open part is `inFlight`: «вкл. до $0.28 — 4 запроса в работе…». Paused, or under a network hold with nothing out, it is `unsettled`:
- * «вкл. до $0.28 — 4 запроса без ответа, до сверки» (S4.6v, ApPausedReconcile / ApHoldNetwork); the two are disjoint and never added (round 1 M1). A reconcile that is
- * required in a view from before `unsettled` keeps one plain line saying the open reserves are already inside «Потрачено».
+ * and requests are out, the open part is `inFlight`: «вкл. до $0.28 — 4 запроса в работе…». Paused, or under a network hold with nothing out, it is `unsettled`,
+ * in the mockup's words (S4.9d): «вкл. до $0.28 за 4 прерванных запроса — до сверки» after a quit or a restart (ApPausedReconcile), «вкл. до $0.28 за 4 запроса
+ * без ответа — до сверки» otherwise (ApHoldNetwork); the two figures are disjoint and never added (round 1 M1). The bar's label says what the line says. A
+ * reconcile that is required in a view from before `unsettled` keeps one plain line saying the open reserves are already inside «Потрачено».
  */
 export function spentBlock(launch: LaunchView): SpentBlock {
-  // «бесплатно» only when nothing was planned AND nothing spent (S4.9c fix round 1): a spend above a W′ of 0 is an A2 breach, and is shown as it is.
-  const free = launch.plannedWorstMicros === 0 && launch.spentMicros === 0;
+  // «бесплатно» only when nothing was planned AND nothing spent (S4.9c fix round 1, the one rule of launchMoney): a spend above a W′ of 0 is an A2 breach, shown as it is.
+  const free = isFree(launch.spentMicros, launch.plannedWorstMicros);
   const part = openPart(launch);
-  const unanswered = part.word === "unanswered";
+  // The hatched part, said by the line and by the bar's label alike: the contract keeps it inside «Потрачено», and a view that does not is capped there.
+  const open = Math.min(part.openMicros, launch.spentMicros);
+  /** What the open part is, after its ceiling: the line under the bar and the bar's label say it alike. */
+  const what = part.word === "working" ? null : `${awaitingReconcile(part.requests, part.word)} — до сверки`;
   let sub: string | null = null;
-  if (part.requests > 0 && part.openMicros > 0) {
-    sub = unanswered
-      ? `вкл. до ${ceilingUsd(part.openMicros)} — ${countOf(part.requests, REQUESTS)} без ответа, до сверки`
-      : `вкл. до ${ceilingUsd(part.openMicros)} — ${countOf(part.requests, REQUESTS)} в работе, по худшей цене до ответа`;
+  if (part.requests > 0 && open > 0) {
+    sub =
+      what === null
+        ? `вкл. до ${ceilingUsd(open)} — ${countOf(part.requests, REQUESTS)} в работе, по худшей цене до ответа`
+        : `вкл. до ${ceilingUsd(open)} ${what}`;
   } else if (launch.unsettled === undefined && launch.status === "paused" && launch.resumeBlockedBy !== null && RECONCILE_FIRST.has(launch.resumeBlockedBy)) {
     // Only a view from before `unsettled` has no better word: with it, a reconcile that is required while nothing is unsettled is for something else (a torn line, another job), and no reserve is claimed.
     const restart = launch.paused !== null && launch.paused.cause !== "owner" && launch.resumeBlockedBy === "reconcile-required";
     sub = `${restart ? "Прерванные запросы" : "Запросы без ответа"} уже в «Потрачено» по худшей цене — до сверки.`;
   }
-  const open = Math.min(part.openMicros, launch.spentMicros);
   const spent = free ? null : spentUsd(launch.spentMicros);
-  const of = free ? "бесплатно" : `из ${ceilingUsd(launch.plannedWorstMicros)}`;
+  const of = free ? "бесплатно" : `из ${limitUsd(launch.plannedWorstMicros)}`;
+  const openLabel = open === 0 ? "" : what === null ? `, из них до ${ceilingUsd(open)} — запросы в работе` : `, из них до ${ceilingUsd(open)} ${what}`;
+  // The bar is W′ wide; a spend over it (an A2 breach, «$0.30 из $0» too) fills it, split as the spend is (S4.9d review L11), as the month's bar does.
+  const width = Math.max(launch.plannedWorstMicros, launch.spentMicros);
   return {
     spent,
     of,
-    settledPct: pctOf(launch.spentMicros - open, launch.plannedWorstMicros),
-    openPct: pctOf(open, launch.plannedWorstMicros),
+    settledPct: pctOf(launch.spentMicros - open, width),
+    openPct: pctOf(open, width),
     sub,
     reviewWrites: launch.reviewWritesMicros > 0 ? spentUsd(launch.reviewWritesMicros) : null,
-    label: free
-      ? "Потрачено: ничего — запуск бесплатный"
-      : `Потрачено ${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}${open > 0 ? `, из них до ${ceilingUsd(open)} — ${unanswered ? "запросы без ответа" : "запросы в работе"}` : ""}`,
+    label: free ? "Потрачено: ничего — запуск бесплатный" : `Потрачено ${spentUsd(launch.spentMicros)} ${of}${openLabel}`,
   };
 }
 
@@ -343,9 +388,9 @@ export function avatarLine(launch: LaunchView, row: LaunchAvatarView, name: stri
 
 // ---------- «Продолжить · до $R» ----------
 
-/** «Продолжить · до $2.93»: always with its sum (after a restart the click is the consent to spend, invariant 4). */
-export function resumeTitle(remainingMicros: number, plannedWorstMicros: number): string {
-  if (plannedWorstMicros === 0) return "Продолжить · бесплатно";
+/** «Продолжить · до $2.93»: always with its sum (after a restart the click is the consent to spend, invariant 4); «бесплатно» by the one rule (S4.9d review L10). */
+export function resumeTitle(remainingMicros: number, plannedWorstMicros: number, spentMicros = 0): string {
+  if (isFree(spentMicros, plannedWorstMicros)) return "Продолжить · бесплатно";
   if (remainingMicros === 0) return "Продолжить · без трат";
   return `Продолжить · до ${ceilingUsd(remainingMicros)}`;
 }
@@ -603,10 +648,13 @@ function blockNote(launch: LaunchView, blocked: ResumeBlockedBy, running: boolea
     case "reconcile-required": {
       const requests = cutOffRequests(launch);
       const cause = launch.paused?.cause === "engine-restart" ? "Движок перезапустился" : "Studio закрылся";
+      // ApPausedReconcile names the ceiling of what waits for the reconcile (S4.9d review L3), as the network hold's banner does; nothing unsettled claims no sum.
+      const unsettled = unansweredRequests(launch);
+      const atWorst = unsettled.requests > 0 && unsettled.openMicros > 0 ? `считаются по худшей цене — до ${ceilingUsd(unsettled.openMicros)}, —` : "считаются по худшей цене,";
       const text =
         requests !== null
-          ? `${cause}, когда ${countOf(requests, REQUESTS)} ${requests === 1 ? "был" : "были"} в работе. Пока OpenRouter не сверен, они считаются по худшей цене, и запуск не продолжить.`
-          : "В журнале расходов остались запросы прошлого запуска Studio. Пока OpenRouter не сверен, они считаются по худшей цене, и запуск не продолжить.";
+          ? `${cause}, когда ${countOf(requests, REQUESTS)} ${requests === 1 ? "был" : "были"} в работе. Пока OpenRouter не сверен, они ${atWorst} и запуск не продолжить.`
+          : `В журнале расходов остались запросы прошлого запуска Studio. Пока OpenRouter не сверен, они ${atWorst} и запуск не продолжить.`;
       return note("block-reconcile", "warn", "Сначала сверка", text, [RECONCILE]);
     }
     case "ledger":
@@ -829,13 +877,15 @@ export function logText(line: LogLine, sceneReview: boolean): { text: string; to
     case "photo-retry":
       return { text: `сцена ${line.sceneId}: отказ${line.viaFallback ? " → Seedream" : ""} · попытка ${line.attempt} из ${line.attempts}`, tone: "plain" };
     case "photo-failed":
-      return { text: `фото ${line.slot}: ${FAILED_CAUSE[line.cause](line.faceCos)} · попыток ${line.attempts}`, tone: "plain" };
+      // S4.9d: orange, as the sheet colours it — a slot that used up its tries.
+      return { text: `фото ${line.slot}: ${FAILED_CAUSE[line.cause](line.faceCos)} · попыток ${line.attempts}`, tone: "warn" };
     case "video-done":
       return { text: `${videoLabel(line.key)} · ${shapeLabel(line.shape, line.size)} · ${seconds(line.durationMs)} · ${megabytes(line.bytes)}`, tone: "plain" };
     case "degrade":
       return {
         text: line.fewerVideos > 0 ? `${countOf(line.fewerVideos, VIDEOS)} меньше: ${countOf(line.missingPhotos, PHOTOS)} не получились` : `видео короче: ${countOf(line.missingPhotos, PHOTOS)} не получились`,
-        tone: "plain",
+        // S4.9d: orange, as the sheet colours it — the launch came out smaller than planned.
+        tone: "warn",
       };
     case "price-shrink":
       return { text: `цена выросла: −${countOf(line.fromPhotos - line.toPhotos, PHOTOS)} в партии`, tone: "warn" };
@@ -964,4 +1014,20 @@ export function stopSetLine(row: LaunchAvatarView, name: string): StopSetLine {
     if (row.undrawnScenes === 0 && row.resumableSlots === 0) return line("нарисован", "Набор нарисован целиком — ничего не меняется.");
   }
   return line(phase, `${row.undrawnScenes === 0 && row.resumableSlots > 0 ? "Набор останется отрисованным частично. " : ""}${resumable}${undrawn}`);
+}
+
+/** Whether «Стоп» changes anything for the avatar's set: no set (library only, skipped or still queued) and a set drawn whole stay as they are. */
+function stopChangesSet(row: LaunchAvatarView): boolean {
+  if (row.sceneSetId === null) return false;
+  return !((row.phase === "montage" || row.phase === "done") && row.undrawnScenes === 0 && row.resumableSlots === 0);
+}
+
+/**
+ * The lines of «Наборы сцен», one per avatar of the launch: the sets «Стоп» changes first, then the avatars it leaves as they are, each group in the launch's
+ * own order (S4.9b L4, ApStopConfirm: Sofia's set back on «Фото», Elena's drawn in part, then Mia's library).
+ */
+export function stopSetLines(launch: LaunchView, nameOf: (avatarId: string) => string): StopSetLine[] {
+  const changes = launch.avatars.filter(stopChangesSet);
+  const stays = launch.avatars.filter((row) => !stopChangesSet(row));
+  return [...changes, ...stays].map((row) => stopSetLine(row, nameOf(row.avatarId)));
 }

@@ -1,4 +1,4 @@
-import type { LaunchAvatarView, LaunchView, RunSummary, SceneSetView } from "../../../shared/engine";
+import type { LaunchAvatarView, LaunchView, RunSummary, SceneLiveWrite, SceneSetView } from "../../../shared/engine";
 import { countOf } from "../../lib/format";
 import { formatUsdTiered } from "../../lib/money";
 
@@ -158,6 +158,26 @@ export function frozenNote(link: LaunchLink): string | null {
     default:
       return "Набор стал частью запуска — правки закрыты.";
   }
+}
+
+/**
+ * The hint of «в запуске автопилота» where a write of a launch's set would show its «Отменить» (S4.9b L8). The launch's own compose and «Дописать» are its
+ * to stop («Пауза», «Стоп»). A rewrite is the owner's own paid click during the review: it runs under its own job, paid apart («Правки сцен»), the launch's
+ * «Пауза» and «Стоп» do not stop it, and the engine refuses `scenes.cancel` on a launch's set — so the hint says it finishes by itself.
+ */
+export function launchWriteHint(kind: SceneLiveWrite["kind"]): string {
+  return kind === "rewrite"
+    ? "Ваша правка сцен: платится отдельно от запуска («Правки сцен»). «Пауза» и «Стоп» её не останавливают — она допишется сама."
+    : "Отменить и продолжить — в «Автопилоте»: «Пауза», «Стоп»";
+}
+
+/**
+ * The open set that opens «по описанию» by itself (ReviewEmpty): an empty set of the owner's with nothing being written; null for any other. Never a launch's set
+ * (S4.9b L2): the launch draws no own scene, and the form armed meanwhile would open on the set once it came back to the owner, scenes or not.
+ */
+export function emptySetToFill(set: SceneSetView | null | undefined, link: LaunchLink | null): string | null {
+  if (link !== null || set === undefined || set === null) return null;
+  return set.status !== "used" && set.scenes.length === 0 && set.write === null ? set.sceneSetId : null;
 }
 
 /** The running batch's line under its progress: «партия 1 из 1 · до $2.94 · запуск 8 окт., 14:02». */

@@ -1,6 +1,7 @@
 import { formatUsd, formatUsdTiered } from "../../lib/money";
-import { countOf, NBSP } from "../../lib/format";
+import { countOf, NBSP, plural } from "../../lib/format";
 import type { SettingsFocus } from "../../navigation";
+import { isFree, limitUsd } from "./launchMoney";
 import type { LaunchPreview, LaunchPreviewAvatar, LaunchStatus, LaunchView, MonthFit } from "../../../shared/engine";
 
 // S4.9a: the «Автопилот» plan card and the avatar rows worded from the engine's own figures (AutopilotS4.dc.html, LaunchStates «Бюджет месяца», «Почему не
@@ -477,21 +478,34 @@ export function videosOf(launch: LaunchView): { done: number; planned: number } 
 
 // ---------- «Стоп» ----------
 
+/** A sentence in runs of words, the figures among them drawn in the mono face (ApStopConfirm: «(2)», «6 готовых видео», «$0.33 из $4.14»). */
+export type Words = readonly (string | { readonly mono: string })[];
+
+/** The sentence as one string: what a screen reader hears and a test reads. */
+export function wordsText(words: Words): string {
+  return Array.from(words, (run) => (typeof run === "string" ? run : run.mono)).join("");
+}
+
 /**
  * «Остановить запуск?» (ApStopConfirm): that nothing new starts and nothing is cut off, what stays, and what was spent of W′; the lines for each set are
- * liveModel's `stopSetLine` (S4.9b). Every figure is the launch view's.
+ * liveModel's `stopSetLines` (S4.9b). Every figure is the launch view's, and each is a mono run, as the mockup draws them (S4.9b L4). A launch that pays for
+ * nothing says nothing of money; an A2 breach of a free one says its figures (S4.9c N2, N3).
  */
-export function stopTexts(launch: LaunchView): { readonly lead: string; readonly stays: readonly string[]; readonly spent: string | null } {
+export function stopTexts(launch: LaunchView): { readonly lead: Words; readonly stays: readonly Words[]; readonly spent: Words | null } {
   const requests = launch.inFlight.requests;
   const { done } = videosOf(launch);
   return {
     lead:
       requests > 0
-        ? `Новых запросов и рендеров не будет. Запросы, что уже в работе (${requests}), закончатся сами — ничего не обрывается. Вернуть запуск после «Стоп» нельзя.`
-        : "Новых запросов и рендеров не будет. Вернуть запуск после «Стоп» нельзя.",
-    stays: [`${countOf(done, ["готовое видео", "готовых видео", "готовых видео"])} — в «Готовых видео»;`, "все новые фото — в библиотеке, свободными для следующего запуска."],
-    spent:
-      launch.plannedWorstMicros === 0 ? null : `Потрачено ${formatUsdTiered(launch.spentMicros, "nearest")} из ${ceilingUsd(launch.plannedWorstMicros)} — остальное запуск уже не потратит.`,
+        ? ["Новых запросов и рендеров не будет. Запросы, что уже в работе (", { mono: String(requests) }, "), закончатся сами — ничего не обрывается. Вернуть запуск после «Стоп» нельзя."]
+        : ["Новых запросов и рендеров не будет. Вернуть запуск после «Стоп» нельзя."],
+    stays: [
+      [{ mono: String(done) }, `${NBSP}${plural(done, ["готовое видео", "готовых видео", "готовых видео"])} — в «Готовых видео»;`],
+      ["все новые фото — в библиотеке, свободными для следующего запуска."],
+    ],
+    spent: isFree(launch.spentMicros, launch.plannedWorstMicros)
+      ? null
+      : ["Потрачено ", { mono: formatUsdTiered(launch.spentMicros, "nearest") }, " из ", { mono: limitUsd(launch.plannedWorstMicros) }, " — остальное запуск уже не потратит."],
   };
 }
 

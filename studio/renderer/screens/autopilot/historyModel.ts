@@ -15,8 +15,9 @@ import {
 } from "../../../shared/engine";
 import { countOf, NBSP, plural } from "../../lib/format";
 import { CATEGORY_LABEL } from "../photos/runForm";
+import { isFree, limitUsd } from "./launchMoney";
 import { clockSeconds, logText, spentUsd } from "./liveModel";
-import { ceilingUsd, clockLabel, videosOf } from "./planModel";
+import { clockLabel, videosOf } from "./planModel";
 
 // S4.9c: «История запусков», a launch's page and its results worded from the engine's own answers (AutopilotS4.dc.html states history, launch and
 // delete-published; LaunchStates «История», «Результаты», «Удалить видео», «Журнал»). Every sum is the engine's (`spentMicros`, W′ = `plannedWorstMicros`),
@@ -60,12 +61,12 @@ export function spanLabel(createdAt: string, endedAt: string | null): string {
   return endedAt === null ? `с ${clockLabel(createdAt)}` : `${clockLabel(createdAt)}–${clockLabel(endedAt)}`;
 }
 
-/** A launch that paid for nothing and spent nothing: «бесплатно». One with W′ 0 that still spent (an A2 breach) shows the engine's figures, never hidden. */
-export const isFree = (spentMicros: number, plannedWorstMicros: number): boolean => plannedWorstMicros === 0 && spentMicros === 0;
-
-/** «$1.69» and «из $4.14» (W′, the launch's limit), or «$0» and «бесплатно» for a launch that pays for nothing (round 1 M4: «из» is W′ on every screen). */
+/**
+ * «$1.69» and «из $4.14» (W′, the launch's limit), or «$0» and «бесплатно» for a launch that pays for nothing (round 1 M4: «из» is W′ on every screen). The rule
+ * of «бесплатно» and the limit's words are launchMoney's, the same on every screen (S4.9d): an A2 breach reads «$0.30 из $0».
+ */
 export function spentOf(spentMicros: number, plannedWorstMicros: number): { readonly spent: string; readonly of: string } {
-  return isFree(spentMicros, plannedWorstMicros) ? { spent: "$0", of: "бесплатно" } : { spent: spentUsd(spentMicros), of: `из ${ceilingUsd(plannedWorstMicros)}` };
+  return isFree(spentMicros, plannedWorstMicros) ? { spent: "$0", of: "бесплатно" } : { spent: spentUsd(spentMicros), of: `из ${limitUsd(plannedWorstMicros)}` };
 }
 
 /** The names of a launch's avatars, in its order; one that is gone from the library says so. */
@@ -168,11 +169,15 @@ export function launchHeading(createdAt: string): string {
   return `Запуск ${dayLabel(createdAt)}, ${clockLabel(createdAt)}`;
 }
 
-/** «3 аватара · 28 из 30 видео · потрачено $1.69 из $4.14 · 14:02–14:31». */
-export function launchMeta(launch: LaunchView): string {
+/**
+ * «3 аватара · 28 из 30 видео · потрачено $1.69 из $4.14 · 14:02–14:31». `standing` (S4.6g L9): the finished videos whose records stand, as the engine says of
+ * each (`LaunchVideo.removed`, the join `LaunchSummary.videosDone` counts too) and the results show them — for an ended launch, so the header and «Видео N» never
+ * disagree after a delete. Absent, the view's own count of what the launch made.
+ */
+export function launchMeta(launch: LaunchView, standing?: number): string {
   const { done, planned } = videosOf(launch);
-  const money = isFree(launch.spentMicros, launch.plannedWorstMicros) ? "бесплатно" : `потрачено ${spentUsd(launch.spentMicros)} из ${ceilingUsd(launch.plannedWorstMicros)}`;
-  return [countOf(launch.draft.avatarIds.length, AVATARS), `${done} из ${planned}${NBSP}видео`, money, spanLabel(launch.createdAt, launch.endedAt)].join(" · ");
+  const money = isFree(launch.spentMicros, launch.plannedWorstMicros) ? "бесплатно" : `потрачено ${spentUsd(launch.spentMicros)} из ${limitUsd(launch.plannedWorstMicros)}`;
+  return [countOf(launch.draft.avatarIds.length, AVATARS), `${standing ?? done} из ${planned}${NBSP}видео`, money, spanLabel(launch.createdAt, launch.endedAt)].join(" · ");
 }
 
 /** A category of the draft by its name: a built-in's label, a custom one's name from the library, or «своя категория» for one that is gone. */

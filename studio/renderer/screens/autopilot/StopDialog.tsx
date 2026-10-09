@@ -3,8 +3,8 @@ import { createPortal } from "react-dom";
 import type { LaunchView } from "../../../shared/engine";
 import { FocusEdge } from "../../ui/FocusEdge";
 import { useModalDialog } from "../../ui/useModalDialog";
-import { stopSetLine } from "./liveModel";
-import { stopTexts } from "./planModel";
+import { stopSetLines } from "./liveModel";
+import { stopTexts, type Words } from "./planModel";
 
 // S4.9a/b: «Остановить запуск?» (ApStopConfirm; the design's decision 9: «Стоп» asks, «Пауза» does not). It says that nothing new starts and nothing in
 // flight is cut off, what stays (the finished videos, the new photos), what becomes of each avatar's scene set by the phase it is in (LaunchStates «Наборы
@@ -31,7 +31,8 @@ export function StopDialog({ launch, nameOf, onCancel, onStop, returnFocus }: St
   const stopped = useRef(false);
   useModalDialog({ dialog: dialogRef, initialFocus: cancelRef, onClose: onCancel, returnFocus: () => returnFocus(stopped.current) });
   const texts = stopTexts(launch);
-  const sets = launch.avatars.map((row) => stopSetLine(row, nameOf(row.avatarId)));
+  // S4.9b L4 (ApStopConfirm): the sets «Стоп» changes first, then the avatars it leaves as they are; the figures drawn mono.
+  const sets = stopSetLines(launch, nameOf);
 
   return createPortal(
     <div className="cat-scrim cat-scrim-center" role="presentation">
@@ -42,12 +43,16 @@ export function StopDialog({ launch, nameOf, onCancel, onStop, returnFocus }: St
             Остановить запуск?
           </h2>
           <div className="ap-stop-text">
-            <p id={textId}>{texts.lead}</p>
+            <p id={textId}>
+              <WordsView words={texts.lead} />
+            </p>
             <div className="ap-stop-stays">
               <span className="lbl">Останется</span>
               <ul>
-                {texts.stays.map((line) => (
-                  <li key={line}>{line}</li>
+                {texts.stays.map((line, i) => (
+                  <li key={i}>
+                    <WordsView words={line} />
+                  </li>
                 ))}
               </ul>
             </div>
@@ -69,7 +74,11 @@ export function StopDialog({ launch, nameOf, onCancel, onStop, returnFocus }: St
                 </ul>
               </div>
             )}
-            {texts.spent !== null && <p className="ap-stop-spent">{texts.spent}</p>}
+            {texts.spent !== null && (
+              <p className="ap-stop-spent">
+                <WordsView words={texts.spent} />
+              </p>
+            )}
           </div>
         </div>
         <footer className="ap-stop-foot">
@@ -91,5 +100,22 @@ export function StopDialog({ launch, nameOf, onCancel, onStop, returnFocus }: St
       </section>
     </div>,
     document.body,
+  );
+}
+
+/** A sentence of runs: the figures in the mono face, the words around them as they are. */
+function WordsView({ words }: { words: Words }) {
+  return (
+    <>
+      {words.map((run, i) =>
+        typeof run === "string" ? (
+          run
+        ) : (
+          <span key={i} className="mono">
+            {run.mono}
+          </span>
+        ),
+      )}
+    </>
   );
 }

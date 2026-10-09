@@ -295,3 +295,68 @@ describe("a paid click on the strip is sent once (round 1 M4), and «Стоп» 
     expect(within(strip()).getByText("Запуск останавливается — набор вернётся на «Фото» обычным.")).toBeDefined();
   });
 });
+
+// ---------- S4.9d: what the S4.9b review left on the strip ----------
+
+describe("S4.9d: the strip's focus as the design's keyboard table has it (S4.9b L5)", () => {
+  /** Resumes a seeded run of Sofia's through the engine: its job then draws. */
+  async function resume(client: EngineClient, runId: string): Promise<void> {
+    await act(async () => {
+      const price = await client.request("runs.estimateResume", { runId });
+      if (!price.ok) throw new Error(`estimate refused: ${price.error.code}`);
+      const run = await client.request("runs.resume", { runId, acceptedWorstMicros: price.result.estimate.worstMicros });
+      if (!run.ok) throw new Error(`resume refused: ${run.error.code}`);
+    });
+  }
+
+  test("«Открыть «Фото»» while scenes have no text (M less than the plan): the focus on the first scene without text, not on the button", async () => {
+    const { engine, launch, row } = await launchWithSet({ written: 12 });
+    const scenes = row.scenes ?? 0;
+    expect(scenes).toBeGreaterThan(12);
+    const fewer = { ...row, scenesWithoutText: scenes - 12, continuePhotos: 12 };
+    act(() => engine.announceLaunch(LaunchView.parse({ ...launch, avatars: launch.avatars.map((a) => (a.avatarId === SOFIA.avatarId ? fewer : a)) })));
+    await openFromAutopilot();
+    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("article", { name: "Сцена 13" }))));
+  });
+
+  test("«Продолжить запуск» accepted: the focus holds on «в запуске автопилота» where the button was, then goes to the batch's progress once it draws", async () => {
+    const { engine, client, launch } = await launchWithSet();
+    await openFromAutopilot();
+    fireEvent.click(goButton());
+    await flush();
+    const mark = await within(strip()).findByText("в запуске автопилота", { selector: ".ap-launch-mark" });
+    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(mark)));
+    const runId = engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1, undefined, { launchId: launch.launchId });
+    await resume(client, runId);
+    await flush();
+    const bar = await within(column()).findByRole("progressbar", { name: /^Рисуем фото: \d+ из 5$/ });
+    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(bar)));
+  });
+
+  test("over the plan: under the reason in red a link «Сцена NN» leads to a scene to take out", async () => {
+    const { engine, row } = await launchWithSet();
+    await openFromAutopilot();
+    engine.failNext("autopilot.continueAfterReview", { code: "VALIDATION", sceneReason: "over-plan", detail: "more active scenes than planned" });
+    fireEvent.click(goButton());
+    await flush();
+    const last = String(row.scenes ?? 0).padStart(2, "0");
+    const toScene = within(strip()).getByRole("button", { name: `Сцена ${last}` });
+    expect(toScene.closest(".ap-launch-why") !== null).toBe(true);
+    fireEvent.click(toScene);
+    await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(column()).getByRole("article", { name: `Сцена ${last}` }))));
+  });
+});
+
+describe("S4.9d: the strip prices nothing itself (S4.9b L15)", () => {
+  test("step 2 is the engine's own figure for the draw — its allocation — never run − compose worked out in the window; the price list's source is still said", async () => {
+    const { engine, row } = await launchWithSet();
+    await openFromAutopilot();
+    await flush();
+    const steps = Array.from(strip().querySelectorAll(".scene-step"), (el) => el.textContent ?? "");
+    expect(steps[1]).toBe(`2${row.continuePhotos ?? 0}${NBSP}фотодо ${formatUsdTiered(row.drawAllocationMicros ?? 0, "up")}`);
+    expect(steps[1]).not.toContain("≈");
+    expect(callsOf(engine, "scenes.estimateCompose")).toHaveLength(0);
+    await waitFor(() => expect(strip().querySelector(".photos-cost-row")?.textContent ?? "").toMatch(/^Цены(OpenRouter|резервные) · /));
+  });
+});
+
