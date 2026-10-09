@@ -58,7 +58,7 @@ export function remainingEstimate(priced: PricedBook, plan: RunPlan, state: RunS
 }
 
 /** Whether the run's cap leaves room for a resume to make progress: at least `minToProgressMicros`, or nothing to send at all. */
-export function capFundsResume(plan: RunPlan, committedMicros: number, minToProgressMicros: number | null): boolean {
+export function capFundsResume(plan: Pick<RunPlan, "capMicros">, committedMicros: number, minToProgressMicros: number | null): boolean {
   return minToProgressMicros === null || plan.capMicros - committedMicros >= minToProgressMicros;
 }
 

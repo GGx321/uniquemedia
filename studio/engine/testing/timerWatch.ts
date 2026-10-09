@@ -1,9 +1,10 @@
 // Test-only: which timers a piece of code leaves pending. `setTimeout` and `clearTimeout` are wrapped for as long as the watch lives; a timer is pending from its `setTimeout` until it fires
-// or is cleared. A test asks for the pending timers of a given length, which names a loop by the interval it sleeps for (the free steps' poll, say) without reaching into it.
+// or is cleared. A test asks for the pending timers by the NAME of the function they run, which names a loop (the free steps' poll, say) without reaching into it and without mistaking another
+// timer of the same length for it.
 
 export interface TimerWatch {
-  /** The lengths (ms) of the timers that are pending now and whose length is in `lengths`. */
-  pendingOf(lengths: readonly number[]): number[];
+  /** How many timers are pending now whose callback is a function named one of `names`. */
+  pendingNamed(names: readonly string[]): number;
   /** Puts the real `setTimeout` and `clearTimeout` back. Idempotent. */
   restore(): void;
 }
@@ -11,7 +12,7 @@ export interface TimerWatch {
 export function watchTimers(): TimerWatch {
   const realSet = globalThis.setTimeout;
   const realClear = globalThis.clearTimeout;
-  const pending = new Map<unknown, number>();
+  const pending = new Map<unknown, string>();
   let restored = false;
   globalThis.setTimeout = ((handler: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
     const handle: unknown = realSet(
@@ -22,7 +23,7 @@ export function watchTimers(): TimerWatch {
       ms,
       ...args,
     );
-    pending.set(handle, ms ?? 0);
+    pending.set(handle, typeof handler === "function" ? handler.name : "");
     return handle;
   }) as typeof setTimeout;
   globalThis.clearTimeout = ((handle?: Parameters<typeof clearTimeout>[0]) => {
@@ -30,7 +31,7 @@ export function watchTimers(): TimerWatch {
     realClear(handle);
   }) as typeof clearTimeout;
   return {
-    pendingOf: (lengths) => [...pending.values()].filter((ms) => lengths.includes(ms)),
+    pendingNamed: (names) => [...pending.values()].filter((name) => names.includes(name)).length,
     restore: () => {
       if (restored) return;
       restored = true;

@@ -11,6 +11,7 @@ import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg"
 import { MockEngine, type MockExportPick, type MockMediaPick } from "../../../renderer/engine/mockEngine";
 import { MIA, NORA, scenePhoto, SOFIA } from "../../../renderer/engine/mockEngine.testkit";
 import { ManualScheduler } from "../../../renderer/engine/scheduler";
+import { IDLE_STEPS } from "../../autopilot/steps";
 import { manifestTraits } from "../../avatars/records";
 import { EXPORT_MARKER_FILE, NODE_EXPORT_ROOT_FS, type ExportRootFs } from "../../exportRoot";
 import { openLibrary } from "../../library";
@@ -880,6 +881,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     deps: {
       musicSink: store,
       musicTracks: store,
+      // The parity engine plugs no steps (plan §21): a launch only starts here, and nothing sends a request into the harness network.
+      launchSteps: IDLE_STEPS,
       text: { gate: textLane },
       ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, video: parityVideoImporter, audio: parityTrackImporter, sticker: parityStickerImporter } } : {}),
       mediaStaging: {

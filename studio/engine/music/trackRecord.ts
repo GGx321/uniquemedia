@@ -98,7 +98,7 @@ export function expiresAtFor(url: string, fetchedAt: number): number {
   return own === null ? fetchedAt + EXPIRY_FALLBACK_MS : Math.min(own, fetchedAt + EXPIRY_CEILING_MS);
 }
 
-const UNTITLED = "Untitled track";
+export const UNTITLED = "Untitled track";
 
 /**
  * A stored track as `music.list` answers it: the summary of K23, with no URL, path or hash. Its length is the one the

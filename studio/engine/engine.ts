@@ -90,12 +90,14 @@ import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
 import { exportGateOf } from "./autopilot/exportGate";
 import { createFreeSteps, freeLibraryOf, type FreeSteps, type FreeStepsDeps } from "./autopilot/freeSteps";
-import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, liveRendersOf, normalizeTrackLabel, renderLifeOf, sliceFactsOf, type SliceFactsSet } from "./autopilot/launchWiring";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedSingleFlight, createSpentSlices, liveRendersOf, normalizeTrackLabel, ownTrackTitle, renderLifeOf, sliceFactsOf, trendTrackLabel } from "./autopilot/launchWiring";
 import { createMusicPorts } from "./autopilot/musicPorts";
 import { checkFailuresOf } from "./autopilot/paidFailures";
 import { NOT_PAYABLE_DETAIL, type LaunchSliceStart, type SliceOutcome } from "./autopilot/paidPort";
 import { createPaidSteps } from "./autopilot/paidSteps";
 import type { FileMusic } from "./autopilot/launchFile";
+import { lookupVideo, scanProvenance, type ProvenanceScan, type VideoLookup } from "./autopilot/provenanceScan";
+import type { TrackUsage } from "../shared/autopilot/track";
 import type { LaunchSteps } from "./autopilot/steps";
 import { composeSteps } from "./autopilot/stepsComposer";
 import { trackUsage } from "./autopilot/trackUsage";
@@ -799,6 +801,10 @@ export class Engine {
   #freeSteps: FreeSteps | null = null;
   /** The slice runs that have ended, so a pass of the free steps reads a finished slice's journal once and not at every poll (a finished slice stays finished: the owner cannot resume a launch's run). */
   readonly #finishedSlices = new Set<string>();
+  /** Slice runs whose job the engine saw end on a cap (`RUN_CAP_EXCEEDED`: the run's own or the LAUNCH group's, which the run's own cap cannot tell). Their open slots will never be drawn: they are spent. */
+  readonly #capEndedSlices = new Set<string>();
+  /** Slices judged spent, latched for the life of this process (`createSpentSlices`): the paid side has sized the next slice from their unspent cap, so they must not read as live again. */
+  readonly #spentSlices = createSpentSlices();
   /** Launch commands (start, pause, resume, stop) being carried out now: a library switch is refused while any is. */
   #launchCommands = 0;
   readonly #autopilot: AutopilotCommands;
@@ -1101,7 +1107,17 @@ export class Engine {
 
   /** What the free steps read and do, each from the engine's live parts. Every read of the library goes to the LIVE library of the moment, never to one captured earlier. */
   #freeStepsDeps(): FreeStepsDeps {
-    const ports = createMusicPorts({ trends: this.#deps.musicTrends ?? NO_TRENDS, media: this.#media }, this.#music);
+    // Every read of the library's side that a dead share could hang is bounded for each caller AND single-flight per key: a hung call is asked about once, not once per pass (every second, and at every
+    // poke), or the calls would pile up in the thread pool the ledger's writes share.
+    const draftsRead = boundedSingleFlight<{ photoIds: ReadonlySet<string>; complete: boolean }>(AUTOPILOT_READ_TIMEOUT_MS, "the drafts of the avatar");
+    const slicesRead = boundedSingleFlight<{ runIds: readonly string[]; over: boolean }>(AUTOPILOT_READ_TIMEOUT_MS, "the slice runs of the avatar");
+    const usageRead = boundedSingleFlight<TrackUsage>(AUTOPILOT_READ_TIMEOUT_MS, "the track usage of the avatar");
+    const ownTracksRead = boundedSingleFlight<{ mediaId: string; durationMs: number }[]>(AUTOPILOT_READ_TIMEOUT_MS, "the flagged own tracks");
+    const scanRead = boundedSingleFlight<ProvenanceScan>(AUTOPILOT_READ_TIMEOUT_MS, "the records of the avatar's videos");
+    const lookupRead = boundedSingleFlight<VideoLookup>(AUTOPILOT_READ_TIMEOUT_MS, "a video's record");
+    // A read belongs to a library: after a switch an answer for the old one is not joined.
+    const keyOf = (name: string): string => [this.#live?.library.root ?? "", name].join("|");
+    const ports = createMusicPorts({ trends: this.#deps.musicTrends ?? NO_TRENDS, media: { autopilotTracks: () => ownTracksRead(keyOf("own"), () => this.#media.autopilotTracks()) } }, this.#music);
     const live = (): Library => {
       const library = this.#live?.library;
       if (library === undefined) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open" });
@@ -1116,9 +1132,14 @@ export class Engine {
       renderLife: (jobId) => renderLifeOf(this.#renders.states(), jobId),
       liveRenders: () => liveRendersOf(this.#renders.states()),
       focus: { prefetchFocus: (avatarId, photoId, options) => this.#focusOf(live()).prefetchFocus(avatarId, photoId, options) },
-      photoIdsInDrafts: (avatarId) => boundedRead(() => this.#drafts.photoIdsInDrafts(live(), avatarId), AUTOPILOT_READ_TIMEOUT_MS, "the drafts of the avatar"),
-      sliceRuns: (avatarId) => boundedRead(() => this.#launchSliceRuns(avatarId), AUTOPILOT_READ_TIMEOUT_MS, "the slice runs of the avatar"),
-      trackUsage: (avatarId) => boundedRead(() => trackUsage(live().root, avatarId), AUTOPILOT_READ_TIMEOUT_MS, "the track usage of the avatar"),
+      photoIdsInDrafts: (avatarId) => draftsRead(keyOf(avatarId), () => this.#drafts.photoIdsInDrafts(live(), avatarId)),
+      // The answer depends on the launch's own set, so a read for another launch of the same avatar is not joined.
+      sliceRuns: (avatarId) => slicesRead(keyOf([avatarId, this.#orchestrator.sceneSetOf(avatarId) ?? ""].join("|")), () => this.#launchSliceRuns(avatarId)),
+      trackUsage: (avatarId) => usageRead(keyOf(avatarId), () => trackUsage(live().root, avatarId)),
+      provenance: {
+        scan: (root, avatarId, launchId, options) => scanRead([root, avatarId, launchId].join("|"), () => scanProvenance(root, avatarId, launchId, options)),
+        lookup: (root, avatarId, videoId) => lookupRead([root, avatarId, videoId].join("|"), () => lookupVideo(root, avatarId, videoId)),
+      },
       chooseMusic: ports.chooseMusic,
       autoRefresh: ports.autoRefresh,
       // The engine's own bounded check (it queues behind the others and never rejects), with the size of the next video: never the raw `checkExportRoot`.
@@ -1140,13 +1161,13 @@ export class Engine {
   async #launchSliceRuns(avatarId: string): Promise<{ runIds: readonly string[]; over: boolean }> {
     const library = this.#live?.library;
     if (library === undefined) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open" });
-    const { sets, unreadable } = await library.sceneSets.list(avatarId);
-    const mine: SliceFactsSet[] = [];
-    for (const set of sets) {
-      if (this.#launches.activeLaunch(set.launchId) === undefined) continue;
-      mine.push({ draw: set.launchDraw, statuses: await this.#openSliceStatuses(library, set) });
-    }
-    return sliceFactsOf(mine, unreadable);
+    // The launch's OWN set, by the id its file names. Not a listing of the avatar's sets: that counts every broken file of the avatar, an old manual set included, and one of them would keep the draw
+    // open for ever. A set that is not composed yet, or cannot be read, leaves the draw not over: nothing is known to be finished.
+    const sceneSetId = this.#orchestrator.sceneSetOf(avatarId);
+    if (sceneSetId === null) return sliceFactsOf([], 0);
+    const set = await library.sceneSets.get(avatarId, sceneSetId);
+    if (set === null) return sliceFactsOf([], 0);
+    return sliceFactsOf([{ draw: set.launchDraw, statuses: await this.#openSliceStatuses(library, set) }], 0);
   }
 
   /** `#sliceStatuses` for the slices not known to be finished yet. */
@@ -1168,10 +1189,11 @@ export class Engine {
   #trackLabelOf(music: FileMusic): { title: string; artist: string | null } | null {
     if (music.source === "trending") {
       const label = (this.#deps.musicTrends ?? NO_TRENDS).labelOf(music.trackId);
-      return label === null ? null : normalizeTrackLabel(label.title, label.artist);
+      return label === null ? null : trendTrackLabel(label.title, label.artist);
     }
     const root = this.#live?.library.root;
-    return root === undefined ? null : normalizeTrackLabel(this.#media.trackNameOf(root, music.mediaId), null);
+    const name = root === undefined ? null : this.#media.trackNameOf(root, music.mediaId);
+    return name === null ? null : normalizeTrackLabel(ownTrackTitle(name), null);
   }
 
   /** Something the free steps wait on changed (a slice or a render ended, a track appeared, the export folder answered): they look again now instead of at the next poll. Never throws. */
@@ -1558,10 +1580,16 @@ export class Engine {
         finish = resolve;
       });
       const started = await this.#pendingRun(runId, () => this.#resumeRunNow({ runId, acceptedWorstMicros: 0 }, { onEnd: finish }));
-      if (started === null) return { kind: "finished" };
+      if (started === null) {
+        this.#capEndedSlices.add(runId);
+        return { kind: "finished" };
+      }
       launched = true;
-      // The slice's photos are the free steps' to assign: its end is their cue.
-      void ended.then(() => this.#pokeFreeSteps());
+      // The slice's photos are the free steps' to assign: its end is their cue. An end on a cap is remembered: the run's slots stay open and nothing will draw them.
+      void ended.then((end) => {
+        if (end.status === "failed" && end.error.code === "RUN_CAP_EXCEEDED") this.#capEndedSlices.add(runId);
+        this.#pokeFreeSteps();
+      });
       return { kind: "started", jobId: started.jobId, ended };
     } finally {
       if (!launched) this.#paidCommands--;
@@ -1580,14 +1608,42 @@ export class Engine {
         const { events } = await library.readJournal(runId, RunEventSchema);
         const state = foldRun(plan, { events, ...ledger, photos: library.photosByAvatar(plan.avatarId) });
         const openSlots = state.slots.filter((slot) => slot.end === undefined || slot.end === null).length;
-        const finished = openSlots === 0 && this.#jobs.runningJobOf(runId) === null;
-        statuses.set(runId, finished ? { finished: true, committedMicros: scopeCommitted(money.budget.ledger, { runId }) } : { finished: false, openSlots });
+        const running = this.#jobs.runningJobOf(runId) !== null;
+        const committedMicros = scopeCommitted(money.budget.ledger, { runId });
+        // A slice that a cap ended keeps its slots open, and nothing will draw them again (the paid side moves on): it is finished for everyone who asks, or a launch would wait for it for ever.
+        const spent = openSlots > 0 && !running && (await this.#sliceIsSpent(plan, state, money.budget, openSlots, committedMicros));
+        const finished = (openSlots === 0 && !running) || spent;
+        statuses.set(runId, finished ? { finished: true, committedMicros } : { finished: false, openSlots });
       } catch {
         // A slice entry whose run cannot be read is live: its whole cap stays counted (never over-allocate). Only a run with NO FOLDER is absent ('pending': its entry is finished by the draw).
         if (await library.runFolderExists(runId).catch(() => true)) statuses.set(runId, { finished: false });
       }
     }
     return statuses;
+  }
+
+  /**
+   * Whether a slice with open slots and no job is over for good (`isSpentSlice`): its own cap cannot fund the next attempt (the very test `#remaining` applies), or its job ended on a cap here. Prices
+   * that cannot be read now leave the cap test undecided (not spent): an end by a cap seen here still counts.
+   */
+  async #sliceIsSpent(plan: RunPlan, state: RunState, budget: Budget, openSlots: number, committedMicros: number): Promise<boolean> {
+    return this.#spentSlices.judge(plan.runId, {
+      openSlots,
+      running: false,
+      needsReconcile: budget.scopeNeedsReconcile({ runId: plan.runId }),
+      capMicros: plan.capMicros,
+      committedMicros,
+      endedByCap: this.#capEndedSlices.has(plan.runId),
+      // Read only when the cheap facts leave the question open: a stale price cache may take as long as the read timeout.
+      minToProgress: async () => {
+        try {
+          const priced = await this.#prices.get(runPlanPriceModels(plan));
+          return remainingPlanOrNull(priced, plan, state, committedMicros, this.#ledgerView(budget))?.minToProgressMicros ?? null;
+        } catch {
+          return null;
+        }
+      },
+    });
   }
 
   /** Plan §4.7: a launch's slice run is moved by the launch only, so the owner's resume or cancel is refused (VALIDATION `launch-set`), free. */
@@ -4837,11 +4893,8 @@ export class Engine {
       throw new EngineFailure({ code: "IN_FLIGHT", detail: `${result.inFlight} paid request(s) of this engine are still in flight; reconcile when they end` });
     }
     const answer = reconcileResultOf(result);
-    if (answer.status === "done") {
-      this.#emitMoney();
-      // The reconcile settled the open reserves, which a launch counts as «без ответа» until then: its card is told (S4.6v).
-      this.#orchestrator.refresh();
-    }
+    // `#emitMoney` also tells the launch's card (`Orchestrator.refresh`): the reconcile settled the open reserves, which a launch counts as «без ответа» until then.
+    if (answer.status === "done") this.#emitMoney();
     return answer;
   }
 
@@ -4938,13 +4991,23 @@ export class Engine {
       payload: { settings: this.#currentSettings(), librarySwitchGeneration: this.#librarySwitchGeneration },
     });
     // H1: the key and the monthly budget are settings, and the launch's view reads both (what closes «Продолжить»).
-    this.#orchestrator.reannounce();
+    this.#refreshLaunchView();
   }
 
   #emitMoney(): void {
     this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "money.changed", payload: { status: this.#moneyStatus() } });
-    // H1: R and what closes «Продолжить» (a reconcile) come from the ledger.
-    this.#orchestrator.reannounce();
+    // H1: R, the spent sum and what closes «Продолжить» (a reconcile) come from the ledger.
+    this.#refreshLaunchView();
+  }
+
+  /** The current launch is announced again (`Orchestrator.refresh`, coalesced, nothing while the engine closes). Never throws: a failing announcement must not cut short what the caller does next. */
+  #refreshLaunchView(): void {
+    try {
+      this.#orchestrator.refresh();
+    } catch (error) {
+      // The card is announced again at the launch's next write; a failure here must not skip the caller's own work (a job's `finishRun` follows `#emitMoney`), but it is told.
+      console.warn(`studio engine: the launch could not be announced again (${error instanceof Error ? error.name : typeof error})`);
+    }
   }
 
   /**
@@ -4954,7 +5017,9 @@ export class Engine {
    */
   #emit(event: UnsequencedEvent): void {
     // The free steps of a launch wait on a music candidate (a refresh, a flag on an own track) and on the export folder: either arriving is their cue.
-    if (event.type === "music.changed" || event.type === "media.changed" || event.type === "export.status") this.#pokeFreeSteps();
+    if (event.type === "music.changed" || event.type === "export.status") this.#pokeFreeSteps();
+    // Own media: only a track can become a candidate (or stop being one), so a photo or a video imported meanwhile is no cue. A removal names no kind: it is one.
+    else if (event.type === "media.changed" && (event.payload.change === "removed" || event.payload.media.kind === "audio")) this.#pokeFreeSteps();
     const seq = this.#events.append(event);
     const stamped = this.#events.since(seq - 1, this.#events.bootId);
     if (stamped.gap) return;

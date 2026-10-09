@@ -253,7 +253,10 @@ export class Orchestrator {
     this.flushEvents();
   }
 
-  /** Tells the window the unfinished launch again: what the ledger says of it changed without a write of the launch (a reconcile closed its open reserves). */
+  /**
+   * Tells the window the unfinished launch again: what the view derives from the money, the key or the monthly budget changed without a write of the launch (a reconcile closed its open reserves;
+   * R, the spent sum and what closes «Продолжить» moved). The engine calls it from `#emitMoney` and `#emitSettings`. Coalesced like every other announcement; nothing while the engine closes.
+   */
   refresh(): void {
     if (!this.#closing && this.#current !== null) this.#announce(this.#current);
   }
@@ -262,12 +265,9 @@ export class Orchestrator {
     this.#coalescer.flush();
   }
 
-  /**
-   * The money, the key or the monthly budget changed (S4.6w, H1): what the view derives from them (R, the spent sum, what closes «Продолжить») is read again and the unfinished launch is
-   * announced as it now reads. Coalesced like every other announcement; nothing when there is no unfinished launch.
-   */
-  reannounce(): void {
-    if (this.#current !== null) this.#announce(this.#current);
+  /** The id of the scene set the unfinished launch composes for this avatar, from the launch file; null when the avatar has no generation in it (or there is no unfinished launch). */
+  sceneSetOf(avatarId: string): string | null {
+    return this.#current?.avatars.find((row) => row.avatarId === avatarId)?.generation?.sceneSetId ?? null;
   }
 
   // ---------- what the engine asks ----------

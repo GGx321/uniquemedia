@@ -118,7 +118,8 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
     hook.fire = () => setup.idleB.resolve();
     setup.endA.resolve(drop);
     await until(() => setup.r.ctx().file().paidHold?.reason === "network", "a network hold");
-    await idle();
+    // Wait for the timer to exist (the observable), then let anything that would arm a second one do so before the exact count is taken.
+    await until(() => timers.pending() >= 1, "the retry timer");
     await idle();
     expect(timers.pending()).toBe(1);
     timers.advance(10 * MIN);
@@ -133,7 +134,8 @@ describe("one hold, one timer: who wins is decided in the file's own write, by r
     endA.resolve(drop);
     idleB.resolve();
     await until(() => r.ctx().file().paidHold?.reason === "network", "a hold");
-    await idle();
+    // Wait for the timer to exist (the observable), then let anything that would arm a second one do so before the exact count is taken.
+    await until(() => timers.pending() >= 1, "the retry timer");
     await idle();
     expect(timers.pending()).toBe(1);
     const nextAt = holdDetail(r)?.nextAt;

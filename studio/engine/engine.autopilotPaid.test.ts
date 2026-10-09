@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { LaunchView, type LaunchDraftInput, type ResponseMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { createPaidSteps } from "./autopilot/paidSteps";
+import { IDLE_STEPS } from "./autopilot/steps";
 import type { LaunchFile } from "./autopilot/launchFile";
 import type { EngineDeps } from "./engine";
 import { openLibrary } from "./library";
@@ -102,7 +103,7 @@ const draftOf = (avatarIds: string[], over: Partial<LaunchDraftInput> = {}): Lau
 
 type Started = Awaited<ReturnType<typeof boot>>;
 
-/** An engine over the test folders with the paid steps plugged in. `steps: false` leaves the seam idle (a launch that only started). */
+/** An engine over the test folders with the paid steps plugged in. `steps: false` leaves the seam idle on purpose (`IDLE_STEPS`): a launch that only started. The engine's own default is the real steps now. */
 async function boot(net: ReturnType<typeof network>, opts: { budget?: number; steps?: boolean; deps?: Partial<EngineDeps> } = {}) {
   await mkdir(join(dir(), "export"), { recursive: true });
   const holder: { engine: Started["engine"] | null } = { engine: null };
@@ -115,7 +116,7 @@ async function boot(net: ReturnType<typeof network>, opts: { budget?: number; st
   const started = await startEngine(dir(), {
     init: { settings: engineSettings(dir(), { imageAgeCheck: "off", monthlyBudgetMicros: opts.budget ?? 10_000_000 }) },
     net,
-    deps: { qaGates: FACE, ...(opts.steps === false ? {} : { launchSteps: steps }), ...opts.deps },
+    deps: { qaGates: FACE, launchSteps: opts.steps === false ? IDLE_STEPS : steps, ...opts.deps },
   });
   holder.engine = started.engine;
   return started;

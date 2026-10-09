@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { within } from "../testing/within";
 import { NETWORK_WAITS_MS } from "./paidFailures";
-import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, liveRendersOf, normalizeTrackLabel, renderLifeOf, sliceFactsOf, type SliceFactsSet } from "./launchWiring";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, boundedSingleFlight, createSpentSlices, isSpentSlice, liveRendersOf, normalizeTrackLabel, ownTrackTitle, trendTrackLabel, renderLifeOf, sliceFactsOf, UNTITLED_TRACK, type SliceFactsSet } from "./launchWiring";
 useNativeGlobals();
 
 // Stage 4, S4.6w: the pure parts of the engine's default wiring of the autopilot steps. The wiring itself is tested in the engine (`engine.autopilotWiring.test.ts`).
@@ -163,5 +163,200 @@ describe("normalizeTrackLabel", () => {
   test("a cut that ends in a blank is trimmed again", () => {
     expect(normalizeTrackLabel(`${"t".repeat(119)} z`, null)?.title).toBe("t".repeat(119));
     expect(normalizeTrackLabel("Song", `${"a".repeat(119)} z`)?.artist).toBe("a".repeat(119));
+  });
+});
+
+describe("isSpentSlice (a slice that ended on its cap is over for the free side too)", () => {
+  const base = { openSlots: 3, running: false, needsReconcile: false, capMicros: 200_000, committedMicros: 190_000, minToProgressMicros: 40_000, endedByCap: false };
+
+  test("open slots with no job and a cap that cannot fund the next attempt: spent", () => {
+    expect(isSpentSlice(base)).toBe(true);
+  });
+
+  test("the cap that leaves exactly the next attempt's cost can still fund it: not spent", () => {
+    expect(isSpentSlice({ ...base, committedMicros: 160_000 })).toBe(false);
+    expect(isSpentSlice({ ...base, committedMicros: 160_001 })).toBe(true);
+  });
+
+  test("a job that runs is not spent, whatever the cap says", () => {
+    expect(isSpentSlice({ ...base, running: true })).toBe(false);
+  });
+
+  test("nothing open is not «spent» (the slice is finished the ordinary way)", () => {
+    expect(isSpentSlice({ ...base, openSlots: 0 })).toBe(false);
+  });
+
+  test("the run's own open reserves wait for a reconcile: the room is not final, so not spent", () => {
+    expect(isSpentSlice({ ...base, needsReconcile: true })).toBe(false);
+  });
+
+  test("nothing to send at all (no minimum) is not a cap that failed", () => {
+    expect(isSpentSlice({ ...base, minToProgressMicros: null })).toBe(false);
+  });
+
+  test("a slice the engine saw end on the LAUNCH group's cap is spent though its own cap has room", () => {
+    expect(isSpentSlice({ ...base, committedMicros: 10_000, endedByCap: true })).toBe(true);
+  });
+
+  test("endedByCap does not outlive a running job or a pending reconcile", () => {
+    expect(isSpentSlice({ ...base, endedByCap: true, running: true })).toBe(false);
+    expect(isSpentSlice({ ...base, endedByCap: true, needsReconcile: true })).toBe(false);
+  });
+});
+
+describe("boundedSingleFlight (a read that hangs is asked once, not once per pass)", () => {
+  test("callers of one key while a read is out share it: one underlying call", async () => {
+    let calls = 0;
+    const read = boundedSingleFlight<number>(30, "a read");
+    const never = new Promise<number>(() => undefined);
+    const work = () => {
+      calls += 1;
+      return never;
+    };
+    const results = await Promise.allSettled([read("a", work), read("a", work), read("a", work)]);
+    expect(calls).toBe(1);
+    expect(results.every((r) => r.status === "rejected")).toBe(true);
+  });
+
+  test("each caller keeps its own bound: a late caller waits its own ms, not the first caller's remainder", async () => {
+    const read = boundedSingleFlight<number>(80, "a read");
+    const never = new Promise<number>(() => undefined);
+    const first = read("a", () => never).then(() => "answered", (error: unknown) => (error instanceof Error ? error.message : "failed"));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const started = Date.now();
+    const second = read("a", () => never);
+    await expect(second).rejects.toThrow("did not answer");
+    expect(Date.now() - started).toBeGreaterThanOrEqual(60);
+    expect(await first).toContain("did not answer");
+  });
+
+  test("a different key is a different read", async () => {
+    let calls = 0;
+    const read = boundedSingleFlight<number>(1_000, "a read");
+    const work = async () => ++calls;
+    await Promise.all([read("a", work), read("b", work)]);
+    expect(calls).toBe(2);
+  });
+
+  test("once the read settles the next call reads again (an answer is not kept)", async () => {
+    let calls = 0;
+    const read = boundedSingleFlight<number>(1_000, "a read");
+    const work = async () => ++calls;
+    expect(await read("a", work)).toBe(1);
+    expect(await read("a", work)).toBe(2);
+  });
+
+  test("a read that failed is not kept either", async () => {
+    let calls = 0;
+    const read = boundedSingleFlight<number>(1_000, "a read");
+    const work = async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("boom");
+      return calls;
+    };
+    await expect(read("a", work)).rejects.toThrow("boom");
+    expect(await read("a", work)).toBe(2);
+  });
+
+  test("a hung read that finally answers frees its key", async () => {
+    let release = (): void => undefined;
+    const slow = new Promise<number>((resolve) => {
+      release = () => resolve(5);
+    });
+    const read = boundedSingleFlight<number>(20, "a read");
+    await expect(read("a", () => slow)).rejects.toThrow("did not answer");
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(await read("a", async () => 9)).toBe(9);
+  });
+});
+
+describe("labels of the tracks", () => {
+  test("an own track is named by its file without the extension", () => {
+    expect(ownTrackTitle("my-song.m4a")).toBe("my-song");
+    expect(ownTrackTitle("a.b.c.m4a")).toBe("a.b.c");
+  });
+
+  test("a name that is only an extension, or has none, is kept as it is", () => {
+    expect(ownTrackTitle(".m4a")).toBe(".m4a");
+    expect(ownTrackTitle("loop")).toBe("loop");
+    expect(ownTrackTitle("v1.0 final")).toBe("v1.0 final");
+  });
+
+  test("the neutral name of a trend with no title is not its id", () => {
+    expect(UNTITLED_TRACK).toBe("Untitled track");
+  });
+});
+
+describe("createSpentSlices (spent is latched, and the cheap checks come before the price list)", () => {
+  const facts = { openSlots: 3, running: false, needsReconcile: false, capMicros: 200_000, committedMicros: 190_000, endedByCap: false };
+
+  test("a slice judged spent stays spent when the figures change: a price drop must not hand back a cap the next slice was already sized from", async () => {
+    const spent = createSpentSlices();
+    expect(await spent.judge("run-a", { ...facts, minToProgress: async () => 40_000 })).toBe(true);
+    // Prices fall: the next attempt now costs 5 000 and the cap would fund it. The slice is still spent.
+    expect(await spent.judge("run-a", { ...facts, minToProgress: async () => 5_000 })).toBe(true);
+  });
+
+  test("a slice not judged spent is judged again each time, and is another run's business", async () => {
+    const spent = createSpentSlices();
+    expect(await spent.judge("run-a", { ...facts, minToProgress: async () => 5_000 })).toBe(false);
+    expect(await spent.judge("run-b", { ...facts, minToProgress: async () => 40_000 })).toBe(true);
+    expect(await spent.judge("run-a", { ...facts, minToProgress: async () => 40_000 })).toBe(true);
+  });
+
+  test("a pending reconcile, a live job and nothing open are decided without reading the prices", async () => {
+    const spent = createSpentSlices();
+    let loads = 0;
+    const load = async (): Promise<number> => {
+      loads += 1;
+      return 40_000;
+    };
+    expect(await spent.judge("run-a", { ...facts, needsReconcile: true, minToProgress: load })).toBe(false);
+    expect(await spent.judge("run-a", { ...facts, running: true, minToProgress: load })).toBe(false);
+    expect(await spent.judge("run-a", { ...facts, openSlots: 0, minToProgress: load })).toBe(false);
+    expect(loads).toBe(0);
+  });
+
+  test("a slice seen ending on a cap is spent without reading the prices", async () => {
+    const spent = createSpentSlices();
+    let loads = 0;
+    expect(
+      await spent.judge("run-a", {
+        ...facts,
+        endedByCap: true,
+        minToProgress: async () => {
+          loads += 1;
+          return null;
+        },
+      }),
+    ).toBe(true);
+    expect(loads).toBe(0);
+  });
+
+  test("prices that cannot be read leave the cap test undecided: not spent", async () => {
+    const spent = createSpentSlices();
+    expect(await spent.judge("run-a", { ...facts, minToProgress: async () => null })).toBe(false);
+  });
+});
+
+describe("ownTrackTitle keeps a version number", () => {
+  test("only an extension with a letter in it is cut", () => {
+    expect(ownTrackTitle("Song 2.0")).toBe("Song 2.0");
+    expect(ownTrackTitle("Song.2024")).toBe("Song.2024");
+    expect(ownTrackTitle("Song.mp3")).toBe("Song");
+    expect(ownTrackTitle("Song.m4a")).toBe("Song");
+  });
+});
+
+describe("trendTrackLabel", () => {
+  test("a null title and a blank title fall back to the same neutral name", () => {
+    expect(trendTrackLabel(null, "The Lamps")).toEqual({ title: UNTITLED_TRACK, artist: "The Lamps" });
+    expect(trendTrackLabel("   ", null)).toEqual({ title: UNTITLED_TRACK, artist: null });
+    expect(trendTrackLabel("", null)).toEqual({ title: UNTITLED_TRACK, artist: null });
+  });
+
+  test("a title the list gave is kept", () => {
+    expect(trendTrackLabel("Midnight Drive", null)).toEqual({ title: "Midnight Drive", artist: null });
   });
 });

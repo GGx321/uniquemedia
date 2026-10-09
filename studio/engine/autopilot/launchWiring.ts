@@ -1,13 +1,16 @@
 import type { SliceStatus } from "../sceneSets/launchDraw";
 import type { RenderLife } from "./freeSteps";
 import { NETWORK_WAITS_MS } from "./paidFailures";
+import { UNTITLED } from "../music/trackRecord";
+import { capFundsResume } from "../runs/remaining";
 
 // Stage 4, S4.6w (plan §25): the pure parts of the engine's DEFAULT wiring of the autopilot steps. The engine builds `composeSteps(createPaidSteps(...), createFreeSteps(...))` out of its own
 // parts (`Engine#launchSteps`); what is decided here is decided without the engine, so a test can ask it in one line.
 
 /**
  * Q2 (plan §17, the owner has not answered; the plan's default stands): a job whose requests got no answer continues by itself after 1 minute at its first drop and after 5 at its second, and the
- * third drop holds for a person. Q2 = Б is `[]` (the first drop holds). This is the ONE place the setting is read: the wiring hands it to the paid steps and nothing else looks at it.
+ * third drop holds for a person. Q2 = Б is `[]` (the first drop holds). The value lives ONCE, as `NETWORK_WAITS_MS` in `paidFailures.ts`, which is also what the paid steps use when they are given
+ * none; the engine hands it over explicitly through this name, so the choice is visible where the steps are built and a test pins it.
  */
 export const AUTOPILOT_NETWORK_WAITS_MS: readonly number[] = NETWORK_WAITS_MS;
 
@@ -30,7 +33,55 @@ export async function boundedRead<T>(work: () => Promise<T>, ms: number, what: s
   }
 }
 
+/**
+ * Like `boundedRead`, but a read that is already out for `key` is joined, not asked again: on a share that does not answer, every pass of the free steps (every second, and at every poke) would
+ * otherwise leave one more hung call in the thread pool the ledger writes share. Each caller keeps its own bound. The flight is forgotten when the underlying read settles, with its answer or its
+ * failure: nothing is cached.
+ */
+export function boundedSingleFlight<T>(ms: number, what: string): (key: string, work: () => Promise<T>) => Promise<T> {
+  const flights = new Map<string, Promise<T>>();
+  return (key, work) => {
+    let flight = flights.get(key);
+    if (flight === undefined) {
+      const started = Promise.resolve().then(work);
+      flights.set(key, started);
+      const forget = (): void => {
+        if (flights.get(key) === started) flights.delete(key);
+      };
+      started.then(forget, forget);
+      flight = started;
+    }
+    const joined = flight;
+    return boundedRead(() => joined, ms, what);
+  };
+}
+
 // ---------- the slices of a launch, as the free steps ask ----------
+
+/** What decides whether a slice that has open slots is over for good (`isSpentSlice`). */
+export interface SpentSliceFacts {
+  /** Slots of the run with no end. */
+  readonly openSlots: number;
+  /** A job of the run is live. */
+  readonly running: boolean;
+  /** The run's own open reserves wait for a reconcile: they count at their worst case until then, so the room is not final. */
+  readonly needsReconcile: boolean;
+  readonly capMicros: number;
+  readonly committedMicros: number;
+  /** The cheapest next attempt (`remainingPlan`), null when there is nothing to send. */
+  readonly minToProgressMicros: number | null;
+  /** The engine saw the run's job end on a cap (`RUN_CAP_EXCEEDED`), which may be the LAUNCH group's cap: the run's own cap can still show room. */
+  readonly endedByCap: boolean;
+}
+
+/**
+ * A slice whose slots stay open because a cap ended it: nothing runs, nothing is waiting for a reconcile, and either its own cap cannot fund the next attempt (the very test `#remaining` applies:
+ * `capFundsResume`) or the engine saw it end on a cap. The paid side treats such a slice as spent and moves on, so the free side must read it as ENDED too, or the draw is never «over».
+ */
+export function isSpentSlice(facts: SpentSliceFacts): boolean {
+  if (facts.openSlots === 0 || facts.running || facts.needsReconcile) return false;
+  return facts.endedByCap || !capFundsResume({ capMicros: facts.capMicros }, facts.committedMicros, facts.minToProgressMicros);
+}
 
 /** One scene set of the launch with the status of each of its slice runs, as the engine read them. */
 export interface SliceFactsSet {
@@ -96,6 +147,16 @@ export function liveRendersOf(states: readonly JobFacts[]): Array<{ jobId: strin
 
 // ---------- the results list ----------
 
+/** What a trend the list gave no title is called: neutral, never its raw id. The very words the music screen uses (`music/trackRecord.ts`). */
+export const UNTITLED_TRACK = UNTITLED;
+
+/** An own track is named by its file without the extension («my-song.m4a» is «my-song»). Only an extension with a letter in it is cut: «Song 2.0» and «Song.2024» are kept whole, and so is a name that is only an extension. */
+export function ownTrackTitle(fileName: string): string {
+  const dot = fileName.lastIndexOf(".");
+  if (dot <= 0) return fileName;
+  return /^(?=[A-Za-z0-9]*[A-Za-z])[A-Za-z0-9]{1,5}$/.test(fileName.slice(dot + 1)) ? fileName.slice(0, dot) : fileName;
+}
+
 /** The longest title or artist the contract takes. */
 const LABEL_MAX = 120;
 
@@ -116,4 +177,43 @@ function labelPart(text: string | null | undefined): string | null {
 export function normalizeTrackLabel(title: string | null | undefined, artist: string | null | undefined): { title: string; artist: string | null } | null {
   const name = labelPart(title);
   return name === null ? null : { title: name, artist: labelPart(artist) };
+}
+
+/** What `SpentSlices.judge` is told of a slice. The cap figures arrive lazily: the price list is read only when the cheap facts leave the question open. */
+export interface SpentSliceQuestion {
+  readonly openSlots: number;
+  readonly running: boolean;
+  readonly needsReconcile: boolean;
+  readonly capMicros: number;
+  readonly committedMicros: number;
+  readonly endedByCap: boolean;
+  /** The cheapest next attempt at today's prices, or null when it cannot be known now. Called at most once, and only when needed. */
+  minToProgress(): Promise<number | null>;
+}
+
+export interface SpentSlices {
+  judge(runId: string, question: SpentSliceQuestion): Promise<boolean>;
+}
+
+/**
+ * `isSpentSlice` with two additions. The cheap checks (nothing open, a live job, a pending reconcile, an end seen on a cap) come BEFORE the price list is read, so a stale price cache
+ * (a fetch that may take as long as the read timeout) cannot turn a question the cheap facts answer into a timeout. And spent is LATCHED for the life of this object: the paid side sizes the
+ * next slice from the unspent cap of a slice it counts as spent, so a slice that later reads as live again (prices fell, the process restarted) would hand that cap out twice.
+ */
+export function createSpentSlices(): SpentSlices {
+  const latched = new Set<string>();
+  return {
+    async judge(runId, question) {
+      if (latched.has(runId)) return true;
+      if (question.openSlots === 0 || question.running || question.needsReconcile) return false;
+      const spent = question.endedByCap || isSpentSlice({ ...question, minToProgressMicros: await question.minToProgress() });
+      if (spent) latched.add(runId);
+      return spent;
+    },
+  };
+}
+
+/** The label of a saved trend: its title and artist as the list recorded them, a missing or blank title as the neutral name (never the raw id). */
+export function trendTrackLabel(title: string | null | undefined, artist: string | null | undefined): { title: string; artist: string | null } {
+  return normalizeTrackLabel(title, artist) ?? { title: UNTITLED_TRACK, artist: labelPart(artist) };
 }

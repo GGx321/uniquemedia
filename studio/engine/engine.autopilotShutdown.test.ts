@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { FREE_IDLE_POLL_MS, FREE_POLL_MS } from "./autopilot/freeSteps";
+import { FREE_POLL_TIMER } from "./autopilot/freeSteps";
 import { useEngineDir } from "./testing/engineHarness";
 import { watchTimers } from "./testing/timerWatch";
 import { draftOf, network, wiringKit } from "./testing/wiringKit";
@@ -16,7 +16,7 @@ const dir = useEngineDir("studio-engine-autopilot-shutdown-");
 const kit = wiringKit(dir);
 
 describe("Engine.shutdown and the free steps", () => {
-  test("a shutdown with a render that never ends leaves no sleep timer of the free steps pending", async () => {
+  test("a shutdown with a render that never ends leaves no poll timer of the free steps pending", async () => {
     const watch = watchTimers();
     try {
       const avatarId = await kit.seedAvatar(5);
@@ -25,12 +25,12 @@ describe("Engine.shutdown and the free steps", () => {
       const launch = await kit.startLaunch(started, draftOf([avatarId], { library: true, generate: false, videosPerAvatar: 1 }));
       await kit.waitFor(started, launch.launchId, "the render to be running", () => started.engine.renders.states().some((s) => s.kind === "render" && s.launchId === launch.launchId && s.status === "running"), 30_000);
       // The free run is waiting for a render that will not end: it sleeps, one poll at a time.
-      expect(watch.pendingOf([FREE_POLL_MS, FREE_IDLE_POLL_MS]).length).toBeGreaterThan(0);
+      expect(watch.pendingNamed([FREE_POLL_TIMER])).toBeGreaterThan(0);
 
       await within(started.engine.shutdown(50), 20_000, "Engine.shutdown");
       await new Promise((resolve) => setTimeout(resolve, 50));
 
-      expect(watch.pendingOf([FREE_POLL_MS, FREE_IDLE_POLL_MS])).toEqual([]);
+      expect(watch.pendingNamed([FREE_POLL_TIMER])).toBe(0);
     } finally {
       watch.restore();
     }

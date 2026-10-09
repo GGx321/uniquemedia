@@ -3,7 +3,7 @@ import type { TrackChoice } from "../../shared/autopilot/track";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { until } from "../testing/engineHarness";
 import type { FreeStepsDeps } from "./freeSteps";
-import type { LaunchFile } from "./launchFile";
+import type { FileVideo, LaunchFile } from "./launchFile";
 import { A } from "./testing/launchFixtures";
 import { distinctPhotos } from "./testing/planFixtures";
 import { failure, rig, MUSIC, patchVideo, settleFor, useRigCleanup, videosOf } from "./testing/freeRig";
@@ -265,5 +265,75 @@ describe("cheap corrections", () => {
     r.start();
     await until(() => r.launch.finished(), "the launch to finish");
     expect(r.launch.logs.some((l) => l.kind === "degrade" && l.fewerVideos === 1 && l.missingPhotos >= 1)).toBe(true);
+  });
+});
+
+describe("S4.6w L2: when the slice runs cannot be read, the library does not take the launch's photos", () => {
+  test("a library video waits while sliceRuns fails (a timeout), and is assigned once it answers", async () => {
+    let broken = true;
+    const asked = { n: 0 };
+    const r = rig({
+      photos: 1,
+      draft: { library: true, generate: true, videosPerAvatar: 2 },
+      auto: false,
+      slices: () => {
+        asked.n += 1;
+        if (broken) throw new Error("the slice runs of the avatar did not answer in 15000 ms");
+        return { runIds: [], over: false };
+      },
+    });
+    r.start();
+    await until(() => asked.n >= 2, "the steps to ask for the slice runs");
+    await settleFor(40);
+    expect(videosOf(r.launch).filter((v) => v.source === "library").every((v) => v.photoIds.length === 0)).toBe(true);
+    broken = false;
+    r.steps.poke();
+    await until(() => videosOf(r.launch).some((v) => v.source === "library" && v.photoIds.length > 0), "the library video to take its photo");
+  });
+
+  test("PHOTO_UNAVAILABLE while the slice runs cannot be read waits and counts no attempt: the video is not dropped, and it takes the spare photo once they can", async () => {
+    let broken = false;
+    let openSubmit = (): void => undefined;
+    const submitGate = new Promise<void>((resolve) => {
+      openSubmit = resolve;
+    });
+    const r = rig({
+      photos: 1,
+      draft: { library: true, generate: true, videosPerAvatar: 2 },
+      slices: () => {
+        if (broken) throw new Error("the slice runs of the avatar did not answer in 15000 ms");
+        return { runIds: [], over: false };
+      },
+      deps: {
+        videos: {
+          // The library video's first photo is taken by the owner at the submit; the spare is still free.
+          renderInternal: async (input) => {
+            await submitGate;
+            const gone = r.photos[0]?.id ?? "";
+            if (scenePhotoOf(input).includes(gone)) {
+              r.library.patch(gone, { usedIn: ["video-by-the-owner"] });
+              throw failure({ code: "PHOTO_UNAVAILABLE", detail: "taken" });
+            }
+            return r.videos.videos.renderInternal(input);
+          },
+          settled: () => r.videos.videos.settled(),
+        },
+      },
+    });
+    const spare = distinctPhotos(1, { avatarId: A }, 9);
+    r.library.add(A, spare);
+    // The assignment happens while the slice runs can still be read; the submit is held until they cannot, so the owner takes the photo exactly then.
+    r.start();
+    await until(() => (videosOf(r.launch).find((v) => v.source === "library")?.photoIds.length ?? 0) > 0, "the library video to be assigned");
+    broken = true;
+    openSubmit();
+    await settleFor(150);
+    const library = (): FileVideo | undefined => videosOf(r.launch).find((v) => v.source === "library");
+    expect(library()?.state).not.toBe("dropped");
+    expect(r.videos.calls.length).toBeLessThanOrEqual(2);
+    broken = false;
+    r.steps.poke();
+    await until(() => library()?.state === "done", "the library video to render with the spare photo");
+    expect(library()?.photoIds).toEqual([spare[0]?.id ?? ""]);
   });
 });

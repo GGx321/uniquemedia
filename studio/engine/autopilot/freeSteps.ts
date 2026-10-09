@@ -32,6 +32,8 @@ import type { LaunchSteps, LaunchStepsContext } from "./steps";
 
 /** The most renders of one launch that may be unfinished (queued plus running) at once: 8 of the 20 the queue allows, so the owner always has 12 (A10). */
 export const MAX_AUTOPILOT_RENDERS = 8;
+/** The name of the function a poll timer of the free steps runs: a test finds the sleeping loops of a launch by it (`testing/timerWatch.ts`), not by guessing at their length. */
+export const FREE_POLL_TIMER = "freeStepsPollElapsed";
 /** How often the free steps look while renders are in flight. */
 export const FREE_POLL_MS = 1_000;
 /** How often they look when nothing is in flight. */
@@ -363,14 +365,14 @@ class FreeRun {
       const ms = this.#inflight.size > 0 ? (this.#d.pollMs ?? FREE_POLL_MS) : (this.#d.idlePollMs ?? FREE_IDLE_POLL_MS);
       // Not `unref`ed: a drain (and a release) wait on this loop, and while it sleeps THIS timer is what the process is waiting for. With an unref'd one Bun on Windows idles for ever with the
       // drain's promise pending, and not even a test's own timeout fires. The loop sleeps only while work is outstanding (`#waitsOnTheWorld`), and `dispose` wakes it, so it never holds a finished launch open.
-      const timer = setTimeout(done, ms);
-      function done(): void {
+      const timer = setTimeout(freeStepsPollElapsed, ms);
+      function freeStepsPollElapsed(): void {
         clearTimeout(timer);
         resolve();
       }
       this.#wakeSleep = () => {
         this.#wakeSleep = null;
-        done();
+        freeStepsPollElapsed();
       };
     });
   }
@@ -592,12 +594,14 @@ class FreeRun {
 
   /**
    * The photos of the launch's own slices while the avatar still has generated videos waiting for photos: they are THEIRS, not the library's, so a library video or a re-pick never takes one
-   * (§5.3: the generated photos of the launch go to its generated videos). Undefined when the avatar has no such video.
+   * (§5.3: the generated photos of the launch go to its generated videos). Undefined when the avatar has no such video. Null when the paid path cannot say.
    */
-  async #withheldOf(library: FreeLibrary, file: LaunchFile, avatarId: string): Promise<ReadonlySet<string> | undefined> {
+  async #withheldOf(library: FreeLibrary, file: LaunchFile, avatarId: string): Promise<ReadonlySet<string> | undefined | null> {
     const row = file.avatars.find((a) => a.avatarId === avatarId);
     if (row === undefined || !row.videos.some(isOpenGenerated)) return undefined;
-    return (await this.#sliceInfo(library, avatarId))?.arrived;
+    // The paid path could not say (a read that timed out): which photos are the launch's own is NOT known, and «nothing is withheld» would hand them to a library video. Null means wait.
+    const info = await this.#sliceInfo(library, avatarId);
+    return info === null ? null : info.arrived;
   }
 
   async #assign(library: FreeLibrary): Promise<boolean> {
@@ -630,7 +634,9 @@ class FreeRun {
     for (const avatarId of ids) {
       const snapshot = library.snapshot(avatarId);
       const withheld = slices.get(avatarId)?.arrived;
-      facts.set(avatarId, { avatarId, ready: snapshot.usageOk && !unknown.has(avatarId), photos: snapshot.photos, ...(withheld === undefined ? {} : { withheld }) });
+      // An avatar with generated videos still open whose slice runs could not be read is not ready: the launch's own photos cannot be told from the library's.
+      const slicesUnknown = generatedRows.some((row) => row.avatarId === avatarId) && !slices.has(avatarId);
+      facts.set(avatarId, { avatarId, ready: snapshot.usageOk && !unknown.has(avatarId) && !slicesUnknown, photos: snapshot.photos, ...(withheld === undefined ? {} : { withheld }) });
     }
 
     let progressed = false;
@@ -1033,6 +1039,7 @@ class FreeRun {
       const now = library.snapshot(avatarId);
       const facts: AvatarFacts = { avatarId, ready: now.usageOk, photos: now.photos };
       const withheld = await this.#withheldOf(library, file, avatarId);
+      if (withheld === null) return this.#notReadyYet(avatarId, video.key);
       const outcome = repick(file, avatarId, video.key, withheld === undefined ? facts : { ...facts, withheld }, holds.held);
       const applied = await this.#applyOutcome(avatarId, outcome, ["assigned"]);
       if (!applied) this.#retryAt.set(video.key, this.#now() + (this.#d.recheckMs ?? DEFAULT_RECHECK_MS));
@@ -1149,15 +1156,22 @@ class FreeRun {
       await this.#revert(avatarId, key);
       return "go";
     }
+    const file = this.#file();
+    if (file === null) return "stop";
+    // Which photos are the launch's own is read BEFORE an attempt is counted: when the paid path cannot say, this is a wait like an unknown usage, not a failed render.
+    const withheld = await this.#withheldOf(library, file, avatarId);
+    if (withheld === null) {
+      this.#notReady.add(avatarId);
+      this.#retryAt.set(key, this.#now() + (this.#d.recheckMs ?? DEFAULT_RECHECK_MS));
+      await this.#revert(avatarId, key);
+      return "go";
+    }
     const tries = (this.#attempts.get(key) ?? 0) + 1;
     this.#attempts.set(key, tries);
     if (tries >= MAX_ATTEMPTS + 2) {
       await this.#drop(avatarId, key, "render-failed", true);
       return "go";
     }
-    const file = this.#file();
-    if (file === null) return "stop";
-    const withheld = await this.#withheldOf(library, file, avatarId);
     const facts: AvatarFacts = { avatarId, ready, photos: snapshot.photos, ...(withheld === undefined ? {} : { withheld }) };
     const outcome = repick(file, avatarId, key, facts, holds.held);
     const applied = await this.#applyOutcome(avatarId, outcome, ["rendering"]);
