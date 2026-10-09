@@ -177,6 +177,54 @@ describe("JobRegistry: photo run jobs", () => {
     expect(signal.aborted).toBe(true);
   });
 
+  test("softStop fires the job's soft-stop signal only: the hard signal stays, and the job keeps running", () => {
+    const jobs = new JobRegistry();
+    const hard = jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    const soft = jobs.softStopSignal("job-00000001");
+    expect(soft?.aborted).toBe(false);
+
+    expect(jobs.softStop("job-00000001")).toBe(true);
+
+    expect(soft?.aborted).toBe(true);
+    expect(hard.aborted).toBe(false);
+    expect(jobs.runningJobOf(RUN)).toBe("job-00000001");
+  });
+
+  test("a hard cancel does not fire the soft-stop signal", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    const soft = jobs.softStopSignal("job-00000001");
+    jobs.cancel("job-00000001");
+    expect(soft?.aborted).toBe(false);
+  });
+
+  test("softStop is false for an unknown job and for one that already ended", () => {
+    const jobs = new JobRegistry();
+    jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });
+    jobs.finishRun("job-00000001", { status: "cancelled" });
+
+    expect(jobs.softStop("job-00000001")).toBe(false);
+    expect(jobs.softStop("job-00000404")).toBe(false);
+    expect(jobs.softStopSignal("job-00000404")).toBeNull();
+  });
+
+  test("S4.5b L3: softStop is false for the kinds that are not paid run or scenes jobs", () => {
+    const jobs = new JobRegistry();
+    jobs.startCandidates("job-00000001", DRAFT, 4);
+    jobs.queueRender("job-00000002", { videoId: "video-00000001", avatarId: AVATAR, montageId: null }, 10);
+
+    expect(jobs.softStop("job-00000001")).toBe(false);
+    expect(jobs.softStop("job-00000002")).toBe(false);
+    expect(jobs.softStopSignal("job-00000001")?.aborted).toBe(false);
+  });
+
+  test("a scenes job takes a soft stop like a run job does", () => {
+    const jobs = new JobRegistry();
+    jobs.startScenes("job-00000003", { sceneSetId: "set-00000001", avatarId: AVATAR, total: 30 });
+    expect(jobs.softStop("job-00000003")).toBe(true);
+    expect(jobs.softStopSignal("job-00000003")?.aborted).toBe(true);
+  });
+
   test("a job is finished only by its own kind's finish", () => {
     const jobs = new JobRegistry();
     jobs.startRun("job-00000001", { runId: RUN, avatarId: AVATAR, total: 3, done: 0 });

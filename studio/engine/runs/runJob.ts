@@ -108,13 +108,19 @@ export interface RunJob {
   descriptor: AvatarDescriptor;
   /** The user's cancel. */
   signal: AbortSignal;
+  /**
+   * S4.5b, the soft stop: once it fires no new writer chunk and no new slot attempt is sent, and a request already out finishes under the ordinary
+   * rules (settled, then judged by the free gates and stored). It aborts nothing, so it creates no open reserve; the job ends `cancelled` with its
+   * slots left open for a resume. The paid age gate stays as it was: it never sends after any stop, so an image that lands now is dropped.
+   */
+  softStop?: AbortSignal;
 }
 
 /**
  * - done: every slot ended (a photo, or none it will ever get); `failedSlots` have no photo.
  * - failed: the job stopped (a fatal error, an attempt that got no answer, the cap or the
  *   month); slots it left open are continued by a resume.
- * - cancelled: the user stopped it with slots left.
+ * - cancelled: the user stopped it with slots left (a hard cancel, or the soft stop of S4.5b).
  * Photos stored before a failure or a cancel stay in the library.
  */
 export type RunJobEnd = { status: "done"; photoIds: string[]; failedSlots: number } | { status: "failed"; error: EngineError } | { status: "cancelled" };
@@ -188,9 +194,19 @@ function at(ctx: Context): string {
   return ctx.deps.now().toISOString();
 }
 
-/** Whether a new request may still be sent: no cancel, no halt. */
+/** Whether the soft stop (S4.5b) has fired: nothing new is sent, nothing in flight is aborted. */
+function softStopped(ctx: Context): boolean {
+  return ctx.job.softStop?.aborted === true;
+}
+
+/** What a wait for a network slot gives way to: the hard cancel, or the soft stop (S4.5b: a request still queued is one that has not started). */
+function waitSignal(ctx: Context): AbortSignal {
+  return ctx.job.softStop === undefined ? ctx.job.signal : AbortSignal.any([ctx.job.signal, ctx.job.softStop]);
+}
+
+/** Whether a new request may still be sent: no cancel, no soft stop, no halt. */
 function sending(ctx: Context): boolean {
-  return !ctx.job.signal.aborted && ctx.halt === null;
+  return !ctx.job.signal.aborted && !softStopped(ctx) && ctx.halt === null;
 }
 
 /** Stops every slot from starting an attempt. Called synchronously right after a result, before anything awaits. */
@@ -402,6 +418,7 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       scope: ctx.scope,
       textModel: plan.models.text,
       signal: job.signal,
+      ...(job.softStop === undefined ? {} : { stop: job.softStop }),
       // The writer only ever describes the planner's own slots; an own scene's sentence is already in the plan (and its plan has no chunks).
       slots: plannedSlots(plan),
       chunks: plan.writerChunks,
@@ -413,7 +430,7 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
     },
   );
   if (!written.ok) {
-    if (written.stop === "cancelled") return { ok: false, end: { status: "cancelled" } };
+    if (written.stop === "cancelled" || written.stop === "soft-stopped") return { ok: false, end: { status: "cancelled" } };
     if (written.stop === "exhausted") {
       // No job will ever write that chunk: every open slot ends, so the run is not offered for a resume that cannot help.
       for (const slot of state.slots) if (slot.end === null) await endSlot(ctx, slot, { status: "failed", error: written.error });
@@ -519,7 +536,7 @@ async function checkPaid(ctx: Context, gate: QaGate, input: Omit<QaInput, "signa
   const { deps, job } = ctx;
   let release: Release;
   try {
-    release = await deps.pool.acquire(job.signal, { priority: true });
+    release = await deps.pool.acquire(waitSignal(ctx), { priority: true });
   } catch {
     throw new GateDropped(); // cancelled while queued: never reserved, never sent
   }
@@ -778,9 +795,9 @@ async function runSlot(ctx: Context, slot: SlotState, prompt: string, master: Li
 
     let release: Release;
     try {
-      release = await deps.pool.acquire(job.signal);
+      release = await deps.pool.acquire(waitSignal(ctx));
     } catch {
-      return; // cancelled while queued: never reserved, never sent
+      return; // cancelled or soft-stopped while queued: never reserved, never sent
     }
     if (!sending(ctx)) {
       release();
@@ -860,6 +877,8 @@ function endOf(ctx: Context, slots: readonly SlotState[]): RunJobEnd {
   const open = slots.some((s) => s.end === null);
   if (ctx.job.signal.aborted && open) return { status: "cancelled" };
   if (ctx.halt !== null) return { status: "failed", error: ctx.halt };
+  // The soft stop comes after a halt (a real failure is not hidden by it) and before a slot's limit (the stop is why the rest did not run).
+  if (softStopped(ctx) && open) return { status: "cancelled" };
   if (open) return { status: "failed", error: ctx.limited ?? { code: "INTERNAL", detail: `run ${ctx.plan.runId} stopped with slots left` } };
   const photoIds = slots.flatMap((s) => (s.end?.status === "done" ? [s.end.photoId] : []));
   return { status: "done", photoIds, failedSlots: slots.length - photoIds.length };
@@ -876,7 +895,7 @@ async function work(ctx: Context): Promise<RunJobEnd> {
   });
   ctx.total = state.slots.length;
   ctx.done = state.slots.filter((s) => s.end !== null).length;
-  if (job.signal.aborted) return { status: "cancelled" };
+  if (job.signal.aborted || softStopped(ctx)) return { status: "cancelled" };
 
   const target = masterTargetOf(ctx);
   const reference = await loadMaster(target);

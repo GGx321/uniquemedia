@@ -45,6 +45,8 @@ export interface RenderJobRef {
 interface Entry {
   state: JobState;
   controller: AbortController;
+  /** S4.5b: the soft stop of a paid job (a run or a scenes job). It aborts nothing in flight; the job's owner reads it to start nothing new. Never fired by `cancel`. */
+  softController: AbortController;
 }
 
 /** Finished jobs kept for a window that opens later; running jobs are always kept. */
@@ -362,6 +364,23 @@ export class JobRegistry {
     return true;
   }
 
+  /**
+   * S4.5b: asks a running job to stop starting new work (no new slot attempt, no new writer chunk) and to let what is in flight finish. Unlike `cancel` it
+   * aborts no request, so it leaves no open reserve. False for an unknown job and for one that already ended.
+   */
+  softStop(jobId: string): boolean {
+    const entry = this.#jobs.get(jobId);
+    // Only the paid kinds take a soft stop: a candidates job, an import or a render has no such drain.
+    if (entry === undefined || entry.state.status !== "running" || (entry.state.kind !== "run" && entry.state.kind !== "scenes")) return false;
+    entry.softController.abort();
+    return true;
+  }
+
+  /** The job's soft-stop signal (S4.5b); null for an unknown job. */
+  softStopSignal(jobId: string): AbortSignal | null {
+    return this.#jobs.get(jobId)?.softController.signal ?? null;
+  }
+
   states(): JobState[] {
     return [...this.#jobs.values()].map((entry) => entry.state);
   }
@@ -369,7 +388,7 @@ export class JobRegistry {
   #start(state: JobState): AbortSignal {
     if (this.#jobs.has(state.jobId)) throw new Error(`job ${state.jobId} is already registered`);
     const controller = new AbortController();
-    this.#jobs.set(state.jobId, { state, controller });
+    this.#jobs.set(state.jobId, { state, controller, softController: new AbortController() });
     return controller.signal;
   }
 

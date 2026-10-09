@@ -41,6 +41,11 @@ export interface SceneWriteRequest {
   /** The job's cap scope; the Budget holds its cap (the accepted worst case). */
   scope: Scope;
   signal: AbortSignal;
+  /**
+   * S4.5b, the soft stop: once it fires no new chunk and no new attempt is asked; the request already out finishes, and an accepted chunk is saved. It aborts
+   * nothing, so it leaves no open reserve. The job ends `cancelled`; a chunk whose first answer was rejected stays pending for the next job's next unused id.
+   */
+  stop?: AbortSignal;
 }
 
 /**
@@ -90,6 +95,8 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
     const set = await deps.load();
     const next = pendingChunks(set, ledger).find((pending) => !asked.has(pending.chunk.chunk));
     if (next === undefined) break;
+    // A soft stop with nothing left to ask changes nothing (the job is done); with a chunk still waiting it is not asked.
+    if (request.stop?.aborted === true) return { status: "cancelled" };
     asked.add(next.chunk.chunk);
 
     const slots = next.sceneIds.map((sceneId) => {
@@ -104,6 +111,7 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
       scope: request.scope,
       textModel: set.models.text,
       signal: request.signal,
+      ...(request.stop === undefined ? {} : { stop: request.stop }),
       slots,
       chunks: [{ chunk: next.chunk.chunk, slotIndexes: next.sceneIds, attemptIds: next.chunk.attemptIds }],
       sentences: new Map(),
@@ -125,7 +133,7 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
       phase,
     );
     if (result.ok) continue;
-    if (result.stop === "cancelled") return { status: "cancelled" };
+    if (result.stop === "cancelled" || result.stop === "soft-stopped") return { status: "cancelled" };
     if (result.stop === "stopped") return { status: "failed", error: result.error, stoppedBy: stoppedByOf(result.error, lastAttemptWasFree(budget, next.chunk.attemptIds)) };
     // exhausted: the chunk will never be answered. A provider's refusal is final; two rejected answers are the chunk's verdict; a chunk whose attempts ran out
     // some other way (its ids all spent with no answer) is read «no attempts» from the ledger and needs no record.

@@ -106,7 +106,7 @@ async function recordIdea(idea: string, count: number, shot: "friend" | "selfie"
   );
 }
 
-function run(steps: Step[], opts: { k?: number; jobId?: string; signal?: AbortSignal } = {}) {
+function run(steps: Step[], opts: { k?: number; jobId?: string; signal?: AbortSignal; stop?: AbortSignal } = {}) {
   const net = fakeFetch(steps);
   const { client } = makeClient(net.fetch);
   const pool = new NetworkPool({ max: 6 });
@@ -130,7 +130,7 @@ function run(steps: Step[], opts: { k?: number; jobId?: string; signal?: AbortSi
       },
       progress: (done) => progress.push(done),
     },
-    { k, jobId, scope: { avatarJobId: jobId }, signal: opts.signal ?? new AbortController().signal },
+    { k, jobId, scope: { avatarJobId: jobId }, signal: opts.signal ?? new AbortController().signal, ...(opts.stop === undefined ? {} : { stop: opts.stop }) },
   );
   return { net, end, progress, closed, pool };
 }
@@ -607,6 +607,77 @@ describe("cancel and the network slot", () => {
     const { pool, end } = run([good]);
     await end;
     expect(pool.active).toBe(0);
+  });
+});
+
+describe("soft stop (S4.5b)", () => {
+  /** A step whose answer arrives when the test says, after the request has been sent. */
+  function held(answer: Step): { step: Step; release: () => void; arrived: () => number } {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let arrived = 0;
+    return {
+      step: async (call) => {
+        arrived++;
+        await gate;
+        return typeof answer === "function" ? answer(call) : (answer as Reply);
+      },
+      release,
+      arrived: () => arrived,
+    };
+  }
+
+  test("a stop while the request is out lets it finish: an accepted answer is stored and the job is done", async () => {
+    await seed();
+    await recordRewrite([2]);
+    const stop = new AbortController();
+    const wait = held(good);
+    const { end } = run([wait.step], { stop: stop.signal });
+    await until(() => wait.arrived() === 1, "the request");
+
+    stop.abort();
+    wait.release();
+
+    expect(await end).toEqual({ status: "done", written: 1, unwritten: 0 });
+    expect(money.budget.status().openAttempts).toBe(0);
+    expect((await setNow()).scenes.find((s) => s.sceneId === 2)?.text).toContain(NEW);
+  });
+
+  test("a stop after a rejected answer sends no second attempt and keeps the write resumable under its next id", async () => {
+    await seed();
+    await recordRewrite([2]);
+    const stop = new AbortController();
+    const wait = held(rejected);
+    const first = run([wait.step, good], { stop: stop.signal });
+    await until(() => wait.arrived() === 1, "the first request");
+
+    stop.abort();
+    wait.release();
+
+    expect(await first.end).toEqual({ status: "cancelled" });
+    expect(first.net.calls).toHaveLength(1);
+    expect(first.closed).toEqual([]);
+    expect((await recordOf(2)).closed).toBe(false);
+    expect(money.budget.status().openAttempts).toBe(0);
+
+    const later = run([good], { jobId: "job-aaaa-0003" });
+    expect(await later.end).toMatchObject({ status: "done" });
+    expect(reserveIds()).toEqual([id(2, 1), id(2, 2)]);
+  });
+
+  test("a stop before the call sends nothing and changes nothing", async () => {
+    await seed();
+    const before = await setNow();
+    await recordRewrite([2]);
+    const stop = new AbortController();
+    stop.abort();
+    const { net, end } = run([good], { stop: stop.signal });
+
+    expect(await end).toEqual({ status: "cancelled" });
+    expect(net.calls).toHaveLength(0);
+    expect((await setNow()).scenes).toEqual(before.scenes);
   });
 });
 
