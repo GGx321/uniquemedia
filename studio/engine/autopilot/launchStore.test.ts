@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LogLine } from "../../shared/engine/autopilot";
@@ -213,9 +213,30 @@ describe("scan", () => {
     const s = store();
     const scan = await s.scan();
     expect(scan.folderUnreadable).toBe(true);
-    expect(scan.unreadable).toEqual([{ entryId: entryIdOf(AUTOPILOT_DIR), name: AUTOPILOT_DIR, reason: "io-error" }]);
+    expect(scan.unreadable).toEqual([{ entryId: entryIdOf(AUTOPILOT_DIR), name: AUTOPILOT_DIR, reason: "io-error", scope: "folder" }]);
     expect(s.hasUnfinishedOrUnreadable()).toBe(true);
     expect(s.isUnfinished("launch-anything-0001")).toBe(true);
+  });
+
+  test.skipIf(process.platform === "win32")("a launch file the disk will not open is an io-error entry of scope file, and the folder is not marked unreadable (S4.6g)", async () => {
+    const s = store();
+    await s.create(newLaunchFile());
+    await chmod(pathOf(ID), 0o000);
+    try {
+      const scan = await s.scan();
+      expect(scan.folderUnreadable).toBe(false);
+      expect(scan.unreadable).toEqual([{ entryId: entryIdOf(`${ID}.json`), name: `${ID}.json`, reason: "io-error", scope: "file" }]);
+    } finally {
+      await chmod(pathOf(ID), 0o644);
+    }
+  });
+
+  test("a damaged launch file and one from a newer Studio have no scope: they are files by their reason", async () => {
+    await put("launch-broken-0001.json", "{not json");
+    await put("launch-future-0001.json", JSON.stringify({ schemaVersion: 99 }));
+    const scan = await store().scan();
+    expect(scan.unreadable.map((u) => u.reason).sort()).toEqual(["invalid", "too-new"]);
+    expect(scan.unreadable.every((u) => !("scope" in u))).toBe(true);
   });
 
   test("never throws: an entry it cannot open is an io-error entry", async () => {

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { EngineError } from "../../shared/engine";
@@ -14,6 +14,7 @@ import type { LaunchFile } from "./launchFile";
 import { AUTOPILOT_DIR } from "./launchStore";
 import { LaunchStores, type LaunchStoresDeps } from "./lookup";
 import { Orchestrator, type Admission, type ListedSet, type OrchestratorDeps } from "./orchestrator";
+import type { PublishedRead } from "../videos/published";
 import { deferred, FakeSteps } from "./testing/fakeSteps";
 import { startInput } from "./testing/launchFixtures";
 import { composeSteps } from "./stepsComposer";
@@ -863,6 +864,160 @@ describe("autopilot.list and autopilot.get", () => {
     r.steps.drainGate = deferred().promise;
     await r.orchestrator.pause(started.launchId);
     expect((await r.orchestrator.get(started.launchId)).launch.status).toBe("pausing");
+  });
+});
+
+describe("get and list join the video facts: the owner's marks and the deleted records (S4.6g)", () => {
+  const MUSIC = { source: "trending" as const, trackId: "track-00000001", startMs: 1500 };
+  const AT_MARK = "2026-10-09T11:00:00.000Z";
+
+  /** Marks the launch's first `ids.length` videos done, each with its own file id. */
+  async function finish(r: Rig, ids: readonly string[]): Promise<void> {
+    const ctx = r.steps.contexts.at(-1);
+    if (ctx === undefined) throw new Error("the steps were never begun");
+    await ctx.update((file) => ({
+      ...file,
+      avatars: file.avatars.map((row, i) => (i === 0 ? { ...row, videos: row.videos.map((v, j) => (j < ids.length ? { ...v, state: "done" as const, videoId: ids[j] ?? null, music: MUSIC, durationMs: 7_000, bytes: 4_096 } : v)) } : row)),
+    }));
+  }
+
+  const marks = (at: Record<string, string>): PublishedRead => ({ state: "ok", at: new Map(Object.entries(at)) });
+  const facts = (opts: { records?: readonly string[] | null; marks?: PublishedRead | Error }): Partial<OrchestratorDeps> => ({
+    recordIds: async (_root) => (opts.records === undefined || opts.records === null ? null : new Set(opts.records)),
+    publishedMarks: async (_root) => {
+      if (opts.marks instanceof Error) throw opts.marks;
+      return opts.marks ?? { state: "absent" };
+    },
+  });
+
+  test("a finished video carries the time of its mark from the published log, and the answer says the marks were read", async () => {
+    const r = await rig({ deps: facts({ records: ["video-0000ad01", "video-0000ad02"], marks: marks({ "video-0000ad01": AT_MARK }) }) });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01", "video-0000ad02"]);
+    const got = await r.orchestrator.get(started.launchId);
+    const done = got.videos.filter((v) => v.state === "done");
+    expect(done.map((v) => [v.videoId, v.publishedAt])).toEqual([
+      ["video-0000ad01", AT_MARK],
+      ["video-0000ad02", null],
+    ]);
+    expect(got.published).toBe("ok");
+    expect(done.some((v) => v.publishedUnknown === true)).toBe(false);
+  });
+
+  test("a finished video whose record is gone is removed, and keeps the mark the log still holds", async () => {
+    const r = await rig({ deps: facts({ records: ["video-0000ad02"], marks: marks({ "video-0000ad01": AT_MARK }) }) });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01", "video-0000ad02"]);
+    const done = (await r.orchestrator.get(started.launchId)).videos.filter((v) => v.state === "done");
+    expect(done.map((v) => [v.videoId, v.removed ?? false, v.publishedAt])).toEqual([
+      ["video-0000ad01", true, AT_MARK],
+      ["video-0000ad02", false, null],
+    ]);
+  });
+
+  test("when the records could not be looked at nothing is called removed: not knowing is not a delete", async () => {
+    const r = await rig({ deps: facts({ records: null }) });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01"]);
+    expect((await r.orchestrator.get(started.launchId)).videos.some((v) => v.removed === true)).toBe(false);
+  });
+
+  test("an unreadable published log says unknown on every finished video of the avatar, never a plain null", async () => {
+    const r = await rig({ deps: facts({ records: ["video-0000ad01"], marks: { state: "unknown", reason: "corrupt" } }) });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01"]);
+    const got = await r.orchestrator.get(started.launchId);
+    expect(got.published).toBe("unknown");
+    expect(got.videos.find((v) => v.state === "done")).toMatchObject({ publishedAt: null, publishedUnknown: true });
+  });
+
+  test("a log that could not even be looked at is unknown too", async () => {
+    const r = await rig({ deps: facts({ records: ["video-0000ad01"], marks: new Error("EIO") }) });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01"]);
+    const got = await r.orchestrator.get(started.launchId);
+    expect(got.published).toBe("unknown");
+    expect(got.videos.find((v) => v.state === "done")?.publishedUnknown).toBe(true);
+  });
+
+  test("an avatar that was never marked has no log: the answer carries no `published`, as videos.list has none", async () => {
+    const r = await rig({ deps: facts({ records: ["video-0000ad01"], marks: { state: "absent" } }) });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01"]);
+    const got = await r.orchestrator.get(started.launchId);
+    expect("published" in got).toBe(false);
+    expect(got.videos.find((v) => v.state === "done")).toMatchObject({ publishedAt: null });
+  });
+
+  test("a video that is not finished is never removed or marked, whatever the records say", async () => {
+    const r = await rig({ deps: facts({ records: [], marks: marks({}) }) });
+    const started = await r.start();
+    await r.orchestrator.stop(started.launchId);
+    const videos = (await r.orchestrator.get(started.launchId)).videos;
+    expect(videos.every((v) => v.state === "dropped" && v.removed === undefined && v.publishedUnknown === undefined && v.publishedAt === null)).toBe(true);
+  });
+
+  test("the history counts the videos whose records stand: a deleted video is not one of «N из M»", async () => {
+    const r = await rig({ deps: facts({ records: ["video-0000ad02"] }) });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01", "video-0000ad02"]);
+    const [row] = (await r.orchestrator.list()).launches;
+    expect(row).toMatchObject({ launchId: started.launchId, videosDone: 1, videosPlanned: 4 });
+  });
+
+  test("the history asks the records only of an avatar that has finished videos", async () => {
+    const asked: string[] = [];
+    const r = await rig({ deps: { recordIds: async (_root, avatarId) => (asked.push(avatarId), new Set(["video-0000ad01"])) } });
+    const first = await r.start();
+    await r.orchestrator.stop(first.launchId);
+    expect((await r.orchestrator.list()).launches[0]?.videosDone).toBe(0);
+    expect(asked).toEqual([]);
+    await r.start();
+    await finish(r, ["video-0000ad01"]);
+    expect((await r.orchestrator.list()).launches[0]?.videosDone).toBe(1);
+    expect(asked).toEqual(["avatar-mia-0001"]);
+  });
+
+  test("L1: the reads are given the root of the store the launch was read from, for both the records and the marks", async () => {
+    const roots: string[] = [];
+    const r = await rig({ deps: { recordIds: async (root) => (roots.push(root), new Set(["video-0000ad01"])), publishedMarks: async (root) => (roots.push(root), { state: "absent" }) } });
+    const started = await r.start();
+    await finish(r, ["video-0000ad01"]);
+    await r.orchestrator.get(started.launchId);
+    await r.orchestrator.list();
+    expect(roots.length).toBe(3);
+    expect(new Set(roots)).toEqual(new Set([r.libraryRoot]));
+  });
+
+  test("with no way to look (a double without the facts) the history counts what the file says, as before", async () => {
+    const r = await rig();
+    await r.start();
+    await finish(r, ["video-0000ad01", "video-0000ad02"]);
+    expect((await r.orchestrator.list()).launches[0]?.videosDone).toBe(2);
+  });
+
+  test("a records read that fails leaves the count as the file says: not knowing is not a delete", async () => {
+    const r = await rig({ deps: { recordIds: () => Promise.reject(new Error("EIO")) } });
+    await r.start();
+    await finish(r, ["video-0000ad01"]);
+    expect((await r.orchestrator.list()).launches[0]?.videosDone).toBe(1);
+  });
+
+  test.skipIf(process.platform === "win32")("a launch file the disk will not open is listed as an io-error of scope file; a damaged one has no scope", async () => {
+    const r = await rig();
+    await mkdir(join(r.libraryRoot, AUTOPILOT_DIR), { recursive: true });
+    await writeFile(join(r.libraryRoot, AUTOPILOT_DIR, "launch-broken-0001.json"), "{not json");
+    await writeFile(join(r.libraryRoot, AUTOPILOT_DIR, "launch-locked-0001.json"), "{}");
+    await chmod(join(r.libraryRoot, AUTOPILOT_DIR, "launch-locked-0001.json"), 0o000);
+    try {
+      const { unreadable } = await r.orchestrator.list();
+      expect(unreadable.map((u) => [u.reason, u.scope ?? null]).sort()).toEqual([
+        ["invalid", null],
+        ["io-error", "file"],
+      ]);
+    } finally {
+      await chmod(join(r.libraryRoot, AUTOPILOT_DIR, "launch-locked-0001.json"), 0o644);
+    }
   });
 });
 

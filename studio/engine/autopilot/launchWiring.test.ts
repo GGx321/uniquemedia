@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { within } from "../testing/within";
+import type { PublishedRead } from "../videos/published";
 import { NETWORK_WAITS_MS } from "./paidFailures";
-import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, boundedSingleFlight, createSpentSlices, isSpentSlice, liveRendersOf, normalizeTrackLabel, ownTrackTitle, trendTrackLabel, renderLifeOf, sliceFactsOf, UNTITLED_TRACK, type SliceFactsSet } from "./launchWiring";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedRead, boundedSingleFlight, boundedVideoFacts, createSpentSlices, isSpentSlice, liveRendersOf, normalizeTrackLabel, ownTrackTitle, trendTrackLabel, renderLifeOf, sliceFactsOf, UNTITLED_TRACK, type SliceFactsSet } from "./launchWiring";
 useNativeGlobals();
 
 // Stage 4, S4.6w: the pure parts of the engine's default wiring of the autopilot steps. The wiring itself is tested in the engine (`engine.autopilotWiring.test.ts`).
@@ -358,5 +359,54 @@ describe("trendTrackLabel", () => {
 
   test("a title the list gave is kept", () => {
     expect(trendTrackLabel("Midnight Drive", null)).toEqual({ title: "Midnight Drive", artist: null });
+  });
+});
+
+describe("boundedVideoFacts (S4.6g round 1, M1: the results' reads of the library are bounded and single-flight)", () => {
+  const hung = (): Promise<never> => new Promise<never>(() => undefined);
+  const base = { timeoutMs: 30, isLive: () => true, listRecordIds: async () => new Set(["video-1"]), readMarks: async (): Promise<PublishedRead> => ({ state: "absent" }) };
+
+  test("several asks for a read that hangs make ONE underlying call, and each ends at its bound as unknown: no record ids, marks unknown", async () => {
+    let calls = 0;
+    let marksCalls = 0;
+    const facts = boundedVideoFacts({
+      ...base,
+      listRecordIds: () => (calls++, hung()),
+      readMarks: () => (marksCalls++, hung()),
+    });
+    const records = await Promise.all([facts.recordIds("/lib", "avatar-a"), facts.recordIds("/lib", "avatar-a"), facts.recordIds("/lib", "avatar-a")]);
+    const marks = await Promise.all([facts.publishedMarks("/lib", "avatar-a"), facts.publishedMarks("/lib", "avatar-a")]);
+    expect(records).toEqual([null, null, null]);
+    expect(marks).toEqual([{ state: "unknown", reason: "corrupt" }, { state: "unknown", reason: "corrupt" }]);
+    expect([calls, marksCalls]).toEqual([1, 1]);
+  });
+
+  test("another avatar, or another library, is another read", async () => {
+    let calls = 0;
+    const facts = boundedVideoFacts({ ...base, listRecordIds: () => (calls++, hung()) });
+    await Promise.all([facts.recordIds("/lib", "avatar-a"), facts.recordIds("/lib", "avatar-b"), facts.recordIds("/other", "avatar-a")]);
+    expect(calls).toBe(3);
+  });
+
+  test("a read that has answered is forgotten: the next ask reads again", async () => {
+    let calls = 0;
+    const facts = boundedVideoFacts({ ...base, timeoutMs: 1_000, listRecordIds: async () => (calls++, new Set(["video-1"])) });
+    expect(await facts.recordIds("/lib", "avatar-a")).toEqual(new Set(["video-1"]));
+    await facts.recordIds("/lib", "avatar-a");
+    expect(calls).toBe(2);
+  });
+
+  test("a read that fails is unknown, not an error and not an empty library", async () => {
+    const facts = boundedVideoFacts({ ...base, listRecordIds: () => Promise.reject(new Error("EIO")), readMarks: () => Promise.reject(new Error("EIO")) });
+    expect(await facts.recordIds("/lib", "avatar-a")).toBeNull();
+    expect(await facts.publishedMarks("/lib", "avatar-a")).toEqual({ state: "unknown", reason: "corrupt" });
+  });
+
+  test("a root that is no longer the open library is not read at all (a switch is no delete)", async () => {
+    let calls = 0;
+    const facts = boundedVideoFacts({ ...base, isLive: (root) => root === "/new", listRecordIds: async () => (calls++, new Set<string>()) });
+    expect(await facts.recordIds("/old", "avatar-a")).toBeNull();
+    expect(await facts.publishedMarks("/old", "avatar-a")).toEqual({ state: "unknown", reason: "corrupt" });
+    expect(calls).toBe(0);
   });
 });

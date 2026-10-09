@@ -90,7 +90,7 @@ import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
 import { exportGateOf } from "./autopilot/exportGate";
 import { createFreeSteps, freeLibraryOf, type FreeSteps, type FreeStepsDeps } from "./autopilot/freeSteps";
-import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedSingleFlight, createSpentSlices, liveRendersOf, normalizeTrackLabel, ownTrackTitle, renderLifeOf, sliceFactsOf, trendTrackLabel } from "./autopilot/launchWiring";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedSingleFlight, boundedVideoFacts, createSpentSlices, liveRendersOf, normalizeTrackLabel, ownTrackTitle, renderLifeOf, sliceFactsOf, trendTrackLabel } from "./autopilot/launchWiring";
 import { createMusicPorts } from "./autopilot/musicPorts";
 import { checkFailuresOf } from "./autopilot/paidFailures";
 import { NOT_PAYABLE_DETAIL, type LaunchSliceStart, type SliceOutcome } from "./autopilot/paidPort";
@@ -139,6 +139,8 @@ import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
+import { listVideoRecordIds } from "./videos/listing";
+import { readPublished } from "./videos/published";
 import type { MediaImporters } from "./media/imports";
 import { MediaService, type SetForAutopilotResult } from "./media/service";
 import { TrackFlagLogError } from "./music/autopilotTrackFlags";
@@ -1062,6 +1064,9 @@ export class Engine {
       registry: this.#launches,
       steps: deps.launchSteps ?? this.#defaultLaunchSteps(),
       trackLabel: (music) => this.#trackLabelOf(music),
+      // S4.6g: the results list joins the records and the owner's marks. No open library: nothing can be said, so nothing reads as deleted and the marks read unknown.
+      // Bounded and single-flight per [root, avatarId], and keyed by the root the launch was read from (S4.6g round 1): a share that does not answer leaves one hung read, not one per event.
+      ...boundedVideoFacts({ timeoutMs: AUTOPILOT_READ_TIMEOUT_MS, isLive: (root) => this.#live?.library.root === root, listRecordIds: listVideoRecordIds, readMarks: readPublished }),
       clock: () => deps.clock(),
       newId: () => deps.newId(),
       budget: () => this.budget,

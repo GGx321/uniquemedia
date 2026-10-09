@@ -440,8 +440,14 @@ export const LaunchSummary = z
   });
 export type LaunchSummary = z.infer<typeof LaunchSummary>;
 
-/** A file of the library's `autopilot/` folder that is not a launch this build can read; `invalid` (damaged or foreign), `too-new` (a newer Studio), `io-error`. */
-export const UnreadableLaunch = z.strictObject({ entryId: LaunchEntryId, reason: z.enum(["invalid", "too-new", "io-error"]) });
+/**
+ * A file of the library's `autopilot/` folder that is not a launch this build can read; `invalid` (damaged or foreign), `too-new` (a newer Studio), `io-error`.
+ * S4.6g (additive): an `io-error` says where the read failed: `folder` (the `autopilot/` folder itself could not be listed, so there is no file to move) or `file`
+ * (one launch file could not be opened). Only an `io-error` has a scope; an engine from before S4.6g sends none, and the window then words the two alike.
+ */
+export const UnreadableLaunch = z
+  .strictObject({ entryId: LaunchEntryId, reason: z.enum(["invalid", "too-new", "io-error"]), scope: z.enum(["folder", "file"]).optional() })
+  .refine((u) => u.scope === undefined || u.reason === "io-error", { message: "only an entry that did not read from the disk has a scope", path: ["scope"] });
 export type UnreadableLaunch = z.infer<typeof UnreadableLaunch>;
 
 export const LAUNCH_VIDEO_STATES = ["done", "rendering", "waiting-music", "dropped"] as const;
@@ -470,7 +476,15 @@ export const LaunchVideo = z
     state: LaunchVideoState,
     dropReason: DropReason.nullable(),
     videoId: Id.nullable(),
+    /** When the owner marked it «Опубликовано» (`published.jsonl`); null when it is not marked, and also when `publishedUnknown`. */
     publishedAt: IsoDateTime.nullable(),
+    /**
+     * S4.6g (additive): a finished video whose record has been deleted since (`videos.delete`, or its avatar was deleted): it is no longer a video of the library, so the
+     * results list does not draw it and the launch's `videosDone` does not count it. Absent for a video whose record stands.
+     */
+    removed: z.literal(true).optional(),
+    /** S4.6g (additive): the avatar's «Опубликовано» marks could not be read, so `publishedAt: null` is not a verdict (as `videos.list`'s `published: "unknown"`). Absent when the marks were read. */
+    publishedUnknown: z.literal(true).optional(),
   })
   .superRefine((v, ctx) => {
     const fail = (path: string, message: string): void => void ctx.addIssue({ code: "custom", path: [path], message });
@@ -482,6 +496,9 @@ export const LaunchVideo = z
     if (v.state === "dropped" && v.bytes !== null) fail("state", "a dropped video has no size (it may have had a file id: its render was submitted)");
     if (v.state === "waiting-music" && v.track !== null) fail("track", "a video waiting for music has no track");
     if (v.state !== "done" && v.publishedAt !== null) fail("publishedAt", "only a finished video can be published");
+    if (v.state !== "done" && v.removed !== undefined) fail("removed", "only a finished video has a record to lose");
+    if (v.state !== "done" && v.publishedUnknown !== undefined) fail("publishedUnknown", "only a finished video has a mark");
+    if (v.publishedUnknown !== undefined && v.publishedAt !== null) fail("publishedUnknown", "a mark that cannot be read has no time");
   });
 export type LaunchVideo = z.infer<typeof LaunchVideo>;
 
@@ -613,6 +630,11 @@ export const AutopilotGetResult = z
     launch: LaunchView,
     log: z.array(LogLine).max(MAX_LAUNCH_LOG_LINES),
     videos: z.array(LaunchVideo).max(MAX_LAUNCH_VIDEOS),
+    /**
+     * S4.6g (additive), as `videos.list`'s: whether the «Опубликовано» marks of the launch's avatars could be read. Absent while no avatar of the launch has a log of marks;
+     * `unknown` when at least one avatar's log could not be read (its videos say `publishedUnknown`); `ok` otherwise.
+     */
+    published: z.enum(["ok", "unknown"]).optional(),
   })
   .refine((r) => unique(r.videos.map((v) => v.key)), { message: "a video key must not repeat", path: ["videos"] });
 export type AutopilotGetResult = z.infer<typeof AutopilotGetResult>;

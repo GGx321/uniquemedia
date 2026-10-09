@@ -13,6 +13,7 @@ import {
   listOf as listOfAvatar,
   marksUnknownText,
   resultCounts,
+  resultsDoneOf,
   resultTiles,
   settingsBits,
   spanLabel,
@@ -99,6 +100,23 @@ describe("a row of «История запусков»", () => {
   });
 });
 
+describe("resultsDoneOf (S4.6g L2)", () => {
+  const row = (over: Partial<LaunchSummary>): LaunchSummary => ({ launchId: "launch-00000001", createdAt: at(14, 2), endedAt: null, status: "running", avatarCount: 1, avatarIds: ["avatar-mia-0001"], videosDone: 3, videosPlanned: 5, spentMicros: 0, acceptedMicros: 0, plannedWorstMicros: 0, ...over });
+
+  test("takes the history's count for the same launch in the same status", () => {
+    expect(resultsDoneOf([row({ status: "done", endedAt: at(14, 31), videosDone: 4 })], "launch-00000001", "done")).toBe(4);
+  });
+
+  test("a history row still saying `running` gives an ended card nothing: the stale running count never shows", () => {
+    expect(resultsDoneOf([row({})], "launch-00000001", "done")).toBeUndefined();
+  });
+
+  test("another launch's row, or no history yet, gives nothing", () => {
+    expect(resultsDoneOf([row({ launchId: "launch-00000002", status: "done", endedAt: at(14, 31) })], "launch-00000001", "done")).toBeUndefined();
+    expect(resultsDoneOf(null, "launch-00000001", "done")).toBeUndefined();
+  });
+});
+
 describe("an entry that cannot be read", () => {
   test("a damaged or a newer file can be moved to the quarantine; one that did not read from the disk (a file or the folder) offers nothing to move", () => {
     expect(unreadableEntry("invalid")).toMatchObject({ title: "Не читается", removable: true, note: "Файл уйдёт в карантин библиотеки — ничего не удаляется." });
@@ -112,6 +130,24 @@ describe("an entry that cannot be read", () => {
     expect(io.text).toBe("Studio не смог прочитать запись запуска с диска: диск не ответил или нет доступа. Убрать её отсюда нельзя — сначала она должна прочитаться. Пока так, новый запуск недоступен.");
     expect(io.text).not.toContain("Папка");
     expect(io.text).not.toContain("файла не видно");
+  });
+
+  test("S4.6g: an io-error of a file names the file, one of the folder names the folder; neither can be moved, and both say the launch is blocked", () => {
+    const file = unreadableEntry("io-error", "file");
+    const folder = unreadableEntry("io-error", "folder");
+    expect(file.removable).toBe(false);
+    expect(folder.removable).toBe(false);
+    expect(file.text).toBe("Studio не смог открыть файл записи запуска: диск не ответил или нет доступа. Убрать запись нельзя — сначала файл должен прочитаться. Пока так, новый запуск недоступен.");
+    expect(folder.text).toBe("Studio не смог прочитать папку запусков в библиотеке: диск не ответил или нет доступа. Убирать нечего — сначала папка должна открыться. Пока так, новый запуск недоступен.");
+    expect(file.text).not.toContain("папк");
+    expect(folder.text).not.toContain("файл");
+    expect(file.note).toBe("Проверьте диск библиотеки и прочитайте историю снова.");
+  });
+
+  test("S4.6g: a scope on a damaged or a newer entry changes nothing; no scope keeps the words that fit both", () => {
+    expect(unreadableEntry("invalid", "file")).toEqual(unreadableEntry("invalid"));
+    expect(unreadableEntry("too-new", "file")).toEqual(unreadableEntry("too-new"));
+    expect(unreadableEntry("io-error", undefined)).toEqual(unreadableEntry("io-error"));
   });
 });
 
@@ -194,10 +230,10 @@ describe("the results", () => {
     publishedAt: null,
     ...over,
   });
-  const listOf = (videos: VideoSummary[], marks: "ok" | "unknown" = "ok", complete = true): AvatarVideos => ({ state: "ready", byId: new Map(videos.map((v) => [v.videoId, v])), complete, marks });
+  const listOf = (videos: VideoSummary[]): AvatarVideos => ({ state: "ready", byId: new Map(videos.map((v) => [v.videoId, v])) });
 
-  test("a finished video with its record: name, length, shape and size, the track, when, its mark from the list", () => {
-    const tiles = resultTiles([video("0-1"), video("0-3", { shape: "slides", size: 6, bytes: 3_100_000, durationMs: 7_800, track: { source: "own", title: "summer-loop.m4a", artist: null } })], new Map([[MIA, listOf([record("video-0-1-0001", { publishedAt: at(15, 0) }), record("video-0-3-0001", { music: { title: "summer-loop.m4a", artist: null, trackId: null } })])]]), named);
+  test("a finished video with its record: name, length, shape and size, the track, when, its mark from the engine's word on the video", () => {
+    const tiles = resultTiles([video("0-1", { publishedAt: at(15, 0) }), video("0-3", { shape: "slides", size: 6, bytes: 3_100_000, durationMs: 7_800, track: { source: "own", title: "summer-loop.m4a", artist: null } })], new Map([[MIA, listOf([record("video-0-1-0001"), record("video-0-3-0001", { music: { title: "summer-loop.m4a", artist: null, trackId: null } })])]]), named);
     expect(tiles.map((t) => [t.name, t.length, t.meta, t.music?.text, t.published, t.actionable, t.bars])).toEqual([
       ["Mia · видео 1", `7.5${NBSP}с`, `одно фото · 1.8${NBSP}МБ`, "Golden Hour Loop — Lumi", true, true, 0],
       ["Mia · видео 3", `7.8${NBSP}с`, `слайды 6 · 3.1${NBSP}МБ`, "summer-loop.m4a · мой", false, true, 6],
@@ -206,18 +242,30 @@ describe("the results", () => {
     expect(tiles[0]?.when).toBe("8 окт., 14:17");
   });
 
-  test("a finished video the avatar's complete list no longer holds was deleted, and leaves; a cut list keeps it", () => {
-    const videos = [video("0-1"), video("0-2")];
-    expect(resultTiles(videos, new Map([[MIA, listOf([record("video-0-1-0001")])]]), named).map((t) => t.key)).toEqual(["0-1"]);
-    expect(resultTiles(videos, new Map([[MIA, listOf([record("video-0-1-0001")], "ok", false)]]), named).map((t) => t.key)).toEqual(["0-1", "0-2"]);
+  test("S4.6g: a finished video the engine calls removed leaves, whatever videos.list holds; the others stay", () => {
+    const videos = [video("0-1"), video("0-2", { removed: true })];
+    const lists = new Map([[MIA, listOf([record("video-0-1-0001"), record("video-0-2-0001")])]]);
+    expect(resultTiles(videos, lists, named).map((t) => t.key)).toEqual(["0-1"]);
+    expect(resultTiles(videos, new Map(), named).map((t) => t.key)).toEqual(["0-1"]);
   });
 
-  test("while the marks cannot be read every video shows unmarked; a list that failed leaves the launch file's word, still actionable", () => {
-    const marked = record("video-0-1-0001", { publishedAt: at(15, 0) });
-    expect(resultTiles([video("0-1")], new Map([[MIA, listOf([marked], "unknown")]]), named)[0]?.published).toBe(false);
-    const failed: AvatarVideos = { state: "failed", error: { code: "NOT_FOUND" } };
+  test("S4.6g: a video that videos.list does not hold (a list cut at 500, or a record it cannot show) is still a tile and still actionable: the engine said its record stands", () => {
+    const [tile] = resultTiles([video("0-1")], new Map([[MIA, listOf([])]]), named);
+    expect([tile?.key, tile?.actionable, tile?.summary === null, tile?.photos]).toEqual(["0-1", true, true, 1]);
+  });
+
+  test("S4.6g: the mark is the engine's publishedAt; while the avatar's marks cannot be read the video shows unmarked and says so", () => {
+    expect(resultTiles([video("0-1", { publishedAt: at(15, 0) })], new Map([[MIA, listOf([record("video-0-1-0001")])]]), named)[0]).toMatchObject({ published: true, markUnknown: false });
+    // A list that holds a mark the engine did not give is not believed: the engine's word is the one.
+    expect(resultTiles([video("0-1")], new Map([[MIA, listOf([record("video-0-1-0001", { publishedAt: at(15, 0) })])]]), named)[0]?.published).toBe(false);
+    const [unknown] = resultTiles([video("0-1", { publishedUnknown: true })], new Map([[MIA, listOf([record("video-0-1-0001")])]]), named);
+    expect([unknown?.published, unknown?.markUnknown, unknown?.actionable]).toEqual([false, true, true]);
+  });
+
+  test("S4.6g: a list that failed changes nothing about a tile: its mark and its trash are the engine's, the summary is just missing", () => {
+    const failed: AvatarVideos = { state: "failed", error: { code: "INTERNAL" } };
     const [tile] = resultTiles([video("0-1", { publishedAt: at(15, 0) })], new Map([[MIA, failed]]), named);
-    expect([tile?.published, tile?.actionable, tile?.summary === null]).toEqual([true, true, true]);
+    expect([tile?.published, tile?.actionable, tile?.summary === null, tile?.markUnknown]).toEqual([true, true, true, false]);
   });
 
   test("an avatar deleted since the launch: NOT_FOUND for an avatar the library no longer holds is «gone» — its tiles stay, inert, «аватар удалён» (fix round 1)", () => {
@@ -230,6 +278,12 @@ describe("the results", () => {
     const [tile] = resultTiles([video("0-1", { publishedAt: at(15, 0) })], new Map([[MIA, { state: "gone" } as const]]), named);
     expect([tile?.state, tile?.actionable, tile?.published, tile?.status?.text, tile?.status?.tone]).toEqual(["done", false, false, "аватар удалён", "faint"]);
     expect(resultCounts(tile === undefined ? [] : [tile]).published).toBe(0);
+  });
+
+  test("S4.6g (N7): the tile of a deleted avatar is not a finished video of the count, nor of its bytes", () => {
+    const tiles = resultTiles([video("0-1"), video("1-1", { avatarId: SOFIA })], new Map([[MIA, listOf([record("video-0-1-0001", { bytes: 30_000_000 })])], [SOFIA, { state: "gone" as const }]]), named);
+    const counts = resultCounts(tiles);
+    expect([tiles.length, counts.done, counts.byAvatar.get(MIA), counts.byAvatar.get(SOFIA) ?? 0, counts.megabytes]).toEqual([2, 1, 1, 0, `30${NBSP}МБ`]);
   });
 
   test("rendering, waiting for music and not made: their own lines, no mark, no trash; the ones not made come last", () => {
@@ -251,9 +305,9 @@ describe("the results", () => {
 
   test("the counts: finished videos, per avatar, published, their size", () => {
     const tiles = resultTiles(
-      [video("0-1"), video("0-2", { bytes: 2_400_000 }), video("1-1", { avatarId: SOFIA, state: "waiting-music", videoId: null, bytes: null, durationMs: null, track: null })],
+      [video("0-1", { publishedAt: at(15, 0) }), video("0-2", { bytes: 2_400_000 }), video("1-1", { avatarId: SOFIA, state: "waiting-music", videoId: null, bytes: null, durationMs: null, track: null })],
       new Map([
-        [MIA, listOf([record("video-0-1-0001", { publishedAt: at(15, 0), bytes: 31_000_000 }), record("video-0-2-0001", { bytes: 30_000_000 })])],
+        [MIA, listOf([record("video-0-1-0001", { bytes: 31_000_000 }), record("video-0-2-0001", { bytes: 30_000_000 })])],
         [SOFIA, listOf([])],
       ]),
       named,

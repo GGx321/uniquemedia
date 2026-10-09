@@ -70,6 +70,11 @@ export const DELETE_UNCONFIRMED = "Удаление не подтвердило�
  */
 export function deleteFailedText(error: EngineError, rejecting: boolean): { readonly title: string; readonly text: string } {
   const photos = rejecting ? "Фото, что успели уйти в «Отклонённые», там и останутся." : null;
+  // S4.6g: the engine says when the folder's silence was a timeout of work that was not cancelled: it may have finished, so the words say that and nothing of a refusal.
+  if (error.code === "EXPORT_UNAVAILABLE" && error.outcome === "unknown") {
+    const parts = ["Папка «Готовые видео» не ответила вовремя, а удаление могло дойти до конца: видео могло уже удалиться.", photos, "Посмотрите список: если видео осталось, удалите его ещё раз."];
+    return { title: DELETE_UNCONFIRMED, text: parts.filter((part) => part !== null).join(" ") };
+  }
   if (error.code === "EXPORT_UNAVAILABLE") {
     const parts = [
       "Папка «Готовые видео» не ответила.",

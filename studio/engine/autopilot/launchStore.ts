@@ -121,7 +121,7 @@ export class LaunchStore {
         this.#adopt([], [], false);
         return { launches: [], unreadable: [], folderUnreadable: false };
       }
-      const folder: UnreadableEntry = { entryId: entryIdOf(AUTOPILOT_DIR), name: AUTOPILOT_DIR, reason: "io-error" };
+      const folder: UnreadableEntry = { entryId: entryIdOf(AUTOPILOT_DIR), name: AUTOPILOT_DIR, reason: "io-error", scope: "folder" };
       this.#adopt([], [folder], true);
       return { launches: [], unreadable: [folder], folderUnreadable: true };
     }
@@ -132,7 +132,7 @@ export class LaunchStore {
     for (const { name } of names.filter((n) => n.isFile && !isTempName(n.name) && n.name.endsWith(".json")).sort((a, b) => (a.name < b.name ? -1 : 1))) {
       const parsed = await this.#parse(name);
       if (parsed.kind === "ok") launches.push(parsed.file);
-      else if (parsed.kind === "bad") unreadable.push({ entryId: entryIdOf(name), name, reason: parsed.reason });
+      else if (parsed.kind === "bad") unreadable.push({ entryId: entryIdOf(name), name, reason: parsed.reason, ...(parsed.reason === "io-error" ? { scope: "file" as const } : {}) });
     }
     launches.sort((a, b) => (a.createdAt === b.createdAt ? (a.launchId < b.launchId ? 1 : -1) : a.createdAt < b.createdAt ? 1 : -1));
     this.#adopt(launches, unreadable, false);

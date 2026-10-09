@@ -4,7 +4,7 @@ import { useCategoryLibrary, useEngine, useEngineView } from "../engine/react";
 import { useNavigate } from "../navigation";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { AvatarColumn } from "./autopilot/AvatarColumn";
-import { lastLaunchLine, statusTag } from "./autopilot/historyModel";
+import { lastLaunchLine, resultsDoneOf, statusTag } from "./autopilot/historyModel";
 import { MusicDialog } from "./autopilot/MusicDialog";
 import { useLaunchList } from "./autopilot/useLaunches";
 import {
@@ -287,7 +287,9 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
         {/* One place for the launch's card whatever the state, so its heading (with the focus after «Запустить» or «Остановить») survives running → stopped. */}
         <PlanColumn>
           {running && wide && launch !== null && <PlanMini launch={launch} />}
-          {launch !== null && <LaunchCard key={launch.launchId} launch={launch} titleRef={liveTitle} wide={wide} nameOf={nameOf} onMusic={openMusic} />}
+          {launch !== null && (
+            <LaunchCard key={launch.launchId} launch={launch} titleRef={liveTitle} wide={wide} nameOf={nameOf} onMusic={openMusic} resultsDone={resultsDoneOf(launches, launch.launchId, launch.status)} />
+          )}
           {!running && (
             <PlanCard
               preview={figures}

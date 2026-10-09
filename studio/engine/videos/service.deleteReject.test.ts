@@ -3,13 +3,14 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { EngineFailure } from "../engineFailure";
-import { LibraryError } from "../library";
-import type { EngineError } from "../../shared/engine";
+import { LibraryError, type Library } from "../library";
+import type { EngineError, FileState } from "../../shared/engine";
+import { FileStateChecker } from "./fileState";
 import { NODE_COMMIT_FS } from "./commitFs";
 import { commitIntent, writeIntent } from "./intents";
 import { videoPaths, type VideoRecord } from "./record";
 import { errnoError, faultyFs, fakeVideoBytes, sampleRecord, useWorld, type World } from "./testing/kit";
-import { serviceRig, withOverrides } from "./testing/serviceKit";
+import { serviceRig, until, withOverrides } from "./testing/serviceKit";
 useNativeGlobals();
 
 // S4.5c (plan §8.5): `videos.delete { rejectPhotos: true }`, «Удалить видео и отклонить фото». The order is: the export folder must answer (and the file be reachable), as for any
@@ -200,6 +201,104 @@ describe("videos.delete with rejectPhotos, when something refuses", () => {
 
     expect(again.rejectedPhotoIds).toEqual([photoId(w, 0), photoId(w, 1)]);
     expect(recordExists(w, record.id)).toBe(false);
+  });
+
+  test("a delete that does not answer in time says its outcome is unknown: it may still go on, so the window must not promise either way (S4.6g)", async () => {
+    const w = world();
+    const stuck: FileStateChecker = Object.assign(Object.create(new FileStateChecker()) as FileStateChecker, { check: () => new Promise<FileState>(() => undefined) });
+    const r = serviceRig(w, { deps: { checker: stuck, deleteTimeoutMs: 40 } });
+    // Its own id: the abandoned delete keeps this video's mutex (`video-delete:<id>`, process-wide) until its call wakes, which it never does here.
+    const { record } = await committed(w, [photoId(w, 0)], { videoId: "video-stuck-0002", jobId: "job-stuck-0002", relPath: "Mia/2026-09-29_photo_007.mp4" });
+
+    const error = await failureOf(r.service.delete(record.id, "video", { rejectPhotos: true }));
+
+    expect(error).toMatchObject({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown" });
+  });
+
+  test("M2: a delete that timed out and finished afterwards still announces video.changed (removed), so the window converges", async () => {
+    const w = world();
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    // The real checker (it keeps state of its own), its first look held back until the test lets it go.
+    const slow = new FileStateChecker();
+    const look = slow.check.bind(slow);
+    slow.check = async (...args: Parameters<FileStateChecker["check"]>) => (await gate, look(...args));
+    const r = serviceRig(w, { deps: { checker: slow, deleteTimeoutMs: 40 } });
+    const { record } = await committed(w, [photoId(w, 0)], { videoId: "video-late-0003", jobId: "job-late-0003", relPath: "Mia/2026-09-29_photo_008.mp4" });
+
+    const error = await failureOf(r.service.delete(record.id, "video", { rejectPhotos: true }));
+    expect(error).toMatchObject({ outcome: "unknown" });
+    expect(r.events.filter((e) => e.type === "video.changed")).toEqual([]);
+
+    release();
+    await until(() => r.events.some((e) => e.type === "video.changed"), `the late delete to be announced (${r.logs.join(" | ")})`);
+    expect(r.events.find((e) => e.type === "video.changed")?.payload).toMatchObject({ change: "removed", videoId: record.id, avatarId: w.avatar.id });
+    expect(recordExists(w, record.id)).toBe(false);
+  });
+
+  /** A delete that times out because the checker is held back; `release()` lets its work finish. `open` is what `openLibrary` answers. */
+  async function heldDelete(w: World, videoId: string, open: () => Library) {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slow = new FileStateChecker();
+    const look = slow.check.bind(slow);
+    slow.check = async (...args: Parameters<FileStateChecker["check"]>) => (await gate, look(...args));
+    const r = serviceRig(w, { deps: { checker: slow, deleteTimeoutMs: 40, openLibrary: open } });
+    const { record } = await committed(w, [photoId(w, 0)], { videoId, jobId: `job-${videoId.slice(-4)}`, relPath: "Mia/2026-09-29_photo_009.mp4" });
+    const error = await failureOf(r.service.delete(record.id, "video", { rejectPhotos: true }));
+    expect(error).toMatchObject({ outcome: "unknown" });
+    return { r, record, release };
+  }
+  const changed = (r: { events: { type: string }[] }): number => r.events.filter((e) => e.type === "video.changed").length;
+
+  test("M2 round 2: a late finish after the library was switched announces NOTHING of the old library: no video.changed, no avatar announce", async () => {
+    const w = world();
+    let open: Library = w.library;
+    const { r, record, release } = await heldDelete(w, "video-late-0004", () => open);
+    open = withOverrides(w.library, {});
+    release();
+    await until(() => r.logs.some((l) => l.includes(`${record.id} finished after its answer`)), "the late finish's guard to run");
+    expect(changed(r)).toBe(0);
+    expect(r.announced).toEqual([]);
+    expect(r.logs.join(" | ")).toContain("in a library that is no longer open; nothing was announced");
+  });
+
+  test("M2 round 2: a late finish after shutdown announces nothing", async () => {
+    const w = world();
+    const { r, record, release } = await heldDelete(w, "video-late-0005", () => w.library);
+    await r.service.shutdown(50);
+    release();
+    await until(() => r.logs.some((l) => l.includes(`${record.id} finished after its answer`)), "the late finish's guard to run");
+    expect(changed(r)).toBe(0);
+    expect(r.announced).toEqual([]);
+    expect(r.logs.join(" | ")).toContain("while the engine was stopping; nothing was announced");
+  });
+
+  test("M2 round 2: exactly one video.changed and one announce, after a late finish and after a delete that finished in time", async () => {
+    const w = world();
+    const { r, release } = await heldDelete(w, "video-late-0006", () => w.library);
+    release();
+    await until(() => changed(r) > 0, "the late delete to be announced");
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(changed(r)).toBe(1);
+    expect(r.announced).toEqual([w.avatar.id]);
+
+    const timely = serviceRig(w);
+    const { record } = await committed(w, [photoId(w, 1)], { videoId: "video-ontime-0007", jobId: "job-ontime-0007", relPath: "Mia/2026-09-29_photo_010.mp4" });
+    await timely.service.delete(record.id, "video");
+    expect(changed(timely)).toBe(1);
+    expect(timely.announced).toEqual([w.avatar.id]);
+  });
+
+  test("a refusal that changed nothing carries no outcome: the folder said no before any work was done", async () => {
+    const w = world();
+    const r = serviceRig(w, { deps: { checkExport: async () => ({ ok: false, reason: "not-writable" }) } });
+    const { record } = await committed(w, [photoId(w, 0)]);
+
+    const error = await failureOf(r.service.delete(record.id, "video", { rejectPhotos: true }));
+
+    expect(error.code).toBe("EXPORT_UNAVAILABLE");
+    expect("outcome" in error).toBe(false);
   });
 
   test("a reject log that needs repair refuses the whole delete: nothing is deleted and the answer names no path", async () => {

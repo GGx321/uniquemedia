@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MAX_LISTED_VIDEOS, type AutopilotGetResult, type EngineError, type LaunchSummary, type UnreadableLaunch, type VideoSummary } from "../../../shared/engine";
+import type { AutopilotGetResult, EngineError, LaunchSummary, UnreadableLaunch } from "../../../shared/engine";
 import { useEngine, useEngineView } from "../../engine/react";
 import { useMounted } from "../photos/shared";
 import type { AvatarVideos } from "./historyModel";
 
 // S4.9c: what the history and a launch's page read from the engine, and when. Every read is free: `autopilot.list`, `autopilot.get` and `videos.list`.
 // - The list: on open, whenever the library's launch moves (another launch, another status), on `reread` (after «Убрать запись»), and for another library.
-// - A launch: on open and whenever the engine's word on it changes (`autopilot.changed` of that launch), so the results of a launch that runs fill in.
-// - The avatars' records: each on open, again for a `video.changed` of that avatar (a mark, a delete, a render that landed) and after a resync; a screen
-//   asks again by itself after a mark under an unreadable log and after a delete that failed (its work may still go on).
+// - A launch: on open and whenever the engine's word on it changes (`autopilot.changed` of that launch), so the results of a launch that runs fill in. Since S4.6g its
+//   answer carries the owner's marks and the deleted videos, so it is read again for a `video.changed` of one of its avatars (a mark, a delete, a render that landed), after
+//   a resync and when an avatar leaves the library; and the screen asks again by itself after a mark and after a delete, failed or not (the work may still go on).
+// - The avatars' records (`videos.list`), only to draw a finished video (poster, time, music): each on open, again for a `video.changed` of that avatar and after a resync.
 
 export type LaunchListState =
   | { readonly state: "loading" }
@@ -45,36 +46,53 @@ export type LaunchDetailState =
   | { readonly state: "failed"; readonly error: EngineError };
 
 /** `autopilot.get` of one launch: its view, its log (the newest ≤ 500) and its videos. The last answer stays on screen while the next is asked. */
-export function useLaunchDetail(launchId: string): { readonly detail: LaunchDetailState; readonly reread: () => void } {
-  const { client } = useEngine();
+export function useLaunchDetail(launchId: string): {
+  readonly detail: LaunchDetailState;
+  readonly reread: () => void;
+  /** How many answers (good or not) have landed: a screen that waits for a re-read to show a change tells it from the one before. */
+  readonly reads: number;
+} {
+  const { client, store } = useEngine();
   const view = useEngineView();
   const ready = view.phase === "ready";
   // The engine's word on this very launch: a new one (a video done, a status) asks again.
   const live = view.autopilot !== null && view.autopilot.launchId === launchId ? view.autopilot : null;
+  // An avatar that leaves the library takes its videos with it: the engine then calls them removed.
+  const avatarsKnown = view.avatars.map((a) => a.avatarId).join("\n");
   const [attempt, setAttempt] = useState(0);
+  const [reads, setReads] = useState(0);
   const [detail, setDetail] = useState<LaunchDetailState>({ state: "loading" });
+  const avatarKey = detail.state === "ready" ? detail.detail.launch.draft.avatarIds.join("\n") : "";
+  useEffect(
+    () =>
+      store.subscribeVideos((signal) => {
+        if (avatarKey === "") return;
+        if (signal.change === "resynced") return void setAttempt((n) => n + 1);
+        const avatarId = signal.change === "upserted" ? signal.video.avatarId : signal.avatarId;
+        if (avatarKey.split("\n").includes(avatarId)) setAttempt((n) => n + 1);
+      }),
+    [store, avatarKey],
+  );
   useEffect(() => {
     if (!ready) return;
     let alive = true;
     void client.request("autopilot.get", { launchId }).then((reply) => {
       if (!alive) return;
       setDetail((now) => (reply.ok ? { state: "ready", detail: reply.result } : now.state === "ready" ? now : { state: "failed", error: reply.error }));
+      setReads((n) => n + 1);
     });
     return () => {
       alive = false;
     };
-  }, [ready, client, launchId, live, attempt]);
+  }, [ready, client, launchId, live, attempt, avatarsKnown]);
   const reread = useCallback(() => setAttempt((n) => n + 1), []);
-  return { detail, reread };
+  return { detail, reread, reads };
 }
 
-/** The records `videos.list` answered for each of `avatarIds`, by video id; `reread` asks one avatar again, `apply` takes a record a command answered with. */
+/** The records `videos.list` answered for each of `avatarIds`, by video id, to draw the finished videos with; `reread` asks one avatar again. */
 export function useAvatarVideoLists(avatarIds: readonly string[]): {
   readonly lists: ReadonlyMap<string, AvatarVideos>;
-  /** How many answers of `videos.list` each avatar has had: a re-read that landed is told from a record a command answered with (`apply`). */
-  readonly reads: ReadonlyMap<string, number>;
   readonly reread: (avatarId: string) => void;
-  readonly apply: (video: VideoSummary) => void;
 } {
   const { client, store } = useEngine();
   const ready = useEngineView().phase === "ready";
@@ -82,7 +100,6 @@ export function useAvatarVideoLists(avatarIds: readonly string[]): {
   const key = avatarIds.join("\n");
   const [ticks, setTicks] = useState<ReadonlyMap<string, number>>(() => new Map());
   const [lists, setLists] = useState<ReadonlyMap<string, AvatarVideos>>(() => new Map());
-  const [reads, setReads] = useState<ReadonlyMap<string, number>>(() => new Map());
   /** The tick each avatar was last asked at: an answer for an older one is dropped. */
   const asked = useRef(new Map<string, number>());
 
@@ -115,27 +132,12 @@ export function useAvatarVideoLists(avatarIds: readonly string[]): {
       asked.current.set(avatarId, tick);
       void client.request("videos.list", { avatarId }).then((reply) => {
         if (!mounted.current || asked.current.get(avatarId) !== tick) return;
-        const answer: AvatarVideos = reply.ok
-          ? {
-              state: "ready",
-              byId: new Map(reply.result.videos.map((v) => [v.videoId, v])),
-              complete: reply.result.videos.length < MAX_LISTED_VIDEOS,
-              marks: reply.result.published ?? "ok",
-            }
-          : { state: "failed", error: reply.error };
+        const answer: AvatarVideos = reply.ok ? { state: "ready", byId: new Map(reply.result.videos.map((v) => [v.videoId, v])) } : { state: "failed", error: reply.error };
         setLists((now) => new Map(now).set(avatarId, answer));
-        setReads((now) => new Map(now).set(avatarId, (now.get(avatarId) ?? 0) + 1));
       });
     }
   }, [ready, client, key, ticks, mounted]);
 
   const reread = useCallback((avatarId: string) => bump([avatarId]), [bump]);
-  const apply = useCallback((video: VideoSummary) => {
-    setLists((now) => {
-      const list = now.get(video.avatarId);
-      if (list === undefined || list.state !== "ready") return now;
-      return new Map(now).set(video.avatarId, { ...list, byId: new Map(list.byId).set(video.videoId, video) });
-    });
-  }, []);
-  return { lists, reads, reread, apply };
+  return { lists, reread };
 }

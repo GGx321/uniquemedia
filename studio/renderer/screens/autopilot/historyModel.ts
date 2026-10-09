@@ -20,8 +20,8 @@ import { ceilingUsd, clockLabel, videosOf } from "./planModel";
 
 // S4.9c: «История запусков», a launch's page and its results worded from the engine's own answers (AutopilotS4.dc.html states history, launch and
 // delete-published; LaunchStates «История», «Результаты», «Удалить видео», «Журнал»). Every sum is the engine's (`spentMicros`, W′ = `plannedWorstMicros`),
-// only formatted; the renderer adds up counts and sizes for a sentence and nothing else (plan §4.2). The «Опубликовано» marks are `videos.list`'s: the launch
-// file does not keep them (`LaunchVideo.publishedAt` is the engine's null today), so a finished video is shown with its record when the record is listed.
+// only formatted; the renderer adds up counts and sizes for a sentence and nothing else (plan §4.2). Since S4.6g the «Опубликовано» marks and the deleted videos are
+// the engine's word on each `LaunchVideo` (`publishedAt`, `publishedUnknown`, `removed`); `videos.list` only gives a finished video its record to draw (poster, time, music).
 
 const AVATARS = ["аватар", "аватара", "аватаров"] as const;
 const VIDEOS = ["видео", "видео", "видео"] as const;
@@ -128,16 +128,30 @@ export interface UnreadableEntry {
 
 const BLOCKS = "Пока она здесь, новый запуск недоступен — она может описывать незаконченный.";
 
-/** An entry of the library's `autopilot/` folder that is not a launch this Studio can read (`autopilot.list` `unreadable`). */
-export function unreadableEntry(reason: UnreadableLaunch["reason"]): UnreadableEntry {
+/** An entry of the library's `autopilot/` folder that is not a launch this Studio can read (`autopilot.list` `unreadable`). `scope` (S4.6g) says where an `io-error` failed. */
+export function unreadableEntry(reason: UnreadableLaunch["reason"], scope?: UnreadableLaunch["scope"]): UnreadableEntry {
   switch (reason) {
     case "invalid":
       return { title: "Не читается", text: `Запись запуска повреждена. ${BLOCKS}`, removable: true, note: "Файл уйдёт в карантин библиотеки — ничего не удаляется." };
     case "too-new":
       return { title: "Не читается", text: `Запись от более новой Studio. ${BLOCKS}`, removable: true, note: "Файл уйдёт в карантин библиотеки — ничего не удаляется. В новой Studio его можно вернуть." };
-    // The engine says `io-error` both for the folder of the launches and for one file in it that could not be opened (fix round 1): the words hold for both,
-    // and nothing is offered to move — a file nobody could read is not taken anywhere.
+    // Nothing is offered to move for an `io-error`: a file nobody could read is not taken anywhere, and a folder is not a file. Since S4.6g the engine says which of the two
+    // failed (`scope`) and the words name it; an engine that does not say gets the words that fit both.
     case "io-error":
+      if (scope === "file")
+        return {
+          title: "Не читается",
+          text: "Studio не смог открыть файл записи запуска: диск не ответил или нет доступа. Убрать запись нельзя — сначала файл должен прочитаться. Пока так, новый запуск недоступен.",
+          removable: false,
+          note: "Проверьте диск библиотеки и прочитайте историю снова.",
+        };
+      if (scope === "folder")
+        return {
+          title: "Не читается",
+          text: "Studio не смог прочитать папку запусков в библиотеке: диск не ответил или нет доступа. Убирать нечего — сначала папка должна открыться. Пока так, новый запуск недоступен.",
+          removable: false,
+          note: "Проверьте диск библиотеки и прочитайте историю снова.",
+        };
       return {
         title: "Не читается",
         text: "Studio не смог прочитать запись запуска с диска: диск не ответил или нет доступа. Убрать её отсюда нельзя — сначала она должна прочитаться. Пока так, новый запуск недоступен.",
@@ -185,18 +199,17 @@ export function settingsBits(draft: LaunchDraft, customName: (categoryId: string
 
 // ---------- the results ----------
 
-/** What `videos.list` answered for one avatar of the launch. */
+/**
+ * What `videos.list` answered for one avatar of the launch: the records to draw a finished video with (its poster, its time, its music, its file's state). It says nothing of
+ * which videos were deleted or marked — that is `autopilot.get`'s (S4.6g) — so a list cut at 500 or one that failed costs a tile its picture, never its mark or its trash.
+ */
 export type AvatarVideos =
-  | {
-      readonly state: "ready";
-      readonly byId: ReadonlyMap<string, VideoSummary>;
-      /** The list holds every record of the avatar (it is cut at 500): a finished video it does not list was deleted. */
-      readonly complete: boolean;
-      /** Whether the avatar's «Опубликовано» marks could be read. */
-      readonly marks: "ok" | "unknown";
-    }
+  | { readonly state: "ready"; readonly byId: ReadonlyMap<string, VideoSummary> }
   | { readonly state: "failed"; readonly error: EngineError }
-  /** Fix round 1: the avatar was deleted after the launch (`videos.list` NOT_FOUND for an avatar the library no longer lists): its tiles stay, inert. */
+  /**
+   * Fix round 1: the avatar was deleted after the launch (`videos.list` NOT_FOUND for an avatar the library no longer lists): its tiles stay, inert. The engine (S4.6g) calls
+   * such an avatar's finished videos `removed` once it can tell, so this is what shows only while it cannot.
+   */
   | { readonly state: "gone" };
 
 /** The avatar's list as the tiles read it: a NOT_FOUND for an avatar the library no longer holds is the avatar gone, not an error to retry. */
@@ -226,7 +239,11 @@ export interface ResultTile {
   readonly videoId: string | null;
   readonly summary: VideoSummary | null;
   readonly published: boolean;
-  /** «Опубликовано» and the trash: a finished video whose record is listed (or whose avatar's list could not be read). */
+  /** The avatar's «Опубликовано» marks could not be read (S4.6g): the video shows unmarked, and the window says why. */
+  readonly markUnknown: boolean;
+  /** The avatar was deleted since the launch and the engine could not yet say so: the tile is inert and is no finished video of the count. */
+  readonly gone: boolean;
+  /** «Опубликовано» and the trash: a finished video whose record stands (the engine's word) and whose avatar is still there. */
   readonly actionable: boolean;
   /** How many photos the video holds: what «отклонить фото» rejects. */
   readonly photos: number;
@@ -280,10 +297,10 @@ export function madeAt(iso: string): string {
 }
 
 /**
- * The launch's videos as tiles, in its own order with the ones that did not come out last. A finished video is drawn with its record from `videos.list`
- * (its poster, its time, its «Опубликовано»); one whose record the avatar's complete list no longer holds was deleted, and is left out. A list that could
- * not be read leaves the launch file's word (and the mark it carries) on the tile. An avatar deleted since (`gone`) keeps its tiles, inert: no mark, no trash,
- * «аватар удалён».
+ * The launch's videos as tiles, in its own order with the ones that did not come out last. A finished video is drawn with its record from `videos.list` (its poster, its
+ * time, its music) when the list holds it; its «Опубликовано» mark and whether it was deleted are the engine's word on the video (S4.6g): a `removed` one is left out, and a
+ * mark the engine could not read shows unmarked (`markUnknown`). A list that is cut or failed leaves the tile without its picture, nothing else. An avatar deleted since that
+ * the engine could not yet call removed (`gone`) keeps its tiles, inert: no mark, no trash, «аватар удалён», and none of them is counted.
  */
 export function resultTiles(videos: readonly LaunchVideo[], lists: ReadonlyMap<string, AvatarVideos>, nameOf: (avatarId: string) => string): ResultTile[] {
   const tiles: ResultTile[] = [];
@@ -292,11 +309,12 @@ export function resultTiles(videos: readonly LaunchVideo[], lists: ReadonlyMap<s
     const ready = list?.state === "ready" ? list : null;
     const gone = list?.state === "gone";
     const summary = video.videoId === null || ready === null ? null : (ready.byId.get(video.videoId) ?? null);
-    if (video.state === "done" && ready !== null && ready.complete && summary === null) continue;
+    if (video.state === "done" && video.removed === true) continue;
     const name = nameOf(video.avatarId);
     const number = numberOf(video.key);
     const done = video.state === "done" && !gone;
-    const published = done && (summary !== null ? ready?.marks === "ok" && typeof summary.publishedAt === "string" : list?.state === "failed" && video.publishedAt !== null);
+    const markUnknown = done && video.publishedUnknown === true;
+    const published = done && !markUnknown && video.publishedAt !== null;
     const shape = shapeText(video.shape, video.size);
     const meta =
       video.state === "waiting-music"
@@ -324,7 +342,9 @@ export function resultTiles(videos: readonly LaunchVideo[], lists: ReadonlyMap<s
       videoId: video.videoId,
       summary,
       published,
-      actionable: done && video.videoId !== null && (summary !== null || list?.state === "failed"),
+      markUnknown,
+      gone,
+      actionable: done && video.videoId !== null,
       photos: summary?.photoCount ?? video.size,
       status: gone
         ? { text: "аватар удалён", tone: "faint" }
@@ -348,7 +368,7 @@ export interface ResultCounts {
 }
 
 export function resultCounts(tiles: readonly ResultTile[]): ResultCounts {
-  const finished = tiles.filter((t) => t.state === "done");
+  const finished = tiles.filter((t) => t.state === "done" && !t.gone);
   const byAvatar = new Map<string, number>();
   for (const t of finished) byAvatar.set(t.avatarId, (byAvatar.get(t.avatarId) ?? 0) + 1);
   const bytes = finished.reduce((sum, t) => sum + (t.summary?.bytes ?? 0), 0);
@@ -400,6 +420,14 @@ export function journalRows(log: readonly LogLine[], sceneReview: boolean, nameO
 /** «214 записей», or «последние 500 записей» when the engine cut the log. */
 export function journalCount(lines: number, cut: boolean): string {
   return cut ? `последние ${countOf(lines, ENTRIES)}` : countOf(lines, ENTRIES);
+}
+
+/**
+ * The history's count of finished videos whose records stand, for the card of `launchId` in `status` (S4.6g): a row in another status is the answer of another moment (a
+ * `running` one for an ended card), so its count is not shown. Undefined: the card keeps the view's own count.
+ */
+export function resultsDoneOf(launches: readonly LaunchSummary[] | null, launchId: string, status: LaunchStatus): number | undefined {
+  return launches?.find((l) => l.launchId === launchId && l.status === status)?.videosDone;
 }
 
 // ---------- «Последний запуск» ----------

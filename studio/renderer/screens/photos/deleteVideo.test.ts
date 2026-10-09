@@ -48,6 +48,22 @@ describe("what a delete did, and why one did not go", () => {
     expect(deleteFailedText({ code: "EXPORT_UNAVAILABLE" }, false).text).toBe("Папка «Готовые видео» не ответила. Если видео осталось в списке, удалите его ещё раз, когда папка вернётся.");
   });
 
+  test("S4.6g: a delete that timed out says its outcome is unknown — the work may have gone on — and gives no folder reason that would read as a refusal", () => {
+    const rejecting = deleteFailedText({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown" }, true);
+    expect(rejecting.title).toBe("Удаление не подтвердилось — списки прочитаны заново");
+    expect(rejecting.text).toBe(
+      "Папка «Готовые видео» не ответила вовремя, а удаление могло дойти до конца: видео могло уже удалиться. Фото, что успели уйти в «Отклонённые», там и останутся. Посмотрите список: если видео осталось, удалите его ещё раз.",
+    );
+    const plain = deleteFailedText({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable", outcome: "unknown" }, false);
+    expect(plain.text).toBe("Папка «Готовые видео» не ответила вовремя, а удаление могло дойти до конца: видео могло уже удалиться. Посмотрите список: если видео осталось, удалите его ещё раз.");
+    expect(plain.text).not.toContain("нельзя записывать");
+    expect(`${rejecting.title} ${rejecting.text}`).not.toContain("не удалено");
+  });
+
+  test("S4.6g: without the outcome the folder's own refusal is worded as before", () => {
+    expect(deleteFailedText({ code: "EXPORT_UNAVAILABLE", exportReason: "not-writable" }, false).text).toContain("В эту папку нельзя записывать.");
+  });
+
   test("NOT_FOUND: the video is no longer in the library; any other refusal says the engine's reason; none says «не удалено»", () => {
     expect(deleteFailedText({ code: "NOT_FOUND", detail: "no video" }, false)).toEqual({ title: "Удаление не подтвердилось — списки прочитаны заново", text: "Этого видео уже нет в библиотеке." });
     const failed = deleteFailedText({ code: "INTERNAL", detail: "disk" }, true);

@@ -1,9 +1,9 @@
-import { lstat, readdir, readFile } from "node:fs/promises";
+import { lstat, readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { Clip, Id, MontageName, type FileState, type VideoSummary } from "../../shared/engine";
 import { hasErrorCode } from "../library/durableFs";
-import { isFromNewerVersion, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
+import { AVATARS_DIR, isFromNewerVersion, VIDEO_RECORD_SCHEMA_VERSION } from "../library/layout";
 import { scenePhotoIds, videoPaths, VideoRecordSchema, type VideoRecord } from "./record";
 
 // `videos.list` reads an avatar's records from disk: the library keeps only what "used" needs (the photo ids), while the
@@ -51,6 +51,33 @@ export async function readVideoRecordFile(libraryRoot: string, avatarId: string,
   } catch (error) {
     if (hasErrorCode(error, "ENOENT")) return null;
     throw error;
+  }
+}
+
+/**
+ * The ids of the records an avatar has on disk, from the file names alone (S4.6g): a launch asks which of its finished videos still have their record. A file with a record's name
+ * counts even when it cannot be used (a damaged record is not a deleted one), and the pending intents and temp files do not. An avatar with no folder has none (the empty set,
+ * which is also what a deleted avatar looks like); null when the folder cannot be listed at all, so that not knowing is never read as nothing being there.
+ */
+export async function listVideoRecordIds(libraryRoot: string, avatarId: string): Promise<Set<string> | null> {
+  try {
+    const entries = await readdir(videoPaths(libraryRoot, avatarId).videosDir, { withFileTypes: true });
+    const ids = new Set<string>();
+    for (const entry of entries) {
+      const id = entry.isDirectory() ? undefined : RECORD_NAME.exec(entry.name)?.[1];
+      if (id !== undefined) ids.add(id);
+    }
+    return ids;
+  } catch (error) {
+    if (!hasErrorCode(error, "ENOENT")) return null;
+    // The avatar has no videos folder, or no folder at all (it was deleted): the empty set. But a library whose `avatars/` is gone too (moved, unmounted, switched away from) has
+    // told us nothing about this avatar: not knowing is not a delete.
+    return (await stat(join(libraryRoot, AVATARS_DIR)).then(
+      (info) => info.isDirectory(),
+      () => false,
+    ))
+      ? new Set()
+      : null;
   }
 }
 

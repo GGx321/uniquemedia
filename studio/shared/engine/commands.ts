@@ -710,7 +710,9 @@ const ENGINE_SPECS = [
   // `autopilot.continueAfterReview`: «Продолжить запуск: M фото» after the owner reviewed an avatar's scenes. SCENES_CHANGED when the revision moved; VALIDATION with
   //   `sceneReason` `over-plan` (more active scenes than planned) or `not-awaiting`. The answer says whether the draw starts now or waits for «Продолжить» (a paused launch).
   // `autopilot.list`: the launches, newest first (≤ 200), and the entries of `autopilot/` that cannot be read as a launch, by an opaque `entryId`.
-  // `autopilot.get`: one launch with its log (the newest ≤ 500 lines) and its videos. NOT_FOUND.
+  // `autopilot.get`: one launch with its log (the newest ≤ 500 lines) and its videos. NOT_FOUND. S4.6g: a finished video carries the owner's mark (`publishedAt`), `removed` when its
+  // record was deleted since and `publishedUnknown` when the avatar's marks cannot be read; the result's `published` is `videos.list`'s (envelope.ts). `autopilot.list` counts only
+  // the finished videos whose records stand, and tells an unreadable `io-error` entry's `scope` (folder or file).
   // `autopilot.removeUnreadable`: moves one unreadable entry to the library's quarantine, never deletes it. `entryId` is taken from `autopilot.list`; the engine finds the
   //   file itself and never takes a name or a path. NOT_FOUND for no match, and for a file that reads fine now (it is never moved).
   defineCommand("autopilot.estimate", z.strictObject({ draft: LaunchDraftInput }), AutopilotEstimateResult),

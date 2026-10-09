@@ -376,6 +376,11 @@ export const EngineError = z
     retryAfterMs: Count.optional(),
     issues: z.array(MontageIssue).min(1).max(MAX_MONTAGE_ISSUES).optional(),
     exportReason: ExportUnavailableReason.optional(),
+    /**
+     * Additive (S4.6g): `unknown` on an EXPORT_UNAVAILABLE that is the timeout of work which may still be going on (a `videos.delete` that did not answer in time: the file,
+     * the record or the photos' rejection may have been done anyway). Absent on a refusal that changed nothing. The window words the two apart.
+     */
+    outcome: z.literal("unknown").optional(),
     captionIssue: CaptionIssue.optional(),
     musicReason: MusicUnavailableReason.optional(),
     mediaReason: MediaUnsupportedReason.optional(),
@@ -446,6 +451,10 @@ export const EngineError = z
   .refine((e) => (e.code === "EXPORT_UNAVAILABLE") === (e.exportReason !== undefined), {
     message: "exportReason must be present exactly on EXPORT_UNAVAILABLE",
     path: ["exportReason"],
+  })
+  .refine((e) => e.outcome === undefined || e.code === "EXPORT_UNAVAILABLE", {
+    message: "outcome may only be present on EXPORT_UNAVAILABLE",
+    path: ["outcome"],
   })
   .refine((e) => (e.code === "TEXT_INVALID") === (e.captionIssue !== undefined), {
     message: "captionIssue must be present exactly on TEXT_INVALID",
