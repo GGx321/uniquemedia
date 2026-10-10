@@ -1,11 +1,12 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
-import { authorizationLabel, markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
+import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type MockOpenRouter } from "./mockOpenRouter";
 import { failureDetail } from "./failureDetail";
 import { poolMessages, readPoolAnswer } from "../engine/scenes/poolGen";
 import { IDEA_JSON_SCHEMA, ideaMessages, readIdeaAnswer, type IdeaSlot } from "../engine/scenes/ideaWriter";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
+import { readImportDescribeAnswer } from "../engine/avatars/importDescribe";
 import { DESCRIPTOR_CHECK_JSON_SCHEMA, descriptorCheckMessages, readDescriptorCheckAnswer } from "../engine/avatars/descriptorCheck";
-import type { AvatarDescriptor } from "../shared/engine";
+import { BODY_KEYS, type AvatarDescriptor } from "../shared/engine";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -178,7 +179,23 @@ describe("the descriptor check call", () => {
     expect(read.check.matches).toBe(true);
     expect(read.check.proposal).toBeNull();
     expect(read.check.checkedText).toBe(stored.text);
-    expect(Object.values(read.check.aspects).every((v) => v.state === "ok")).toBe(true);
+    // S5.2b: the body is judged only when a body phrase was sent; with none the photo "does not show" it.
+    expect([read.check.aspects.hair?.state, read.check.aspects.eyes?.state, read.check.aspects.marks?.state, read.check.aspects.body?.state]).toEqual(["ok", "ok", "ok", "not-visible"]);
+  });
+
+  test("judges the body (ok) when the request carries her body phrase, and still proposes nothing", async () => {
+    const m = await started();
+    const phrase = "tall, a full bust and long slim legs";
+    const [system, user] = descriptorCheckMessages(stored, phrase);
+    const withBody = JSON.stringify({
+      model: "x-ai/grok-4.3",
+      messages: [system, { role: "user", content: [{ type: "text", text: user?.content }, { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } }] }],
+      response_format: { type: "json_schema", json_schema: { name: DESCRIPTOR_CHECK_JSON_SCHEMA.name, strict: true, schema: {} } },
+    });
+    const reply = (await (await nativeFetch(`${m.url}/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: withBody })).json()) as { choices: { message: { content: string } }[] };
+    const read = readDescriptorCheckAnswer(reply.choices[0]?.message.content ?? "", stored, phrase);
+    expect(read.ok && read.check.aspects.body?.state).toBe("ok");
+    expect(read.ok && read.check.proposal).toBeNull();
   });
 
   test("returns the quoted description unchanged", async () => {
@@ -202,6 +219,37 @@ describe("the descriptor check call", () => {
     mock = await startMockOpenRouter({ descriptorText: "A 25-year-old woman.", costsUsd: { descriptorCheck: 0.005 } });
     await post(mock);
     expect(mock.totalUsageUsd()).toBeCloseTo(0.005, 6);
+  });
+});
+
+// S5.2b: the vision describe call carries the eight body keys. The default answer is a face-only photo (every key unknown, no marks), and a scenario can script the body the photo
+// "shows"; either way the engine's own reader takes it whole.
+describe("the import describe call's body keys", () => {
+  const post = (m: MockOpenRouter) =>
+    nativeFetch(`${m.url}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "x-ai/grok-4.3", messages: [], response_format: { type: "json_schema", json_schema: { name: "import_describe", strict: true, schema: {} } } }),
+    });
+  const contentOf = async (m: MockOpenRouter): Promise<string> => ((await (await post(m)).json()) as { choices: { message: { content: string } }[] }).choices[0]?.message.content ?? "";
+
+  test("the default answer is a photo that shows no body: read whole, with no proposal", async () => {
+    const m = await started();
+    const read = readImportDescribeAnswer(await contentOf(m));
+    expect(read.ok).toBe(true);
+    expect(read.ok && read.body).toBeUndefined();
+  });
+
+  test("the default answer carries every body key, the way the strict schema requires them", async () => {
+    const m = await started();
+    const answer = JSON.parse(await contentOf(m)) as Record<string, unknown>;
+    for (const key of BODY_KEYS) expect(key in answer).toBe(true);
+  });
+
+  test("a scripted body is read back as the proposal the scenario meant", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "A 25-year-old woman.", importDescribeAnswer: { ...DEFAULT_IMPORT_DESCRIBE_ANSWER, height: "tall", bust: "full", bodyMarks: ["mole-back"] } });
+    const read = readImportDescribeAnswer(await contentOf(mock));
+    expect(read.ok && read.body?.values).toEqual({ height: "tall", bust: "full", bodyMarks: ["mole-back"] });
   });
 });
 
