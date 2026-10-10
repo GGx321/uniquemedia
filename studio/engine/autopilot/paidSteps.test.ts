@@ -382,6 +382,63 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 
+  test("an announce that lands between the row write and the first sleep still wakes the avatar (no lost wake while the open-set line is being logged)", async () => {
+    const owner = { open: true };
+    // The open-set log line is held, so the row says «open-set» while the engine has not yet armed its wait.
+    const logGate = deferred();
+    const r = await rig({ steps: { retryMs: 60_000 } });
+    const begin = r.steps.begin.bind(r.steps);
+    r.steps.begin = (ctx) => {
+      const log = ctx.log.bind(ctx);
+      ctx.log = async (line) => {
+        if (line.kind === "open-set") await logGate.promise;
+        return log(line);
+      };
+      begin(ctx);
+    };
+    r.port.compose = async (payload, ids) => {
+      if (owner.open) throw openSet();
+      r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, avatarId: payload.avatarId, launchId: LAUNCH });
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    r.port.ownerOpen = () => owner.open;
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => ({ kind: "none-left" });
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
+    owner.open = false;
+    r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
+    logGate.resolve();
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+  });
+
+  test("a stop that lands between the row write and the first sleep still ends the wait at once (no lost drain wake)", async () => {
+    const owner = { open: true };
+    const logGate = deferred();
+    const r = await rig({ steps: { retryMs: 60_000 } });
+    const begin = r.steps.begin.bind(r.steps);
+    r.steps.begin = (ctx) => {
+      const log = ctx.log.bind(ctx);
+      ctx.log = async (line) => {
+        if (line.kind === "open-set") await logGate.promise;
+        return log(line);
+      };
+      begin(ctx);
+    };
+    r.port.compose = async () => {
+      throw openSet();
+    };
+    r.port.ownerOpen = () => owner.open;
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
+    const stopping = r.orchestrator.stop(launch.launchId);
+    await idle();
+    logGate.resolve();
+    const outcome = await Promise.race([stopping.then(() => "stopped"), new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 2_000))]);
+    expect(outcome).toBe("stopped");
+  });
+
   test("S4.10 M-3: an open-set episode is cheap: 20 polls are ONE log line, no `composing` flips, no second compose call (which would claim the avatar)", async () => {
     const owner = { open: true };
     const r = await rig({ steps: { retryMs: 2 } });
