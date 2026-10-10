@@ -119,7 +119,7 @@ export const DescriptorCheck = z
     /** The stored descriptor text this check judged. */
     checkedText: z.string().min(1).max(DESCRIPTOR_MAX_CHARS).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters"),
   })
-  .refine((c) => c.matches === !Object.values(c.aspects).some((a) => a.state === "mismatch"), { message: "matches must say whether no aspect is a mismatch", path: ["matches"] })
+  .refine((c) => c.matches === !Object.values(c.aspects).some((a) => a?.state === "mismatch"), { message: "matches must say whether no aspect is a mismatch", path: ["matches"] })
   .refine((c) => c.proposal === null || [c.aspects.hair, c.aspects.eyes, c.aspects.marks].some((a) => a?.state === "mismatch"), {
     message: "a proposal needs a mismatch of the hair, the eyes or the marks (a body mismatch has none)",
     path: ["proposal"],

@@ -351,9 +351,9 @@ const ENGINE_SPECS = [
   // (hair, eyes, marks, body) and, for a mismatch of the first three, a proposed text. It NEVER writes: the owner applies a proposal with the free `avatars.editDescriptor`, passing
   // the check's `checkedText` as `expectedText`. `estimateCheckDescriptor` is free and also prices a DRAFT (the wizard shows «Затем — сверка описания с ним · до $X» under
   // «Сохранить»); NOT_FOUND for an unknown avatar, LIBRARY_UNAVAILABLE without a library. `checkDescriptor` is paid, accepted like `rewriteDescriptor`, and refused, before any
-  // spend and in this order: AUTH_INVALID (no usable key), the ledger's own refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION (a draft, or no master photo),
+  // spend and in this order: AUTH_INVALID (no usable key), the ledger's own refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION (a draft),
   // DESCRIPTOR_INVALID (a stored descriptor that fails today's rules: mend it with `editDescriptor`), PRICE_CHANGED, BUDGET_EXCEEDED, IN_FLIGHT (a job, a command or a photo run holds
-  // the avatar; checked first of all). A photo it could not load is INTERNAL and free.
+  // the avatar; checked first of all). A master photo that is missing on disk or cannot be read is INTERNAL and free (an active avatar always has one in its manifest).
   defineCommand("avatars.estimateCheckDescriptor", z.strictObject({ avatarId: Id }), Estimate),
   defineCommand("avatars.checkDescriptor", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ check: DescriptorCheck })),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).

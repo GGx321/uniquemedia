@@ -425,6 +425,12 @@ describe("DescriptorCheck (Stage 5, S5.0c)", () => {
     expect(DescriptorCheck.safeParse({ ...good, proposal: "25-year-old woman, blue eyes" }).success).toBe(false);
   });
 
+  test("an aspect that is undefined is refused or accepted, never thrown on", () => {
+    expect(() => DescriptorCheck.safeParse({ ...good, aspects: { hair: undefined } })).not.toThrow();
+    expect(DescriptorCheck.safeParse({ ...good, aspects: { hair: undefined } }).success).toBe(true);
+    expect(DescriptorCheck.safeParse({ ...good, matches: false, aspects: { hair: undefined } }).success).toBe(false);
+  });
+
   test("a body mismatch alone has no proposal, and one with a proposal is refused", () => {
     const body = { ...good, matches: false, aspects: { body: verdict("mismatch", { descriptor: "стройное", photo: "пышное" }) } };
     expect(DescriptorCheck.safeParse(body).success).toBe(true);
