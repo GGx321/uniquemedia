@@ -360,6 +360,20 @@ describe("a run from the start", () => {
     expect(photos.map((p) => p !== undefined && "resolution" in p)).toEqual([false, false, false]);
   });
 
+  // S5.1c: the run wires the room lookup into the assembler (I5.1, I5.4): a slot in a room of today's pools gets the room sentence, any other slot none.
+  test("a slot in a room carries a room sentence in its journalled prompt, and a slot elsewhere carries none", async () => {
+    const run = await newRun(8);
+    await start(run).end;
+
+    const event = (await journal()).find((e) => e.type === "prompts");
+    const prompts = new Map(event?.type === "prompts" ? event.prompts.map((p) => [p.slotIndex, p.prompt]) : []);
+    const slots = plannedSlots(run);
+    const inRoom = (slot: (typeof slots)[number]): boolean => POOLS.home.locations.find((l) => l.name === slot.location)?.room === true;
+    expect(slots.some(inRoom)).toBe(true);
+    expect(slots.some((s) => !inRoom(s))).toBe(true);
+    for (const slot of slots) expect(/ The room (is|looks) /.test(prompts.get(slot.slotIndex) ?? "")).toBe(inRoom(slot));
+  });
+
   test("journals the writer's chunk, then the prompts, then each slot's attempt before its end, then the job's end", async () => {
     const run = await newRun(2);
     await start(run).end;
