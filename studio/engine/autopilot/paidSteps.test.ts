@@ -696,11 +696,15 @@ describe("a busy avatar is waited for, not given up on (MEDIUM)", () => {
       tries += 1;
       if (tries === 1) throw new EngineFailure({ code: "IN_FLIGHT", detail: "busy" });
       sent.push(input.acceptedWorstMicros);
+      // The write does what the real one does: the scenes of the set are there when its job ends. Without them the pass finds «the write stopped: no record» and holds the launch as internal,
+      // racing the assertion below.
+      r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
       return { jobId: "job-write-0001" };
     };
     r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, written: 0 });
     const launch = await r.start({ sceneReview: true });
     await until(() => sent.length === 1, "the retried write");
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "awaiting-review", "the pass to reach the review");
     expect(tries).toBe(2);
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
