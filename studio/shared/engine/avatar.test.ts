@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { perfTest } from "../../testing/bunTiers";
 import { assertBudget } from "../../testing/tiers";
-import { AdultAge, AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
+import { AdultAge, AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits, DescriptorCheck } from "./avatar";
 
 const traits = {
   age: 25,
@@ -365,5 +365,69 @@ describe("AvatarStatus", () => {
   test("is draft, active or archived", () => {
     const actual: string[] = [...AvatarStatus.options];
     expect(actual).toEqual(["draft", "active", "archived"]);
+  });
+});
+
+describe("DescriptorCheck (Stage 5, S5.0c)", () => {
+  const verdict = (state: "ok" | "mismatch" | "not-visible", extra: Record<string, string> = {}) => ({ state, ...extra });
+  const good = {
+    matches: true,
+    aspects: { hair: verdict("ok"), eyes: verdict("ok"), marks: verdict("not-visible"), body: verdict("not-visible") },
+    proposal: null,
+    checkedText: "25-year-old woman, green eyes",
+  };
+
+  test("a check that matches parses", () => {
+    expect(DescriptorCheck.safeParse(good).success).toBe(true);
+  });
+
+  test("a mismatch carries its two Russian phrases and a proposal", () => {
+    const check = {
+      matches: false,
+      aspects: { hair: verdict("mismatch", { descriptor: "волнистые блонд", photo: "прямые платиновые с чёлкой" }) },
+      proposal: "25-year-old woman, green eyes, straight platinum hair with bangs",
+      checkedText: "25-year-old woman, green eyes",
+    };
+    expect(DescriptorCheck.safeParse(check).success).toBe(true);
+  });
+
+  test("a phrase over 40 characters is refused, and 40 is the last that fits", () => {
+    const withPhrase = (photo: string) => ({ ...good, matches: false, aspects: { hair: verdict("mismatch", { photo }) } });
+    expect(DescriptorCheck.safeParse(withPhrase("я".repeat(40))).success).toBe(true);
+    expect(DescriptorCheck.safeParse(withPhrase("я".repeat(41))).success).toBe(false);
+  });
+
+  test("a phrase with an invisible character is refused", () => {
+    expect(DescriptorCheck.safeParse({ ...good, matches: false, aspects: { hair: verdict("mismatch", { photo: "светлые‮волосы" }) } }).success).toBe(false);
+  });
+
+  test("an aspect the contract does not name is refused", () => {
+    expect(DescriptorCheck.safeParse({ ...good, aspects: { ...good.aspects, legs: verdict("ok") } }).success).toBe(false);
+  });
+
+  test("a state outside ok, mismatch and not-visible is refused", () => {
+    expect(DescriptorCheck.safeParse({ ...good, aspects: { hair: verdict("maybe" as "ok") } }).success).toBe(false);
+  });
+
+  test("a proposal over the descriptor's 600 characters is refused", () => {
+    expect(DescriptorCheck.safeParse({ ...good, matches: false, aspects: { hair: verdict("mismatch") }, proposal: "x".repeat(601) }).success).toBe(false);
+  });
+
+  test("matches true beside a mismatch is refused", () => {
+    expect(DescriptorCheck.safeParse({ ...good, matches: true, aspects: { hair: verdict("mismatch") } }).success).toBe(false);
+  });
+
+  test("matches false with no mismatch anywhere is refused", () => {
+    expect(DescriptorCheck.safeParse({ ...good, matches: false }).success).toBe(false);
+  });
+
+  test("a proposal beside matches true is refused", () => {
+    expect(DescriptorCheck.safeParse({ ...good, proposal: "25-year-old woman, blue eyes" }).success).toBe(false);
+  });
+
+  test("a body mismatch alone has no proposal, and one with a proposal is refused", () => {
+    const body = { ...good, matches: false, aspects: { body: verdict("mismatch", { descriptor: "стройное", photo: "пышное" }) } };
+    expect(DescriptorCheck.safeParse(body).success).toBe(true);
+    expect(DescriptorCheck.safeParse({ ...body, proposal: "25-year-old woman, curvy build" }).success).toBe(false);
   });
 });

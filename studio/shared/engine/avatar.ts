@@ -86,9 +86,52 @@ export const AvatarDescriptor = z
     path: ["text"],
   });
 
+// ---------- Stage 5, S5.0c: the descriptor-vs-master check ----------
+
+/** What a check compares with the master photo: the hair (colour, length, texture, bangs), the eyes, the face marks, and (when the photo shows it) the body. */
+export const CHECK_ASPECTS = ["hair", "eyes", "marks", "body"] as const;
+export const CheckAspect = z.enum(CHECK_ASPECTS);
+/** `ok`: the description matches the photo; `mismatch`: it contradicts it; `not-visible`: the photo does not show this (grey in the window, not an error). */
+export const CheckState = z.enum(["ok", "mismatch", "not-visible"]);
+
+/** The short Russian phrases of a mismatch («В описании: … · На фото: …») are model output: bounded and plain text. */
+export const CHECK_PHRASE_MAX_CHARS = 40;
+const CheckPhrase = z.string().min(1).max(CHECK_PHRASE_MAX_CHARS).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters");
+
+export const AspectVerdict = z.strictObject({ state: CheckState, descriptor: CheckPhrase.optional(), photo: CheckPhrase.optional() });
+
+/**
+ * One check of a saved avatar's descriptor against her master photo. It never writes: `proposal` is the corrected text a mismatch of hair, eyes or marks suggests,
+ * or null (no such mismatch, a text that breaks a rule, one that adds a word about the body, or one equal to the stored text). The owner applies it, if he wants it,
+ * with `avatars.editDescriptor`, passing `checkedText` as `expectedText` so a proposal made against an older text is refused as stale. A `body` mismatch never has a
+ * proposal: it goes to the body traits.
+ */
+export const DescriptorCheck = z
+  .strictObject({
+    matches: z.boolean(),
+    aspects: z.strictObject({
+      hair: AspectVerdict.optional(),
+      eyes: AspectVerdict.optional(),
+      marks: AspectVerdict.optional(),
+      body: AspectVerdict.optional(),
+    }),
+    proposal: z.string().min(1).max(DESCRIPTOR_MAX_CHARS).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters").nullable(),
+    /** The stored descriptor text this check judged. */
+    checkedText: z.string().min(1).max(DESCRIPTOR_MAX_CHARS).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters"),
+  })
+  .refine((c) => c.matches === !Object.values(c.aspects).some((a) => a.state === "mismatch"), { message: "matches must say whether no aspect is a mismatch", path: ["matches"] })
+  .refine((c) => c.proposal === null || [c.aspects.hair, c.aspects.eyes, c.aspects.marks].some((a) => a?.state === "mismatch"), {
+    message: "a proposal needs a mismatch of the hair, the eyes or the marks (a body mismatch has none)",
+    path: ["proposal"],
+  });
+
 /** Lifecycle of an avatar in the library: a draft until a candidate is picked. */
 export const AvatarStatus = z.enum(["draft", "active", "archived"]);
 
 export type AvatarTraits = z.infer<typeof AvatarTraits>;
 export type AvatarDescriptor = z.infer<typeof AvatarDescriptor>;
 export type AvatarStatus = z.infer<typeof AvatarStatus>;
+export type CheckAspect = z.infer<typeof CheckAspect>;
+export type CheckState = z.infer<typeof CheckState>;
+export type AspectVerdict = z.infer<typeof AspectVerdict>;
+export type DescriptorCheck = z.infer<typeof DescriptorCheck>;
