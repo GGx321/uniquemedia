@@ -199,3 +199,49 @@ test("a draft created with body traits becomes an avatar that carries that body 
   expect(picked.avatar.body).toEqual(BODY);
   expect(bodyPhrase(picked.avatar.body ?? {})).toBe(PHRASE);
 });
+
+// ---------- the import's body proposal (S5.2b) ----------
+
+async function pickedImport(client: ReturnType<typeof makeMock>["client"]): Promise<{ stagingId: string; worst: number }> {
+  const staged = await unwrap(client.request("avatars.pickImportPhoto", {}));
+  if (!staged.picked) throw new Error("expected a picked photo");
+  const worst = (await unwrap(client.request("avatars.estimateImport", { stagingId: staged.stagingId }))).worstMicros;
+  return { stagingId: staged.stagingId, worst };
+}
+
+test("an import with no scripted body saves an avatar with no proposal, as a photo that shows no body does", async () => {
+  const { client } = makeMock();
+  const { stagingId, worst } = await pickedImport(client);
+
+  const { avatar } = await unwrap(client.request("avatars.importAvatar", { stagingId, name: "Zoe", acceptedWorstMicros: worst }));
+
+  expect(avatar.bodyProposal).toBeUndefined();
+  expect(avatar.body).toBeUndefined();
+});
+
+test("a body scripted for the next import comes back as the avatar's proposal, never as its body, and is listed until it is dismissed", async () => {
+  const { engine, client } = makeMock();
+  engine.queueImportBodyProposal(PROPOSAL);
+  const { stagingId, worst } = await pickedImport(client);
+
+  const { avatar } = await unwrap(client.request("avatars.importAvatar", { stagingId, name: "Zoe", acceptedWorstMicros: worst }));
+
+  expect(avatar.bodyProposal).toEqual(PROPOSAL);
+  expect(avatar.body).toBeUndefined();
+  const listed = (await unwrap(client.request("avatars.list", {}))).avatars.find((a) => a.avatarId === avatar.avatarId);
+  expect(listed?.bodyProposal).toEqual(PROPOSAL);
+  await unwrap(client.request("avatars.dismissBodyProposal", { avatarId: avatar.avatarId }));
+  expect((await unwrap(client.request("avatars.list", {}))).avatars.find((a) => a.avatarId === avatar.avatarId)?.bodyProposal).toBeUndefined();
+});
+
+test("a scripted body serves one import only: the next one has no proposal", async () => {
+  const { engine, client } = makeMock();
+  engine.queueImportBodyProposal(PROPOSAL);
+  const first = await pickedImport(client);
+  await unwrap(client.request("avatars.importAvatar", { stagingId: first.stagingId, name: "Zoe", acceptedWorstMicros: first.worst }));
+  const second = await pickedImport(client);
+
+  const { avatar } = await unwrap(client.request("avatars.importAvatar", { stagingId: second.stagingId, name: "Eva", acceptedWorstMicros: second.worst }));
+
+  expect(avatar.bodyProposal).toBeUndefined();
+});

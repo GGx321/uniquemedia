@@ -5,6 +5,7 @@ import {
   AvatarDescriptor,
   bodyFromRecord,
   bodyPhrase,
+  type BodyProposal,
   checkImageChoice,
   LaunchView,
   decodePhotoCursor,
@@ -739,6 +740,8 @@ export class MockEngine implements EngineBridge {
   private nextImportPick: ImportPhotoPicked | null = null;
   /** T6c review round 3, L4: see failNextImportAfterConsuming's own doc comment. */
   private nextImportFailure: EngineError | null = null;
+  /** Stage 5, S5.2b: the body the next avatars.importAvatar's photo "shows"; see queueImportBodyProposal. */
+  private nextImportBody: BodyProposal | null = null;
   /** T8b: photo runs, oldest first (runs.list answers newest first), and their jobs. */
   private runs: MockRun[] = [];
   private runJobs: MockRunJob[] = [];
@@ -1396,6 +1399,14 @@ export class MockEngine implements EngineBridge {
    */
   failNextImportAfterConsuming(error: EngineError): void {
     this.nextImportFailure = error;
+  }
+
+  /**
+   * Stage 5, S5.2b: the next avatars.importAvatar saves its avatar with this body proposal, as the real engine does when the photo shows a body (never as traits; a photo that
+   * shows none stores nothing, which is the default). Serves one import only.
+   */
+  queueImportBodyProposal(proposal: BodyProposal): void {
+    this.nextImportBody = proposal;
   }
 
   /** The next candidate job loses `count` portraits to the age check. */
@@ -2645,7 +2656,9 @@ export class MockEngine implements EngineBridge {
           videoCount: 0,
           eligibleUnusedCount: 0,
           usage: { state: "ok" },
+          ...(this.nextImportBody === null ? {} : { bodyProposal: this.nextImportBody }),
         };
+        this.nextImportBody = null;
         this.avatars = [...this.avatars, avatar];
         this.spend(this.importPrice().expectedMicros);
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });

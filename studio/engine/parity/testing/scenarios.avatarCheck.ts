@@ -77,4 +77,31 @@ export const AVATAR_CHECK_SCENARIOS: readonly Scenario[] = [
       await control.launch.quit();
     },
   },
+  // Stage 5, S5.2b (APPENDED): the body proposal a photo import leaves on the avatar. The import itself needs the OS picker and a vision answer, which the rig does not script; its
+  // reader, its storage in the avatar's own write and the mock's proposal are held by engine.avatarsImport, importDescribe and mockEngine.body. Played here: what the proposal does NOT do.
+  {
+    name: "importBodyProposal: a check of an avatar that holds the import's body proposal is priced and refused like any other, and leaves the proposal alone",
+    rig: { bodyProposal: true },
+    async run(t, w) {
+      t.note("the avatar holds the body a photo import read");
+      await t.call("avatars.list", {});
+      await t.call("avatars.estimateCheckDescriptor", { avatarId: w.avatarId });
+      t.note("a worst case below the check's price is refused before any spend");
+      await t.call("avatars.checkDescriptor", { avatarId: w.avatarId, acceptedWorstMicros: 1 });
+      t.note("nothing was spent or written: the proposal is still there, and still not a trait");
+      await t.call("avatars.list", {});
+    },
+  },
+  {
+    name: "importBodyProposal: saving the proposal's own values («Сохранить тело») makes them the body and takes the proposal away",
+    rig: { bodyProposal: true },
+    async run(t, w) {
+      await t.call("avatars.list", {});
+      t.note("the owner saves exactly what the photo showed");
+      await t.call("avatars.setBody", { avatarId: w.avatarId, body: { bust: "full" } });
+      t.note("the proposal is gone, so a dismiss has nothing left to clear");
+      await t.call("avatars.dismissBodyProposal", { avatarId: w.avatarId });
+      await t.call("avatars.list", {});
+    },
+  },
 ];
