@@ -123,9 +123,18 @@ export const DESCRIPTOR_CHECK_JSON_SCHEMA: { name: string; schema: Record<string
 
 const MAX_ANSWER_CHARS = 24_000;
 
-/** The words of a text, lower-cased: runs of ASCII letters. */
+/**
+ * The words of a text, lower-cased: runs of ASCII letters. A word of hair is not a word of the body: «waist-length» and «hip-length» hair (any «x-length») and «the bottom»
+ * of the hair («lighter at the bottom») are left out before the words are read.
+ */
 function wordsOf(text: string): string[] {
-  return text.toLowerCase().match(/[a-z]+/g) ?? [];
+  return (
+    text
+      .toLowerCase()
+      .replace(/\b[a-z]+-length\b/g, " ")
+      .replace(/\bthe bottom\b/g, " ")
+      .match(/[a-z]+/g) ?? []
+  );
 }
 
 /**
@@ -178,6 +187,8 @@ function proposalOf(raw: unknown, stored: AvatarDescriptor, bodyPhrase: string |
   if (bodyPhrase !== null && !AvatarDescriptor.safeParse({ age: stored.age, text: `${checked.text} ${bodyPhrase}` }).success) return null;
   if (checked.text === normaliseDescriptorText(stored.text)) return null;
   if (addedBodyWords(stored.text, checked.text).length > 0) return null;
+  // Expected, documented behaviour (L5): a hair fix that also changes a build word the stored text already has («slim build» → «athletic build») is accepted, because it adds no
+  // word about the body from the list; the build is the model's word in the text, and the body traits (S5.2) are what the owner sets for the body.
   return checked.text;
 }
 

@@ -236,6 +236,23 @@ describe("the proposal's body words (N2: only the words it ADDS)", () => {
     expect(result.ok && result.check.proposal).toBeNull();
   });
 
+  test("«waist-length» and «hip-length» hair are hair, not the body: a hair fix that adds them is accepted", () => {
+    for (const length of ["waist-length", "hip-length"]) {
+      const fixed = FIXED_HAIR.replace("long straight platinum hair", `${length} straight platinum hair`);
+      expect(checkOf(answer(HAIR_WRONG, fixed)).proposal).toBe(fixed);
+    }
+  });
+
+  test("«the bottom» of the hair is not the body: «lighter at the bottom» is accepted", () => {
+    const fixed = FIXED_HAIR.replace("platinum hair with bangs", "platinum hair, lighter at the bottom, with bangs");
+    expect(checkOf(answer(HAIR_WRONG, fixed)).proposal).toBe(fixed);
+  });
+
+  test("a bare «bottom» and «legs» are still the body, beside a «-length» hair", () => {
+    expect(addedBodyWords(STORED_TEXT, FIXED_HAIR.replace("long straight", "waist-length straight").replace("a curvy figure", "a curvy figure, a round bottom"))).toEqual(["bottom"]);
+    expect(addedBodyWords(STORED_TEXT, FIXED_HAIR.replace("long straight", "waist-length straight").replace("a curvy figure", "a curvy figure, long legs"))).toEqual(["legs"]);
+  });
+
   test("addedBodyWords names what the proposal adds and nothing the stored text had", () => {
     expect(addedBodyWords(STORED_TEXT, FIXED_HAIR.replace("a curvy figure", "a curvy figure, long legs"))).toEqual(["legs"]);
     expect(addedBodyWords(STORED_TEXT, FIXED_HAIR)).toEqual([]);
