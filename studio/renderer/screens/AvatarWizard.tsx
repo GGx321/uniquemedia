@@ -4,6 +4,7 @@ import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type JobView } from "../engine/store";
 import { formatUsd, formatUsdTiered } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
+import { bodyOfTraits, bodySetCount } from "../lib/body";
 import { DEFAULT_TRAITS, randomTraits, type Traits, traitsProblem } from "../lib/traits";
 import { vibeIssues } from "../lib/vibe";
 import { useNavigate } from "../navigation";
@@ -13,8 +14,10 @@ import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { CandidatesCard, candidateLetter } from "./wizard/CandidatesCard";
+import { DescriptorCard } from "./wizard/DescriptorCard";
 import { type EstimateAction, EstimateCard } from "./wizard/EstimateCard";
 import { TraitsForm } from "./wizard/TraitsForm";
+import { type TraitsTab, type TraitsTabIds, TraitsTabs } from "./wizard/TraitsTabs";
 
 type Busy = "estimate" | "generate" | "cancel" | "save" | null;
 
@@ -82,6 +85,10 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const nameId = useId();
   const nameErrorId = useId();
   const saveHintId = useId();
+  const tabsId = useId();
+  const tabIds: TraitsTabIds = { face: `${tabsId}-face`, body: `${tabsId}-body`, facePanel: `${tabsId}-face-panel`, bodyPanel: `${tabsId}-body-panel` };
+  /** S5.2d: «Лицо и волосы» or «Тело» in the «Внешность» card; the face first, as before the body existed. */
+  const [tab, setTab] = useState<TraitsTab>("face");
 
   const [avatarId, setAvatarId] = useState<string | null>(draftId);
   const draft = avatarId === null ? null : (view.drafts.find((d) => d.avatarId === avatarId) ?? null);
@@ -160,7 +167,8 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
 
   const locked = avatarId !== null;
   const issues = vibeIssues(traits.vibe, traits.age);
-  const problem = issues.length > 0 ? "Исправьте поле «Вайб»." : traitsProblem(traits);
+  // On the «Тело» tab the vibe is out of sight: the hint says where it is (S5.2d, review L7).
+  const problem = issues.length > 0 ? (tab === "body" ? "Исправьте поле «Вайб» на вкладке «Лицо и волосы»." : "Исправьте поле «Вайб».") : traitsProblem(traits);
   const traitsValid = problem === null;
   const key = view.settings?.apiKey;
   const keyUsable = key !== undefined && key.stored && !key.rejected;
@@ -462,10 +470,18 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             <h2 id="traits-title" className="lbl">
               Внешность
             </h2>
-            {locked && <span className="tag">зафиксирована в черновике</span>}
+            <TraitsTabs tab={tab} onChange={setTab} bodyCount={bodySetCount(bodyOfTraits(traits))} ids={tabIds} />
           </div>
 
-          <TraitsForm traits={traits} onChange={changeTraits} vibeIssues={issues} locked={locked || busy === "generate"} />
+          <TraitsForm traits={traits} onChange={changeTraits} vibeIssues={issues} locked={locked || busy === "generate"} tab={tab} tabIds={tabIds} />
+
+          {/* The mockup's 03: under the fixed form, what is fixed, and that the body can still change later — free, on the avatar's page. */}
+          {locked && (
+            <p className="lock-note">
+              <Icon name="lock" size={14} strokeWidth={2} />
+              <span>Внешность и тело зафиксированы в черновике. Тело можно поменять потом — на странице аватара, бесплатно.</span>
+            </p>
+          )}
 
           {!locked && (
             <div className="wizard-form-footer">
@@ -520,20 +536,8 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
             hiddenBelowThreshold={draft?.hiddenBelowThreshold ?? 0}
           />
 
-          {draft && (
-            <section className="card descriptor-card" aria-labelledby="descriptor-title">
-              <div className="descriptor-head">
-                <h2 id="descriptor-title" className="fl">
-                  Дескриптор
-                </h2>
-                <span className="muted">уходит в каждый промпт как якорь внешности</span>
-              </div>
-              {/* Read-only: written once with the draft, the anchor of every later prompt. */}
-              <p className="descriptor-text mono" lang="en">
-                {draft.descriptor.text}
-              </p>
-            </section>
-          )}
+          {/* Before the draft, the preview of the body phrase Studio adds (S5.2d); then the draft's own descriptor, the phrase marked at its end. */}
+          <DescriptorCard draft={draft} body={bodyOfTraits(draft === null ? traits : draft.traits)} />
 
           <section className="save-bar" aria-labelledby="save-title">
             <h2 id="save-title" className="sr-only">

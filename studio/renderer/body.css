@@ -1,0 +1,411 @@
+/* ── S5.2d · «Тело»: the wizard's tabs and fields, the import's «Что прочитает Studio», and «Тело» on «Внешность» (.omc/stage5/design 01–08).
+   App tokens only. ── */
+
+/* The wizard's «Лицо и волосы» | «Тело N / 6», on the card's head row. */
+.traits-tabs button {
+  gap: 6px;
+}
+
+.tab-count {
+  color: var(--faint);
+  font-size: 10px;
+  letter-spacing: -0.02em;
+}
+
+.traits-tabs .on .tab-count {
+  color: var(--muted);
+}
+
+/* The two panels keep the form's own rhythm; a hidden one takes no room. */
+.traits-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  min-width: 0;
+}
+
+.traits-panel[hidden] {
+  display: none;
+}
+
+/* «Тело» in the wizard: one column, the gaps a little tighter than the face's, so all of it fits a 900 px window. */
+.body-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.body-fields .choice,
+.body-fields .field,
+.body-fields .segment-pair,
+.look-body-edit .choice,
+.look-body-edit .field,
+.look-body-edit .segment-pair {
+  gap: 6px;
+}
+
+.body-legend {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.choice > legend.body-legend:not(.sr-only) {
+  display: flex;
+}
+
+.body-sub {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.body-count {
+  font-size: 10.5px;
+  font-weight: 400;
+}
+
+/* «не задано»: a choice like the others, only quieter — so «unset» never reads as a pick. */
+.seg .choice-face.unset {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.seg .choice-face.unset.on {
+  background: var(--panel-3);
+  color: var(--muted);
+}
+
+.chip.unset {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.chip.unset.chip-on {
+  border-color: var(--border-strong);
+  background: var(--panel-3);
+  color: var(--muted);
+}
+
+/* «Форма попы»: five faces, a little tighter, and they wrap rather than leave a narrow card. */
+.choice-options.seg.seg-tight {
+  flex-wrap: wrap;
+}
+
+.seg-tight .choice-face {
+  padding: 0 8px;
+}
+
+/* «Тату и родинки на теле»: two rows of chips; the third mark waits until one is taken off. */
+.mark-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  clear: both;
+}
+
+.mark-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.mark-row-cap {
+  flex-shrink: 0;
+  width: 58px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chip-off {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.choice-input:disabled {
+  cursor: not-allowed;
+}
+
+.lock:disabled .chip-off {
+  opacity: 1;
+}
+
+/* Where an import's proposal took a value from. */
+.src-photo {
+  gap: 4px;
+  background: var(--ok-10);
+  color: var(--ok);
+}
+
+.src-guess {
+  gap: 4px;
+  background: var(--warn-12);
+  color: var(--warn);
+}
+
+.src-none {
+  color: var(--faint);
+}
+
+/* Under the fixed form (03): what is fixed, and that the body can change later. */
+.lock-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  padding-top: 4px;
+  color: var(--faint);
+  font-size: 12px;
+}
+
+.lock-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* ── the descriptor: the body phrase Studio writes is marked, so the owner sees what «Тело» adds ── */
+
+.desc-body {
+  padding: 1px 2px;
+  border-radius: 3px;
+  background: var(--accent-06);
+  box-shadow: inset 0 -1px 0 var(--accent-35);
+  color: var(--text);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.desc-body del.dx,
+.desc-body ins.dx {
+  padding: 0 1px;
+}
+
+.desc-pre-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.desc-pre-tag,
+.desc-head-legend {
+  margin-left: auto;
+}
+
+.descriptor-head {
+  flex-wrap: wrap;
+}
+
+.look-legend-sw {
+  flex-shrink: 0;
+  width: 14px;
+  height: 10px;
+  margin-top: 2px;
+  border-radius: 2px;
+  background: var(--accent-18);
+  box-shadow: inset 0 -1px 0 var(--accent-45);
+}
+
+/* «Описание» while «Изменить тело» is open: the preview of the change. */
+.look-desc-live {
+  border-color: var(--info-35);
+}
+
+/* ── the import (04): what the paid click reads ── */
+
+.import-reads-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.import-reads {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 0;
+  padding: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  list-style: none;
+}
+
+.import-reads li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.import-reads svg {
+  flex-shrink: 0;
+  color: var(--ok);
+}
+
+.import-reads-maybe {
+  color: var(--muted);
+}
+
+.import-reads .import-reads-maybe svg {
+  color: var(--info);
+}
+
+/* ── «Тело» on «Внешность» (05–08) ── */
+
+.look-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.look-body-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--info);
+  font-size: 12px;
+}
+
+.look-body-hint svg {
+  flex-shrink: 0;
+}
+
+.look-body-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.look-body-actions .field-hint {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0 0 0 4px;
+}
+
+.body-sum {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 28px;
+  margin: 0;
+}
+
+.body-sum > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid var(--line);
+}
+
+.body-sum > .wide {
+  grid-column: 1 / -1;
+}
+
+.body-sum dt {
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.body-sum dd {
+  margin: 0;
+  font-weight: 600;
+  text-align: right;
+}
+
+.body-sum dd.unset {
+  color: var(--faint);
+  font-weight: 500;
+}
+
+.body-nudge {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--warn-35);
+  border-radius: 10px;
+  background: var(--warn-08);
+}
+
+.body-nudge-info {
+  border-color: var(--info-35);
+  background: var(--info-08);
+}
+
+.body-nudge p {
+  flex: 1;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+}
+
+.body-nudge b {
+  color: var(--text);
+}
+
+/* «Изменить тело»: short fields in two columns; «Ноги» and «Попа» full-width rows, where both segments of a pair fit one line. */
+.look-body-edit {
+  container: lookbody / inline-size;
+  border-color: var(--accent-35);
+}
+
+.look-body-edit > .lock {
+  display: flex;
+  flex-direction: column;
+}
+
+.body-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px 32px;
+}
+
+.body-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.body-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.body-grid .choice-options.seg .choice-face {
+  padding: 0 9px;
+}
+
+@container lookbody (width < 760px) {
+  .body-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* «Телосложение» on «Внешность» (D1): read-only — the build word is the description's, changed there. */
+.body-build-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  font-size: 12.5px;
+  line-height: 34px;
+}
+
+.body-build-value b {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.body-build-value .faint {
+  font-size: 12px;
+}
