@@ -333,7 +333,19 @@ export interface RigOptions {
    * its clock. Without it the real rig plugs `IDLE_STEPS` and the mock keeps its canned launch (the S4.1 stories are bound to both).
    */
   readonly launch?: boolean;
+  /**
+   * Stage 5 (S5.2a): Mia holds a stored body proposal (`PARITY_BODY_PROPOSAL`), as a photo import leaves one. The real rig writes it into her `avatar.json` before the engine opens
+   * the library; the mock is seeded with the same. No older story asks for it, so their lines are unchanged.
+   */
+  readonly bodyProposal?: boolean;
 }
+
+/** The body proposal of a rig with `bodyProposal`: what a photo import read (a bust and a height it could not see), kept on Mia until the owner saves or dismisses it. */
+export const PARITY_BODY_PROPOSAL = {
+  values: { bust: "full" as const },
+  seen: { bust: "photo" as const, height: "not-visible" as const },
+  at: "2026-10-10T10:00:00.000Z",
+};
 
 /** The custom category of a rig with `categories`: what the real store holds and the mock lists. */
 export const PARITY_CATEGORY: Omit<CategorySummary, "createdAt" | "updatedAt"> = {
@@ -453,10 +465,11 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     ...Array.from({ length: MAIN_PHOTOS }, (_, i) => scenePhoto(i + 1)),
     ...Array.from({ length: OTHER_PHOTOS }, (_, i) => scenePhoto(i + 1, {}, SOFIA)),
   ];
+  const proposed = options.bodyProposal === true ? { bodyProposal: { values: { ...PARITY_BODY_PROPOSAL.values }, seen: { ...PARITY_BODY_PROPOSAL.seen }, at: PARITY_BODY_PROPOSAL.at } } : {};
   const avatars: AvatarSummary[] = [
     options.usage === undefined
-      ? { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS }
-      : { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: 0, usage: { state: "unknown", reasons: [options.usage] } },
+      ? { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: MAIN_PHOTOS, ...proposed }
+      : { ...MIA, photoCount: MAIN_PHOTOS, eligibleUnusedCount: 0, usage: { state: "unknown", reasons: [options.usage] }, ...proposed },
     { ...SOFIA, photoCount: OTHER_PHOTOS, eligibleUnusedCount: OTHER_PHOTOS },
     { ...NORA, photoCount: 0, eligibleUnusedCount: 0 },
   ];
@@ -766,6 +779,12 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
   const otherPhotoIds = await seedPhotos(library, otherAvatarId, OTHER_PHOTOS, 2);
   const archivedAvatarId = await seedAvatar(library, "Nora", master);
   if (options.usage !== undefined) await breakUsage(join(dir, "library", "avatars", avatarId), avatarId, options.usage);
+  if (options.bodyProposal === true) {
+    // Written into the file before the engine opens the library (the rig's own `library` is only the seeder), as a photo import's single atomic write leaves it.
+    const manifestPath = join(dir, "library", "avatars", avatarId, "avatar.json");
+    const manifest: unknown = JSON.parse(await readFile(manifestPath, "utf8"));
+    await writeFile(manifestPath, JSON.stringify({ ...(typeof manifest === "object" && manifest !== null ? manifest : {}), bodyProposal: PARITY_BODY_PROPOSAL }));
+  }
   if (options.categories === true) {
     await library.categories.create(PARITY_CATEGORY);
     if (options.secondCategory === true) await library.categories.create(PARITY_SECOND_CATEGORY);

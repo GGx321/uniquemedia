@@ -65,6 +65,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "the price of drawing photos (S4.6p, `runs.estimateImages`): the figures are each engine's own prices (the mock's fixed image price, the engine's bundled table), so the transcript writes the photos the price is for, that expected is within worst, that the figure is above zero exactly when there are photos, and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. A refusal's text names the launch or the avatar in each engine's words: its code is compared",
   "the plan card's figures (S4.10 fix B, `Transcript.callCard`): the number of candidate tracks, the OpenRouter balance in micro-dollars and the export volume's free bytes are each rig's own (the rig's track list and the mock's canned figures, the fake OpenRouter's credits, a free-space figure the story sets), so a story that asks writes only that they are FILLED (`candidates > 0`, `balance !== null`, `freeBytes !== null`); the word on the automatic refresh is written by every estimate and is the same rule in both engines (shared/autopilot/autoRefresh.ts)",
   "the descriptor edit (Stage 5, S5.0a, `avatars.editDescriptor`): played are the edit and its fold, the stale proposal, one refusal per rule (the closed `descriptorReason` and a youth word's `descriptorWords`), the refusals before the text, an archived avatar, and an edit during an autopilot launch. Not played: the IN_FLIGHT a rewrite, a candidates batch, an archive or a delete gives (the mock runs those to their end at once; a testkit switch, `setAvatarEditing`, says it, and the engine's own tests hold the claim), a draft, and an unreadable entry (the mock keeps no stored text for it, so it answers NOT_FOUND where the engine can mend it from its stored text): engine.editDescriptor and mockEngine.editDescriptor hold those. The VALIDATION detail is not compared, as for every VALIDATION",
+  "the body (Stage 5, S5.2a, `avatars.setBody`, `avatars.dismissBodyProposal`): played are the write and its replace-the-whole-body rule, the refusals the contract and the composite give (the closed `descriptorReason` `too-long-with-body`, from either side: a body on a long text and a long text on a body), an archived avatar, the stored proposal cleared by a body and by a dismiss, and a body set while an autopilot launch holds the avatar. The summary's `body` and `bodyProposal` are written only when set (`avatarLine`), so every older line is unchanged. Not played: the IN_FLIGHT a rewrite, a candidates batch, an archive or a delete gives, a draft, and a schema-version-1 record (the mock keeps no record version), the write race inside the library's lock, and the phrase in a run's prompt (the mock draws no prompt): engine.body, mockEngine.body and the prompt tests hold those. The VALIDATION detail is not compared, as for every VALIDATION",
   "the descriptor check (Stage 5, S5.0c, `avatars.estimateCheckDescriptor`, `avatars.checkDescriptor`): the rig scripts no chat, so only the FREE commands and the free refusals of the paid one are played (an unknown avatar, a worst case below the price, a payload the contract refuses, the claim a running launch holds). The price is each engine's own (the mock's fixed figures, the engine's bundled table), so the transcript writes that it is ordered (expected within worst), that it is a price (above zero) and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. The text of a check's PRICE_CHANGED is each engine's own (the engine's names both sums, the mock's none): its code is compared; every other refusal's text is compared. A check that RUNS (the verdict, the money flow, an import's `descriptorCheck`, that it never writes) is held by engine.checkDescriptor, engine.avatarsImport and mockEngine.checkDescriptor. No key (AUTH_INVALID) and no library (LIBRARY_UNAVAILABLE) cannot be played in the rig (it always has both) and are held by engine.checkDescriptor and mockEngine.checkDescriptor. A draft, an unreadable stored descriptor (DESCRIPTOR_INVALID) and the other jobs' claims (a rewrite, a candidates batch, an archive, a delete) are held by those suites too",
 ];
 
@@ -211,6 +212,9 @@ function avatarLine(avatar: unknown): Record<string, unknown> {
     videoCount: a.videoCount,
     eligibleUnusedCount: a.eligibleUnusedCount,
     ...(usage?.state === "ok" ? {} : { usage: a.usage ?? null }),
+    // Stage 5 (S5.2a): written only when the avatar has them (the summaries omit both when unset), so every older line stays as it was.
+    ...(a.body === undefined ? {} : { body: a.body }),
+    ...(a.bodyProposal === undefined ? {} : { bodyProposal: a.bodyProposal }),
   };
 }
 
@@ -400,8 +404,9 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
       }),
     )}`;
   }
-  if (type === "avatars.editDescriptor") {
-    // Stage 5 (S5.0a): the avatar's text is what the owner sent, folded, and its age: the same in both engines. The rest of the summary is `avatarLine`'s.
+  if (type === "avatars.editDescriptor" || type === "avatars.setBody" || type === "avatars.dismissBodyProposal") {
+    // Stage 5 (S5.0a): the avatar's text is what the owner sent, folded, and its age: the same in both engines. The rest of the summary is `avatarLine`'s (S5.2a: its body and proposal included,
+    // which is how `setBody` and `dismissBodyProposal` are told).
     const avatar = objectOf(answer.result.avatar);
     const descriptor = objectOf(avatar.descriptor);
     return `< ok ${compact(norm.value({ ...avatarLine(avatar), descriptor: { age: descriptor.age, text: descriptor.text } }))}`;
