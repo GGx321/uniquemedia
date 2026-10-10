@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
-import { AvatarDescriptor, AvatarTraits } from "../../shared/engine";
+import { adultTextProblems, AvatarDescriptor, AvatarTraits, HairColor } from "../../shared/engine";
 import {
   IMPORT_DESCRIBE_JSON_SCHEMA,
   importDescribeMessages,
@@ -42,6 +45,46 @@ describe("importDescribeMessages", () => {
     // Every enum the model must pick from is named, so it cannot invent one outside the contract.
     for (const word of ["european", "latina", "asian", "african", "mixed"]) expect(messages[0]?.content).toContain(word);
     for (const word of ["slim", "athletic", "soft", "curvy"]) expect(messages[0]?.content).toContain(word);
+  });
+
+  // S5.0b: the full system prompt is a deliberate fixture. Any edit to the
+  // prompt (or to an enum it lists) fails here on purpose: re-pin it in the
+  // same commit as the edit, with the reason in the message.
+  test("the system prompt is pinned to its fixture, word for word", () => {
+    const fixture = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "import-describe-system-prompt.txt"), "utf8");
+    expect(`${importDescribeMessages()[0]?.content}\n`).toBe(fixture);
+  });
+
+  test("the hair rule: describe the real colour exactly as seen, never forced to the nearest trait choice", () => {
+    const system = String(importDescribeMessages()[0]?.content);
+    expect(system).toContain("Describe her hair exactly as the photo shows it");
+    for (const colour of ["platinum", "white", "silver", "grey", "pastel pink", "ombre", "dyed ends"]) expect(system).toContain(colour);
+    expect(system).toContain("even when the hairColor trait above had to take the nearest choice");
+  });
+
+  test("every example hair colour in the rule passes the descriptor's own word rules inside a realistic descriptor", () => {
+    const system = String(importDescribeMessages()[0]?.content);
+    const list = /real colour \(for example ([^)]+)\)/.exec(system)?.[1];
+    if (list === undefined) throw new Error("the hair rule's example list is missing");
+    const examples = list.split(/, | or /).filter((e) => e !== "");
+    expect(examples.length).toBeGreaterThanOrEqual(5);
+    for (const example of examples) {
+      const text = `27-year-old European woman, fair skin, brown eyes, long straight ${example} hair, slim build.`;
+      expect({ example, problems: adultTextProblems(text, 27, "descriptor") }).toEqual({ example, problems: [] });
+    }
+  });
+
+  test("the hairColor trait stays a choice among the six enum values, and the other descriptor rules survive the hair rule", () => {
+    const system = String(importDescribeMessages()[0]?.content);
+    expect(HairColor.options).toHaveLength(6);
+    expect(system).toContain(`- hairColor: one of ${HairColor.options.join(", ")}.`);
+    expect(system).toContain("no height or weight");
+    expect(system).toContain("No counts");
+  });
+
+  test("a retry's feedback does not change the pinned system prompt", () => {
+    const first = importDescribeMessages()[0]?.content;
+    expect(importDescribeMessages({ problems: ["empty"], words: [] })[0]?.content).toBe(first);
   });
 
   test("no user-entered text ever reaches the prompt: the messages take no arguments besides the previous refusal", () => {

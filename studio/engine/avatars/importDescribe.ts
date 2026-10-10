@@ -79,6 +79,7 @@ function systemPrompt(): string {
     '- No counts: write "a" ("a mole", "a dimple"), and no digits or number words other than the age at the start.',
     '- Always call her a woman. Never use "youthful", "young", "boyish" or any word for a young person or anything that suggests she is not a grown adult; for size say "small", never "tiny" or "petite".',
     "- Mention her skin, eyes, hair (length, texture and colour), build and every distinctive mark you listed. You may add at most three neutral facial details that fit the photo, such as high cheekbones, full eyebrows or a soft jawline.",
+    "- Describe her hair exactly as the photo shows it: its real colour (for example platinum, white, silver, grey, pastel pink, ombre or dyed ends), its length, its texture and any bangs, even when the hairColor trait above had to take the nearest choice.",
     "- No clothing, jewellery other than a given piercing, pose, expression, setting, lighting, camera or photo style.",
     "- Plain English letters, spaces and ordinary punctuation (, . ; : - ' \" ( ) / & !) only.",
     "",
