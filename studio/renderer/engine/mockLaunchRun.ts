@@ -26,8 +26,13 @@ import type { MockAutopilotWorld, MockLaunch } from "./mockAutopilot";
 //    free hold of the export folder (a missing folder or a full disk), the waiting reasons, and a video that waits for a track;
 //  - money is booked in the mock's ledger as the engine books it: a reserve at the attempt's worst case, settled at the expected cost on the next tick, so a launch's «Потрачено» moves.
 //
+// S4.10 fix D: the launch makes what the engine's makes, so the owner's side of the library meets it as it meets the engine's. Its scene set is a real set of the mock's library from the compose's
+// first request on (named by the launch while the launch is unfinished, frozen once the draw begins, refusing the owner's commands as `launch-set`); each slice of the draw is a run of the library
+// that carries the launch's id, with a job that holds the avatar and is announced as a run job is; the first slice runs under the set's own run id, which uses the set.
+//
 // What it does NOT model (the engine does): the planner's seeded sizes and PDQ rules (the plan is the mock's own, mockAutopilot.ts), photos that fail the face or moderation gates (so the
-// failure-rate guard and a degraded video never happen), an owner's edit of the scenes during the review. A render that fails is a testkit switch (`failLaunchRender`): one free retry, then the
+// failure-rate guard and a degraded video never happen), what an owner's edit of the scenes during the review changes in the draw (the row follows the set's revision, so a stale «Продолжить
+// запуск» is refused, but a removed scene still draws; the scene counts stay the plan's). A render that fails is a testkit switch (`failLaunchRender`): one free retry, then the
 // video is dropped (S4.6r); a folder that goes away while a render runs holds the renders without using the retry.
 
 /** The photos a video of a shape has when its photos are generated, as the engine's planner draws them (`GENERATED_SIZE`). */
@@ -85,7 +90,12 @@ interface Work {
   setId: string | null;
   /** The writer has answered: the set's scenes have their sentences. A set exists (and shows) from the compose's start, with none written. */
   written: boolean;
-  revision: number;
+  /** The draw started from the set (the engine's `launchDraw`): its scenes are the launch's, frozen. */
+  frozen: boolean;
+  /** The slices of the draw begun so far, the run of the latest and whether its job is open. A slice is at most `LAUNCH_SLICE_MAX_PHOTOS` photos; the first runs under the set's own run id. */
+  slices: number;
+  sliceRun: string | null;
+  sliceOpen: boolean;
   drawn: number;
   drawnIds: string[];
   libraryDone: boolean;
@@ -93,6 +103,8 @@ interface Work {
   capped: boolean;
   busyLogged: boolean;
   unknownLogged: boolean;
+  /** The wait for the owner's open set is logged once per episode (the engine's `open-set` line). */
+  openSetLogged: boolean;
 }
 
 interface Reserve {
@@ -181,13 +193,17 @@ export class MockRun {
         skipped: null,
         setId: null,
         written: false,
-        revision: 1,
+        frozen: false,
+        slices: 0,
+        sliceRun: null,
+        sliceOpen: false,
         drawn: 0,
         drawnIds: [],
         libraryDone: false,
         capped: false,
         busyLogged: false,
         unknownLogged: false,
+        openSetLogged: false,
       };
     });
     this.#sync();
@@ -228,6 +244,11 @@ export class MockRun {
     return this.#launch.status !== "done" && this.#launch.status !== "stopped";
   }
 
+  /** The rows read again (the set's revision moved under an owner's edit). */
+  resync(): void {
+    this.#sync();
+  }
+
   /** What the rows of `launch.avatars` and the videos of `launch.videos` say, derived from the work. */
   #sync(): void {
     this.#sweep();
@@ -243,7 +264,6 @@ export class MockRun {
       const generating = work.toGenerate > 0;
       const phase: AvatarPhase = work.skipped !== null ? "skipped" : work.waiting !== null ? "waiting" : this.#phaseOf(work, counted.length, rendered, done);
       const drawing = phase === "drawing" || (work.waiting !== null && work.phase === "drawing");
-      const left = work.toGenerate - work.drawn;
       const dropped = work.slots.filter((s) => s.dropReason !== null);
       const reasons = new Map<DropReason, number>();
       for (const slot of dropped) if (slot.dropReason !== null) reasons.set(slot.dropReason, (reasons.get(slot.dropReason) ?? 0) + 1);
@@ -251,6 +271,7 @@ export class MockRun {
       const sliceTotal = Math.max(1, Math.ceil(work.toGenerate / LAUNCH_SLICE_MAX_PHOTOS));
       // An ended launch has let its sets go (the engine's `complete` and `release` clear the mirrors): the rows name no set.
       const setId = this.#unfinished() ? work.setId : null;
+      const revision = setId === null ? null : (this.#w.launchSetRevision(setId) ?? 1);
       return {
         avatarId: work.avatarId,
         phase,
@@ -260,15 +281,16 @@ export class MockRun {
         montage: { done: rendered, total: counted.length },
         videos: { done, total: counted.length },
         sceneSetId: setId,
-        setRevision: setId === null ? null : work.revision,
+        setRevision: revision,
         scenes: setId === null ? null : work.toGenerate,
         scenesWithoutText: setId === null ? null : 0,
         continuePhotos: setId === null ? null : work.written ? work.toGenerate : 0,
         slice: drawing && generating ? { index: Math.min(sliceTotal, Math.floor(work.drawn / LAUNCH_SLICE_MAX_PHOTOS) + 1), total: sliceTotal } : null,
         dropped: topReason === undefined ? null : { count: dropped.length, reason: topReason },
         waitingMusic: work.slots.filter((s) => s.state === "waiting-music").length,
-        undrawnScenes: drawing ? left : 0,
-        resumableSlots: drawing ? left : 0,
+        // Disjoint, as the engine's mirror has them (plan §3.7): the scenes no slice has taken yet, and the open slots of the slices already begun.
+        undrawnScenes: drawing ? Math.max(0, work.toGenerate - Math.min(work.toGenerate, work.slices * LAUNCH_SLICE_MAX_PHOTOS)) : 0,
+        resumableSlots: drawing ? this.#openSlots(work) : 0,
         drawAllocationMicros: generating ? work.toGenerate * this.#w.unit().photoWorstMicros : null,
       };
     });
@@ -413,8 +435,10 @@ export class MockRun {
         if (work.phase === "composing") {
           this.#openSet(work);
           work.written = true;
+          if (work.setId !== null) this.#w.writeLaunchSet(work.setId);
           this.#log({ at: this.#at(), kind: "scenes-ready", avatarId: work.avatarId, scenes: work.toGenerate, withoutText: 0 });
-          work.phase = this.#review ? "awaiting-review" : "drawing";
+          if (this.#review) work.phase = "awaiting-review";
+          else this.#startDraw(work);
         }
       } else {
         this.#close(key, this.#w.unit().photoExpectedMicros);
@@ -422,10 +446,15 @@ export class MockRun {
       }
     }
     for (const [work, count] of arrived) {
-      work.drawnIds.push(...this.#w.drawPhotos(work.avatarId, count, this.#categories[0] ?? "home"));
+      // One photo at a time, so a batch that crosses a slice's end lands in the right slice run: the first slice ends at its 25th photo and the next begins.
       for (let i = 0; i < count; i++) {
+        const runId = this.#ensureSlice(work, work.drawn + 1);
+        const ids = this.#w.drawPhotos(work.avatarId, 1, this.#categories[0] ?? "home", runId);
+        work.drawnIds.push(...ids);
         work.drawn += 1;
+        if (runId !== null) this.#w.sliceProgress(runId, ids, this.#w.unit().photoExpectedMicros);
         this.#log({ at: this.#at(), kind: "photo", avatarId: work.avatarId, done: work.drawn, total: work.toGenerate });
+        if (work.drawn % LAUNCH_SLICE_MAX_PHOTOS === 0 || work.drawn >= work.toGenerate) this.#closeSlice(work, "done");
       }
       if (work.drawn >= work.toGenerate) work.phase = "montage";
     }
@@ -473,11 +502,17 @@ export class MockRun {
       return "waits";
     }
     work.busyLogged = false;
-    if (step === "compose" && this.#w.hasOwnersOpenSet(work.avatarId)) {
+    if (step === "compose" && this.#w.hasOwnersOpenSet(work.avatarId, work.setId ?? "")) {
+      // One line per episode, like the engine's (`open-set`): the poll writes nothing.
+      if (!work.openSetLogged) {
+        work.openSetLogged = true;
+        this.#log({ at: this.#at(), kind: "open-set", avatarId: work.avatarId });
+      }
       work.waiting = "open-set";
       this.#worldWait = true;
       return "waits";
     }
+    work.openSetLogged = false;
     work.waiting = null;
     const unit = this.#w.unit();
     const left = work.toGenerate - work.drawn;
@@ -500,6 +535,7 @@ export class MockRun {
       this.#reserve("writer", work.avatarId, chunks * unit.writerChunkWorstMicros, true);
       return "moved";
     }
+    this.#ensureSlice(work, work.drawn + 1);
     if (work.drawn % LAUNCH_SLICE_MAX_PHOTOS === 0 && !this.#openImages(work)) {
       const photos = Math.min(LAUNCH_SLICE_MAX_PHOTOS, left);
       this.#log({
@@ -520,13 +556,64 @@ export class MockRun {
   #openSet(work: Work): void {
     if (work.setId !== null) return;
     work.setId = `set-mock-${this.#number}-${work.index + 1}`;
-    work.revision = 1;
+    // A real set of the library, as the engine's compose makes it: the avatar's open set, named by the launch, with no sentence written yet.
+    this.#w.openLaunchSet({ avatarId: work.avatarId, sceneSetId: work.setId, count: work.toGenerate, categories: this.#categories, launchId: this.#launch.launchId });
+  }
+
+  /** The draw begins (the review's approval, or a compose with the review off): the set's scenes are frozen and the avatar draws. */
+  #startDraw(work: Work): void {
+    work.phase = "drawing";
+    work.frozen = true;
+    if (work.setId !== null) this.#w.freezeLaunchSet(work.setId);
+  }
+
+  /** Photos still to come in the slices begun: the open slots of the draw, which a resume could fill. */
+  #openSlots(work: Work): number {
+    if (work.slices === 0) return 0;
+    const lastPhotos = Math.min(LAUNCH_SLICE_MAX_PHOTOS, work.toGenerate - (work.slices - 1) * LAUNCH_SLICE_MAX_PHOTOS);
+    return Math.max(0, lastPhotos - (work.drawn - (work.slices - 1) * LAUNCH_SLICE_MAX_PHOTOS));
+  }
+
+  /**
+   * The slice run the `photoNo`th photo of the avatar's draw belongs to, begun (or taken up again after a hold, a pause or a restart) when it is not open. Null when the avatar draws
+   * nothing. The previous slice, if one is still open, ends done: its 25 photos are in.
+   */
+  #ensureSlice(work: Work, photoNo: number): string | null {
+    if (work.setId === null || work.toGenerate === 0) return null;
+    const index = Math.ceil(photoNo / LAUNCH_SLICE_MAX_PHOTOS);
+    if (work.sliceRun !== null && work.slices === index && work.sliceOpen) return work.sliceRun;
+    if (work.sliceOpen) this.#closeSlice(work, "done");
+    const photos = Math.min(LAUNCH_SLICE_MAX_PHOTOS, work.toGenerate - (index - 1) * LAUNCH_SLICE_MAX_PHOTOS);
+    const unit = this.#w.unit();
+    // A slice taken up again is the same run under a new job; a new one is a run of its own.
+    const runId = this.#w.startSlice({
+      launchId: this.#launch.launchId,
+      avatarId: work.avatarId,
+      sceneSetId: work.setId,
+      index,
+      photos,
+      capMicros: photos * unit.photoWorstMicros,
+      category: this.#categories[0] ?? "home",
+      ...(work.slices === index && work.sliceRun !== null ? { resume: work.sliceRun } : {}),
+    });
+    work.slices = index;
+    work.sliceRun = runId;
+    work.sliceOpen = true;
+    return runId;
+  }
+
+  /** The slice's job ends (`done`: its photos are in or its cap ended it; `cancelled`: a hold, a pause or a stop; `gone`: the process died). The run stays, the owner's once the launch ends. */
+  #closeSlice(work: Work, how: "done" | "cancelled" | "gone"): void {
+    if (!work.sliceOpen || work.sliceRun === null) return;
+    work.sliceOpen = false;
+    this.#w.endSlice(work.sliceRun, how);
   }
 
   /** The cap is used: no more is bought for this avatar; the videos its photos cannot fill are dropped, the rest go on (the engine's §4.6 `RUN_CAP_EXCEEDED` row). */
   #capEnd(work: Work): void {
     work.capped = true;
     work.phase = "montage";
+    this.#closeSlice(work, "done");
     let missing = 0;
     let fewer = 0;
     for (const slot of work.slots) {
@@ -541,6 +628,11 @@ export class MockRun {
 
   #openImages(work: Work): boolean {
     return [...this.#open.values()].some((r) => r.avatarId === work.avatarId && r.kind === "image");
+  }
+
+  /** A request of this process is out for the avatar's draw. */
+  #liveImages(work: Work): boolean {
+    return [...this.#open.values()].some((r) => r.avatarId === work.avatarId && r.kind === "image" && r.live);
   }
 
   /**
@@ -603,7 +695,7 @@ export class MockRun {
 
   #room(): number {
     const month = this.#w.month();
-    return Math.max(0, month.budgetMicros - month.spentAndOpenMicros);
+    return Math.max(0, month.budgetMicros - month.committedMicros);
   }
 
   #budgetKind(work: Work, step: "compose" | "draw"): "new-slice" | "resume-slice" {
@@ -615,6 +707,8 @@ export class MockRun {
     // One hold stands, by rank (the engine's `holdRank`, S4.6b2 and S4.6r): a hold displaces the one that stands only by a higher rank, and among equals the first stays. The avatar is parked either way.
     const standing = this.#launch.paidHold;
     this.#raiseWon = standing === null || holdRank(hold) > holdRank(standing);
+    // A slice whose requests are all answered or lost ends with the hold (the engine's job ends and «Продолжить» takes the same run up again); another avatar's request still out keeps its own.
+    for (const other of this.#work) if (other.sliceOpen && !this.#liveImages(other)) this.#closeSlice(other, "cancelled");
     work.waiting = "paid-hold";
     for (const other of this.#work) if (other !== work && other.toGenerate > 0 && other.skipped === null && other.phase !== "montage" && other.phase !== "done" && other.phase !== "awaiting-review") other.waiting = "paid-hold";
     if (!this.#raiseWon) return "held";
@@ -679,7 +773,8 @@ export class MockRun {
       if (this.#launch.status !== "running" || this.#launch.paidHold !== hold) return;
       this.#host.enter();
       try {
-        if (this.#w.admission() !== null || this.#w.keyState() !== "ok") {
+        // The engine's `#fire` asks the ledger's admission only: a key that went bad meanwhile is found by the step the wait lets go on, and held there.
+        if (this.#w.admission() !== null) {
           // The wait ends and a person decides: the same hold with no retry left.
           if (hold.reason === "network") this.#launch.paidHold = { ...hold, detail: { ...hold.detail, nextAt: null } };
           else if (hold.reason === "price-unavailable") this.#launch.paidHold = { ...hold, detail: { ...hold.detail, nextAt: null } };
@@ -710,7 +805,7 @@ export class MockRun {
     this.#unpark();
     for (const work of this.#work) {
       if (work.skipped === null && !this.#w.avatarActive(work.avatarId)) this.#skip(work, "archived");
-      else if (work.phase === "approved-waiting") work.phase = "drawing";
+      else if (work.phase === "approved-waiting") this.#startDraw(work);
       // A compose whose request died with the process is made again (its set stays; the ids are the same).
       else if (work.phase === "composing" && ![...this.#open.values()].some((r) => r.live && r.avatarId === work.avatarId)) work.phase = "planned";
     }
@@ -917,6 +1012,7 @@ export class MockRun {
   #finish(): void {
     this.#dropUnmetJobFaults();
     this.#cancelAll();
+    for (const work of this.#work) this.#closeSlice(work, "done");
     for (const work of this.#work) if (work.skipped === null) work.phase = "done";
     const launch = this.#launch;
     launch.paidHold = null;
@@ -932,7 +1028,13 @@ export class MockRun {
     this.#log({ at: launch.endedAt, kind: "done", videosDone, videosPlanned: launch.plan.videos });
     this.#sync();
     this.#lastView = "";
+    this.#releaseSets();
     this.#host.announce();
+  }
+
+  /** The launch has ended: its sets are the owner's again (the engine unlinks them), and every window is told. */
+  #releaseSets(): void {
+    for (const work of this.#work) if (work.setId !== null) this.#w.releaseLaunchSet(work.setId);
   }
 
   // ---------- the owner's clicks ----------
@@ -952,6 +1054,7 @@ export class MockRun {
     const { requests, renders } = this.flight();
     if (requests === 0 && renders === 0) {
       this.#cancelAll();
+      for (const work of this.#work) this.#closeSlice(work, "cancelled");
       return true;
     }
     this.#schedule(true);
@@ -964,6 +1067,7 @@ export class MockRun {
     for (const work of this.#work) for (const slot of work.slots) if (slot.state === "rendering") this.#land(work, slot);
     const launch = this.#launch;
     if (launch.status === "pausing") {
+      for (const work of this.#work) this.#closeSlice(work, "cancelled");
       launch.status = "paused";
       launch.paused = { cause: "owner", at: this.#at() };
       this.#log({ at: this.#at(), kind: "paused" });
@@ -981,9 +1085,12 @@ export class MockRun {
     this.#dropUnmetJobFaults();
     this.#cancelAll();
     this.#settleLive();
+    for (const work of this.#work) this.#closeSlice(work, "cancelled");
     for (const work of this.#work) for (const slot of work.slots) if (slot.state === "rendering") this.#land(work, slot);
     const launch = this.#launch;
     for (const work of this.#work) {
+      // The engine's final write clears the waiting rows and a row that waited reads `done`: every one of its videos is final (fix A).
+      if (work.waiting !== null && work.skipped === null) work.phase = "done";
       work.waiting = null;
       for (const slot of work.slots) {
         if (slot.state === "done" || slot.state === "dropped") continue;
@@ -991,8 +1098,6 @@ export class MockRun {
         slot.state = "dropped";
         slot.dropReason = "launch-stopped";
       }
-      // A set the launch composed and never drew from goes back to the owner as an open set of their own (§3.7): a draw that began has used it.
-      if (work.setId !== null && work.drawn === 0) this.#w.leaveOpenSet(work.avatarId, work.setId, work.written ? work.toGenerate : 0, work.toGenerate);
     }
     launch.paidHold = null;
     launch.freeHold = null;
@@ -1005,6 +1110,8 @@ export class MockRun {
     this.#log({ at: launch.endedAt, kind: "stopped", spentMicros: launch.spentMicros });
     this.#sync();
     this.#lastView = "";
+    // A set the launch composed and never drew from is the avatar's own open set again (§3.7), and a drawn one is used: either way it no longer names the launch.
+    this.#releaseSets();
     this.#host.announce();
   }
 
@@ -1032,7 +1139,8 @@ export class MockRun {
   review(avatarId: string, paused: boolean): number | null {
     const work = this.#work.find((w) => w.avatarId === avatarId);
     if (work === undefined || work.phase !== "awaiting-review") return null;
-    work.phase = paused ? "approved-waiting" : "drawing";
+    if (paused) work.phase = "approved-waiting";
+    else this.#startDraw(work);
     this.#sync();
     if (!paused) this.#schedule(true);
     return work.toGenerate;
@@ -1041,6 +1149,7 @@ export class MockRun {
   /** The process died (or the app quit): nothing is in flight any more, the requests' reserves stay open, the renders are gone. */
   processEnded(cause: "quit" | "engine-restart"): { requests: number } {
     this.#cancelAll();
+    for (const work of this.#work) this.#closeSlice(work, "gone");
     const requests = [...this.#open.values()].filter((r) => r.live).length;
     for (const reserve of this.#open.values()) reserve.live = false;
     for (const work of this.#work) {

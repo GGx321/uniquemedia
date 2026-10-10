@@ -248,6 +248,11 @@ describe("autopilot.estimate: the music line follows the engine's auto-refresh r
     expect([await word(71), await word(72)]).toEqual(["no-quota", "will"]);
   });
 
+  test("an automatic sends file with a line that cannot be read is no-quota, whatever it counts (the engine reads a damaged log as the limit)", async () => {
+    expect((await musicOf(musicWorld({ autoSendsDamaged: true }))).autoRefresh).toBe("no-quota");
+    expect((await musicOf(musicWorld({}))).autoRefresh).toBe("will");
+  });
+
   test("9 automatic refreshes in the window is will, 10 is no-quota", async () => {
     const word = async (n: number) => (await musicOf(musicWorld({ autoSendsHoursAgo: Array.from({ length: n }, (_, i) => 96 + i * 2) }))).autoRefresh;
     expect([await word(9), await word(10)]).toEqual(["will", "no-quota"]);

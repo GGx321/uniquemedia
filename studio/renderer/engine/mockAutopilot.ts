@@ -66,16 +66,16 @@ export interface MockAutopilotWorld {
   busy(avatarId: string): boolean;
   /** The avatar has an open scene set: one of the owner's own, or the unfinished launch's (composed, not drawn from yet). A plan that needs new photos for it cannot start. */
   hasOpenSet(avatarId: string): boolean;
-  /** The avatar has an open scene set of the OWNER's own (what a launch's compose waits for). */
-  hasOwnersOpenSet(avatarId: string): boolean;
+  /** The avatar has an open scene set of the OWNER's own, other than `exceptSetId` (what a launch's compose waits for). */
+  hasOwnersOpenSet(avatarId: string, exceptSetId: string): boolean;
   /** The avatar is a saved, active one (it can be archived while a launch is paused). */
   avatarActive(avatarId: string): boolean;
   /** The library can say which of the avatar's photos are free (its usage and drafts are known). */
   libraryKnown(avatarId: string): boolean;
   unit(): MockAutopilotUnit;
   prices(): { prices: Estimate["prices"]; pricesAsOf: string };
-  /** The month's budget, and what is spent and reserved in it. */
-  month(): { budgetMicros: number; spentAndOpenMicros: number };
+  /** The month's budget, and what is committed in it: spent, open, and (A21) the unspent rest of every running job's cap. */
+  month(): { budgetMicros: number; committedMicros: number };
   /** The key, then the ledger's admission rule: the engine's first checks before any paid call. */
   paidGate(): EngineError | null;
   keyState(): "ok" | "missing" | "rejected";
@@ -108,10 +108,27 @@ export interface MockAutopilotWorld {
   claimPhotos(avatarId: string, categories: readonly CategoryRef[], n: number, taken: ReadonlySet<string>): string[] | null;
   /** The photos a launch's videos hold are reserved (not free) until their record lands. */
   holdPhotos(photoIds: readonly string[], held: boolean): void;
-  /** A stopped launch lets go of a set it composed and never drew from: it is the avatar's own open set again (paid for; drawing or discarding it is the owner's call). */
-  leaveOpenSet(avatarId: string, sceneSetId: string, written: number, count: number): void;
-  /** `n` photos the launch's draw made for the avatar (new library photos), in order. */
-  drawPhotos(avatarId: string, n: number, category: CategoryRef): string[];
+  /**
+   * The launch's scene set (S4.10 fix D), the way the engine's compose makes one: it exists from the compose's first request (`openLaunchSet`), the writer's answer gives it its sentences
+   * (`writeLaunchSet`), the draw's start freezes its scenes (`freezeLaunchSet`), and the end of the launch lets it go (`releaseLaunchSet`: announced, no launch on it).
+   */
+  openLaunchSet(set: { avatarId: string; sceneSetId: string; count: number; categories: readonly CategoryRef[]; launchId: string }): void;
+  writeLaunchSet(sceneSetId: string): void;
+  freezeLaunchSet(sceneSetId: string): void;
+  releaseLaunchSet(sceneSetId: string): void;
+  /** The set's revision as the library holds it (the owner's edits move it), or null with no such set. */
+  launchSetRevision(sceneSetId: string): number | null;
+  /**
+   * A slice of the draw begins: its run and the job that holds the avatar. Answers the run's id (the first slice's is the set's pre-issued one, which uses the set). With `resume` it is the
+   * run of a slice that was stopped (a hold, a pause): the same run under a new job.
+   */
+  startSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string;
+  /** Photos of the slice arrived (their ids, the money they settled). */
+  sliceProgress(runId: string, photoIds: readonly string[], settledMicros: number): void;
+  /** The slice ended: `done` (its photos are in, or its cap ended it), `cancelled` (a stop or a pause), `gone` (the process died with it: nothing is announced). */
+  endSlice(runId: string, how: "done" | "cancelled" | "gone"): void;
+  /** `n` photos the launch's draw made for the avatar (new library photos), in order, as the photos of the slice run `runId`. */
+  drawPhotos(avatarId: string, n: number, category: CategoryRef, runId: string | null): string[];
   newVideoId(): string;
   /** A render landed: the record of the video, its photos taken, its file in the export folder. */
   storeVideo(video: { launchId: string; avatarId: string; videoId: string; photoIds: readonly string[]; durationMs: number; bytes: number; track: NonNullable<LaunchVideo["track"]>; n: number }): void;
@@ -285,7 +302,7 @@ export class MockAutopilot {
 
     const month = this.#world.month();
     const live = this.#unfinished();
-    const committedMicros = month.spentAndOpenMicros + (live === undefined ? 0 : this.#remaining(live));
+    const committedMicros = month.committedMicros + (live === undefined ? 0 : this.#remaining(live));
     const freeMicros = Math.max(0, month.budgetMicros - committedMicros);
     const fit: MonthFit = freeMicros >= worst ? "fits" : freeMicros >= expected ? "fits-expected" : "short";
 
@@ -553,6 +570,14 @@ export class MockAutopilot {
     if (live !== undefined) this.#announce(live);
   }
 
+  /** The owner changed a scene set the unfinished launch holds (an edit during the review): the launch reads its rows again (the set's revision) and is announced, as the engine's `onSetChanged` does. */
+  setChanged(launchId: string, _sceneSetId: string): void {
+    const launch = this.#launches.find((l) => l.launchId === launchId);
+    if (launch === undefined || launch.run === null || !isUnfinished(launch.status)) return;
+    launch.run.resync();
+    if (this.#depth === 0) this.#announce(launch);
+  }
+
   /** Whether the unfinished launch holds an open scene set of this avatar: composed, and no photo of it bought yet (the engine's library counts it as the avatar's open set). */
   holdsOpenSet(avatarId: string): boolean {
     return this.#unfinished()?.run?.holdsOpenSet(avatarId) ?? false;
@@ -660,7 +685,7 @@ export class MockAutopilot {
     switch (hold.reason) {
       case "budget": {
         const month = this.#world.month();
-        const free = Math.max(0, month.budgetMicros - month.spentAndOpenMicros);
+        const free = Math.max(0, month.budgetMicros - month.committedMicros);
         return free >= hold.detail.needMicros ? null : { by: "budget", error: { code: "VALIDATION", detail: `the month has ${free} µ$ of room, the held step needs ${hold.detail.needMicros} µ$` } };
       }
       case "network":
