@@ -1,4 +1,5 @@
 import { autoRefreshOf, quotaRemainingOf } from "../../shared/autopilot/autoRefresh";
+import { monthRoomMicros } from "../../shared/autopilot/money";
 import type { MarksRead } from "../../shared/autopilot/videoFacts";
 import {
   AvatarDescriptor,
@@ -338,6 +339,8 @@ export interface MockMusicOptions {
   quotaLog?: MusicQuotaLog;
   /** S4.10 fix B: the automatic refreshes the engine's `auto-sends.jsonl` holds, each as hours before the mock's start. Only the plan card's «will the trends refresh by themselves?» reads them. */
   autoSendsHoursAgo?: readonly number[];
+  /** S4.10 fix D: the automatic sends file has a line that cannot be read (not a torn tail, which the engine heals): the engine reads such a log as the limit and the card says `no-quota`. */
+  autoSendsDamaged?: boolean;
 }
 
 /** The mock's music: what the engine keeps in its quota log and its track store, as plain numbers (mock clock, epoch ms). */
@@ -345,6 +348,8 @@ interface MockMusic {
   sends: number[];
   /** The automatic refreshes (`auto-sends.jsonl`), epoch ms; the mock never makes one itself, a story seeds them. */
   autoSends: number[];
+  /** The automatic sends file holds a line that cannot be read (`autoLogDamaged`). */
+  autoSendsDamaged: boolean;
   serverRemaining: { value: number; at: number } | null;
   quotaLog: MusicQuotaLog;
   list: { fetchedAt: number; trackCount: number; bytesOnDisk: number } | null;
@@ -381,6 +386,7 @@ function mockMusic(options: MockMusicOptions, now: number): MockMusic {
   return {
     sends: (options.sendsDaysAgo ?? []).map((days) => now - days * DAY_MS),
     autoSends: (options.autoSendsHoursAgo ?? []).map((hours) => now - hours * 3600 * 1000),
+    autoSendsDamaged: options.autoSendsDamaged === true,
     serverRemaining: options.serverRemaining === undefined ? null : { value: options.serverRemaining.value, at: now - options.serverRemaining.daysAgo * DAY_MS },
     quotaLog: options.quotaLog ?? "ok",
     list:
@@ -848,6 +854,8 @@ export class MockEngine implements EngineBridge {
         },
         ledgerReadable: () => this.unavailable === null,
         cancelHasRequestOut: () => this.sceneCancelOutcome === "in-flight",
+        launchUnfinished: (launchId) => this.autopilot.isUnfinished(launchId),
+        launchSetChanged: (launchId, sceneSetId) => this.autopilot.setChanged(launchId, sceneSetId),
       },
       options.sceneSets ?? [],
       options.unreadableSceneSets ?? 0,
@@ -866,14 +874,15 @@ export class MockEngine implements EngineBridge {
             const view = this.photoView(p);
             return p.avatarId === avatarId && categories.some((c) => c === p.category) && view.eligible && !view.used && !view.reserved && !view.rejected;
           }).length,
-        busy: (avatarId) => this.jobRunningFor(avatarId),
+        // The launch's own slice job holds the avatar (the owner's commands meet IN_FLIGHT), but the launch does not wait for itself.
+        busy: (avatarId) => this.jobRunningFor(avatarId, { exceptLaunch: true }),
         hasOpenSet: (avatarId) => this.sceneSets.hasOpenSet(avatarId) || this.autopilot.holdsOpenSet(avatarId),
-        hasOwnersOpenSet: (avatarId) => this.sceneSets.hasOpenSet(avatarId),
+        hasOwnersOpenSet: (avatarId, exceptSetId) => this.sceneSets.hasOpenSet(avatarId, exceptSetId),
         avatarActive: (avatarId) => this.avatars.some((a) => a.avatarId === avatarId && a.status === "active"),
         libraryKnown: (avatarId) => !this.launchLibraryLost && this.availabilityOf(avatarId).state === "known",
         unit: () => this.autopilotUnit(),
         prices: () => ({ prices: this.price.prices, pricesAsOf: this.price.pricesAsOf }),
-        month: () => ({ budgetMicros: this.settings.monthlyBudgetMicros, spentAndOpenMicros: this.spentMicros + this.unsettledMicros() }),
+        month: () => this.launchMonthRoom(),
         paidGate: () => this.launchGate(),
         keyState: () => (!this.settings.apiKey.stored ? "missing" : this.settings.apiKey.rejected ? "rejected" : "ok"),
         admission: () => this.launchAdmission(),
@@ -911,8 +920,17 @@ export class MockEngine implements EngineBridge {
             else this.launchHeldPhotos.delete(id);
           }
         },
-        leaveOpenSet: (avatarId, sceneSetId, written, count) => this.sceneSets.add({ avatarId, sceneSetId, count, written }),
-        drawPhotos: (avatarId, n, category) => this.drawLaunchPhotos(avatarId, n, category),
+        openLaunchSet: (set) => this.sceneSets.add({ avatarId: set.avatarId, sceneSetId: set.sceneSetId, count: set.count, categories: set.categories, launchId: set.launchId }),
+        startLaunchCompose: (sceneSetId) => this.sceneSets.startLaunchCompose(sceneSetId),
+        writeLaunchSet: (sceneSetId) => this.sceneSets.writeLaunchSet(sceneSetId),
+        endLaunchCompose: (sceneSetId, how) => this.sceneSets.endLaunchCompose(sceneSetId, how),
+        freezeLaunchSet: (sceneSetId) => this.sceneSets.freezeLaunchSet(sceneSetId),
+        releaseLaunchSet: (sceneSetId) => this.sceneSets.releaseLaunchSet(sceneSetId),
+        launchSetRevision: (sceneSetId) => this.sceneSets.revisionOf(sceneSetId),
+        startSlice: (slice) => this.startLaunchSlice(slice),
+        sliceProgress: (runId, photoIds, settledMicros) => this.launchSliceProgress(runId, photoIds, settledMicros),
+        endSlice: (runId, how) => this.endLaunchSlice(runId, how),
+        drawPhotos: (avatarId, n, category, runId) => this.drawLaunchPhotos(avatarId, n, category, runId),
         newVideoId: () => this.nextId("video"),
         storeVideo: (video) => this.storeLaunchVideo(video),
       },
@@ -1625,6 +1643,16 @@ export class MockEngine implements EngineBridge {
     return runId;
   }
 
+  /**
+   * Stage 4 (S4.10 fix D): the draw of a SEEDED launch's slice (`seedRun` with a `launchId`) begins, as the launch itself begins it: a job over the run's open slots. The owner's `runs.resume`
+   * of such a run is refused as `launch-set` (plan §4.7), so a test that needs the launch's batch drawing starts it here. Answers the job's id.
+   */
+  startSeededLaunchRun(runId: string): string {
+    const run = this.runs.find((r) => r.runId === runId);
+    if (run?.launchId === undefined) throw new Error(`startSeededLaunchRun: ${runId} is not a run of a launch`);
+    return this.startRunJob(run);
+  }
+
   /** While off, events go into the log but are not delivered: the window misses them. */
   setDelivery(on: boolean): void {
     this.delivering = on;
@@ -1794,7 +1822,7 @@ export class MockEngine implements EngineBridge {
     this.autopilot.refresh();
   }
 
-  /** Stage 4 (S4.9b): a scene set seeded while the engine runs — a launch's set (`launchId`), which the mock's launch names but does not write. */
+  /** Stage 4 (S4.9b): a scene set seeded while the engine runs — a launch's set (`launchId`), as a test of the window needs one (the mock's own launch makes its set itself since S4.10 fix D). */
   seedSceneSet(seed: MockSceneSetSeed): void {
     this.sceneSets.add(seed);
   }
@@ -1988,12 +2016,12 @@ export class MockEngine implements EngineBridge {
   }
 
   /** S4.8: `n` new free photos of the avatar, as a launch's draw makes them (copies of its first photo, of this category). */
-  private drawLaunchPhotos(avatarId: string, n: number, category: CategoryRef): string[] {
+  private drawLaunchPhotos(avatarId: string, n: number, category: CategoryRef, runId: string | null): string[] {
     const template = this.photos.find((p) => p.avatarId === avatarId);
     if (template === undefined || n < 1) return [];
     const ids: string[] = [];
     for (let k = 0; k < n; k++) {
-      const photo: PhotoSummary = { ...template, photoId: this.nextId("photo-launch"), category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true };
+      const photo: PhotoSummary = { ...template, photoId: this.nextId("photo-launch"), runId: runId ?? template.runId, category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true };
       this.photos.push(photo);
       ids.push(photo.photoId);
     }
@@ -2001,6 +2029,101 @@ export class MockEngine implements EngineBridge {
     this.avatars = this.avatars.map((a) => (a.avatarId === avatarId ? { ...a, photoCount: this.photos.filter((p) => p.avatarId === avatarId).length } : a));
     this.announceAvatar(avatarId);
     return ids;
+  }
+
+  // ---------- the launch's slice runs (S4.10 fix D) ----------
+
+  /**
+   * Plan §4.7: a launch's slice run is moved by the launch only, so the owner's resume or cancel is refused (VALIDATION `launch-set`), free, while the launch is unfinished. Null for a run
+   * that is not there, one the owner made, and a launch's once the launch has ended.
+   */
+  private launchRunRefusal(run: MockRun | undefined, what: string): EngineError | null {
+    if (run?.launchId === undefined || !this.autopilot.isUnfinished(run.launchId)) return null;
+    return { code: "VALIDATION", sceneReason: "launch-set", detail: `run ${run.runId} is a slice of launch ${run.launchId}; ${what}` };
+  }
+
+  /**
+   * A slice of a launch's draw begins: a run of its own (the first one under the set's pre-issued run id, so the set is used from here) with a job that holds the avatar, announced as a run
+   * job is. Answers the run's id.
+   */
+  private startLaunchSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string {
+    const resumed = slice.resume === undefined ? undefined : this.runs.find((r) => r.runId === slice.resume);
+    if (slice.resume !== undefined && resumed === undefined) throw new Error(`startLaunchSlice: the run ${slice.resume} to take up again is not there`);
+    if (resumed !== undefined) {
+      const again: MockRunJob = { jobId: this.nextId("job"), runId: resumed.runId, avatarId: resumed.avatarId, status: "running", done: resumed.slots.filter((s) => s.end !== null).length, total: resumed.slots.length, error: null, reserveKeys: [], cancelTimers: [] };
+      this.runJobs = [...this.runJobs, again];
+      this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "run", jobId: again.jobId, runId: again.runId, avatarId: again.avatarId, done: again.done, total: again.total } });
+      return again.runId;
+    }
+    const runId = slice.index === 1 ? (this.sceneSets.find(slice.sceneSetId)?.runId ?? this.nextId("run")) : this.nextId("run");
+    const run: MockRun = {
+      runId,
+      avatarId: slice.avatarId,
+      createdAt: this.nowIso(),
+      request: { avatarId: slice.avatarId, count: slice.photos, categories: [slice.category], poses: { profile: false, back: false } },
+      capMicros: slice.capMicros,
+      settledMicros: 0,
+      ageCheck: this.settings.imageAgeCheck === "on",
+      slots: Array.from({ length: slice.photos }, () => ({ category: slice.category, end: null })),
+      photoIds: [],
+      categoryNames: {},
+      // The launch's compose wrote every sentence before it drew anything.
+      writerDone: true,
+      launchId: slice.launchId,
+    };
+    this.runs = [...this.runs, run];
+    const job: MockRunJob = { jobId: this.nextId("job"), runId, avatarId: slice.avatarId, status: "running", done: 0, total: slice.photos, error: null, reserveKeys: [], cancelTimers: [] };
+    this.runJobs = [...this.runJobs, job];
+    if (slice.index === 1) {
+      const set = this.sceneSets.find(slice.sceneSetId);
+      if (set !== undefined) this.sceneSets.approve(set);
+    }
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "run", jobId: job.jobId, runId, avatarId: slice.avatarId, done: 0, total: slice.photos } });
+    return runId;
+  }
+
+  /** Photos of a launch's slice arrived: their slots end, the money they settled is the run's, and the job's progress is announced. */
+  private launchSliceProgress(runId: string, photoIds: readonly string[], settledMicros: number): void {
+    const run = this.runs.find((r) => r.runId === runId);
+    const job = this.activeRunJob(runId);
+    if (run === undefined || job === null) return;
+    for (const photoId of photoIds) {
+      const slot = run.slots.find((s) => s.end === null);
+      if (slot === undefined) break;
+      slot.end = "done";
+      run.photoIds.push(photoId);
+    }
+    run.settledMicros += settledMicros;
+    job.done = run.slots.filter((s) => s.end !== null).length;
+    this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.progress", payload: { kind: "run", jobId: job.jobId, runId, avatarId: job.avatarId, done: job.done, total: job.total } });
+  }
+
+  /**
+   * A launch's slice ends. `done`: every photo it asked for is in (or the cap ended it), `job.done` is announced; `cancelled`: a stop or a pause ended it, `job.cancelled`; `gone`: the process died
+   * with it, and nothing is announced (a restart's jobs are gone, as `restart` leaves them).
+   */
+  private endLaunchSlice(runId: string, how: "done" | "cancelled" | "gone"): void {
+    const run = this.runs.find((r) => r.runId === runId);
+    const job = this.activeRunJob(runId);
+    if (run === undefined || job === null) return;
+    job.status = how === "done" ? "done" : "cancelled";
+    if (how === "done") this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.done", payload: { jobId: job.jobId, result: this.runResult(run) } });
+    else if (how === "cancelled") this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "job.cancelled", payload: { kind: "run", jobId: job.jobId, runId, avatarId: job.avatarId } });
+  }
+
+  /**
+   * The month's room a launch is sized against, with live caps (plan §4.4, A21): the engine subtracts, from the budget, what is spent and open AND the unspent rest of every running job's
+   * cap, since that job may still reserve it. Here the running jobs are the owner's own photo runs; a launch's slice is not counted against the launch that draws it.
+   */
+  private launchMonthRoom(): { budgetMicros: number; committedMicros: number } {
+    const liveScopes = this.runJobs
+      .filter((job) => job.status === "queued" || job.status === "running")
+      .flatMap((job) => {
+        const run = this.runs.find((r) => r.runId === job.runId);
+        return run === undefined || run.launchId !== undefined ? [] : [{ capMicros: run.capMicros, committedMicros: this.runCommitted(run) }];
+      });
+    const room = monthRoomMicros({ budgetMicros: this.settings.monthlyBudgetMicros, spentMicros: this.spentMicros, openMicros: this.unsettledMicros(), heldMicros: 0, liveScopes });
+    return { budgetMicros: room.budgetMicros, committedMicros: room.committedMicros };
   }
 
   /** Stage 4 (S4.9c): `avatarId`'s «Опубликовано» log gets a torn tail: its marks read `unknown` until the next mark heals it. */
@@ -2476,6 +2599,11 @@ export class MockEngine implements EngineBridge {
         if (early) return this.fail(c, early);
         const set = this.sceneSets.find(c.payload.sceneSetId);
         if (set === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
+        // S4.5a: the launch does its own «Дописать» and an idea write is an own scene it never draws, so both are refused whenever a launch holds the set; a rewrite or a resume is the owner's
+        // click while the launch waits for the review, and is closed once the launch froze the set. Before the avatar is claimed, as the engine's.
+        const kind = c.payload.target.kind;
+        const launchHeld = this.sceneSets.launchRefusal(set, kind === "unwritten" ? "the launch writes what is missing itself" : kind === "idea" ? "the scenes of a launch are its own; an own scene would never be drawn" : "its scenes are frozen");
+        if (launchHeld !== null && (kind === "unwritten" || kind === "idea" || set.frozen)) return this.fail(c, launchHeld);
         if (this.jobRunningFor(set.avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar" });
         const target = c.payload.target;
         const common =
@@ -2502,7 +2630,11 @@ export class MockEngine implements EngineBridge {
       case "scenes.cancel": {
         const gone = this.libraryGate();
         if (gone) return this.fail(c, gone);
-        if (this.sceneSets.find(c.payload.sceneSetId) === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
+        const held = this.sceneSets.find(c.payload.sceneSetId);
+        if (held === undefined) return this.fail(c, { code: "NOT_FOUND", detail: `no scene set ${c.payload.sceneSetId} in the open library` });
+        // A launch's set is stopped from the launch (S4.5a).
+        const launchSet = this.sceneSets.launchRefusal(held, "its job is stopped from the launch");
+        if (launchSet) return this.fail(c, launchSet);
         this.sceneSets.cancel(c.payload.sceneSetId);
         return this.ok(c, { sceneSetId: c.payload.sceneSetId });
       }
@@ -2617,6 +2749,9 @@ export class MockEngine implements EngineBridge {
       }
       case "runs.cancel": {
         const run = this.runs.find((r) => r.runId === c.payload.runId);
+        // Plan §4.7: a launch's slice run is stopped by the launch only. Looked at before the run is, as the engine's registry is.
+        const sliceOf = this.launchRunRefusal(run, "stopping it is the launch's call");
+        if (sliceOf) return this.fail(c, sliceOf);
         if (!run) return this.fail(c, { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
         const job = this.activeRunJob(run.runId);
         if (job) this.cancelRunJob(job);
@@ -2641,6 +2776,8 @@ export class MockEngine implements EngineBridge {
         // the run's own age gate (the mode it started with) and the face gate, VALIDATION, the cap, and the price.
         // No master check: the engine only finds a missing master when the job loads it.
         const run = this.runs.find((r) => r.runId === c.payload.runId);
+        const sliceOf = this.launchRunRefusal(run, "resuming it is the launch's call");
+        if (sliceOf) return this.fail(c, sliceOf);
         if (run && this.activeRunJob(run.runId)) return this.fail(c, { code: "IN_FLIGHT", detail: `run ${run.runId} is already running` });
         const early = this.keyAndLedgerGate() ?? this.libraryGate() ?? (run ? null : { code: "NOT_FOUND" as const, detail: `no run ${c.payload.runId}` });
         if (early || !run) return this.fail(c, early ?? { code: "NOT_FOUND", detail: `no run ${c.payload.runId}` });
@@ -2798,9 +2935,11 @@ export class MockEngine implements EngineBridge {
   }
 
   /** Whether an avatar has a candidate batch or a photo run still queued or running: a second batch, a pick or a run must wait. */
-  private jobRunningFor(avatarId: string): boolean {
+  private jobRunningFor(avatarId: string, opts: { exceptLaunch?: boolean } = {}): boolean {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
-    return this.jobs.some(active) || this.runJobs.some(active) || this.sceneSets.liveFor(avatarId) || this.busyAvatars.has(avatarId);
+    // `exceptLaunch`: the question is the launch's own ("does ANOTHER job hold the avatar?"), so a slice job of a launch is not counted.
+    const runs = opts.exceptLaunch === true ? this.runJobs.filter((j) => this.runs.find((r) => r.runId === j.runId)?.launchId === undefined) : this.runJobs;
+    return this.jobs.some(active) || runs.some(active) || this.sceneSets.liveFor(avatarId, { exceptLaunch: opts.exceptLaunch === true }) || this.busyAvatars.has(avatarId);
   }
 
   // ---------- «Удалить аватар» ----------
@@ -3544,7 +3683,7 @@ export class MockEngine implements EngineBridge {
       listFetchedAt: this.music.list?.fetchedAt ?? null,
       candidateCount: candidates,
       autoSendsInWindow: autoInWindow.length,
-      autoLogDamaged: false,
+      autoLogDamaged: this.music.autoSendsDamaged,
       lastAutoSendAt: autoInWindow.length === 0 ? null : Math.max(...autoInWindow),
       totalSendsInWindow: status.sentLast31d,
       serverRemaining: status.serverRemaining,

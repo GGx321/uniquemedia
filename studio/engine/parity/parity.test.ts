@@ -37,6 +37,12 @@ describe("mock and engine agree", () => {
       scenario.name,
       async () => {
         const mock = await play(mockRig(scenario.rig), scenario);
+        // S4.10 fix D: a RETIRED story is replaced by stories both engines play (`Scenario.retired`); only the mock's transcript stays bound, to the golden below.
+        if (scenario.retired !== undefined) {
+          if (WRITE_GOLDEN) written[scenario.name] = mock;
+          else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
+          return;
+        }
         const real = await play(await realRig(dir(), scenario.rig), scenario);
 
         // Stage 4 (S4.1): a story whose commands the real engine does not serve yet is PENDING. It cannot match line for line, so the real engine is held to its one refusal
@@ -69,6 +75,30 @@ describe("the suite itself", () => {
       expect(story.until).toMatch(/^S4\.\d/);
       expect(story.commands.length).toBeGreaterThan(0);
       for (const command of story.commands) expect(command).toMatch(/^(autopilot\.|videos\.(setPublished|delete)$|media\.setForAutopilot$)/);
+    }
+  });
+
+  test("a retired story says why, names the stories that replace it, and they exist, are played against both engines, and are not retired or pending themselves", () => {
+    const retired = SCENARIOS.flatMap((s) => (s.retired === undefined ? [] : [{ name: s.name, pending: s.pending, ...s.retired }]));
+    // The allow-list: a story is retired by naming it here, in a commit that says why, never by adding a field to a scenario that happens to be hard to keep green.
+    expect(retired.map((s) => s.name).sort()).toEqual(
+      [
+        "autopilot (pending the orchestrator): a start below the engine's worst case is PRICE_CHANGED and free, and one launch is unfinished at a time",
+        "autopilot (pending the orchestrator): pause, resume with the remaining worst case, and stop move a launch, and a wrong state is refused",
+        "autopilot (pending the orchestrator): the review hand-off draws now, or records the approval while the launch is paused",
+        "autopilot (pending the orchestrator): a launch is listed and read, and an unreadable entry that nobody holds is NOT_FOUND",
+      ].sort(),
+    );
+    for (const story of retired) {
+      expect(story.pending).toBeUndefined();
+      expect(story.why.length).toBeGreaterThan(20);
+      expect(story.replacedBy.length).toBeGreaterThan(0);
+      for (const name of story.replacedBy) {
+        const replacement = SCENARIOS.find((s) => s.name === name);
+        expect(replacement).toBeDefined();
+        expect(replacement?.retired).toBeUndefined();
+        expect(replacement?.pending).toBeUndefined();
+      }
     }
   });
 

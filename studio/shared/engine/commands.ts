@@ -709,8 +709,8 @@ const ENGINE_SPECS = [
   // status as the check found it, and `export.status` follows when it CHANGED, so a window that asks on focus shows an
   // unplugged drive, and a plugged one, without a render attempt.
   defineCommand("export.check", Empty, z.strictObject({ exportStatus: ExportStatus })),
-  // ---- Stage 4 «Автопилот» (S4.1, plan §9 and §18). Until the orchestrator lands (S4.6) the engine answers every autopilot command INTERNAL «… is not implemented yet»
-  // (a payload that breaks the contract is still VALIDATION). Nothing here spends before `autopilot.start` is accepted with a worst case at least the engine's own.
+  // ---- Stage 4 «Автопилот» (S4.1, plan §9 and §18). The engine serves every one of them since S4.6 (the orchestrator, its steps and the host), and the mock runs a launch of its own (S4.8); a payload that
+  // breaks the contract is VALIDATION before either looks at it. Nothing here spends before `autopilot.start` is accepted with a worst case at least the engine's own.
   // `autopilot.estimate`: free. The plan of the draft with the engine's own estimate, the month's room and what the card shows; draws the `planSeed` when the draft has none.
   //   LIBRARY_UNAVAILABLE without a library; NOT_FOUND for an avatar that is not saved and active. What blocks a start is listed in `blockers`, not refused here.
   // `autopilot.start`: the click «Запустить: N видео · до $W» accepts the launch's worst case. PRICE_CHANGED when the engine's recomputed W′ is above `acceptedWorstMicros`

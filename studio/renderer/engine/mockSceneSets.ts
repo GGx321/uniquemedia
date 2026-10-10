@@ -181,8 +181,10 @@ interface MockSet {
   textModel: string;
   /** The counters when the last write job ended, as the compose said them; absent until a job ended. */
   lastOutcome?: SceneComposeTally;
-  /** Stage 4: the launch the set belongs to (a seed's); absent for the owner's own. */
+  /** Stage 4: the launch the set belongs to (a seed's, or the one that composed it); absent for the owner's own. */
   launchId?: string;
+  /** Stage 4 (S4.10 fix D): the launch started to draw from the set (the engine's `launchDraw`): its scenes are frozen while the launch is unfinished. */
+  frozen: boolean;
 }
 
 interface Job {
@@ -200,6 +202,8 @@ interface Job {
   written: number;
   unwritten: number;
   timers: (() => void)[];
+  /** Stage 4 (S4.10 fix D): the compose of a launch's set, which the launch's writer step answers (no timers of its own). */
+  launch?: boolean;
   /** The chunks still to be asked, in order. */
   queue: number[];
 }
@@ -224,6 +228,10 @@ export interface MockSceneSetDeps {
   ledgerReadable: () => boolean;
   /** Whether a cancel finds a request at the model (its reserve then stays open) or lands between requests (nothing is open). */
   cancelHasRequestOut: () => boolean;
+  /** Stage 4 (S4.10 fix D): whether `launchId` names a launch that is not done or stopped. A set names its launch, and the owner's commands on it are refused, only while so. */
+  launchUnfinished: (launchId: string) => boolean;
+  /** Stage 4 (S4.10 fix D): the owner changed a set an unfinished launch holds (an edit): the launch reads its rows again and is announced, as the engine's `onSetChanged` does. */
+  launchSetChanged: (launchId: string, sceneSetId: string) => void;
 }
 
 /** The counters of the PLANNED scenes that are not removed, as they are now: own scenes are the owner's and are not part of what a compose wrote. */
@@ -473,15 +481,77 @@ export class MockSceneSets {
       used: false,
       // A seed is built before the settings exist: the mock's default text model, as a set made at first launch has.
       textModel: seed.textModel ?? "x-ai/grok-4.3",
+      frozen: false,
       ...(seed.launchId === undefined ? {} : { launchId: seed.launchId }),
     });
   }
 
-  /** A set seeded while the engine runs (S4.9b: a launch's set, which the mock's launch names but does not write), announced as a compose would. */
+  /** A set made while the engine runs, announced as a compose would: a launch's set (S4.9b seeds one; the mock's own launch makes its set through this since S4.10 fix D). */
   add(seed: MockSceneSetSeed): void {
     this.#seed(seed);
     const set = this.find(seed.sceneSetId);
     if (set !== undefined) this.#announce(set);
+  }
+
+  // ---------- the launch's own set (S4.10 fix D) ----------
+
+  /**
+   * The launch's compose request goes out: the set's writer job is live, as the engine's compose is (it claims the avatar and records the live entry before its first await), so the set reads
+   * `writing`, the avatar is held, and the owner's commands meet IN_FLIGHT. Announced as a scenes job is. The launch's writer step ends it (`writeLaunchSet`, `endLaunchCompose`).
+   */
+  startLaunchCompose(sceneSetId: string): void {
+    const set = this.find(sceneSetId);
+    if (set === undefined || this.#liveJob(sceneSetId) !== undefined) return;
+    const job: Job = { jobId: this.#deps.nextId("job"), sceneSetId, avatarId: set.avatarId, kind: "compose", status: "running", done: 0, total: set.scenes.length, error: null, written: 0, unwritten: 0, timers: [], queue: [], launch: true };
+    this.#jobs.push(job);
+    this.#announce(set);
+    this.#progress(job);
+  }
+
+  /** The launch's compose wrote the sentences of every scene: the set reads as a compose left it, its job done and announced. */
+  writeLaunchSet(sceneSetId: string): void {
+    const set = this.find(sceneSetId);
+    if (set === undefined) return;
+    for (const scene of set.scenes) if (scene.text === null) scene.text = sentenceOf(scene);
+    for (const chunk of set.chunks) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: true, cost: Math.round(chunk.sceneIds.length * TYPICAL_PER_SCENE), open: false });
+    const job = this.#liveJob(sceneSetId);
+    if (job === undefined) {
+      this.#announce(set);
+      return;
+    }
+    job.done = job.total;
+    job.written = job.total;
+    this.#end(job, set, { status: "done" });
+  }
+
+  /** The launch's compose request ended without an answer: `gone` when the process died with it (nothing is announced), else the job is cancelled. */
+  endLaunchCompose(sceneSetId: string, how: "cancelled" | "gone"): void {
+    const set = this.find(sceneSetId);
+    const job = this.#liveJob(sceneSetId);
+    if (set === undefined || job === undefined) return;
+    if (how === "gone") job.status = "cancelled";
+    else this.#end(job, set, { status: "cancelled" });
+  }
+
+  /** The launch started to draw from the set: its scenes are the launch's from here, until the launch lets go. */
+  freezeLaunchSet(sceneSetId: string): void {
+    const set = this.find(sceneSetId);
+    if (set === undefined || set.frozen) return;
+    set.frozen = true;
+    this.#announce(set);
+  }
+
+  /** The launch let go of the set (stopped, done): it is announced as the owner's again, with no launch on it. */
+  releaseLaunchSet(sceneSetId: string): void {
+    const set = this.find(sceneSetId);
+    if (set === undefined) return;
+    set.frozen = false;
+    this.#announce(set);
+  }
+
+  /** The set's file revision, or null with no such set. */
+  revisionOf(sceneSetId: string): number | null {
+    return this.find(sceneSetId)?.revision ?? null;
   }
 
   // ---------- controls ----------
@@ -504,8 +574,8 @@ export class MockSceneSets {
   }
 
   /** Whether a scenes job of this avatar is queued or running. */
-  liveFor(avatarId: string): boolean {
-    return this.#jobs.some((j) => j.avatarId === avatarId && j.status === "running");
+  liveFor(avatarId: string, opts: { exceptLaunch?: boolean } = {}): boolean {
+    return this.#jobs.some((j) => j.avatarId === avatarId && j.status === "running" && !(opts.exceptLaunch === true && j.launch === true));
   }
 
   /** The jobs queued or running, for what a library switch or a reconcile waits for. */
@@ -529,8 +599,9 @@ export class MockSceneSets {
     return { sceneSet: shown === undefined ? null : this.view(shown), unreadable };
   }
 
-  hasOpenSet(avatarId: string): boolean {
-    return this.#sets.some((s) => s.avatarId === avatarId && !s.used);
+  /** Whether the avatar has an open set (no run yet), other than `exceptSetId`: the very test a compose refuses on. */
+  hasOpenSet(avatarId: string, exceptSetId?: string): boolean {
+    return this.#sets.some((s) => s.avatarId === avatarId && !s.used && s.sceneSetId !== exceptSetId);
   }
 
   jobStates(): JobState[] {
@@ -678,8 +749,20 @@ export class MockSceneSets {
       chunks: set.chunks.map((c) => ({ chunk: c.chunk, sceneIds: [...c.sceneIds], attemptsLeft: this.#attemptsLeft(c), gaveUpBy: this.#chunkGaveUpBy(set, c) })),
       scenes,
       ...(ideas.length === 0 ? {} : { interruptedIdeas: ideas }),
-      ...(set.launchId === undefined ? {} : { launchId: set.launchId }),
+      // The contract's rule: a set names its launch only while the launch is unfinished (the engine unlinks it at the end).
+      ...(this.#launchOf(set) === undefined ? {} : { launchId: this.#launchOf(set) }),
     };
+  }
+
+  /** The unfinished launch the set belongs to, or undefined. */
+  #launchOf(set: MockSet): string | undefined {
+    return set.launchId !== undefined && this.#deps.launchUnfinished(set.launchId) ? set.launchId : undefined;
+  }
+
+  /** Plan §4.7: a launch's set is moved by the launch only, so the owner's command on it is refused (VALIDATION `launch-set`), free. Null when no unfinished launch holds the set. */
+  launchRefusal(set: MockSet, what: string): EngineError | null {
+    const launchId = this.#launchOf(set);
+    return launchId === undefined ? null : refuse(`scene set ${set.sceneSetId} is part of launch ${launchId}; ${what}`, "launch-set");
   }
 
   #announce(set: MockSet): void {
@@ -692,7 +775,7 @@ export class MockSceneSets {
   edit(sceneSetId: string, revision: number, op: SceneEditOp): { view: SceneSetView } | { problem: SceneProblem } | { error: EngineError } {
     const set = this.find(sceneSetId);
     if (set === undefined) return { error: { code: "NOT_FOUND", detail: `no scene set ${sceneSetId} in the open library` } };
-    const refusal = this.#changeRefusal(set);
+    const refusal = this.#changeRefusal(set, "edit");
     if (refusal !== null) return { error: refusal };
     if (set.revision !== revision) return { error: { code: "SCENES_CHANGED", detail: `scene set ${sceneSetId} is at revision ${set.revision}, not ${revision}` } };
     const known = new Set(set.scenes.map((s) => s.sceneId));
@@ -733,20 +816,24 @@ export class MockSceneSets {
     }
     set.revision += 1;
     this.#announce(set);
+    const launchId = this.#launchOf(set);
+    if (launchId !== undefined) this.#deps.launchSetChanged(launchId, set.sceneSetId);
     return { view: this.view(set) };
   }
 
   /** What refuses a change of a set: its job runs (IN_FLIGHT), or it is used (VALIDATION). */
-  #changeRefusal(set: MockSet): EngineError | null {
+  #changeRefusal(set: MockSet, change: "edit" | "discard"): EngineError | null {
     if (this.isLive(set.sceneSetId)) return { code: "IN_FLIGHT", detail: `scene set ${set.sceneSetId} is being written; change it when that ends (or cancel it)` };
     if (set.used) return refuse(`scene set ${set.sceneSetId} is used by run ${set.runId} and is read-only`, "set-used");
-    return null;
+    // S4.5a: a launch's set cannot be discarded, and once the launch started to draw from it (a frozen list) it cannot be edited, while the launch is unfinished.
+    if (change === "discard") return this.launchRefusal(set, "discarding it is the launch's call");
+    return set.frozen ? this.launchRefusal(set, "its scenes are frozen") : null;
   }
 
   discard(sceneSetId: string): { error: EngineError } | { avatarId: string } {
     const set = this.find(sceneSetId);
     if (set === undefined) return { error: { code: "NOT_FOUND", detail: `no scene set ${sceneSetId} in the open library` } };
-    const refusal = this.#changeRefusal(set);
+    const refusal = this.#changeRefusal(set, "discard");
     if (refusal !== null) return { error: refusal };
     this.#sets = this.#sets.filter((s) => s !== set);
     this.#deps.emit({ v: PROTOCOL_VERSION, id: this.#deps.nextId("evt"), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId: set.avatarId } });
@@ -764,6 +851,9 @@ export class MockSceneSets {
   approvalOf(sceneSetId: string, revision: number): { error: EngineError } | { set: MockSet; active: readonly Scene[] } {
     const set = this.find(sceneSetId);
     if (set === undefined) return { error: { code: "NOT_FOUND", detail: `no scene set ${sceneSetId} in the open library` } };
+    // The owner's «Отрисовать» on a launch's set: the launch draws it in slices. Looked at before the revision, as the engine's `loadApprovable` does.
+    const held = this.launchRefusal(set, "the launch draws it");
+    if (held !== null) return { error: held };
     if (set.revision !== revision) return { error: { code: "SCENES_CHANGED", detail: `scene set ${sceneSetId} is at revision ${set.revision}, not ${revision}` } };
     const active = set.scenes.filter((s) => !s.removed);
     const empty = active.filter((s) => s.text === null).map((s) => s.sceneId);
@@ -822,6 +912,7 @@ export class MockSceneSets {
       writes: scenes.length === 0 ? 0 : 1,
       snapshotWrites: new Map(),
       used: false,
+      frozen: false,
       textModel: this.#deps.textModel(),
     };
     this.#sets.push(set);
@@ -1272,7 +1363,8 @@ export class MockSceneSets {
         set.write = { k, kind, stoppedBy: end.status === "cancelled" ? "cancelled" : end.stoppedBy, ...(end.status === "failed" && end.stoppedBy === "failed" ? { stoppedError: end.error } : {}) };
       }
     }
-    set.revision += 1;
+    // The engine's compose moves the file's revision (a count of writes the contract does not name); the launch's compose leaves the mock's at the one the set was made with.
+    if (job.launch !== true) set.revision += 1;
     if (review === undefined) set.lastOutcome = tallyOf(this.view(set).scenes);
     this.#deps.emitMoney();
     this.#announce(set);

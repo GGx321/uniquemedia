@@ -379,7 +379,8 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
     // detail names times of the rig's own clock: its code and its cause are compared.
     // S4.8 (`running`): a launch's refusals say sums and sentences of the engine's own (the remaining worst case, the key's state); the code and the reason are the contract.
     // S4.6p: a launch the price is asked for is told in each engine's own words (which launch, which avatar); its code is the contract.
-    const text = code === "VALIDATION" || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" ? undefined : detail;
+    // S4.10 fix D: an IN_FLIGHT given to a command sent while a launch runs names the job in each engine's own words; its code is the contract.
+    const text = code === "VALIDATION" || (running !== false && code === "IN_FLIGHT") || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" ? undefined : detail;
     return `< error ${code} ${compact(
       norm.value({
         ...(text === undefined ? {} : { detail: text }),
@@ -468,6 +469,20 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
     // The fixtures' own run, date and QA verdicts differ by construction: what is compared is the photo's state.
     const p = objectOf(answer.result.photo);
     return `< ok ${compact(norm.value({ photo: { photoId: p.photoId, used: p.used, usedIn: p.usedIn, reserved: p.reserved, rejected: p.rejected, eligible: p.eligible } }))}`;
+  }
+  if (running !== false && type === "runs.list") {
+    // S4.10 fix D, a story that reads the runs while a launch runs: which run is a slice of the launch (`launchId` present) and how many photos it draws. Its progress, money and times
+    // are each engine's own.
+    const runs = Array.isArray(answer.result.runs) ? answer.result.runs.map((run) => objectOf(run)) : [];
+    // A run id is not one of the aliased kinds (an older line may write it as it came), so it is named here, in order of appearance.
+    return `< ok ${compact(norm.value({ runs: runs.map((r) => ({ runId: norm.register("run", String(r.runId)), avatarId: r.avatarId, total: r.total, launch: r.launchId !== undefined })) }))}`;
+  }
+  if (running !== false && type === "scenes.get") {
+    // S4.10 fix D: the avatar's set as the owner sees it while a launch runs: its status, whether the launch holds it, and how many scenes are there and written.
+    const set = answer.result.sceneSet === null ? null : objectOf(answer.result.sceneSet);
+    const scenes = set === null || !Array.isArray(set.scenes) ? [] : set.scenes.map((scene) => objectOf(scene));
+    const view = set === null ? null : { sceneSetId: set.sceneSetId, status: set.status, launch: set.launchId !== undefined, scenes: scenes.length, written: scenes.filter((s) => s.text !== null).length };
+    return `< ok ${compact(norm.value({ sceneSet: view, unreadable: answer.result.unreadable }))}`;
   }
   if (type.startsWith("autopilot.")) {
     const detailed = running !== false && type !== "autopilot.removeUnreadable" && type !== "autopilot.estimate";

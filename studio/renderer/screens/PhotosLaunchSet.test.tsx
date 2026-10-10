@@ -223,9 +223,10 @@ describe("a launch's batches on «Фото»", () => {
   };
 
   test("the launch's own batch drawing now (its `RunSummary.launchId`): «в запуске автопилота» instead of «Отменить», the batch and the launch under the bar", async () => {
-    const { engine, client, launch } = await launchWithSet();
+    const { engine, launch } = await launchWithSet();
     const runId = engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1, undefined, { launchId: launch.launchId });
-    await resumeRun(client, runId);
+    // The launch draws its own batch: the owner's `runs.resume` of it is refused as launch-set, so the launch's draw is started the way the launch starts it.
+    await act(async () => void engine.startSeededLaunchRun(runId));
     const drawing = launch.avatars.map((a) => (a.avatarId === SOFIA.avatarId ? { ...a, phase: "drawing" as const, slice: { index: 1, total: 1 } } : a));
     act(() => engine.announceLaunch(LaunchView.parse({ ...launch, avatars: drawing })));
     await openSofia();
@@ -300,16 +301,6 @@ describe("a paid click on the strip is sent once (round 1 M4), and «Стоп» 
 // ---------- S4.9d: what the S4.9b review left on the strip ----------
 
 describe("S4.9d: the strip's focus as the design's keyboard table has it (S4.9b L5)", () => {
-  /** Resumes a seeded run of Sofia's through the engine: its job then draws. */
-  async function resume(client: EngineClient, runId: string): Promise<void> {
-    await act(async () => {
-      const price = await client.request("runs.estimateResume", { runId });
-      if (!price.ok) throw new Error(`estimate refused: ${price.error.code}`);
-      const run = await client.request("runs.resume", { runId, acceptedWorstMicros: price.result.estimate.worstMicros });
-      if (!run.ok) throw new Error(`resume refused: ${run.error.code}`);
-    });
-  }
-
   test("«Открыть «Фото»» while scenes have no text (M less than the plan): the focus on the first scene without text, not on the button", async () => {
     const { engine, launch, row } = await launchWithSet({ written: 12 });
     const scenes = row.scenes ?? 0;
@@ -321,14 +312,14 @@ describe("S4.9d: the strip's focus as the design's keyboard table has it (S4.9b 
   });
 
   test("«Продолжить запуск» accepted: the focus holds on «в запуске автопилота» where the button was, then goes to the batch's progress once it draws", async () => {
-    const { engine, client, launch } = await launchWithSet();
+    const { engine, launch } = await launchWithSet();
     await openFromAutopilot();
     fireEvent.click(goButton());
     await flush();
     const mark = await within(strip()).findByText("в запуске автопилота", { selector: ".ap-launch-mark" });
     await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(mark)));
     const runId = engine.seedRun({ avatarId: SOFIA.avatarId, count: 5, categories: ["home"], poses: { profile: false, back: false } }, 1, undefined, { launchId: launch.launchId });
-    await resume(client, runId);
+    await act(async () => void engine.startSeededLaunchRun(runId));
     await flush();
     const bar = await within(column()).findByRole("progressbar", { name: /^Рисуем фото: \d+ из 5$/ });
     await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(bar)));

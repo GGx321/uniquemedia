@@ -16,6 +16,10 @@ import type { Answer } from "./transcript";
 //  - the four that start a launch say «drawing» and «awaiting-review» in the ANSWER to the start, which a canned mock gives and no engine can: the engine writes a phase in a pass that
 //    runs after the start has answered, so its answer says «planned». Their lifted equivalents are the appended stories.
 //
+// S4.10 fix D: the four that start a launch are RETIRED (`Scenario.retired`, see `retiredBy` below): the real engine no longer plays them, the mock's transcript is still bound to the golden, and the
+// appended `autopilot (running)` stories replace them. The estimate story stays pending: its `library: true` plan is the one thing no engine and mock can match (the seeded sizes above); its
+// `library: false` half is lifted by the appended story «a plan with every photo new says what blocks it» (S4.10 fix B).
+//
 // A pending story is written so that it can run against a real engine that refuses everything AND so that it can later run against one that serves it: it passes its own plan
 // seed (the preview echoes it), accepts a worst case that is plainly enough (`ENOUGH`) or plainly not (`NOT_ENOUGH`) instead of the preview's own figure (the mock's prices and the
 // engine's are different tables), and takes a placeholder for an id when the command that would have given it was refused.
@@ -156,6 +160,17 @@ const orchestrator = (...used: string[]): { until: string; commands: readonly st
   return { until: "S4.8", commands, served: commands.filter((c) => CORE_COMMANDS.includes(c)) };
 };
 
+/**
+ * S4.10 fix D: a story the running stories replaced (`Scenario.retired`). The four S4.1 stories that START a launch said «drawing» and «awaiting-review» in the ANSWER to the start, which a
+ * canned mock gives and no engine can (a phase is written by a pass that runs after the start has answered). Their equivalents on the real timeline are the appended `autopilot (running)` stories
+ * (scenarios.autopilotRun.ts), which both engines play line for line. The retired story is not deleted and its golden is not edited (the golden is append-only): it stays bound to the mock's canned
+ * launch, and the real engine no longer plays it, since no engine can match it and its «not implemented yet» refusal has not been true since S4.6a.
+ */
+const retiredBy = (...replacedBy: string[]): { why: string; replacedBy: readonly string[] } => ({
+  why: "the answer to the start says a phase that only a canned mock gives; the running stories tell the same story on the engine's own timeline",
+  replacedBy: replacedBy.map((name) => `autopilot (running): ${name}`),
+});
+
 /** The media ids a `media.list` answer holds, newest first. */
 function mediaIdsOf(answer: Answer): string[] {
   const media = answer.ok ? answer.result.media : null;
@@ -214,7 +229,7 @@ const PENDING: Scenario[] = [
   },
   {
     name: "autopilot (pending the orchestrator): a start below the engine's worst case is PRICE_CHANGED and free, and one launch is unfinished at a time",
-    pending: orchestrator("autopilot.estimate", "autopilot.start", "autopilot.stop"),
+    retired: retiredBy("a start below the engine's worst case is PRICE_CHANGED and writes nothing, and one launch is unfinished at a time"),
     async run(t, w) {
       const draft = draftOf(w, { library: false });
       t.note("an accepted worst case below the plan's: refused, nothing written");
@@ -229,7 +244,7 @@ const PENDING: Scenario[] = [
   },
   {
     name: "autopilot (pending the orchestrator): pause, resume with the remaining worst case, and stop move a launch, and a wrong state is refused",
-    pending: orchestrator("autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.get", "autopilot.list"),
+    retired: retiredBy("a launch is paused where nothing is in flight, an approval during the pause is only recorded, and «Продолжить · до $R» takes a sum that covers R", "a stop ends the launch from its review wait and from a pause; what was not made is dropped, and a stopped launch is over"),
     async run(t, w) {
       const launch = launchIdOf(await t.call("autopilot.start", { draft: draftOf(w, { library: false }), acceptedWorstMicros: ENOUGH }));
       t.note("a launch that runs cannot be resumed");
@@ -249,7 +264,7 @@ const PENDING: Scenario[] = [
   },
   {
     name: "autopilot (pending the orchestrator): the review hand-off draws now, or records the approval while the launch is paused",
-    pending: orchestrator("autopilot.start", "autopilot.pause", "autopilot.resume", "autopilot.stop", "autopilot.continueAfterReview"),
+    retired: retiredBy("with the review on the scenes wait for the owner, a stale revision and a foreign set are refused, «Продолжить запуск» draws, and an approval is given once"),
     async run(t, w) {
       const started = await t.call("autopilot.start", { draft: draftOf(w, { library: false, sceneReview: true }), acceptedWorstMicros: ENOUGH });
       const launch = launchIdOf(started);
@@ -269,7 +284,7 @@ const PENDING: Scenario[] = [
   },
   {
     name: "autopilot (pending the orchestrator): a launch is listed and read, and an unreadable entry that nobody holds is NOT_FOUND",
-    pending: orchestrator("autopilot.start", "autopilot.stop", "autopilot.list", "autopilot.get", "autopilot.removeUnreadable"),
+    retired: retiredBy("a launch with the review off composes, draws, montages and renders by itself and ends done; a launch that is done is over"),
     async run(t, w) {
       await t.call("autopilot.list", {});
       await t.call("autopilot.removeUnreadable", { entryId: "0123456789abcdef" });
