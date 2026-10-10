@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { StrictMode } from "react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { DescriptorCheck, Draft } from "../../shared/engine";
-import { MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
+import { App } from "../App";
+import { MOCK_ESTIMATE, MockEngine, mockDescriptor, mockEngineClient } from "../engine/mockEngine";
+import { ManualScheduler } from "../engine/scheduler";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { callsOf, estimateText, flush, setup, withText } from "../testing";
+import { callsOf, estimateText, flush, inAct, setup, withText } from "../testing";
 
 // S5.0d: the wizard and the import end on the new avatar's «Внешность» (the owner's decision; mockup 11 after «Сохранить», 05–06 after
 // «Импортировать»). After «Сохранить» the check the wizard priced under the button runs there, at exactly that worst case; the import brings the
@@ -113,6 +116,46 @@ describe("after «Сохранить» (11)", () => {
     expect(callsOf(engine, "avatars.checkDescriptor").map((c) => c.payload.acceptedWorstMicros)).toEqual([25_000]);
     expect(text(checkCard())).toContain("Было не больше $0.025, теперь не больше $0.040.");
     expect(within(checkCard()).getByRole("button", { name: /^Подтвердить новую цену/ }).textContent).toBe("Подтвердить новую цену · до $0.040");
+  });
+
+  test("no key when she is saved: the price was shown, but no check is sent, and the card says why (review r1, 8)", async () => {
+    const { engine } = setup({ drafts: [readyDraft()], apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
+    await readyToSave();
+    await waitFor(() => expect(screen.queryByText(withText(HINT)) === null).toBe(false));
+    await save();
+
+    expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
+    expect(text(checkCard())).toContain("Нужен рабочий ключ OpenRouter — добавьте его в Настройках.");
+    expect(within(checkCard()).getByRole("button", { name: /^Проверить описание/ }).hasAttribute("disabled")).toBe(true);
+  });
+
+  test("paid requests stopped for a reconcile when she is saved: no check is sent (review r1, 8)", async () => {
+    const { engine } = setup({ drafts: [readyDraft()] });
+    await readyToSave();
+    await waitFor(() => expect(screen.queryByText(withText(HINT)) === null).toBe(false));
+    inAct(() => engine.requireReconcile(["open-reserves"]));
+    await flush();
+    await save();
+
+    expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
+    expect(text(checkCard())).toContain("Платные запросы остановлены до сверки расходов.");
+  });
+
+  test("React's development double mount (StrictMode) still sends the check once (review r1, 8)", async () => {
+    const scheduler = new ManualScheduler();
+    const engine = new MockEngine({ scheduler, latencyMs: 0, drafts: [readyDraft()] });
+    render(
+      <StrictMode>
+        <App client={mockEngineClient(engine)} />
+      </StrictMode>,
+    );
+    await readyToSave();
+    await waitFor(() => expect(screen.queryByText(withText(HINT)) === null).toBe(false));
+    await save();
+    await flush();
+
+    expect(callsOf(engine, "avatars.checkDescriptor").map((c) => c.payload)).toEqual([{ avatarId: DRAFT_ID, acceptedWorstMicros: 25_000 }]);
+    expect(text(checkCard())).toContain("Описание совпадает с фото");
   });
 
   test("no price under «Сохранить», no check after it", async () => {

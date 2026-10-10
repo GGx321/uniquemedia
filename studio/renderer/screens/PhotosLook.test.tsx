@@ -393,6 +393,56 @@ describe("held by other work (IN_FLIGHT, not drawn on the mockup)", () => {
   });
 });
 
+describe("a check under way when the owner moves on (review r1, 8)", () => {
+  /** Through the sidebar's «Аватары» to another avatar's «Внешность». */
+  async function openAvatar(name: string): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+    fireEvent.click(await screen.findByRole("button", { name }));
+    await screen.findByRole("heading", { level: 1, name });
+    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
+    await flush();
+  }
+
+  test("Mia's check ends while Sofia is open: Sofia's page shows no verdict and no proposal of Mia's", async () => {
+    const { engine, scheduler } = setup({ avatars: [MIA, SOFIA] });
+    await screen.findByRole("button", { name: "Mia" });
+    await openAvatar("Mia");
+    engine.setNextDescriptorCheck(hairMismatch());
+    engine.delayNext("avatars.checkDescriptor", 1_000);
+    await runCheck();
+    expect(checkCard().getAttribute("aria-busy")).toBe("true");
+
+    await openAvatar("Sofia");
+    runAll(scheduler);
+    await flush();
+    expect(text(checkCard())).toContain("последняя: ещё не было");
+    expect(text(checkCard())).not.toContain("Не совпадает");
+    expect(within(descCard()).queryByText("предложение сверки") === null).toBe(true);
+    expect(callsOf(engine, "avatars.checkDescriptor").map((c) => c.payload.avatarId)).toEqual([MIA.avatarId]);
+  });
+
+  test("leaving the screen mid-check: the answer lands on nothing, and nothing errs", async () => {
+    const errors: string[] = [];
+    const original = console.error;
+    console.error = (...args: unknown[]) => {
+      errors.push(args.map(String).join(" ").slice(0, 200));
+    };
+    try {
+      const { engine, scheduler } = await openLook();
+      engine.delayNext("avatars.checkDescriptor", 1_000);
+      await runCheck();
+      fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+      await screen.findByRole("heading", { level: 1, name: "Аватары" });
+      runAll(scheduler);
+      await flush();
+      expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(1);
+    } finally {
+      console.error = original;
+    }
+    expect(errors).toEqual([]);
+  });
+});
+
 describe("«Изменить текст»", () => {
   test("saves free, against the stored text; the next edit is made against what the engine stored, not what was typed", async () => {
     const { engine } = await openLook();
