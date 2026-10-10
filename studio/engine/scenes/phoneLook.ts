@@ -48,7 +48,7 @@ const LIGHT: ReadonlyMap<string, string> = new Map([
   ["midday", "flat midday daylight"],
   ["golden hour", "low late-afternoon sun"],
   ["evening", "the evening lamps, the sky outside already dim"],
-  ["night", "the nearest ceiling light or street lamp, a dark background"],
+  ["night", "a ceiling light or street lamp, a dark background"],
   ["studio lighting", "the room's ceiling lights"],
 ]);
 

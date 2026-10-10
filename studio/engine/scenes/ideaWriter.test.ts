@@ -58,8 +58,8 @@ describe("ideaMessages", () => {
   test("keeps the compose prompt's standing rules line for line: the woman, the phone hand, the pose, the adult rule, the clothing list, no text, no praise words", () => {
     const compose = (writerMessages(plan({ seed: 1, count: 1, categories: ["home"] }).slots)[0]?.content ?? "").split("\n");
     const idea = ideaSystemPrompt().split("\n");
-    const standing = compose.filter((line) => /^You write|^Reference images|holds the phone|Match each slot|grown adult|^- No text|^- Never write about|^- No paper|^- Never use these words/.test(line));
-    expect(standing.length).toBe(9);
+    const standing = compose.filter((line) => /^You write|^Reference images|holds the phone|Match each slot|grown adult|^- No text|^- Never write about|^- When she looks|^- No paper|^- Never use these words/.test(line));
+    expect(standing.length).toBe(10);
     for (const line of standing) expect(idea).toContain(line);
     // The clothing line differs on purpose: the outfit is not "given" in an idea write, so it keeps its covering sentence (C-8).
     expect(idea.some((l) => l.startsWith("- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says"))).toBe(true);
@@ -72,6 +72,9 @@ describe("ideaMessages", () => {
     expect(prompt).toContain("her expression, and at most one ordinary detail of the place. Do not describe the light, the colours or the mood; if light comes up, name only its source.");
     expect(prompt).toContain("vary the place, her outfit and what she does.");
     expect(prompt).not.toContain("the time of day");
+    expect(prompt).toContain("When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.");
+    expect(prompt).toContain("For any other pose she may face or glance toward the viewer as the shot allows.");
+    expect(prompt).not.toContain('"the phone" in a gaze');
     expect(prompt).not.toContain("photorealistic");
     expect(prompt).not.toContain('Never use "stunning"');
   });
@@ -116,7 +119,7 @@ describe("ideaMessages: a slot whose angle the model picks", () => {
   });
 
   test("a slot that gives both (an own scene written again) is told as before", () => {
-    expect(items(ideaMessages([FIXED]))).toEqual([{ slotIndex: 8, idea: "лежит на животе, вид сзади", shot: "a phone snap a friend took while she is busy", pose: "from behind, her face not visible" }]);
+    expect(items(ideaMessages([FIXED]))).toEqual([{ slotIndex: 8, idea: "лежит на животе, вид сзади", shot: "a friend's snap while she is busy", pose: "from behind, her face not visible" }]);
   });
 
   test("the system prompt explains «choose»: from the idea, in the schema's words, back for a view from behind, null for what is given", () => {

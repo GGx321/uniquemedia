@@ -109,7 +109,7 @@ describe("lightOf", () => {
     ["midday", "flat midday daylight"],
     ["golden hour", "low late-afternoon sun"],
     ["evening", "the evening lamps, the sky outside already dim"],
-    ["night", "the nearest ceiling light or street lamp, a dark background"],
+    ["night", "a ceiling light or street lamp, a dark background"],
     ["studio lighting", "the room's ceiling lights"],
   ])("names the source of %p light as %p", (time, phrase) => {
     expect(lightOf(time)).toBe(phrase);

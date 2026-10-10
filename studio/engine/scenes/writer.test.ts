@@ -302,6 +302,13 @@ describe("detectors", () => {
     // the camera is still a violation even in a sentence that also contains
     // an unrelated negation elsewhere.
     ["back", "She isn't holding anything, but she looks over her shoulder at the camera as the door closes.", true],
+    // S5.1b review: the viewer, the phone and the lens are the same forbidden gaze for a back or profile pose.
+    ["back", "she looks over her shoulder at the viewer as she leaves.", true],
+    ["profile", "she glances toward the viewer with a small smile.", true],
+    ["back", "she looks at the phone and then walks away.", true],
+    ["profile", "she smiles into the lens.", true],
+    ["profile", "she is not looking at the viewer, her eyes on the window.", false],
+    ["front", "she looks at the viewer and laughs.", false],
   ] as const)("contradictsPose(%j, %j) -> %p", (pose, sentence, expected) => {
     expect(contradictsPose(sentence, pose)).toBe(expected);
   });
@@ -534,8 +541,17 @@ describe("S5.1b: the writer is told to write what an ordinary phone photo shows,
     expect(system()).not.toContain("the background and the light");
   });
 
+  test("the gaze rule: she looks at the viewer, never at a named phone, camera or lens; her phone appears only with its activity", () => {
+    expect(system()).toContain(
+      "When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.",
+    );
+    expect(system()).not.toContain('"the phone" in a gaze');
+    expect(system()).toContain("For any other pose she may face or glance toward the viewer as the shot allows.");
+    expect(system()).not.toContain("glance toward the camera");
+  });
+
   test("forbids camera talk, paper, books, laptops and tablets", () => {
-    expect(system()).toContain('Never write about the camera, the lens, the photo, the shot or the framing; "the phone" in a gaze is her own phone.');
+    expect(system()).toContain("Never write about the camera, the lens, the photo, the shot or the framing.");
     expect(system()).toContain("No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.");
   });
 
@@ -548,8 +564,9 @@ describe("S5.1b: the writer is told to write what an ordinary phone photo shows,
 
   test("tells the model the 37 words never to use", () => {
     const line = system().split("\n").find((l) => l.startsWith("- Never use these words: ")) ?? "";
-    const told = line.slice("- Never use these words: ".length).replace(/\.$/, "").split(", ");
+    const told = line.slice("- Never use these words: ".length).replace(", unless the slot's own place, outfit or activity uses it.", "").split(", ");
     expect(told).toEqual(TOLD_NEVER_WORDS);
+    expect(line.endsWith(", gorgeous, unless the slot's own place, outfit or activity uses it.")).toBe(true);
     expect(told).toHaveLength(37);
     expect(system()).not.toContain('Never use "stunning"');
   });
@@ -559,7 +576,7 @@ describe("S5.1b: the writer is told to write what an ordinary phone photo shows,
       friend: "a phone snap a friend took",
       selfie: "her own front-camera selfie",
       mirror: "her mirror selfie",
-      candid: "a phone snap a friend took while she is busy",
+      candid: "a friend's snap while she is busy",
       photographer: "a phone snap a friend took",
     });
     for (const label of Object.values(SHOT_LABEL)) expect(label).not.toMatch(/full-frame|photographer|candid shot|looking at the camera/);

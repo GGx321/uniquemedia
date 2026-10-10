@@ -260,7 +260,7 @@ function readPoses(raw: unknown): ScenePose[] | undefined {
 
 export type PoolAnswer = { ok: true; label: string; style: CategoryStyle; pool: CategoryPool; dropped: number } | ({ ok: false } & PoolRefusal);
 
-/** How a custom category is finished: always a phone photo. A stored "editorial" stays readable, but a new pool never gets it. */
+/** How a custom category is finished: always a phone photo, whatever the deck (the parameter stays so callers and the contract do not change). A stored "editorial" stays readable, but a new pool never gets it. */
 export function styleOfDeck(_deck: readonly string[]): CategoryStyle {
   return "phone";
 }

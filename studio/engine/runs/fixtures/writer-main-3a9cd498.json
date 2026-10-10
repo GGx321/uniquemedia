@@ -1,15 +1,15 @@
 {
   "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
   "messages": {
-    "chunk1": "ecf8d14fd562ef0af4b8eb9cc65bd5460f84ca6ac5716df13d4cbd39ed38035f",
-    "chunk1-empty": "76d6d579d3b72d2663a73333cd0479a2260ef5b5ea53edf979f5c8dedf6f7e30",
-    "chunk2": "f7bbe478ddfae3cc5537f1feab585e299c5303a04cf84ca3081b42560a50b251",
-    "chunk2-empty": "2ac66e07b31df21201a947f03500c7873c29b7dc08de0a0fd3da5a1dda4b4ba7"
+    "chunk1": "755fa0a0bc1b4621fc6edb14a38280972b998f67bc36431dc7b3a6ae80749eb8",
+    "chunk1-empty": "d1fda6c068f09237b3f651048791cf5dcd3adf9c7a0a75296de8c5d0f0d41670",
+    "chunk2": "6c216ff3dcc4361eb156884a0cbfc27198e7af06136dc38e8c6e8dd7e491c023",
+    "chunk2-empty": "6effcf53a3ad6a97e7b6e999c2dd41605ddca60be905336a711e1f9829785a35"
   },
   "bodies": [
-    "647cc9ec1c3e6268863a2f0aafa10a0c9026898c5eb81b386ddc5dbcc2de8b70",
-    "096d8737009c7d4afdf2fb8d16973cedc9b264220dd7040d0f4a0cbc5209239e",
-    "9bcf04b7753e11c93190fb5f3b2ce7c7e6cb83b1fae5383c2bdd2c9186bbd514"
+    "d19f4d4d474e7d06566ee87b6378200d5bd917126cf29caa75489dafb6fde875",
+    "cf95e82df72fdcff566f7cd8a4985109c39bae66bc84cf6a51ccfd7db1227947",
+    "1596c0aa4c7cc159e5a25c892b37268bb4d29493c397fbedf78f7966b174864d"
   ],
   "reserves": [
     { "attemptId": "run-00000001:writer-1#1", "worstMicros": 37500, "model": "x-ai/grok-4.3" },

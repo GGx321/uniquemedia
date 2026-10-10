@@ -87,7 +87,7 @@ export const SHOT_LABEL: Record<Shot, string> = {
   friend: "a phone snap a friend took",
   selfie: "her own front-camera selfie",
   mirror: "her mirror selfie",
-  candid: "a phone snap a friend took while she is busy",
+  candid: "a friend's snap while she is busy",
   photographer: "a phone snap a friend took",
 };
 
@@ -113,13 +113,14 @@ function writerSystemPrompt(): string {
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
     '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
-    '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the camera, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the camera. For any other pose she may face or glance toward the camera as the shot allows.',
+    '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the viewer, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the viewer. For any other pose she may face or glance toward the viewer as the shot allows.',
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
     "- Describe the outfit exactly as given, in its own words: never more or less revealing, never add or remove a garment. Never name bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
-    '- Never write about the camera, the lens, the photo, the shot or the framing; "the phone" in a gaze is her own phone.',
+    "- Never write about the camera, the lens, the photo, the shot or the framing.",
+    "- When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.",
     "- No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.",
-    "- Never use these words: professional, photographer, photoshoot, studio, editorial, fashion, model, posing, captures, candid, cinematic, bokeh, golden hour, softly lit, soft light, glow, glowing, dramatic, moody, dreamy, elegant, luxurious, lavish, glamorous, chic, sophisticated, polished, pristine, marble, silk, satin, velvet, stunning, beautiful, perfect, flawless, gorgeous.",
+    "- Never use these words: professional, photographer, photoshoot, studio, editorial, fashion, model, posing, captures, candid, cinematic, bokeh, golden hour, softly lit, soft light, glow, glowing, dramatic, moody, dreamy, elegant, luxurious, lavish, glamorous, chic, sophisticated, polished, pristine, marble, silk, satin, velvet, stunning, beautiful, perfect, flawless, gorgeous, unless the slot's own place, outfit or activity uses it.",
     "",
     'Return JSON matching the schema: {"scenes": [{"slotIndex", "sentence"}, ...]}, exactly one object per slot, in the given order.',
   ].join("\n");
@@ -343,7 +344,7 @@ function phoneInHand(slot: ReadableSlot): boolean {
 const CAMERA_GAZE_VERB = "(?:look(?:ing|s)?|gaz(?:ing|es)?|star(?:ing|es)?|glanc(?:ing|es)?|smil(?:ing|es)?|peer(?:ing|s)?)";
 const CAMERA_GAZE_NEGATOR = "(?:not|isn't|is\\s+not|never|without|no\\s+longer)\\s+";
 const CAMERA_GAZE = new RegExp(
-  `\\b(?<!${CAMERA_GAZE_NEGATOR})${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+camera\\b`,
+  `\\b(?<!${CAMERA_GAZE_NEGATOR})${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+(?:camera|phone|viewer|lens)\\b`,
   "i",
 );
 
