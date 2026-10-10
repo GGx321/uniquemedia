@@ -23,7 +23,7 @@ const KITCHEN: RoomPlace = { room: true, details: ["a kettle on the counter", "a
 const BEDROOM: RoomPlace = { room: true, details: ["a charger cable on the bed", "a hoodie on the chair"], activity: { messyOk: true } };
 
 describe("CAPTURE_LINE", () => {
-  test.each(SHOTS)("has a line for the %s author", (shot) => {
+  test.each([...SHOTS])("has a line for the %s author", (shot) => {
     expect(CAPTURE_LINE[shot].length).toBeGreaterThan(40);
   });
 
@@ -150,15 +150,15 @@ describe("IMPERFECTIONS and imperfectionOf", () => {
     ]);
   });
 
-  test.each(SHOTS)("draws a %s imperfection from that author's list only", (shot) => {
+  test.each([...SHOTS])("draws a %s imperfection from that author's list only", (shot) => {
     for (const key of KEYS.slice(0, 500)) expect(IMPERFECTIONS[shot]).toContain(imperfectionOf(shot, key));
   });
 
-  test.each(SHOTS)("is the same for the same key, so a resume draws what the first pass drew (I5.4)", (shot) => {
+  test.each([...SHOTS])("is the same for the same key, so a resume draws what the first pass drew (I5.4)", (shot) => {
     for (const key of KEYS.slice(0, 200)) expect(imperfectionOf(shot, key)).toBe(imperfectionOf(shot, key));
   });
 
-  test.each(SHOTS)("reaches every entry of the %s list over many keys", (shot) => {
+  test.each([...SHOTS])("reaches every entry of the %s list over many keys", (shot) => {
     const seen = new Set(KEYS.map((key) => imperfectionOf(shot, key)));
     expect([...seen].sort()).toEqual([...IMPERFECTIONS[shot]].sort());
   });

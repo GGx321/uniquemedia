@@ -4,10 +4,12 @@ import type { AvatarDescriptor } from "../../shared/engine";
 import { PromptSubjectError } from "../avatars/prompts";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { plan } from "./planner";
-import { PlanSlotSchema, PoseSchema, type PlanSlot } from "./schema";
+import { POOL_TIMES } from "../../shared/engine";
+import { PlanSlotSchema, PoseSchema, type OwnPlanSlot, type PlanSlot } from "./schema";
 import { SHOTS } from "./types";
 import { revealingWordsIn } from "./words";
-import { AssemblerRefusalError, assembleRun, assembleSlot, BINDING_ANCHOR, CAMERA_REALISM_CLAUSE, CAMERA_REALISM_CLAUSE_EDITORIAL, POSE_PHRASE, SHOT_PHRASE } from "./assembler";
+import { AssemblerRefusalError, assembleRun, assembleSlot as assembleWith, BINDING_ANCHOR, POSE_PHRASE, type AssembleOptions } from "./assembler";
+import { artefactLine, CAPTURE_LINE, CONSTRAINTS, imperfectionOf, lightOf, NEUTRAL_LIGHT, phoneHandLine, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -22,6 +24,14 @@ const DESCRIPTOR: AvatarDescriptor = {
 };
 const MASTER = asLibraryReference(JPEG);
 const SENTENCE = "She leans on the balcony railing with a mug of coffee, watching the street wake up below in the soft morning light.";
+
+const RUN_ID = "run-a1b2c3";
+const OPTIONS: AssembleOptions = { runId: RUN_ID };
+
+/** assembleSlot with the run id every call needs (the look draws are seeded from it). */
+function assembleSlot(descriptor: AvatarDescriptor, planSlot: PlanSlot | OwnPlanSlot, sentence: string, master: typeof MASTER, options: Partial<AssembleOptions> = {}) {
+  return assembleWith(descriptor, planSlot, sentence, master, { ...OPTIONS, ...options });
+}
 
 function slot(overrides: Partial<PlanSlot> = {}): PlanSlot {
   return {
@@ -62,25 +72,27 @@ describe("assembleSlot", () => {
     expect(prompt.toLowerCase()).toContain("watermark");
   });
 
-  test.each([
-    ["friend", "Photo taken by a friend"],
-    ["selfie", "Front-camera selfie"],
-    ["mirror", "Mirror selfie"],
-    ["candid", "Candid shot"],
-    ["photographer", "Photographed by a photographer"],
-  ] as const)("the %s shot phrase names the shot", (shot, phrase) => {
+  test.each([...SHOTS])("the %s capture line is the first sentence of the prompt", (shot) => {
     const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot }), SENTENCE, MASTER);
-    expect(prompt).toContain(phrase);
+    expect(prompt.startsWith(CAPTURE_LINE[shot])).toBe(true);
   });
 
-  test.each(["selfie", "mirror"] as const)("a %s slot's constraints say one hand holds the phone", (shot) => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot }), SENTENCE, MASTER);
-    expect(prompt.toLowerCase()).toContain("one hand holds the phone");
+  test("a mirror slot's constraints say one hand holds the phone", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "mirror" }), SENTENCE, MASTER);
+    expect(prompt).toContain("One hand holds the phone; only her other hand acts.");
+  });
+
+  test("a selfie slot's constraints say her phone arm runs out of the frame, and never that a hand holds the phone", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "selfie" }), SENTENCE, MASTER);
+    expect(prompt).toContain("Her phone arm runs out of the frame; only her other hand acts.");
+    expect(prompt.toLowerCase()).not.toContain("holds the phone");
   });
 
   test.each(["friend", "candid", "photographer"] as const)("a %s slot's constraints say nothing about a phone hand", (shot) => {
     const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot }), SENTENCE, MASTER);
+    expect(prompt.toLowerCase()).not.toContain("phone hand");
     expect(prompt.toLowerCase()).not.toContain("holds the phone");
+    expect(prompt.toLowerCase()).not.toContain("phone arm");
   });
 
   describe("pose (T5c)", () => {
@@ -118,21 +130,38 @@ describe("assembleSlot", () => {
       expect(prompt.toLowerCase()).toContain("exact face");
     });
 
-    test("a selfie's shot phrase still says her face is visible, whatever the pose label adds", () => {
+    test("a selfie's pose phrase still says her face is clearly visible", () => {
       const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "selfie", pose: "front" }), SENTENCE, MASTER);
-      expect(prompt.toLowerCase()).toContain("face fully visible");
+      expect(prompt.toLowerCase()).toContain("face clearly visible");
+    });
+
+    test.each([
+      ["front", "the exact hair colour from the reference photo"],
+      ["three-quarter", "the exact hair colour from the reference photo"],
+      ["profile", "the exact hair colour from the reference photo and build"],
+      ["back", "the exact hair colour from the reference photo, her build and posture"],
+    ] as const)("the %s binding asks for the exact hair colour from the reference photo (C-21)", (pose, phrase) => {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend", pose }), SENTENCE, MASTER);
+      expect(prompt).toContain(phrase);
+      expect(prompt.toLowerCase()).not.toContain("natural hair");
+    });
+
+    test("the binding no longer names the hairline", () => {
+      for (const pose of PoseSchema.options) expect(BINDING_ANCHOR[pose]).not.toContain("hairline");
     });
   });
 
-  test("uses the photoshoot's editorial realism suffix, not the phone-photo one", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot" }), SENTENCE, MASTER);
-    expect(prompt).toContain("Editorial photo");
-    expect(prompt).not.toContain("Smartphone photo");
+  test("a photoshoot slot reads as an ordinary phone photo too, never as an editorial one (T4)", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot", shot: "photographer" }), SENTENCE, MASTER);
+    expect(prompt).toContain("Ordinary phone photo");
+    expect(prompt).not.toMatch(/editorial/i);
+    expect(prompt).not.toMatch(/photographer/i);
   });
 
-  test("every other category uses the smartphone realism suffix", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "home" }), SENTENCE, MASTER);
-    expect(prompt).toContain("Smartphone photo");
+  test("every other category reads as an ordinary phone photo", () => {
+    for (const category of ["home", "travel", "glamour", "fitness"] as const) {
+      expect(assembleSlot(DESCRIPTOR, slot({ category }), SENTENCE, MASTER).prompt).toContain("Ordinary phone photo");
+    }
   });
 
   test("strips stop-words (marketing superlatives) even if the sentence carried one", () => {
@@ -243,9 +272,10 @@ describe("shot × pose coherence (round 2, HIGH)", () => {
 describe("phrase constants never suggest a minor or use a revealing word (round 2, LOW)", () => {
   function allPhrases(): [string, string][] {
     return [
-      ...Object.entries(SHOT_PHRASE).map(([k, v]): [string, string] => [`SHOT_PHRASE.${k}`, v]),
+      ...Object.entries(CAPTURE_LINE).map(([k, v]): [string, string] => [`CAPTURE_LINE.${k}`, v]),
       ...Object.entries(POSE_PHRASE).map(([k, v]): [string, string] => [`POSE_PHRASE.${k}`, v]),
       ...Object.entries(BINDING_ANCHOR).map(([k, v]): [string, string] => [`BINDING_ANCHOR.${k}`, v]),
+      ["CONSTRAINTS", CONSTRAINTS],
     ];
   }
 
@@ -255,75 +285,126 @@ describe("phrase constants never suggest a minor or use a revealing word (round 
   });
 });
 
-// «Реализм камеры»: one fixed clause, off unless asked for, appended after everything else.
-describe("camera realism", () => {
-  test("is not in the prompt by default", () => {
-    expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER).prompt).not.toContain(CAMERA_REALISM_CLAUSE);
+// S5.1a: the order of a prompt (plan 6.2): capture line, pose phrase, sentence, room phrase, binding + descriptor, artefact line, constraints.
+describe("the order of a prompt (T6)", () => {
+  const ROOM: RoomPlace = { room: true, details: ["a kettle on the counter", "a fruit bowl"], activity: { messyOk: false } };
+  const withRoom = { roomPlaceOf: () => ROOM };
+
+  test.each([true, false])("with cameraRealism %p the parts come in the settled order", (cameraRealism) => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend", pose: "front" }), SENTENCE, MASTER, { cameraRealism, ...withRoom });
+    const room = roomStateOf(slotKeyOf(RUN_ID, "slot-1"), ROOM) ?? "";
+    expect(room).not.toBe("");
+    const parts = [
+      CAPTURE_LINE.friend,
+      POSE_PHRASE.front,
+      "She leans on the balcony railing",
+      room,
+      "The same woman as in the reference photo",
+      "25-year-old European woman",
+      "Ordinary phone photo",
+      CONSTRAINTS,
+    ];
+    const order = parts.map((part) => prompt.indexOf(part));
+    expect(order.every((index) => index >= 0)).toBe(true);
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
   });
 
-  test("is not in the prompt when switched off explicitly, and the prompt is then exactly the default one", () => {
-    const plain = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER);
-    expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: false })).toEqual(plain);
+  test("a prompt without a room lookup has no room phrase", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER);
+    expect(prompt).not.toContain("The room ");
   });
 
-  test("ends the prompt when switched on, after the constraints, and leaves everything before it untouched", () => {
-    const plain = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER).prompt;
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: true });
-    expect(prompt).toBe(`${plain} ${CAMERA_REALISM_CLAUSE}`);
+  test("a lookup that finds no place (an old plan's renamed place) adds no room phrase", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { roomPlaceOf: () => null });
+    expect(prompt).not.toContain("The room ");
   });
 
-  test("assembleRun passes the switch to every slot", () => {
-    const scenePlan = plan({ seed: 1, count: 3, categories: ["home"] });
-    const sentences = new Map(scenePlan.slots.map((s) => [s.slotIndex, SENTENCE]));
-    const prompts = assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER, { cameraRealism: true }).map((a) => a.prompt);
-    expect(prompts.every((p) => p.endsWith(CAMERA_REALISM_CLAUSE))).toBe(true);
+  test("the lookup is asked about the slot being assembled", () => {
+    const asked: number[] = [];
+    assembleSlot(DESCRIPTOR, slot({ slotIndex: 4, attemptIdBase: "slot-4" }), SENTENCE, MASTER, {
+      roomPlaceOf: (s) => {
+        asked.push(s.slotIndex);
+        return null;
+      },
+    });
+    expect(asked).toEqual([4]);
   });
 
-  test.each([
-    ["the smartphone clause", CAMERA_REALISM_CLAUSE],
-    ["the editorial clause", CAMERA_REALISM_CLAUSE_EDITORIAL],
-  ])("%s is a short English sentence about the camera, with no youth word, no revealing word and no stop-word", (_name, clause) => {
-    expect(clause.length).toBeLessThanOrEqual(220);
-    expect(youthWords(clause, "descriptor")).toEqual([]);
-    expect(revealingWordsIn(clause)).toEqual([]);
-    expect(clause).toMatch(/skin texture/i);
-    expect(clause).toMatch(/no airbrushing/i);
-    expect(clause).not.toMatch(/\b(?:8k|masterpiece|professional photo|perfect skin|stunning|flawless|beautiful)\b/i);
+  test("the normalised text carries no doubled space, no dangling comma and no doubled full stop", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "selfie" }), SENTENCE, MASTER, { cameraRealism: true, ...withRoom });
+    expect(prompt).not.toMatch(/\s{2,}|,\s*\.|\.\./);
+  });
+});
+
+// «Реализм камеры»: both lines exist. ON adds the camera-roll artefacts and the slot's imperfection; OFF carries the light and the sharp background.
+describe("camera realism (artefact line)", () => {
+  const key = slotKeyOf(RUN_ID, "slot-1");
+
+  test("off (the default): the OFF artefact line carries the slot's light", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ timeOfDay: "morning" }), SENTENCE, MASTER);
+    expect(prompt).toContain(artefactLine({ cameraRealism: false, light: "morning daylight", imperfection: "" }));
   });
 
-  // Review round 1, M4: «Editorial photo» + «Candid smartphone photo» in one prompt contradicts itself.
-  test("a photoshoot slot gets the editorial clause, which never says smartphone, and never the phone one", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot", shot: "photographer" }), SENTENCE, MASTER, { cameraRealism: true });
-
-    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
-    expect(prompt).not.toContain(CAMERA_REALISM_CLAUSE);
-    expect(CAMERA_REALISM_CLAUSE_EDITORIAL).not.toMatch(/smartphone|phone/i);
+  test("off explicitly is the same prompt as the default", () => {
+    expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: false })).toEqual(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER));
   });
 
-  test("a photoshoot prompt with the clause says smartphone nowhere", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot", shot: "photographer" }), SENTENCE, MASTER, { cameraRealism: true });
-
-    expect(prompt).toContain("Editorial photo");
-    expect(prompt.toLowerCase()).not.toContain("smartphone");
+  test("on: the ON artefact line carries the light and the slot's imperfection", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ timeOfDay: "evening", shot: "friend" }), SENTENCE, MASTER, { cameraRealism: true });
+    expect(prompt).toContain(artefactLine({ cameraRealism: true, light: lightOf("evening"), imperfection: imperfectionOf("friend", key) }));
   });
 
-  test("every other category keeps the smartphone clause", () => {
-    for (const category of ["home", "travel", "glamour", "fitness"] as const) {
-      expect(assembleSlot(DESCRIPTOR, slot({ category }), SENTENCE, MASTER, { cameraRealism: true }).prompt.endsWith(CAMERA_REALISM_CLAUSE)).toBe(true);
+  test("on: the imperfection is drawn from the author's own list (a mirror gets mirror smudges, never a motion blur)", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "mirror" }), SENTENCE, MASTER, { cameraRealism: true });
+    expect(prompt).toContain(imperfectionOf("mirror", key));
+    expect(prompt).not.toContain("motion blur");
+  });
+
+  test("off: the imperfection and the camera-roll artefacts are not in the prompt", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend" }), SENTENCE, MASTER);
+    for (const text of ["motion blur", "washed-out", "white balance", "camera roll", "JPEG"]) expect(prompt).not.toContain(text);
+  });
+
+  test("the light of every stored time of day reaches the prompt as its source", () => {
+    for (const time of POOL_TIMES) expect(assembleSlot(DESCRIPTOR, slot({ timeOfDay: time }), SENTENCE, MASTER).prompt).toContain(lightOf(time));
+  });
+
+  test("a time the table does not know gets the neutral light", () => {
+    expect(assembleSlot(DESCRIPTOR, slot({ timeOfDay: "twilight" }), SENTENCE, MASTER).prompt).toContain(NEUTRAL_LIGHT);
+  });
+
+  test("the stored times «golden hour» and «studio lighting» never reach the prompt", () => {
+    for (const time of ["golden hour", "studio lighting"]) {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot({ timeOfDay: time }), SENTENCE, MASTER, { cameraRealism: true });
+      expect(prompt.toLowerCase()).not.toContain("golden hour");
+      expect(prompt.toLowerCase()).not.toContain("studio lighting");
     }
   });
 
-  test("the stop-word filter leaves the clause whole (it contains none of them)", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: true });
-    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE)).toBe(true);
+  test("an own scene (no place, no time) gets the neutral light", () => {
+    const own: OwnPlanSlot = { kind: "own", slotIndex: 3, category: "own", shot: "selfie", pose: "front", attemptIdBase: "slot-3", sentence: SENTENCE };
+    expect(assembleSlot(DESCRIPTOR, own, SENTENCE, MASTER).prompt).toContain(NEUTRAL_LIGHT);
   });
 
-  test("the editorial clause survives the stop-word filter whole too", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot({ category: "photoshoot", shot: "photographer" }), SENTENCE, MASTER, { cameraRealism: true });
-    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
+  test("the artefact line comes before the constraints, and the constraints end the prompt of a friend slot", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "friend" }), SENTENCE, MASTER, { cameraRealism: true });
+    expect(prompt.endsWith(CONSTRAINTS)).toBe(true);
+    expect(prompt.indexOf("Ordinary phone photo straight from her camera roll")).toBeLessThan(prompt.indexOf(CONSTRAINTS));
   });
 
-  test("every valid shot and pose with the clause stays well under 2000 characters", () => {
+  test("the prompt of a selfie ends with the phone-arm line after the constraints", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "selfie" }), SENTENCE, MASTER);
+    expect(prompt.endsWith(`${CONSTRAINTS} ${phoneHandLine("selfie")}`)).toBe(true);
+  });
+
+  test("the stop-word filter leaves both artefact lines whole (they contain none of them)", () => {
+    for (const cameraRealism of [true, false]) {
+      const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism });
+      expect(prompt).toContain(artefactLine({ cameraRealism, light: lightOf("morning"), imperfection: imperfectionOf("friend", key) }));
+    }
+  });
+
+  test("every valid shot and pose with the switch on stays well under 2000 characters", () => {
     for (const shot of SHOTS) {
       for (const pose of PoseSchema.options) {
         for (const category of ["home", "photoshoot"] as const) {
@@ -337,12 +418,91 @@ describe("camera realism", () => {
   });
 });
 
+// I5.4: the draws are pure functions of the slot's key.
+describe("deterministic per slot (I5.4)", () => {
+  test("the same run and slot assemble a byte-identical prompt every time", () => {
+    const a = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: true });
+    const b = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: true });
+    expect(a.prompt).toBe(b.prompt);
+  });
+
+  test("the plan's seed is not an input: two plans of one run id and slot assemble the same prompt", () => {
+    const options = { ...OPTIONS, cameraRealism: true };
+    const first = assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots: [slot()] }, new Map([[1, SENTENCE]]), MASTER, options);
+    const second = assembleRun(DESCRIPTOR, { version: 1, seed: 0, slots: [slot()] }, new Map([[1, SENTENCE]]), MASTER, options);
+    expect(first[0]?.prompt).toBe(second[0]?.prompt);
+  });
+
+  test("different runs of the same slot draw different imperfections", () => {
+    const prompts = new Set(Array.from({ length: 40 }, (_, i) => assembleWith(DESCRIPTOR, slot(), SENTENCE, MASTER, { runId: `run-${i}`, cameraRealism: true }).prompt));
+    expect(prompts.size).toBeGreaterThan(1);
+  });
+
+  test("different slots of one run draw different imperfections", () => {
+    const prompts = new Set(Array.from({ length: 12 }, (_, i) => assembleSlot(DESCRIPTOR, slot({ slotIndex: i + 1, attemptIdBase: `slot-${i + 1}` }), SENTENCE, MASTER, { cameraRealism: true }).prompt));
+    expect(prompts.size).toBeGreaterThan(1);
+  });
+});
+
+// I5.2 / I5.3 / I5.10 over every shot × pose × category × time × switch (the full sweeps over plans are S5.1d's).
+describe("what no new prompt may say", () => {
+  const HELD_PHONE = [/holds? (the|her) phone/i, /phone in (her|one) hand/i, /phone (is )?visible/i];
+  const STAGING = [/only she is in focus/i, /full-frame/i, /editorial/i, /shot on a camera/i, /photographer/i, /bokeh/i, /studio lighting/i, /golden hour/i, /softly lit/i];
+  const NEGATED_LOOK = [/\bno (retouching|airbrushing|beauty filter|bokeh|blur|makeup filter)\b/i, /not retouched/i, /without retouching/i];
+  const PHONE_NOT_IN_PICTURE = /phone itself is not in the picture/;
+
+  function everyPrompt(): { label: string; shot: PlanSlot["shot"]; prompt: string }[] {
+    const out: { label: string; shot: PlanSlot["shot"]; prompt: string }[] = [];
+    for (const shot of SHOTS) {
+      for (const pose of PoseSchema.options) {
+        for (const category of ["home", "travel", "photoshoot", "glamour", "fitness"] as const) {
+          for (const time of [...POOL_TIMES, "twilight"]) {
+            const candidate = { ...slot(), category, shot, pose, timeOfDay: time };
+            if (!PlanSlotSchema.safeParse(candidate).success) continue;
+            for (const cameraRealism of [true, false]) {
+              out.push({ label: `${category}/${shot}/${pose}/${time}/${cameraRealism ? "on" : "off"}`, shot, prompt: assembleSlot(DESCRIPTOR, candidate, SENTENCE, MASTER, { cameraRealism }).prompt });
+            }
+          }
+        }
+      }
+    }
+    return out;
+  }
+
+  test("the sweep covers a few hundred prompts (sanity)", () => {
+    expect(everyPrompt().length).toBeGreaterThan(300);
+  });
+
+  test("I5.3: no camera or staging word in any prompt", () => {
+    for (const { label, prompt } of everyPrompt()) for (const pattern of STAGING) expect({ label, hit: pattern.test(prompt) }).toEqual({ label, hit: false });
+  });
+
+  test("I5.10: no negated look term in any prompt", () => {
+    for (const { label, prompt } of everyPrompt()) for (const pattern of NEGATED_LOOK) expect({ label, hit: pattern.test(prompt) }).toEqual({ label, hit: false });
+  });
+
+  test("I5.2: no prompt but a mirror's shows or holds a phone", () => {
+    for (const { label, shot, prompt } of everyPrompt()) {
+      if (shot === "mirror") continue;
+      for (const pattern of HELD_PHONE) expect({ label, hit: pattern.test(prompt) }).toEqual({ label, hit: false });
+    }
+  });
+
+  test("a selfie's prompt says the phone itself is not in the picture; no other author's does", () => {
+    for (const { label, shot, prompt } of everyPrompt()) expect({ label, says: PHONE_NOT_IN_PICTURE.test(prompt) }).toEqual({ label, says: shot === "selfie" });
+  });
+
+  test("the adult-woman line is in every prompt (I5.13)", () => {
+    for (const { label, prompt } of everyPrompt()) expect({ label, adult: prompt.includes("She is an adult woman.") }).toEqual({ label, adult: true });
+  });
+});
+
 describe("assembleRun", () => {
   test("assembles every slot of a real plan, one prompt each, bound to the master", () => {
     const scenePlan = plan({ seed: 1, count: 3, categories: ["home"] });
     const sentences = new Map(scenePlan.slots.map((s) => [s.slotIndex, SENTENCE]));
 
-    const scenes = assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER);
+    const scenes = assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER, OPTIONS);
 
     expect(scenes).toHaveLength(3);
     expect(scenes.map((s) => s.slotIndex)).toEqual(scenePlan.slots.map((s) => s.slotIndex));
@@ -353,6 +513,6 @@ describe("assembleRun", () => {
     const scenePlan = plan({ seed: 1, count: 2, categories: ["home"] });
     const sentences = new Map([[scenePlan.slots[0]!.slotIndex, SENTENCE]]);
 
-    expect(() => assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER)).toThrow();
+    expect(() => assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER, OPTIONS)).toThrow();
   });
 });

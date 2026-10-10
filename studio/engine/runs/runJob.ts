@@ -439,7 +439,7 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   }
   let assembled: Map<number, string>;
   try {
-    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { cameraRealism: plan.cameraRealism === true, categories: plan.categories }).map((a) => [a.slotIndex, a.prompt]));
+    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { runId: plan.runId, cameraRealism: plan.cameraRealism === true }).map((a) => [a.slotIndex, a.prompt]));
   } catch (error) {
     return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the scene prompts could not be assembled: ${messageOf(error)}`) } } };
   }

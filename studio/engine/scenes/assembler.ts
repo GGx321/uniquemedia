@@ -1,9 +1,9 @@
-import { youthWords, type AvatarDescriptor, type CategorySnapshot } from "../../shared/engine";
+import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { promptSubject } from "../avatars/prompts";
 import type { LibraryReference } from "../library/media";
-import { categoryStyleOf } from "./categories";
+import { artefactLine, CAPTURE_LINE, CONSTRAINTS, imperfectionOf, lightOf, phoneHandLine, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import { revealingWordsIn } from "./words";
-import type { Pose, RunSlot, ScenePlan } from "./schema";
+import { isOwnSlot, type Pose, type RunSlot, type ScenePlan } from "./schema";
 import type { Shot } from "./types";
 
 // T5b: the assembler. Pure, no I/O, deterministic: the same descriptor, slot,
@@ -39,31 +39,15 @@ export function sentenceProblems(sentence: string): SentenceProblem[] {
   return problems;
 }
 
-// T5c: selfie and mirror are always front/three-quarter (schema.ts's own
-// refine pins this), so their own "face fully visible" wording stays exactly
-// right regardless of pose. friend/candid/photographer can land on any pose,
-// so their face-visibility claim now comes from POSE_PHRASE below instead of
-// being hardcoded here — hardcoding "face clearly visible" on these three
-// would contradict a back or profile pose's own phrase.
-//
-// Round 2 review (HIGH): candid's own "not looking at the camera" combined
-// with front's original "She faces the camera" produced a self-contradicting
-// prompt for a candid+front slot — a real combination (candid draws any
-// pose). Exported so assembler.test.ts's coherence test can scan every
-// value directly, and so the shot×pose coherence check has the exact text
-// to reason about.
-export const SHOT_PHRASE: Record<Shot, string> = {
-  friend: "Photo taken by a friend with the rear phone camera, three-quarter or full-body framing",
-  selfie: "Front-camera selfie at arm's length, slight wide-angle distortion, face fully visible",
-  mirror: "Mirror selfie, phone held at chest height, face fully visible in the mirror",
-  candid: "Candid shot, she is not looking at the camera",
-  photographer: "Photographed by a photographer with a full-frame camera, three-quarter or full-body framing",
-};
+// T5c, S5.1a: how the photo was taken (the capture line, first in the prompt) now lives in phoneLook.ts with every other look phrase (I5.1). This
+// module's POSE_PHRASE below says which way she is turned and whether her face is visible: friend/candid/photographer slots can land on any pose, so
+// the face-visibility claim comes from it and is never hardcoded in a capture line (a back pose would contradict it). Selfie and mirror are always
+// front or three-quarter (schema.ts), so POSE_PHRASE's face claim is always right for them.
 
 /**
- * T5c: a fixed phrase per pose, exactly like SHOT_PHRASE — the shot phrase
- * above says how the photo was taken, this says which way she is turned and
- * whether her face is visible.
+ * T5c: a fixed phrase per pose — the capture line (phoneLook.ts) says how the
+ * photo was taken, this says which way she is turned and whether her face is
+ * visible.
  *
  * Round 2 review (HIGH): `front` no longer says "She faces the camera"
  * (an active gaze claim that contradicts candid's "not looking at the
@@ -82,28 +66,6 @@ export const POSE_PHRASE: Record<Pose, string> = {
   back: "Photographed from behind, her face not visible",
 };
 
-const REALISM_EDITORIAL = "Editorial photo, natural skin texture, no heavy retouching.";
-const REALISM_PHONE = "Smartphone photo, natural skin texture, slight noise, no retouching, no beauty filter.";
-
-/**
- * «Реализм камеры» (Settings, off by default): the one fixed clause appended to the END of every image prompt of a run
- * that started with the switch on. The default phrases above already ask for natural skin and no retouching, yet some
- * models still draw too clean («будто кистью нарисовано»); this names the camera artefacts those models leave out. It is a
- * constant in this one place, never built from a descriptor, a sentence or any user text, and it avoids every stop-word.
- */
-export const CAMERA_REALISM_CLAUSE =
-  "Candid smartphone photo, natural skin texture with pores, slight sensor noise, imperfect natural light, no retouching, no airbrushing.";
-
-/**
- * The same clause for a `photoshoot` slot, whose prompt already says «Editorial photo» (REALISM_EDITORIAL): a camera, not a phone, so
- * the two sentences do not contradict each other (review round 1, M4). Every other category takes CAMERA_REALISM_CLAUSE.
- */
-export const CAMERA_REALISM_CLAUSE_EDITORIAL =
-  "Shot on a camera, natural skin texture with pores, subtle grain, imperfect natural light, no retouching, no airbrushing.";
-
-const BASE_CONSTRAINTS = "She is an adult woman. Only she is in focus; no text, logos, brand names or watermark.";
-const PHONE_HAND_CONSTRAINT = " One hand holds the phone; only her other hand acts.";
-
 const BINDING = "The same woman as in the reference photo,";
 
 /**
@@ -112,13 +74,14 @@ const BINDING = "The same woman as in the reference photo,";
  * keeps the face too, with "profile" and "build" named explicitly (the
  * reference-binding wording must still make sense for a profile shot); a
  * back shot has no face to bind at all, so it anchors on hair, build and
- * posture instead.
+ * posture instead. S5.1a (C-21): every pose asks for «the exact hair colour
+ * from the reference photo», never «natural» (a dyed colour is hers too).
  */
 export const BINDING_ANCHOR: Record<Pose, string> = {
-  front: "with her exact face, facial proportions and hairline",
-  "three-quarter": "with her exact face, facial proportions and hairline",
-  profile: "with her exact facial profile, hairline and build",
-  back: "with her exact hair, build and posture",
+  front: "with her exact face, facial proportions and the exact hair colour from the reference photo",
+  "three-quarter": "with her exact face, facial proportions and the exact hair colour from the reference photo",
+  profile: "with her exact facial profile, the exact hair colour from the reference photo and build",
+  back: "with the exact hair colour from the reference photo, her build and posture",
 };
 
 const STOP_WORD_LIST = "8k|masterpiece|professional photo|perfect skin|stunning|flawless|beautiful";
@@ -149,19 +112,18 @@ function normalize(text: string): string {
     .trim();
 }
 
-function phoneInHand(shot: Shot): boolean {
-  return shot === "selfie" || shot === "mirror";
-}
-
 function constraintsFor(slot: RunSlot): string {
-  return BASE_CONSTRAINTS + (phoneInHand(slot.shot) ? PHONE_HAND_CONSTRAINT : "");
+  const hand = phoneHandLine(slot.shot);
+  return hand === null ? CONSTRAINTS : `${CONSTRAINTS} ${hand}`;
 }
 
 export interface AssembleOptions {
-  /** «Реализм камеры»: append CAMERA_REALISM_CLAUSE (CAMERA_REALISM_CLAUSE_EDITORIAL for an editorial category). Off when absent. */
+  /** The run's id: with the slot's attempt id base it seeds the slot's look draws (the imperfection, the room state), so a resume assembles the same prompt (I5.4). */
+  runId: string;
+  /** «Реализм камеры»: the artefact line carries the camera-roll artefacts and the imperfection. Off when absent. */
   cameraRealism?: boolean;
-  /** The plan's own category snapshots: a custom category's finish (editorial or phone) is its snapshot's, never the library's. */
-  categories?: readonly CategorySnapshot[] | undefined;
+  /** The place of a slot as the room draw reads it, or null for none (an own scene, a renamed place). Absent: no slot gets a room phrase. */
+  roomPlaceOf?: (slot: RunSlot) => RoomPlace | null;
 }
 
 export interface AssembledScene {
@@ -172,17 +134,14 @@ export interface AssembledScene {
 }
 
 /**
- * Builds one slot's final image prompt from the avatar's descriptor (via
- * `promptSubject`, the only path from the avatar into the prompt), the
- * writer's sentence, a shot phrase, a realism suffix and the constraints
- * (one hand holds the phone for a selfie/mirror slot, no text/watermark,
- * adult woman), then strips stop-words. `sentence` is re-checked against the
- * same youth- and revealing-word rules the writer's own gate already ran
- * (runs/writerPhase.ts / readWriterAnswer): a defense-in-depth last resort, since
- * this is the last engine code to see the text before an image is paid for.
+ * Builds one slot's final image prompt, in the settled order (S5.1a, plan 6.2): the capture line, the pose phrase, the writer's sentence, the room
+ * phrase (if the slot's place is a room), the reference binding and the avatar's descriptor (via `promptSubject`, the only path from the avatar
+ * into the prompt), the artefact line («Реализм камеры» on or off) and the constraints. Every look phrase comes from phoneLook.ts; the draws (the
+ * imperfection, the room state) are pure functions of `${runId}:${attemptIdBase}`. Then it strips stop-words. `sentence` is re-checked against the
+ * same youth- and revealing-word rules the writer's own gate already ran (runs/writerPhase.ts / readWriterAnswer): a defense-in-depth last resort,
+ * since this is the last engine code to see the text before an image is paid for.
  */
-export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, sentence: string, master: LibraryReference, options: AssembleOptions = {}): AssembledScene {
-  const snapshots = options.categories ?? [];
+export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, sentence: string, master: LibraryReference, options: AssembleOptions): AssembledScene {
   const [problem] = sentenceProblems(sentence);
   if (problem !== undefined) {
     const kind = problem.reason === "youth-word" ? "a youth word" : "a revealing word";
@@ -190,22 +149,21 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   }
 
   const anchor = promptSubject(descriptor);
-  // A built-in's finish is fixed (the photoshoot is editorial); a custom category's is its snapshot's, never the category library's.
-  const editorial = categoryStyleOf(slot.category, snapshots) === "editorial";
-  const realism = editorial ? REALISM_EDITORIAL : REALISM_PHONE;
+  const key = slotKeyOf(options.runId, slot.attemptIdBase);
+  // An own scene has no stored time (the writer's sentence carries its light) and no place, so it gets the neutral light and no room phrase.
+  const light = lightOf(isOwnSlot(slot) ? undefined : slot.timeOfDay);
+  const room = roomStateOf(key, options.roomPlaceOf?.(slot) ?? null);
+  const artefact = artefactLine({ cameraRealism: options.cameraRealism === true, light, imperfection: imperfectionOf(slot.shot, key) });
   const raw =
+    `${CAPTURE_LINE[slot.shot]} ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
+    (room === null ? "" : `${room} `) +
     `${BINDING} ${BINDING_ANCHOR[slot.pose]}; ${anchor}. ` +
-    `${SHOT_PHRASE[slot.shot]}. ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
-    `${realism} ${constraintsFor(slot)}`;
-  const prompt = normalize(raw);
-  // «Реализм камеры» goes last, after normalize, and in the same style as the finish above: a camera for an editorial category (a photoshoot, or a custom
-  // category whose snapshot says so), a phone for the rest, so the two sentences never contradict each other.
-  const clause = editorial ? CAMERA_REALISM_CLAUSE_EDITORIAL : CAMERA_REALISM_CLAUSE;
-  return { slotIndex: slot.slotIndex, prompt: options.cameraRealism === true ? `${prompt} ${clause}` : prompt, references: [master] };
+    `${artefact} ${constraintsFor(slot)}`;
+  return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };
 }
 
-/** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. `options.categories` are the plan's own snapshots. */
-export function assembleRun(descriptor: AvatarDescriptor, scenePlan: { readonly slots: readonly RunSlot[] } & Partial<Omit<ScenePlan, "slots">>, sentences: ReadonlyMap<number, string>, master: LibraryReference, options: AssembleOptions = {}): AssembledScene[] {
+/** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. */
+export function assembleRun(descriptor: AvatarDescriptor, scenePlan: { readonly slots: readonly RunSlot[] } & Partial<Omit<ScenePlan, "slots">>, sentences: ReadonlyMap<number, string>, master: LibraryReference, options: AssembleOptions): AssembledScene[] {
   return scenePlan.slots.map((slot) => {
     const sentence = sentences.get(slot.slotIndex);
     if (sentence === undefined) throw new RangeError(`no writer sentence for slot ${slot.slotIndex}`);

@@ -12,7 +12,7 @@ import { reconcile } from "../money/reconcile";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type FetchCall, type Reply } from "../openrouter/testing/fakes";
 import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
-import { CAMERA_REALISM_CLAUSE, plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
+import { plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { attemptPaid, RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
@@ -45,6 +45,8 @@ const DESCRIPTOR: AvatarDescriptor = {
   text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build, light freckles across the nose.",
 };
 /** Fallback prices: the primary's attempt (low 1K + one reference) and the writer's (14K in, 8K out, T5c). */
+// The line «Реализм камеры» adds to a prompt (scenes/phoneLook.ts): only the ON artefact line says it is straight from the camera roll.
+const ON_ARTEFACT = "Ordinary phone photo straight from her camera roll";
 const IMAGE_WORST = 50_000;
 const WRITER_WORST = 37_500;
 const SENTENCE = "A friend catches her mid-laugh at the kitchen counter as morning light spills across the table.";
@@ -419,20 +421,20 @@ describe("a run from the start", () => {
     expect(net.imageCalls()[0]?.json().quality).toBeUndefined();
   });
 
-  test("camera realism on: every image prompt ends with the fixed clause", async () => {
+  test("camera realism on: every image prompt carries the camera-roll artefact line", async () => {
     const run = await newRun(1, { cameraRealism: true });
     const { net, end } = start(run);
     await end;
 
-    expect(String(net.imageCalls()[0]?.json().prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+    expect(String(net.imageCalls()[0]?.json().prompt)).toContain(ON_ARTEFACT);
   });
 
-  test("camera realism off (the default): the clause is not in the prompt", async () => {
+  test("camera realism off (the default): the camera-roll artefact line is not in the prompt", async () => {
     const run = await newRun(1);
     const { net, end } = start(run);
     await end;
 
-    expect(String(net.imageCalls()[0]?.json().prompt)).not.toContain(CAMERA_REALISM_CLAUSE);
+    expect(String(net.imageCalls()[0]?.json().prompt)).not.toContain(ON_ARTEFACT);
   });
 
   test("reports progress once per slot that ends", async () => {
@@ -505,10 +507,8 @@ describe("a run with a custom category", () => {
     expect(writerBody).not.toContain("Кофейни");
   });
 
-  test.each([
-    ["editorial", "Editorial photo", "Smartphone photo"],
-    ["phone", "Smartphone photo", "Editorial photo"],
-  ] as const)("the image prompt is finished by the snapshot's %s style", async (style, wanted, unwanted) => {
+  // S5.1a (T4): the assembler no longer reads a category's style, so a stored «editorial» snapshot still reads as the owner's own phone photo.
+  test.each(["editorial", "phone"] as const)("the image prompt of a snapshot with the %s style reads as an ordinary phone photo", async (style) => {
     const run = await newCustomRun(2, style);
     const net = network();
     await start(run, { net }).end;
@@ -516,8 +516,8 @@ describe("a run with a custom category", () => {
     const prompts = net.imageCalls().map((c) => JSON.stringify(c.json()));
     expect(prompts).toHaveLength(2);
     for (const prompt of prompts) {
-      expect(prompt).toContain(wanted);
-      expect(prompt).not.toContain(unwanted);
+      expect(prompt).toContain("Ordinary phone photo");
+      expect(prompt).not.toMatch(/editorial/i);
       expect(prompt).not.toContain(CUSTOM_REF);
     }
   });
