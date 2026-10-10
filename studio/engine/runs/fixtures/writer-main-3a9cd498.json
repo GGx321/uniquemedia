@@ -1,15 +1,15 @@
 {
-  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX;new plan from the pool rewrite; pose labels speak of the viewer): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
+  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
   "messages": {
-    "chunk1": "28e54ecc98c55316ad6e1e71d667da4efddbd9a893df52551fb74a8011ead591",
-    "chunk1-empty": "cb42eb706a4b1e81b4b0698d726e20a64ecbe63aecd2ab1b1f33aa555ae10197",
-    "chunk2": "215cb6cb762955d6471456d1777a56e6fb1182c800c4171b2a8bde03e2bc0f5b",
-    "chunk2-empty": "4f054d5968f78a0caf049cdb07b4aaf6dc28cdab8f737745b3285aaa4ba82ae5"
+    "chunk1": "4638f3112e8bd88dfe55f46342f3c06359e286a8e709374ebac8658e57b92bb7",
+    "chunk1-empty": "9d0239dbe76d93ffe27d432a63187e819adc27dd7f91aa8a5db4272403d002ca",
+    "chunk2": "a43048904560b543a6ed6df13924961fce38317d0d86831d723223203af2b518",
+    "chunk2-empty": "5dc2a4013452cc1e2afd20e4efd7e2a62bdd8e5adad1b8919e7e885a0a6f4b52"
   },
   "bodies": [
-    "c0661dd7283ec6622ac964b6edae459089f1eeaf5b75524660cf5ba70aad398f",
-    "f617b6deb1facf94c3f2b7019991195fbc8b616c4be396b906e8ea32221a8203",
-    "324a007efa653456f097e6f6c1f53ff267096cccf34fc7a82eb366fd8aca7363"
+    "eb46d8624d0274ad3a3f4c0f45dbcf8d563255a7c2a99fb7e05c51e11f6af5be",
+    "bfc329a927ba65dfa5a38941bb75380974c6aee8e5821b863699d0ad4fc7c46c",
+    "ea0123ff41bdf13c9e2636975c37c91927c1c8b98bc7f4d8730a2954dabdde4b"
   ],
   "reserves": [
     { "attemptId": "run-00000001:writer-1#1", "worstMicros": 37500, "model": "x-ai/grok-4.3" },
