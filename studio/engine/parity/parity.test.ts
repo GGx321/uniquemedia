@@ -37,6 +37,12 @@ describe("mock and engine agree", () => {
       scenario.name,
       async () => {
         const mock = await play(mockRig(scenario.rig), scenario);
+        // S4.10 fix D: a RETIRED story is replaced by stories both engines play (`Scenario.retired`); only the mock's transcript stays bound, to the golden below.
+        if (scenario.retired !== undefined) {
+          if (WRITE_GOLDEN) written[scenario.name] = mock;
+          else expect(mock).toEqual(GOLDEN[scenario.name] ?? ["<no golden transcript>"]);
+          return;
+        }
         const real = await play(await realRig(dir(), scenario.rig), scenario);
 
         // Stage 4 (S4.1): a story whose commands the real engine does not serve yet is PENDING. It cannot match line for line, so the real engine is held to its one refusal
@@ -69,6 +75,22 @@ describe("the suite itself", () => {
       expect(story.until).toMatch(/^S4\.\d/);
       expect(story.commands.length).toBeGreaterThan(0);
       for (const command of story.commands) expect(command).toMatch(/^(autopilot\.|videos\.(setPublished|delete)$|media\.setForAutopilot$)/);
+    }
+  });
+
+  test("a retired story says why, names the stories that replace it, and they exist, are played against both engines, and are not retired or pending themselves", () => {
+    const retired = SCENARIOS.flatMap((s) => (s.retired === undefined ? [] : [{ name: s.name, pending: s.pending, ...s.retired }]));
+    expect(retired.length).toBeGreaterThan(0);
+    for (const story of retired) {
+      expect(story.pending).toBeUndefined();
+      expect(story.why.length).toBeGreaterThan(20);
+      expect(story.replacedBy.length).toBeGreaterThan(0);
+      for (const name of story.replacedBy) {
+        const replacement = SCENARIOS.find((s) => s.name === name);
+        expect(replacement).toBeDefined();
+        expect(replacement?.retired).toBeUndefined();
+        expect(replacement?.pending).toBeUndefined();
+      }
     }
   });
 

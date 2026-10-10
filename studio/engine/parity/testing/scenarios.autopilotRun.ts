@@ -360,4 +360,82 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
       await t.call("autopilot.estimate", { draft: draftOf(w, { videosPerAvatar: 4, mix: { single: 100, collage: 0, slides: 0 }, library: true, generate: false }) });
     },
   },
+
+  // S4.10 fix D (appended): the owner's commands on what a launch holds. The mock named a launch's set and run but wrote neither, so none of these refusals was ever seen (plan §9).
+  {
+    name: "autopilot (running): a launch's composed set is the launch's — the owner's discard, cancel, «Дописать», own scene and «Отрисовать» on it are refused launch-set, and «Стоп» gives it back",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      const { launch } = await begin(t, w, { sceneReview: true });
+      const row = await review(t, launch);
+      const set = { sceneSetId: row.sceneSetId };
+      t.note("the set the launch composed is the avatar's set, held by the launch");
+      await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      t.note("the owner's commands on it are refused, free, and change nothing (the revision of a refused call is not looked at)");
+      await t.callLaunch("scenes.discard", set);
+      await t.callLaunch("scenes.cancel", set);
+      await t.callLaunch("scenes.write", { ...set, revision: 1, target: { kind: "unwritten" }, acceptedWorstMicros: ENOUGH });
+      await t.callLaunch("scenes.write", { ...set, revision: 1, target: { kind: "idea", idea: "coffee on a sunny balcony", count: 1, shot: null }, acceptedWorstMicros: ENOUGH });
+      await t.callLaunch("runs.startFromScenes", { ...set, revision: 1, acceptedWorstMicros: ENOUGH });
+      await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      t.note("«Стоп»: the set is the owner's again, and the owner may discard it");
+      await t.callLaunch("autopilot.stop", { launchId: launch });
+      await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      await t.callLaunch("scenes.discard", set);
+      await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+    },
+  },
+  {
+    name: "autopilot (running): a launch's drawn photos are the launch's run — the owner's resume and cancel of it are refused launch-set, a drawn set is used, and the run is the owner's again when the launch ends",
+    rig: { launch: true },
+    async run(t, w, control) {
+      t.note("no track is stored: the photos are bought and drawn, the videos wait, the launch runs");
+      const { launch } = await begin(t, w);
+      await t.untilLaunch(launch, "the videos wait for music", (l) => Number(l.waitingMusic) === 2);
+      const listed = await t.callLaunch("runs.list", {});
+      const first = listed.ok && Array.isArray(listed.result.runs) ? record(listed.result.runs[0]) : null;
+      const runId = typeof first?.runId === "string" ? first.runId : "run-00000000";
+      const named = { runId: t.norm.register("run", runId) };
+      const sets = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      const found = sets.ok ? record(sets.result.sceneSet)?.sceneSetId : undefined;
+      const sceneSetId = typeof found === "string" ? found : "set-00000000";
+      t.note("the slice run is the launch's: resume and cancel are refused whatever its state (before anything else is looked at)");
+      await t.callLaunch("runs.resume", { runId, acceptedWorstMicros: ENOUGH }, { written: { ...named, acceptedWorstMicros: ENOUGH } });
+      await t.callLaunch("runs.cancel", { runId }, { written: named });
+      t.note("a set the launch has drawn from is used, which the owner's discard is told first");
+      await t.callLaunch("scenes.discard", { sceneSetId });
+      t.note("a track is stored; the launch ends, and the run is nobody's but the owner's");
+      await control.musicTracks();
+      await t.untilLaunch(launch, "done", isDone);
+      await t.callLaunch("runs.list", {});
+      await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      await t.callLaunch("runs.resume", { runId, acceptedWorstMicros: ENOUGH }, { written: { ...named, acceptedWorstMicros: ENOUGH } });
+      await t.callLaunch("runs.cancel", { runId }, { written: named });
+    },
+  },
+
+  // S4.10 fix D (appended): fix A made the engine's final stop write clear the holds and the waiting rows; the mock's `completeStop` does the same. Nothing told both engines the same story.
+  {
+    name: "autopilot (running): «Стоп» under a hold ends the launch with no hold and no row waiting, whether the hold was a paid one (402) or a free one (a full disk)",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      control.launch.fault("credits");
+      const paid = await begin(t, w);
+      await t.untilLaunch(paid.launch, "the credits hold", holds("credits"));
+      t.note("held: the avatar is parked behind the hold");
+      await t.callLaunch("autopilot.get", { launchId: paid.launch });
+      t.note("«Стоп» under the hold: the launch is over, the hold and the wait are gone, and a stopped launch holds nothing");
+      await t.callLaunch("autopilot.stop", { launchId: paid.launch });
+      await t.callLaunch("autopilot.get", { launchId: paid.launch });
+      t.note("the same for a free hold: the renders wait for room, and «Стоп» ends the launch (another avatar: the first one's composed set is its owner's open set now)");
+      control.freeSpace(1_000_000);
+      const free = await begin(t, w, { avatarIds: [w.otherAvatarId] });
+      await t.untilLaunch(free.launch, "the disk hold", (l) => record(l.freeHold) !== null);
+      await t.callLaunch("autopilot.stop", { launchId: free.launch });
+      await t.callLaunch("autopilot.get", { launchId: free.launch });
+      await t.callLaunch("autopilot.list", {});
+    },
+  },
 ];

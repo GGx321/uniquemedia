@@ -29,6 +29,15 @@ export interface Scenario {
      */
     readonly served?: readonly string[];
   };
+  /**
+   * S4.10 fix D: the story was REPLACED by the stories it names and is no longer played against the real engine. The mock's transcript is still bound to the golden (the golden is append-only,
+   * and a transcript of the canned mock is still a fact about the mock), so the story keeps guarding what it guarded there. `why` says what made it impossible to lift; `replacedBy` names
+   * the scenarios that tell it now, each of which must exist and be played against both engines.
+   */
+  readonly retired?: {
+    readonly why: string;
+    readonly replacedBy: readonly string[];
+  };
   run(t: Transcript, world: World, control: Control): Promise<void>;
 }
 

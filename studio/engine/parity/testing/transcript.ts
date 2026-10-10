@@ -469,6 +469,20 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
     const p = objectOf(answer.result.photo);
     return `< ok ${compact(norm.value({ photo: { photoId: p.photoId, used: p.used, usedIn: p.usedIn, reserved: p.reserved, rejected: p.rejected, eligible: p.eligible } }))}`;
   }
+  if (running !== false && type === "runs.list") {
+    // S4.10 fix D, a story that reads the runs while a launch runs: which run is a slice of the launch (`launchId` present) and how many photos it draws. Its progress, money and times
+    // are each engine's own.
+    const runs = Array.isArray(answer.result.runs) ? answer.result.runs.map((run) => objectOf(run)) : [];
+    // A run id is not one of the aliased kinds (an older line may write it as it came), so it is named here, in order of appearance.
+    return `< ok ${compact(norm.value({ runs: runs.map((r) => ({ runId: norm.register("run", String(r.runId)), avatarId: r.avatarId, total: r.total, launch: r.launchId !== undefined })) }))}`;
+  }
+  if (running !== false && type === "scenes.get") {
+    // S4.10 fix D: the avatar's set as the owner sees it while a launch runs: its status, whether the launch holds it, and how many scenes are there and written.
+    const set = answer.result.sceneSet === null ? null : objectOf(answer.result.sceneSet);
+    const scenes = set === null || !Array.isArray(set.scenes) ? [] : set.scenes.map((scene) => objectOf(scene));
+    const view = set === null ? null : { sceneSetId: set.sceneSetId, status: set.status, launch: set.launchId !== undefined, scenes: scenes.length, written: scenes.filter((s) => s.text !== null).length };
+    return `< ok ${compact(norm.value({ sceneSet: view, unreadable: answer.result.unreadable }))}`;
+  }
   if (type.startsWith("autopilot.")) {
     const detailed = running !== false && type !== "autopilot.removeUnreadable" && type !== "autopilot.estimate";
     const facts = running === "brief" && "launch" in answer.result ? autopilotBrief(answer.result) : detailed ? autopilotDetail(type, answer.result) : autopilotFacts(type, answer.result, running === "card");
