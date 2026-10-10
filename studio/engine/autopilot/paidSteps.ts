@@ -372,6 +372,8 @@ export class PaidSteps implements LaunchSteps {
         this.#busyKeys.delete(key);
         this.#openSetKeys.delete(key);
         this.#composeEpochs.delete(key);
+        // Only a live pass holds a captured count: the avatar's entry goes with its last pass.
+        if (![...this.#workers.keys()].some((k) => k.endsWith(`:${avatarId}`))) this.#topicEpochs.delete(avatarId);
         const next = this.#again.get(key);
         this.#again.delete(key);
         if (next !== undefined) this.#start(next, avatarId);

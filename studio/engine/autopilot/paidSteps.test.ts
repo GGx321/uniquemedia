@@ -342,6 +342,49 @@ describe("a paid path that cannot go on never leaves the launch running with no 
   });
 });
 
+/** Holds one kind of launch log line on a gate, so the row is already written while the engine has not yet gone on to arm its wait. `reached` resolves when the line is being held. */
+function holdLogLine(r: Rig, kind: string): { release: () => void; reached: Promise<void> } {
+  const gate = deferred();
+  const reached = deferred();
+  const begin = r.steps.begin.bind(r.steps);
+  r.steps.begin = (ctx) => {
+    const log = ctx.log.bind(ctx);
+    ctx.log = async (line) => {
+      if (line.kind === kind) {
+        reached.resolve();
+        await gate.promise;
+      }
+      return log(line);
+    };
+    begin(ctx);
+  };
+  return { release: () => gate.resolve(), reached: reached.promise };
+}
+
+/** Clicks «Стоп» and resolves `entered` once the stop has reached the steps' drain (not a guess at a delay). Call before `r.start`. */
+function stopWhenDrained(r: Rig): { stop: (launchId: string) => Promise<unknown>; entered: Promise<void> } {
+  const entered = deferred();
+  const drain = r.steps.drain.bind(r.steps);
+  r.steps.drain = () => {
+    entered.resolve();
+    return drain();
+  };
+  return { stop: (launchId) => r.orchestrator.stop(launchId), entered: entered.promise };
+}
+
+/** "settled" when the promise settles within `ms`, "still waiting" otherwise; the timer never outlives the call. */
+async function settlesWithin(promise: Promise<unknown>, ms: number): Promise<"settled" | "still waiting"> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const late = new Promise<"still waiting">((resolve) => {
+    timer = setTimeout(() => resolve("still waiting"), ms);
+  });
+  try {
+    return await Promise.race([promise.then(() => "settled" as const), late]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 describe("the owner's own open set mid-launch makes only that avatar wait (S4.10 L3)", () => {
   const openSet = (): EngineFailure => new EngineFailure({ code: "VALIDATION", sceneReason: "open-set", detail: "avatar already has an open scene set; discard it or use its run first" });
 
@@ -384,18 +427,9 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
 
   test("an announce that lands between the row write and the first sleep still wakes the avatar (no lost wake while the open-set line is being logged)", async () => {
     const owner = { open: true };
-    // The open-set log line is held, so the row says «open-set» while the engine has not yet armed its wait.
-    const logGate = deferred();
     const r = await rig({ steps: { retryMs: 60_000 } });
-    const begin = r.steps.begin.bind(r.steps);
-    r.steps.begin = (ctx) => {
-      const log = ctx.log.bind(ctx);
-      ctx.log = async (line) => {
-        if (line.kind === "open-set") await logGate.promise;
-        return log(line);
-      };
-      begin(ctx);
-    };
+    // The open-set log line is held, so the row says «open-set» while the engine has not yet armed its wait.
+    const held = holdLogLine(r, "open-set");
     r.port.compose = async (payload, ids) => {
       if (owner.open) throw openSet();
       r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, avatarId: payload.avatarId, launchId: LAUNCH });
@@ -408,35 +442,75 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
     owner.open = false;
     r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
-    logGate.resolve();
+    held.release();
     await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
     expect(r.fileOf(launch.launchId).paidHold).toBeNull();
   });
 
-  test("a stop that lands between the row write and the first sleep still ends the wait at once (no lost drain wake)", async () => {
+  test("an announce that lands while the compose call is being refused still wakes the avatar (the epoch is taken before the call)", async () => {
     const owner = { open: true };
-    const logGate = deferred();
     const r = await rig({ steps: { retryMs: 60_000 } });
-    const begin = r.steps.begin.bind(r.steps);
-    r.steps.begin = (ctx) => {
-      const log = ctx.log.bind(ctx);
-      ctx.log = async (line) => {
-        if (line.kind === "open-set") await logGate.promise;
-        return log(line);
-      };
-      begin(ctx);
+    r.port.compose = async (payload, ids) => {
+      if (owner.open) {
+        // The owner closes their set and it is announced while the refusal is on its way back.
+        owner.open = false;
+        r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
+        throw openSet();
+      }
+      r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, avatarId: payload.avatarId, launchId: LAUNCH });
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
     };
+    r.port.ownerOpen = () => owner.open;
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => ({ kind: "none-left" });
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+  });
+
+  test("an announce that lands while the open-set poll read is out still ends the next wait (the epoch is refreshed before the read)", async () => {
+    const owner = { open: true };
+    const r = await rig({ steps: { retryMs: 60_000 } });
+    r.port.compose = async (payload, ids) => {
+      if (owner.open) throw openSet();
+      r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, avatarId: payload.avatarId, launchId: LAUNCH });
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    let reads = 0;
+    r.port.ownerOpen = () => {
+      reads += 1;
+      if (reads === 1) {
+        // The first read answers «still open» but the owner has closed it and it is announced while the answer is on its way.
+        owner.open = false;
+        r.port.announce(r.port.seed({ sceneSetId: "set-owner-0002", runId: "run-owner-0002", avatarId: A }));
+        return true;
+      }
+      return owner.open;
+    };
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => ({ kind: "none-left" });
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the wait");
+    // The first announce wakes the poll; its read is the one that goes stale.
+    r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    expect(reads).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a stop that lands between the row write and the first sleep still ends the wait at once (no lost drain wake)", async () => {
+    const r = await rig({ steps: { retryMs: 60_000 } });
+    const held = holdLogLine(r, "open-set");
+    const stopper = stopWhenDrained(r);
     r.port.compose = async () => {
       throw openSet();
     };
-    r.port.ownerOpen = () => owner.open;
+    r.port.ownerOpen = () => true;
     const launch = await r.start({ sceneReview: false });
     await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the row to say open-set");
-    const stopping = r.orchestrator.stop(launch.launchId);
-    await idle();
-    logGate.resolve();
-    const outcome = await Promise.race([stopping.then(() => "stopped"), new Promise<string>((resolve) => setTimeout(() => resolve("still waiting"), 2_000))]);
-    expect(outcome).toBe("stopped");
+    const stopping = stopper.stop(launch.launchId);
+    await stopper.entered;
+    held.release();
+    expect(await settlesWithin(stopping, 10_000)).toBe("settled");
   });
 
   test("S4.10 M-3: an open-set episode is cheap: 20 polls are ONE log line, no `composing` flips, no second compose call (which would claim the avatar)", async () => {
@@ -478,6 +552,23 @@ describe("the owner's own open set mid-launch makes only that avatar wait (S4.10
     const log = (await r.orchestrator.get(launch.launchId)).log;
     expect(log.filter((l) => l.kind === "open-set")).toHaveLength(1);
     expect(log.filter((l) => l.kind === "scenes-writing")).toHaveLength(1);
+  });
+});
+
+describe("a stop that lands while a busy avatar's line is being logged (lost drain wake)", () => {
+  test("the busy wait does not sleep through a stop that came during its writes", async () => {
+    const r = await rig({ steps: { retryMs: 60_000 } });
+    const held = holdLogLine(r, "avatar-busy");
+    const stopper = stopWhenDrained(r);
+    r.port.compose = async () => {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar; wait for it to finish" });
+    };
+    const launch = await r.start({ sceneReview: false });
+    await held.reached;
+    const stopping = stopper.stop(launch.launchId);
+    await stopper.entered;
+    held.release();
+    expect(await settlesWithin(stopping, 10_000)).toBe("settled");
   });
 });
 
