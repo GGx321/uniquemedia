@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
-import { AvatarDescriptor, AvatarTraits, HairColor } from "../../shared/engine";
+import { adultTextProblems, AvatarDescriptor, AvatarTraits, HairColor } from "../../shared/engine";
 import {
   IMPORT_DESCRIBE_JSON_SCHEMA,
   importDescribeMessages,
@@ -58,8 +58,20 @@ describe("importDescribeMessages", () => {
   test("the hair rule: describe the real colour exactly as seen, never forced to the nearest trait choice", () => {
     const system = String(importDescribeMessages()[0]?.content);
     expect(system).toContain("Describe her hair exactly as the photo shows it");
-    for (const colour of ["platinum", "white", "silver", "grey", "pastel pink", "two-tone", "dyed ends"]) expect(system).toContain(colour);
+    for (const colour of ["platinum", "white", "silver", "grey", "pastel pink", "ombre", "dyed ends"]) expect(system).toContain(colour);
     expect(system).toContain("even when the hairColor trait above had to take the nearest choice");
+  });
+
+  test("every example hair colour in the rule passes the descriptor's own word rules inside a realistic descriptor", () => {
+    const system = String(importDescribeMessages()[0]?.content);
+    const list = /real colour \(for example ([^)]+)\)/.exec(system)?.[1];
+    if (list === undefined) throw new Error("the hair rule's example list is missing");
+    const examples = list.split(/, | or /).filter((e) => e !== "");
+    expect(examples.length).toBeGreaterThanOrEqual(5);
+    for (const example of examples) {
+      const text = `27-year-old European woman, fair skin, brown eyes, long straight ${example} hair, slim build.`;
+      expect({ example, problems: adultTextProblems(text, 27, "descriptor") }).toEqual({ example, problems: [] });
+    }
   });
 
   test("the hairColor trait stays a choice among the six enum values, and the other descriptor rules survive the hair rule", () => {
