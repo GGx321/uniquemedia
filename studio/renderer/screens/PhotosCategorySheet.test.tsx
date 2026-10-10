@@ -51,7 +51,7 @@ describe("the panel", () => {
     expect(within(sheet()).getByText("Наряды · 4")).toBeDefined();
     expect(within(sheet()).getAllByText("утро").length).toBeGreaterThan(0);
     expect(within(sheet()).getByText("Стиль «телефон», как у Дома. С тремя кадрами «Фотограф» был бы «редакционный», как у Фотосессии.")).toBeDefined();
-    expect(within(sheet()).getByText("Встроенные пять — Дом, Путешествия, Фотосессия, Гламур 18+, Фитнес — здесь не показываются и не меняются.")).toBeDefined();
+    expect(within(sheet()).getByText("Встроенные пять — Дом, Путешествия, Фотосессия на телефон, Гламур 18+, Фитнес — здесь не показываются и не меняются.")).toBeDefined();
     fireEvent.click(row("Горы зимой"));
     await flush();
     expect(within(sheet()).getByRole("heading", { level: 3, name: "Горы зимой" })).toBeDefined();
