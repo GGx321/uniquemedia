@@ -550,6 +550,21 @@ describe("avatars.createDraft with a body", () => {
     expect(JSON.stringify(net.descriptorCalls()[1]?.json())).toContain(`longer than ${600 - 2 - phrase.length} characters`);
   });
 
+  test("a rewrite of a stored descriptor counts the stored body: an answer with no room for it is asked for again", async () => {
+    const phrase = bodyPhrase({ ...BODY, bodyMarks: ["tattoo-ankle"] }) ?? "";
+    const avatarId = await seedAvatar({ descriptor: "a young woman with hazel eyes", body: { ...BODY, bodyMarks: ["tattoo-ankle"] } });
+    const net = network({ descriptors: [descriptorReply(textOf(600 - 2 - phrase.length + 1)), descriptorReply(GOOD)] });
+    const { engine } = await started({ net });
+
+    ok(await engine.handle(command("avatars.rewriteDescriptor", { avatarId, acceptedWorstMicros: 1_000_000 })));
+
+    expect(net.descriptorCalls()).toHaveLength(2);
+    expect(stored(avatarId).descriptor).toBe(GOOD);
+    expect(stored(avatarId).traits.height).toBe("tall");
+    const sent = JSON.stringify(net.descriptorCalls()[0]?.json());
+    for (const word of ["bust", "legs", "tattoo", "bodyMarks"]) expect(sent).not.toContain(word);
+  });
+
   test("three body marks are refused at the contract before anything is spent", async () => {
     const net = network({ descriptors: [descriptorReply(GOOD)] });
     const { engine } = await started({ net });
