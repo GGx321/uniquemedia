@@ -526,3 +526,52 @@ describe("assembleRun", () => {
     expect(() => assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER, OPTIONS)).toThrow();
   });
 });
+
+// Stage 5, S5.2c: the binding keeps the body. «, and her exact body proportions as described» joins the reference binding only when the avatar has a body
+// and the shot is not a selfie (a selfie crops to the face and arm). The phrase itself rides in the descriptor via promptSubject, once.
+describe("the body in the reference binding (S5.2c)", () => {
+  const BODY_CLAUSE = "and her exact body proportions as described";
+  const BODY_PHRASE = "tall, hourglass figure, full bust";
+  const WITH_BODY: AvatarDescriptor = { ...DESCRIPTOR, body: BODY_PHRASE };
+
+  test.each(["front", "three-quarter", "profile", "back"] as const)("a %s shot with a body adds the body clause to the binding", (pose) => {
+    const { prompt } = assembleSlot(WITH_BODY, slot({ shot: "friend", pose }), SENTENCE, MASTER);
+    expect(prompt).toContain(`${BINDING_ANCHOR[pose]}, ${BODY_CLAUSE}; `);
+  });
+
+  test.each(["friend", "mirror", "candid", "photographer"] as const)("a %s shot with a body gets the clause", (shot) => {
+    const { prompt } = assembleSlot(WITH_BODY, slot({ shot }), SENTENCE, MASTER);
+    expect(prompt).toContain(BODY_CLAUSE);
+  });
+
+  test("a selfie with a body gets the phrase in the descriptor but not the clause", () => {
+    const { prompt } = assembleSlot(WITH_BODY, slot({ shot: "selfie" }), SENTENCE, MASTER);
+    expect(prompt).not.toContain(BODY_CLAUSE);
+    expect(prompt).toContain(`; ${BODY_PHRASE}.`);
+  });
+
+  test("the clause comes once, and the body phrase comes once, after the descriptor text", () => {
+    const { prompt } = assembleSlot(WITH_BODY, slot({ shot: "friend" }), SENTENCE, MASTER);
+    expect(prompt.split(BODY_CLAUSE)).toHaveLength(2);
+    expect(prompt.split(BODY_PHRASE)).toHaveLength(2);
+    expect(prompt.indexOf(BODY_CLAUSE)).toBeLessThan(prompt.indexOf(BODY_PHRASE));
+  });
+
+  test.each(SHOTS.flatMap((shot) => PoseSchema.options.map((pose) => [shot, pose] as const)))("with no body a %s/%s prompt has no clause and the binding alone", (shot, pose) => {
+    if ((shot === "selfie" || shot === "mirror") && pose !== "front" && pose !== "three-quarter") return;
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot, pose }), SENTENCE, MASTER);
+    expect(prompt).not.toContain(BODY_CLAUSE);
+    expect(prompt).toContain(`${BINDING_ANCHOR[pose]}; ${DESCRIPTOR.text.replace(/\.$/, "")}. `);
+  });
+
+  test("a prompt with a body differs from the one without only by the clause and the phrase", () => {
+    const base = assembleSlot(DESCRIPTOR, slot({ shot: "friend" }), SENTENCE, MASTER).prompt;
+    const withBody = assembleSlot(WITH_BODY, slot({ shot: "friend" }), SENTENCE, MASTER).prompt;
+    expect(withBody.replace(`, ${BODY_CLAUSE}`, "").replace(`; ${BODY_PHRASE}`, "")).toBe(base);
+  });
+
+  test("the clause carries no youth or revealing word", () => {
+    expect(youthWords(BODY_CLAUSE, "descriptor")).toEqual([]);
+    expect(revealingWordsIn(BODY_CLAUSE)).toEqual([]);
+  });
+});

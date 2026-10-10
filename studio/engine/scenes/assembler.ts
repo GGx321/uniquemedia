@@ -84,6 +84,12 @@ export const BINDING_ANCHOR: Record<Pose, string> = {
   back: "with the exact hair colour from the reference photo, her build and posture",
 };
 
+/**
+ * Stage 5, S5.2c: joins the reference binding when the avatar has a body and the shot shows more than her face and arm (not a selfie), so the model keeps the
+ * body the descriptor names. Never on a selfie, never without a body: such a prompt is byte-identical to the one before Stage 5.
+ */
+const BODY_BINDING = ", and her exact body proportions as described";
+
 const STOP_WORD_LIST = "8k|masterpiece|professional photo|perfect skin|stunning|flawless|beautiful";
 /**
  * Stop-words: marketing superlatives the assembler never lets through,
@@ -157,7 +163,7 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   const raw =
     `${CAPTURE_LINE[slot.shot]} ${POSE_PHRASE[slot.pose]}. ${field(sentence)}. ` +
     (room === null ? "" : `${room} `) +
-    `${BINDING} ${BINDING_ANCHOR[slot.pose]}; ${anchor}. ` +
+    `${BINDING} ${BINDING_ANCHOR[slot.pose]}${descriptor.body !== undefined && slot.shot !== "selfie" ? BODY_BINDING : ""}; ${anchor}. ` +
     `${artefact} ${constraintsFor(slot)}`;
   return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };
 }
