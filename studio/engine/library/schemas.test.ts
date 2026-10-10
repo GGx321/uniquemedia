@@ -102,9 +102,18 @@ describe("AvatarManifestSchema", () => {
   });
 
   test("drops a bodyProposal with an extra key, a bad timestamp or no timestamp, and keeps the manifest", () => {
-    const good = { values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z" };
-    for (const bodyProposal of [{ ...good, note: "x" }, { ...good, at: "yesterday" }, { values: {}, seen: {} }]) {
+    const good = { values: { bust: "full" }, seen: {}, at: "2026-10-10T10:00:00.000Z" };
+    for (const bodyProposal of [{ ...good, note: "x" }, { ...good, at: "yesterday" }, { values: { bust: "full" }, seen: {} }]) {
       const parsed = AvatarManifestSchema.safeParse(validManifest({ bodyProposal }));
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.bodyProposal).toBeUndefined();
+    }
+  });
+
+  test("drops a bodyProposal that holds no trait (empty values or only an empty marks list) and keeps the manifest", () => {
+    const at = "2026-10-10T10:00:00.000Z";
+    for (const values of [{}, { bodyMarks: [] }]) {
+      const parsed = AvatarManifestSchema.safeParse(validManifest({ bodyProposal: { values, seen: {}, at } }));
       expect(parsed.success).toBe(true);
       expect(parsed.success && parsed.data.bodyProposal).toBeUndefined();
     }

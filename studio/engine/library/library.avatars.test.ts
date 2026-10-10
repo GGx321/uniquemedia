@@ -637,8 +637,10 @@ describe("the stored body proposal (Stage 5, S5.2a)", () => {
   });
 
   test.each([
-    ["a bad timestamp", { values: {}, seen: {}, at: "yesterday" }],
-    ["an extra key", { values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z", note: "x" }],
+    ["empty values", { values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z" }],
+    ["only an empty bodyMarks list", { values: { bodyMarks: [] }, seen: { bodyMarks: "not-visible" }, at: "2026-10-10T10:00:00.000Z" }],
+    ["a bad timestamp", { values: { bust: "full" }, seen: {}, at: "yesterday" }],
+    ["an extra key", { values: { bust: "full" }, seen: {}, at: "2026-10-10T10:00:00.000Z", note: "x" }],
     ["a value of the wrong type", { values: { bust: { deep: 1 } }, seen: {}, at: "2026-10-10T10:00:00.000Z" }],
     ["not an object", "full"],
   ])("a hand-corrupted proposal (%s) is dropped on open: the avatar is kept, listed and not quarantined", async (_label, corrupted) => {

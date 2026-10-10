@@ -23,11 +23,17 @@ export type TraitValue = z.infer<typeof TraitValueSchema>;
  * Stage 5, S5.2a: the body a photo import read, kept on the avatar until the owner saves or dismisses it. Additive, no version bump. Like the traits, the library checks only
  * its shape; the engine parses the values with the contract (`BodyProposal`) and drops a proposal that no longer fits.
  */
-export const BodyProposalRecordSchema = z.strictObject({
-  values: z.record(z.string(), TraitValueSchema),
-  seen: z.record(z.string(), z.string()),
-  at: IsoTimestamp,
-});
+export const BodyProposalRecordSchema = z
+  .strictObject({
+    values: z.record(z.string(), TraitValueSchema),
+    seen: z.record(z.string(), z.string()),
+    at: IsoTimestamp,
+  })
+  // An empty proposal is never stored (the contract refuses it too): `{}` and `{ bodyMarks: [] }` hold no trait, so a hand-made one is dropped on open.
+  .refine((proposal) => Object.values(proposal.values).some((value) => !Array.isArray(value) || value.length > 0), {
+    message: "an empty proposal is not stored",
+    path: ["values"],
+  });
 export type BodyProposalRecord = z.infer<typeof BodyProposalRecordSchema>;
 
 /** `avatars/<id>/avatar.json`. Strict: an unknown key (e.g. the dropped

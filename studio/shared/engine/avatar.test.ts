@@ -544,6 +544,28 @@ describe("BodyProposal (Stage 5, S5.2a)", () => {
     expect(BodyProposal.safeParse({ ...proposal, values: { bodyMarks: ["tattoo-ankle", "tattoo-hip", "mole-back"] } }).success).toBe(false);
   });
 
+  test("refuses empty values: an empty proposal is not stored", () => {
+    const parsed = BodyProposal.safeParse({ ...proposal, values: {} });
+    expect(parsed.success).toBe(false);
+    expect(!parsed.success && parsed.error.issues.map((i) => i.message).join(" ")).toContain("an empty proposal is not stored");
+  });
+
+  test("refuses values that hold only an empty bodyMarks list", () => {
+    expect(BodyProposal.safeParse({ ...proposal, values: { bodyMarks: [] } }).success).toBe(false);
+  });
+
+  test("accepts a single height value", () => {
+    expect(BodyProposal.safeParse({ ...proposal, values: { height: "short" } }).success).toBe(true);
+  });
+
+  test("accepts a single body mark as the only value", () => {
+    expect(BodyProposal.safeParse({ ...proposal, values: { bodyMarks: ["mole-back"] } }).success).toBe(true);
+  });
+
+  test("refuses empty values even when seen marks are present", () => {
+    expect(BodyProposal.safeParse({ ...proposal, values: {}, seen: { height: "not-visible" } }).success).toBe(false);
+  });
+
   test("refuses an extra key and a missing timestamp", () => {
     expect(BodyProposal.safeParse({ ...proposal, note: "x" }).success).toBe(false);
     const { at: _at, ...noAt } = proposal;

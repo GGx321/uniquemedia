@@ -55,6 +55,9 @@ export const BodyProposal = z.strictObject({
     bodyMarks: BodyProposalSeen.optional(),
   }),
   at: z.iso.datetime(),
+}).refine((proposal) => bodyPhrase(proposal.values) !== undefined, {
+  message: "an empty proposal is not stored: at least one body trait must be set",
+  path: ["values"],
 });
 export type BodyProposal = z.infer<typeof BodyProposal>;
 
