@@ -50,6 +50,17 @@ export async function until(condition: () => boolean, what: string, timeoutMs = 
   if (!condition()) throw new Error(`timed out waiting for ${what}`);
 }
 
+/**
+ * Waits until the orchestrator's own copy of the launch carries a paid hold, and returns it. The hold reaches the file on disk first and the in-memory copy a few microtasks later, so a test that
+ * has seen the hold in the file and reads the copy (or anything built from it) at once can find none yet. Wait on the copy when the copy is what the test then reads.
+ */
+export async function untilHeld(r: Rig, what = "the hold in the snapshot"): Promise<NonNullable<LaunchView["paidHold"]>> {
+  await until(() => (r.orchestrator.snapshotView()?.paidHold ?? null) !== null, what);
+  const hold = r.orchestrator.snapshotView()?.paidHold ?? null;
+  if (hold === null) throw new Error(`${what}: the hold went away`);
+  return hold;
+}
+
 /** A clock and timers a test owns: nothing fires until `advance`. Time starts at T0. */
 export class FakeTimers implements StepTimers {
   now = T0;
