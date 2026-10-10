@@ -372,6 +372,18 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     payload: { avatarId: "avatar-0001", text: "25-year-old woman, hazel eyes", expectedText: "25-year-old woman, green eyes" },
     result: { avatar },
   },
+  "avatars.estimateCheckDescriptor": { payload: { avatarId: "avatar-0001" }, result: { ...estimate, expectedMicros: 2_375, worstMicros: 25_000 } },
+  "avatars.checkDescriptor": {
+    payload: { avatarId: "avatar-0001", acceptedWorstMicros: 25_000 },
+    result: {
+      check: {
+        matches: false,
+        aspects: { hair: { state: "mismatch", descriptor: "волнистые блонд", photo: "прямые платиновые с чёлкой" }, eyes: { state: "ok" }, body: { state: "not-visible" } },
+        proposal: "25-year-old woman, long straight platinum hair with bangs",
+        checkedText: "25-year-old woman, wavy blonde hair",
+      },
+    },
+  },
   "avatars.deletePreview": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", photos: 12, candidates: 0, drafts: 2, videos: 3, videoFilesFound: 2, videoFilesUnchecked: 0 } },
   "avatars.delete": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", videoFilesTrashed: 2, videoFilesKept: 1, videoFilesUnchecked: 0, videoFolder: "Mia" } },
   "avatars.rewriteDescriptor": { payload: { avatarId: "avatar-0009", acceptedWorstMicros: 27_500 }, result: { avatarId: "avatar-0009" } },
@@ -614,6 +626,8 @@ describe("contract surface", () => {
         "avatars.pick",
         "avatars.archive",
         "avatars.editDescriptor",
+        "avatars.estimateCheckDescriptor",
+        "avatars.checkDescriptor",
         "avatars.deletePreview",
         "avatars.delete",
         "avatars.rewriteDescriptor",
@@ -1934,5 +1948,43 @@ describe("avatars.importAvatar payload after the confirmation's removal", () => 
 
   test("refuses a payload that still carries confirmedAiPersona", () => {
     expect(parseMessage(command("avatars.importAvatar", { ...base, confirmedAiPersona: true })).ok).toBe(false);
+  });
+});
+
+// Stage 5, S5.0c (additive, protocol stays 5): the descriptor-vs-master check. `avatars.importAvatar`'s result carries the check of the avatar it saved, or null when the
+// check was refused, timed out or could not be read (the paid import is never undone); absent from an engine that does not run one.
+describe("avatars.importAvatar result after the descriptor check (S5.0c)", () => {
+  const check = { matches: true, aspects: { hair: { state: "ok" } }, proposal: null, checkedText: "25-year-old woman, green eyes" };
+
+  test("a result without descriptorCheck still parses", () => {
+    expect(parseMessage(okResponse("avatars.importAvatar", { avatar })).ok).toBe(true);
+  });
+
+  test("a result with a check parses", () => {
+    expect(parseMessage(okResponse("avatars.importAvatar", { avatar, descriptorCheck: check })).ok).toBe(true);
+  });
+
+  test("a result with descriptorCheck null parses: the check did not happen", () => {
+    expect(parseMessage(okResponse("avatars.importAvatar", { avatar, descriptorCheck: null })).ok).toBe(true);
+  });
+
+  test("a check that contradicts itself is refused", () => {
+    expect(parseMessage(okResponse("avatars.importAvatar", { avatar, descriptorCheck: { ...check, matches: false } })).ok).toBe(false);
+  });
+});
+
+describe("avatars.checkDescriptor payload (S5.0c)", () => {
+  test("is strict: the avatar and the accepted worst case, nothing else", () => {
+    expect(parseMessage(command("avatars.checkDescriptor", { avatarId: "avatar-0001", acceptedWorstMicros: 25_000 })).ok).toBe(true);
+    expect(parseMessage(command("avatars.checkDescriptor", { avatarId: "avatar-0001", acceptedWorstMicros: 25_000, apply: true })).ok).toBe(false);
+  });
+
+  test("needs the accepted worst case: a check is paid", () => {
+    expect(parseMessage(command("avatars.checkDescriptor", { avatarId: "avatar-0001" })).ok).toBe(false);
+  });
+
+  test("its estimate takes only the avatar", () => {
+    expect(parseMessage(command("avatars.estimateCheckDescriptor", { avatarId: "avatar-0001" })).ok).toBe(true);
+    expect(parseMessage(command("avatars.estimateCheckDescriptor", { avatarId: "avatar-0001", acceptedWorstMicros: 1 })).ok).toBe(false);
   });
 });

@@ -90,6 +90,9 @@ import { z } from "zod";
 //   `{ avatar }`, the owner's own free edit of a saved avatar's descriptor (a stale `expectedText` is refused); `EngineError.descriptorReason` (`DESCRIPTOR_REASONS`, only on VALIDATION,
 //   never beside another reason; Russian texts `DESCRIPTOR_REASONS_RU` / `descriptorReasonRu`) and `EngineError.descriptorWords` (the owner's own offending words, only with
 //   the reason `youth-word`). No new ErrorCode.
+// Stage 5, S5.0c (additive, no bump; two new commands and one optional result field, nothing that exists changes): `avatars.estimateCheckDescriptor { avatarId }` → `Estimate` (free; also for a
+//   draft) and `avatars.checkDescriptor { avatarId, acceptedWorstMicros }` → `{ check: DescriptorCheck }` (paid; never writes); `avatars.importAvatar`'s result gains the optional nullable
+//   `descriptorCheck`. `DescriptorCheck`, `AspectVerdict`, `CheckAspect`, `CheckState` live in avatar.ts. No new ErrorCode.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

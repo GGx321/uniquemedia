@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AvatarName, AvatarTraits } from "./avatar";
+import { AvatarName, AvatarTraits, DescriptorCheck } from "./avatar";
 import { AutopilotContinueResult, AutopilotEstimateResult, AutopilotGetResult, AutopilotLaunchResult, AutopilotListResult, LaunchDraft, LaunchDraftInput, LaunchEntryId, LaunchMicros, LaunchView } from "./autopilot";
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategorySummary, CustomCategoryId, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
@@ -347,6 +347,15 @@ const ENGINE_SPECS = [
     z.strictObject({ avatarId: Id, text: z.string().max(4_000), expectedText: z.string().max(4_000) }),
     z.strictObject({ avatar: AvatarSummary }),
   ),
+  // Stage 5, S5.0c (additive): the descriptor-vs-master check. One vision call compares a saved avatar's master photo with its stored descriptor and answers a verdict per aspect
+  // (hair, eyes, marks, body) and, for a mismatch of the first three, a proposed text. It NEVER writes: the owner applies a proposal with the free `avatars.editDescriptor`, passing
+  // the check's `checkedText` as `expectedText`. `estimateCheckDescriptor` is free and also prices a DRAFT (the wizard shows «Затем — сверка описания с ним · до $X» under
+  // «Сохранить»); NOT_FOUND for an unknown avatar, LIBRARY_UNAVAILABLE without a library. `checkDescriptor` is paid, accepted like `rewriteDescriptor`, and refused, before any
+  // spend and in this order: AUTH_INVALID (no usable key), the ledger's own refusals, LIBRARY_UNAVAILABLE, NOT_FOUND, VALIDATION (a draft, or no master photo),
+  // DESCRIPTOR_INVALID (a stored descriptor that fails today's rules: mend it with `editDescriptor`), PRICE_CHANGED, BUDGET_EXCEEDED, IN_FLIGHT (a job, a command or a photo run holds
+  // the avatar; checked first of all). A photo it could not load is INTERNAL and free.
+  defineCommand("avatars.estimateCheckDescriptor", z.strictObject({ avatarId: Id }), Estimate),
+  defineCommand("avatars.checkDescriptor", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ check: DescriptorCheck })),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.
@@ -372,7 +381,10 @@ const ENGINE_SPECS = [
   defineCommand(
     "avatars.importAvatar",
     z.strictObject({ stagingId: Id, name: AvatarName, ...AcceptedWorst }),
-    z.strictObject({ avatar: AvatarSummary }),
+    // Stage 5, S5.0c (additive): the avatar is saved first; then the descriptor check of the saved avatar runs in the same command, in the import's own scope and cap, and its worst
+    // case is part of the import's (`avatars.estimateImport`). `descriptorCheck` is null when the check was refused, timed out (60 s) or could not be read: the paid import is never
+    // undone. Absent from an engine that does not run one.
+    z.strictObject({ avatar: AvatarSummary, descriptorCheck: DescriptorCheck.nullable().optional() }),
   ),
   // photo runs (T6). A run is persisted in the library (its plan and journal),
   // so it outlives its jobs: a resume is a new job of the same run. The run's
