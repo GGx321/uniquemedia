@@ -30,6 +30,7 @@ export {
   RejectedEntrySchema,
   type AvatarManifest,
   type AvatarStatus,
+  type BodyProposalRecord,
   type GeneratedPhotoSource,
   type HistoryEntry,
   type ImportedPhotoSource,
