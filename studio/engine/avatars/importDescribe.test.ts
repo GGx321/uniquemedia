@@ -311,6 +311,12 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
     expect(floorOf(worst)).toBeLessThanOrEqual(ceiling - MARGIN);
   });
 
+  // EXACT, like the writer's pins: any extra byte in the prompt, the schema or a reason moves the margin and fails this, so the prompt cannot creep toward the ceiling unseen.
+  // Re-measure when the describe prompt changes.
+  test("the worst prompt keeps its measured margin under the ceiling (8,000 less the floor of 6,976)", () => {
+    expect(ceiling - floorOf(worst)).toBe(1024);
+  });
+
   test("the pin measures: a refusal with nothing to tell is smaller than the worst", () => {
     expect(floorOf({ problems: [], words: [] })).toBeLessThan(floorOf(worst));
   });
