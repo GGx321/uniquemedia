@@ -10,6 +10,7 @@ import { lightOf } from "../scenes/phoneLook";
 import { POSE_LABEL, SHOT_LABEL } from "../scenes/writer";
 import type { Pose } from "../scenes/schema";
 import { SHOTS } from "../scenes/types";
+import { worstSlotList } from "../scenes/testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -25,6 +26,8 @@ const WORST_TIME = longestOf([...POOL_TIMES, "a time the table does not know"], 
 const WORST_SHOT = longestOf(SHOTS, (s) => SHOT_LABEL[s]);
 const WORST_POSE = longestOf(Object.keys(POSE_LABEL) as Pose[], (p) => POSE_LABEL[p]);
 const MARGIN = 200;
+/** The first scene number of the worst chunk: a set holds up to 100 scenes, a chunk 25. */
+const WORST_FIRST_ID = 100 - WRITER_CALL.slotsPerCall + 1;
 const CEILING = WRITER_CALL.inputTokens;
 
 const snapshot: CategorySnapshot = { ref: CUSTOM, name: "я".repeat(40), label: "L".repeat(CATEGORY_LABEL_MAX), style: "editorial" };
@@ -36,11 +39,14 @@ function worstSet(textLength: number): Omit<PlannedSceneSet, "schemaVersion" | "
     ...base,
     request: { ...base.request, categories: [CUSTOM] },
     categories: [snapshot],
+    // A set holds up to 100 scenes, so a full chunk can be scenes 76..100: the widest numbers (the slot number is the scene's id, and the file checks it).
+    chunks: base.chunks.map((chunk) => ({ ...chunk, sceneIds: chunk.sceneIds.map((id) => id + WORST_FIRST_ID - 1) })),
     scenes: base.scenes.map((scene, i) => ({
       ...scene,
+      sceneId: scene.sceneId + WORST_FIRST_ID - 1,
       slot: {
         ...scene.slot,
-        slotIndex: scene.sceneId,
+        slotIndex: scene.sceneId + WORST_FIRST_ID - 1,
         category: CUSTOM,
         location: "x".repeat(textLength),
         timeOfDay: WORST_TIME,
@@ -63,12 +69,12 @@ const hostileWords = Array.from({ length: 40 }, (_, i) => {
 }).flat();
 
 function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
-  const indices = slots.map((s) => s.slotIndex);
-  // Every other slot: two in a row would be told as a range (writer.ts slotList), so this is the longest list a refusal can carry.
-  const rest = indices.slice(0, -1).filter((_, i) => i % 2 === 0);
+  // The subset of the numbers that `slotList` tells in the most characters (scenes/testing/worstSlotList.ts). A set holds up to 100 scenes, so a chunk's numbers go up to 100:
+  // the widest are 76..100, whatever numbers the sample's slots carry.
+  const rest = worstSlotList(Array.from({ length: slots.length }, (_, i) => 100 - slots.length + 1 + i));
   return {
     problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie"],
-    missingSlots: indices.slice(-1),
+    missingSlots: rest,
     twoHandedSlots: rest,
     wordSlots: rest,
     poseSlots: rest,
@@ -82,7 +88,10 @@ describe("the writer prompt floor pin, for a scene set", () => {
     const parsed = SceneSetFile.parse(stamped(worstSet(POOL_TEXT_MAX)));
     const slots = parsed.scenes.flatMap((s) => (s.origin === "planned" ? [s.slot] : []));
     const messages = runWriterConfig(parsed.categories).messages(slots, worstRefusal(slots));
-    expect(promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 })).toBeLessThanOrEqual(CEILING - MARGIN);
+    const floor = promptTokenFloor({ messages, jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
+    expect(floor).toBeLessThanOrEqual(CEILING - MARGIN);
+    // The measured margin of the honest worst (numbers 76..100 told in the longest list slotList can make): re-measure it when the writer prompt or a refusal text changes.
+    expect(CEILING - floor).toBe(268);
   });
 
   test("a set file does not hold a custom scene's text past the bound the pin was measured at", () => {

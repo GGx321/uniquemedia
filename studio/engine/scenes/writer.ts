@@ -221,9 +221,10 @@ function quotedList(words: readonly string[]): string {
 
 /**
  * The slot numbers a reason names, in the order given. A run of consecutive numbers is told as a range («76-100»), so a refusal over a whole chunk costs a few
- * bytes: the re-ask is priced on its bytes before it is sent (S5.R1). The longest list is then every other slot, which the floor pins use.
+ * bytes: the re-ask is priced on its bytes before it is sent (S5.R1). Commas carry no space, for the same reason. The longest list over a set of numbers is not «every other
+ * one» (a pair, a gap, a pair is dearer per slot): the floor pins find it exactly (scenes/testing/worstSlotList.ts).
  */
-function slotList(indices: readonly number[]): string {
+export function slotList(indices: readonly number[]): string {
   const told: string[] = [];
   for (let from = 0; from < indices.length; ) {
     let to = from;
@@ -231,7 +232,7 @@ function slotList(indices: readonly number[]): string {
     told.push(to > from ? `${indices[from]}-${indices[to]}` : String(indices[from]));
     from = to + 1;
   }
-  return told.join(", ");
+  return told.join(",");
 }
 
 const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
@@ -240,10 +241,10 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "missing-slots": (r) => `it was missing a sentence for slot(s) ${slotList(r.missingSlots)}`,
   "unknown-slot": () => "it returned a slotIndex that is not in the plan",
   "duplicate-slot": () => "it returned the same slotIndex more than once",
-  "two-handed": (r) => `slot(s) ${slotList(r.twoHandedSlots)} used a two-handed action in a selfie or mirror shot; only one hand is free, so only that hand may act`,
+  "two-handed": (r) => `slot(s) ${slotList(r.twoHandedSlots)} used a two-handed action in a selfie or mirror shot; only one hand is free`,
   "youth-word": (r) => `slot(s) ${slotList(r.wordSlots)} used words we do not allow: ${quotedList(r.words)}; call her a woman and use none of them`,
   "revealing-word": (r) => `slot(s) ${slotList(r.wordSlots)} used a revealing word we do not allow: ${quotedList(r.words)}`,
-  "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their own pose (a back or profile pose, or a friend's snap while busy, looking toward the camera); match each slot's given pose instead`,
+  "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their pose or shot by looking toward the camera; match each slot's given pose`,
   // No slot list: the re-ask rewrites the whole chunk, and the floor pins hold the reason to one fixed sentence (`phoneSlots` is for the logs and the tests).
   "phone-in-selfie": () => "a selfie sentence named a phone; name none, describe only her free hand",
   "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing, outside the lists the rules give, or a selfie or mirror shot not facing the camera (front or three-quarter only)`,
@@ -328,18 +329,15 @@ export function isTwoHanded(sentence: string): boolean {
  * What the answer reader needs of a slot: its number, its shot (the phone hand) and its pose. A plan's slot has more; an own scene (CS.4b) has only these,
  * so the same rules read both.
  */
-export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose"> & {
-  /** The slot's own activity (or an idea's text), when it has one: a selfie whose own text names a phone may name it in the sentence too (M3). */
-  activity?: string | undefined;
-};
+export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose">;
 
 function phoneInHand(slot: ReadableSlot): boolean {
   return slot.shot === "selfie" || slot.shot === "mirror";
 }
 
-/** M3: a front-camera selfie's sentence names a phone the slot's own text did not ask for. A mirror shot may name it: the phone is in the mirror. */
+/** M3: a front-camera selfie's sentence names a phone. The phone is the camera, so a phone in the sentence is the second one, whatever the slot's activity. A mirror shot may name it: the phone is in the mirror. */
 function phoneNamedInSelfie(slot: ReadableSlot, sentence: string): boolean {
-  return slot.shot === "selfie" && PHONE_WORDS.test(sentence) && !PHONE_WORDS.test(slot.activity ?? "");
+  return slot.shot === "selfie" && PHONE_WORDS.test(sentence);
 }
 
 /**
@@ -379,9 +377,10 @@ const CAMERA_GAZE = new RegExp(
 /**
  * Whether `sentence` contradicts `pose` in a cheaply detectable way (T5c,
  * plan: "reject a sentence that contradicts the pose ... for example a back
- * pose whose sentence says 'looking at the camera'"). Only back and profile
- * carry this rule: front and three-quarter may freely face or glance toward
- * the camera.
+ * pose whose sentence says 'looking at the camera'"). Back and profile carry
+ * this rule, and so does a candid whatever its pose (S5.R1 L1: in a friend's
+ * snap while she is busy she never looks at the viewer); the other shots with
+ * a front or three-quarter pose may freely face or glance toward the camera.
  */
 export function contradictsPose(sentence: string, pose: Pose, shot?: Shot): boolean {
   // S5.R1 L1: a candid is a friend's snap while she is busy, so she never looks at the viewer, whatever her pose.

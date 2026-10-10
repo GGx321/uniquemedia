@@ -25,6 +25,7 @@ import {
   type WriterProblem,
   type WriterRefusal,
 } from "./writer";
+import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -179,9 +180,9 @@ describe("readWriterAnswer", () => {
       expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: true });
     });
 
-    test("a selfie whose own activity uses the phone (a custom place with no other free-hand activity) may name it", () => {
+    test("a selfie sentence naming a phone is refused even when the slot's own activity uses the phone: a phone in a selfie is the second phone", () => {
       const slots = [slot({ slotIndex: 1, shot: "selfie", activity: "scrolling her phone" })];
-      expect(readWriterAnswer(output([{ slotIndex: 1, sentence: "She scrolls her phone with her free hand on a quiet bench." }]), slots)).toMatchObject({ ok: true });
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence: "She scrolls her phone with her free hand on a quiet bench." }]), slots)).toMatchObject({ ok: false, problems: ["phone-in-selfie"] });
     });
 
     test("the refusal is told as one fixed reason with an explanation, never the model's own wording", () => {
@@ -476,12 +477,12 @@ describe("writerRefusalText", () => {
   // S5.R1: consecutive slot numbers are told as a range, so a refusal over a whole chunk costs a few bytes, not one number per slot (the floor pins need the room).
   test("tells consecutive slot numbers as a range and keeps the order and the others as they are", () => {
     const text = writerRefusalText({ problems: ["two-handed"], missingSlots: [], twoHandedSlots: [1, 2, 3, 7, 9, 10], wordSlots: [], words: [], poseSlots: [] });
-    expect(text).toContain("slot(s) 1-3, 7, 9-10 used");
+    expect(text).toContain("slot(s) 1-3,7,9-10 used");
   });
 
   test("a single slot and a lone pair read as they did before", () => {
     expect(writerRefusalText({ problems: ["pose-contradiction"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [4] })).toContain("slot(s) 4 contradicted");
-    expect(writerRefusalText({ problems: ["missing-slots"], missingSlots: [5, 7], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] })).toContain("slot(s) 5, 7");
+    expect(writerRefusalText({ problems: ["missing-slots"], missingSlots: [5, 7], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] })).toContain("slot(s) 5,7");
   });
 
   test("a whole chunk of 25 consecutive slots is told in a handful of bytes", () => {
@@ -596,10 +597,9 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
   // and carrying a youth/revealing word, one slot missing outright, and
   // (T5c) almost every slot also flagged for a pose contradiction.
   function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
-    const indices = slots.map((s) => s.slotIndex);
-    const missingSlots = indices.slice(-1);
-    // Every other slot: two in a row would be told as a range (writer.ts slotList), so this is the longest list a refusal can carry.
-    const rest = indices.slice(0, -1).filter((_, i) => i % 2 === 0);
+    // The subset of the numbers that `slotList` tells in the most characters (testing/worstSlotList.ts), over a 100-photo run's last chunk (76..100), the widest numbers.
+    const rest = worstSlotList(Array.from({ length: slots.length }, (_, i) => 100 - slots.length + 1 + i));
+    const missingSlots = rest;
     return {
       problems: ["missing-slots", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie"],
       missingSlots,
