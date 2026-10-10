@@ -178,7 +178,8 @@ test("PRICE_CHANGED re-asks: the fresh estimate is shown and must be confirmed a
   await openImport();
   await pickPhoto();
   fireEvent.change(nameInput(), { target: { value: "Zoe" } });
-  engine.setImportPrice({ expectedMicros: 6_000, worstMicros: 45_000 });
+  // S5.0c (deliberate re-pin): the import price now includes the check (57 500 at the fallback table), so the raised price must be above that.
+  engine.setImportPrice({ expectedMicros: 8_000, worstMicros: 70_000 });
 
   fireEvent.click(importButton());
   await screen.findByText(/Цена выросла/);
