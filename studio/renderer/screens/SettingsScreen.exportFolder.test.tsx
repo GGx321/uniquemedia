@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
-import { EXPORT_UNAVAILABLE_REASONS_RU, ERROR_MESSAGES_RU, type EngineError } from "../../shared/engine";
+import { EXPORT_UNAVAILABLE_REASONS_RU, ERROR_MESSAGES_RU, LaunchView, type EngineError } from "../../shared/engine";
+import { view as launchFixture } from "../../shared/engine/autopilot.fixtures";
 import { EngineProvider } from "../engine/react";
 import { MockEngine, mockEngineClient } from "../engine/mockEngine";
 import { freePhotos, MIA, PHOTO_IDS } from "../engine/mockEngine.testkit";
@@ -336,6 +337,84 @@ describe("the library row refused while renders run", () => {
     await flush();
 
     expect(notice("alert").textContent).toContain(ERROR_MESSAGES_RU.IN_FLIGHT);
+  });
+});
+
+describe("S4.10 fix C (M1): the library row refused while a launch runs", () => {
+  const AUTOPILOT_TEXT = "Идёт автопилот — сменить библиотеку можно на паузе или после конца запуска.";
+  /** The engine's own refusal of a switch under a launch that runs (engine.ts `#switchRefusal`). */
+  const LAUNCH_REFUSAL = { code: "IN_FLIGHT", detail: "an autopilot launch is running; pause or stop it before changing the library folder" } as const;
+
+  function changeLibrary(path: string): void {
+    fireEvent.click(screen.getByRole("button", { name: "Изменить" }));
+    const input = screen.getByLabelText("Библиотека");
+    fireEvent.change(input, { target: { value: path } });
+    const form = input.closest("form");
+    if (!form) throw new Error("library form missing");
+    fireEvent.submit(form);
+  }
+
+  function announce(ctx: Awaited<ReturnType<typeof openFolders>>, over: Record<string, unknown>): void {
+    act(() => ctx.engine.announceLaunch(LaunchView.parse({ ...launchFixture, ...over })));
+  }
+
+  for (const status of ["running", "pausing", "stopping"] as const) {
+    test(`a launch that is ${status}: the row says when the library can be changed (HostStates), not to cancel renders or wait for paid requests`, async () => {
+      const ctx = await openFolders();
+      announce(ctx, { status });
+      ctx.engine.failNext("settings.setLibraryPath", LAUNCH_REFUSAL);
+
+      changeLibrary("/Volumes/Data/Studio");
+      await flush();
+
+      const text = notice("alert").textContent ?? "";
+      expect(text).toContain(AUTOPILOT_TEXT);
+      expect(text).not.toContain(ERROR_MESSAGES_RU.IN_FLIGHT);
+      expect(text).not.toContain("отмените");
+    });
+  }
+
+  test("the launch's own render holds the folder too: the launch is the reason said, not «отмените рендеры»", async () => {
+    const photos = freePhotos(6);
+    const ctx = await openFolders({ avatars: [{ ...MIA, photoCount: photos.length, eligibleUnusedCount: photos.length }], photos });
+    const created = await ctx.client.request("montages.create", { avatarId: MIA.avatarId, photoIds: [P1, P2] });
+    if (!created.ok) throw new Error("the draft was not made");
+    await ctx.client.request("videos.render", { montageId: created.result.montage.montageId });
+    announce(ctx, { status: "running" });
+    await flush();
+
+    changeLibrary("/Volumes/Data/Studio");
+    await flush();
+
+    const text = notice("alert").textContent ?? "";
+    expect(text).toContain(AUTOPILOT_TEXT);
+    expect(text).not.toContain("Пока идут рендеры");
+  });
+
+  test("a paused launch lets the library go: an IN_FLIGHT then is something else, and its ordinary text stays", async () => {
+    const ctx = await openFolders();
+    announce(ctx, { status: "paused", paused: { cause: "owner", at: "2026-10-08T14:06:00.000Z" }, inFlight: { requests: 0, openMicros: 0 } });
+    ctx.engine.failNext("settings.setLibraryPath", { code: "IN_FLIGHT" });
+
+    changeLibrary("/Volumes/Data/Studio");
+    await flush();
+
+    const text = notice("alert").textContent ?? "";
+    expect(text).toContain(ERROR_MESSAGES_RU.IN_FLIGHT);
+    expect(text).not.toContain(AUTOPILOT_TEXT);
+  });
+
+  test("the words stay those of the refusal when the launch moves on afterwards", async () => {
+    const ctx = await openFolders();
+    announce(ctx, { status: "running" });
+    ctx.engine.failNext("settings.setLibraryPath", LAUNCH_REFUSAL);
+    changeLibrary("/Volumes/Data/Studio");
+    await flush();
+
+    announce(ctx, { status: "paused", paused: { cause: "owner", at: "2026-10-08T14:06:00.000Z" }, inFlight: { requests: 0, openMicros: 0 } });
+    await flush();
+
+    expect(notice("alert").textContent ?? "").toContain(AUTOPILOT_TEXT);
   });
 });
 

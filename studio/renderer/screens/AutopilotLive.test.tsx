@@ -1,11 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
-import { LaunchView, type AvatarSummary, type LaunchAvatarView, type LaunchDraftInput, type LogLine, type PhotoSummary } from "../../shared/engine";
+import {
+  ERROR_MESSAGES_RU,
+  LAUNCH_REASONS_RU,
+  LaunchView,
+  SCENE_REASONS_RU,
+  type AvatarSummary,
+  type EngineError,
+  type LaunchAvatarView,
+  type LaunchDraftInput,
+  type LogLine,
+  type PhotoSummary,
+} from "../../shared/engine";
 import type { EngineClient } from "../engine/client";
 import type { MockEngine } from "../engine/mockEngine";
+import type { ManualScheduler } from "../engine/scheduler";
 import { freePhotos, MIA, SOFIA } from "../engine/mockEngine.testkit";
 import { formatUsdTiered } from "../lib/money";
-import { callsOf, describeElement, flush, openSection, setup, withText } from "../testing";
+import { callsOf, describeElement, flush, openSection, setup, tick, withText } from "../testing";
 
 // S4.9b: the live launch card of «Автопилот» against the mock engine (AutopilotS4.dc.html, states review-wait … paused-reviewed; LaunchStates; plan §3.5–§3.8,
 // §4.6–§4.8, §18). The mock moves a launch only by the owner's clicks (pause, resume, stop, the review hand-off); every other state the engine can send — a
@@ -41,12 +53,13 @@ interface Started {
   readonly engine: MockEngine;
   readonly client: EngineClient;
   readonly launch: LaunchView;
+  readonly scheduler: ManualScheduler;
 }
 
 /** The mock with Mia (31 free photos), Sofia (4) and Elena (14), a launch of the three started through the engine, and «Автопилот» open. */
 async function started({ review = false, extra = [] as readonly AvatarSummary[], videos = 10, libraryOn = true } = {}): Promise<Started> {
   // S4.8: the card's states are announced through the contract over the mock's CANNED launch (a mid-run state that moves only by clicks); the mock now runs one by default.
-  const { engine, client } = setup({ ...library(extra), sceneReview: "off", launchRun: "canned" });
+  const { engine, client, scheduler } = setup({ ...library(extra), sceneReview: "off", launchRun: "canned" });
   engine.setRunImagePrice(70_000);
   await flush();
   const draft: LaunchDraftInput = {
@@ -72,7 +85,7 @@ async function started({ review = false, extra = [] as readonly AvatarSummary[],
   await screen.findByRole("heading", { level: 1, name: "Автопилот" });
   await flush();
   if (launch === null) throw new Error("no launch");
-  return { engine, client, launch };
+  return { engine, client, launch, scheduler };
 }
 
 /** The engine's word on the launch, as the contract lets it be: `over` on top of `base`, with R kept W′ − spent. */
@@ -647,6 +660,215 @@ describe("the end of a launch", () => {
     expect(card().querySelector(".ap-live-meta") === null).toBe(true);
     expect(within(card()).getByRole("button", { name: /^Результаты · \d+$/ })).toBeDefined();
   });
+});
+
+describe("S4.10 fix C (M2): a pause, stop or resume the engine refuses because the launch moved on", () => {
+  const MOVED = "Состояние запуска уже изменилось — посмотрите карточку.";
+  const alertText = (): string => within(card()).queryAllByRole("alert").map((a) => a.textContent ?? "").join(" | ");
+
+  /** The engine paused through another way, the window still holding the older word that the launch runs: «Пауза» on the card meets the engine's refusal. */
+  async function staleRunning(): Promise<Started & { readonly real: LaunchView }> {
+    const opened = await started();
+    await act(async () => {
+      await opened.client.request("autopilot.pause", { launchId: opened.launch.launchId });
+    });
+    const fresh = await opened.client.request("autopilot.get", { launchId: opened.launch.launchId });
+    if (!fresh.ok) throw new Error("get refused");
+    const real = fresh.result.launch;
+    announce(opened.engine, vary(real, { status: "running", paused: null }));
+    await flush();
+    expect(within(card()).getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();
+    return { ...opened, real };
+  }
+
+  test("«Пауза» on a launch already paused: the card says so, reads the launch again and shows the engine's word, the focus on its heading", async () => {
+    const { engine } = await staleRunning();
+    const gets = callsOf(engine, "autopilot.get").length;
+    const pause = button("Пауза");
+    pause.focus();
+
+    fireEvent.click(pause);
+    await flush();
+    await flush();
+
+    expect(callsOf(engine, "autopilot.pause")).toHaveLength(2);
+    expect(alertText()).toContain(MOVED);
+    expect(alertText()).not.toContain("Некорректные данные запроса.");
+    expect(callsOf(engine, "autopilot.get").length).toBeGreaterThan(gets);
+    // The engine's own word, read again: the launch is paused, «Продолжить» on the card.
+    const heading = within(card()).getByRole("heading", { level: 2, name: "Запуск на паузе" });
+    expect(resumeButton()).toBeDefined();
+    // Fix C round 1 (MEDIUM): «Пауза» went with the reread; the focus is on the heading, not dropped to the body.
+    expect(describeElement(document.activeElement)).toBe(describeElement(heading));
+  });
+
+  test("the words outlive a view that says what the reread said; a view whose status or `resumeBlockedBy` differs clears them", async () => {
+    const { engine, real } = await staleRunning();
+    fireEvent.click(button("Пауза"));
+    await flush();
+    await flush();
+    expect(alertText()).toContain(MOVED);
+
+    // The engine's own announcement of the pause, late: the same status and the same `resumeBlockedBy` as the reread.
+    announce(engine, vary(real, {}));
+    await flush();
+    expect(alertText()).toContain(MOVED);
+
+    announce(engine, vary(real, { resumeBlockedBy: "key" }));
+    await flush();
+    expect(alertText()).not.toContain(MOVED);
+  });
+
+  test("the owner's next click clears the words", async () => {
+    const { engine } = await staleRunning();
+    fireEvent.click(button("Пауза"));
+    await flush();
+    await flush();
+    expect(alertText()).toContain(MOVED);
+    engine.delayNext("autopilot.resume", 1_000);
+
+    fireEvent.click(resumeButton());
+    await flush();
+
+    expect(alertText()).not.toContain(MOVED);
+  });
+
+  test("«Продолжить · до $R» refused with a VALIDATION: the same words and a fresh read; the button is not left busy, the focus on the heading", async () => {
+    const { engine, client, launch } = await started();
+    await act(async () => {
+      await client.request("autopilot.pause", { launchId: launch.launchId });
+    });
+    engine.failNext("autopilot.resume", { code: "VALIDATION", detail: "the month has 0 µ$ of room, the held step needs 1050000 µ$" });
+    const gets = callsOf(engine, "autopilot.get").length;
+    resumeButton().focus();
+
+    fireEvent.click(resumeButton());
+    await flush();
+    await flush();
+
+    expect(alertText()).toContain(MOVED);
+    expect(callsOf(engine, "autopilot.get").length).toBeGreaterThan(gets);
+    expect(resumeButton().getAttribute("aria-busy")).toBeNull();
+    expect(describeElement(document.activeElement)).toBe(describeElement(within(card()).getByRole("heading", { level: 2, name: "Запуск на паузе" })));
+  });
+
+  test("«Продолжить запуск: M фото» clears the words too (fix C round 1, LOW)", async () => {
+    const { engine } = await started({ review: true });
+    engine.failNext("autopilot.pause", { code: "VALIDATION", detail: "launch is pausing" });
+    fireEvent.click(button("Пауза"));
+    await flush();
+    await flush();
+    expect(alertText()).toContain(MOVED);
+    engine.delayNext("autopilot.continueAfterReview", 1_000);
+
+    fireEvent.click(within(noteTitled("Сцены Sofia ждут проверки")).getByRole("button", { name: /^Продолжить запуск: \d+\sфото$/ }));
+    await flush();
+
+    expect(alertText()).not.toContain(MOVED);
+  });
+
+  test("a late reread does not overwrite a newer one", async () => {
+    const { engine, client, launch, scheduler } = await started();
+    await act(async () => {
+      await client.request("autopilot.pause", { launchId: launch.launchId });
+    });
+    engine.failNext("autopilot.resume", { code: "VALIDATION" });
+    engine.delayNext("autopilot.get", 1_000);
+    fireEvent.click(resumeButton());
+    await flush();
+    engine.failNext("autopilot.resume", { code: "VALIDATION" });
+    fireEvent.click(resumeButton());
+    await flush();
+    await flush();
+    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
+
+    // The mock answers a delayed read when it is delivered; the engine answers in order, so a reply to the older ask carries the older word. Made to differ here
+    // by a key the mock rejects without telling the window: if the older reply landed, «Продолжить» would close on «key».
+    engine.rejectKey();
+    expect(scheduler.pending).toBeGreaterThan(0);
+    tick(scheduler);
+    await flush();
+
+    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
+  });
+
+  test("a refusal cancels a live H1 read: its late answer does not land over the reread", async () => {
+    const { engine, client, launch, scheduler } = await started();
+    await openSection("Аватары");
+    await act(async () => {
+      await client.request("autopilot.pause", { launchId: launch.launchId });
+    });
+    const fresh = await client.request("autopilot.get", { launchId: launch.launchId });
+    if (!fresh.ok) throw new Error("get refused");
+    // The window holds a word that the key closes «Продолжить»: the card asks the engine as it opens (H1), and that read is slow.
+    announce(engine, vary(fresh.result.launch, { resumeBlockedBy: "key" }));
+    engine.delayNext("autopilot.get", 1_000);
+    await openSection("Автопилот");
+    await screen.findByRole("heading", { level: 1, name: "Автопилот" });
+    await flush();
+    expect(resumeButton().getAttribute("aria-disabled")).toBe("true");
+
+    engine.failNext("autopilot.stop", { code: "VALIDATION" });
+    fireEvent.click(button("Стоп"));
+    fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Остановить" }));
+    await flush();
+    await flush();
+    // The reread: the key is fine, «Продолжить» opens.
+    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
+
+    engine.rejectKey();
+    expect(scheduler.pending).toBeGreaterThan(0);
+    tick(scheduler);
+    await flush();
+
+    expect(resumeButton().getAttribute("aria-disabled")).toBeNull();
+  });
+
+  test("a refusal with words of its own keeps them, and reads nothing again: another code, a VALIDATION with a launch or a scene reason", async () => {
+    const own: [EngineError, string][] = [
+      [{ code: "INTERNAL" }, ERROR_MESSAGES_RU.INTERNAL],
+      [{ code: "VALIDATION", launchReason: "launch-unreadable" }, LAUNCH_REASONS_RU["launch-unreadable"]],
+      [{ code: "VALIDATION", sceneReason: "not-awaiting" }, SCENE_REASONS_RU["not-awaiting"]],
+    ];
+    const { engine } = await started();
+    for (const [error, words] of own) {
+      engine.failNext("autopilot.pause", error);
+      const gets = callsOf(engine, "autopilot.get").length;
+
+      fireEvent.click(button("Пауза"));
+      await flush();
+
+      expect(alertText()).toContain(words);
+      expect(alertText()).not.toContain(MOVED);
+      expect(callsOf(engine, "autopilot.get").length).toBe(gets);
+    }
+  });
+
+  for (const status of ["done", "stopped"] as const) {
+    test(`«Остановить запуск?» closes when the launch ends under it (${status}); the focus goes to the heading`, async () => {
+      const { engine, launch } = await started();
+      fireEvent.click(button("Стоп"));
+      const dialog = await screen.findByRole("alertdialog", { name: "Остановить запуск?" });
+      await waitFor(() => expect(describeElement(document.activeElement)).toBe(describeElement(within(dialog).getByRole("button", { name: "Отмена" }))));
+
+      announce(
+        engine,
+        vary(launch, {
+          ...money,
+          inFlight: { requests: 0, openMicros: 0 },
+          status,
+          endedAt: "2026-10-08T14:31:00.000Z",
+          avatars: launch.avatars.map((r) => ({ ...r, phase: "done" as const, waiting: null })),
+        }),
+      );
+      await flush();
+
+      expect(screen.queryByRole("alertdialog") === null).toBe(true);
+      const heading = within(card()).getByRole("heading", { level: 2, name: status === "done" ? "Запуск завершён" : "Запуск остановлен" });
+      expect(describeElement(document.activeElement)).toBe(describeElement(heading));
+      expect(callsOf(engine, "autopilot.stop")).toHaveLength(0);
+    });
+  }
 });
 
 describe("the sidebar's mark, from the view", () => {

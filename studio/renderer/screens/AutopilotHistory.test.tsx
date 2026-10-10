@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { UnreadableLaunch } from "../../shared/engine";
 import { callsOf, describeElement, flush, focusedLabel, openSection, setup } from "../testing";
 import { historyLibrary, seedHistory } from "./autopilot/historyTestkit";
@@ -179,5 +179,31 @@ describe("«Последний запуск» on «Автопилот»", () => 
     await openAutopilot([], false);
     expect(screen.queryByRole("region", { name: "Последний запуск" }) === null).toBe(true);
     expect(screen.getByRole("button", { name: /^История запусков/ }).textContent).toBe("История запусков0");
+  });
+
+  // S4.10 fix C (UI LOW 1): the empty right column of the LaunchStates sheet («правая колонка без истории — вместо «Последний запуск»»).
+  test("nothing in the history at 1440: «Запусков пока не было» and what to do, in the card's place", async () => {
+    wideWindow();
+    await openAutopilot([], false);
+    const empty = screen.getByRole("region", { name: "Запусков пока не было" });
+    expect(within(empty).getByText("Выберите аватаров слева и нажмите «Запустить» — здесь появится ход запуска.")).toBeDefined();
+  });
+
+  test("not drawn with a launch in the history, with entries that cannot be read, nor at 1200", async () => {
+    wideWindow();
+    await openAutopilot([]);
+    expect(screen.queryByRole("region", { name: "Запусков пока не было" }) === null).toBe(true);
+    cleanup();
+
+    wideWindow();
+    await openAutopilot(BAD, false);
+    expect(screen.queryByRole("region", { name: "Запусков пока не было" }) === null).toBe(true);
+    cleanup();
+
+    const hd: unknown = Reflect.get(window, "happyDOM");
+    const setViewport: unknown = hd !== null && typeof hd === "object" ? Reflect.get(hd, "setViewport") : null;
+    if (typeof setViewport === "function") Reflect.apply(setViewport, hd, [{ width: 1200, height: 800 }]);
+    await openAutopilot([], false);
+    expect(screen.queryByRole("region", { name: "Запусков пока не было" }) === null).toBe(true);
   });
 });

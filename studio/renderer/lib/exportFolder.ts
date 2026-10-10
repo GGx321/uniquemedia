@@ -1,4 +1,4 @@
-import { EXPORT_UNAVAILABLE_REASONS_RU, type EngineError, type ExportUnavailableReason } from "../../shared/engine";
+import { EXPORT_UNAVAILABLE_REASONS_RU, type EngineError, type ExportUnavailableReason, type LaunchView } from "../../shared/engine";
 import { errorText } from "./errors";
 import { countOf } from "./format";
 
@@ -48,6 +48,17 @@ export function pickedNotice(counts: { resolved: number; elsewhere: number; inco
 
 /** «Библиотека · Изменить» refused while renders are queued or running: the generic IN_FLIGHT text talks about paid requests, which is not the reason then. */
 export const LIBRARY_RENDER_BUSY_TEXT = "Пока идут рендеры, папку библиотеки менять нельзя: дождитесь их конца или отмените их.";
+
+/**
+ * S4.10 fix C (M1): «Библиотека · Изменить» refused while the library's launch runs, pauses or stops (HostStates «Другие экраны»). Cancelling renders does not
+ * help then: the launch holds the folder by its own check, and a pause lets it go.
+ */
+export const LIBRARY_AUTOPILOT_BUSY_TEXT = "Идёт автопилот — сменить библиотеку можно на паузе или после конца запуска.";
+
+/** Whether the library's launch holds the library folder (plan §3.8, A12): while it runs, pauses or stops. A paused launch, or one that ended, lets it go. */
+export function launchHoldsLibrary(launch: LaunchView | null): boolean {
+  return launch !== null && (launch.status === "running" || launch.status === "pausing" || launch.status === "stopping");
+}
 
 /** Why a pick was refused, and that nothing changed: the old folder is still the export folder. */
 export function refusedPickText(error: EngineError): string {

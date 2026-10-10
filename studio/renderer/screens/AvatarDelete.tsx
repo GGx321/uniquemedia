@@ -1,8 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
-import type { AvatarDeletePreview, AvatarDeleteResult, EngineError } from "../../shared/engine";
-import { useEngine } from "../engine/react";
+import type { AvatarDeletePreview, AvatarDeleteResult, EngineError, LaunchView } from "../../shared/engine";
+import { useEngine, useEngineView } from "../engine/react";
 import { countOf } from "../lib/format";
 import { errorText } from "../lib/errors";
+import { useNavigate } from "../navigation";
+import { isUnfinished } from "./autopilot/planModel";
 import { useMounted } from "./photos/shared";
 import { Icon, Spin } from "../ui/Icon";
 import { cancelOnEscape, useConfirmFocus } from "../ui/useConfirmFocus";
@@ -66,7 +68,9 @@ type Phase =
   | { readonly kind: "ready"; readonly preview: AvatarDeletePreview; readonly failure: EngineError | null }
   | { readonly kind: "deleting"; readonly preview: AvatarDeletePreview }
   /** The preview was refused or could not be made: nothing to confirm. */
-  | { readonly kind: "refused"; readonly error: EngineError };
+  | { readonly kind: "refused"; readonly error: EngineError }
+  /** The preview or the delete was refused because an unfinished launch holds the avatar (M1): its start, said with «Открыть «Автопилот»» and «Понятно». */
+  | { readonly kind: "in-launch"; readonly launchAt: string };
 
 /**
  * What to do when the Trash refuses, on this system (`platform` is the window's `navigator.platform`): Windows keeps a Recycle Bin per volume, and a volume that has
@@ -76,6 +80,25 @@ export function trashHint(platform: string): string {
   if (/^win/i.test(platform)) return "Если на диске нет Корзины, удалите любой файл с него в Корзину один раз или перенесите библиотеку на другой диск.";
   if (/^mac/i.test(platform)) return "Корзина есть не на каждом внешнем или сетевом томе: перенесите библиотеку на внутренний диск или удалите папку аватара вручную в Finder.";
   return "Корзина есть не на каждом внешнем или сетевом томе: перенесите библиотеку на внутренний диск.";
+}
+
+const LAUNCH_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+
+/**
+ * S4.10 fix C (M1, HostStates «Другие экраны»): «Sofia в запуске автопилота от 8 окт., 14:02 — удалить её можно после «Стоп» или конца запуска.» The day and
+ * time are the launch's start, in the viewer's own zone.
+ */
+export function inLaunchText(name: string, createdAt: string): string {
+  const at = Date.parse(createdAt);
+  return `${name} в запуске автопилота от ${Number.isNaN(at) ? createdAt : LAUNCH_DATE.format(at)} — удалить её можно после «Стоп» или конца запуска.`;
+}
+
+/**
+ * The unfinished launch that holds the avatar (`draft.avatarIds`, paused included), whose start the refusal names; null when none does. The engine refuses
+ * such an avatar with IN_FLIGHT (`#deleteBusy`) until «Стоп» or the end of the launch.
+ */
+function launchHolding(launch: LaunchView | null, avatarId: string): string | null {
+  return isUnfinished(launch) && launch.draft.avatarIds.includes(avatarId) ? launch.createdAt : null;
 }
 
 /** The refusal of a preview or a delete, in words: a busy avatar says what to wait for; a Trash that refused says what to do here; every other code has its fixed Russian text. */
@@ -105,6 +128,8 @@ export interface AvatarDelete {
  */
 export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarId: string; label: string; draft: boolean; onDeleted: (who: DeletedAvatar, result: AvatarDeleteResult) => void }): AvatarDelete {
   const { client } = useEngine();
+  const launch = useEngineView().autopilot;
+  const navigate = useNavigate();
   const mounted = useMounted();
   const [phase, setPhase] = useState<Phase>({ kind: "closed" });
   const focus = useConfirmFocus();
@@ -112,7 +137,24 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
   const confirmRef = useRef<HTMLDivElement>(null);
   /** Which question is current: an answer to an older one (the owner cancelled and asked again) is dropped. */
   const asked = useRef(0);
+  /** The library's launch as of the latest render: a refusal is read against it when it comes, and its words are kept (the launch may end while they are open). */
+  const launchNow = useRef(launch);
+  useEffect(() => {
+    launchNow.current = launch;
+  });
   const who: DeletedAvatar = { name: label, draft };
+
+  /** An IN_FLIGHT the engine gives for an avatar an unfinished launch holds (M1): the launch's own words, the focus on «Понятно». */
+  const heldByLaunch = useCallback(
+    (error: EngineError): boolean => {
+      const launchAt = error.code === "IN_FLIGHT" ? launchHolding(launchNow.current, avatarId) : null;
+      if (launchAt === null) return false;
+      setPhase({ kind: "in-launch", launchAt });
+      focus.opened();
+      return true;
+    },
+    [avatarId, focus],
+  );
 
   const ask = useCallback((): void => {
     if (phase.kind !== "closed") return;
@@ -121,9 +163,10 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
     focus.opened();
     void client.request("avatars.deletePreview", { avatarId }).then((reply) => {
       if (!mounted.current || asked.current !== mine) return;
+      if (!reply.ok && heldByLaunch(reply.error)) return;
       setPhase(reply.ok ? { kind: "ready", preview: reply.result, failure: null } : { kind: "refused", error: reply.error });
     });
-  }, [phase.kind, client, avatarId, mounted, focus]);
+  }, [phase.kind, client, avatarId, mounted, focus, heldByLaunch]);
 
   const cancel = useCallback((): void => {
     asked.current += 1;
@@ -154,6 +197,8 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
       onDeleted(who, reply.result);
       return;
     }
+    // A launch began meanwhile and holds the avatar: «Удалить» would be refused again until it ends, so it is not offered.
+    if (heldByLaunch(reply.error)) return;
     // Refused: the question stays open with what went wrong, and its buttons, off while it was asked, take the focus back.
     setPhase({ kind: "ready", preview, failure: reply.error });
     focus.opened();
@@ -195,6 +240,7 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
         </>
       )}
       {failure !== null && <span className="avatar-confirm-error">{failureText(failure)}</span>}
+      {phase.kind === "in-launch" && <span>{inLaunchText(label, phase.launchAt)}</span>}
       <div className="draft-actions">
         {preview !== null && (
           <button type="button" className="btn btn-s btn-d" aria-busy={deleting} disabled={deleting} onClick={() => void remove(preview)}>
@@ -202,8 +248,13 @@ export function useAvatarDelete({ avatarId, label, draft, onDeleted }: { avatarI
             Удалить
           </button>
         )}
+        {phase.kind === "in-launch" && (
+          <button type="button" className="btn btn-s" onClick={() => navigate({ name: "section", id: "autopilot" })}>
+            Открыть «Автопилот»
+          </button>
+        )}
         <button ref={focus.cancelRef} type="button" className="btn btn-s" disabled={deleting} onClick={cancel}>
-          Отмена
+          {phase.kind === "in-launch" ? "Понятно" : "Отмена"}
         </button>
       </div>
     </div>

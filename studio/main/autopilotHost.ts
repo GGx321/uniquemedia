@@ -1,5 +1,5 @@
 import { errorResponseFor, heldWhileAsleep, HOST_ASLEEP_DETAIL, type AvatarPhase, type CommandType, type EngineCommandMessage, type EventMessage, type LaunchView, type ResponseMessage } from "../shared/engine";
-import { formatUsdTiered } from "../shared/engine/usd";
+import { formatUsdTiered, isFree, limitUsd } from "../shared/engine/usd";
 import type { HostControl } from "../engine/control";
 
 // The autopilot's host in main (plan §3.8, S4.7): what only the main process can do for a launch that runs with the window closed.
@@ -180,8 +180,14 @@ function holdWords(hold: NonNullable<LaunchView["paidHold"]>): { why: string; bo
       return { why: "ключ OpenRouter", body: "Ключ отклонён. Замените его в Настройках, потом «Продолжить»." };
     case "halt":
       return { why: "сверка", body: "Расходы не сходятся. Сверьте их, потом «Продолжить»." };
-    case "network":
-      return hold.detail.nextAt !== null ? null : { why: "сверка", body: "Нет ответа от OpenRouter: повторы не помогли. Сверьте расходы, потом «Продолжить»." };
+    case "network": {
+      if (hold.detail.nextAt !== null) return null;
+      // Worded from the automatic retries made (`attempt`), as the card is (S4.10 fix C, UI LOW 8 and round 1): the drops survive a reconcile and «Продолжить», so
+      // under Q2 = Б (no automatic retries) a third drop made none. Two is the design's sentence (HostStates).
+      const { attempt } = hold.detail;
+      const lead = attempt > 0 ? `${attempt} ${plural(attempt, "повтор", "повтора", "повторов")} ${plural(attempt, "не помог", "не помогли", "не помогли")}` : "связь пропала";
+      return { why: "сверка", body: `Нет ответа от OpenRouter: ${lead}. Сверьте расходы, потом «Продолжить».` };
+    }
     case "price-unavailable":
       return hold.detail.nextAt !== null ? null : { why: "цены", body: "Цены OpenRouter не загрузились. Проверьте связь, потом «Продолжить»." };
     case "price":
@@ -224,7 +230,10 @@ function reviewBody(row: LaunchView["avatars"][number], view: LaunchView): strin
 
 function doneWords(view: LaunchView): { title: string; body: string } {
   const done = view.avatars.reduce((sum, a) => sum + a.videos.done, 0);
-  const spent = `Потрачено ${formatUsdTiered(view.spentMicros, "nearest")} из ${formatUsdTiered(view.plannedWorstMicros, "up")}.`;
+  // The card's one money rule (S4.10 fix C, UI LOW 7): a launch that planned and spent nothing is «бесплатный», never «$0.000 из $0.000»; W′ of 0 reads «$0».
+  const spent = isFree(view.spentMicros, view.plannedWorstMicros)
+    ? "Запуск бесплатный."
+    : `Потрачено ${formatUsdTiered(view.spentMicros, "nearest")} из ${limitUsd(view.plannedWorstMicros)}.`;
   return view.status === "done"
     ? { title: "Автопилот: готово", body: `${done} из ${view.plan.videos} видео в «Готовых видео». ${spent}` }
     : { title: `Запуск остановлен: ${done} из ${view.plan.videos} видео`, body: spent };

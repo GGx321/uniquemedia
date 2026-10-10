@@ -1,19 +1,20 @@
-import type {
-  DropReason,
-  ExportUnavailableReason,
-  LaunchAvatarView,
-  LaunchStatus,
-  LaunchView,
-  LogLine,
-  PaidHold,
-  ResumeBlockedBy,
-  SkipReason,
-  VideoShape,
+import {
+  EXPORT_UNAVAILABLE_REASONS_RU,
+  type DropReason,
+  type EngineError,
+  type ExportUnavailableReason,
+  type LaunchAvatarView,
+  type LaunchStatus,
+  type LaunchView,
+  type LogLine,
+  type PaidHold,
+  type ResumeBlockedBy,
+  type SkipReason,
+  type VideoShape,
 } from "../../../shared/engine";
 import { countOf, NBSP, plural } from "../../lib/format";
-import { formatUsdTiered } from "../../lib/money";
+import { formatUsdTiered, isFree, limitUsd } from "../../lib/money";
 import type { SettingsFocus } from "../../navigation";
-import { isFree, limitUsd } from "./launchMoney";
 import { ceilingUsd, clockLabel, leftUsd, stoppingLine, videosOf } from "./planModel";
 
 // S4.9b: the live launch card of «Автопилот» worded from the engine's view (AutopilotS4.dc.html states review-wait … paused-reviewed; LaunchStates
@@ -228,7 +229,7 @@ const RECONCILE_FIRST = new Set<ResumeBlockedBy>(["reconcile-required", "network
  * reconcile that is required in a view from before `unsettled` keeps one plain line saying the open reserves are already inside «Потрачено».
  */
 export function spentBlock(launch: LaunchView): SpentBlock {
-  // «бесплатно» only when nothing was planned AND nothing spent (S4.9c fix round 1, the one rule of launchMoney): a spend above a W′ of 0 is an A2 breach, shown as it is.
+  // «бесплатно» only when nothing was planned AND nothing spent (S4.9c fix round 1, the one rule of `shared/engine/usd.ts`): a spend above a W′ of 0 is an A2 breach, shown as it is.
   const free = isFree(launch.spentMicros, launch.plannedWorstMicros);
   const part = openPart(launch);
   // The hatched part, said by the line and by the bar's label alike: the contract keeps it inside «Потрачено», and a view that does not is capped there.
@@ -286,11 +287,15 @@ export interface AvatarLine {
 const SKIP_ROW: Record<SkipReason, string> = {
   archived: "пропущена: аватар в архиве",
   "master-unusable": "пропущена: мастер-портрет не годится для проверки лица",
-  "face-gate-unavailable": "пропущена: проверка лица недоступна",
-  "descriptor-invalid": "пропущена: проверка лица недоступна",
+  // S4.10 fix C (M3): what helps — a restart for the face gate; the descriptor is rewritten on «Аватары» («Открыть аватар»).
+  "face-gate-unavailable": "пропущена: проверка лица недоступна — перезапустите Studio",
+  "descriptor-invalid": "пропущена: описание не проходит проверку",
   "failure-rate": "пропущена: много неудачных фото",
   "set-unreadable": "пропущена: набор сцен не читается",
 };
+
+/** The skips the owner fixes on «Аватары» («Открыть аватар»): the master portrait, and the descriptor that no longer passes the check. */
+const AVATAR_FIXES: ReadonlySet<SkipReason> = new Set(["master-unusable", "descriptor-invalid"]);
 
 const of = (done: number, total: number): string => `${done} / ${total}`;
 const cell = (done: number, total: number): RowCell => ({ text: of(done, total), pct: pctOf(done, total) });
@@ -346,7 +351,7 @@ export function avatarLine(launch: LaunchView, row: LaunchAvatarView, name: stri
     case "skipped": {
       const reason = row.skipped?.reason ?? "failure-rate";
       const action: RowAction | null =
-        reason === "failure-rate" ? { kind: "photos", label: "Открыть «Фото»" } : reason === "master-unusable" ? { kind: "avatars", label: "Открыть аватар" } : null;
+        reason === "failure-rate" ? { kind: "photos", label: "Открыть «Фото»" } : AVATAR_FIXES.has(reason) ? { kind: "avatars", label: "Открыть аватар" } : null;
       return line(SKIP_ROW[reason], "danger", action);
     }
     case "done":
@@ -384,6 +389,20 @@ export function avatarLine(launch: LaunchView, row: LaunchAvatarView, name: stri
     default:
       return line("", "calm");
   }
+}
+
+// ---------- a click the engine refused ----------
+
+/** «Пауза», «Стоп» or «Продолжить» met a launch that had already moved on (S4.10 fix C, M2): the card is read again and says so. */
+export const LAUNCH_MOVED_TEXT = "Состояние запуска уже изменилось — посмотрите карточку.";
+
+/**
+ * Whether a refusal of `autopilot.pause`, `autopilot.stop` or `autopilot.resume` means the launch is no longer where the click found it: a VALIDATION with
+ * neither a `launchReason` nor a `sceneReason` (the engine's «launch … is paused: it cannot be asked to pause now», or a resume its admission refuses). A
+ * VALIDATION with a reason, and every other code, keep their own words.
+ */
+export function launchMovedOn(error: EngineError): boolean {
+  return error.code === "VALIDATION" && error.launchReason === undefined && error.sceneReason === undefined;
 }
 
 // ---------- «Продолжить · до $R» ----------
@@ -469,10 +488,14 @@ function cutOffRequests(launch: LaunchView): number | null {
   return null;
 }
 
-/** The avatar a paid hold holds (the first that waits for it), for a sentence that names whose batch it is. */
+/**
+ * The avatar a paid hold holds, for a sentence that names whose batch it is: only when exactly one waits for it (S4.10 fix C, UI LOW 9). With several waiting the
+ * hold is the launch's, and naming the first would say the others' batches are not held.
+ */
 function heldAvatar(launch: LaunchView, nameOf: (avatarId: string) => string): string | null {
-  const row = launch.avatars.find((a) => a.phase === "waiting" && a.waiting?.reason === "paid-hold");
-  return row === undefined ? null : nameOf(row.avatarId);
+  const rows = launch.avatars.filter((a) => a.phase === "waiting" && a.waiting?.reason === "paid-hold");
+  const [only] = rows;
+  return rows.length === 1 && only !== undefined ? nameOf(only.avatarId) : null;
 }
 
 /** When an automatic retry goes: at its time while the launch runs, after «Продолжить» while it is paused (nothing runs by itself then). */
@@ -552,8 +575,11 @@ function holdNote(launch: LaunchView, hold: PaidHold, running: boolean, nameOf: 
           why: blockWhy ?? "Каждый обрыв сжигает по одной оплаченной попытке у фото в работе — до 6.",
         };
       }
-      const drops = hold.detail.drops;
-      const lead = drops >= 3 ? `Связь пропала ${countOf(drops, TIMES)}: 2 повтора (через 1 и 5 мин) не помогли — платная часть ждёт.` : "Связь пропала — платная часть ждёт.";
+      // By the automatic retries made (`attempt`), not the drops (S4.10 fix C round 1): the drops survive a reconcile and «Продолжить», so under Q2 = Б (no
+      // automatic retries) a third drop made none. Two is ApHoldNetwork's sentence word for word.
+      const { drops, attempt } = hold.detail;
+      const retries = attempt === 1 ? "1 повтор (через 1 мин) не помог" : `${attempt} повтора (через 1 и 5 мин) не помогли`;
+      const lead = attempt > 0 ? `Связь пропала ${countOf(drops, TIMES)}: ${retries} — платная часть ждёт.` : "Связь пропала — платная часть ждёт.";
       const unanswered = unansweredRequests(launch);
       const open =
         unanswered.requests > 0 && unanswered.openMicros > 0
@@ -696,8 +722,9 @@ const SKIP_TEXT: Record<SkipReason, (name: string, failed: string) => string> = 
   "failure-rate": (name, failed) => `${failed}новых фото не прошли проверки. Новых фото ${name} в этом запуске не будет — проверьте мастер-портрет. Её видео из библиотеки соберутся; остаток её доли предела не тратится.`,
   "master-unusable": (name) => `Мастер-портрет ${name} не годится для проверки лица — новых фото ${name} в этом запуске не будет. Её доля предела не тратится.`,
   archived: (name) => `${name} в архиве — в этом запуске её больше нет. Её доля предела не тратится.`,
-  "face-gate-unavailable": (name) => `Проверка лица недоступна — новых фото ${name} в этом запуске не будет. Её доля предела не тратится.`,
-  "descriptor-invalid": (name) => `Проверка лица недоступна — новых фото ${name} в этом запуске не будет. Её доля предела не тратится.`,
+  "face-gate-unavailable": (name) => `Проверка лица недоступна — новых фото ${name} в этом запуске не будет. Перезапустите Studio, чтобы проверка заработала снова. Её доля предела не тратится.`,
+  "descriptor-invalid": (name) =>
+    `Описание ${name} не проходит нынешнюю проверку — перепишите его на экране «Аватары». Новых фото ${name} в этом запуске не будет. Её доля предела не тратится.`,
   "set-unreadable": (name) =>
     `Файл набора ${name} повреждён, а в журнале расходов по нему уже есть запросы. Новых фото ${name} в этом запуске не будет — иначе можно заплатить за сцены второй раз. Остальные аватары идут дальше.`,
 };
@@ -709,7 +736,7 @@ function skipNote(row: LaunchAvatarView, name: string): LiveNote {
   const failed = skipped !== null && skipped.reason === "failure-rate" ? `${skipped.failed} из ${skipped.total} ` : "";
   const title = reason === "set-unreadable" ? `${name} пропущена: набор сцен не читается` : `${name} пропущена`;
   const actions: NoteAction[] =
-    reason === "failure-rate" ? [{ kind: "photos", avatarId: row.avatarId, label: `Открыть «Фото» ${name}` }] : reason === "master-unusable" ? [{ kind: "avatars", label: "Открыть аватар" }] : [];
+    reason === "failure-rate" ? [{ kind: "photos", avatarId: row.avatarId, label: `Открыть «Фото» ${name}` }] : AVATAR_FIXES.has(reason) ? [{ kind: "avatars", label: "Открыть аватар" }] : [];
   return { id: `skipped-${row.avatarId}-${reason}`, tone: "warn", icon: "alert", title, text: SKIP_TEXT[reason](name, failed), actions, resume: false, why: null };
 }
 
@@ -734,13 +761,17 @@ function reviewNote(launch: LaunchView, row: LaunchAvatarView, nameOf: (avatarId
   return { id: `review-${row.avatarId}`, tone: "info", icon: "info", title: `Сцены ${name} ждут проверки`, text: `${lead}${meanwhile}${from}`, actions, resume: false, why: null };
 }
 
+/** The design's own words (LaunchStates «Пока ждём») for the reasons it draws; every other reason is the engine's closed list (`EXPORT_UNAVAILABLE_REASONS_RU`). */
 const EXPORT_TEXT: Partial<Record<ExportUnavailableReason, string>> = {
   missing: "Диск отключён или папку переименовали.",
   "not-a-directory": "На месте папки теперь файл.",
   "not-writable": "В папку нельзя записать.",
 };
 
-/** The notice of the export folder (LaunchStates «Пока ждём»): renders wait, the paid part goes on; it clears by itself. */
+/**
+ * The notice of the export folder (LaunchStates «Пока ждём»): renders wait, the paid part goes on; it clears by itself. An overlap, a newer marker or a
+ * damaged one says the engine's reason (S4.10 fix C, UI LOW 6): a damaged marker with videos on record must say «Не удаляйте его», never a generic line.
+ */
 function exportNote(launch: LaunchView): LiveNote | null {
   const hold = launch.freeHold;
   if (hold === null) return null;
@@ -751,7 +782,7 @@ function exportNote(launch: LaunchView): LiveNote | null {
     const figures = need !== null && free !== null ? `Для следующего видео нужно ≈ ${need}, свободно ${free}.` : "Для следующего видео не хватает места.";
     return { id: "free-space", tone: "warn", icon: "alert", title: "Мало места на диске", text: `${figures} Освободите место — рендеры продолжатся сами.`, actions: [], resume: false, why: null };
   }
-  const cause = EXPORT_TEXT[exportReason] ?? "Studio не может записать в неё видео.";
+  const cause = EXPORT_TEXT[exportReason] ?? EXPORT_UNAVAILABLE_REASONS_RU[exportReason];
   return {
     id: `free-export-${exportReason}`,
     tone: "warn",
@@ -866,8 +897,9 @@ const FAILED_CAUSE: Record<Extract<LogLine, { kind: "photo-failed" }>["cause"], 
 const SKIP_LOG: Record<SkipReason, string> = {
   archived: "пропущена: аватар в архиве",
   "master-unusable": "пропущена: мастер-портрет не годится для проверки лица",
-  "face-gate-unavailable": "пропущена: проверка лица недоступна",
-  "descriptor-invalid": "пропущена: проверка лица недоступна",
+  // A log line is a record read later too (a launch's page): it says what was needed, not an order.
+  "face-gate-unavailable": "пропущена: проверка лица недоступна — нужен перезапуск Studio",
+  "descriptor-invalid": "пропущена: описание не проходит проверку",
   "failure-rate": "пропущена: много неудачных фото",
   "set-unreadable": "пропущена: набор сцен не читается",
 };

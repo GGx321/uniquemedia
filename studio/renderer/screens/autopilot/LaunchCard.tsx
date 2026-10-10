@@ -12,6 +12,8 @@ import {
   endedLine,
   headerMeta,
   headerSub,
+  LAUNCH_MOVED_TEXT,
+  launchMovedOn,
   liveNote,
   logRows,
   resumePlace,
@@ -98,15 +100,34 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
   const [continueSent, setContinueSent] = useState<{ avatarId: string; pending: boolean; over: LaunchView } | null>(null);
   const [error, setError] = useState<EngineError | null>(null);
   const [asked, setAsked] = useState<Asked | null>(null);
+  /**
+   * S4.10 fix C (M2): a pause, stop or resume the engine refused because the launch had moved on. `moved` is the engine's view the refusal was met over and the
+   * number of its read. `reread` is the engine's whole word on the launch, asked at once (`autopilot.get`): the card shows it in place of the view it was asked
+   * over, until the engine's next `autopilot.changed`. The words stay until the owner's next click, or until the engine says a status or a `resumeBlockedBy`
+   * other than the reread's (round 1): a late announcement of the same state is no news.
+   */
+  const [moved, setMoved] = useState<{ readonly over: LaunchView; readonly read: number } | null>(null);
+  const [reread, setReread] = useState<{ readonly base: LaunchView; readonly view: LaunchView; readonly read: number } | null>(null);
+  /** The number of the latest reread asked: an answer to an older one never lands over a newer one, and the owner's next click retires it. */
+  const rereads = useRef(0);
+  /** The number of the H1 reads still welcome: a refusal's reread retires a live one, whose older answer would land over it. */
+  const h1Reads = useRef(0);
   /** Where the focus goes once the screen shows what a click did (an effect: the element may only just be mounted). */
   const [focusNext, setFocusNext] = useState<"resume" | "title" | null>(null);
   /** A paid click in flight: a second click before React re-renders never sends twice. */
   const sending = useRef(false);
 
   const current = asked !== null && asked.base === engineLaunch ? asked : null;
-  const launch: LaunchView = current === null ? engineLaunch : askedView(engineLaunch, current.view);
+  const announced = reread !== null && reread.base === engineLaunch ? reread.view : engineLaunch;
+  const launch: LaunchView = current === null ? announced : askedView(announced, current.view);
   const status = shownStatus(launch, { pause: pauseSent === launch.launchId, stop: stopSent === launch.launchId });
   const ended = status === "done" || status === "stopped";
+  const movedOn =
+    moved !== null &&
+    (moved.over === engineLaunch ||
+      (reread !== null && reread.read === moved.read && reread.view.status === engineLaunch.status && reread.view.resumeBlockedBy === engineLaunch.resumeBlockedBy));
+  // «Остановить запуск?» has nothing left to ask once the launch has ended (S4.10 fix C, M2): it closes, and the focus goes to the heading.
+  const stopAsked = asking && !ended;
   const note = liveNote(launch, status, nameOf);
   const place = resumePlace(launch, status, note);
   const remaining = launch.remainingMicros;
@@ -130,6 +151,9 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
   useEffect(() => {
     if (stopSent !== null && (stopSent !== launch.launchId || launch.status === "stopped" || launch.status === "done")) setStopSent(null);
   }, [stopSent, launch.launchId, launch.status]);
+  useEffect(() => {
+    if (ended) setAsking(false);
+  }, [ended]);
   // «Продолжить» accepted and the view says so: the focus goes to the heading («Идёт запуск»), and the button may be clicked again.
   useEffect(() => {
     if (resumeSent === null || resumeSent.pending || resumeSent.over === engineLaunch) return;
@@ -160,8 +184,10 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
     const { launch: over, closed } = latest.current;
     if (!closed) return () => undefined;
     let alive = true;
+    const welcome = h1Reads.current;
     void client.request("autopilot.get", { launchId: over.launchId }).then((reply) => {
-      if (alive && mounted.current && reply.ok) setAsked((now) => ({ base: over, view: reply.result.launch, recountFrom: now !== null && now.base === over ? now.recountFrom : null }));
+      if (alive && welcome === h1Reads.current && mounted.current && reply.ok)
+        setAsked((now) => ({ base: over, view: reply.result.launch, recountFrom: now !== null && now.base === over ? now.recountFrom : null }));
     });
     return () => {
       alive = false;
@@ -175,23 +201,54 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
     return askEngine.current();
   }, [money, settings]);
 
-  const pause = async (): Promise<void> => {
+  /** The owner's next click: what the last refusal said goes, and a reread still on its way for it is retired. */
+  const clearErrors = (): void => {
     setError(null);
+    setMoved(null);
+    rereads.current += 1;
+  };
+
+  /**
+   * A pause, stop or resume refused (M2). One that means the launch had moved on (`launchMovedOn`) says «посмотрите карточку» rather than «Некорректные данные
+   * запроса», and the card reads the launch again: the engine's whole word replaces the view the window holds until the next one comes. A live H1 read is retired
+   * (its older answer would land over the reread), and the focus goes to the card's heading once the reread is shown: the control the owner pressed may have
+   * gone with it (round 1, MEDIUM). Any other refusal keeps its own words.
+   */
+  const refused = (refusal: EngineError): void => {
+    if (!launchMovedOn(refusal)) {
+      setError(refusal);
+      return;
+    }
+    const over = latest.current.launch;
+    const read = ++rereads.current;
+    h1Reads.current += 1;
+    setError(null);
+    setAsked(null);
+    setMoved({ over, read });
+    void client.request("autopilot.get", { launchId: over.launchId }).then((reply) => {
+      if (!mounted.current || read !== rereads.current || !reply.ok) return;
+      setReread({ base: over, view: reply.result.launch, read });
+      setFocusNext("title");
+    });
+  };
+
+  const pause = async (): Promise<void> => {
+    clearErrors();
     setPauseSent(launch.launchId);
     const reply = await client.request("autopilot.pause", { launchId: launch.launchId });
     if (!mounted.current || reply.ok) return;
     setPauseSent(null);
-    setError(reply.error);
+    refused(reply.error);
   };
 
   const stop = async (): Promise<void> => {
     setAsking(false);
-    setError(null);
+    clearErrors();
     setStopSent(launch.launchId);
     const reply = await client.request("autopilot.stop", { launchId: launch.launchId });
     if (!mounted.current || reply.ok) return;
     setStopSent(null);
-    setError(reply.error);
+    refused(reply.error);
   };
 
   const resume = async (): Promise<void> => {
@@ -200,7 +257,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
     const accepted = remaining;
     const over = engineLaunch;
     setResumeSent({ pending: true, over });
-    setError(null);
+    clearErrors();
     try {
       const reply = await client.request("autopilot.resume", { launchId: launch.launchId, acceptedRemainingMicros: accepted });
       if (!mounted.current) return;
@@ -212,7 +269,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
       }
       setResumeSent(null);
       if (reply.error.code !== "PRICE_CHANGED") {
-        setError(reply.error);
+        refused(reply.error);
         return;
       }
       // R moved under the screen: the engine's own word, asked again; the whole card shows its R, the focus stays on the button with the new sum (LaunchStates
@@ -231,7 +288,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
     sending.current = true;
     const over = engineLaunch;
     setContinueSent({ avatarId: action.avatarId, pending: true, over });
-    setError(null);
+    clearErrors();
     const reply = await client.request("autopilot.continueAfterReview", { launchId: launch.launchId, avatarId: action.avatarId, sceneSetId: action.sceneSetId, revision: action.revision });
     sending.current = false;
     if (!mounted.current) return;
@@ -367,6 +424,7 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
           </Notice>
         )}
         {error !== null && <ErrorNotice error={error} />}
+        {movedOn && <Notice tone="warn">{LAUNCH_MOVED_TEXT}</Notice>}
       </div>
 
       {ended ? (
@@ -394,13 +452,14 @@ export function LaunchCard({ launch: engineLaunch, titleRef, wide, nameOf, onMus
         />
       )}
 
-      {asking && (
+      {/* Closed by the launch's end, «Стоп» is gone with the header's buttons: the focus goes to the heading, as after «Остановить». */}
+      {stopAsked && (
         <StopDialog
           launch={launch}
           nameOf={nameOf}
           onCancel={() => setAsking(false)}
           onStop={() => void stop()}
-          returnFocus={(stopped) => (stopped ? titleRef.current : stopRef.current)}
+          returnFocus={(stopped) => (stopped ? titleRef.current : (stopRef.current ?? titleRef.current))}
         />
       )}
     </section>

@@ -14,8 +14,8 @@ import {
   type VideoSummary,
 } from "../../../shared/engine";
 import { countOf, NBSP, plural } from "../../lib/format";
+import { isFree, limitUsd } from "../../lib/money";
 import { CATEGORY_LABEL } from "../photos/runForm";
-import { isFree, limitUsd } from "./launchMoney";
 import { clockSeconds, logText, spentUsd } from "./liveModel";
 import { clockLabel, videosOf } from "./planModel";
 
@@ -63,7 +63,7 @@ export function spanLabel(createdAt: string, endedAt: string | null): string {
 
 /**
  * «$1.69» and «из $4.14» (W′, the launch's limit), or «$0» and «бесплатно» for a launch that pays for nothing (round 1 M4: «из» is W′ on every screen). The rule
- * of «бесплатно» and the limit's words are launchMoney's, the same on every screen (S4.9d): an A2 breach reads «$0.30 из $0».
+ * of «бесплатно» and the limit's words are `shared/engine/usd.ts`'s (`isFree`, `limitUsd`), the same on every screen (S4.9d): an A2 breach reads «$0.30 из $0».
  */
 export function spentOf(spentMicros: number, plannedWorstMicros: number): { readonly spent: string; readonly of: string } {
   return isFree(spentMicros, plannedWorstMicros) ? { spent: "$0", of: "бесплатно" } : { spent: spentUsd(spentMicros), of: `из ${limitUsd(plannedWorstMicros)}` };

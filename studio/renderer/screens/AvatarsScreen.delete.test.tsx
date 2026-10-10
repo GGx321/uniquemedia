@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
-import type { AvatarSummary, Draft } from "../../shared/engine";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { LaunchView, type AvatarSummary, type Draft } from "../../shared/engine";
+import { view as launchFixture } from "../../shared/engine/autopilot.fixtures";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { mockDescriptor } from "../engine/mockEngine";
+import { mockDescriptor, type MockEngine } from "../engine/mockEngine";
 import { freePhotos, NORA, PHOTO_IDS, SOFIA } from "../engine/mockEngine.testkit";
 import { callsOf, describeElement, flush, focusedLabel, runAll, setup } from "../testing";
 import { asAnotherWindow, makeDraft, MIA, studio, withCounts } from "./montage/screenKit";
@@ -410,5 +411,119 @@ describe("what goes wrong", () => {
     await waitFor(() => expect(cardNames()).not.toContain("Mia"));
 
     expect(screen.queryByText(/не удалось переместить в Корзину/) === null).toBe(true);
+  });
+});
+
+describe("S4.10 fix C (M1): an avatar in an unfinished autopilot launch", () => {
+  /** The engine's own refusal (engine.ts `#deleteBusy`): the avatar is held by a launch that is not done or stopped. */
+  const HELD = { code: "IN_FLIGHT", detail: "the avatar is in an unfinished autopilot launch: stop the launch first" } as const;
+  /** HostStates: «Sofia в запуске автопилота от 8 окт., 14:02 — удалить её можно после «Стоп» или конца запуска.» (the day and time in the viewer's zone). */
+  const HELD_TEXT = /^Mia в запуске автопилота от \d{1,2} окт\., \d\d:\d\d — удалить её можно после «Стоп» или конца запуска\.$/;
+  const PAUSED = { status: "paused", paused: { cause: "owner", at: "2026-10-08T14:06:00.000Z" }, inFlight: { requests: 0, openMicros: 0 } };
+
+  function announce(engine: MockEngine, over: Record<string, unknown> = {}): void {
+    act(() => engine.announceLaunch(LaunchView.parse({ ...launchFixture, ...over })));
+  }
+  const heldLine = (): HTMLElement | undefined => Array.from(panel().querySelectorAll("span")).find((s) => HELD_TEXT.test((s.textContent ?? "").replace(/\u00a0/g, " ")));
+
+  test("a refused preview says whose launch holds the avatar and since when, with «Открыть «Автопилот»» and «Понятно», and nothing to delete", async () => {
+    const { engine } = await withMia();
+    announce(engine);
+    engine.failNext("avatars.deletePreview", HELD);
+
+    await ask();
+
+    expect(heldLine()).toBeDefined();
+    expect(panelText()).not.toContain("занят");
+    expect(within(panel()).getByRole("button", { name: "Открыть «Автопилот»" })).toBeDefined();
+    expect(within(panel()).getByRole("button", { name: "Понятно" })).toBeDefined();
+    expect(within(panel()).queryByRole("button", { name: "Удалить" }) === null).toBe(true);
+    expect(within(panel()).queryByRole("button", { name: "Отмена" }) === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(within(panel()).getByRole("button", { name: "Понятно" })));
+    expect(callsOf(engine, "avatars.delete")).toHaveLength(0);
+  });
+
+  test("«Понятно» closes it and gives the focus back to the trash; Escape does the same", async () => {
+    const { engine } = await withMia();
+    announce(engine);
+    engine.failNext("avatars.deletePreview", HELD);
+    await ask();
+
+    fireEvent.click(within(panel()).getByRole("button", { name: "Понятно" }));
+    await flush();
+    expect(screen.queryByRole("alert") === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(trash()));
+
+    engine.failNext("avatars.deletePreview", HELD);
+    await ask();
+    fireEvent.keyDown(within(panel()).getByRole("button", { name: "Понятно" }), { key: "Escape" });
+    await flush();
+    expect(screen.queryByRole("alert") === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(trash()));
+  });
+
+  test("«Открыть «Автопилот»» opens the Autopilot screen", async () => {
+    const { engine } = await withMia();
+    announce(engine);
+    engine.failNext("avatars.deletePreview", HELD);
+    await ask();
+
+    fireEvent.click(within(panel()).getByRole("button", { name: "Открыть «Автопилот»" }));
+
+    expect(await screen.findByRole("heading", { level: 1, name: "Автопилот" })).toBeDefined();
+  });
+
+  test("a paused launch holds the avatar too (it is unfinished)", async () => {
+    const { engine } = await withMia();
+    announce(engine, PAUSED);
+    engine.failNext("avatars.deletePreview", HELD);
+
+    await ask();
+
+    expect(heldLine()).toBeDefined();
+  });
+
+  test("the delete itself refused after the preview (the launch began meanwhile): the same words, and no «Удалить» left to press", async () => {
+    const { engine } = await withMia();
+    await ask();
+    announce(engine);
+    engine.failNext("avatars.delete", HELD);
+
+    fireEvent.click(within(panel()).getByRole("button", { name: "Удалить" }));
+    await flush();
+
+    expect(heldLine()).toBeDefined();
+    expect(within(panel()).queryByRole("button", { name: "Удалить" }) === null).toBe(true);
+    expect(focusedLabel()).toBe(describeElement(within(panel()).getByRole("button", { name: "Понятно" })));
+    expect(cardNames()).toContain("Mia");
+  });
+
+  test("an avatar the launch does not hold, and a launch that ended, keep the ordinary «занят» words", async () => {
+    const { engine } = await withMia();
+    announce(engine, { draft: { ...launchFixture.draft, avatarIds: [SOFIA.avatarId] }, avatars: launchFixture.avatars.filter((a) => a.avatarId === SOFIA.avatarId) });
+    engine.failNext("avatars.deletePreview", { code: "IN_FLIGHT" });
+    await ask();
+    expect(panelText()).toContain("занят");
+    expect(heldLine() === undefined).toBe(true);
+    fireEvent.click(within(panel()).getByRole("button", { name: "Отмена" }));
+    await flush();
+
+    announce(engine, { status: "done", endedAt: "2026-10-08T14:31:00.000Z", inFlight: { requests: 0, openMicros: 0 } });
+    engine.failNext("avatars.deletePreview", { code: "IN_FLIGHT" });
+    await ask();
+    expect(panelText()).toContain("занят");
+    expect(heldLine() === undefined).toBe(true);
+  });
+
+  test("the words stay those of the refusal when the launch ends while they are open", async () => {
+    const { engine } = await withMia();
+    announce(engine);
+    engine.failNext("avatars.deletePreview", HELD);
+    await ask();
+
+    announce(engine, { status: "stopped", endedAt: "2026-10-08T14:31:00.000Z", inFlight: { requests: 0, openMicros: 0 } });
+    await flush();
+
+    expect(heldLine()).toBeDefined();
   });
 });

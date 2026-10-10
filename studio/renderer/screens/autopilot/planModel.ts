@@ -1,7 +1,6 @@
-import { formatUsd, formatUsdTiered } from "../../lib/money";
+import { formatUsd, formatUsdTiered, isFree, limitUsd } from "../../lib/money";
 import { countOf, NBSP, plural } from "../../lib/format";
 import type { SettingsFocus } from "../../navigation";
-import { isFree, limitUsd } from "./launchMoney";
 import type { LaunchPreview, LaunchPreviewAvatar, LaunchStatus, LaunchView, MonthFit } from "../../../shared/engine";
 
 // S4.9a: the «Автопилот» plan card and the avatar rows worded from the engine's own figures (AutopilotS4.dc.html, LaunchStates «Бюджет месяца», «Почему не
