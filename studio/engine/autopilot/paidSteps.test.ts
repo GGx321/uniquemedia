@@ -311,8 +311,15 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     const launch = await r.start({ sceneReview: true });
     await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: "the ledger cannot be read" } });
+    // The hold reaches three places one after another: the file on disk, then the engine's in-memory copy (the snapshot), then the log line. The file is read first above, so the other two are
+    // awaited, not read at once: a read in the gap between them sees the hold in the file and none yet in the snapshot or the log.
+    await until(() => r.orchestrator.snapshotView()?.paidHold != null, "the hold in the snapshot");
     expect(r.orchestrator.snapshotView()?.paidHold).toMatchObject({ reason: "internal" });
-    const log = (await r.orchestrator.get(launch.launchId)).log;
+    let log = (await r.orchestrator.get(launch.launchId)).log;
+    for (let i = 0; i < 100 && !log.some((l) => l.kind === "hold-internal"); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      log = (await r.orchestrator.get(launch.launchId)).log;
+    }
     expect(log.some((l) => l.kind === "hold-internal")).toBe(true);
   });
 
