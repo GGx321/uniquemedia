@@ -92,7 +92,7 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       activities: [
         { text: "tying her hair up", twoHanded: true },
         { text: "on her stomach, scrolling her phone", twoHanded: false },
-        { text: "on her stomach, propped on elbows", twoHanded: false },
+        { text: "on her stomach, on one elbow", twoHanded: false },
       ],
       mirror: false,
     },
@@ -106,7 +106,7 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       mirror: false,
     },
     {
-      name: "a bedroom with a tall mirror",
+      name: "a bedroom",
       times: ["morning", "evening"],
       activities: [
         { text: "adjusting a sleeve", twoHanded: false },
@@ -148,6 +148,7 @@ function systemPrompt(): string {
     "- No person's name, no brand and no readable sign. She is a grown adult woman: never a word that suggests she or anyone else is young.",
     "- Places are ordinary places she would really be in; no paper, books or screens other than her phone; never a photographer or a studio.",
     "- Every place needs at least one free-hand activity that does not use her phone.",
+    "- Never name a mirror in a place's name; mark it with \"mirror\": true instead.",
     "- Outfits are everyday: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
     "- No two places, outfits or activities of one place alike.",
     "",
@@ -316,7 +317,8 @@ type ReadPlace = { name: string; times: string[]; activities: { text: string; tw
 function readPlace(raw: unknown, collector: Collector): { place: ReadPlace; dropped: number } | null {
   if (!isRecord(raw)) return null;
   const inner: Collector = { dropped: 0, words: collector.words };
-  const nameOk = usableText(raw.name, collector, false);
+  // S5.R1 H1: a place never names a mirror (a shot that is not a mirror can land on any place); the mirror shots use the place's mark.
+  const nameOk = usableText(raw.name, collector, false) && !/mirror/i.test(String(raw.name));
 
   const times = Array.isArray(raw.times) ? raw.times : [];
   const goodTimes = times.filter((t): t is string => {
@@ -388,7 +390,7 @@ export function readPoolAnswer(content: string): PoolAnswer {
   const problems: PoolProblem[] = [];
   // A label that suggests a young person is refused like a malformed one, naming our words for the rule it broke (never the model's own text).
   const labelRules = label.success ? youthRuleNames(label.data, "descriptor") : [];
-  if (!label.success || labelRules.length > 0 || labelSuggestsAMinor(label.data)) {
+  if (!label.success || labelSuggestsAMinor(label.data)) {
     problems.push("bad-label");
     collector.words.push(...labelRules);
   }

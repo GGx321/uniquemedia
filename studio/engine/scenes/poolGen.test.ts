@@ -204,6 +204,24 @@ describe("readPoolAnswer: salvage drops the items that break the pool rules and 
     expect(result.pool.locations.map((l) => l.name)).toEqual(PLACES);
   });
 
+  // S5.R1 H1: a place is dropped at generation when its name says mirror, in any case (a stored pool of the owner's is never refused for it: the library reads what it holds).
+  test.each(["a bedroom with a tall mirror", "her bathroom Mirror", "mirrors in the hallway"])("a place named «%s» is dropped, and the pool stands on the others", (name) => {
+    const named = place(name, { mirror: true });
+    const result = okOf(answer({ locations: [...(answer().locations as Json[]), named] }));
+    expect(result.pool.locations.map((l) => l.name)).toEqual(PLACES);
+    expect(result.dropped).toBe(1);
+  });
+
+  test("a mirror place that does not name a mirror is kept with its mark", () => {
+    const result = okOf(answer({ locations: [...(answer().locations as Json[]), place("a bedroom", { mirror: true })] }));
+    expect(result.pool.locations.find((l) => l.name === "a bedroom")?.mirror).toBe(true);
+  });
+
+  test("a pool whose only mirror place names a mirror is refused as mirror-without-place when the deck has a mirror shot", () => {
+    const locations = PLACES.map((name, i) => place(i === 2 ? "a hallway mirror" : name, { mirror: i === 2 }));
+    expect(refusalOf(answer({ locations: [...locations, place("a sixth place")] })).problems).toContain("mirror-without-place");
+  });
+
   // S5.R1 M1: a selfie or mirror shot needs a free hand that does not hold her phone, so a place needs one such activity; the phone ones are found by their words.
   test("a place whose only free-hand activities use her phone is dropped", () => {
     const phoneOnly = place("a sixth place", { activities: [{ text: "scrolling her phone", twoHanded: false }, { text: "kneading dough", twoHanded: true }] });
@@ -554,6 +572,23 @@ describe("poolMessages", () => {
   test("S5.R1 M1: every place of the example has a free-hand activity that does not use her phone", () => {
     const example: { locations: { name: string; activities: { text: string; twoHanded: boolean }[] }[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
     for (const place of example.locations) expect(place.activities.some((a) => !a.twoHanded && !/\bphones?\b/i.test(a.text))).toBe(true);
+  });
+
+  // S5.R1 H1 for custom pools: a shot that is not a mirror can land on any place, so a place named «…mirror…» contradicts «the phone itself is not in the picture».
+  test("the prompt says never to name a mirror in a place's name, and to mark it instead", () => {
+    expect(poolMessages("x")[0]?.content).toContain('Never name a mirror in a place\'s name; mark it with "mirror": true instead.');
+  });
+
+  test("the example teaches no mirror name: its mirror place is a bedroom marked mirror true", () => {
+    const example: { locations: { name: string; mirror: boolean }[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
+    expect(example.locations.some((l) => /mirror/i.test(l.name))).toBe(false);
+    expect(example.locations.find((l) => l.name === "a bedroom")?.mirror).toBe(true);
+  });
+
+  test("the example's body-position activity fits the 35 characters", () => {
+    const example: { locations: { activities: { text: string }[] }[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
+    for (const place of example.locations) for (const activity of place.activities) expect(activity.text.length).toBeLessThanOrEqual(POOL_TEXT_MAX);
+    expect(POOL_EXAMPLE_ANSWER).toContain("on her stomach, on one elbow");
   });
 
   test("the example it shows is itself a pool the reader accepts", () => {

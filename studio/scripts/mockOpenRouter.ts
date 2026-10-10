@@ -245,7 +245,7 @@ const DEFAULT_POOL_ANSWER = {
 const BACK_VIEW_POOL_ANSWER = {
   ...DEFAULT_POOL_ANSWER,
   label: "Lying at home",
-  locations: ["a sunny bedroom", "a living room rug", "a sofa by the window", "a quiet balcony mat", "a bedroom with a mirror"].map((name, i) => ({
+  locations: ["a sunny bedroom", "a living room rug", "a sofa by the window", "a quiet balcony mat", "a bedroom corner"].map((name, i) => ({
     name,
     times: ["morning", "midday"],
     activities: [
