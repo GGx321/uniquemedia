@@ -95,6 +95,7 @@ import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, v
 import { MOCK_IMAGE_CATALOGUE } from "./mockImageModels";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
+import { descriptorEditOutcome } from "./mockAvatarEdit";
 import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
 import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAutopilot";
@@ -803,6 +804,8 @@ export class MockEngine implements EngineBridge {
   private previousProcessReserves = false;
   /** S4.8: avatars another job of the owner's holds, by a testkit switch (`setAvatarBusy`). */
   private readonly busyAvatars = new Set<string>();
+  /** Stage 5: avatars one of the five non-run jobs holds (the engine's `#avatarEdits`), by a testkit switch (`setAvatarEditing`). An edit of the descriptor meets IN_FLIGHT for them, never for `busyAvatars`. */
+  private readonly editingAvatars = new Set<string>();
   /** S4.8: the library cannot say which photos are free (`loseLaunchLibrary`). */
   private launchLibraryLost = false;
   /** S4.8: the launch's videos find no track though some are stored (`holdLaunchMusic`). */
@@ -1761,6 +1764,15 @@ export class MockEngine implements EngineBridge {
     else this.busyAvatars.delete(avatarId);
   }
 
+  /**
+   * A rewrite, a candidates batch, an archive, a delete or a descriptor check holds the avatar (the mock runs the first four to their end at once, so a test says it by this switch):
+   * `avatars.editDescriptor` answers IN_FLIGHT. A photo run or a launch (`setAvatarBusy`) does not stop an edit.
+   */
+  setAvatarEditing(avatarId: string, editing: boolean): void {
+    if (editing) this.editingAvatars.add(avatarId);
+    else this.editingAvatars.delete(avatarId);
+  }
+
   /** The library cannot say which photos are free (its usage or the drafts cannot be read): the launch's free steps wait as «library-unknown» and pick or drop nothing. */
   loseLaunchLibrary(lost: boolean): void {
     this.launchLibraryLost = lost;
@@ -2424,6 +2436,26 @@ export class MockEngine implements EngineBridge {
         this.avatars = this.avatars.map((a) => (a === avatar ? archived : a));
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: archived } });
         return this.ok(c, { avatar: archived });
+      }
+      case "avatars.editDescriptor": {
+        // The engine's order: the library, the claim, the avatar (a draft is VALIDATION; an unreadable entry holds no text here, so it is as unknown as in a library
+        // without it), a stale proposal, then the text's own rules.
+        const { avatarId, text, expectedText } = c.payload;
+        const gone = this.writeLibraryGate();
+        if (gone) return this.fail(c, gone);
+        if (this.editingAvatars.has(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; edit the description when that ends" });
+        const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+        if (avatar === undefined) {
+          return this.drafts.some((d) => d.avatarId === avatarId)
+            ? this.fail(c, { code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` })
+            : this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        }
+        const outcome = descriptorEditOutcome(avatar.descriptor.text, avatar.descriptor.age, text, expectedText);
+        if ("error" in outcome) return this.fail(c, outcome.error);
+        const edited: AvatarSummary = { ...avatar, descriptor: { ...avatar.descriptor, text: outcome.text } };
+        this.avatars = this.avatars.map((a) => (a === avatar ? edited : a));
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: edited } });
+        return this.ok(c, { avatar: edited });
       }
       case "avatars.deletePreview":
         return this.deletePreview(c, c.payload.avatarId);
