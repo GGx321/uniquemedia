@@ -438,4 +438,51 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
       await t.callLaunch("autopilot.list", {});
     },
   },
+
+  // S4.10 fix D round 1 (appended): the engine writes the frozen draw when the approval is given, also in a pause, before it asks whether it may pay.
+  {
+    name: "autopilot (running): an approval given in a pause freezes the set — the owner's edit and rewrite are refused launch-set before «Продолжить», and «Стоп» gives the set back",
+    rig: { launch: true },
+    async run(t, w, control) {
+      await control.musicTracks();
+      const { launch } = await begin(t, w, { sceneReview: true });
+      const row = await review(t, launch);
+      const set = { sceneSetId: row.sceneSetId };
+      t.note("before the approval the owner may still edit: nothing is frozen");
+      await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      t.note("the launch is paused and the approval is only recorded");
+      await t.callLaunch("autopilot.pause", { launchId: launch });
+      await proceed(t, launch, row);
+      t.note("the draw is written all the same: the scenes are the launch's (the revision of a refused call is not looked at)");
+      await t.callLaunch("scenes.edit", { ...set, revision: 1, op: { op: "remove", sceneIds: [1] } });
+      await t.callLaunch("scenes.write", { ...set, revision: 1, target: { kind: "rewrite", sceneIds: [1], redraw: false }, acceptedWorstMicros: ENOUGH });
+      await t.callLaunch("autopilot.get", { launchId: launch });
+      t.note("«Стоп» gives the set back");
+      await t.callLaunch("autopilot.stop", { launchId: launch });
+      await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+    },
+  },
+
+  // S4.10 fix D round 1 (appended): the launch's compose is a live scenes job, so the owner's commands on the set and the avatar meet IN_FLIGHT while the writer is out.
+  {
+    name: "autopilot (running): while the launch's writer is out the set is being written and the avatar is held — the owner's edit, discard, compose and photo run are IN_FLIGHT",
+    rig: { launch: true },
+    async run(t, w, control) {
+      control.launch.hangWriter();
+      const { launch } = await begin(t, w, { sceneReview: true });
+      await t.untilLaunch(launch, "a request in flight", (l) => Number(record(l.inFlight)?.requests) > 0);
+      t.note("the set reads writing, held by the launch");
+      const read = await t.callLaunch("scenes.get", { avatarId: w.avatarId });
+      const found = read.ok ? record(read.result.sceneSet)?.sceneSetId : undefined;
+      const set = { sceneSetId: typeof found === "string" ? found : "set-00000000" };
+      t.note("the owner's commands meet the job first");
+      await t.callLaunch("scenes.edit", { ...set, revision: 1, op: { op: "remove", sceneIds: [1] } });
+      await t.callLaunch("scenes.discard", set);
+      await t.callLaunch("scenes.compose", { avatarId: w.avatarId, count: 3, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: ENOUGH });
+      await t.callLaunch("runs.start", { avatarId: w.avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: ENOUGH });
+      t.note("the owner quits: the launch is paused by the quit and the writer's request dies with the process");
+      await control.launch.quit();
+      await t.callLaunch("autopilot.get", { launchId: launch });
+    },
+  },
 ];
