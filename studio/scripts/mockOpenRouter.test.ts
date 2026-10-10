@@ -340,3 +340,126 @@ describe("authorizationLabel", () => {
     expect(authorizationLabel({ ...base, authorization: "sk-fake" }, "sk-fake")).toBe("other");
   });
 });
+
+/** `promise`, or a rejection after `ms`: no await in these tests may wait for ever. */
+function bounded<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`timed out waiting for ${what}`)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error: unknown) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
+async function postImage(m: MockOpenRouter): Promise<{ status: number; b64: string }> {
+  const response = await nativeFetch(`${m.url}/images`, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+  const body: unknown = await response.json();
+  const data = typeof body === "object" && body !== null && "data" in body && Array.isArray(body.data) ? body.data[0] : undefined;
+  const b64 = typeof data === "object" && data !== null && "b64_json" in data && typeof data.b64_json === "string" ? data.b64_json : "";
+  return { status: response.status, b64 };
+}
+
+/** Polls until `want` holds: the mock records a request on arrival, so the test waits for the event itself and never for a fixed time. */
+async function until(want: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!want()) {
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+    await Bun.sleep(10);
+  }
+}
+
+// S4.E2E: the autopilot scenario kills the engine while image requests are in flight. A fixed delay would make that a race on a slow runner, so the scenario holds the images instead:
+// each is recorded when it arrives and answered only when the hold is released.
+describe("holdImages", () => {
+  test("records an image request on arrival and leaves it unanswered while held", async () => {
+    const m = await started();
+    const hold = m.holdImages();
+    const pending = postImage(m);
+    await until(() => m.imageRequests().length === 1, "the held request to be recorded");
+    expect(hold.arrived()).toBe(1);
+    const early = await Promise.race([pending.then(() => "answered"), Bun.sleep(150).then(() => "held")]);
+    expect(early).toBe("held");
+    hold.release();
+    expect((await bounded(pending, 5_000, "the released request")).status).toBe(200);
+  });
+
+  test("releasing answers every request that was held", async () => {
+    const m = await started();
+    const hold = m.holdImages();
+    const both = Promise.all([postImage(m), postImage(m)]);
+    await until(() => hold.arrived() === 2, "both requests to arrive");
+    hold.release();
+    expect((await bounded(both, 5_000, "both released requests")).map((r) => r.status)).toEqual([200, 200]);
+  });
+
+  test("a request that arrives after the release is answered at once", async () => {
+    const m = await started();
+    const hold = m.holdImages();
+    hold.release();
+    expect((await bounded(postImage(m), 5_000, "a request after the release")).status).toBe(200);
+    expect(hold.arrived()).toBe(0);
+  });
+
+  test("a held request is booked against /credits only when it is answered", async () => {
+    const m = await started();
+    const hold = m.holdImages();
+    const pending = postImage(m);
+    await until(() => hold.arrived() === 1, "the request to arrive");
+    expect(m.totalUsageUsd()).toBe(0);
+    hold.release();
+    await bounded(pending, 5_000, "the released request");
+    expect(m.totalUsageUsd()).toBeGreaterThan(0);
+  });
+
+  test("a new hold releases the one before it, and holds what comes after", async () => {
+    const m = await started();
+    const first = m.holdImages();
+    const heldByFirst = postImage(m);
+    await until(() => first.arrived() === 1, "the first request to arrive");
+    const second = m.holdImages();
+    expect((await bounded(heldByFirst, 5_000, "the request the first hold held")).status).toBe(200);
+    const heldBySecond = postImage(m);
+    await until(() => second.arrived() === 1, "the second request to arrive");
+    expect(first.arrived()).toBe(1);
+    const early = await Promise.race([heldBySecond.then(() => "answered"), Bun.sleep(150).then(() => "held")]);
+    expect(early).toBe("held");
+    second.release();
+    expect((await bounded(heldBySecond, 5_000, "the request the second hold held")).status).toBe(200);
+  });
+
+  test("stopping the mock lets a held request go on, so no handler is left waiting for ever", async () => {
+    const m = await started();
+    const hold = m.holdImages();
+    const pending = postImage(m).catch(() => ({ status: -1, b64: "" }));
+    await until(() => hold.arrived() === 1, "the request to arrive");
+    expect(m.totalUsageUsd()).toBe(0);
+    await m.stop();
+    await until(() => m.totalUsageUsd() > 0, "the held handler to run on after the stop");
+    await bounded(pending, 5_000, "the held request to end");
+  });
+});
+
+// S4.E2E: a launch of two avatars and a second one draw about fifty images from one mock; the default pool of 48 would repeat a picture inside the run, and the near-duplicate gate would retry it.
+describe("poolSize", () => {
+  test("the distinct pool serves poolSize different pictures before the first one comes back", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "x", distinctImages: true, poolSize: 3 });
+    const served: string[] = [];
+    for (let i = 0; i < 4; i++) served.push((await bounded(postImage(mock), 10_000, "an image")).b64);
+    expect(new Set(served.slice(0, 3)).size).toBe(3);
+    expect(served[3]).toBe(served[0]);
+  });
+
+  test("the pool has 48 pictures when poolSize is left out", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "x", distinctImages: true });
+    const first = (await bounded(postImage(mock), 10_000, "the first image")).b64;
+    for (let i = 1; i < 48; i++) await bounded(postImage(mock), 10_000, "an image");
+    expect((await bounded(postImage(mock), 10_000, "the 49th image")).b64).toBe(first);
+  });
+});

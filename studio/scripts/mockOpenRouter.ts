@@ -393,6 +393,11 @@ export interface MockOpenRouterOptions {
    */
   distinctImages?: boolean;
   /**
+   * S4.E2E: how many different pictures the distinct pool holds (default 48). The pool is served round-robin, so a mock that answers more image requests than this
+   * repeats a picture, and the near-duplicate gate would retry the repeat. A launch scenario sizes it above everything it asks for.
+   */
+  poolSize?: number;
+  /**
    * T7b: serves a real fixture face (studio/engine/face/fixtures) instead of
    * the faceless mandelbrot portrait — the only way a run with the face gate
    * on can pass a front/three-quarter slot at all. The avatar's master and
@@ -423,6 +428,16 @@ export interface MockOpenRouterOptions {
   faceMismatchAt?: number;
 }
 
+export interface ImageHold {
+  /** How many image requests came while this hold was set. */
+  arrived(): number;
+  /** Answers every request held and lets later ones through. */
+  release(): void;
+}
+
+/** How many different pictures the distinct pool holds before the first one is served again. */
+const DEFAULT_POOL_SIZE = 48;
+
 export interface MockOpenRouter {
   /** Pass as --studio-openrouter-base-url. */
   url: string;
@@ -443,6 +458,11 @@ export interface MockOpenRouter {
   creditsRequests(): MockRequest[];
   /** The running total this mock has billed, in USD — what /credits reports. */
   totalUsageUsd(): number;
+  /**
+   * S4.E2E: from now on an image request is recorded when it arrives and left unanswered (so it is genuinely in flight, however slow the runner) until the returned hold
+   * is released; a request that arrives after the release is answered at once. `arrived()` counts the requests that came while held. A new hold releases the old one.
+   */
+  holdImages(): ImageHold;
   stop(): Promise<void>;
 }
 
@@ -467,7 +487,10 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
   let imageCount = 0;
   // Built once, up front: rendering must never add latency inside a request a
   // caller is timing the arrival of (see the module doc above).
-  const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(48, opts.faceMismatchAt ?? null) : buildDistinctPool(48)) : [];
+  const poolSize = opts.poolSize ?? DEFAULT_POOL_SIZE;
+  const distinctPool = opts.distinctImages ? (opts.faceFixture ? buildFacePool(poolSize, opts.faceMismatchAt ?? null) : buildDistinctPool(poolSize)) : [];
+  // S4.E2E: while a hold is set, an image request is recorded on arrival and answered only when the hold is released.
+  let imageHold: { promise: Promise<void>; release: () => void; arrived: number } | null = null;
 
   // Reused verbatim: the exact bodies studio/engine/money/prices.test.ts
   // already proved the real client parses, so the mock's prices are exactly
@@ -586,6 +609,11 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
       }
       if (method === "POST" && path === "/api/v1/images") {
         record(req, path, await bodyOf(req));
+        const held = imageHold;
+        if (held !== null) {
+          held.arrived++;
+          await held.promise;
+        }
         if (imageDelayMs > 0) await Bun.sleep(imageDelayMs);
         totalUsageUsd += costs.image;
         const fallback = opts.faceFixture ? faceFixtureBytes() : portraitPng();
@@ -613,7 +641,24 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),
     creditsRequests: () => requests.filter((r) => r.path === "/api/v1/credits"),
     totalUsageUsd: () => totalUsageUsd,
+    holdImages: () => {
+      imageHold?.release();
+      let release: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const hold = { promise, release, arrived: 0 };
+      imageHold = hold;
+      return {
+        arrived: () => hold.arrived,
+        release: () => {
+          if (imageHold === hold) imageHold = null;
+          hold.release();
+        },
+      };
+    },
     stop: async () => {
+      imageHold?.release();
       server.stop(true);
     },
   };
