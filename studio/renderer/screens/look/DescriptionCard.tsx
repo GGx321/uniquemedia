@@ -72,7 +72,10 @@ export function DescriptionCard({
   const [said, say] = useAnnouncer();
   const [edit, setEdit] = useState<Edit | null>(null);
   const [busy, setBusy] = useState<"save" | "apply" | null>(null);
-  const [error, setError] = useState<EngineError | null>(null);
+  /** Why the owner's own edit was refused: it lives with the open editor. */
+  const [editError, setEditError] = useState<EngineError | null>(null);
+  /** Why a proposal could not be applied: it lives until the next check starts or ends. */
+  const [applyError, setApplyError] = useState<EngineError | null>(null);
   const field = useRef<HTMLTextAreaElement>(null);
   const editButton = useRef<HTMLButtonElement>(null);
   /** Where the focus goes once the card has drawn its next mode: into the field, or back to «Изменить текст». */
@@ -80,10 +83,10 @@ export function DescriptionCard({
   const { avatarId } = avatar;
   const { text, age } = avatar.descriptor;
 
-  // A new proposal starts clean: a refusal of an earlier one (a stale text, say) is not about it.
+  // A check started or ended is about the description as it is now: the refusal of an earlier proposal (a stale text, say) goes with it.
   useEffect(() => {
-    if (proposal !== null) setError(null);
-  }, [proposal]);
+    setApplyError(null);
+  }, [look.phase]);
 
   useEffect(() => {
     if (focusNext === "field") {
@@ -105,20 +108,21 @@ export function DescriptionCard({
   }
 
   function open(): void {
-    setError(null);
+    setEditError(null);
+    setApplyError(null);
     setEdit({ draft: text, base: text, current: null, refused: null });
     setFocusNext("field");
   }
 
   function close(): void {
     setEdit(null);
-    setError(null);
+    setEditError(null);
     setFocusNext("edit");
   }
 
   async function save(current: Edit): Promise<void> {
     setBusy("save");
-    setError(null);
+    setEditError(null);
     const reply = await client.request("avatars.editDescriptor", { avatarId, text: current.draft, expectedText: current.base });
     if (!mounted.current) return;
     if (reply.ok) {
@@ -136,12 +140,12 @@ export function DescriptionCard({
       if (now !== null) setEdit((e) => (e === null ? e : { ...e, base: now, current: now }));
     } else if (ruleRefusal(reply.error)) setEdit((e) => (e === null ? e : { ...e, refused: current.draft }));
     setBusy(null);
-    setError(reply.error);
+    setEditError(reply.error);
   }
 
   async function apply(check: DescriptorCheck, fix: string): Promise<void> {
     setBusy("apply");
-    setError(null);
+    setApplyError(null);
     const reply = await client.request("avatars.editDescriptor", { avatarId, text: fix, expectedText: check.checkedText });
     if (!mounted.current) return;
     if (reply.ok) {
@@ -158,12 +162,12 @@ export function DescriptionCard({
       if (!mounted.current) return;
       setBusy(null);
       look.settle("stale");
-      setError(reply.error);
+      setApplyError(reply.error);
       setFocusNext("edit");
       return;
     }
     setBusy(null);
-    setError(reply.error);
+    setApplyError(reply.error);
   }
 
   function onKey(event: KeyboardEvent<HTMLTextAreaElement>, current: Edit): void {
@@ -178,8 +182,9 @@ export function DescriptionCard({
     }
   }
 
+  // Not while this window's own check holds the avatar: the engine would refuse the save IN_FLIGHT.
   const canSave = (current: Edit): boolean =>
-    ready && busy === null && current.draft.trim() !== "" && current.draft !== current.base && current.draft !== current.refused;
+    ready && !editHeld && busy === null && current.draft.trim() !== "" && current.draft !== current.base && current.draft !== current.refused;
   const live = (
     <p className="sr-only" role="status">
       {said}
@@ -190,7 +195,7 @@ export function DescriptionCard({
   if (edit !== null) {
     const over = edit.draft.length > DESCRIPTOR_MAX_CHARS;
     // A rule's reason is about the text it refused: once the owner types on, it goes until the next save says otherwise.
-    const problem = error !== null && (!ruleRefusal(error) || edit.draft === edit.refused) ? error : null;
+    const problem = editError !== null && (!ruleRefusal(editError) || edit.draft === edit.refused) ? editError : null;
     return (
       <section className="card look-desc look-desc-edit" aria-label="Описание">
         <div className="card-head">
@@ -241,6 +246,12 @@ export function DescriptionCard({
             Съёмка, которая идёт сейчас, закончит со старым описанием — новое возьмут следующие фото.
           </p>
         )}
+        {editHeld && (
+          <p className="look-legend">
+            <Icon name="info" size={13} strokeWidth={2} />
+            {EDIT_HELD_REASON}.
+          </p>
+        )}
         <div className="look-desc-actions">
           <button type="button" className="btn btn-p" aria-busy={busy === "save"} disabled={!canSave(edit)} onClick={() => void save(edit)}>
             {busy === "save" && <Spin />}
@@ -286,10 +297,10 @@ export function DescriptionCard({
             ),
           )}
         </p>
-        {error !== null && (
+        {applyError !== null && (
           <p className="look-edit-problem" role="alert">
             <Icon name="alert" size={14} strokeWidth={2} />
-            <span>{editProblem(error, age)}</span>
+            <span>{editProblem(applyError, age)}</span>
           </p>
         )}
         <div className="look-desc-actions">
@@ -302,7 +313,7 @@ export function DescriptionCard({
             className="btn"
             disabled={busy !== null}
             onClick={() => {
-              setError(null);
+              setApplyError(null);
               look.settle("kept");
               setFocusNext("edit");
             }}
@@ -334,10 +345,10 @@ export function DescriptionCard({
       <p className="descriptor-text mono" lang="en">
         {text}
       </p>
-      {error !== null && isStale(error) && (
+      {applyError !== null && isStale(applyError) && (
         <p className="look-edit-problem" role="alert">
           <Icon name="alert" size={14} strokeWidth={2} />
-          <span>{editProblem(error, age)}</span>
+          <span>{editProblem(applyError, age)}</span>
         </p>
       )}
       {editHeld && (

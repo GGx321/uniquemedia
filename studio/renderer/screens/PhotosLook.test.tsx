@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ERROR_MESSAGES_RU, type DescriptorCheck, type RunRequest } from "../../shared/engine";
-import { MIA } from "../engine/mockEngine.testkit";
-import { callsOf, flush, runAll, setup } from "../testing";
+import { MIA, SOFIA } from "../engine/mockEngine.testkit";
+import { callsOf, flush, inAct, runAll, setup } from "../testing";
 import { CHECK_HELD_REASON, EDIT_HELD_REASON } from "./look/lookModel";
 
 // S5.0d: the avatar page's «Внешность» against the mock engine, state by state of .omc/stage5/design (07, 09–13; the «Тело» card is S5.2d's), plus
@@ -222,6 +222,12 @@ describe("10 · the description does not match", () => {
     expect(within(descCard()).queryByRole("button", { name: "Исправить описание" }) === null).toBe(true);
     expect(text(checkCard())).toContain("Описание уже изменилось — проверьте ещё раз.");
     expect(isDisabled(checkButton(/^Проверить снова/))).toBe(false);
+
+    // Review r1 (2): the next check is about the description as it is now; the old refusal goes with it.
+    await runCheck();
+    expect(text(checkCard())).toContain("Описание совпадает с фото");
+    expect(within(descCard()).queryAllByRole("alert").map(text)).toEqual([]);
+    expect(text(descCard())).not.toContain("Описание уже изменилось");
   });
 
   test("a description changed by another window after the check drops the proposal by itself", async () => {
@@ -270,6 +276,17 @@ describe("12 · no key", () => {
     fireEvent.click(within(checkCard()).getByRole("button", { name: "Открыть ключ в Настройках" }));
     await screen.findByRole("heading", { level: 1, name: "Настройки" });
     expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
+  });
+
+  test("an engine away says so first, and then the way to the key is not offered (review r1, 6)", async () => {
+    const { engine } = await openLook({ apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
+    engine.failNext("engine.snapshot", { code: "INTERNAL" });
+    inAct(() => engine.restart());
+    await flush();
+
+    expect(isDisabled(checkButton(/^Проверить описание/))).toBe(true);
+    expect(text(checkCard())).toContain("Нет связи с движком — дождитесь, пока он снова ответит.");
+    expect(within(checkCard()).queryByRole("button", { name: "Открыть ключ в Настройках" }) === null).toBe(true);
   });
 });
 
@@ -343,6 +360,24 @@ describe("held by other work (IN_FLIGHT, not drawn on the mockup)", () => {
     engine.setAvatarBusy(MIA.avatarId, false);
     await runCheck();
     expect(text(checkCard())).toContain("Описание совпадает с фото");
+  });
+
+  test("the editor open while this window's own check runs: «Сохранить» waits, with the reason (review r1, 5)", async () => {
+    const { engine, scheduler } = await openLook();
+    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
+    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: `${TEXT} Soft smile.` } });
+    engine.delayNext("avatars.checkDescriptor", 1_000);
+    await runCheck();
+
+    expect(isDisabled(within(descCard()).getByRole("button", { name: "Сохранить" }))).toBe(true);
+    expect(text(descCard())).toContain(EDIT_HELD_REASON);
+
+    runAll(scheduler);
+    await flush();
+    expect(text(checkCard())).toContain("Описание совпадает с фото");
+    expect(isDisabled(within(descCard()).getByRole("button", { name: "Сохранить" }))).toBe(false);
+    expect(text(descCard())).not.toContain(EDIT_HELD_REASON);
+    expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(0);
   });
 
   test("an edit refused IN_FLIGHT says the description can be changed when that work ends", async () => {

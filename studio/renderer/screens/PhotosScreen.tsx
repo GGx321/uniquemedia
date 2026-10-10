@@ -10,7 +10,7 @@ import { ErrorNotice } from "../ui/Notice";
 import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { LookTab } from "./look/LookTab";
-import { useLookCheck } from "./look/useLookCheck";
+import { useLookCheck, useReadFromPhoto } from "./look/useLookCheck";
 import { Gallery, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
@@ -87,6 +87,7 @@ function AvatarPhotos({
   const [tab, setTab] = useState<PhotosTab>(initialTab);
   // S5.0d: the descriptor check lives with the screen, not the tab, so a look at «Фото» and back keeps its verdict.
   const look = useLookCheck(avatarId, landing, { shown: tab === "look", ready, paidBlocked: paidBlockedReason(view) !== null });
+  const readFromPhoto = useReadFromPhoto(landing, avatar.descriptor.text);
 
   // CS.7 L4: kept by the window, so a look at Settings and back finds it as it was (a new category still on, the count, the poses).
   const runForms = useRunForms();
@@ -444,7 +445,7 @@ function AvatarPhotos({
         <UsageNotice key={avatarId} avatar={avatar} />
 
         {tab === "look" ? (
-          <LookTab avatar={avatar} view={view} look={look} landing={landing} />
+          <LookTab avatar={avatar} view={view} look={look} landing={landing} readFromPhoto={readFromPhoto} />
         ) : tab === "photos" ? (
           <>
             <GenerateCard

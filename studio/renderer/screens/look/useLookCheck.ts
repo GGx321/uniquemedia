@@ -38,6 +38,18 @@ export interface LookCheck {
   settle(fate: Exclude<ProposalFate, "open">): void;
 }
 
+/**
+ * «прочитано с фото»: true while the description is still the one the import read. Held by the avatar's screen, as the verdict is: once the text
+ * changes on this screen the tag is gone for good, and a look at «Фото» and back does not bring it back.
+ */
+export function useReadFromPhoto(landing: LookLanding | null, text: string): boolean {
+  const [read, setRead] = useState<string | null>(() => (landing?.kind === "imported" ? text : null));
+  useEffect(() => {
+    if (read !== null && read !== text) setRead(null);
+  }, [read, text]);
+  return read !== null && read === text;
+}
+
 /** Landings already acted on: a screen mounted again for the same route (React's development double mount, say) never sends a second paid check. */
 const consumed = new WeakSet<LookLanding>();
 

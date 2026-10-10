@@ -145,6 +145,23 @@ describe("after «Импортировать» (05–06)", () => {
     expect(callsOf(engine, "avatars.checkDescriptor")).toHaveLength(0);
   });
 
+  test("«прочитано с фото» goes once the owner edits the text, and stays gone after a look at «Фото» and back (review r1, 1)", async () => {
+    setup();
+    await importZoe();
+    fireEvent.click(within(descCard()).getByRole("button", { name: "Изменить текст" }));
+    fireEvent.change(within(descCard()).getByRole("textbox", { name: "Текст описания" }), { target: { value: `${IMPORT_TEXT} Soft smile.` } });
+    fireEvent.click(within(descCard()).getByRole("button", { name: "Сохранить" }));
+    await flush();
+    expect(within(descCard()).getByText(`${IMPORT_TEXT} Soft smile.`).tagName).toBe("P");
+    expect(within(descCard()).queryByText("прочитано с фото") === null).toBe(true);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Фото" }));
+    await flush();
+    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
+    await flush();
+    expect(within(descCard()).queryByText("прочитано с фото") === null).toBe(true);
+  });
+
   test("a mismatch at import (06): the notice points at it, and the proposal is fixed against the text the import read", async () => {
     const { engine, client } = setup();
     engine.setNextDescriptorCheck(mismatch(IMPORT_TEXT, "brown eyes", "green eyes"));

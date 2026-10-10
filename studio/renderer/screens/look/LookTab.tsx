@@ -1,6 +1,6 @@
-import { useState } from "react";
 import type { AvatarSummary } from "../../../shared/engine";
 import type { EngineView } from "../../engine/store";
+import { paidStop } from "../../lib/paidStop";
 import type { LookLanding } from "../../navigation";
 import { Notice } from "../../ui/Notice";
 import { Portrait } from "../../ui/Portrait";
@@ -21,14 +21,26 @@ function landingText(landing: LookLanding, name: string): string {
   return check.matches ? `Аватар «${name}» импортирован. Описание прочитано с фото и сверено с ним.` : `Аватар «${name}» импортирован. Описание прочитано с фото — проверьте сверку.`;
 }
 
-export function LookTab({ avatar, view, look, landing }: { avatar: AvatarSummary; view: EngineView; look: LookCheck; landing: LookLanding | null }) {
+export function LookTab({
+  avatar,
+  view,
+  look,
+  landing,
+  readFromPhoto,
+}: {
+  avatar: AvatarSummary;
+  view: EngineView;
+  look: LookCheck;
+  landing: LookLanding | null;
+  /** The description is still the one the import read (held by the screen: `useReadFromPhoto`). */
+  readFromPhoto: boolean;
+}) {
   const ready = view.phase === "ready";
   const { avatarId } = avatar;
   const text = avatar.descriptor.text;
-  // The text the import read, kept so «прочитано с фото» goes once the owner (or a proposal) changes it.
-  const [readAtImport] = useState(() => (landing?.kind === "imported" ? text : null));
   const key = view.settings?.apiKey;
-  const keyMissing = key === undefined || !key.stored || key.rejected;
+  // The way to the key is offered only when the key is what stops the check: an engine away is said first (`paidBlockedReason`'s order).
+  const keyMissing = paidStop(view)?.kind !== "offline" && (key === undefined || !key.stored || key.rejected);
   const checking = look.phase.kind === "running";
 
   return (
@@ -57,7 +69,7 @@ export function LookTab({ avatar, view, look, landing }: { avatar: AvatarSummary
             ready={ready}
             editHeld={checking}
             runDrawing={runDrawing(view, avatarId)}
-            fresh={readAtImport !== null && readAtImport === text}
+            fresh={readFromPhoto}
           />
         </div>
       </div>
