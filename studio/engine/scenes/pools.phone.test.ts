@@ -96,9 +96,9 @@ describe("the built-in pools are ordinary places", () => {
     expect([...POOLS.photoshoot.shotDeck].sort()).toEqual(["candid", "candid", "photographer", "photographer", "photographer"]);
   });
 
-  test("the rooms the owner pictured are there: a kitchen, a bed, a couch, a bathroom mirror and a hallway wall", () => {
+  test("the rooms the owner pictured are there: a kitchen, a bed, a couch, a bathroom, a bedroom and a hallway wall", () => {
     const names = allPlaces.map(([, p]) => p.name);
-    for (const expected of ["her small kitchen", "her bed in the morning", "the couch under a blanket", "her bathroom mirror", "her bedroom mirror", "a plain wall in her hallway"]) expect(names).toContain(expected);
+    for (const expected of ["her small kitchen", "her bed in the morning", "the couch under a blanket", "her bathroom", "her bedroom", "a plain wall in her hallway"]) expect(names).toContain(expected);
   });
 });
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CategoryPoses, youthWords } from "../../shared/engine";
+import { CategoryPoses, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
 import { isPhoneInHandShot, type Pose } from "./schema";
 import { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
 import { REVEALING_WORDS } from "./words";
@@ -133,8 +133,8 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("laughing at her phone", "phone"), one("holding a ceramic coffee mug"), two("pulling the blanket over her knees")],
       },
       {
-        name: "her bathroom mirror",
-        at: "at her bathroom mirror",
+        name: "her bathroom",
+        at: "in her bathroom",
         room: true,
         details: ["a hair dryer by the sink", "a towel on the hook"],
         times: ["morning", "evening"],
@@ -156,7 +156,7 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("looking out of the window"), one("holding a cup of tea"), one("pulling her knees up")],
       },
     ],
-    outfits: ["an oversized cream knit sweater", "a tank top and pajama shorts", "a grey lounge set", "a plain white t-shirt and cotton shorts", "a cozy hoodie"],
+    outfits: ["an oversized cream knit sweater", "a tank top and pajama shorts", "a grey lounge set", "a white t-shirt and cotton shorts", "a cozy hoodie"],
     shotDeck: DEFAULT_SHOT_DECK,
   },
   travel: {
@@ -198,8 +198,8 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("holding the rail"), one("sitting on the edge of the deck"), one("letting the wind blow her hair")],
       },
       {
-        name: "an ordinary hotel room mirror",
-        at: "at the mirror of an ordinary hotel room",
+        name: "an ordinary hotel room",
+        at: "in an ordinary hotel room",
         room: true,
         details: ["a suitcase open on the floor", "a key card on the nightstand"],
         times: ["morning", "evening"],
@@ -207,7 +207,7 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("adjusting her outfit"), one("putting on earrings"), one("checking her look")],
       },
     ],
-    outfits: ["a light cotton top and linen trousers", "a linen shirt and denim shorts", "a sundress and sneakers", "a white button-up shirt"],
+    outfits: ["a cotton top and linen trousers", "a linen shirt and denim shorts", "a sundress and sneakers", "a white button-up shirt"],
     shotDeck: DEFAULT_SHOT_DECK,
   },
   photoshoot: {
@@ -218,7 +218,7 @@ export const POOLS: Record<Category, Pool> = {
         room: true,
         details: ["a coat rack by the door", "shoes by the door"],
         times: ["morning", "evening"],
-        activities: [one("tucking her hair behind her ear"), one("leaning her shoulder against the wall"), one("looking over her shoulder")],
+        activities: [one("tucking her hair behind her ear"), one("leaning a shoulder on the wall"), one("looking over her shoulder")],
       },
       {
         name: "a city street at night",
@@ -245,14 +245,14 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("sitting at a small table with a cup"), one("resting her chin on her hand"), one("looking out of the window")],
       },
     ],
-    outfits: ["an oversized blazer over a tee and jeans", "a black going-out dress", "a denim jacket and jeans", "a monochrome knit set", "a trench coat"],
+    outfits: ["a loose blazer over a tee and jeans", "a black going-out dress", "a denim jacket and jeans", "a monochrome knit set", "a trench coat"],
     shotDeck: PHOTOSHOOT_SHOT_DECK,
   },
   glamour: {
     locations: [
       {
-        name: "her bedroom mirror",
-        at: "at her bedroom mirror",
+        name: "her bedroom",
+        at: "in her bedroom",
         room: true,
         details: ["a lamp on the nightstand", "shoes by the bed"],
         times: ["evening", "night"],
@@ -269,8 +269,8 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("sitting on the edge of the bed"), one("putting on earrings"), one("standing by the window")],
       },
       {
-        name: "her bathroom mirror, the ceiling light on",
-        at: "at her bathroom mirror",
+        name: "her bathroom, the ceiling light on",
+        at: "in her bathroom",
         room: true,
         details: ["a hair dryer by the sink", "a towel on the hook"],
         times: ["evening"],
@@ -278,7 +278,7 @@ export const POOLS: Record<Category, Pool> = {
         activities: [one("adjusting her hair"), one("applying lipstick"), one("leaning on the sink counter")],
       },
       {
-        name: "her open wardrobe with a mirror door",
+        name: "her open wardrobe",
         at: "at her open wardrobe",
         room: true,
         details: ["shoes by the door", "folded tops on a shelf"],
@@ -292,7 +292,7 @@ export const POOLS: Record<Category, Pool> = {
         room: true,
         details: ["a pillow", "a bedside lamp"],
         times: ["evening", "night"],
-        activities: [one("sitting on the edge of the bed"), one("lying on her side propped on an elbow"), one("stretching")],
+        activities: [one("sitting on the edge of the bed"), one("lying on her side on one elbow"), one("stretching")],
       },
     ],
     // Non-revealing only (fixed decision, "Revealing outfits"): the mini
@@ -301,14 +301,14 @@ export const POOLS: Record<Category, Pool> = {
     // there; per the same decision it relies on the one-attempt Seedream
     // fallback if Grok refuses it. Bikinis, lingerie and slip dresses are
     // dropped entirely, not merely gated.
-    outfits: ["a fitted black bodycon dress", "a mini skirt with a cropped top", "a corset top with high-waisted trousers"],
+    outfits: ["a fitted black bodycon dress", "a mini skirt with a cropped top", "a corset top and high-rise trousers"],
     shotDeck: DEFAULT_SHOT_DECK,
   },
   fitness: {
     locations: [
       {
-        name: "a gym in front of a mirror",
-        at: "in a gym in front of a mirror",
+        name: "a gym floor",
+        at: "on a gym floor",
         times: ["morning", "evening"],
         mirror: true,
         activities: [one("resting between sets"), one("holding a water bottle"), one("adjusting her ponytail")],
@@ -328,8 +328,8 @@ export const POOLS: Record<Category, Pool> = {
         activities: [two("jogging"), one("stretching her legs"), one("holding a water bottle")],
       },
       {
-        name: "the gym locker-room mirror",
-        at: "at the gym locker-room mirror",
+        name: "the gym locker room",
+        at: "in the gym locker room",
         times: ["morning", "evening"],
         mirror: true,
         activities: [one("resting on the bench"), one("holding a water bottle"), one("adjusting her ponytail")],
@@ -419,19 +419,29 @@ export const PoolSchema = z
 const POOL_BANNED_WORDS =
   /\b(paper\w*|books?|magazines?|documents?|notebooks?|menus?|maps?|desks?|stud(?:y|ying|io)|laptops?|tablets?|screens?|newspapers?|television|tv|professional|photographer|photoshoot|editorial|fashion|models?|posing|captures?|candid|cinematic|bokeh|golden hour|softly lit|soft light|glow\w*|dramatic|moody|dreamy|elegant|luxurious|lavish|glamorous|chic|sophisticated|polished|pristine|marble|silk|satin|velvet|stunning|beautiful|perfect|flawless|gorgeous)\b/i;
 
-const BuiltInText = PromptText.refine((text) => !POOL_BANNED_WORDS.test(text), { message: "pool text must be an ordinary place of her own life: no paper, screens, staging or luxury words" });
+const BuiltInUnboundedText = PromptText.refine((text) => !POOL_BANNED_WORDS.test(text), { message: "pool text must be an ordinary place of her own life: no paper, screens, staging or luxury words" });
+
+// S5.R1: the built-in texts are held to the bound a custom pool is held to (POOL_TEXT_MAX), so the writer's floor pins for the worst custom chunk cover the
+// built-in ones too. The locative `at` is not sent to the writer and is not bound.
+const BuiltInText = BuiltInUnboundedText.refine((text) => text.length <= POOL_TEXT_MAX, { message: `pool text must be at most ${POOL_TEXT_MAX} characters` });
+
+// S5.R1 H1: a shot other than the mirror can land on any place, so no place names a mirror (the mirror capture line names it); `mirror: true` marks the places a
+// mirror shot may use.
+const NO_MIRROR_WORD = { message: "a place must not name a mirror: only the mirror shot's own line does" };
+const PlaceName = BuiltInText.refine((text) => !/mirror/i.test(text), NO_MIRROR_WORD);
+const PlaceAt = BuiltInUnboundedText.refine((text) => !/mirror/i.test(text), NO_MIRROR_WORD);
 
 const BuiltInActivitySchema = z.strictObject({ text: BuiltInText, twoHanded: z.boolean(), phone: z.literal(true).optional(), messyOk: z.literal(true).optional() });
 
 const BuiltInPlaceSchema = z
   .strictObject({
-    name: BuiltInText,
+    name: PlaceName,
     times: z.array(NonEmpty).min(1),
     activities: z.array(BuiltInActivitySchema).min(1),
     mirror: z.literal(true).optional(),
     room: z.literal(true).optional(),
     details: z.array(BuiltInText).optional(),
-    at: BuiltInText,
+    at: PlaceAt,
   })
   .superRefine((place, ctx) => {
     const problem = (message: string, path: string): void => ctx.addIssue({ code: "custom", message, path: [path] });
@@ -450,7 +460,13 @@ const BuiltInPlaceSchema = z
 export const BuiltInPoolSchema = z
   .strictObject({
     locations: z.array(BuiltInPlaceSchema).min(1),
-    outfits: z.array(OutfitSchema.refine((outfit) => !POOL_BANNED_WORDS.test(outfit), { message: "outfit text must not use a paper, screen, staging or luxury word" })).min(1),
+    outfits: z
+      .array(
+        OutfitSchema.refine((outfit) => !POOL_BANNED_WORDS.test(outfit), { message: "outfit text must not use a paper, screen, staging or luxury word" }).refine((outfit) => outfit.length <= POOL_TEXT_MAX, {
+          message: `outfit text must be at most ${POOL_TEXT_MAX} characters`,
+        }),
+      )
+      .min(1),
     shotDeck: z.array(z.enum(SHOTS)).min(1),
     poses: CategoryPoses.optional(),
   })
