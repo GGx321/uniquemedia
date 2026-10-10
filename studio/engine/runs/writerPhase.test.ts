@@ -220,7 +220,7 @@ describe("runWriterPhase", () => {
 
 // CS.1: the call shape and the messages are the caller's. A run passes exactly
 // today's values, so what a built-in run sends must not move by one byte.
-describe("runWriterPhase: a built-in run's requests are byte-identical to main 3a9cd498", () => {
+describe("runWriterPhase: a built-in run's requests are pinned to the S5.1b phone-look prompts (re-pinned from main 3a9cd498)", () => {
   const sha = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
   const fixture: { bodies: string[]; reserves: { attemptId: string; worstMicros: number; model: string }[] } = JSON.parse(
     readFileSync(join(import.meta.dir, "fixtures", "writer-main-3a9cd498.json"), "utf8"),

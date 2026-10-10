@@ -80,7 +80,7 @@ describe("categoryStyleOf", () => {
   });
 });
 
-describe("a built-in run's writer messages are byte-identical to main 3a9cd498", () => {
+describe("a built-in run's writer messages are pinned to the S5.1b phone-look prompts (re-pinned from main 3a9cd498)", () => {
   const fixture: { messages: Record<string, string> } = JSON.parse(readFileSync(join(import.meta.dir, "..", "runs", "fixtures", "writer-main-3a9cd498.json"), "utf8"));
   const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], poses: { profile: true, back: true } }).slots;
 
@@ -156,8 +156,8 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   const label = "L".repeat(CATEGORY_LABEL_MAX);
   const snapshot: CategorySnapshot = { ref: CUSTOM, name: "я".repeat(40), label, style: "editorial" };
   /** What the reserve keeps clear of the ceiling: room for a field a later change adds to a slot or to a refusal. */
-  const MARGIN = 200;
-  const MARGIN_PRINTED = 241;
+  const MARGIN = 900;
+  const MARGIN_PRINTED = 902;
   /** A 100-photo run's last chunk is slots 76..100: the widest indices a chunk can carry. */
   const FIRST_INDEX = 100 - WRITER_CALL.slotsPerCall + 1;
 
@@ -169,7 +169,7 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
       timeOfDay: text.repeat(TIME_OF_DAY_MAX),
       activity: text.repeat(textLength),
       outfit: text.repeat(textLength),
-      shot: "photographer" as const,
+      shot: "candid" as const,
       pose: "three-quarter" as const,
       attemptIdBase: `slot-${i + 1}`,
       repeatedPair: false,

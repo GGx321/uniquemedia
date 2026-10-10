@@ -18,7 +18,7 @@ import { NO_REFUSAL, POSE_LABEL, readWriterScenes, SHOT_LABEL, writerRefusalText
 
 /**
  * The shots the model may pick for an «Авто» slot: «Авто» never draws the mirror (an own scene has no place for a mirror to sit on) and never the photographer
- * (own scenes are finished as phone photos, `categoryStyleOf("own")`, and a photographer shot would contradict that finish; before CS.8a «Авто» never picked it
+ * (every photo is an ordinary phone photo a friend or she took, and a photographer shot would contradict that; before CS.8a «Авто» never picked it
  * either). A photographer the owner chose himself is kept as is: it is a given shot, not a pick.
  */
 export const PICKABLE_SHOTS = ["friend", "selfie", "candid"] as const satisfies readonly Shot[];
@@ -79,21 +79,23 @@ export function toIdeaSlot(ask: IdeaAsk): IdeaSlot {
 
 export function ideaSystemPrompt(mirrorAllowed = false): string {
   return [
-    "You write one photorealistic scene sentence for each of the given photo slots, of one recurring adult woman.",
-    "Reference images supply her identity, so you never describe her face, never give her a name, and never change her hair, eyes or body type.",
+    "You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.",
+    "Reference images supply her identity, so you never describe her face, never give her a name, and never describe her hair, eyes or body type.",
     "",
-    "Each slot carries an idea written by the owner, in any language. Understand it, and write the scene in English: for each slot, exactly one full English sentence (never a fragment) that brings the idea to life, using the slot's shot type and pose, and adds natural, concrete detail: where she is, what she wears, what her hands and body do, her expression, the background and the light. Never copy the idea word for word and never leave it in its own language.",
+    "Each slot carries an idea written by the owner, in any language. Understand it, and write the scene in English: for each slot, exactly one full English sentence (never a fragment) that brings the idea to life, using the slot's shot type and pose, and adds natural, concrete detail: where she is, what she wears, what her hands and body do, her expression, and at most one ordinary detail of the place. Do not describe the light, the colours or the mood; if light comes up, name only its source. Never copy the idea word for word and never leave it in its own language.",
     "",
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
-    "- When several slots share an idea, make each one a different moment of it: vary the place, her outfit, the time of day and what she does.",
+    "- When several slots share an idea, make each one a different moment of it: vary the place, her outfit and what she does.",
     '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
     '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the camera, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the camera. For any other pose she may face or glance toward the camera as the shot allows.',
     `- When a slot's "shot" or "pose" is "choose", pick it from the idea and return it in that slot's "shot" or "pose": the shot is ${mirrorAllowed ? "friend, selfie, mirror or candid" : "friend, selfie or candid"}; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend or candid. ${mirrorAllowed ? "The idea names a mirror, so you may pick the mirror shot, only for a mirror selfie." : "Never choose the mirror shot."} Then write the scene for what you picked. A shot or a pose the slot gives is kept as given: never return it.`,
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
     "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says, describe her clothing as covering and non-revealing.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
-    '- Never use "stunning", "beautiful", "perfect" or "flawless".',
+    '- Never write about the camera, the lens, the photo, the shot or the framing; "the phone" in a gaze is her own phone.',
+    "- No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.",
+    "- Never use these words: professional, photographer, photoshoot, studio, editorial, fashion, model, posing, captures, candid, cinematic, bokeh, golden hour, softly lit, soft light, glow, glowing, dramatic, moody, dreamy, elegant, luxurious, lavish, glamorous, chic, sophisticated, polished, pristine, marble, silk, satin, velvet, stunning, beautiful, perfect, flawless, gorgeous.",
     "",
     'Return JSON matching the schema: {"scenes": [...]}, exactly one object per slot, in the given order, each with "slotIndex", "sentence" and, only where the schema has them, "shot" and "pose".',
   ].join("\n");

@@ -3,6 +3,8 @@ import { youthWords } from "../../shared/engine";
 import { estimateRun, WRITER_CALL, type RunPlanInput } from "../money/estimate";
 import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
+import { POOL_TIMES } from "../../shared/engine";
+import { lightOf } from "./phoneLook";
 import { CATEGORIES } from "./types";
 import { plan } from "./planner";
 import type { PlanSlot } from "./schema";
@@ -69,8 +71,8 @@ describe("writerMessages", () => {
     expect(user?.role).toBe("user");
     const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
     expect(body).toEqual([
-      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning", shot: "photo taken by a friend", pose: "facing the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
-      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning", shot: "front-camera selfie", pose: "a three-quarter view, turned slightly from the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "a phone snap a friend took", pose: "facing the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "her own front-camera selfie", pose: "a three-quarter view, turned slightly from the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
     ]);
   });
 
@@ -505,5 +507,80 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
 
   test("the output ceiling comfortably fits one full chunk, even generously overshooting the target sentence length", () => {
     expect(WRITER_CALL.slotsPerCall * WORST_OUTPUT_TOKENS_PER_SCENE).toBeLessThanOrEqual(WRITER_CALL.maxTokens);
+  });
+});
+
+/** The words the writers are told never to use (Spike A v3): 37, copied here so a silent edit of the prompt turns this red. */
+const TOLD_NEVER_WORDS = [
+  "professional", "photographer", "photoshoot", "studio", "editorial", "fashion", "model", "posing", "captures", "candid", "cinematic", "bokeh", "golden hour", "softly lit",
+  "soft light", "glow", "glowing", "dramatic", "moody", "dreamy", "elegant", "luxurious", "lavish", "glamorous", "chic", "sophisticated", "polished", "pristine", "marble",
+  "silk", "satin", "velvet", "stunning", "beautiful", "perfect", "flawless", "gorgeous",
+];
+
+describe("S5.1b: the writer is told to write what an ordinary phone photo shows, and nothing about how it was taken", () => {
+  const system = (): string => writerMessages([slot()])[0]?.content ?? "";
+
+  test("the opening lines say it is her own ordinary phone photo and never name her hair, eyes or body", () => {
+    const lines = system().split("\n");
+    expect(lines[0]).toBe("You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.");
+    expect(lines[1]).toContain("never describe her hair, eyes or body type");
+    expect(system()).not.toContain("photorealistic");
+    expect(system()).not.toContain("never change her hair");
+  });
+
+  test("the detail is at most one ordinary detail of the place, and the light is named by its source only", () => {
+    expect(system()).toContain("her expression, and at most one ordinary detail of the place.");
+    expect(system()).toContain("Do not describe the light, the colours or the mood; if light comes up, name only its source.");
+    expect(system()).not.toContain("the background and the light");
+  });
+
+  test("forbids camera talk, paper, books, laptops and tablets", () => {
+    expect(system()).toContain('Never write about the camera, the lens, the photo, the shot or the framing; "the phone" in a gaze is her own phone.');
+    expect(system()).toContain("No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.");
+  });
+
+  test("the outfit is described exactly as given, and the revealing words are still named as forbidden (the readers refuse them)", () => {
+    expect(system()).toContain(
+      "Describe the outfit exactly as given, in its own words: never more or less revealing, never add or remove a garment. Never name bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie.",
+    );
+    expect(system()).not.toContain("describe it as covering and non-revealing");
+  });
+
+  test("tells the model the 37 words never to use", () => {
+    const line = system().split("\n").find((l) => l.startsWith("- Never use these words: ")) ?? "";
+    const told = line.slice("- Never use these words: ".length).replace(/\.$/, "").split(", ");
+    expect(told).toEqual(TOLD_NEVER_WORDS);
+    expect(told).toHaveLength(37);
+    expect(system()).not.toContain('Never use "stunning"');
+  });
+
+  test("SHOT_LABEL names who took the phone photo and carries no camera or photographer", () => {
+    expect(SHOT_LABEL).toEqual({
+      friend: "a phone snap a friend took",
+      selfie: "her own front-camera selfie",
+      mirror: "her mirror selfie",
+      candid: "a phone snap a friend took while she is busy",
+      photographer: "a phone snap a friend took",
+    });
+    for (const label of Object.values(SHOT_LABEL)) expect(label).not.toMatch(/full-frame|photographer|candid shot|looking at the camera/);
+  });
+
+  test("the slot's time of day goes out as its light, by source, for every stored time", () => {
+    for (const time of POOL_TIMES) {
+      const [, user] = writerMessages([slot({ timeOfDay: time })]);
+      const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+      expect(body[0].timeOfDay).toBe(lightOf(time));
+      expect(user?.content).not.toMatch(/golden hour|studio lighting|softly lit/);
+    }
+  });
+
+  test("a built-in photoshoot slot is called «Own phone photos», never a photoshoot", () => {
+    const [, user] = writerMessages([slot({ category: "photoshoot" })]);
+    expect(user?.content).toContain('"category":"Own phone photos"');
+    expect(user?.content).not.toContain("Photoshoot");
+  });
+
+  test("the slots go out as compact JSON (the worst custom chunk must stay under the writer ceiling: writer.custom.test.ts)", () => {
+    expect(writerMessages([slot(), slot({ slotIndex: 2 })])[1]?.content).not.toContain("\n  ");
   });
 });

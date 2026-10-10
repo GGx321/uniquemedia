@@ -44,7 +44,7 @@ export function photoCategoryOf(category: PlannerCategory | "own"): PhotoCategor
 export const BUILT_IN_LABEL: Record<Category, string> = {
   home: "Home",
   travel: "Travel",
-  photoshoot: "Photoshoot",
+  photoshoot: "Own phone photos",
   glamour: "Glamour",
   fitness: "Fitness",
 };

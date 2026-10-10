@@ -4,6 +4,7 @@ import { WRITER_CALL, writerWorstMicros, type Estimate } from "../money/estimate
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
 import { categoryLabelOf, type CategoryLabelOf } from "./categories";
+import { lightOf } from "./phoneLook";
 import type { Shot } from "./types";
 import type { PlanSlot, Pose } from "./schema";
 import { revealingWordsIn } from "./words";
@@ -83,11 +84,11 @@ export const WRITER_JSON_SCHEMA: { name: string; schema: Record<string, unknown>
 // ---------- the prompt ----------
 
 export const SHOT_LABEL: Record<Shot, string> = {
-  friend: "photo taken by a friend",
-  selfie: "front-camera selfie",
-  mirror: "mirror selfie",
-  candid: "candid shot, not looking at the camera",
-  photographer: "photo taken by a photographer with a full-frame camera",
+  friend: "a phone snap a friend took",
+  selfie: "her own front-camera selfie",
+  mirror: "her mirror selfie",
+  candid: "a phone snap a friend took while she is busy",
+  photographer: "a phone snap a friend took",
 };
 
 /**
@@ -104,19 +105,21 @@ export const POSE_LABEL: Record<Pose, string> = {
 
 function writerSystemPrompt(): string {
   return [
-    "You write one photorealistic scene sentence for each of the given photo slots, of one recurring adult woman.",
-    "Reference images supply her identity, so you never describe her face, never give her a name, and never change her hair, eyes or body type.",
+    "You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.",
+    "Reference images supply her identity, so you never describe her face, never give her a name, and never describe her hair, eyes or body type.",
     "",
-    "For each slot, write exactly one full English sentence (never a fragment) that uses the slot's category, location, time of day, shot type, pose, outfit and activity, and adds natural, concrete detail: what her hands and body do, her expression, the background and the light.",
+    "For each slot, write exactly one full English sentence (never a fragment) that uses the slot's category, location, time of day, shot type, pose, outfit and activity, and adds natural, concrete detail: what her hands and body do, her expression, and at most one ordinary detail of the place. Do not describe the light, the colours or the mood; if light comes up, name only its source.",
     "",
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
     '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
     '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the camera, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the camera. For any other pose she may face or glance toward the camera as the shot allows.',
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
-    "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the given outfit, describe it as covering and non-revealing.",
+    "- Describe the outfit exactly as given, in its own words: never more or less revealing, never add or remove a garment. Never name bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
-    '- Never use "stunning", "beautiful", "perfect" or "flawless".',
+    '- Never write about the camera, the lens, the photo, the shot or the framing; "the phone" in a gaze is her own phone.',
+    "- No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.",
+    "- Never use these words: professional, photographer, photoshoot, studio, editorial, fashion, model, posing, captures, candid, cinematic, bokeh, golden hour, softly lit, soft light, glow, glowing, dramatic, moody, dreamy, elegant, luxurious, lavish, glamorous, chic, sophisticated, polished, pristine, marble, silk, satin, velvet, stunning, beautiful, perfect, flawless, gorgeous.",
     "",
     'Return JSON matching the schema: {"scenes": [{"slotIndex", "sentence"}, ...]}, exactly one object per slot, in the given order.',
   ].join("\n");
@@ -127,7 +130,7 @@ function slotForWriter(slot: PlanSlot, labelOf: CategoryLabelOf): Record<string,
     slotIndex: slot.slotIndex,
     category: labelOf(slot.category),
     location: slot.location,
-    timeOfDay: slot.timeOfDay,
+    timeOfDay: lightOf(slot.timeOfDay),
     shot: SHOT_LABEL[slot.shot],
     pose: POSE_LABEL[slot.pose],
     outfit: slot.outfit,
@@ -237,7 +240,7 @@ export function writerRefusalText(refusal: WriterRefusal): string {
  * sent under a made-up name); a run passes the resolver of its plan's snapshot.
  */
 export function writerMessages(slots: readonly PlanSlot[], refusal: WriterRefusal = NO_REFUSAL, labelOf: CategoryLabelOf = categoryLabelOf()): ChatMessage[] {
-  const lines = ["Slots:", JSON.stringify(slots.map((slot) => slotForWriter(slot, labelOf)), null, 2)];
+  const lines = ["Slots:", JSON.stringify(slots.map((slot) => slotForWriter(slot, labelOf)))];
   if (refusal.problems.length > 0) {
     lines.push("", `An earlier answer was rejected: ${writerRefusalText(refusal)}. Write a new answer that follows every rule.`);
   }
