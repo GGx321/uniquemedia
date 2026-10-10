@@ -16,7 +16,8 @@
  * - POST /chat/completions                       (the descriptor, schema
  *   "avatar_descriptor"; the age check, schema "age_check"; T6c's vision
  *   describe call, schema "import_describe"; the scene writer, schema
- *   "scene_sentences"; a custom category's pool, schema "scene_pool")
+ *   "scene_sentences"; a custom category's pool, schema "scene_pool"; S5.0c's
+ *   descriptor-vs-master check, schema "descriptor_check")
  * - POST /images                                 (candidate and scene
  *   portraits — a real, valid, non-animated PNG rendered once by the bundled
  *   ffmpeg, never a committed binary blob)
@@ -46,6 +47,7 @@ import { z } from "zod";
 import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { ideaNamesMirror } from "../shared/engine";
+import { DESCRIPTOR_CHECK_JSON_SCHEMA } from "../engine/avatars/descriptorCheck";
 import { IDEA_JSON_SCHEMA } from "../engine/scenes/ideaWriter";
 import { SHOT_LABEL } from "../engine/scenes/writer";
 import { POOL_JSON_SCHEMA } from "../engine/scenes/poolGen";
@@ -273,6 +275,31 @@ function poolDescriptionOf(body: unknown): string {
   }
 }
 
+/** A vision check's user message: plain text or a list of parts, of which the text ones are read. */
+const CheckChatBody = z.object({
+  messages: z.array(z.object({ role: z.string(), content: z.union([z.string(), z.array(z.object({ type: z.string(), text: z.string().optional() }).loose())]) }).loose()),
+});
+
+/**
+ * S5.0c: the check's answer when every aspect agrees: "ok" for all four, and the quoted description (`descriptorCheck.ts`'s user message line
+ * `Description: "<JSON text>"`) back character for character. The engine's reader then finds a match and no proposal.
+ */
+function descriptorCheckAnswerFor(body: unknown): { aspects: Record<"hair" | "eyes" | "marks" | "body", { state: string; descriptor: string; photo: string }>; descriptor: string } {
+  const verdict = { state: "ok", descriptor: "", photo: "" };
+  const parsed = CheckChatBody.safeParse(body);
+  const user = parsed.success ? parsed.data.messages.find((m) => m.role === "user")?.content : undefined;
+  const text = typeof user === "string" ? user : (user ?? []).map((part) => part.text ?? "").join("\n");
+  const line = text.split("\n").find((l) => l.startsWith("Description: "));
+  let descriptor = "";
+  try {
+    const quoted: unknown = line === undefined ? "" : JSON.parse(line.slice("Description: ".length));
+    descriptor = typeof quoted === "string" ? quoted : "";
+  } catch {
+    descriptor = "";
+  }
+  return { aspects: { hair: verdict, eyes: verdict, marks: verdict, body: verdict }, descriptor };
+}
+
 /** The JSON schema a chat completion asked for ("avatar_descriptor", "age_check"), or null — studio/engine/testing/engineHarness.ts's `schemaName`, read from the parsed body instead of a captured fetch call. */
 function schemaNameOf(body: unknown): string | null {
   if (typeof body !== "object" || body === null || !("response_format" in body)) return null;
@@ -375,7 +402,7 @@ export interface MockOpenRouterOptions {
   /** Which age-check call, counted across the whole run (1-based), answers "not an adult"; 0 rejects none. */
   rejectAgeCheckNumber?: number;
   /** USD per call; /credits' total_usage is the running sum of exactly these. */
-  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; writer?: number; pool?: number };
+  costsUsd?: { descriptor?: number; image?: number; age?: number; importDescribe?: number; descriptorCheck?: number; writer?: number; pool?: number };
   /** CS.2: fields that replace those of the default pool the mock answers for the "scene_pool" schema (a category's pool call), e.g. `{ label: "Seine bakeries" }`. */
   poolAnswer?: Record<string, unknown>;
   /**
@@ -452,6 +479,8 @@ export interface MockOpenRouter {
   descriptorRequests(): MockRequest[];
   /** T6c: the vision describe call's own requests ("import_describe" schema), distinct from a plain new-avatar descriptor. */
   importDescribeRequests(): MockRequest[];
+  /** S5.0c: the descriptor-vs-master check's own requests ("descriptor_check" schema). */
+  descriptorCheckRequests(): MockRequest[];
   /** T6: the scene writer's own requests ("scene_sentences" schema). */
   sceneWriterRequests(): MockRequest[];
   /** CS.2: a custom category's pool calls ("scene_pool" schema). */
@@ -478,7 +507,7 @@ const NO_BODY: SentBody = { json: null, text: "" };
 
 export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<MockOpenRouter> {
   const imageModel = opts.imageModel ?? DEFAULT_IMAGE_MODEL;
-  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, writer: 0.011, pool: 0.0051, ...opts.costsUsd };
+  const costs = { descriptor: 0.0021, image: 0.04, age: 0.0014, importDescribe: 0.0021, descriptorCheck: 0.0023, writer: 0.011, pool: 0.0051, ...opts.costsUsd };
   const rejectAt = opts.rejectAgeCheckNumber ?? 1;
   const imageDelayMs = opts.imageDelayMs ?? 0;
   const writerDelayMs = opts.writerDelayMs ?? 0;
@@ -594,6 +623,9 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
           const answer = opts.importDescribeAnswer ?? DEFAULT_IMPORT_DESCRIBE_ANSWER;
           return json(chatCompletion(JSON.stringify(answer), costs.importDescribe));
         }
+        if (entry.schemaName === DESCRIPTOR_CHECK_JSON_SCHEMA.name) {
+          return json(chatCompletion(JSON.stringify(descriptorCheckAnswerFor(entry.body)), costs.descriptorCheck));
+        }
         if (entry.schemaName === WRITER_JSON_SCHEMA.name || entry.schemaName === IDEA_JSON_SCHEMA.name) {
           if (writerDelayMs > 0) await Bun.sleep(writerDelayMs);
           const ideas = ideaSlotsOf(entry.body);
@@ -638,6 +670,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
     ageCheckRequests: () => requests.filter((r) => r.schemaName === "age_check"),
     descriptorRequests: () => requests.filter((r) => r.schemaName === "avatar_descriptor"),
     importDescribeRequests: () => requests.filter((r) => r.schemaName === "import_describe"),
+    descriptorCheckRequests: () => requests.filter((r) => r.schemaName === DESCRIPTOR_CHECK_JSON_SCHEMA.name),
     sceneWriterRequests: () => requests.filter((r) => r.schemaName === WRITER_JSON_SCHEMA.name || r.schemaName === IDEA_JSON_SCHEMA.name),
     poolRequests: () => requests.filter((r) => r.schemaName === POOL_JSON_SCHEMA.name),
     priceRequests: () => requests.filter((r) => r.path.endsWith("/endpoints") || r.path === "/api/v1/models"),

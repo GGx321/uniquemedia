@@ -4,6 +4,8 @@ import { failureDetail } from "./failureDetail";
 import { poolMessages, readPoolAnswer } from "../engine/scenes/poolGen";
 import { IDEA_JSON_SCHEMA, ideaMessages, readIdeaAnswer, type IdeaSlot } from "../engine/scenes/ideaWriter";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
+import { DESCRIPTOR_CHECK_JSON_SCHEMA, descriptorCheckMessages, readDescriptorCheckAnswer } from "../engine/avatars/descriptorCheck";
+import type { AvatarDescriptor } from "../shared/engine";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -149,6 +151,57 @@ describe("the pool call", () => {
     const read = readPoolAnswer(reply.choices[0]?.message.content ?? "");
     expect(read.ok && read.label).toBe("Seine bakeries");
     expect(mock.totalUsageUsd()).toBeCloseTo(0.006, 6);
+  });
+});
+
+// S5.0c: the descriptor-vs-master check ("descriptor_check"). The import now runs it after the save, so the smoke's mock must answer it: «every aspect agrees», in a shape the
+// engine's own reader takes whole, listed apart from the other chat calls, at a cost of its own that /credits adds up.
+describe("the descriptor check call", () => {
+  const stored: AvatarDescriptor = { age: 25, text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, light freckles across the nose." };
+  /** The request the engine sends (`chat.ts`): the prompt's user message as a text part, then the photo as an image part. */
+  const body = () => {
+    const [system, user] = descriptorCheckMessages(stored);
+    return JSON.stringify({
+      model: "x-ai/grok-4.3",
+      messages: [system, { role: "user", content: [{ type: "text", text: user?.content }, { type: "image_url", image_url: { url: "data:image/jpeg;base64,AAAA" } }] }],
+      response_format: { type: "json_schema", json_schema: { name: DESCRIPTOR_CHECK_JSON_SCHEMA.name, strict: true, schema: {} } },
+    });
+  };
+  const post = (m: MockOpenRouter) => nativeFetch(`${m.url}/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: body() });
+
+  test("answers a check the engine's reader takes: a match, no mismatch and no proposal", async () => {
+    const m = await started();
+    const reply = (await (await post(m)).json()) as { choices: { message: { content: string } }[] };
+    const read = readDescriptorCheckAnswer(reply.choices[0]?.message.content ?? "", stored);
+    expect(read.ok).toBe(true);
+    if (!read.ok) return;
+    expect(read.check.matches).toBe(true);
+    expect(read.check.proposal).toBeNull();
+    expect(read.check.checkedText).toBe(stored.text);
+    expect(Object.values(read.check.aspects).every((v) => v.state === "ok")).toBe(true);
+  });
+
+  test("returns the quoted description unchanged", async () => {
+    const m = await started();
+    const reply = (await (await post(m)).json()) as { choices: { message: { content: string } }[] };
+    const answer = JSON.parse(reply.choices[0]?.message.content ?? "") as { descriptor: string };
+    expect(answer.descriptor).toBe(stored.text);
+  });
+
+  test("lists the request apart from the other chat calls, and books its cost against /credits", async () => {
+    const m = await started();
+    await post(m);
+    expect(m.descriptorCheckRequests()).toHaveLength(1);
+    expect(m.descriptorRequests()).toHaveLength(0);
+    expect(m.importDescribeRequests()).toHaveLength(0);
+    expect(m.unexpected).toEqual([]);
+    expect(m.totalUsageUsd()).toBeCloseTo(0.0023, 6);
+  });
+
+  test("answers at a cost the scenario chose", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "A 25-year-old woman.", costsUsd: { descriptorCheck: 0.005 } });
+    await post(mock);
+    expect(mock.totalUsageUsd()).toBeCloseTo(0.005, 6);
   });
 });
 
