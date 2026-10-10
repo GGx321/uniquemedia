@@ -193,7 +193,7 @@ export const DESCRIPTOR_REASONS_RU = {
   empty: "Описание пустое",
   "hidden-chars": "В описании есть скрытые символы",
   "too-long": "Описание длиннее 600 знаков",
-  "no-anchor": "В описании должна быть фраза «<возраст>-year-old» с возрастом этого аватара, например «25-year-old»",
+  "no-anchor": "В описании должна быть фраза «<возраст>-year-old» с возрастом этого аватара",
   script: "Описание пишется латиницей — английскими словами",
   "non-ascii-digits": "Только цифры 0–9",
   "other-age": "В описании другой возраст",
@@ -204,10 +204,18 @@ export const DESCRIPTOR_REASONS_RU = {
   invalid: "Описание не проходит проверку возраста и правил Studio. Перепишите его проще",
 } as const satisfies Record<DescriptorReason, string>;
 
-/** The text for a `descriptorReason`; for `youth-word` it quotes the owner's own words after a colon. */
-export function descriptorReasonRu(reason: DescriptorReason, words: readonly string[] = []): string {
+/**
+ * The text for a `descriptorReason`. For `youth-word` it quotes the owner's own words after a colon, in the plural for several. For `no-anchor` it gives the avatar's own
+ * `age` as the example when the caller knows it (the error itself carries none).
+ */
+export function descriptorReasonRu(reason: DescriptorReason, words: readonly string[] = [], age?: number): string {
   const text = DESCRIPTOR_REASONS_RU[reason];
-  return reason === "youth-word" && words.length > 0 ? `${text}: ${words.map((word) => `«${word}»`).join(", ")}` : text;
+  if (reason === "youth-word" && words.length > 0) {
+    const head = words.length > 1 ? "Слова, которые мы не используем" : text;
+    return `${head}: ${words.map((word) => `«${word}»`).join(", ")}`;
+  }
+  if (reason === "no-anchor" && age !== undefined) return `${text}, например «${age}-year-old»`;
+  return text;
 }
 
 /** Why a scene-set command was refused, for VALIDATION's `sceneReason`: each text names the cause and the way out; the window names the scene itself from `sceneId`. */

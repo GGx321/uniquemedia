@@ -16,7 +16,7 @@ test.each(DESCRIPTOR_REASONS.filter((reason) => reason !== "youth-word"))("the r
 
 test("a youth-word refusal quotes the owner's own words", () => {
   expect(errorText({ code: "VALIDATION", descriptorReason: "youth-word", descriptorWords: ["petite", "tiny"] })).toBe(
-    `${DESCRIPTOR_REASONS_RU["youth-word"]}: «petite», «tiny»`,
+    "Слова, которые мы не используем: «petite», «tiny»",
   );
 });
 

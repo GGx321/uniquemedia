@@ -60,8 +60,22 @@ describe("DESCRIPTOR_REASONS_RU", () => {
     expect(DESCRIPTOR_REASONS_RU[reason]).toContain(fragment);
   });
 
-  test("the youth-word text quotes the owner's words", () => {
-    expect(descriptorReasonRu("youth-word", ["petite", "tiny"])).toBe("Слово, которое мы не используем: «petite», «tiny»");
+  test("the youth-word text quotes one word in the singular", () => {
+    expect(descriptorReasonRu("youth-word", ["petite"])).toBe("Слово, которое мы не используем: «petite»");
+  });
+
+  test("the youth-word text quotes several words in the plural", () => {
+    expect(descriptorReasonRu("youth-word", ["petite", "tiny"])).toBe("Слова, которые мы не используем: «petite», «tiny»");
+  });
+
+  test("the no-anchor text gives the avatar's own age as the example when it is known", () => {
+    expect(descriptorReasonRu("no-anchor", [], 27)).toContain("«27-year-old»");
+    expect(descriptorReasonRu("no-anchor", [], 27)).not.toContain("25-year-old");
+  });
+
+  test("the no-anchor text without an age names no example number", () => {
+    expect(descriptorReasonRu("no-anchor")).toBe(DESCRIPTOR_REASONS_RU["no-anchor"]);
+    expect(DESCRIPTOR_REASONS_RU["no-anchor"]).not.toMatch(/[0-9]/);
   });
 
   test("the youth-word text still reads without words", () => {
