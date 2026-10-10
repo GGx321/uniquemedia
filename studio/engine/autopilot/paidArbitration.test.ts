@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from "bun:test";
 import type { PaidHold } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
 import type { RunJobEnd } from "../runs/runJob";
-import { A, ALL, B, cleanupRigs, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, until, type Rig } from "./testing/paidRig";
+import { A, ALL, B, cleanupRigs, deferred, FakeTimers, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, T0, until, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -262,6 +262,33 @@ describe("a wake-up re-arms or fires the wait it interrupted (M1)", () => {
     await w.r.orchestrator.settled();
     expect(w.r.port.calls).toContain("admitted");
     expect(w.r.ctx().file().paidHold).not.toBeNull();
+  });
+});
+
+describe("no paid work is admitted while a paid hold is being written", () => {
+  test("mayPay is false from the moment a hold starts to be raised, not only once its write has landed", async () => {
+    const r = await rig();
+    r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
+    const launch = await r.start({ sceneReview: true });
+    await r.orchestrator.settled();
+    expect(r.orchestrator.mayPay(launch.launchId)).toBe(true);
+    const raising = r.ctx().raisePaidHold({ reason: "credits", at: new Date(T0).toISOString(), detail: {} });
+    expect(r.orchestrator.mayPay(launch.launchId)).toBe(false);
+    await raising;
+    expect(r.orchestrator.mayPay(launch.launchId)).toBe(false);
+  });
+
+  test("a hold that cannot be raised (the launch is paused) leaves no trace: mayPay follows the real state again once the launch runs", async () => {
+    const r = await rig();
+    r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
+    const launch = await r.start({ sceneReview: true });
+    await r.orchestrator.settled();
+    await r.orchestrator.pause(launch.launchId);
+    await r.orchestrator.settled();
+    await expect(r.ctx().raisePaidHold({ reason: "credits", at: new Date(T0).toISOString(), detail: {} })).rejects.toThrow();
+    expect(r.orchestrator.mayPay(launch.launchId)).toBe(false);
+    await r.orchestrator.resume(launch.launchId, launch.remainingMicros);
+    expect(r.orchestrator.mayPay(launch.launchId)).toBe(true);
   });
 });
 
