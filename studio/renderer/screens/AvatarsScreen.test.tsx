@@ -249,6 +249,8 @@ test("the rewrite recovery prices itself up front, sends nothing paid until the 
   const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
   expect(callsOf(engine, "avatars.estimateRewriteDescriptor").map((c) => c.payload)).toEqual([{ avatarId: "avatar-broken-0001" }]);
   expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(0);
+  // S5.0d (plan §5.5): the known limit, beside the button — the rewrite brings the hair back to the nearest of the six stored colours.
+  expect(screen.getByText("Цвет волос вернётся к ближайшему из шести — после этого проверьте описание").className).toBe("field-hint");
   fireEvent.click(button);
 
   await screen.findByRole("heading", { level: 2, name: "Zoe" });
