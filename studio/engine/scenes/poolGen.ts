@@ -202,7 +202,7 @@ const LENGTH_NOTE = "(each text is at most 35 characters, the position included;
 const REASON: Record<PoolProblem, string> = {
   "not-json": "it was not the JSON object asked for",
   empty: "it was empty",
-  "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash',
+  "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash, or it suggested a young person',
   "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one free-hand activity that does not use her phone) ${LENGTH_NOTE}`,
   "too-few-outfits": `fewer than ${POOL_OUTFITS_MIN} of its outfits were usable ${LENGTH_NOTE}`,
   "bad-shot-deck": `its "shotDeck" was not exactly five shots from ${POOL_SHOTS.join(", ")}`,
@@ -285,6 +285,14 @@ function usableText(text: unknown, collector: Collector, revealing: boolean): te
   const reveal = revealing ? revealingWordsIn(value).map((w) => w.toLowerCase().replace(/\s+/g, " ")).filter((w) => REVEALING_TOLD.includes(w)) : [];
   collector.words.push(...youth, ...reveal);
   return youth.length === 0 && youthWords(value, "descriptor").length === 0 && reveal.length === 0;
+}
+
+/**
+ * Whether a category's label suggests a young person. The label goes to the writer with every slot of the category, so it is held to the check every pool text and
+ * the descriptor are (S5.R1 M2): when a pool is read, and when a stored record is (library/categories.ts).
+ */
+export function labelSuggestsAMinor(label: string): boolean {
+  return youthRuleNames(label, "descriptor").length > 0 || youthWords(label, "descriptor").length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -378,7 +386,12 @@ export function readPoolAnswer(content: string): PoolAnswer {
   const deckOk = deck.length === POOL_DECK_SIZE && deck.every((shot) => PoolShot.safeParse(shot).success);
 
   const problems: PoolProblem[] = [];
-  if (!label.success) problems.push("bad-label");
+  // A label that suggests a young person is refused like a malformed one, naming our words for the rule it broke (never the model's own text).
+  const labelRules = label.success ? youthRuleNames(label.data, "descriptor") : [];
+  if (!label.success || labelRules.length > 0 || labelSuggestsAMinor(label.data)) {
+    problems.push("bad-label");
+    collector.words.push(...labelRules);
+  }
   if (locations.length < POOL_PLACES_MIN) problems.push("too-few-places");
   if (outfits.length < POOL_OUTFITS_MIN) problems.push("too-few-outfits");
   if (!deckOk) problems.push("bad-shot-deck");

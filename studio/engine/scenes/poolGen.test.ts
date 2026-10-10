@@ -298,6 +298,26 @@ describe("readPoolAnswer: the label and the deck cannot be salvaged", () => {
     expect(refusalOf(answer(over))).toEqual({ problems: ["bad-label"], words: [] });
   });
 
+  // S5.R1 M2: the label is sent to the writer with every slot, so it is held to the youth check the texts of the pool are.
+  test.each(["Teen cafes", "Petite looks", "Young mornings", "School days", "Girl next door"])("a label that suggests a young person («%s») is refused as bad-label, naming our words for the rule", (label) => {
+    const refusal = refusalOf(answer({ label }));
+    expect(refusal.problems).toEqual(["bad-label"]);
+    expect(refusal.words.length).toBeGreaterThan(0);
+  });
+
+  test("a bad label's refusal never carries the model's own text", () => {
+    const refusal = refusalOf(answer({ label: "Teen cafes" }));
+    for (const word of refusal.words) expect(word.toLowerCase()).not.toContain("cafes");
+  });
+
+  test("an ordinary label is still accepted", () => {
+    expect(okOf(answer({ label: "Lazy Sundays" })).label).toBe("Lazy Sundays");
+  });
+
+  test("a youth label and a missing deck are both told", () => {
+    expect(refusalOf(answer({ label: "Teen cafes", shotDeck: [] })).problems).toEqual(["bad-label", "bad-shot-deck"]);
+  });
+
   test.each([
     ["a deck of four", ["friend", "friend", "selfie", "candid"]],
     ["a deck of six", ["friend", "friend", "selfie", "candid", "candid", "friend"]],
