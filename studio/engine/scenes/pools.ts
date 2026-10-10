@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { CategoryPoses, youthWords } from "../../shared/engine";
-import type { Pose } from "./schema";
+import { isPhoneInHandShot, type Pose } from "./schema";
 import { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
 import { REVEALING_WORDS } from "./words";
 
@@ -58,7 +58,7 @@ export interface Place {
 }
 
 // A stored custom pool is built from the shared `PoolActivity {text, twoHanded}`, which carries no phone flag, so its phone activities are found by their words.
-const PHONE_WORDS = /\b(phone|smartphone)\b/i;
+export const PHONE_WORDS = /\b(phones?|smartphones?|iphones?|cellphones?|texting|facetime)\b/i;
 
 /** The phone is in her hand or in use: the flag for a built-in activity, the word-bounded text for a stored custom one (the built-ins' flags are pinned to agree with the words). */
 export function isPhoneActivity(activity: { text: string; phone?: true | undefined }): boolean {
@@ -72,7 +72,7 @@ export function isPhoneActivity(activity: { text: string; phone?: true | undefin
  * never emptied by the phone rule; every other shot draws from all of them.
  */
 export function allowedActivities(place: { activities: readonly Activity[] }, shot: Shot): readonly Activity[] {
-  if (shot !== "selfie" && shot !== "mirror") return place.activities;
+  if (!isPhoneInHandShot(shot)) return place.activities;
   const freeHanded = place.activities.filter((a) => !a.twoHanded);
   const clean = freeHanded.filter((a) => !isPhoneActivity(a));
   return clean.length > 0 ? clean : freeHanded;

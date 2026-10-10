@@ -29,6 +29,12 @@ describe("isPhoneActivity", () => {
     expect(isPhoneActivity({ text: "Checking a smartphone" })).toBe(true);
   });
 
+  test("is true for the other ways a custom text names a phone: plural, iPhone, cellphone, texting, FaceTime", () => {
+    for (const text of ["checking her phones", "holding her iPhone", "talking on a cellphone", "texting a friend", "on a FaceTime call", "taking a smartphones photo"]) {
+      expect(isPhoneActivity({ text })).toBe(true);
+    }
+  });
+
   test("is false for text that only contains the letters of phone inside another word", () => {
     for (const text of ["adjusting her headphones", "waiting by the telephone box", "listening to a saxophone"]) expect(isPhoneActivity({ text })).toBe(false);
   });

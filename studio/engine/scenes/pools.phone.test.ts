@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BuiltInPoolSchema, isPhoneActivity, POOLS, validatePools, type Activity, type Place, type Pool } from "./pools";
+import { BuiltInPoolSchema, isPhoneActivity, PHONE_WORDS, POOLS, validatePools, type Activity, type Place, type Pool } from "./pools";
 import { CATEGORIES } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -35,7 +35,7 @@ describe("the built-in pools are ordinary places", () => {
   });
 
   test("the phone flag agrees with the words: an activity names her phone exactly when it is flagged", () => {
-    for (const [, place] of allPlaces) for (const a of place.activities) expect(a.phone === true).toBe(/\b(phone|smartphone)\b/i.test(a.text));
+    for (const [, place] of allPlaces) for (const a of place.activities) expect(a.phone === true).toBe(PHONE_WORDS.test(a.text));
   });
 
   test("there are phone activities to filter (the rule is not vacuous on the real pools)", () => {
