@@ -495,10 +495,10 @@ test("the import tile's price text is derived from IMPORT_FALLBACK_PRICE, not a 
   // literal, not computed with formatUsdRange itself — a bug in that
   // function must still be caught here, not just agree with itself.
   // S5.0c (deliberate re-pin): the import also runs the descriptor check on the avatar it saves, accepted by the same click: up to 2 describe attempts and up to 2 check attempts.
-  expect(IMPORT_FALLBACK_PRICE.whole).toEqual({ expectedMicros: 7_250, worstMicros: 57_500 });
+  expect(IMPORT_FALLBACK_PRICE.whole).toEqual({ expectedMicros: 7_250, worstMicros: 60_000 });
   setup({ preset: "demo" });
   const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
-  expect(within(tile).getByText("1 фото · ≈ $0.007–0.058")).toBeDefined();
+  expect(within(tile).getByText("1 фото · ≈ $0.007–0.060")).toBeDefined();
 });
 
 test("the new-avatar tile's «до $X» is the engine's own free estimate, never a spend", async () => {
