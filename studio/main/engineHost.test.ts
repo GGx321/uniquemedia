@@ -502,7 +502,7 @@ describe("request deadline", () => {
   // the owner would import again and pay twice.
   test("the import deadline covers the check's attempts after the describe attempts, and the check command has its own", () => {
     expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000);
-    expect(COMMAND_DEADLINE_MS["avatars.checkDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000);
+    expect(COMMAND_DEADLINE_MS["avatars.checkDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000);
     expect(COMMAND_DEADLINE_MS["avatars.estimateCheckDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 

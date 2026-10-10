@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_DELETE_VIDEO_FILES, MAX_IMPORT_PHOTO_BYTES } from "./control";
 import { MAX_RECORD_FILES_READ } from "./videos/listing";
-import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET_MS } from "./videos/timeouts";
+import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET_MS, LIVE_LIBRARY_IDENTITY_TIMEOUT_MS } from "./videos/timeouts";
 import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
@@ -205,6 +205,21 @@ describe("HostCall media.import and its reply", () => {
 describe("COMMAND_DEADLINE_MS['avatars.importAvatar'] covers the describe attempts, the check's attempts and no age check", () => {
   test("a price load, then exactly the describe and the check attempts at their slowest, plus the fixed slack", () => {
     expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000);
+  });
+});
+
+// S5.R1: a check is more than its attempts. Before the first one the engine confirms the library is still where it was (LIVE_LIBRARY_IDENTITY_TIMEOUT_MS) and loads the avatar's master
+// (REFERENCE_TIMEOUT_MS); a deadline that left them out was 5 s short of the slowest real path, and main would answer INTERNAL while the engine was still working: the owner would check, and pay, twice.
+describe("COMMAND_DEADLINE_MS['avatars.checkDescriptor'] covers every step of a check at its slowest", () => {
+  test("a price load, the library's identity check, the master's load, every check attempt, and the fixed slack", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.checkDescriptor"]).toBe(
+      PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000,
+    );
+  });
+
+  test("it is above the real worst path, with the slack left over", () => {
+    const worstPath = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS;
+    expect(COMMAND_DEADLINE_MS["avatars.checkDescriptor"]).toBeGreaterThan(worstPath);
   });
 });
 

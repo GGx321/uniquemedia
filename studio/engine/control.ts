@@ -6,7 +6,7 @@ import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
-import { AVATAR_DELETE_PREPARE_DEADLINE_MS, VIDEOS_DELETE_DEADLINE_MS } from "./videos/timeouts";
+import { AVATAR_DELETE_PREPARE_DEADLINE_MS, LIVE_LIBRARY_IDENTITY_TIMEOUT_MS, VIDEOS_DELETE_DEADLINE_MS } from "./videos/timeouts";
 
 // Messages between main and the engine that are not part of the
 // renderer-facing contract (studio/shared/engine). They never reach the
@@ -313,7 +313,7 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "avatars.importAvatar": PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Stage 5, S5.0c: the check's price (a price load that times out still gives the fallback estimate), and the paid check itself: a price load, a load of the master, then every check attempt.
   "avatars.estimateCheckDescriptor": PRICE_FETCH_TIMEOUT_MS + 15_000,
-  "avatars.checkDescriptor": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  "avatars.checkDescriptor": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
