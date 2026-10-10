@@ -368,6 +368,10 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     result: { avatar: { ...avatar, avatarId: DRAFT_ID, masterPhotoId: "photo-0101" } },
   },
   "avatars.archive": { payload: { avatarId: "avatar-0001" }, result: { avatar: { ...avatar, status: "archived" } } },
+  "avatars.editDescriptor": {
+    payload: { avatarId: "avatar-0001", text: "25-year-old woman, hazel eyes", expectedText: "25-year-old woman, green eyes" },
+    result: { avatar },
+  },
   "avatars.deletePreview": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", photos: 12, candidates: 0, drafts: 2, videos: 3, videoFilesFound: 2, videoFilesUnchecked: 0 } },
   "avatars.delete": { payload: { avatarId: "avatar-0001" }, result: { avatarId: "avatar-0001", videoFilesTrashed: 2, videoFilesKept: 1, videoFilesUnchecked: 0, videoFolder: "Mia" } },
   "avatars.rewriteDescriptor": { payload: { avatarId: "avatar-0009", acceptedWorstMicros: 27_500 }, result: { avatarId: "avatar-0009" } },
@@ -609,6 +613,7 @@ describe("contract surface", () => {
         "avatars.cancel",
         "avatars.pick",
         "avatars.archive",
+        "avatars.editDescriptor",
         "avatars.deletePreview",
         "avatars.delete",
         "avatars.rewriteDescriptor",

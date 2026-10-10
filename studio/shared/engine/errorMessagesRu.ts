@@ -1,4 +1,4 @@
-import type { CaptionIssue, CategoryReason, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, SceneReason } from "./errors";
+import type { CaptionIssue, CategoryReason, DescriptorReason, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -184,6 +184,31 @@ export const CATEGORY_REASONS_RU = {
   "item-not-found": "Этого места или образа в категории уже нет — возможно, его убрали. Обновите список.",
   "library-unreadable": "Диск не отдал часть записей библиотеки (так бывает, когда файл занят антивирусом или диск не отвечает), поэтому Studio не может проверить имя и число категорий. Ничего не создано и не потрачено — повторите через секунду.",
 } as const satisfies Record<CategoryReason, string>;
+
+/**
+ * Why `avatars.editDescriptor` refused the owner's text, for VALIDATION's `descriptorReason`: one text per rule, each naming what to fix. The owner types
+ * the descriptor in English words (it goes into image prompts as it is), so the script text says so.
+ */
+export const DESCRIPTOR_REASONS_RU = {
+  empty: "Описание пустое",
+  "hidden-chars": "В описании есть скрытые символы",
+  "too-long": "Описание длиннее 600 знаков",
+  "no-anchor": "В описании должна быть фраза «<возраст>-year-old» с возрастом этого аватара, например «25-year-old»",
+  script: "Описание пишется латиницей — английскими словами",
+  "non-ascii-digits": "Только цифры 0–9",
+  "other-age": "В описании другой возраст",
+  "under-21-bound": "Нельзя указывать возрастные пределы",
+  "youth-word": "Слово, которое мы не используем",
+  number: "Других чисел, кроме возраста, быть не должно",
+  stale: "Описание уже изменилось — проверьте ещё раз",
+  invalid: "Описание не проходит проверку возраста и правил Studio. Перепишите его проще",
+} as const satisfies Record<DescriptorReason, string>;
+
+/** The text for a `descriptorReason`; for `youth-word` it quotes the owner's own words after a colon. */
+export function descriptorReasonRu(reason: DescriptorReason, words: readonly string[] = []): string {
+  const text = DESCRIPTOR_REASONS_RU[reason];
+  return reason === "youth-word" && words.length > 0 ? `${text}: ${words.map((word) => `«${word}»`).join(", ")}` : text;
+}
 
 /** Why a scene-set command was refused, for VALIDATION's `sceneReason`: each text names the cause and the way out; the window names the scene itself from `sceneId`. */
 export const SCENE_REASONS_RU = {

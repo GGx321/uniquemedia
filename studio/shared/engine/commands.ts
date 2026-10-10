@@ -338,6 +338,15 @@ const ENGINE_SPECS = [
     z.strictObject({ avatar: AvatarSummary }),
   ),
   defineCommand("avatars.archive", z.strictObject({ avatarId: Id }), z.strictObject({ avatar: AvatarSummary })),
+  // Stage 5, S5.0a (additive): the owner's own edit of a saved avatar's descriptor. Free. `text` is what the owner wants stored, `expectedText` the stored text the edit
+  // (or the check's proposal) was made against: a different stored text is refused as stale, so a proposal never overwrites a later hand edit. Refused with VALIDATION and a
+  // `descriptorReason` when the text breaks a rule (bounded here only so a runaway paste is refused before any work), NOT_FOUND for an unknown avatar, VALIDATION for a draft,
+  // IN_FLIGHT while a rewrite, a candidates batch, an archive, a delete or a check holds the avatar (a photo run or a launch does not), LIBRARY_UNAVAILABLE without a library.
+  defineCommand(
+    "avatars.editDescriptor",
+    z.strictObject({ avatarId: Id, text: z.string().max(4_000), expectedText: z.string().max(4_000) }),
+    z.strictObject({ avatar: AvatarSummary }),
+  ),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.

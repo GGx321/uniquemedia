@@ -38,6 +38,7 @@ export const SLEEP_CLASS: Record<CommandType, SleepClass> = {
   "avatars.cancel": "free",
   "avatars.pick": "free",
   "avatars.archive": "free",
+  "avatars.editDescriptor": "free",
   "avatars.deletePreview": "free",
   "avatars.rewriteDescriptor": "held",
   "avatars.estimateImport": "free",
