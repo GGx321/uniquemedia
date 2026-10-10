@@ -1,7 +1,7 @@
-import type { Place, Pool } from "./pools";
+import { allowedActivities, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, type PoseAllowance } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
-import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
+import type { PlanSlot, Pose } from "./schema";
 import type { Shot } from "./types";
 
 // CS.4b: the two draws a review-time write makes BEFORE its call. Both are pure functions of (set seed, write number, scene) and what they are given, on
@@ -53,14 +53,12 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
   }
   const place = rngPick(rng, preferred(places, (p) => p.name, avoid.locations, slot.location));
   const outfit = rngPick(rng, preferred(pool.outfits, (o) => o, avoid.outfits, slot.outfit));
-  const phoneInHand = isPhoneInHandShot(shot);
-  const activities = place.activities.filter((a) => !(phoneInHand && a.twoHanded));
   return {
     slotIndex: slot.slotIndex,
     category: slot.category,
     location: place.name,
     timeOfDay: rngPick(rng, place.times),
-    activity: rngPick(rng, activities).text,
+    activity: rngPick(rng, allowedActivities(place, shot)).text,
     outfit,
     shot,
     pose: angled === null ? drawPose(poseRng, shot, input.poses) : angled.pose,

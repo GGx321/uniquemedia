@@ -1,7 +1,7 @@
 import { orderCategories, splitCount, type CategoryRef } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
-import { POOLS, type Place, type Pool } from "./pools";
+import { allowedActivities, POOLS, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
 import { Bag, makeRng, rngPick, subSeed, type Rng } from "./rngUtil";
 import { ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
@@ -166,16 +166,14 @@ function planCategory(
     }
     const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
     // pools.ts's schema guarantees at least one one-handed activity per
-    // location, so this is never empty even for a selfie/mirror shot.
-    const phoneInHand = shot === "selfie" || shot === "mirror";
-    const activities = place.activities.filter((a) => !(phoneInHand && a.twoHanded));
+    // location, so allowedActivities is never empty even for a selfie/mirror shot.
     const slotIndex = startIndex + i;
     return {
       slotIndex,
       category,
       location: place.name,
       timeOfDay: rngPick(rng, place.times),
-      activity: rngPick(rng, activities).text,
+      activity: rngPick(rng, allowedActivities(place, shot)).text,
       outfit,
       shot,
       pose: angled === null ? drawPose(poseRng, shot, poses) : (angled[i] as { pose: Pose }).pose,
