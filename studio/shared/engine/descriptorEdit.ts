@@ -1,5 +1,5 @@
 import { adultTextProblems, DESCRIPTOR_MAX_CHARS, youthWords, type AdultTextProblem } from "./ageText";
-import { AvatarDescriptor } from "./avatar";
+import { AvatarDescriptor, composedLength } from "./avatar";
 import type { DescriptorReason } from "./errors";
 
 // The owner's hand-typed descriptor (`avatars.editDescriptor`), judged before it is stored. The engine and the renderer's mock share this one function, so
@@ -58,7 +58,7 @@ function refused(reason: DescriptorReason, words: string[] = []): DescriptorEdit
  * The first rule the text breaks, in the order the owner can fix them: invisible characters, blank, too long, the age anchor (it may stand anywhere), then the
  * `AdultTextProblem`s in the order `adultTextProblems` lists them (a foreign digit before the script rule it also breaks). The text it accepts is the normalised one, and it passes `AvatarDescriptor` for `age`.
  */
-export function checkDescriptorEdit(text: string, age: number): DescriptorEditCheck {
+export function checkDescriptorEdit(text: string, age: number, body?: string): DescriptorEditCheck {
   if (HIDDEN.test(text)) return refused("hidden-chars");
   const normalised = normaliseDescriptorText(text);
   if (normalised === "") return refused("empty");
@@ -68,6 +68,8 @@ export function checkDescriptorEdit(text: string, age: number): DescriptorEditCh
   // A foreign digit also breaks the script rule; «only 0-9» is the more useful advice, so it goes first (and is reachable at all).
   const first = problems.includes("non-ascii-digits") ? "non-ascii-digits" : problems[0];
   if (first !== undefined) return refused(PROBLEM_REASON[first], first === "youth-word" ? youthWords(normalised, "descriptor") : []);
+  // The text and her body phrase together (S5.2a): judged after the text's own rules, so the advice «shorten it» only comes for a text that is otherwise fine.
+  if (composedLength(normalised, body) > DESCRIPTOR_MAX_CHARS) return refused("too-long-with-body");
   // The contract has the last word: a rule it adds later refuses the text here too.
-  return AvatarDescriptor.safeParse({ age, text: normalised }).success ? { ok: true, text: normalised } : refused("invalid");
+  return AvatarDescriptor.safeParse({ age, text: normalised, ...(body === undefined ? {} : { body }) }).success ? { ok: true, text: normalised } : refused("invalid");
 }

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits } from "./avatar";
+import { AvatarBody, BodyProposal } from "./body";
 import { CategoryName, CategoryRef, MAX_RUN_CATEGORIES, PhotoCategory, SceneCategory } from "./categories";
 import { EngineError, ExportUnavailableReason } from "./errors";
 import { ImageQuality } from "./imageModels";
@@ -400,6 +401,13 @@ export const AvatarSummary = z.strictObject({
   eligibleUnusedCount: Count,
   /** Whether the counts above can be trusted (3e.2): the window shows «использование неизвестно» instead of them when not. */
   usage: AvatarUsage,
+  /**
+   * Stage 5, S5.2a: her body traits, OMITTED (never null) for an avatar with none, so an avatar without a body lists exactly as it did before. The descriptor above never
+   * holds the body phrase: the window renders it from these with `bodyPhrase`.
+   */
+  body: AvatarBody.optional(),
+  /** The body a photo import read and the owner has not saved or dismissed yet; omitted when there is none. */
+  bodyProposal: BodyProposal.optional(),
 });
 
 /**

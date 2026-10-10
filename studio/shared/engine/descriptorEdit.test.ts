@@ -83,6 +83,38 @@ describe("checkDescriptorEdit", () => {
   });
 });
 
+describe("checkDescriptorEdit with her body phrase (Stage 5, S5.2a)", () => {
+  const BODY = "tall, a full bust and long slim legs";
+  /** A valid text of exactly `length` characters. */
+  const textOf = (length: number): string => `${GOOD}, `.padEnd(length - 1, "x").padEnd(length, "x");
+
+  test("accepts a text whose composite with the body is exactly 600", () => {
+    const text = textOf(600 - 2 - BODY.length);
+    expect(checkDescriptorEdit(text, 25, BODY)).toEqual({ ok: true, text });
+  });
+
+  test("refuses a composite of 601 as too-long-with-body, though the text alone is fine", () => {
+    const text = textOf(601 - 2 - BODY.length);
+    expect(checkDescriptorEdit(text, 25)).toMatchObject({ ok: true });
+    expect(checkDescriptorEdit(text, 25, BODY)).toEqual({ ok: false, reason: "too-long-with-body", words: [] });
+  });
+
+  test("a text over 600 alone stays plain too-long, body or not", () => {
+    const text = textOf(601);
+    expect(checkDescriptorEdit(text, 25, BODY)).toEqual({ ok: false, reason: "too-long", words: [] });
+  });
+
+  test("without a body the limit is the old 600", () => {
+    expect(checkDescriptorEdit(textOf(600), 25)).toMatchObject({ ok: true });
+  });
+
+  test("another rule is reported before the composite length", () => {
+    const text = `${GOOD}, petite, `.padEnd(601 - 2 - BODY.length, "x");
+    expect(text.length + 2 + BODY.length).toBe(601);
+    expect(checkDescriptorEdit(text, 25, BODY)).toMatchObject({ ok: false, reason: "youth-word" });
+  });
+});
+
 describe("normaliseDescriptorText", () => {
   test("folds fullwidth digits and strips accents", () => {
     expect(normaliseDescriptorText("２５-year-old café")).toBe("25-year-old cafe");
