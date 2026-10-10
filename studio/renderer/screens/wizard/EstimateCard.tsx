@@ -1,7 +1,7 @@
 import type { ReactNode } from "react";
 import type { EngineError, Estimate, ImageAgeCheck } from "../../../shared/engine";
 import { dateLabel } from "../../lib/format";
-import { formatUsd } from "../../lib/money";
+import { formatUsdTiered } from "../../lib/money";
 import { Spin } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 
@@ -85,9 +85,10 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
         <div className="estimate-figure" aria-live="polite">
           <div className="estimate-price">
             <p className="mono estimate-worst">
-              <span>до</span> <span>{formatUsd(estimate.worstMicros, 2, "up")}</span>
+              {/* S5.R2: the app's rule — three decimals below $0.10 — so the figure, the tile and the button never round apart («до $0.063»). */}
+              <span>до</span> <span>{formatUsdTiered(estimate.worstMicros, "up")}</span>
             </p>
-            <p className="mono estimate-expected">ожидаемая ≈ {formatUsd(estimate.expectedMicros)}</p>
+            <p className="mono estimate-expected">ожидаемая ≈ {formatUsdTiered(estimate.expectedMicros, "nearest")}</p>
           </div>
           <p className="estimate-caption">
             {caption(variant, repeat, imageAgeCheck)}
@@ -98,8 +99,8 @@ export function EstimateCard({ estimate, previousWorst, estimating, action, bloc
 
       {previousWorst !== null && estimate && (
         <Notice tone="warn" title="Цена выросла">
-          Было не больше <span className="mono">{formatUsd(previousWorst, 2, "up")}</span>, теперь не больше{" "}
-          <span className="mono">{formatUsd(estimate.worstMicros, 2, "up")}</span>. Проверьте новую оценку и подтвердите снова — без
+          Было не больше <span className="mono">{formatUsdTiered(previousWorst, "up")}</span>, теперь не больше{" "}
+          <span className="mono">{formatUsdTiered(estimate.worstMicros, "up")}</span>. Проверьте новую оценку и подтвердите снова — без
           подтверждения ничего не отправляется.
         </Notice>
       )}

@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AvatarName, type Candidate, type EngineError, type Estimate } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type JobView } from "../engine/store";
-import { formatUsd, formatUsdTiered } from "../lib/money";
+import { formatUsdTiered } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { bodyOfTraits, bodySetCount } from "../lib/body";
 import { DEFAULT_TRAITS, randomTraits, type Traits, traitsProblem } from "../lib/traits";
@@ -389,7 +389,8 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   let action: EstimateAction | null = null;
   let blockedReason: string | null = null;
   if (estimate && !running) {
-    const worst = formatUsd(estimate.worstMicros, 2, "up");
+    // The estimate card's own rule (S5.R2): the button and the figure above it never round apart.
+    const worst = formatUsdTiered(estimate.worstMicros, "up");
     const label =
       previousWorst !== null
         ? `Подтвердить новую цену · до ${worst}`

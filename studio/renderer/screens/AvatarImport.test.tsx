@@ -245,6 +245,15 @@ test("H2: picking a larger photo after a small one drops the advice", async () =
   expect(adviceText()).toBeNull();
 });
 
+// S5.R2 (review LOW): the import's worst case reads the same on the tile, the estimate and the button — three decimals below $0.10, as the app's rule says.
+test("the import's price is said with three decimals below $0.10, on the estimate and on the button alike", async () => {
+  setup();
+  await openImport();
+  await pickPhoto();
+  expect(estimateText()).toBe("до $0.063 · ожидаемая ≈ $0.007");
+  expect(importButton().textContent).toBe("Импортировать · до $0.063");
+});
+
 // S5.2d (mockup 04): before the paid click the screen says what the import reads — the body only when the photo shows it — and where it lands.
 test("04: «Что прочитает Studio» and «По фото лица тело не определить» appear with the picked photo, before anything is paid", async () => {
   const { engine } = setup();

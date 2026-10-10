@@ -3,7 +3,7 @@ import { AvatarName, type EngineError, type Estimate } from "../../shared/engine
 import { useEngine, useEngineView } from "../engine/react";
 import { NBSP } from "../lib/format";
 import { IMPORT_GOOD_SHORT_SIDE, isSmallImportPhoto } from "../lib/importPhoto";
-import { formatUsd } from "../lib/money";
+import { formatUsdTiered } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { useNavigate } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
@@ -303,8 +303,8 @@ export function AvatarImport() {
                         Импортируем…
                       </>
                     ) : previousWorst !== null
-                        ? `Подтвердить новую цену · до ${formatUsd(estimate.worstMicros, 2, "up")}`
-                        : `Импортировать · до ${formatUsd(estimate.worstMicros, 2, "up")}`}
+                        ? `Подтвердить новую цену · до ${formatUsdTiered(estimate.worstMicros, "up")}`
+                        : `Импортировать · до ${formatUsdTiered(estimate.worstMicros, "up")}`}
                   </button>
                   {blockedReason ? <p className="field-hint">{blockedReason}</p> : <p className="field-hint">Дальше — страница аватара: тело и итог сверки.</p>}
                 </div>
