@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { AvatarName, type Candidate, type EngineError, type Estimate } from "../../shared/engine";
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type JobView } from "../engine/store";
-import { formatUsd } from "../lib/money";
+import { formatUsd, formatUsdTiered } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { DEFAULT_TRAITS, randomTraits, type Traits, traitsProblem } from "../lib/traits";
 import { vibeIssues } from "../lib/vibe";
@@ -92,6 +92,11 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const [error, setError] = useState<EngineError | null>(null);
   const [saveError, setSaveError] = useState<EngineError | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
+  /**
+   * S5.0d: the price of the descriptor check that follows «Сохранить» (`avatars.estimateCheckDescriptor` prices the draft). Shown under the button, so
+   * the click accepts it, and the avatar's «Внешность» sends the check at exactly this worst case. Without it no check is sent after saving.
+   */
+  const [checkPrice, setCheckPrice] = useState<Estimate | null>(null);
   const [name, setName] = useState("");
   const [showNameIssue, setShowNameIssue] = useState(false);
   // Bumped on every traits change: an estimate answer for older traits is dropped.
@@ -138,6 +143,19 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
       alive = false;
     };
   }, [draftKey]); // keyed on the draft's identity, not its (possibly still-null) estimate
+
+  // The check's price once there is a draft to price: free, asked for once per draft.
+  useEffect(() => {
+    if (avatarId === null) return;
+    let alive = true;
+    setCheckPrice(null);
+    void client.request("avatars.estimateCheckDescriptor", { avatarId }).then((reply) => {
+      if (alive && reply.ok) setCheckPrice(reply.result);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [client, avatarId]);
 
   const locked = avatarId !== null;
   const issues = vibeIssues(traits.vibe, traits.age);
@@ -348,7 +366,13 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
       return;
     }
     store.saveAvatar(reply.result.avatar);
-    navigate({ name: "avatars", saved: reply.result.avatar.name });
+    // S5.0d (owner's decision): the wizard ends on the new avatar's «Внешность», where the check shown under «Сохранить» runs.
+    navigate({
+      name: "photos",
+      avatarId: reply.result.avatar.avatarId,
+      tab: "look",
+      landing: { kind: "created", checkWorstMicros: checkPrice === null ? null : checkPrice.worstMicros },
+    });
   }
 
   // ---------- the estimate card's action ----------
@@ -561,6 +585,11 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
                     ? `Мастер-портрет — вариант ${pickedLetter}.`
                     : "Сначала выберите вариант."}
               </p>
+              {picked !== null && !running && checkPrice !== null && (
+                <p className="field-hint">
+                  Затем — <span className="save-check">сверка описания с ним · до <span className="mono">{formatUsdTiered(checkPrice.worstMicros, "up")}</span></span>
+                </p>
+              )}
             </div>
             {saveError && <ErrorNotice error={saveError} actions={descriptorFix(saveError)} />}
           </section>

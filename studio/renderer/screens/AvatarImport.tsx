@@ -113,7 +113,13 @@ export function AvatarImport() {
     if (reply.ok) {
       setBusy(null);
       store.saveAvatar(reply.result.avatar);
-      navigate({ name: "avatars", saved: reply.result.avatar.name });
+      // S5.0d (owner's decision): the import ends on the new avatar's «Внешность», with the check the import ran itself (null: none came back).
+      navigate({
+        name: "photos",
+        avatarId: reply.result.avatar.avatarId,
+        tab: "look",
+        landing: { kind: "imported", check: reply.result.descriptorCheck ?? null },
+      });
       return;
     }
     if (reply.error.code === "PRICE_CHANGED") {

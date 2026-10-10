@@ -269,13 +269,14 @@ test("progress, then four candidates, then pick and save", async () => {
   fireEvent.change(screen.getByRole("textbox", { name: /Имя/ }), { target: { value: "  Mia " } });
   fireEvent.click(save);
 
-  await screen.findByRole("heading", { level: 1, name: "Аватары" });
+  // S5.0d re-pin (the owner's decision, plan §5.5): «Сохранить» ends on the new avatar's «Внешность», not on the Avatars grid.
+  await screen.findByRole("heading", { level: 1, name: "Mia" });
   const [pick] = callsOf(engine, "avatars.pick");
   const draftCall = callsOf(engine, "avatars.createDraft")[0];
   expect(pick?.payload.name).toBe("Mia");
   expect(pick?.payload.photoId).toBe(radios[1]?.getAttribute("value") ?? "");
-  expect(screen.getByText(/Аватар «Mia» сохранён/)).toBeDefined();
-  expect(screen.getByRole("heading", { level: 2, name: "Mia" })).toBeDefined();
+  expect(screen.getByText("Аватар «Mia» сохранён. Мастер-портрет готов для фото.").tagName).toBe("DIV");
+  expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
   expect(draftCall).toBeDefined();
 });
 

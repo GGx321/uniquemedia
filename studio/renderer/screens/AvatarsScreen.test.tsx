@@ -155,8 +155,11 @@ test("a draft from the snapshot is listed and reopens the wizard with its candid
   fireEvent.click(screen.getByRole("radio", { name: "Вариант C" }));
   fireEvent.change(screen.getByRole("textbox", { name: /Имя/ }), { target: { value: "Lena" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-  await screen.findByRole("heading", { level: 2, name: "Lena" });
+  // S5.0d re-pin: «Сохранить» ends on the new avatar's «Внешность»; the grid, opened again, lists her and no longer the draft.
+  await screen.findByRole("heading", { level: 1, name: "Lena" });
   expect(callsOf(engine, "avatars.pick")[0]?.payload).toEqual({ avatarId: draft.avatarId, photoId: "photo-draft-000c", name: "Lena" });
+  fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+  await screen.findByRole("heading", { level: 2, name: "Lena" });
   expect(screen.queryByRole("article", { name: "Черновик" }) === null).toBe(true);
 });
 
