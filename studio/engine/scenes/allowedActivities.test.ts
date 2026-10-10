@@ -88,7 +88,6 @@ describe("allowedActivities", () => {
 
 const CUSTOM_ID = "cat-phoneful" as const;
 const SEEDS = Array.from({ length: 1000 }, (_, i) => i * 7919 + 1);
-const hasCleanActivity = (place: Place): boolean => place.activities.some((a) => !a.twoHanded && !isPhoneActivity(a));
 function isPhoneHand(shot: Shot): boolean {
   return shot === "selfie" || shot === "mirror";
 }
@@ -103,13 +102,13 @@ const MIXED_CUSTOM: Pool = {
   shotDeck: ["friend", "selfie", "mirror", "candid", "friend"],
 };
 
-/** Asserts that a selfie or mirror slot carries an activity of its place that is one-handed and, where the place has a clean one, not a phone one. */
+/** Asserts that a selfie or mirror slot carries an activity of its place that is one-handed and not a phone one (S5.R1: a selfie or mirror never falls back to the phone). */
 function expectCleanActivity(pool: Pool, slot: Pick<PlanSlot, "shot" | "location" | "activity">): void {
   if (!isPhoneHand(slot.shot)) return;
   const place = pool.locations.find((l) => l.name === slot.location) as Place;
   const activity = place.activities.find((a) => a.text === slot.activity) as Activity;
   expect(activity.twoHanded).toBe(false);
-  if (hasCleanActivity(place)) expect(isPhoneActivity(activity)).toBe(false);
+  expect(isPhoneActivity(activity)).toBe(false);
 }
 
 describe("the planner never plans a phone or two-handed activity on a selfie or mirror slot", () => {
