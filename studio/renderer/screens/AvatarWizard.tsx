@@ -81,6 +81,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
   const navigate = useNavigate();
   const nameId = useId();
   const nameErrorId = useId();
+  const saveHintId = useId();
 
   const [avatarId, setAvatarId] = useState<string | null>(draftId);
   const draft = avatarId === null ? null : (view.drafts.find((d) => d.avatarId === avatarId) ?? null);
@@ -568,6 +569,7 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
                 disabled={picked === null || busy !== null || running}
                 onClick={() => void save()}
                 aria-busy={busy === "save"}
+                aria-describedby={saveHintId}
               >
                 {busy === "save" ? (
                   <>
@@ -578,18 +580,24 @@ export function AvatarWizard({ draftId }: { draftId: string | null }) {
                   "Сохранить"
                 )}
               </button>
-              <p className="field-hint">
-                {running
-                  ? "Дождитесь конца генерации, чтобы сохранить."
-                  : pickedLetter
-                    ? `Мастер-портрет — вариант ${pickedLetter}.`
-                    : "Сначала выберите вариант."}
+              {/* One line, as the mockup's 03: the portrait picked, then the paid check the click also accepts. */}
+              <p id={saveHintId} className="field-hint">
+                <span>
+                  {running
+                    ? "Дождитесь конца генерации, чтобы сохранить."
+                    : pickedLetter
+                      ? `Мастер-портрет — вариант ${pickedLetter}.`
+                      : "Сначала выберите вариант."}
+                </span>
+                {picked !== null && !running && checkPrice !== null && (
+                  <>
+                    {" "}
+                    <span>
+                      Затем — <span className="save-check">сверка описания с ним · до <span className="mono">{formatUsdTiered(checkPrice.worstMicros, "up")}</span></span>
+                    </span>
+                  </>
+                )}
               </p>
-              {picked !== null && !running && checkPrice !== null && (
-                <p className="field-hint">
-                  Затем — <span className="save-check">сверка описания с ним · до <span className="mono">{formatUsdTiered(checkPrice.worstMicros, "up")}</span></span>
-                </p>
-              )}
             </div>
             {saveError && <ErrorNotice error={saveError} actions={descriptorFix(saveError)} />}
           </section>

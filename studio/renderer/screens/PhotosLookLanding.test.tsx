@@ -39,6 +39,12 @@ const checkCard = (): HTMLElement => screen.getByRole("region", { name: "Све�
 const descCard = (): HTMLElement => screen.getByRole("region", { name: "Описание" });
 const HINT = /^Затем — сверка описания с ним · до \$/;
 
+/** The accessible description an element points at, as one string. */
+function describedBy(el: HTMLElement): string {
+  const ids = (el.getAttribute("aria-describedby") ?? "").split(" ").filter(Boolean);
+  return ids.map((id) => document.getElementById(id)?.textContent ?? `(#${id} missing)`).join(" ");
+}
+
 /** From the grid into the draft, pick «Вариант B» and name her Mia: the wizard is one click from «Сохранить». */
 async function readyToSave(): Promise<void> {
   const card = await screen.findByRole("article", { name: "Черновик" });
@@ -61,6 +67,8 @@ describe("after «Сохранить» (11)", () => {
     await readyToSave();
     expect(callsOf(engine, "avatars.estimateCheckDescriptor").map((c) => c.payload)).toEqual([{ avatarId: DRAFT_ID }]);
     expect(screen.getByText(withText(HINT)).textContent).toBe("Затем — сверка описания с ним · до $0.025");
+    // Review r1 (4): one line, as the mockup's 03, and the button says what its click also accepts.
+    expect(describedBy(screen.getByRole("button", { name: "Сохранить" }))).toBe("Мастер-портрет — вариант B. Затем — сверка описания с ним · до $0.025");
 
     await save();
     expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
