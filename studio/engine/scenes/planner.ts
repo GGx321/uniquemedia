@@ -1,10 +1,10 @@
 import { orderCategories, splitCount, type CategoryRef } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
-import { allowedActivities, POOLS, type Place, type Pool } from "./pools";
+import { allowedActivities, hasCleanActivity, POOLS, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
 import { Bag, makeRng, rngPick, subSeed, type Rng } from "./rngUtil";
-import { ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
+import { isPhoneInHandShot, ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
 
 // The seeded scene planner (T5a, item 2). Each category draws from its own
 // rng sub-stream (see categorySeed below), so the same (seed, count,
@@ -120,6 +120,29 @@ export function placeMirrorShots(shots: Shot[], places: readonly { mirror?: true
 }
 
 /**
+ * The shots and places of a category once no selfie or mirror sits where it has no clean activity (`hasCleanActivity`). Such a slot's place is drawn again from `fixRng` among
+ * the places that have one (the mirror shot among the clean mirror places); a mirror with no clean mirror place becomes a selfie on a clean place; a pool with no clean place
+ * turns the slot into a friend's snap, where her phone in use is fine. Nothing is drawn for a slot that needs no change, so a pool where every place is clean never touches `fixRng`.
+ * Exported to pin its branches directly.
+ */
+export function settleHandShots(shots: readonly Shot[], places: readonly Place[], pool: Pool, fixRng: Rng): { shots: Shot[]; places: Place[] } {
+  const clean = pool.locations.filter(hasCleanActivity);
+  const cleanMirrors = clean.filter((place) => place.mirror === true);
+  const outShots = [...shots];
+  const outPlaces = [...places];
+  for (let i = 0; i < outShots.length; i++) {
+    const shot = outShots[i] as Shot;
+    if (!isPhoneInHandShot(shot) || hasCleanActivity(outPlaces[i] as Place)) continue;
+    if (shot === "mirror" && cleanMirrors.length > 0) outPlaces[i] = rngPick(fixRng, cleanMirrors);
+    else if (clean.length > 0) {
+      outShots[i] = "selfie";
+      outPlaces[i] = rngPick(fixRng, clean);
+    } else outShots[i] = "friend";
+  }
+  return { shots: outShots, places: outPlaces };
+}
+
+/**
  * Plans one category's `n` slots, starting at global index `startIndex`, on
  * its own rng stream (`rng`, already seeded for this category alone — see
  * `categorySeed`). Draw order: locations and shots are each drawn from their
@@ -137,6 +160,7 @@ export function placeMirrorShots(shots: Shot[], places: readonly { mirror?: true
 function planCategory(
   rng: Rng,
   poseRng: Rng,
+  fixRng: Rng,
   pool: Pool,
   category: PlannerCategory,
   n: number,
@@ -155,10 +179,14 @@ function planCategory(
   // CS.8a: a category whose description named its angles draws each slot's pose from them (the run's toggles are not asked), on the pose stream, and a back
   // or profile slot that drew a phone-in-hand shot takes another shot of the deck. Without `poses` this is the code path that always was: nothing is drawn here.
   const angled = pool.poses === undefined ? null : placedShots.map((shot) => drawFromPoses(poseRng, shot, pool.poses ?? [], pool.shotDeck));
-  const shots = angled === null ? placedShots : angled.map((a) => a.shot);
+  const angledShots = angled === null ? placedShots : angled.map((a) => a.shot);
+  // S5.R1: a selfie or mirror is never placed where it has no clean activity (the writer is told her phone appears only when the activity uses it, and the reader refuses a phone in
+  // a selfie sentence: a slot like that is asked again and, refused twice, fails the run). Its place is redrawn among the clean ones on its own stream, and a pool with none turns the
+  // slot into a friend's snap. A built-in pool has a clean activity at every place, so nothing is drawn for it and its plans do not move.
+  const { shots, places: settledPlaces } = settleHandShots(angledShots, places, pool, fixRng);
 
   const maxOutfitAttempts = pool.outfits.length - 1;
-  return places.map((place, i) => {
+  return settledPlaces.map((place, i) => {
     const shot = shots[i] as Shot;
     let outfit = outfitBag.next();
     for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < maxOutfitAttempts; attempt++) {
@@ -210,7 +238,9 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     // A custom category's streams are keyed by its id (never a built-in's name), so every built-in's draws for a seed stay what they were.
     const rng = makeRng(categorySeed(seed, category));
     const poseRng = makeRng(poseSeed(seed, category));
-    slots.push(...planCategory(rng, poseRng, pool, category, n, nextIndex, excluded, poses));
+    // The place redraws of S5.R1 have a stream of their own: a pool that needs none never reads it, and no other stream shifts.
+    const fixRng = makeRng(subSeed(seed, `clean:${category}`));
+    slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded, poses));
     nextIndex += n;
   }
   return ScenePlanSchema.parse({ version: 1, seed, slots });

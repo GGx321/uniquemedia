@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { allowedActivities, isPhoneActivity, POOLS, type Activity, type Place, type Pool } from "./pools";
+import { allowedActivities, hasCleanActivity, isPhoneActivity, POOLS, type Activity, type Place, type Pool } from "./pools";
 import { planWithPools } from "./planner";
 import { redrawSlot } from "./redraw";
 import { PlanSlotSchema, type PlanSlot } from "./schema";
@@ -64,9 +64,13 @@ describe("allowedActivities", () => {
     expect(texts(allowedActivities(custom, "selfie"))).toEqual(["leaning on the railing"]);
   });
 
-  test("a place whose only one-handed activity is a phone one keeps its one-handed list rather than going empty", () => {
+  test("a place whose only one-handed activity is a phone one has none for a selfie or mirror (S5.R1: no fallback to the phone), and all of them for the other shots", () => {
     const phoneOnly = placeOf([SCROLL, COOK]);
-    expect(texts(allowedActivities(phoneOnly, "selfie"))).toEqual([SCROLL.text]);
+    expect(allowedActivities(phoneOnly, "selfie")).toEqual([]);
+    expect(allowedActivities(phoneOnly, "mirror")).toEqual([]);
+    expect(texts(allowedActivities(phoneOnly, "friend"))).toEqual([SCROLL.text, COOK.text]);
+    expect(hasCleanActivity(phoneOnly)).toBe(false);
+    expect(hasCleanActivity(placeOf([SCROLL, MUG]))).toBe(true);
   });
 
   test("a place with no phone activity draws the same list as the old two-handed filter", () => {

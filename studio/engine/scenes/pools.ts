@@ -65,17 +65,26 @@ export function isPhoneActivity(activity: { text: string; phone?: true | undefin
   return activity.phone === true || PHONE_WORDS.test(activity.text);
 }
 
+/** A free-hand activity that does not use her phone: what a selfie or a mirror shot may draw (the phone in her hand is the camera or the mirror prop). */
+function isCleanActivity(activity: Activity): boolean {
+  return !activity.twoHanded && !isPhoneActivity(activity);
+}
+
+/** Whether a selfie or mirror shot can be placed at `place`: it has an activity for one free hand that is not on the phone. Every built-in place has one (pinned). */
+export function hasCleanActivity(place: { activities: readonly Activity[] }): boolean {
+  return place.activities.some(isCleanActivity);
+}
+
 /**
  * The activities a shot may draw at a place (M3, N1), shared by the planner and «Другая сцена» (redraw.ts). A selfie or mirror has one hand on the phone, so it
  * drops the two-handed activities, and it drops the phone ones too: her phone is already the camera or the mirror prop, and a second one in her hand is the
- * «second phone» defect (I5.2). A place with no one-handed non-phone activity keeps its one-handed list (a custom place can be built that way), so the list is
- * never emptied by the phone rule; every other shot draws from all of them.
+ * «second phone» defect (I5.2). It never falls back to the phone ones (S5.R1): the writer is told her phone appears only when the activity uses it, and the reader refuses a
+ * phone in a selfie sentence, so such a slot would be asked again and, refused twice, fail the run. A place with no clean activity is EMPTY here, and the planner and the
+ * redraw do not put a selfie or mirror there (`hasCleanActivity`); every other shot draws from all of the place's activities.
  */
 export function allowedActivities(place: { activities: readonly Activity[] }, shot: Shot): readonly Activity[] {
   if (!isPhoneInHandShot(shot)) return place.activities;
-  const freeHanded = place.activities.filter((a) => !a.twoHanded);
-  const clean = freeHanded.filter((a) => !isPhoneActivity(a));
-  return clean.length > 0 ? clean : freeHanded;
+  return place.activities.filter(isCleanActivity);
 }
 
 /** One category's pools: its locations, its flat outfit list (no revealing
