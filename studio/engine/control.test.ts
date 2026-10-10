@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { COMMAND_DEADLINE_MS, EngineInit, EngineReply, HostCall, MAX_DELETE_VIDEO_FILES, MAX_IMPORT_PHOTO_BYTES } from "./control";
 import { MAX_RECORD_FILES_READ } from "./videos/listing";
 import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET_MS } from "./videos/timeouts";
-import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
+import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
@@ -199,11 +199,12 @@ describe("HostCall media.import and its reply", () => {
   });
 });
 
-// An import's only paid call is the describe job (at most IMPORT_DESCRIBE_MAX_ATTEMPTS attempts): since the 2026-10-05 removal of its age
-// check the deadline holds no room for a third attempt, so main does not wait on a call the engine can no longer be making.
-describe("COMMAND_DEADLINE_MS['avatars.importAvatar'] covers the describe attempts and no age check", () => {
-  test("a price load, then exactly the describe attempts at their slowest, plus the fixed slack", () => {
-    expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
+// An import's paid calls are the describe job (at most IMPORT_DESCRIBE_MAX_ATTEMPTS attempts) and, since Stage 5 (S5.0c), the descriptor check of the avatar it saved (at most
+// DESCRIPTOR_CHECK_MAX_ATTEMPTS attempts). Since the 2026-10-05 removal of its age check the deadline holds no room for a third describe attempt, so main does not wait on a call
+// the engine can no longer be making; it does wait for the check, or it would answer INTERNAL while the engine is still working and the owner would import (and pay) twice.
+describe("COMMAND_DEADLINE_MS['avatars.importAvatar'] covers the describe attempts, the check's attempts and no age check", () => {
+  test("a price load, then exactly the describe and the check attempts at their slowest, plus the fixed slack", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000);
   });
 });
 

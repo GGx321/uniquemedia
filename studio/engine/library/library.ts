@@ -517,7 +517,14 @@ export class Library {
       .sort(byCreation);
   }
 
-  async updateAvatar(avatarId: string, patch: AvatarPatch): Promise<AvatarManifest> {
+  /**
+   * `validate` (Stage 5): a check of the manifest as it WOULD be written, run inside the exclusive section after the patch is merged onto what is stored right
+   * now and before anything is written. It throws to refuse, and its error reaches the caller as it is; nothing is written then. A caller whose rule spans
+   * fields it did not patch (the descriptor text beside the traits that render into the prompt) passes it, so the rule is judged against the stored record,
+   * not against a copy read earlier. It also gets `current`, the manifest stored right now, for a rule about what the patch replaces (an edit made against a text that
+   * has since changed).
+   */
+  async updateAvatar(avatarId: string, patch: AvatarPatch, validate?: (next: AvatarManifest, current: AvatarManifest) => void): Promise<AvatarManifest> {
     const path = join(this.#avatarDir(avatarId), MANIFEST_FILE);
     return runExclusive(`manifest:${path}`, async () => {
       const current = this.#avatars.get(avatarId);
@@ -528,6 +535,7 @@ export class Library {
         throw new LibraryError("photo-not-found", `avatar ${avatarId} has no photo ${patch.masterPhotoId}`);
       }
       const next = this.#validManifest({ ...current, ...patch });
+      validate?.(next, current);
       await writeJsonAtomic(path, next, { beforeRename: this.#beforeRename });
       this.#avatars.set(avatarId, next);
       return next;

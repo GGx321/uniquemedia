@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { ENGINE_GONE_DETAIL, type AvatarTraits, type EngineCommandMessage, type EngineError, type EventMessage, type ResponseMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "../engine/avatars/descriptor";
+import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "../engine/avatars/plan";
 import { COMMAND_DEADLINE_MS, MEDIA_IMPORT_DEADLINE_MS, type EngineInit } from "../engine/control";
 import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS } from "../engine/videos/timeouts";
 import { PRICE_FETCH_TIMEOUT_MS } from "../engine/money/prices";
@@ -495,6 +496,14 @@ describe("request deadline", () => {
     // One attempt: three HTTP tries to their 180 s timeout and two retry waits at the 60 s Retry-After cap plus 1 s jitter.
     expect(MAX_ATTEMPT_MS).toBe(3 * 180_000 + 2 * 61_000);
     expect(COMMAND_DEADLINE_MS["avatars.createDraft"]).toBe(PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + 30_000);
+  });
+
+  // S5.0c: the import also runs the descriptor check of the avatar it saved, in the same command; a deadline that ignored it would answer INTERNAL while the engine is still working, and
+  // the owner would import again and pay twice.
+  test("the import deadline covers the check's attempts after the describe attempts, and the check command has its own", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.importAvatar"]).toBe(PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000);
+    expect(COMMAND_DEADLINE_MS["avatars.checkDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + 30_000);
+    expect(COMMAND_DEADLINE_MS["avatars.estimateCheckDescriptor"]).toBe(PRICE_FETCH_TIMEOUT_MS + 15_000);
   });
 
   test("videos.delete: main waits at least as long as the engine's own worst case, so the engine's timeout text reaches the window (stage 3 review 4-M1)", () => {

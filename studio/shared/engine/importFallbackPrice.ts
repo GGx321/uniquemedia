@@ -12,8 +12,10 @@
 export const IMPORT_FALLBACK_PRICE = {
   /** One vision describe attempt alone (1_800 in / 650 out tokens typical; ceilings 7K in / 3K out). */
   describe: { expectedMicros: 3_875, worstMicros: 16_250 },
-  /** The whole job: up to two describe attempts (plan.ts's IMPORT_DESCRIBE_MAX_ATTEMPTS), no age check. */
-  whole: { expectedMicros: 3_875, worstMicros: 32_500 },
+  /** One descriptor-vs-master check attempt (Stage 5, S5.0c; 1_700 in / 500 out typical; ceilings 7K in / 1.5K out). */
+  check: { expectedMicros: 3_375, worstMicros: 12_500 },
+  /** The whole job: up to two describe attempts (plan.ts's IMPORT_DESCRIBE_MAX_ATTEMPTS), no age check, then up to two check attempts (S5.0c: the saved avatar is checked against its photo). */
+  whole: { expectedMicros: 7_250, worstMicros: 57_500 },
   asOf: "2026-09-24",
 } as const;
 

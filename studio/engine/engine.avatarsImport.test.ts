@@ -8,6 +8,8 @@ import { openLibrary } from "./library";
 import { PNG_1X1 } from "./library/testing/helpers";
 import { chatBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import {
+  checkCalls,
+  checkReply,
   command,
   engineSettings,
   failed,
@@ -34,7 +36,7 @@ useNativeGlobals();
 const dir = useEngineDir("studio-engine-import-");
 
 /** The import job's price at the dated fallback table (plan.test.ts pins the same numbers). */
-const IMPORT_ESTIMATE: Estimate = { expectedMicros: 3_875, worstMicros: 32_500, prices: "fallback", pricesAsOf: "2026-09-24" };
+const IMPORT_ESTIMATE: Estimate = { expectedMicros: 7_250, worstMicros: 57_500, prices: "fallback", pricesAsOf: "2026-09-24" };
 const DESCRIBE_WORST = 16_250;
 
 function describeReply(overrides: Record<string, unknown> = {}, cost = 0.0021): Reply {
@@ -273,7 +275,7 @@ describe("avatars.estimateImport", () => {
     expect(failed(response).error.code).toBe("NOT_FOUND");
   });
 
-  test("prices up to two describe attempts and nothing else", async () => {
+  test("prices up to two describe attempts and up to two checks of the avatar it saves (S5.0c)", async () => {
     const { engine, stagingId } = await startWithStagedPhoto(network());
     const response = await engine.handle(command("avatars.estimateImport", { stagingId }));
     expect(ok(response).result).toEqual(IMPORT_ESTIMATE);
@@ -322,9 +324,11 @@ describe("avatars.importAvatar: happy path", () => {
     expect(ok(await engine.handle(importCommand(stagingId, "Nia", worst))).ok).toBe(true);
 
     expect(net.ageCalls()).toHaveLength(0);
+    // S5.0c (deliberate re-pin): the import also checks the avatar it saved, so its check's reserve follows the describe's; neither is an age money.
     const reserves = ledgerLines(dir()).filter((l) => l.type === "reserve");
-    expect(reserves).toHaveLength(1);
+    expect(reserves).toHaveLength(2);
     expect(reserves[0]).toMatchObject({ worstMicros: DESCRIBE_WORST });
+    expect(reserves.map((r) => String(r.attemptId).split(":").at(-1))).toEqual(["describe#1", "check#1"]);
   });
 
   test("attempt ids: <importId>:describe#N, never an :age one", async () => {
@@ -707,6 +711,271 @@ describe("avatars.importAvatar: the cap is cleared afterward", () => {
       model: "x-ai/grok-4.3",
       worstMicros: 1,
     });
+
+    expect(stray).toMatchObject({ ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: 0 });
+  });
+});
+
+// ---------- Stage 5, S5.0c: the descriptor check of the avatar the import saves ----------
+
+// The avatar is saved first (`createImportedAvatar`); then, in the same command, the check compares the stored descriptor with the staged photo. It runs in the import's own scope,
+// under the import's own cap, which therefore must outlive the describe call and be cleared (and the money announced) only after the check (r2.1 · N3): a scope without a cap
+// reserves nothing, and a check placed after that would be refused and silently give null. A refusal, a timeout or an unreadable answer gives `descriptorCheck: null` and never
+// undoes the paid import.
+
+const CHECK_ATTEMPT_WORST = 12_500;
+const FIXED_HAIR = "25-year-old European woman, light olive skin, hazel eyes, long straight platinum hair with bangs, athletic build, light freckles across the nose.";
+const HAIR_MISMATCH = {
+  aspects: {
+    hair: { state: "mismatch", descriptor: "волнистые каштановые", photo: "прямые платиновые с чёлкой" },
+    eyes: { state: "ok", descriptor: "", photo: "" },
+    marks: { state: "ok", descriptor: "", photo: "" },
+    body: { state: "not-visible", descriptor: "", photo: "" },
+  },
+  descriptor: FIXED_HAIR,
+};
+
+/** The image of a request, as the data URL the wire carries. */
+function imageOf(call: FetchCall | undefined): string | undefined {
+  return /data:image\/jpeg;base64,[A-Za-z0-9+/=]+/.exec(JSON.stringify(call?.json()))?.[0];
+}
+
+/** The avatar folders of the library on disk now. */
+async function savedAvatars(): Promise<string[]> {
+  return readdir(join(dir(), "library", "avatars")).catch(() => []);
+}
+
+function importResult(response: ResponseMessage) {
+  const answer = ok(response);
+  if (answer.type !== "avatars.importAvatar") throw new Error("wrong type");
+  return answer.result;
+}
+
+describe("avatars.importAvatar: the descriptor check of the avatar it saves (S5.0c)", () => {
+  // N3, the happy path: a check that is refused by a missing cap would give null and every other test below would still pass.
+  test("N3: the check reserves under the import's scope at <importId>:check#1, within the cap the import registered, and returns a non-null check", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.descriptorCheck).toEqual({
+      matches: true,
+      aspects: { hair: { state: "ok" }, eyes: { state: "ok" }, marks: { state: "ok" }, body: { state: "not-visible" } },
+      proposal: null,
+      checkedText: GOOD,
+    });
+    const reserves = ledgerLines(dir()).filter((l) => l.type === "reserve") as { attemptId: string; jobId: string; scope: { avatarJobId: string }; worstMicros: number }[];
+    const importId = reserves[0]?.jobId;
+    if (importId === undefined) throw new Error("no reserve was written");
+    expect(reserves.map((r) => r.attemptId)).toEqual([`${importId}:describe#1`, `${importId}:check#1`]);
+    for (const reserve of reserves) expect(reserve.scope).toEqual({ avatarJobId: importId });
+    expect(reserves[1]?.worstMicros).toBe(CHECK_ATTEMPT_WORST);
+    expect(reserves.reduce((sum, r) => sum + r.worstMicros, 0)).toBeLessThanOrEqual(worst);
+  });
+
+  test("the avatar is saved before the check is asked", async () => {
+    const asked: { saved: string[] | null } = { saved: null };
+    const net = network({
+      descriptors: [describeReply()],
+      check: async () => {
+        asked.saved = await savedAvatars();
+        return checkReply();
+      },
+    });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(asked.saved).toEqual([result.avatar.avatarId]);
+  });
+
+  test("the check judges the descriptor the describe call wrote, against the same staged photo", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    ok(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    const describeImage = imageOf(describeCalls(net)[0]);
+    expect(describeImage).toBeDefined();
+    expect(imageOf(checkCalls(net)[0])).toBe(describeImage);
+    expect(JSON.stringify(checkCalls(net)[0]?.json())).toContain(GOOD);
+  });
+
+  test("the name the owner typed never reaches the check's prompt", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    ok(await engine.handle(importCommand(stagingId, "Zoyechka", worst)));
+
+    expect(JSON.stringify(checkCalls(net)[0]?.json())).not.toContain("Zoyechka");
+  });
+
+  test("the money is announced only after the check, not between the describe and the check", async () => {
+    const asked: { money: number | null; eventsOf: () => { type: string }[] } = { money: null, eventsOf: () => [] };
+    const net = network({
+      descriptors: [describeReply()],
+      check: () => {
+        asked.money = asked.eventsOf().filter((e) => e.type === "money.changed").length;
+        return checkReply();
+      },
+    });
+    const { engine, stagingId, events } = await startWithStagedPhoto(net);
+    asked.eventsOf = events;
+    const before = events().filter((e) => e.type === "money.changed").length;
+    const worst = await estimateWorst(engine, stagingId);
+
+    ok(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(asked.money).toBe(before);
+    expect(events().filter((e) => e.type === "money.changed").length).toBeGreaterThan(before);
+  });
+
+  test("a mismatch comes back with its proposal, and the saved descriptor is still the one the describe call wrote", async () => {
+    const net = network({ descriptors: [describeReply()], check: () => checkReply(HAIR_MISMATCH) });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.descriptorCheck).toMatchObject({ matches: false, proposal: FIXED_HAIR, checkedText: GOOD });
+    expect(result.avatar.descriptor.text).toBe(GOOD);
+    const { library } = await openLibrary(join(dir(), "library"));
+    expect(library.getAvatar(result.avatar.avatarId)?.descriptor).toBe(GOOD);
+  });
+
+  test("a refused check gives descriptorCheck null; the avatar is kept and the describe attempt is settled", async () => {
+    const net = network({ descriptors: [describeReply()], check: () => ({ status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } }) });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.descriptorCheck).toBeNull();
+    expect(result.avatar).toMatchObject({ name: "Zoe", status: "active" });
+    expect(await savedAvatars()).toEqual([result.avatar.avatarId]);
+    const lines = ledgerLines(dir());
+    expect(lines.filter((l) => l.type === "settle").map((l) => l.costMicros)).toEqual([2_100, 0]);
+  });
+
+  test("an answer unreadable twice gives null; the avatar is kept and both check attempts are settled", async () => {
+    const net = network({ descriptors: [describeReply()], check: () => ({ status: 200, body: chatBody("nope", { cost: 0.002 }) }) });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.descriptorCheck).toBeNull();
+    expect(checkCalls(net)).toHaveLength(2);
+    expect(ledgerLines(dir()).filter((l) => l.type === "settle")).toHaveLength(3);
+    expect(await savedAvatars()).toEqual([result.avatar.avatarId]);
+  });
+
+  test("a check that gets no answer within its own timeout gives null; the avatar is kept and the check's reserve stays open at its worst case", async () => {
+    const net = network({ descriptors: [describeReply()], check: () => ({ hang: true }) });
+    const { engine, stagingId } = await startWithStagedPhoto(net, undefined, { deps: { descriptorCheckTimeoutMs: 50 } });
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.descriptorCheck).toBeNull();
+    expect(await savedAvatars()).toEqual([result.avatar.avatarId]);
+    const lines = ledgerLines(dir());
+    const open = lines.filter((l) => l.type === "reserve" && !lines.some((s) => s.type === "settle" && s.attemptId === l.attemptId));
+    expect(open.map((l) => [String(l.attemptId).split(":").at(-1), l.worstMicros])).toEqual([["check#1", CHECK_ATTEMPT_WORST]]);
+  });
+
+  test("a 401 on the check gives null and marks the key rejected; the avatar is kept", async () => {
+    const net = network({ descriptors: [describeReply()], check: () => ({ status: 401, body: { error: { message: "No auth credentials found" } } }) });
+    const { engine, stagingId, events } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.descriptorCheck).toBeNull();
+    expect(events().some((e) => e.type === "settings.changed" && JSON.stringify(e.payload).includes('"rejected":true'))).toBe(true);
+    expect(await savedAvatars()).toEqual([result.avatar.avatarId]);
+  });
+
+  test("while the check runs the new avatar is claimed: an edit of its descriptor and an archive are IN_FLIGHT, and an edit is allowed once the import returns", async () => {
+    const seen: { attempt: (() => Promise<ResponseMessage[]>) | null; answers: ResponseMessage[] } = { attempt: null, answers: [] };
+    const net = network({
+      descriptors: [describeReply()],
+      check: async () => {
+        seen.answers = (await seen.attempt?.()) ?? [];
+        return checkReply();
+      },
+    });
+    const { engine, stagingId, events } = await startWithStagedPhoto(net);
+    seen.attempt = async () => {
+      const changed = events().find((e) => e.type === "avatar.changed");
+      const avatarId = changed?.type === "avatar.changed" ? changed.payload.avatar.avatarId : "avatar-not-announced";
+      return [
+        await engine.handle(command("avatars.editDescriptor", { avatarId, text: FIXED_HAIR, expectedText: GOOD })),
+        await engine.handle(command("avatars.archive", { avatarId })),
+      ];
+    };
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(seen.answers.map((a) => (a.ok ? "ok" : a.error.code))).toEqual(["IN_FLIGHT", "IN_FLIGHT"]);
+    const { avatarId } = result.avatar;
+    ok(await engine.handle(command("avatars.editDescriptor", { avatarId, text: FIXED_HAIR, expectedText: GOOD })));
+    expect((await openLibrary(join(dir(), "library"))).library.getAvatar(avatarId)?.descriptor).toBe(FIXED_HAIR);
+  });
+
+  test("a describe that fails sends no check", async () => {
+    const net = network({ descriptors: [describeReply({ people: 2 })] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    expect(failed(await engine.handle(importCommand(stagingId, "Zoe", worst))).error.code).toBe("IMPORT_SUBJECT_INVALID");
+
+    expect(checkCalls(net)).toHaveLength(0);
+  });
+
+  test.skipIf(process.platform === "win32")("a library write that fails sends no check: nothing was saved to check", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+    const avatarsDir = join(dir(), "library", "avatars");
+
+    await chmod(avatarsDir, 0o555);
+    let response: ResponseMessage;
+    try {
+      response = await engine.handle(importCommand(stagingId, "Zoe", worst));
+    } finally {
+      await chmod(avatarsDir, 0o755);
+    }
+
+    expect(failed(response).error.code).toBe("INTERNAL");
+    expect(checkCalls(net)).toHaveLength(0);
+  });
+
+  test("the previous import's worst case, without the check, is PRICE_CHANGED now: the click accepted a price that includes it", async () => {
+    const net = network();
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+
+    expect(failed(await engine.handle(importCommand(stagingId, "Zoe", 2 * DESCRIBE_WORST))).error.code).toBe("PRICE_CHANGED");
+    expect(net.paidCalls()).toHaveLength(0);
+  });
+
+  test("after the check the import's scope is capped at 0 again: a stray reserve in it is refused", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+    ok(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+    const budget = engine.budget;
+    if (budget === null) throw new Error("expected a budget");
+    const reserve = ledgerLines(dir()).find((l) => l.type === "reserve") as { scope: { avatarJobId: string } } | undefined;
+    if (reserve === undefined) throw new Error("expected a reserve line");
+
+    const stray = await budget.tryReserve({ attemptId: "stray-0002", jobId: "stray-job", scope: reserve.scope, model: "x-ai/grok-4.3", worstMicros: 1 });
 
     expect(stray).toMatchObject({ ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: 0 });
   });

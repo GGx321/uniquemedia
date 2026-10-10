@@ -6,6 +6,7 @@ export * from "./avatarDelete";
 export * from "./categories";
 export * from "./commands";
 export * from "./commandHold";
+export * from "./descriptorEdit";
 export * from "./envelope";
 export * from "./errorMessagesRu";
 export * from "./errors";

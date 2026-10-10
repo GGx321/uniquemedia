@@ -3,6 +3,7 @@ import {
   adultTextProblems,
   AvatarDescriptor,
   DESCRIPTOR_MAX_CHARS,
+  normaliseDescriptorText,
   youthRuleNames,
   type AdultTextProblem,
   type AvatarTraits,
@@ -169,32 +170,8 @@ export function descriptorMessages(traits: AvatarTraits, feedback: DescriptorRef
 
 // ---------- reading the answer ----------
 
-/** Letters NFD cannot split into a base letter and a mark. */
-const SPELLED_OUT: Record<string, string> = { ß: "ss", æ: "ae", Æ: "AE", œ: "oe", Œ: "OE", ø: "o", Ø: "O", ł: "l", Ł: "L", đ: "d", Đ: "D" };
-
-/**
- * Typography folded before validation, so a paid answer is not dropped for it:
- * NFKC (fullwidth digits), invisible format characters dropped — U+FEFF too,
- * although JS counts it as whitespace — so a word they split is seen whole by
- * the checks, control characters that are whitespace (tab, newline) to a
- * space and the rest dropped, every dash to "-", curly quotes to straight
- * ones, accents stripped ("café" → "cafe"), whitespace collapsed.
- */
-export function normaliseDescriptorText(raw: string): string {
-  return raw
-    .normalize("NFKC")
-    .replace(/\p{Cf}/gu, "")
-    .replace(/\p{Cc}/gu, (ch) => (/\s/.test(ch) ? " " : ""))
-    .replace(/[\p{Pd}−]/gu, "-")
-    .replace(/[‘’‚‛′]/g, "'")
-    .replace(/[“”„‟″«»]/g, '"')
-    .normalize("NFD")
-    .replace(/\p{M}+/gu, "")
-    .normalize("NFC")
-    .replace(/[ßæÆœŒøØłŁđĐ]/g, (ch) => SPELLED_OUT[ch] ?? ch)
-    .replace(/\s+/g, " ")
-    .trim();
-}
+// Moved to shared/engine/descriptorEdit.ts (the owner's own edit and the mock fold typography the same way); re-exported so this module's callers are unchanged.
+export { normaliseDescriptorText };
 
 const Answer = z.object({ descriptor: z.string() });
 

@@ -2,6 +2,8 @@ import { encodePhotoCursor } from "../../../shared/engine";
 import { defaultSpec, estimateBytesUpper } from "../../../shared/montage";
 import { STICKER_MANIFEST } from "../../../shared/stickers";
 import { AUTOPILOT_SCENARIOS } from "./scenarios.autopilot";
+import { AVATAR_CHECK_SCENARIOS } from "./scenarios.avatarCheck";
+import { AVATAR_EDIT_SCENARIOS } from "./scenarios.avatarEdit";
 import { IMAGE_MODEL_SCENARIOS } from "./scenarios.imageModels";
 import type { Control, RigOptions, World } from "./rigs";
 import { PARITY_DECODED_APART, parityListTracks } from "./tracks";
@@ -1980,7 +1982,7 @@ const PHOTO_CURSOR_SCENARIOS: readonly Scenario[] = [
   },
 ];
 
-export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS, ...SCENE_RUN_SCENARIOS, ...PHOTO_CURSOR_SCENARIOS, ...AUTOPILOT_SCENARIOS];
+export const SCENARIOS: readonly Scenario[] = [...BASE_SCENARIOS, ...OWN_MEDIA_SCENARIOS, ...OWN_MEDIA_RECORD_SCENARIOS, ...OWN_PHOTO_SCENARIOS, ...OWN_VIDEO_SCENARIOS, ...OWN_STICKER_SCENARIOS, ...OWN_MUSIC_SCENARIOS, ...OWN_VIDEO_CLIP_SCENARIOS, ...OWN_IMPORT_STAGE_SCENARIOS, ...CAPTION_CHECK_SCENARIOS, ...USAGE_UNKNOWN_SCENARIOS, ...MIN_CLIP_SCENARIOS, ...AVATAR_DELETE_SCENARIOS, ...IMAGE_MODEL_SCENARIOS, ...CATEGORY_SCENARIOS, ...SCENE_SET_SCENARIOS, ...SCENE_RUN_SCENARIOS, ...PHOTO_CURSOR_SCENARIOS, ...AUTOPILOT_SCENARIOS, ...AVATAR_EDIT_SCENARIOS, ...AVATAR_CHECK_SCENARIOS];
 
 /** A spec's clips, from an answer, each made `durationMs` long. */
 function clipsOf(spec: Record<string, unknown>, durationMs: number): Record<string, unknown>[] {

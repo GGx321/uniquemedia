@@ -64,6 +64,8 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "a launch that RUNS (Stage 4, S4.8): the real rig runs the engine's default launch steps over a fake OpenRouter, the rig's fake ffmpeg and its track store; the mock runs its launch on its clock (`RigOptions.launch`). Both are read only at the STABLE points a story waits for (`Transcript.untilLaunch`), through `callLaunch`, which writes `launchFacts` (state, holds, reasons, rows' phases and progress, videos by state) and NOT: the prices, the clock, how many requests a batch sends or are in flight while the launch moves, the set file's revision (the engine's compose makes it 3, an approval 4: the contract says a set is named with one, not which), the text of a launch's refusals (sums and sentences of the engine's own: the code and the reason are written), or the events the launch causes (`autopilot.changed` is coalesced by the engine and sent per pass by the mock; the older stories' covered events are not written during a launch). The stories plan every photo NEW (`library: false`): a generated video asks for the same photos from both planners (1, 3, 5), but the photos a LIBRARY video takes are drawn by the engine's planner from the seed (collages of 2 to 4, slides of 5 to 7, near-duplicates refused) and are fixed in the mock, as are the order of the shapes and the categories: the library plan's counts are held by each engine's own tests, and the five S4.1 stories whose commands plan from the library stay pending for that reason. The bounded automatic continues after a drop (1 and 5 minutes) and the price list's retries (5, 15, 60) wait real minutes in the engine: the mock's tests hold them, the engine's own (paidHolds, engine.autopilotHolds), and no story waits for them. The quit is the graceful one (`paused { quit }`); the engine's other restart, a crash read as `paused { engine-restart }`, needs the crash matrix's copy of the folders (engine.autopilotCrashMatrix) and is played against the mock by its own tests",
   "the price of drawing photos (S4.6p, `runs.estimateImages`): the figures are each engine's own prices (the mock's fixed image price, the engine's bundled table), so the transcript writes the photos the price is for, that expected is within worst, that the figure is above zero exactly when there are photos, and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. A refusal's text names the launch or the avatar in each engine's words: its code is compared",
   "the plan card's figures (S4.10 fix B, `Transcript.callCard`): the number of candidate tracks, the OpenRouter balance in micro-dollars and the export volume's free bytes are each rig's own (the rig's track list and the mock's canned figures, the fake OpenRouter's credits, a free-space figure the story sets), so a story that asks writes only that they are FILLED (`candidates > 0`, `balance !== null`, `freeBytes !== null`); the word on the automatic refresh is written by every estimate and is the same rule in both engines (shared/autopilot/autoRefresh.ts)",
+  "the descriptor edit (Stage 5, S5.0a, `avatars.editDescriptor`): played are the edit and its fold, the stale proposal, one refusal per rule (the closed `descriptorReason` and a youth word's `descriptorWords`), the refusals before the text, an archived avatar, and an edit during an autopilot launch. Not played: the IN_FLIGHT a rewrite, a candidates batch, an archive or a delete gives (the mock runs those to their end at once; a testkit switch, `setAvatarEditing`, says it, and the engine's own tests hold the claim), a draft, and an unreadable entry (the mock keeps no stored text for it, so it answers NOT_FOUND where the engine can mend it from its stored text): engine.editDescriptor and mockEngine.editDescriptor hold those. The VALIDATION detail is not compared, as for every VALIDATION",
+  "the descriptor check (Stage 5, S5.0c, `avatars.estimateCheckDescriptor`, `avatars.checkDescriptor`): the rig scripts no chat, so only the FREE commands and the free refusals of the paid one are played (an unknown avatar, a worst case below the price, a payload the contract refuses, the claim a running launch holds). The price is each engine's own (the mock's fixed figures, the engine's bundled table), so the transcript writes that it is ordered (expected within worst), that it is a price (above zero) and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. The text of a check's PRICE_CHANGED is each engine's own (the engine's names both sums, the mock's none): its code is compared; every other refusal's text is compared. A check that RUNS (the verdict, the money flow, an import's `descriptorCheck`, that it never writes) is held by engine.checkDescriptor, engine.avatarsImport and mockEngine.checkDescriptor. No key (AUTH_INVALID) and no library (LIBRARY_UNAVAILABLE) cannot be played in the rig (it always has both) and are held by engine.checkDescriptor and mockEngine.checkDescriptor. A draft, an unreadable stored descriptor (DESCRIPTOR_INVALID) and the other jobs' claims (a rewrite, a candidates batch, an archive, a delete) are held by those suites too",
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -374,13 +376,13 @@ function autopilotBrief(result: Record<string, unknown>): Record<string, unknown
  */
 export function answerLine(type: string, answer: Answer, norm: Normalizer, running: boolean | "brief" | "card" = false): string {
   if (!answer.ok) {
-    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason } = answer.error;
+    const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason, descriptorReason, descriptorWords } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
     // detail names times of the rig's own clock: its code and its cause are compared.
     // S4.8 (`running`): a launch's refusals say sums and sentences of the engine's own (the remaining worst case, the key's state); the code and the reason are the contract.
     // S4.6p: a launch the price is asked for is told in each engine's own words (which launch, which avatar); its code is the contract.
     // S4.10 fix D: an IN_FLIGHT given to a command sent while a launch runs names the job in each engine's own words; its code is the contract.
-    const text = code === "VALIDATION" || (running !== false && code === "IN_FLIGHT") || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" ? undefined : detail;
+    const text = code === "VALIDATION" || (running !== false && code === "IN_FLIGHT") || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" || (code === "PRICE_CHANGED" && type === "avatars.checkDescriptor") ? undefined : detail;
     return `< error ${code} ${compact(
       norm.value({
         ...(text === undefined ? {} : { detail: text }),
@@ -393,8 +395,16 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
         ...(sceneReason === undefined ? {} : { sceneReason }),
         ...(sceneId === undefined ? {} : { sceneId }),
         ...(launchReason === undefined ? {} : { launchReason }),
+        ...(descriptorReason === undefined ? {} : { descriptorReason }),
+        ...(descriptorWords === undefined ? {} : { descriptorWords }),
       }),
     )}`;
+  }
+  if (type === "avatars.editDescriptor") {
+    // Stage 5 (S5.0a): the avatar's text is what the owner sent, folded, and its age: the same in both engines. The rest of the summary is `avatarLine`'s.
+    const avatar = objectOf(answer.result.avatar);
+    const descriptor = objectOf(avatar.descriptor);
+    return `< ok ${compact(norm.value({ ...avatarLine(avatar), descriptor: { age: descriptor.age, text: descriptor.text } }))}`;
   }
   if (type === "montages.textPreview") {
     // The box is the rasteriser's in the engine and an estimate in the mock: only that it is a box inside the frame is compared.
@@ -434,6 +444,12 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
     const next = typeof answer.result.nextCursor === "string" ? decodePhotoCursor(answer.result.nextCursor) : null;
     const paging = next === null && !(typeof answer.result.remainingTotal === "number" && answer.result.remainingTotal > 0) ? {} : { next: next === null ? null : norm.value(next.photoId, "photoId"), remainingTotal: answer.result.remainingTotal };
     return [`< ok photos ${compact({ count: listed.length, free: listed.length - held.length, skippedTotal: answer.result.skippedTotal, order, ...paging })}`, ...held.map((s) => `  ${s}`)].join("\n");
+  }
+  if (type === "avatars.estimateCheckDescriptor") {
+    // S5.0c: the figures are each engine's own prices (the mock's fixed ones, the engine's bundled table, as for every estimate): written are that the price is ordered, that it is a price, and that it names its source.
+    const expected = Number(answer.result.expectedMicros);
+    const worst = Number(answer.result.worstMicros);
+    return `< ok check price ${compact({ ordered: expected <= worst, priced: worst > 0, source: typeof answer.result.prices === "string" })}`;
   }
   if (type === "runs.estimateImages") {
     // S4.6p: the figures are each engine's own prices (the mock's fixed image price, the engine's bundled table, as for every estimate). What both are bound to say: the photos the

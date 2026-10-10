@@ -17,12 +17,14 @@ import {
   type ApiKeyStatus,
   type CategoryCallKind,
   type CategoryDescription,
+  checkDescriptorEdit,
   type CategoryRef,
   type CategorySummary,
   type CommandResult,
   type MusicKeyStatus,
   type AvatarSummary,
   type CommandPayload,
+  type DescriptorCheck,
   type Draft,
   type EngineCommandMessage,
   type EngineError,
@@ -53,15 +55,20 @@ import {
 import { downscaleToJpeg, MAX_SOURCE_PIXELS, preflightDownscale } from "../node/downscale";
 import { windowPeaks } from "../shared/music/trackShape";
 import { timeoutSignal, untilAborted } from "./money/timeoutSignal";
+import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
 import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
-import { runImportJob, type ImportJobResult } from "./avatars/importJob";
+import { runDescriptorCheckJob } from "./avatars/descriptorCheckJob";
+import { runImportJob } from "./avatars/importJob";
 import { checkImportPhoto, IMPORT_DESCRIBE_MAX_SIDE } from "./avatars/importStaging";
 import {
   avatarJobEstimate,
   avatarPriceModels,
   CANDIDATES_PER_BATCH,
+  DESCRIPTOR_CHECK_TIMEOUT_MS,
+  descriptorCheckEstimate,
+  descriptorCheckPriceModels,
   descriptorJobCap,
   importJobEstimate,
   importPriceModels,
@@ -294,6 +301,8 @@ export interface EngineDeps {
   downscaleImportPhoto?: (bytes: Uint8Array, maxSide: number, signal: AbortSignal) => Promise<Uint8Array>;
   /** M4: bounds the import's downscale to the describe call's size; IMPORT_DOWNSCALE_TIMEOUT_MS unless a test says otherwise. */
   importDownscaleTimeoutMs?: number;
+  /** Stage 5, S5.0c: how long one HTTP try of a descriptor check waits for its answer; DESCRIPTOR_CHECK_TIMEOUT_MS (60 s) unless a test says otherwise. */
+  descriptorCheckTimeoutMs?: number;
   /**
    * T6: the QA gates every photo run's paid images pass through, in order
    * (runs/qa.ts). None by default: T7a (PDQ, the optional age check) and T7b
@@ -371,6 +380,21 @@ function seedOf(runId: string): number {
 function detailOf(message: string): string {
   const masked = maskHome(message);
   return masked.length <= MAX_DETAIL ? masked : `${masked.slice(0, MAX_DETAIL - 1)}…`;
+}
+
+/**
+ * The owner's text for an avatar of `age`, folded and checked (`checkDescriptorEdit`). A refusal is the VALIDATION a window words from its closed `descriptorReason`
+ * (and, for a youth word, the owner's own `descriptorWords`). It throws, so it can also run as the library's validator inside its exclusive section.
+ */
+function descriptorEditOrFailure(text: string, age: number): string {
+  const checked = checkDescriptorEdit(text, age);
+  if (checked.ok) return checked.text;
+  throw new EngineFailure({
+    code: "VALIDATION",
+    descriptorReason: checked.reason,
+    ...(checked.words.length > 0 ? { descriptorWords: checked.words.slice(0, 10).map((word) => word.slice(0, 60)) } : {}),
+    detail: `the description breaks a rule: ${checked.reason}`,
+  });
 }
 
 function messageOf(error: unknown, fallback: string): string {
@@ -745,6 +769,7 @@ export class Engine {
   readonly #rawDir: string;
   /** Paid commands running now (createDraft): the library they write to must not change under them. */
   #paidCommands = 0;
+  readonly #descriptorCheckTimeoutMs: number;
   /** One createDraft at a time: a second click (the wizard left and opened again) must not buy a second descriptor. */
   #creatingDraft = false;
   /**
@@ -849,6 +874,13 @@ export class Engine {
    * that would change one of them is refused with IN_FLIGHT.
    */
   readonly #busyAvatars = new Set<string>();
+  /**
+   * Stage 5 (S5.0a): the avatars one of the five NON-RUN jobs holds, beside their `#busyAvatars` claim: a descriptor rewrite, a candidates batch, an archive, a
+   * delete and (S5.0c) a descriptor check. `avatars.editDescriptor` and (S5.2a) `setBody` refuse IN_FLIGHT for an avatar in here. A photo run and an autopilot
+   * launch touch only `#busyAvatars`, so an edit is allowed during both: a live job keeps the descriptor it started with, and a resume or a new run reads the new one.
+   * Join with `#claimAvatarForEdit` and leave with `#releaseAvatarEdit`, never by hand, so the two sets cannot drift apart.
+   */
+  readonly #avatarEdits = new Set<string>();
   /** T6: paid requests of every photo run in flight at once (the settings' network concurrency); shrinks on a 429. */
   readonly #networkPool: NetworkPool;
   /** T6: local work of every photo run (the QA gates). */
@@ -876,6 +908,7 @@ export class Engine {
     this.#preflight = deps.preflightDownscale ?? preflightDownscale;
     this.#downscaleImportPhoto = deps.downscaleImportPhoto ?? ((bytes, maxSide, signal) => downscaleToJpeg(bytes, { maxSide, signal }));
     this.#importDownscaleTimeoutMs = deps.importDownscaleTimeoutMs ?? IMPORT_DOWNSCALE_TIMEOUT_MS;
+    this.#descriptorCheckTimeoutMs = deps.descriptorCheckTimeoutMs ?? DESCRIPTOR_CHECK_TIMEOUT_MS;
     this.#preflightTimeoutMs = deps.preflightTimeoutMs ?? PREFLIGHT_TIMEOUT_MS;
     this.#liveLibraryIdentityTimeoutMs = deps.liveLibraryIdentityTimeoutMs ?? LIVE_LIBRARY_IDENTITY_TIMEOUT_MS;
     this.#events = new EventLog(EVENT_LOG_CAPACITY, deps.bootId);
@@ -2156,6 +2189,16 @@ export class Engine {
         const result = avatarJobEstimate(await this.#prices.get(avatarPriceModels(models, "rewrite-descriptor", imageAgeCheck)), models, "rewrite-descriptor", imageAgeCheck);
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
       }
+      case "avatars.estimateCheckDescriptor": {
+        // Free, so no #switching gating (like the rewrite's estimate): LIBRARY_UNAVAILABLE without a library, NOT_FOUND for an unknown id. A draft is priced too: the wizard
+        // shows the price under «Сохранить» before the avatar is saved. The stored descriptor is not read: this is a price, and the check itself refuses a bad one.
+        const library = this.library;
+        if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+        this.#manifestOrNotFound(library, command.payload.avatarId);
+        const models = this.#avatarModels();
+        const result = descriptorCheckEstimate(await this.#prices.get(descriptorCheckPriceModels(models)), models);
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result };
+      }
       case "avatars.createDraft": {
         if (this.#creatingDraft) {
           throw new EngineFailure({ code: "IN_FLIGHT", detail: "a new avatar's descriptor is already being written; wait for it to finish" });
@@ -2171,7 +2214,7 @@ export class Engine {
       }
       case "avatars.generateCandidates": {
         const { avatarId } = command.payload;
-        this.#claimAvatar(avatarId, "a batch of candidates is already being made for this draft; wait for it to finish");
+        this.#claimAvatarForEdit(avatarId, "a batch of candidates is already being made for this draft; wait for it to finish");
         this.#paidCommands++;
         let started = false;
         try {
@@ -2182,7 +2225,7 @@ export class Engine {
           // A started job holds both until it ends.
           if (!started) {
             this.#paidCommands--;
-            this.#busyAvatars.delete(avatarId);
+            this.#releaseAvatarEdit(avatarId);
           }
         }
       }
@@ -2196,15 +2239,30 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#pick(command.payload) };
       case "avatars.archive":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#archive(command.payload) };
+      case "avatars.editDescriptor":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#editDescriptor(command.payload) };
+      case "avatars.checkDescriptor": {
+        // Claimed like a rewrite (the avatar becomes one that an edit of its descriptor must wait for; a photo run holding it refuses the check), and counted as a paid command
+        // so a library switch is refused meanwhile.
+        const { avatarId } = command.payload;
+        this.#claimAvatarForEdit(avatarId, "a job or command is already changing this avatar; wait for it to finish");
+        this.#paidCommands++;
+        try {
+          return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#checkDescriptor(command.payload) };
+        } finally {
+          this.#paidCommands--;
+          this.#releaseAvatarEdit(avatarId);
+        }
+      }
       case "avatars.rewriteDescriptor": {
         const { avatarId } = command.payload;
-        this.#claimAvatar(avatarId, "a job or command is already changing this avatar; wait for it to finish");
+        this.#claimAvatarForEdit(avatarId, "a job or command is already changing this avatar; wait for it to finish");
         this.#paidCommands++;
         try {
           return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#rewriteDescriptor(command.payload) };
         } finally {
           this.#paidCommands--;
-          this.#busyAvatars.delete(avatarId);
+          this.#releaseAvatarEdit(avatarId);
         }
       }
       case "avatars.estimateImport": {
@@ -4053,7 +4111,7 @@ export class Engine {
    * 2026-10-05 (personal-use app): an import makes no age check and asks for
    * no AI-persona confirmation.
    */
-  async #importAvatar(payload: CommandPayload<"avatars.importAvatar">): Promise<{ avatar: AvatarSummary }> {
+  async #importAvatar(payload: CommandPayload<"avatars.importAvatar">): Promise<{ avatar: AvatarSummary; descriptorCheck: DescriptorCheck | null }> {
     const key = this.#usableKey("import an avatar");
     const budget = this.#paidBudget();
     const library = await this.#liveLibrary();
@@ -4074,16 +4132,22 @@ export class Engine {
 
     const importId = this.#deps.newId();
     const scope: Scope = { avatarJobId: importId };
-    // The scope only ever sends up to two describe attempts — exactly this job's own worst case.
+    // The scope sends up to two describe attempts and, once the avatar is saved, up to two check attempts: its cap is the job's own worst case, check included. The cap
+    // stays until the check ends (r2.1 · N3): a scope without a cap reserves nothing, so a check after a cap deleted at the describe's end would be refused and silently
+    // give null. The money is announced, and the cap dropped, only then.
     this.#caps.set(scopeKey(scope), job.worstMicros);
     const client = this.#openRouter(key);
     const linesBefore = budget.ledger.lines.length;
-    let outcome: ImportJobResult;
+    let outcome: Awaited<ReturnType<typeof runImportJob>>;
+    let imported: { avatar: AvatarSummary; descriptorCheck: DescriptorCheck | null } | null = null;
     try {
       outcome = await runImportJob(
         { chat: (params) => client.chat(params), budget, priceBook: priced.book },
         { jobId: importId, scope, textModel: models.textModel, describeJpeg: staged.describeJpeg },
       );
+      if (outcome.ok) {
+        imported = await this.#saveImportedAvatar({ library, key, budget, priced: priced.book, textModel: models.textModel, importId, scope, staged, name: payload.name, traits: outcome.traits, descriptor: outcome.descriptor });
+      }
     } finally {
       this.#caps.delete(scopeKey(scope));
       if (budget.ledger.lines.length !== linesBefore || budget.ledger.failed) this.#emitMoney();
@@ -4092,15 +4156,35 @@ export class Engine {
       if (outcome.authInvalid) this.markKeyRejected(key);
       throw new EngineFailure(outcome.error);
     }
-    const { traits, descriptor } = outcome;
+    if (imported === null) throw new Error("unreachable: an import whose describe call succeeded saved nothing");
+    return imported;
+  }
 
+  /**
+   * The rest of an import once the describe call has answered: the avatar is saved first, then its descriptor is checked (m8). The check never undoes the paid import.
+   * Runs inside `#importAvatar`'s scope and cap.
+   */
+  async #saveImportedAvatar(args: {
+    library: Library;
+    key: string;
+    budget: Budget;
+    priced: PriceBook;
+    textModel: string;
+    importId: string;
+    scope: Scope;
+    staged: { rawBytes: Uint8Array; describeJpeg: Uint8Array; mediaType: ImageMediaType; width: number; height: number };
+    name: string;
+    traits: AvatarTraits;
+    descriptor: AvatarDescriptor;
+  }): Promise<{ avatar: AvatarSummary; descriptorCheck: DescriptorCheck | null }> {
+    const { library, staged, traits, descriptor, importId } = args;
     // M3: the manifest (status "active", her master already set), the photo
     // file and its sidecar all publish in ONE rename — no dangling avatar,
     // no half-written manifest, if the write fails or the process is killed
     // partway (Library.createImportedAvatar's own doc comment).
     const written = await library
       .createImportedAvatar({
-        name: payload.name,
+        name: args.name,
         age: traits.age,
         traits: manifestTraits(traits),
         descriptor: descriptor.text,
@@ -4122,7 +4206,109 @@ export class Engine {
         );
         throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`${where}: the imported avatar could not be written (${messageOf(error, "unknown error")})`) });
       });
-    return { avatar: this.#announceAvatar(library, written.avatar.id) };
+    const avatar = this.#announceAvatar(library, written.avatar.id);
+
+    // The new avatar is claimed while its check runs, like any check: an edit of its descriptor, an archive or a delete meets IN_FLIGHT until the check ends (nothing awaits
+    // between the write above and this claim).
+    this.#claimAvatarForEdit(avatar.avatarId, "this avatar's description is being checked against its photo; wait for it to finish");
+    try {
+      const descriptorCheck = await this.#checkImportedAvatar({ key: args.key, budget: args.budget, priced: args.priced, textModel: args.textModel, jobId: importId, scope: args.scope, image: staged.describeJpeg, descriptor });
+      return { avatar, descriptorCheck };
+    } finally {
+      this.#releaseAvatarEdit(avatar.avatarId);
+    }
+  }
+
+  /**
+   * The descriptor check of an avatar the import just saved, in the import's own scope (`<importId>:check#1..2`), on the staged JPEG the describe call saw. Never throws and
+   * never undoes the import: a refusal, a timeout (this client's own 60 s), an unreadable answer or a defect gives null (the reserve of a timed-out try stays open at its worst
+   * case until the next reconcile, as for any try that may have been billed). A 401 also marks the key rejected, as everywhere.
+   */
+  async #checkImportedAvatar(args: {
+    key: string;
+    budget: Budget;
+    priced: PriceBook;
+    textModel: string;
+    jobId: string;
+    scope: Scope;
+    image: Uint8Array;
+    descriptor: AvatarDescriptor;
+  }): Promise<DescriptorCheck | null> {
+    try {
+      const client = this.#openRouter(args.key, this.#deps.fetch, this.#descriptorCheckTimeoutMs);
+      const result = await runDescriptorCheckJob(
+        { chat: (params) => client.chat(params), budget: args.budget, priceBook: args.priced },
+        { jobId: args.jobId, scope: args.scope, textModel: args.textModel, image: args.image, stored: args.descriptor },
+      );
+      if (result.ok) return result.check;
+      if (result.error.code === "AUTH_INVALID") this.markKeyRejected(args.key);
+      return null;
+    } catch (error) {
+      console.warn(`studio engine: the descriptor check of an imported avatar failed (${error instanceof Error ? error.name : typeof error})`);
+      return null;
+    }
+  }
+
+  /**
+   * `avatars.checkDescriptor` (Stage 5, S5.0c): compares a saved avatar's master photo with its stored descriptor. It NEVER writes (I5.6); the owner applies a proposal with
+   * `avatars.editDescriptor`. Checked before anything is spent, in rewrite's order: a usable key, a ledger that allows paid calls, the live library, the avatar (NOT_FOUND), its
+   * folder, a saved avatar (a draft is VALIDATION: no master yet), a descriptor today's rules accept (DESCRIPTOR_INVALID: mend it with `editDescriptor` first), the accepted
+   * worst case (PRICE_CHANGED), room in the month. Then the master is loaded (free; INTERNAL when it cannot be) and the job runs in its own scope, capped at its worst case,
+   * with this client's 60 s timeout. The claim and the paid-command count are the dispatch's.
+   */
+  async #checkDescriptor(payload: CommandPayload<"avatars.checkDescriptor">): Promise<{ check: DescriptorCheck }> {
+    const key = this.#usableKey("check an avatar's description");
+    const budget = this.#paidBudget();
+    const library = await this.#liveLibrary();
+    const { avatarId } = payload;
+    const manifest = this.#manifestOrNotFound(library, avatarId);
+    await this.#assertAvatarOnDisk(library, avatarId);
+    if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar has a master photo to check against` });
+    this.#assertDescriptorReadable(manifest);
+    const stored: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
+    const models = this.#avatarModels();
+    const priced = await this.#prices.get(descriptorCheckPriceModels(models));
+    const job = descriptorCheckEstimate(priced, models);
+    Engine.#checkAccepted(job.worstMicros, payload.acceptedWorstMicros);
+    Engine.#checkMonthlyRoom(budget, job.worstMicros);
+    const image = await this.#masterForCheck(library, avatarId);
+
+    const jobId = this.#deps.newId();
+    const scope: Scope = { avatarJobId: jobId };
+    // The scope only ever sends the check's attempts: its cap is theirs.
+    this.#caps.set(scopeKey(scope), job.worstMicros);
+    const client = this.#openRouter(key, this.#deps.fetch, this.#descriptorCheckTimeoutMs);
+    const linesBefore = budget.ledger.lines.length;
+    let result: Awaited<ReturnType<typeof runDescriptorCheckJob>>;
+    try {
+      result = await runDescriptorCheckJob(
+        { chat: (params) => client.chat(params), budget, priceBook: priced.book },
+        { jobId, scope, textModel: models.textModel, image, stored },
+      );
+    } finally {
+      this.#caps.delete(scopeKey(scope));
+      if (budget.ledger.lines.length !== linesBefore || budget.ledger.failed) this.#emitMoney();
+    }
+    if (!result.ok) {
+      if (result.error.code === "AUTH_INVALID") this.markKeyRejected(key);
+      throw new EngineFailure(result.error);
+    }
+    return { check: result.check };
+  }
+
+  /** The avatar's master as the downscaled JPEG a check attaches (`Library.loadReference`), bounded; INTERNAL, and free, when it cannot be read. */
+  async #masterForCheck(library: Library, avatarId: string): Promise<Uint8Array> {
+    const timeout = timeoutSignal(REFERENCE_TIMEOUT_MS);
+    try {
+      const master = await untilAborted(library.loadReference(avatarId, timeout.signal), timeout.signal);
+      if (master === null) throw new EngineFailure({ code: "INTERNAL", detail: `avatar ${avatarId}'s master photo could not be found on disk` });
+      return master;
+    } catch (error) {
+      if (error instanceof EngineFailure) throw error;
+      throw new EngineFailure({ code: "INTERNAL", detail: detailOf(`avatar ${avatarId}'s master photo could not be read (${messageOf(error, "unknown error")})`) });
+    } finally {
+      timeout.clear();
+    }
   }
 
   /**
@@ -4225,7 +4411,7 @@ export class Engine {
     }
     this.#caps.delete(scopeKey(job.scope));
     this.#paidCommands--;
-    this.#busyAvatars.delete(job.avatarId);
+    this.#releaseAvatarEdit(job.avatarId);
     try {
       this.#emitMoney();
       const state = this.#jobs.finish(job.jobId, end);
@@ -4317,7 +4503,7 @@ export class Engine {
     // Claimed before the (now async) #liveLibrary() re-verification below, so
     // this still marks the avatar busy synchronously, before this method's
     // first await — library.confirm's own race check relies on that.
-    this.#claimAvatar(avatarId, "a job is changing this avatar; archive it when the job ends");
+    this.#claimAvatarForEdit(avatarId, "a job is changing this avatar; archive it when the job ends");
     try {
       const library = await this.#liveLibrary();
       const manifest = library.getAvatar(avatarId);
@@ -4329,7 +4515,52 @@ export class Engine {
       await library.updateAvatar(avatarId, { status: "archived" });
       return { avatar: this.#announceAvatar(library, avatarId) };
     } finally {
-      this.#busyAvatars.delete(avatarId);
+      this.#releaseAvatarEdit(avatarId);
+    }
+  }
+
+  /**
+   * `avatars.editDescriptor` (Stage 5, S5.0a): the owner's own text for a saved avatar's descriptor. Free, and the only writer of the text outside the paid create,
+   * import and rewrite jobs (I5.6). The order: the live library; the claim (IN_FLIGHT while one of
+   * the five non-run jobs or a pending delete holds the avatar, never for a photo run or a launch); the manifest or NOT_FOUND; a saved avatar (a draft is VALIDATION); a stale `expectedText`; the text's own rules; then the write, whose
+   * composite check runs inside the library's exclusive section against the manifest read under the lock (I5.7).
+   */
+  async #editDescriptor(payload: CommandPayload<"avatars.editDescriptor">): Promise<{ avatar: AvatarSummary }> {
+    const { avatarId, text, expectedText } = payload;
+    // Counted before the first await, like every small write of the library: a delete's prepare (`#deleteBusy`) and a library switch (`#busy`) must see an edit whose
+    // manifest write is in flight, or the write would put a detached avatar back into the index.
+    this.#librarySmallWrites++;
+    try {
+      const library = await this.#liveLibrary();
+      // The claim is read before the manifest: a delete takes the avatar out of the library's indexes at its prepare, so a lookup first would answer NOT_FOUND for an
+      // avatar that a kept delete gives back a moment later. (The plan lists the manifest first; this is the one deliberate reordering.)
+      if (this.#avatarEdits.has(avatarId) || this.#pendingDelete?.avatarId === avatarId) {
+        throw new EngineFailure({ code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; edit the description when that ends" });
+      }
+      const manifest = this.#manifestOrNotFound(library, avatarId);
+      if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` });
+      const stale = (): EngineFailure => new EngineFailure({ code: "VALIDATION", descriptorReason: "stale", detail: "the stored description is not the one this edit was made against" });
+      // The polite, early refusal; the one that counts runs under the library's lock below.
+      if (expectedText !== manifest.descriptor) throw stale();
+      const checked = descriptorEditOrFailure(text, manifest.age);
+      // Never a write that succeeds and then answers INTERNAL: the summary the answer needs is built from the manifest as it will be, before anything is written.
+      if (avatarSummaryFrom({ ...manifest, descriptor: checked }, avatarCounts(library, avatarId)) === null) {
+        throw new EngineFailure({ code: "VALIDATION", descriptorReason: "invalid", detail: "the avatar would not fit the contract with this description" });
+      }
+      // Under the lock, against the manifest stored at that moment: a second edit made against the same text finds it changed (a proposal never overwrites a later hand
+      // edit), and whatever else landed since the early checks (the composite will hold the body phrase from S5.2a) is judged here, before anything is written.
+      await library
+        .updateAvatar(avatarId, { descriptor: checked }, (next, current) => {
+          if (current.descriptor !== expectedText) throw stale();
+          descriptorEditOrFailure(checked, next.age);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+          throw error;
+        });
+      return { avatar: this.#announceAvatar(library, avatarId) };
+    } finally {
+      this.#librarySmallWrites--;
     }
   }
 
@@ -4385,7 +4616,7 @@ export class Engine {
     this.#pendingDelete = slot;
     try {
       // Claimed before the first await too: nothing else (a library switch included) may change the avatar from here to the finish.
-      this.#claimAvatar(avatarId, "a job or command is changing this avatar; delete it when that ends");
+      this.#claimAvatarForEdit(avatarId, "a job or command is changing this avatar; delete it when that ends");
     } catch (error) {
       if (this.#pendingDelete === slot) this.#pendingDelete = null;
       throw error;
@@ -4421,7 +4652,7 @@ export class Engine {
         if (slot.abandoned) this.#announceRestored(slot.library, avatarId);
       }
       if (this.#pendingDelete === slot) this.#pendingDelete = null;
-      this.#busyAvatars.delete(avatarId);
+      this.#releaseAvatarEdit(avatarId);
       throw error;
     }
   }
@@ -4463,7 +4694,7 @@ export class Engine {
       for (const sceneSetId of pending.sceneSetIds) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId } });
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId } });
     } finally {
-      this.#busyAvatars.delete(avatarId);
+      this.#releaseAvatarEdit(avatarId);
     }
   }
 
@@ -4522,6 +4753,18 @@ export class Engine {
   #claimAvatar(avatarId: string, detail: string): void {
     if (this.#busyAvatars.has(avatarId)) throw new EngineFailure({ code: "IN_FLIGHT", detail });
     this.#busyAvatars.add(avatarId);
+  }
+
+  /** `#claimAvatar` for one of the five non-run jobs (see `#avatarEdits`): the avatar also becomes one that an edit of its descriptor or body must wait for. */
+  #claimAvatarForEdit(avatarId: string, detail: string): void {
+    this.#claimAvatar(avatarId, detail);
+    this.#avatarEdits.add(avatarId);
+  }
+
+  /** The release that pairs with `#claimAvatarForEdit`. */
+  #releaseAvatarEdit(avatarId: string): void {
+    this.#avatarEdits.delete(avatarId);
+    this.#busyAvatars.delete(avatarId);
   }
 
   /**
@@ -5009,9 +5252,10 @@ export class Engine {
   }
 
   /** A client for the current key and base URL; the key goes to OpenRouter only. `fetch` wraps the engine's own (a run's reports every status to the network pool). */
-  #openRouter(key: string, fetch: OpenRouterFetch = this.#deps.fetch): OpenRouterClient {
+  #openRouter(key: string, fetch: OpenRouterFetch = this.#deps.fetch, timeoutMs?: number): OpenRouterClient {
     return createOpenRouterClient({
       apiKey: key,
+      ...(timeoutMs === undefined ? {} : { timeoutMs }),
       baseUrl: this.#openRouterBaseUrl,
       allowBaseUrlOverride: STUDIO_E2E,
       fetch,

@@ -289,6 +289,21 @@ export const CATEGORY_REASONS = ["limit", "name-taken", "below-minimum", "mirror
 export const CategoryReason = z.enum(CATEGORY_REASONS);
 export type CategoryReason = z.infer<typeof CategoryReason>;
 
+/**
+ * Why `avatars.editDescriptor` refused the owner's text (VALIDATION's `descriptorReason`, additive in Stage 5): the window's text depends on it, so it is a closed code.
+ * One per way a hand-typed descriptor can fail the prompt-time contract (`AvatarDescriptor`), plus the stale proposal.
+ *
+ * - empty / hidden-chars: blank, or it holds invisible or control characters.
+ * - too-long: over 600 characters.
+ * - no-anchor: the avatar's "<age>-year-old" is missing (it may stand anywhere in the text).
+ * - script / non-ascii-digits / other-age / under-21-bound / youth-word / number: the `AdultTextProblem` of the same name.
+ * - stale: the stored text is no longer the one the proposal was made for.
+ * - invalid: the contract refused it for a reason none of the above names (a rule added later).
+ */
+export const DESCRIPTOR_REASONS = ["empty", "hidden-chars", "too-long", "no-anchor", "script", "non-ascii-digits", "other-age", "under-21-bound", "youth-word", "number", "stale", "invalid"] as const;
+export const DescriptorReason = z.enum(DESCRIPTOR_REASONS);
+export type DescriptorReason = z.infer<typeof DescriptorReason>;
+
 /** A scene's number in its set (the same bounds as `SceneId` in scenes.ts, which imports this file). */
 const SceneIdNumber = z.number().int().min(1).max(10_000);
 
@@ -400,6 +415,13 @@ export const EngineError = z
     /** Additive (Stage 4): which rule `autopilot.estimate` / `autopilot.start` broke (`LAUNCH_REASONS`); only on VALIDATION, never beside a scene or category reason. The window's text is `LAUNCH_REASONS_RU`. */
     launchReason: LaunchReason.optional(),
     /**
+     * Additive (Stage 5, S5.0a): which rule `avatars.editDescriptor` found the owner's text breaking (`DESCRIPTOR_REASONS`); only on VALIDATION, never beside another reason.
+     * The window's text is `DESCRIPTOR_REASONS_RU` (`descriptorReasonRu`).
+     */
+    descriptorReason: DescriptorReason.optional(),
+    /** Additive (Stage 5, S5.0a): the owner's own offending words, only with the reason `youth-word` (at most a handful, each short). */
+    descriptorWords: z.array(z.string().min(1).max(60)).max(10).optional(),
+    /**
      * Additive (CS.2): what a failed paid category call cost, in micro-dollars as the ledger booked it (a settled attempt at its cost, an
      * open reserve at its worst case). Present on every failure of `categories.create` / `categories.regenerate` from the moment its call
      * was started — a provider's refusal (0), two rejected pools, a dropped connection, a pool paid for and not storable — and absent on
@@ -439,6 +461,18 @@ export const EngineError = z
   .refine((e) => e.launchReason === undefined || (e.sceneReason === undefined && e.categoryReason === undefined), {
     message: "a refusal has one reason: a launchReason, a sceneReason or a categoryReason",
     path: ["launchReason"],
+  })
+  .refine((e) => e.descriptorReason === undefined || e.code === "VALIDATION", {
+    message: "descriptorReason may only be present on VALIDATION",
+    path: ["descriptorReason"],
+  })
+  .refine((e) => e.descriptorReason === undefined || (e.sceneReason === undefined && e.categoryReason === undefined && e.launchReason === undefined), {
+    message: "a refusal has one reason: a descriptorReason, a launchReason, a sceneReason or a categoryReason",
+    path: ["descriptorReason"],
+  })
+  .refine((e) => e.descriptorWords === undefined || e.descriptorReason === "youth-word", {
+    message: "descriptorWords may only accompany the descriptorReason youth-word",
+    path: ["descriptorWords"],
   })
   .refine((e) => e.sceneId === undefined || (e.sceneReason !== undefined && (SCENE_REASONS_NAMING_A_SCENE as readonly string[]).includes(e.sceneReason)), {
     message: "sceneId may only accompany a sceneReason that names a scene",

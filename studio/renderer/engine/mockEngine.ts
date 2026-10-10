@@ -17,6 +17,7 @@ import {
   type CommandMessage,
   type CommandType,
   type Draft,
+  type DescriptorCheck,
   type EngineError,
   type EngineNotice,
   type ExportStatus,
@@ -95,6 +96,8 @@ import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, v
 import { MOCK_IMAGE_CATALOGUE } from "./mockImageModels";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
+import { descriptorEditOutcome } from "./mockAvatarEdit";
+import { matchingCheck, MOCK_CHECK_ESTIMATE } from "./mockDescriptorCheck";
 import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
 import { MockAutopilot, type MockAutopilotUnit, type PaidFault } from "./mockAutopilot";
@@ -711,6 +714,10 @@ export class MockEngine implements EngineBridge {
   /** T6c's own import price, settable apart from `price` above (the avatar-creation baseline): the two commands are priced independently by the real engine too. */
   private importPriceValue: Estimate = { ...MOCK_IMPORT_ESTIMATE };
   private rewritePriceOverride: Pick<Estimate, "expectedMicros" | "worstMicros"> | null = null;
+  /** Stage 5, S5.0c: the check's own price when a test changed it (`setCheckPrice`); otherwise `MOCK_CHECK_ESTIMATE`. */
+  private checkPriceOverride: Pick<Estimate, "expectedMicros" | "worstMicros"> | null = null;
+  /** Stage 5, S5.0c: what the next descriptor check comes back as (`setNextDescriptorCheck`), used once. */
+  private nextDescriptorCheck: DescriptorCheck | EngineError | null = null;
   private encryptionAvailable: boolean;
   private readonly forced = new Map<CommandType, EngineError[]>();
   private readonly delayed = new Map<CommandType, number[]>();
@@ -803,6 +810,8 @@ export class MockEngine implements EngineBridge {
   private previousProcessReserves = false;
   /** S4.8: avatars another job of the owner's holds, by a testkit switch (`setAvatarBusy`). */
   private readonly busyAvatars = new Set<string>();
+  /** Stage 5: avatars one of the five non-run jobs holds (the engine's `#avatarEdits`), by a testkit switch (`setAvatarEditing`). An edit of the descriptor meets IN_FLIGHT for them, never for `busyAvatars`. */
+  private readonly editingAvatars = new Set<string>();
   /** S4.8: the library cannot say which photos are free (`loseLaunchLibrary`). */
   private launchLibraryLost = false;
   /** S4.8: the launch's videos find no track though some are stored (`holdLaunchMusic`). */
@@ -1761,6 +1770,28 @@ export class MockEngine implements EngineBridge {
     else this.busyAvatars.delete(avatarId);
   }
 
+  /**
+   * A rewrite, a candidates batch, an archive, a delete or a descriptor check holds the avatar (the mock runs the first four to their end at once, so a test says it by this switch):
+   * `avatars.editDescriptor` answers IN_FLIGHT. A photo run or a launch (`setAvatarBusy`) does not stop an edit.
+   */
+  setAvatarEditing(avatarId: string, editing: boolean): void {
+    if (editing) this.editingAvatars.add(avatarId);
+    else this.editingAvatars.delete(avatarId);
+  }
+
+  /**
+   * Stage 5, S5.0c: the NEXT descriptor check, from `avatars.checkDescriptor` or an import's own, comes back as `outcome` (used once): a check as it is, or an error (the check
+   * is refused: a command answers it, an import gives `descriptorCheck: null`). Without one a check says everything agrees with the descriptor it judges.
+   */
+  setNextDescriptorCheck(outcome: DescriptorCheck | EngineError): void {
+    this.nextDescriptorCheck = outcome;
+  }
+
+  /** Stage 5, S5.0c: changes the check's own price, so a check accepted lower gets PRICE_CHANGED. */
+  setCheckPrice(price: Pick<Estimate, "expectedMicros" | "worstMicros">): void {
+    this.checkPriceOverride = price;
+  }
+
   /** The library cannot say which photos are free (its usage or the drafts cannot be read): the launch's free steps wait as «library-unknown» and pick or drop nothing. */
   loseLaunchLibrary(lost: boolean): void {
     this.launchLibraryLost = lost;
@@ -2425,6 +2456,48 @@ export class MockEngine implements EngineBridge {
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: archived } });
         return this.ok(c, { avatar: archived });
       }
+      case "avatars.editDescriptor": {
+        // The engine's order: the library, the claim, the avatar (a draft is VALIDATION; an unreadable entry holds no text here, so it is as unknown as in a library
+        // without it), a stale proposal, then the text's own rules.
+        const { avatarId, text, expectedText } = c.payload;
+        const gone = this.writeLibraryGate();
+        if (gone) return this.fail(c, gone);
+        if (this.editingAvatars.has(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; edit the description when that ends" });
+        const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+        if (avatar === undefined) {
+          return this.drafts.some((d) => d.avatarId === avatarId)
+            ? this.fail(c, { code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` })
+            : this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        }
+        const outcome = descriptorEditOutcome(avatar.descriptor.text, avatar.descriptor.age, text, expectedText);
+        if ("error" in outcome) return this.fail(c, outcome.error);
+        const edited: AvatarSummary = { ...avatar, descriptor: { ...avatar.descriptor, text: outcome.text } };
+        this.avatars = this.avatars.map((a) => (a === avatar ? edited : a));
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: edited } });
+        return this.ok(c, { avatar: edited });
+      }
+      case "avatars.estimateCheckDescriptor": {
+        // The engine's order: the library, then the avatar (a draft is priced too: the wizard shows the price before «Сохранить»).
+        const gone = this.libraryGate() ?? this.checkTargetRefusal(c.payload.avatarId, { draftsToo: true });
+        if (gone) return this.fail(c, gone);
+        return this.ok(c, this.checkPrice());
+      }
+      case "avatars.checkDescriptor": {
+        // The engine's order: the claim (IN_FLIGHT while a job, a command or a photo run holds the avatar), the key and the ledger, the library, the avatar (a draft is
+        // VALIDATION), the price. It never writes: the avatar is exactly as it was.
+        const { avatarId, acceptedWorstMicros } = c.payload;
+        if (this.editingAvatars.has(avatarId) || this.jobRunningFor(avatarId)) {
+          return this.fail(c, { code: "IN_FLIGHT", detail: "a job or command is already changing this avatar; wait for it to finish" });
+        }
+        const refusal = this.keyAndLedgerGate() ?? this.writeLibraryGate() ?? this.checkTargetRefusal(avatarId, { draftsToo: false }) ?? this.priceGate(acceptedWorstMicros, this.checkPrice().worstMicros);
+        if (refusal) return this.fail(c, refusal);
+        const scripted = this.takeDescriptorCheck();
+        if (scripted !== null && "code" in scripted) return this.fail(c, scripted);
+        const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+        if (avatar === undefined) throw new Error("unreachable: checkTargetRefusal already checked the avatar exists");
+        this.spend(this.checkPrice().expectedMicros);
+        return this.ok(c, { check: scripted ?? matchingCheck(avatar.descriptor.text) });
+      }
       case "avatars.deletePreview":
         return this.deletePreview(c, c.payload.avatarId);
       case "avatars.delete":
@@ -2527,7 +2600,10 @@ export class MockEngine implements EngineBridge {
         this.avatars = [...this.avatars, avatar];
         this.spend(this.importPrice().expectedMicros);
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar } });
-        return this.ok(c, { avatar });
+        // The avatar is saved first; its check runs after, and a refused one gives null without undoing the import (the price above already holds the check).
+        const scripted = this.takeDescriptorCheck();
+        const descriptorCheck = scripted === null ? matchingCheck(avatar.descriptor.text) : "code" in scripted ? null : scripted;
+        return this.ok(c, { avatar, descriptorCheck });
       }
       case "photos.list": {
         const { avatarId, cursor } = c.payload;
@@ -4461,6 +4537,30 @@ export class MockEngine implements EngineBridge {
   /** The descriptor-only recovery's price: the same descriptor sub-cost `candidatesPrice` subtracts, alone; never touches the image age check either way. */
   private rewritePrice(): Estimate {
     return { ...this.price, expectedMicros: DESCRIPTOR.expected, worstMicros: DESCRIPTOR.worst, ...this.rewritePriceOverride };
+  }
+
+  /** Stage 5, S5.0c: the check's price: up to two attempts, `setCheckPrice` aside. */
+  private checkPrice(): Estimate {
+    return { ...MOCK_CHECK_ESTIMATE, ...this.checkPriceOverride };
+  }
+
+  /** The scripted outcome of the next check, taken (it is used once). */
+  private takeDescriptorCheck(): DescriptorCheck | EngineError | null {
+    const scripted = this.nextDescriptorCheck;
+    this.nextDescriptorCheck = null;
+    return scripted;
+  }
+
+  /**
+   * The engine's avatar checks for a descriptor check: NOT_FOUND for an id that names no saved avatar (an unreadable entry holds no text here, as for an edit); a draft is
+   * priced (`draftsToo`) but is VALIDATION for the check itself.
+   */
+  private checkTargetRefusal(avatarId: string, options: { draftsToo: boolean }): EngineError | null {
+    if (this.avatars.some((a) => a.avatarId === avatarId)) return null;
+    if (this.drafts.some((d) => d.avatarId === avatarId)) {
+      return options.draftsToo ? null : { code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar has a master photo to check against` };
+    }
+    return { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` };
   }
 
   /** T6c's import job price: fixed, unaffected by settings.imageAgeCheck (an import makes no age check either way). */

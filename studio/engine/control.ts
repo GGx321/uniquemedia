@@ -2,7 +2,7 @@ import { z } from "zod";
 import { AbsolutePath, ApiKey, Count, EngineError, EngineNotice, Id, MediaFileName, MediaPickKind, MediaUnsupportedReason, MusicKey, PickedFileIdentity, Settings, type EngineCommandMessage } from "../shared/engine";
 import { DESCRIPTOR_MAX_ATTEMPTS } from "./avatars/descriptor";
 import { POOL_MAX_ATTEMPTS } from "./scenes/poolCall";
-import { IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
+import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
@@ -308,8 +308,12 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   "avatars.estimateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.estimateRewriteDescriptor": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.estimateImport": PRICE_FETCH_TIMEOUT_MS + 15_000,
-  // T6c: up to IMPORT_DESCRIBE_MAX_ATTEMPTS describe attempts, each at its slowest (no age check since 2026-10-05).
-  "avatars.importAvatar": PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  // T6c: up to IMPORT_DESCRIBE_MAX_ATTEMPTS describe attempts, each at its slowest (no age check since 2026-10-05); S5.0c: then up to DESCRIPTOR_CHECK_MAX_ATTEMPTS check attempts of the
+  // saved avatar, each at its slowest under the check's own, shorter timeout (DESCRIPTOR_CHECK_MAX_ATTEMPT_MS).
+  "avatars.importAvatar": PRICE_FETCH_TIMEOUT_MS + IMPORT_DESCRIBE_MAX_ATTEMPTS * MAX_ATTEMPT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  // Stage 5, S5.0c: the check's price (a price load that times out still gives the fallback estimate), and the paid check itself: a price load, a load of the master, then every check attempt.
+  "avatars.estimateCheckDescriptor": PRICE_FETCH_TIMEOUT_MS + 15_000,
+  "avatars.checkDescriptor": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

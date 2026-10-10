@@ -352,6 +352,66 @@ describe("updateAvatar", () => {
     expect(library.getAvatar("avatar-0001")).toMatchObject({ name: "Mia" });
   });
 
+  test("hands the validator the manifest as it would be written, and writes it when the validator accepts", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(MIA);
+    const seen: { name: string; descriptor: string }[] = [];
+
+    const updated = await library.updateAvatar("avatar-0001", { descriptor: "a new 25-year-old woman." }, (next) => {
+      seen.push({ name: next.name, descriptor: next.descriptor });
+    });
+
+    expect(seen).toEqual([{ name: "Mia", descriptor: "a new 25-year-old woman." }]);
+    expect(updated.descriptor).toBe("a new 25-year-old woman.");
+    expect(library.getAvatar("avatar-0001")?.descriptor).toBe("a new 25-year-old woman.");
+  });
+
+  test("hands the validator the manifest that is stored right now as well, before the write", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(MIA);
+    const stored: string[] = [];
+
+    await library.updateAvatar("avatar-0001", { descriptor: "a new 25-year-old woman." }, (_next, current) => {
+      stored.push(current.descriptor);
+    });
+
+    expect(stored).toEqual([MIA.descriptor]);
+  });
+
+  test("a validator that throws refuses the update, with its own error, and leaves the manifest on disk and in memory", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(MIA);
+    const refusal = new Error("validator says no");
+
+    expect(
+      await rejectionOf(
+        library.updateAvatar("avatar-0001", { descriptor: "a new 25-year-old woman." }, () => {
+          throw refusal;
+        })
+      )
+    ).toBe(refusal);
+
+    const avatarDir = join(root(), "avatars", "avatar-0001");
+    expect(await readJson(join(avatarDir, "avatar.json"))).toMatchObject({ descriptor: MIA.descriptor });
+    expect(library.getAvatar("avatar-0001")?.descriptor).toBe(MIA.descriptor);
+    expect(await tempFilesIn(avatarDir)).toHaveLength(0);
+  });
+
+  test("the validator runs inside the exclusive section: a queued update is judged against the one before it", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(MIA);
+    const namesSeenBy2: string[] = [];
+
+    const first = library.updateAvatar("avatar-0001", { name: "First" });
+    const second = library.updateAvatar("avatar-0001", { descriptor: "a second 25-year-old woman." }, (next) => {
+      namesSeenBy2.push(next.name);
+    });
+    await Promise.all([first, second]);
+
+    expect(namesSeenBy2).toEqual(["First"]);
+    expect(library.getAvatar("avatar-0001")).toMatchObject({ name: "First", descriptor: "a second 25-year-old woman." });
+  });
+
   test("a crash between the temp write and the rename keeps the old manifest on disk and in memory", async () => {
     let armed = false;
     const crash = new Error("simulated crash");

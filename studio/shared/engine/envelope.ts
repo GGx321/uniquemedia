@@ -86,6 +86,13 @@ import { z } from "zod";
 //  - `LogKind` `open-set` (S4.10): the owner's own open scene set stands in the way of an avatar's compose; written once per wait.
 //  - `HOST_ASLEEP_DETAIL` (S4.7), a plain `EngineError.detail` string and no new `ErrorCode`: main refuses a command that starts paid work or moves a launch while the Mac sleeps or has just woken;
 //    nothing was sent, and a retry a moment later goes through. The window words it in Russian.
+// Stage 5, S5.0a (additive, no bump; a new command and two optional error fields, nothing that exists changes): `avatars.editDescriptor { avatarId, text, expectedText }` →
+//   `{ avatar }`, the owner's own free edit of a saved avatar's descriptor (a stale `expectedText` is refused); `EngineError.descriptorReason` (`DESCRIPTOR_REASONS`, only on VALIDATION,
+//   never beside another reason; Russian texts `DESCRIPTOR_REASONS_RU` / `descriptorReasonRu`) and `EngineError.descriptorWords` (the owner's own offending words, only with
+//   the reason `youth-word`). No new ErrorCode.
+// Stage 5, S5.0c (additive, no bump; two new commands and one optional result field, nothing that exists changes): `avatars.estimateCheckDescriptor { avatarId }` → `Estimate` (free; also for a
+//   draft) and `avatars.checkDescriptor { avatarId, acceptedWorstMicros }` → `{ check: DescriptorCheck }` (paid; never writes); `avatars.importAvatar`'s result gains the optional nullable
+//   `descriptorCheck`. `DescriptorCheck`, `AspectVerdict`, `CheckAspect`, `CheckState` live in avatar.ts. No new ErrorCode.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
