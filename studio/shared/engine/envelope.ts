@@ -77,6 +77,15 @@ import { z } from "zod";
 //   draw is priced by (`runs.estimateFromScenes`' and the launch's slices'), so the figure is the one the run will reserve. NOT_FOUND for an avatar that is not saved and active, a
 //   launch that is not the unfinished one, or an avatar it does not hold. Why a command and not `runs.estimateFromScenes` for a launch's set: that refuses a set with a scene
 //   that has no text, which is the very state of the review the strip prices.
+// Stage 4, S4.6r to S4.10 (additive, no bump; one bundle with the window; listed here after the fact, S4.10 fix D, since the contract's own tests held them and this changelog did not):
+//  - `WaitingReason` and `LogKind` `library-unknown` (the §22 follow-up of S4.6c2): the library cannot say which of an avatar's photos are free (its usage is unknown), so nothing is picked or dropped yet; the row waits
+//    and the line is written once.
+//  - `InternalHoldKind` `job-failed` (S4.6r), beside `allocation-exceeded`: a paid job ended in a way no row of the failure table covers; «Продолжить» runs it again. `PaidHold.internal.detail.message`
+//    (optional, only with `job-failed`, enforced by the schema) carries the job's words, paths scrubbed and cut; `LogKind` `hold-internal` carries `holdKind` and the same words as `detail`.
+//  - `LogKind` `render-retry` (S4.6r): a render that ended without a video is submitted again once, free; the second failure drops the video (`render-dropped`).
+//  - `LogKind` `open-set` (S4.10): the owner's own open scene set stands in the way of an avatar's compose; written once per wait.
+//  - `HOST_ASLEEP_DETAIL` (S4.7), a plain `EngineError.detail` string and no new `ErrorCode`: main refuses a command that starts paid work or moves a launch while the Mac sleeps or has just woken;
+//    nothing was sent, and a retry a moment later goes through. The window words it in Russian.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

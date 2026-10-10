@@ -309,7 +309,10 @@ export type LaunchAvatarView = z.infer<typeof LaunchAvatarView>;
 
 // ---------- the log ----------
 
-/** The kinds of a log line: the 23 rows of the design's log sheet. The engine writes types and numbers; the window words each. */
+/**
+ * The kinds of a log line. The design's log sheet drew 23 rows; the engine's lines have grown with the stages since (S4.6r, S4.6w, S4.10: 39 kinds now, the count `autopilot.test.ts` pins), each added
+ * with the window's words for it. The engine writes types and numbers; the window words each.
+ */
 const line = <const K extends string, F extends z.ZodRawShape>(kind: K, fields: F) => z.strictObject({ at: IsoDateTime, avatarId: Id.optional(), kind: z.literal(kind), ...fields });
 
 const LogSkipped = line("skipped", { reason: SkipReason, failed: Count.optional(), total: Count.optional() }).refine(
