@@ -151,7 +151,7 @@ describe("a refusal's feedback is bounded: the words are the model's own text, s
 
 /** The widest of each label the writer sends, read from the tables themselves so a longer phrase can never slip past the floor pins (S5.1b review). */
 const longestOf = <T extends string>(keys: readonly T[], label: (key: T) => string): T => keys.reduce((a, b) => (label(b).length > label(a).length ? b : a));
-const WORST_TIME = longestOf(POOL_TIMES, lightOf);
+const WORST_TIME = longestOf([...POOL_TIMES, "a time the table does not know"], lightOf);
 const WORST_SHOT = longestOf(CANON_SHOTS, (s) => SHOT_LABEL[s]);
 const WORST_POSE = longestOf(Object.keys(POSE_LABEL) as Pose[], (p) => POSE_LABEL[p]);
 

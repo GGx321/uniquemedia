@@ -72,7 +72,7 @@ const STYLE_RU: Record<CategoryStyle, string> = { phone: "телефон", edito
 export function styleNote(style: CategoryStyle): string {
   return style === "phone"
     ? "Стиль «телефон», как у Дома."
-    : "Стиль «редакционный», как у Фотосессии: в наборе не меньше трёх кадров «Фотограф».";
+    : "Стиль «редакционный» сохранён со старой версии; новые фото снимаются как с телефона.";
 }
 
 const SHORT_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });

@@ -305,7 +305,9 @@ describe("detectors", () => {
     // S5.1b review: the viewer, the phone and the lens are the same forbidden gaze for a back or profile pose.
     ["back", "she looks over her shoulder at the viewer as she leaves.", true],
     ["profile", "she glances toward the viewer with a small smile.", true],
-    ["back", "she looks at the phone and then walks away.", true],
+    // Her own phone is the slot's activity, not a gaze at the viewer: it must not cost a paid retry.
+    ["back", "she looks down at the phone in her hand and walks away.", false],
+    ["profile", "she looks at the phone in her hand, smiling.", false],
     ["profile", "she smiles into the lens.", true],
     ["profile", "she is not looking at the viewer, her eyes on the window.", false],
     ["front", "she looks at the viewer and laughs.", false],

@@ -344,7 +344,7 @@ function phoneInHand(slot: ReadableSlot): boolean {
 const CAMERA_GAZE_VERB = "(?:look(?:ing|s)?|gaz(?:ing|es)?|star(?:ing|es)?|glanc(?:ing|es)?|smil(?:ing|es)?|peer(?:ing|s)?)";
 const CAMERA_GAZE_NEGATOR = "(?:not|isn't|is\\s+not|never|without|no\\s+longer)\\s+";
 const CAMERA_GAZE = new RegExp(
-  `\\b(?<!${CAMERA_GAZE_NEGATOR})${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+(?:camera|phone|viewer|lens)\\b`,
+  `\\b(?<!${CAMERA_GAZE_NEGATOR})${CAMERA_GAZE_VERB}\\b[^.]{0,25}?\\b(?:at|toward|towards|into)\\s+the\\s+(?:camera|viewer|lens)\\b`,
   "i",
 );
 
