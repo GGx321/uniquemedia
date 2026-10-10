@@ -1406,6 +1406,7 @@ export class MockEngine implements EngineBridge {
    * shows none stores nothing, which is the default). Serves one import only.
    */
   queueImportBodyProposal(proposal: BodyProposal): void {
+    if (Object.keys(proposal.values).length === 0) throw new Error("an import body proposal needs at least one value: a photo that shows no body stores none");
     this.nextImportBody = proposal;
   }
 
@@ -2640,6 +2641,7 @@ export class MockEngine implements EngineBridge {
         if (this.nextImportFailure) {
           const error = this.nextImportFailure;
           this.nextImportFailure = null;
+          this.nextImportBody = null;
           // One describe attempt ran (and is billed); nothing is stored. L8: its own expected micros, shared with plan.test.ts
           // and the import tile's own text — never a separate number.
           this.spend(IMPORT_FALLBACK_PRICE.describe.expectedMicros);

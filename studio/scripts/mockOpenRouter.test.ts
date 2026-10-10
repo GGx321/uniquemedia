@@ -4,7 +4,7 @@ import { failureDetail } from "./failureDetail";
 import { poolMessages, readPoolAnswer } from "../engine/scenes/poolGen";
 import { IDEA_JSON_SCHEMA, ideaMessages, readIdeaAnswer, type IdeaSlot } from "../engine/scenes/ideaWriter";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
-import { readImportDescribeAnswer } from "../engine/avatars/importDescribe";
+import { IMPORT_DESCRIBE_JSON_SCHEMA, IMPORT_DESCRIBE_NO_BODY_JSON_SCHEMA, readImportDescribeAnswer } from "../engine/avatars/importDescribe";
 import { DESCRIPTOR_CHECK_JSON_SCHEMA, descriptorCheckMessages, readDescriptorCheckAnswer } from "../engine/avatars/descriptorCheck";
 import { BODY_KEYS, type AvatarDescriptor } from "../shared/engine";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -562,5 +562,29 @@ describe("poolSize", () => {
     const first = (await bounded(postImage(mock), 10_000, "the first image")).b64;
     for (let i = 1; i < 48; i++) await bounded(postImage(mock), 10_000, "an image");
     expect((await bounded(postImage(mock), 10_000, "the 49th image")).b64).toBe(first);
+  });
+});
+
+// S5.2b review M1: the retry after an unusable answer asks without the body keys in the schema. The mock answers what it was asked: no body keys when the schema has none.
+describe("the import describe call without the body request", () => {
+  const postWith = (m: MockOpenRouter, schema: unknown) =>
+    nativeFetch(`${m.url}/chat/completions`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "x-ai/grok-4.3", messages: [], response_format: { type: "json_schema", json_schema: { name: "import_describe", strict: true, schema } } }),
+    });
+  const contentOf = async (r: Response): Promise<string> => ((await r.json()) as { choices: { message: { content: string } }[] }).choices[0]?.message.content ?? "";
+
+  test("a schema with no body keys is answered with none, even when the scenario scripts a body", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "A 25-year-old woman.", importDescribeAnswer: { ...DEFAULT_IMPORT_DESCRIBE_ANSWER, height: "tall", bodyMarks: ["mole-back"] } });
+    const answer = JSON.parse(await contentOf(await postWith(mock, IMPORT_DESCRIBE_NO_BODY_JSON_SCHEMA.schema))) as Record<string, unknown>;
+    for (const key of BODY_KEYS) expect(key in answer).toBe(false);
+    expect(readImportDescribeAnswer(JSON.stringify(answer)).ok).toBe(true);
+  });
+
+  test("the full schema is answered with the body keys", async () => {
+    mock = await startMockOpenRouter({ descriptorText: "A 25-year-old woman.", importDescribeAnswer: { ...DEFAULT_IMPORT_DESCRIBE_ANSWER, height: "tall" } });
+    const answer = JSON.parse(await contentOf(await postWith(mock, IMPORT_DESCRIBE_JSON_SCHEMA.schema))) as Record<string, unknown>;
+    expect(answer.height).toBe("tall");
   });
 });

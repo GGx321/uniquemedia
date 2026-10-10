@@ -245,3 +245,22 @@ test("a scripted body serves one import only: the next one has no proposal", asy
 
   expect(avatar.bodyProposal).toBeUndefined();
 });
+
+// S5.2b review L10.
+test("a failed import consumes the scripted body too: the next import does not get it", async () => {
+  const { engine, client } = makeMock();
+  engine.queueImportBodyProposal(PROPOSAL);
+  engine.failNextImportAfterConsuming({ code: "INTERNAL", detail: "x" });
+  const failing = await pickedImport(client);
+  await client.request("avatars.importAvatar", { stagingId: failing.stagingId, name: "Zoe", acceptedWorstMicros: failing.worst });
+  const next = await pickedImport(client);
+
+  const { avatar } = await unwrap(client.request("avatars.importAvatar", { stagingId: next.stagingId, name: "Eva", acceptedWorstMicros: next.worst }));
+
+  expect(avatar.bodyProposal).toBeUndefined();
+});
+
+test("a scripted body with no values is refused: an empty proposal is never stored", () => {
+  const { engine } = makeMock();
+  expect(() => engine.queueImportBodyProposal({ values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z" })).toThrow();
+});
