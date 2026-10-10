@@ -26,12 +26,12 @@ describe("roomPlaceOf", () => {
   });
 
   test("carries messyOk of the slot's activity", () => {
-    expect(roomPlaceOf(slot({ location: "her unmade bed", activity: "stretching after waking up" }))?.activity.messyOk).toBe(true);
-    expect(roomPlaceOf(slot({ location: "her unmade bed", activity: "scrolling her phone" }))?.activity.messyOk).not.toBe(true);
+    expect(roomPlaceOf(slot({ location: "her bed in the morning", activity: "stretching after waking up" }))?.activity.messyOk).toBe(true);
+    expect(roomPlaceOf(slot({ location: "her bed in the morning", activity: "scrolling her phone" }))?.activity.messyOk).not.toBe(true);
   });
 
   test("is not messy for an activity the place no longer has (a renamed activity of an old plan)", () => {
-    const place = roomPlaceOf(slot({ location: "her unmade bed", activity: "yawning" }));
+    const place = roomPlaceOf(slot({ location: "her bed in the morning", activity: "yawning" }));
     expect(place?.room).toBe(true);
     expect(place?.activity.messyOk).not.toBe(true);
   });

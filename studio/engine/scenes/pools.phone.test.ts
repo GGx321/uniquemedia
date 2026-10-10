@@ -58,6 +58,28 @@ describe("the built-in pools are ordinary places", () => {
     for (const [, place] of allPlaces) expect(place.at?.length ?? 0).toBeGreaterThan(0);
   });
 
+  // The place name goes to the writer as the slot's location whatever the room draw says, so mess in a name or a detail would contradict «The room is ordinary
+  // and fairly tidy». The room draw (phoneLook.ts) is the only source of mess.
+  test("no place name or detail carries mess: the room draw is the only source of it", () => {
+    const MESS = /\b(unmade|clothes|messy|mess|clutter\w*|hoodie|charger|cables?|pile|piles)\b/i;
+    for (const [, place] of allPlaces) for (const text of [place.name, place.at ?? "", ...(place.details ?? [])]) expect(text).not.toMatch(MESS);
+  });
+
+  test("a glamour place is lit by the evening or the night, never the morning (its outfits are going-out ones)", () => {
+    for (const place of POOLS.glamour.locations) for (const time of place.times) expect(["evening", "night"]).toContain(time);
+  });
+
+  test("no travel outfit is a sundress that would sit oddly on a mountain viewpoint or a ferry deck", () => {
+    expect(POOLS.travel.outfits).not.toContain("a light linen sundress");
+  });
+
+  test("the cafe table has table activities and the hallway wall has no stool", () => {
+    const cafe = POOLS.photoshoot.locations.find((l) => l.name === "a corner cafe table");
+    const wall = POOLS.photoshoot.locations.find((l) => l.name === "a plain wall in her hallway");
+    expect(cafe?.activities.map((a) => a.text).join(" ")).not.toMatch(/counter/);
+    expect(wall?.activities.map((a) => a.text).join(" ")).not.toMatch(/stool/);
+  });
+
   test("every place name is unique within its category", () => {
     for (const category of CATEGORIES) {
       const names = POOLS[category].locations.map((l) => l.name);
@@ -75,7 +97,7 @@ describe("the built-in pools are ordinary places", () => {
 
   test("the rooms the owner pictured are there: a kitchen, a bed, a couch, a bathroom mirror and a hallway wall", () => {
     const names = allPlaces.map(([, p]) => p.name);
-    for (const expected of ["her small kitchen", "her unmade bed", "the couch under a blanket", "her bathroom mirror", "a plain wall in her hallway"]) expect(names).toContain(expected);
+    for (const expected of ["her small kitchen", "her bed in the morning", "the couch under a blanket", "her bathroom mirror", "her bedroom mirror", "a plain wall in her hallway"]) expect(names).toContain(expected);
   });
 });
 
