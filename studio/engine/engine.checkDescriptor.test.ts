@@ -418,6 +418,22 @@ describe("avatars.checkDescriptor: failures", () => {
     expect(events().at(-1)).toMatchObject({ type: "settings.changed", payload: { settings: { apiKey: { rejected: true } } } });
   });
 
+  // S5.R1: the cap was set before the client existed, outside the try/finally, so a client that could not be made (the E2E build refused the 60 s timeout) left the check's
+  // cap in the engine for good, and the month's room shrank by the check's worst case on every «Проверить описание».
+  test("a check whose client cannot be made fails INTERNAL and leaves no cap behind: the month's room is whole again", async () => {
+    const avatarId = await seedAvatar();
+    const net = network();
+    const monthlyBudgetMicros = 5 * CHECK_ESTIMATE.worstMicros;
+    const { engine } = await started({ net, deps: { descriptorCheckTimeoutMs: 999_999 }, init: { settings: engineSettings(dir(), { monthlyBudgetMicros }) } });
+
+    expect(failed(await engine.handle(check(avatarId))).error.code).toBe("INTERNAL");
+    expect(failed(await engine.handle(check(avatarId))).error.code).toBe("INTERNAL");
+
+    expect(engine.monthRoom()?.freeMicros).toBe(monthlyBudgetMicros);
+    expect(checkCalls(net)).toHaveLength(0);
+    expect(paidLines()).toHaveLength(0);
+  });
+
   test("a request that gets no answer within the check's own timeout fails TIMEOUT and leaves its reserve open at the worst case", async () => {
     const avatarId = await seedAvatar();
     const net = network({ check: () => ({ hang: true }) });
