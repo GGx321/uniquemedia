@@ -13,8 +13,8 @@ useNativeGlobals();
 const JPEG = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0xaa);
 const SCOPE: Scope = { avatarJobId: "import-00000001" };
 const JOB: ImportDescribeJob = { jobId: "import-00000001", scope: SCOPE, textModel: "x-ai/grok-4.3", image: JPEG };
-/** One describe attempt at its ceilings on grok-4.3 (fallback prices): 3K out × $2.50/M + 8K in × $1.25/M. */
-const ATTEMPT_WORST = 17_500;
+/** One describe attempt at its ceilings on grok-4.3 (fallback prices): 3K out × $2.50/M + 9K in × $1.25/M. */
+const ATTEMPT_WORST = 18_750;
 
 const GOOD_ANSWER = {
   people: 1,
@@ -186,4 +186,16 @@ test("one person who is not a woman (woman: false) fails at once with IMPORT_SUB
 
   expect(await result).toMatchObject({ ok: false, error: { code: "IMPORT_SUBJECT_INVALID" } });
   expect(net.calls).toHaveLength(1);
+});
+
+const BODY_UNKNOWN = { height: "unknown", bust: "unknown", figure: "unknown", legLength: "unknown", legShape: "unknown", bottomSize: "unknown", bottomShape: "unknown", bodyMarks: [] };
+
+test("a body the photo showed rides along with the traits and the descriptor (S5.2b)", async () => {
+  const outcome = await run([reply({ ...GOOD_ANSWER, ...BODY_UNKNOWN, height: "tall" })]).result;
+  expect(outcome.ok && outcome.body?.values).toEqual({ height: "tall" });
+});
+
+test("a photo that showed no body leaves the body out of the result (S5.2b)", async () => {
+  const outcome = await run([reply({ ...GOOD_ANSWER, ...BODY_UNKNOWN })]).result;
+  expect(outcome.ok && "body" in outcome).toBe(false);
 });

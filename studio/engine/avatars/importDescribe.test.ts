@@ -2,7 +2,24 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
-import { adultTextProblems, allYouthRuleNames, AvatarDescriptor, AvatarTraits, HairColor } from "../../shared/engine";
+import {
+  adultTextProblems,
+  allYouthRuleNames,
+  AvatarDescriptor,
+  AvatarTraits,
+  Build,
+  BODY_KEYS,
+  bodyPhrase,
+  BodyBust,
+  BodyFigure,
+  BodyHeight,
+  BodyMark,
+  BottomShape,
+  BottomSize,
+  HairColor,
+  LegLength,
+  LegShape,
+} from "../../shared/engine";
 import { promptTokenFloor } from "../openrouter/chat";
 import { importDescribeCall } from "./plan";
 import {
@@ -21,6 +38,9 @@ useNativeGlobals();
 // exactly the same AvatarTraits/AvatarDescriptor rules as a generated
 // avatar's (invariant 8) — never a looser check just because the source is
 // an import.
+
+/** Every body key answered "unknown" and no marks: a photo that shows no body. */
+const ALL_UNKNOWN = { height: "unknown", bust: "unknown", figure: "unknown", legLength: "unknown", legShape: "unknown", bottomSize: "unknown", bottomShape: "unknown", bodyMarks: [] };
 
 function answer(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -107,11 +127,105 @@ describe("importDescribeMessages", () => {
   });
 });
 
-test("the output schema requires every trait, the descriptor, and the subject check (M5: exactly one woman) — nothing else", () => {
+test("the output schema requires every trait, the eight body keys (S5.2b), the descriptor, and the subject check (M5: exactly one woman) — nothing else", () => {
   expect(IMPORT_DESCRIBE_JSON_SCHEMA.schema).toMatchObject({
     type: "object",
     additionalProperties: false,
-    required: ["people", "woman", "age", "ethnicity", "skinTone", "hairColor", "hairLength", "hairTexture", "eyeColor", "build", "marks", "descriptor"],
+    required: [
+      "people", "woman", "age", "ethnicity", "skinTone", "hairColor", "hairLength", "hairTexture", "eyeColor", "build", "marks",
+      "height", "bust", "figure", "legLength", "legShape", "bottomSize", "bottomShape", "bodyMarks", "descriptor",
+    ],
+  });
+});
+
+// Stage 5, S5.2b: the body the photo shows. Each of the eight body keys is answered only when the photo clearly shows it ("unknown" otherwise); the reader turns the answer into
+// proposals (`values`) and a per-key `seen`, and nothing here is ever a trait.
+describe("the body request (S5.2b)", () => {
+  const BODY_ENUM_KEYS = ["height", "bust", "figure", "legLength", "legShape", "bottomSize", "bottomShape"] as const;
+
+  test("the schema requires the eight body keys after the existing ones, and the descriptor stays last", () => {
+    const required = (IMPORT_DESCRIBE_JSON_SCHEMA.schema as { required: string[] }).required;
+    expect(required).toEqual([
+      "people", "woman", "age", "ethnicity", "skinTone", "hairColor", "hairLength", "hairTexture", "eyeColor", "build", "marks",
+      ...BODY_KEYS, "descriptor",
+    ]);
+  });
+
+  test("each single-choice body key is its enum plus unknown, and bodyMarks is a list of the fixed body marks", () => {
+    const properties = (IMPORT_DESCRIBE_JSON_SCHEMA.schema as { properties: Record<string, { enum?: string[]; items?: { enum?: string[] }; type: string }> }).properties;
+    const shapes = { height: BodyHeight, bust: BodyBust, figure: BodyFigure, legLength: LegLength, legShape: LegShape, bottomSize: BottomSize, bottomShape: BottomShape };
+    for (const key of BODY_ENUM_KEYS) expect(properties[key]?.enum).toEqual([...shapes[key].options, "unknown"]);
+    expect(properties.bodyMarks?.type).toBe("array");
+    expect(properties.bodyMarks?.items?.enum).toEqual([...BodyMark.options]);
+  });
+
+  test("the prompt asks for each body field only when the photo clearly shows it, and keeps build the existing trait", () => {
+    const system = String(importDescribeMessages()[0]?.content);
+    expect(system).toContain('answer each only when the photo clearly shows it; otherwise "unknown"');
+    for (const key of BODY_KEYS) expect(system).toContain(key);
+    expect(system).toContain(`- build: one of ${Build.options.join(", ")}.`);
+  });
+
+  test("an answer without any body key is still a clean answer with no proposal", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer()));
+    expect(read.ok && read.body).toBeUndefined();
+    expect(read.ok).toBe(true);
+  });
+
+  test("a body the photo shows becomes values, and each key says it came from the photo", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, height: "tall", bust: "full", bodyMarks: ["tattoo-hip"] })));
+    if (!read.ok) throw new Error("unreachable");
+    expect(read.body?.values).toEqual({ height: "tall", bust: "full", bodyMarks: ["tattoo-hip"] });
+    expect(read.body?.seen).toEqual({
+      height: "photo", bust: "photo", figure: "not-visible", legLength: "not-visible", legShape: "not-visible", bottomSize: "not-visible", bottomShape: "not-visible", bodyMarks: "photo",
+    });
+  });
+
+  test("unknown is never proposed: the key is absent from the values and not-visible in seen", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, figure: "hourglass" })));
+    if (!read.ok) throw new Error("unreachable");
+    expect(read.body?.values).toEqual({ figure: "hourglass" });
+    expect(read.body?.seen.bust).toBe("not-visible");
+    expect(Object.keys(read.body?.values ?? {})).not.toContain("bust");
+  });
+
+  test("a face-only photo (every key unknown, no marks) has no proposal at all", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer(ALL_UNKNOWN)));
+    expect(read.ok && read.body).toBeUndefined();
+  });
+
+  test("a value outside the choices is treated as not seen: the paid import is not refused over a body field", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, height: "gigantic", bust: "small" })));
+    if (!read.ok) throw new Error("unreachable");
+    expect(read.body?.values).toEqual({ bust: "small" });
+    expect(read.body?.seen.height).toBe("not-visible");
+  });
+
+  test("body marks are deduplicated, a mark outside the list is dropped, and at most two are kept in the order given", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, bodyMarks: ["tattoo-ribs", "tattoo-ribs", "birthmark", "mole-back", "tattoo-ankle"] })));
+    if (!read.ok) throw new Error("unreachable");
+    expect(read.body?.values.bodyMarks).toEqual(["tattoo-ribs", "mole-back"]);
+  });
+
+  test("a bodyMarks that is not a list is treated as not seen", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, bust: "medium", bodyMarks: "tattoo-hip" })));
+    if (!read.ok) throw new Error("unreachable");
+    expect(read.body?.values).toEqual({ bust: "medium" });
+    expect(read.body?.seen.bodyMarks).toBe("not-visible");
+  });
+
+  test("the proposal never reaches the traits: they hold no body key, and build is the face-read trait", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, height: "tall", build: "curvy" })));
+    if (!read.ok) throw new Error("unreachable");
+    expect(read.traits.build).toBe("curvy");
+    for (const key of BODY_KEYS) expect(Object.keys(read.traits)).not.toContain(key);
+    expect(Object.keys(read.body?.values ?? {})).not.toContain("build");
+  });
+
+  test("a proposed body whose phrase breaks the adult rules is not proposed (the phrases are ours, so none does; the guard is the contract's own)", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, height: "short" })));
+    if (!read.ok) throw new Error("unreachable");
+    expect(AvatarDescriptor.safeParse({ age: 26, text: read.descriptor.text, body: bodyPhrase(read.body?.values ?? {}) }).success).toBe(true);
   });
 });
 
@@ -270,7 +384,7 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
   const byBytesDescending = (names: readonly string[]): string[] => [...names].sort((a, b) => Buffer.byteLength(b, "utf8") - Buffer.byteLength(a, "utf8"));
   const worst: ImportDescribeRefusal = { problems: Object.keys(EVERY_PROBLEM) as ImportDescribeProblem[], words: byBytesDescending(allYouthRuleNames("descriptor")) };
   const ceiling = importDescribeCall("x-ai/grok-4.3").inputTokens;
-  /** What the pin keeps clear of the ceiling: room for S5.2b's body-proposal text and a later rule. */
+  /** What the pin keeps clear of the ceiling: room for a later rule (S5.2b spent the first 1,024 of 8K on the body request and raised the ceiling to 9K). */
   const MARGIN = 500;
   const floorOf = (refusal: ImportDescribeRefusal): number => promptTokenFloor({ messages: importDescribeMessages(refusal), jsonSchema: IMPORT_DESCRIBE_JSON_SCHEMA, images: 1 });
   const toldOf = (refusal: ImportDescribeRefusal): string[] => {
@@ -313,8 +427,8 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
 
   // EXACT, like the writer's pins: any extra byte in the prompt, the schema or a reason moves the margin and fails this, so the prompt cannot creep toward the ceiling unseen.
   // Re-measure when the describe prompt changes.
-  test("the worst prompt keeps its measured margin under the ceiling (8,000 less the floor of 6,976)", () => {
-    expect(ceiling - floorOf(worst)).toBe(1024);
+  test("the worst prompt keeps its measured margin under the ceiling (9,000 less the floor of 8,209)", () => {
+    expect(ceiling - floorOf(worst)).toBe(791);
   });
 
   test("the pin measures: a refusal with nothing to tell is smaller than the worst", () => {

@@ -3,6 +3,7 @@ import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import type { OpenRouterClient } from "../openrouter/types";
+import type { ImportedBody } from "./importDescribe";
 import { runImportDescribeJob } from "./importDescribeJob";
 
 // T6c: the orchestration engine.ts's own #importAvatar hands to, extracted so
@@ -30,7 +31,7 @@ export interface ImportJob {
 }
 
 export type ImportJobResult =
-  | { ok: true; traits: AvatarTraits; descriptor: AvatarDescriptor }
+  | { ok: true; traits: AvatarTraits; descriptor: AvatarDescriptor; /** The body the photo showed (S5.2b); absent when it showed none. */ body?: ImportedBody }
   | { ok: false; error: EngineError; /** Whether this failure means the stored key was rejected (401): the caller marks it so. */ authInvalid: boolean };
 
 /** The vision describe job for her typed traits and descriptor; a failure stores nothing, every attempt made is still settled by the client's own settle rule. */
@@ -40,5 +41,5 @@ export async function runImportJob(deps: ImportJobDeps, job: ImportJob): Promise
     { jobId: job.jobId, scope: job.scope, textModel: job.textModel, image: job.describeJpeg },
   );
   if (!described.ok) return { ok: false, error: described.error, authInvalid: described.error.code === "AUTH_INVALID" };
-  return { ok: true, traits: described.traits, descriptor: described.descriptor };
+  return { ok: true, traits: described.traits, descriptor: described.descriptor, ...(described.body === undefined ? {} : { body: described.body }) };
 }

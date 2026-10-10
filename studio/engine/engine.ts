@@ -64,6 +64,7 @@ import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
 import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
 import { runDescriptorCheckJob } from "./avatars/descriptorCheckJob";
+import type { ImportedBody } from "./avatars/importDescribe";
 import { runImportJob } from "./avatars/importJob";
 import { checkImportPhoto, IMPORT_DESCRIBE_MAX_SIDE } from "./avatars/importStaging";
 import {
@@ -4157,7 +4158,7 @@ export class Engine {
         { jobId: importId, scope, textModel: models.textModel, describeJpeg: staged.describeJpeg },
       );
       if (outcome.ok) {
-        imported = await this.#saveImportedAvatar({ library, key, budget, priced: priced.book, textModel: models.textModel, importId, scope, staged, name: payload.name, traits: outcome.traits, descriptor: outcome.descriptor });
+        imported = await this.#saveImportedAvatar({ library, key, budget, priced: priced.book, textModel: models.textModel, importId, scope, staged, name: payload.name, traits: outcome.traits, descriptor: outcome.descriptor, body: outcome.body });
       }
     } finally {
       this.#caps.delete(scopeKey(scope));
@@ -4187,6 +4188,8 @@ export class Engine {
     name: string;
     traits: AvatarTraits;
     descriptor: AvatarDescriptor;
+    /** The body the photo showed (S5.2b): kept on the avatar as a proposal in the same write, never as traits. */
+    body: ImportedBody | undefined;
   }): Promise<{ avatar: AvatarSummary; descriptorCheck: DescriptorCheck | null }> {
     const { library, staged, traits, descriptor, importId } = args;
     // M3: the manifest (status "active", her master already set), the photo
@@ -4199,6 +4202,7 @@ export class Engine {
         age: traits.age,
         traits: manifestTraits(traits),
         descriptor: descriptor.text,
+        ...(args.body === undefined ? {} : { bodyProposal: { values: args.body.values, seen: args.body.seen, at: new Date(this.#deps.clock()).toISOString() } }),
         photoBytes: staged.rawBytes,
         photoMeta: {
           mediaType: staged.mediaType,

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Estimate, ResponseMessage } from "../shared/engine";
@@ -17,6 +18,7 @@ import {
   GOOD,
   ledgerLines,
   network,
+  NOW,
   ok,
   OFFLINE,
   portraitPng,
@@ -36,8 +38,8 @@ useNativeGlobals();
 const dir = useEngineDir("studio-engine-import-");
 
 /** The import job's price at the dated fallback table (plan.test.ts pins the same numbers). */
-const IMPORT_ESTIMATE: Estimate = { expectedMicros: 7_250, worstMicros: 60_000, prices: "fallback", pricesAsOf: "2026-09-24" };
-const DESCRIBE_WORST = 17_500;
+const IMPORT_ESTIMATE: Estimate = { expectedMicros: 7_250, worstMicros: 62_500, prices: "fallback", pricesAsOf: "2026-09-24" };
+const DESCRIBE_WORST = 18_750;
 
 function describeReply(overrides: Record<string, unknown> = {}, cost = 0.0021): Reply {
   const answer = {
@@ -978,5 +980,117 @@ describe("avatars.importAvatar: the descriptor check of the avatar it saves (S5.
     const stray = await budget.tryReserve({ attemptId: "stray-0002", jobId: "stray-job", scope: reserve.scope, model: "x-ai/grok-4.3", worstMicros: 1 });
 
     expect(stray).toMatchObject({ ok: false, reason: "RUN_CAP_EXCEEDED", limitMicros: 0 });
+  });
+});
+
+// Stage 5, S5.2b: the body the photo showed is kept on the avatar as a proposal (never as traits), in the same atomic write as the avatar. The owner saves it with `avatars.setBody`
+// or drops it with `avatars.dismissBodyProposal` (S5.2a); until then it comes back with the avatar, whenever it is listed.
+describe("avatars.importAvatar: the body proposal (S5.2b)", () => {
+  const UNKNOWN = { height: "unknown", bust: "unknown", figure: "unknown", legLength: "unknown", legShape: "unknown", bottomSize: "unknown", bottomShape: "unknown", bodyMarks: [] };
+  const SHOWN = { ...UNKNOWN, height: "tall", bust: "full", bodyMarks: ["mole-back"] };
+  const AT = new Date(NOW).toISOString();
+
+  function manifestOf(avatarId: string): { traits: Record<string, unknown>; bodyProposal?: unknown } {
+    return JSON.parse(readFileSync(join(dir(), "library", "avatars", avatarId, "avatar.json"), "utf8")) as { traits: Record<string, unknown>; bodyProposal?: unknown };
+  }
+
+  test("what the photo showed comes back on the avatar as a proposal: values, a seen mark per key, and when it was read", async () => {
+    const net = network({ descriptors: [describeReply(SHOWN)] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.avatar.bodyProposal).toEqual({
+      values: { height: "tall", bust: "full", bodyMarks: ["mole-back"] },
+      seen: { height: "photo", bust: "photo", figure: "not-visible", legLength: "not-visible", legShape: "not-visible", bottomSize: "not-visible", bottomShape: "not-visible", bodyMarks: "photo" },
+      at: AT,
+    });
+  });
+
+  test("it is stored in the avatar's own write: the manifest already holds it when the check is asked", async () => {
+    const seen: { manifest: { traits: Record<string, unknown>; bodyProposal?: unknown } | null } = { manifest: null };
+    const net = network({
+      descriptors: [describeReply(SHOWN)],
+      check: async () => {
+        const [avatarId] = await savedAvatars();
+        seen.manifest = avatarId === undefined ? null : manifestOf(avatarId);
+        return checkReply();
+      },
+    });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    ok(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(seen.manifest?.bodyProposal).toMatchObject({ values: { height: "tall", bust: "full", bodyMarks: ["mole-back"] }, at: AT });
+  });
+
+  test("nothing becomes a trait: the stored traits and the summary carry no body key", async () => {
+    const net = network({ descriptors: [describeReply(SHOWN)] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    const traits = manifestOf(result.avatar.avatarId).traits;
+    for (const key of ["height", "bust", "figure", "legLength", "legShape", "bottomSize", "bottomShape", "bodyMarks"]) expect(key in traits).toBe(false);
+    expect(result.avatar.body).toBeUndefined();
+    expect(result.avatar.descriptor.body).toBeUndefined();
+  });
+
+  test("a photo that shows no body stores no proposal at all", async () => {
+    const net = network({ descriptors: [describeReply(UNKNOWN)] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.avatar.bodyProposal).toBeUndefined();
+    expect("bodyProposal" in manifestOf(result.avatar.avatarId)).toBe(false);
+  });
+
+  test("an answer from before the body keys existed stores no proposal either", async () => {
+    const net = network({ descriptors: [describeReply()] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    const result = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(result.avatar.bodyProposal).toBeUndefined();
+  });
+
+  test("«Позже» keeps it: the avatar list shows the same proposal until it is saved or dismissed", async () => {
+    const net = network({ descriptors: [describeReply(SHOWN)] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+    const imported = importResult(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    const listed = ok(await engine.handle(command("avatars.list", {})));
+    if (listed.type !== "avatars.list") throw new Error("wrong type");
+
+    expect(listed.result.avatars.find((a) => a.avatarId === imported.avatar.avatarId)?.bodyProposal).toEqual(imported.avatar.bodyProposal);
+  });
+
+  test("the check of the new avatar is asked without a body phrase: the proposal is not a trait", async () => {
+    const net = network({ descriptors: [describeReply(SHOWN)] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    ok(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    expect(JSON.stringify(checkCalls(net)[0]?.json())).not.toContain("Body phrase");
+  });
+
+  test("the describe request asks for the body keys and nothing the owner typed", async () => {
+    const net = network({ descriptors: [describeReply(SHOWN)] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+
+    ok(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+
+    const body = JSON.stringify(describeCalls(net)[0]?.json());
+    expect(body).toContain("bodyMarks");
+    expect(body).not.toContain("Zoe");
   });
 });

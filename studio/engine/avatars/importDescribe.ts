@@ -1,8 +1,19 @@
 import { z } from "zod";
 import {
   adultTextProblems,
+  AvatarBody,
   AvatarDescriptor,
   AvatarTraits,
+  BODY_KEYS,
+  BODY_MARKS_MAX,
+  BodyBust,
+  BodyFigure,
+  BodyHeight,
+  BodyMark,
+  type BodyKey,
+  type BodyProposal,
+  BottomShape,
+  BottomSize,
   Build,
   DESCRIPTOR_MAX_CHARS,
   Ethnicity,
@@ -10,6 +21,8 @@ import {
   HairColor,
   HairLength,
   HairTexture,
+  LegLength,
+  LegShape,
   Mark,
   SkinTone,
   youthRuleNames,
@@ -91,6 +104,10 @@ function systemPrompt(): string {
     `- build: one of ${Build.options.join(", ")}.`,
     `- marks: any that clearly show, from ${Mark.options.join(", ")}; an empty list if none do.`,
     "",
+    'Body: answer each only when the photo clearly shows it; otherwise "unknown". A face or shoulders alone show none of it.',
+    `- ${BODY_KEYS.slice(0, -1).join(", ")}: one of the schema's choices, or "unknown".`,
+    "- bodyMarks: the tattoos and moles that clearly show on her body, from the schema's choices; an empty list if none do.",
+    "",
     "The appearance anchor (descriptor):",
     "- One line of plain English, about 20 to 40 words, in the third person, without a name.",
     '- Begin exactly with "<age>-year-old <Ethnicity> woman, ", using the same age and ethnicity as your own traits above. State her age only there and only in that form: no other words about her age, no height or weight.',
@@ -98,10 +115,11 @@ function systemPrompt(): string {
     '- Always call her a woman. Never use "youthful", "young", "boyish" or any word for a young person or anything that suggests she is not a grown adult; for size say "small", never "tiny" or "petite".',
     "- Mention her skin, eyes, hair (length, texture and colour), build and every distinctive mark you listed. You may add at most three neutral facial details that fit the photo, such as high cheekbones, full eyebrows or a soft jawline.",
     "- Describe her hair exactly as the photo shows it: its real colour (for example platinum, white, silver, grey, pastel pink, ombre or dyed ends), its length, its texture and any bangs, even when the hairColor trait above had to take the nearest choice.",
+    "- Keep the body fields out of it: no height, bust, figure, legs or bottom.",
     "- No clothing, jewellery other than a given piercing, pose, expression, setting, lighting, camera or photo style.",
     "- Plain English letters, spaces and ordinary punctuation (, . ; : - ' \" ( ) / & !) only.",
     "",
-    'Answer only with the JSON object of the schema given: {"people": ..., "woman": ..., "age": ..., "ethnicity": "...", "skinTone": "...", "hairColor": "...", "hairLength": "...", "hairTexture": "...", "eyeColor": "...", "build": "...", "marks": [...], "descriptor": "..."}.',
+    'Answer only with the JSON object of the schema given: {"people": ..., "woman": ..., "age": ..., "ethnicity": "...", "skinTone": "...", "hairColor": "...", "hairLength": "...", "hairTexture": "...", "eyeColor": "...", "build": "...", "marks": [...], the body fields above, "descriptor": "..."}.',
   ].join("\n");
 }
 
@@ -136,13 +154,16 @@ export function importDescribeMessages(feedback: ImportDescribeRefusal = NO_REFU
   ];
 }
 
+/** The answer for a body key the photo does not clearly show. */
+const UNKNOWN = "unknown";
+
 /** Structured output: the subject check (M5), every trait, and the descriptor, sent as a strict JSON schema. */
 export const IMPORT_DESCRIBE_JSON_SCHEMA: { name: string; schema: Record<string, unknown> } = {
   name: "import_describe",
   schema: {
     type: "object",
     additionalProperties: false,
-    required: ["people", "woman", "age", "ethnicity", "skinTone", "hairColor", "hairLength", "hairTexture", "eyeColor", "build", "marks", "descriptor"],
+    required: ["people", "woman", "age", "ethnicity", "skinTone", "hairColor", "hairLength", "hairTexture", "eyeColor", "build", "marks", ...BODY_KEYS, "descriptor"],
     properties: {
       people: { type: "integer", description: "how many people are recognisable in the photo, of any age; 0 if none" },
       woman: { type: "boolean", description: "true only when people is exactly 1 and that person is an adult woman" },
@@ -155,6 +176,14 @@ export const IMPORT_DESCRIBE_JSON_SCHEMA: { name: string; schema: Record<string,
       eyeColor: { type: "string", enum: EyeColor.options },
       build: { type: "string", enum: Build.options },
       marks: { type: "array", items: { type: "string", enum: Mark.options } },
+      height: { type: "string", enum: [...BodyHeight.options, UNKNOWN] },
+      bust: { type: "string", enum: [...BodyBust.options, UNKNOWN] },
+      figure: { type: "string", enum: [...BodyFigure.options, UNKNOWN] },
+      legLength: { type: "string", enum: [...LegLength.options, UNKNOWN] },
+      legShape: { type: "string", enum: [...LegShape.options, UNKNOWN] },
+      bottomSize: { type: "string", enum: [...BottomSize.options, UNKNOWN] },
+      bottomShape: { type: "string", enum: [...BottomShape.options, UNKNOWN] },
+      bodyMarks: { type: "array", items: { type: "string", enum: BodyMark.options } },
       descriptor: { type: "string" },
     },
   },
@@ -174,6 +203,8 @@ const RawAnswer = z.object({
   build: z.string(),
   marks: z.array(z.string()),
   descriptor: z.string(),
+  // Stage 5, S5.2b: the body keys are read apart (`bodyOf`), never refusing the answer: an older answer without them, or a value outside the choices, is a key not seen.
+  ...Object.fromEntries(BODY_KEYS.map((key) => [key, z.unknown().optional()])),
 });
 
 const MAX_ANSWER_CHARS = 24_000;
@@ -187,10 +218,53 @@ function parseJson(content: string): unknown {
   }
 }
 
-export type ImportDescribeAnswer = { ok: true; traits: AvatarTraits; descriptor: AvatarDescriptor } | ({ ok: false } & ImportDescribeRefusal);
+/** The body a photo import read: the traits the model was sure of, and per key whether the photo showed it. The engine adds `at` when it stores it. */
+export type ImportedBody = Omit<BodyProposal, "at">;
+
+export type ImportDescribeAnswer = { ok: true; traits: AvatarTraits; descriptor: AvatarDescriptor; body?: ImportedBody } | ({ ok: false } & ImportDescribeRefusal);
 
 function refused(problems: ImportDescribeProblem[], words: string[] = []): ImportDescribeAnswer {
   return { ok: false, problems, words };
+}
+
+const SINGLE_CHOICE = {
+  height: BodyHeight,
+  bust: BodyBust,
+  figure: BodyFigure,
+  legLength: LegLength,
+  legShape: LegShape,
+  bottomSize: BottomSize,
+  bottomShape: BottomShape,
+} as const;
+
+/**
+ * The body the photo showed, or undefined when it showed none. A key the model answered with a choice becomes a value ("photo"); «unknown», a missing key or a value outside the
+ * choices is not proposed ("not-visible"): a paid import is never refused over a body field. Marks are a list: unknown marks dropped, repeats dropped, the first two kept; an empty
+ * list is "not-visible". The proposal is parsed with the contract's own `AvatarBody`, and is never a trait.
+ */
+function bodyOf(raw: Readonly<Record<string, unknown>>): ImportedBody | undefined {
+  const values: Record<string, unknown> = {};
+  const seen: Record<string, "photo" | "not-visible"> = {};
+  for (const key of BODY_KEYS) {
+    seen[key] = "not-visible";
+    const given = raw[key];
+    if (key === "bodyMarks") {
+      const marks = Array.isArray(given) ? [...new Set(given.filter((m): m is z.infer<typeof BodyMark> => BodyMark.safeParse(m).success))].slice(0, BODY_MARKS_MAX) : [];
+      if (marks.length > 0) {
+        values[key] = marks;
+        seen[key] = "photo";
+      }
+      continue;
+    }
+    const parsed = SINGLE_CHOICE[key].safeParse(given);
+    if (parsed.success) {
+      values[key] = parsed.data;
+      seen[key] = "photo";
+    }
+  }
+  const body = AvatarBody.safeParse(values);
+  if (!body.success || Object.keys(body.data).length === 0) return undefined;
+  return { values: body.data, seen: seen as ImportedBody["seen"] };
 }
 
 /** The model's answer as typed traits (vibe always "": it comes from the model, never the owner) and a descriptor, or every reason it cannot be one. */
@@ -234,5 +308,7 @@ export function readImportDescribeAnswer(content: string): ImportDescribeAnswer 
 
   // The contract has the last word: a rule it adds later refuses the answer here too.
   const descriptor = AvatarDescriptor.safeParse({ age, text });
-  return descriptor.success ? { ok: true, traits: traits.data, descriptor: descriptor.data } : refused(["invalid-descriptor"]);
+  if (!descriptor.success) return refused(["invalid-descriptor"]);
+  const body = bodyOf(raw);
+  return { ok: true, traits: traits.data, descriptor: descriptor.data, ...(body === undefined ? {} : { body }) };
 }

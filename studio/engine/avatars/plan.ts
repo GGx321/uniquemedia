@@ -113,7 +113,7 @@ export const IMPORT_DESCRIBE_MAX_ATTEMPTS = 2;
  * 1024). Typical counts are an estimate,
  * like the descriptor call's own.
  */
-const IMPORT_DESCRIBE_LIMITS = { maxTokens: 3_000, inputTokens: 8_000, images: 1, typical: { inputTokens: 1_800, outputTokens: 650 } } as const;
+const IMPORT_DESCRIBE_LIMITS = { maxTokens: 3_000, inputTokens: 9_000, images: 1, typical: { inputTokens: 1_800, outputTokens: 650 } } as const;
 
 /** One describe attempt on the settings' text model. */
 export function importDescribeCall(textModel: string): ChatCall {

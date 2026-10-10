@@ -16,6 +16,10 @@ Traits, each exactly one of the given choices (your best guess even when the sub
 - build: one of slim, athletic, soft, curvy.
 - marks: any that clearly show, from freckles, mole, dimples, nose-piercing, wrist-tattoo; an empty list if none do.
 
+Body: answer each only when the photo clearly shows it; otherwise "unknown". A face or shoulders alone show none of it.
+- height, bust, figure, legLength, legShape, bottomSize, bottomShape: one of the schema's choices, or "unknown".
+- bodyMarks: the tattoos and moles that clearly show on her body, from the schema's choices; an empty list if none do.
+
 The appearance anchor (descriptor):
 - One line of plain English, about 20 to 40 words, in the third person, without a name.
 - Begin exactly with "<age>-year-old <Ethnicity> woman, ", using the same age and ethnicity as your own traits above. State her age only there and only in that form: no other words about her age, no height or weight.
@@ -23,7 +27,8 @@ The appearance anchor (descriptor):
 - Always call her a woman. Never use "youthful", "young", "boyish" or any word for a young person or anything that suggests she is not a grown adult; for size say "small", never "tiny" or "petite".
 - Mention her skin, eyes, hair (length, texture and colour), build and every distinctive mark you listed. You may add at most three neutral facial details that fit the photo, such as high cheekbones, full eyebrows or a soft jawline.
 - Describe her hair exactly as the photo shows it: its real colour (for example platinum, white, silver, grey, pastel pink, ombre or dyed ends), its length, its texture and any bangs, even when the hairColor trait above had to take the nearest choice.
+- Keep the body fields out of it: no height, bust, figure, legs or bottom.
 - No clothing, jewellery other than a given piercing, pose, expression, setting, lighting, camera or photo style.
 - Plain English letters, spaces and ordinary punctuation (, . ; : - ' " ( ) / & !) only.
 
-Answer only with the JSON object of the schema given: {"people": ..., "woman": ..., "age": ..., "ethnicity": "...", "skinTone": "...", "hairColor": "...", "hairLength": "...", "hairTexture": "...", "eyeColor": "...", "build": "...", "marks": [...], "descriptor": "..."}.
+Answer only with the JSON object of the schema given: {"people": ..., "woman": ..., "age": ..., "ethnicity": "...", "skinTone": "...", "hairColor": "...", "hairLength": "...", "hairTexture": "...", "eyeColor": "...", "build": "...", "marks": [...], the body fields above, "descriptor": "..."}.
