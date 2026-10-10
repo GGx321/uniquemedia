@@ -5,6 +5,7 @@ import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
 import { categoryLabelOf, type CategoryLabelOf } from "./categories";
 import { lightOf } from "./phoneLook";
+import { PHONE_WORDS } from "./pools";
 import type { Shot } from "./types";
 import type { PlanSlot, Pose } from "./schema";
 import { revealingWordsIn } from "./words";
@@ -112,14 +113,16 @@ function writerSystemPrompt(): string {
     "",
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
-    '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
+    '- In a front-camera selfie or a mirror selfie, only one hand is free: describe only what that hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
     '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the viewer, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the viewer. For any other pose she may face or glance toward the viewer as the shot allows.',
+    "- In a friend's snap while she is busy, she never looks at the viewer.",
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
     "- Describe the outfit exactly as given, in its own words: never more or less revealing, never add or remove a garment. Never name bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
     "- Never write about the camera, the lens, the photo, the shot or the framing.",
     "- When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.",
     "- No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.",
+    "- Never describe mess, clutter or things lying around; the room's state is given separately.",
     "- Never use these words: professional, photographer, photoshoot, studio, editorial, fashion, model, posing, captures, candid, cinematic, bokeh, golden hour, softly lit, soft light, glow, glowing, dramatic, moody, dreamy, elegant, luxurious, lavish, glamorous, chic, sophisticated, polished, pristine, marble, silk, satin, velvet, stunning, beautiful, perfect, flawless, gorgeous, unless the slot's own place, outfit or activity uses it.",
     "",
     'Return JSON matching the schema: {"scenes": [{"slotIndex", "sentence"}, ...]}, exactly one object per slot, in the given order.',
@@ -151,6 +154,8 @@ export type WriterProblem =
   | "youth-word"
   | "revealing-word"
   | "pose-contradiction"
+  /** S5.R1 M3: a front-camera selfie's sentence names a phone, which would draw a second one. */
+  | "phone-in-selfie"
   /** CS.8a: an idea write's shot or pose the model had to pick is missing, outside the vocabulary or an impossible pair (ideaWriter.ts). */
   | "bad-angle";
 
@@ -165,6 +170,8 @@ export interface WriterRefusal {
   words: string[];
   /** T5c: slots whose sentence contradicts their own pose (e.g. a back pose "looking at the camera"). */
   poseSlots: number[];
+  /** S5.R1 M3: selfie slots whose sentence names a phone (`phone-in-selfie`). Absent in every other refusal. */
+  phoneSlots?: number[];
   /** CS.8a: idea-write slots whose picked shot or pose was refused (`bad-angle`). Absent in every other refusal. */
   angleSlots?: number[];
 }
@@ -212,8 +219,19 @@ function quotedList(words: readonly string[]): string {
   return toldWords(words).map((w) => `"${w}"`).join(", ");
 }
 
+/**
+ * The slot numbers a reason names, in the order given. A run of consecutive numbers is told as a range («76-100»), so a refusal over a whole chunk costs a few
+ * bytes: the re-ask is priced on its bytes before it is sent (S5.R1). The longest list is then every other slot, which the floor pins use.
+ */
 function slotList(indices: readonly number[]): string {
-  return indices.join(", ");
+  const told: string[] = [];
+  for (let from = 0; from < indices.length; ) {
+    let to = from;
+    while (to + 1 < indices.length && indices[to + 1] === (indices[to] as number) + 1) to++;
+    told.push(to > from ? `${indices[from]}-${indices[to]}` : String(indices[from]));
+    from = to + 1;
+  }
+  return told.join(", ");
 }
 
 const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
@@ -222,10 +240,12 @@ const REASON: Partial<Record<WriterProblem, (r: WriterRefusal) => string>> = {
   "missing-slots": (r) => `it was missing a sentence for slot(s) ${slotList(r.missingSlots)}`,
   "unknown-slot": () => "it returned a slotIndex that is not in the plan",
   "duplicate-slot": () => "it returned the same slotIndex more than once",
-  "two-handed": (r) => `slot(s) ${slotList(r.twoHandedSlots)} used a two-handed action in a selfie or mirror shot; one hand always holds the phone, so only the other hand may act`,
+  "two-handed": (r) => `slot(s) ${slotList(r.twoHandedSlots)} used a two-handed action in a selfie or mirror shot; only one hand is free, so only that hand may act`,
   "youth-word": (r) => `slot(s) ${slotList(r.wordSlots)} used words we do not allow: ${quotedList(r.words)}; call her a woman and use none of them`,
   "revealing-word": (r) => `slot(s) ${slotList(r.wordSlots)} used a revealing word we do not allow: ${quotedList(r.words)}`,
-  "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their own pose (a back or profile pose looking toward the camera); match each slot's given pose instead`,
+  "pose-contradiction": (r) => `slot(s) ${slotList(r.poseSlots)} contradicted their own pose (a back or profile pose, or a friend's snap while busy, looking toward the camera); match each slot's given pose instead`,
+  // No slot list: the re-ask rewrites the whole chunk, and the floor pins hold the reason to one fixed sentence (`phoneSlots` is for the logs and the tests).
+  "phone-in-selfie": () => "a selfie sentence named a phone; name none, describe only her free hand",
   "bad-angle": (r) => `slot(s) ${slotList(r.angleSlots ?? [])} gave a shot or a pose that is missing, outside the lists the rules give, or a selfie or mirror shot not facing the camera (front or three-quarter only)`,
 };
 
@@ -308,10 +328,18 @@ export function isTwoHanded(sentence: string): boolean {
  * What the answer reader needs of a slot: its number, its shot (the phone hand) and its pose. A plan's slot has more; an own scene (CS.4b) has only these,
  * so the same rules read both.
  */
-export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose">;
+export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose"> & {
+  /** The slot's own activity (or an idea's text), when it has one: a selfie whose own text names a phone may name it in the sentence too (M3). */
+  activity?: string | undefined;
+};
 
 function phoneInHand(slot: ReadableSlot): boolean {
   return slot.shot === "selfie" || slot.shot === "mirror";
+}
+
+/** M3: a front-camera selfie's sentence names a phone the slot's own text did not ask for. A mirror shot may name it: the phone is in the mirror. */
+function phoneNamedInSelfie(slot: ReadableSlot, sentence: string): boolean {
+  return slot.shot === "selfie" && PHONE_WORDS.test(sentence) && !PHONE_WORDS.test(slot.activity ?? "");
 }
 
 /**
@@ -355,8 +383,9 @@ const CAMERA_GAZE = new RegExp(
  * carry this rule: front and three-quarter may freely face or glance toward
  * the camera.
  */
-export function contradictsPose(sentence: string, pose: Pose): boolean {
-  return (pose === "back" || pose === "profile") && CAMERA_GAZE.test(sentence);
+export function contradictsPose(sentence: string, pose: Pose, shot?: Shot): boolean {
+  // S5.R1 L1: a candid is a friend's snap while she is busy, so she never looks at the viewer, whatever her pose.
+  return (pose === "back" || pose === "profile" || shot === "candid") && CAMERA_GAZE.test(sentence);
 }
 
 // ---------- reading the answer ----------
@@ -412,6 +441,7 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
   const wordSlots = new Set<number>();
   const words = new Set<string>();
   const poseSlots: number[] = [];
+  const phoneSlots: number[] = [];
   for (const s of slots) {
     const sentence = bySlot.get(s.slotIndex);
     if (sentence === undefined) continue;
@@ -431,9 +461,13 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
       problems.add("two-handed");
       twoHandedSlots.push(s.slotIndex);
     }
-    if (contradictsPose(sentence, s.pose)) {
+    if (contradictsPose(sentence, s.pose, s.shot)) {
       problems.add("pose-contradiction");
       poseSlots.push(s.slotIndex);
+    }
+    if (phoneNamedInSelfie(s, sentence)) {
+      problems.add("phone-in-selfie");
+      phoneSlots.push(s.slotIndex);
     }
   }
 
@@ -444,6 +478,7 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
       wordSlots: [...wordSlots].sort((a, b) => a - b),
       words: [...words],
       poseSlots,
+      ...(phoneSlots.length > 0 ? { phoneSlots } : {}),
     });
   }
   return { ok: true, sentences: bySlot };

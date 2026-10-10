@@ -87,15 +87,15 @@ export function ideaSystemPrompt(mirrorAllowed = false): string {
     "Rules:",
     "- One full sentence per slot, about 25 to 45 words, plain present tense.",
     "- When several slots share an idea, make each one a different moment of it: vary the place, her outfit and what she does.",
-    '- In a front-camera selfie or a mirror selfie, one hand always holds the phone: describe only what her other, single hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
-    '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the viewer, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the viewer. For any other pose she may face or glance toward the viewer as the shot allows.',
-    `- When a slot's "shot" or "pose" is "choose", pick it from the idea and return it in that slot's "shot" or "pose": the shot is ${mirrorAllowed ? "friend, selfie, mirror or candid" : "friend, selfie or candid"}; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend or candid. ${mirrorAllowed ? "The idea names a mirror, so you may pick the mirror shot, only for a mirror selfie." : "Never choose the mirror shot."} Then write the scene for what you picked. A shot or a pose the slot gives is kept as given: never return it.`,
+    '- In a front-camera selfie or a mirror selfie, only one hand is free: describe only what that hand does, or say nothing about her hands. Never describe an action that needs both hands in these shots.',
+    '- Match each slot\'s pose: for pose "from behind, her face not visible" write the scene from behind — she never looks at, toward or into the viewer, and her face is never described; for pose "in profile, her face turned fully to the side" write her in profile — her face turned to the side, never looking at or toward the viewer. For any other pose she may face or glance toward the viewer as the shot allows.',    `- When a slot's "shot" or "pose" is "choose", pick it from the idea and return it in that slot's "shot" or "pose": the shot is ${mirrorAllowed ? "friend, selfie, mirror or candid" : "friend, selfie or candid"}; the pose is front, three-quarter, profile or back. Use "back" when the idea asks for a view from behind and "profile" for a side view. A selfie always faces the camera, and so does a mirror shot (front or three-quarter), so for a view from behind or from the side pick friend or candid. ${mirrorAllowed ? "The idea names a mirror, so you may pick the mirror shot, only for a mirror selfie." : "Never choose the mirror shot."} Then write the scene for what you picked. A shot or a pose the slot gives is kept as given: never return it.`,
     "- She is a grown adult woman; no children or minors anywhere in the scene, and never a word that suggests she or anyone else is not an adult.",
     "- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says, describe her clothing as covering and non-revealing.",
     "- No text, logos, brand names or readable signs; nothing covers her face.",
     "- Never write about the camera, the lens, the photo, the shot or the framing.",
     "- When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.",
     "- No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.",
+    "- Never describe mess, clutter or things lying around; the room's state is given separately.",
     "- Never use these words: professional, photographer, photoshoot, studio, editorial, fashion, model, posing, captures, candid, cinematic, bokeh, golden hour, softly lit, soft light, glow, glowing, dramatic, moody, dreamy, elegant, luxurious, lavish, glamorous, chic, sophisticated, polished, pristine, marble, silk, satin, velvet, stunning, beautiful, perfect, flawless, gorgeous, unless the slot's own place, outfit or activity uses it.",
     "",
     'Return JSON matching the schema: {"scenes": [...]}, exactly one object per slot, in the given order, each with "slotIndex", "sentence" and, only where the schema has them, "shot" and "pose".',
@@ -213,7 +213,7 @@ export function readIdeaAnswer(content: string, slots: readonly IdeaSlot[], mirr
     if (scene !== undefined && settled === undefined) angleSlots.push(slot.slotIndex);
     const angle = settled ?? { shot: slot.shot ?? "friend", pose: slot.pose ?? "front" };
     if (settled !== undefined) angles.set(slot.slotIndex, settled);
-    return { slotIndex: slot.slotIndex, shot: angle.shot, pose: angle.pose };
+    return { slotIndex: slot.slotIndex, shot: angle.shot, pose: angle.pose, activity: slot.idea };
   });
 
   const read = readWriterScenes(parsed.data.scenes, readable);
