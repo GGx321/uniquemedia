@@ -17,6 +17,7 @@ import {
   type ApiKeyStatus,
   type CategoryCallKind,
   type CategoryDescription,
+  checkDescriptorEdit,
   type CategoryRef,
   type CategorySummary,
   type CommandResult,
@@ -371,6 +372,21 @@ function seedOf(runId: string): number {
 function detailOf(message: string): string {
   const masked = maskHome(message);
   return masked.length <= MAX_DETAIL ? masked : `${masked.slice(0, MAX_DETAIL - 1)}…`;
+}
+
+/**
+ * The owner's text for an avatar of `age`, folded and checked (`checkDescriptorEdit`). A refusal is the VALIDATION a window words from its closed `descriptorReason`
+ * (and, for a youth word, the owner's own `descriptorWords`). It throws, so it can also run as the library's validator inside its exclusive section.
+ */
+function descriptorEditOrFailure(text: string, age: number): string {
+  const checked = checkDescriptorEdit(text, age);
+  if (checked.ok) return checked.text;
+  throw new EngineFailure({
+    code: "VALIDATION",
+    descriptorReason: checked.reason,
+    ...(checked.words.length > 0 ? { descriptorWords: checked.words.slice(0, 10).map((word) => word.slice(0, 60)) } : {}),
+    detail: `the description breaks a rule: ${checked.reason}`,
+  });
 }
 
 function messageOf(error: unknown, fallback: string): string {
@@ -849,6 +865,13 @@ export class Engine {
    * that would change one of them is refused with IN_FLIGHT.
    */
   readonly #busyAvatars = new Set<string>();
+  /**
+   * Stage 5 (S5.0a): the avatars one of the five NON-RUN jobs holds, beside their `#busyAvatars` claim: a descriptor rewrite, a candidates batch, an archive, a
+   * delete and (S5.0c) a descriptor check. `avatars.editDescriptor` and (S5.2a) `setBody` refuse IN_FLIGHT for an avatar in here. A photo run and an autopilot
+   * launch touch only `#busyAvatars`, so an edit is allowed during both: a live job keeps the descriptor it started with, and a resume or a new run reads the new one.
+   * Join with `#claimAvatarForEdit` and leave with `#releaseAvatarEdit`, never by hand, so the two sets cannot drift apart.
+   */
+  readonly #avatarEdits = new Set<string>();
   /** T6: paid requests of every photo run in flight at once (the settings' network concurrency); shrinks on a 429. */
   readonly #networkPool: NetworkPool;
   /** T6: local work of every photo run (the QA gates). */
@@ -2171,7 +2194,7 @@ export class Engine {
       }
       case "avatars.generateCandidates": {
         const { avatarId } = command.payload;
-        this.#claimAvatar(avatarId, "a batch of candidates is already being made for this draft; wait for it to finish");
+        this.#claimAvatarForEdit(avatarId, "a batch of candidates is already being made for this draft; wait for it to finish");
         this.#paidCommands++;
         let started = false;
         try {
@@ -2182,7 +2205,7 @@ export class Engine {
           // A started job holds both until it ends.
           if (!started) {
             this.#paidCommands--;
-            this.#busyAvatars.delete(avatarId);
+            this.#releaseAvatarEdit(avatarId);
           }
         }
       }
@@ -2196,15 +2219,17 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#pick(command.payload) };
       case "avatars.archive":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#archive(command.payload) };
+      case "avatars.editDescriptor":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#editDescriptor(command.payload) };
       case "avatars.rewriteDescriptor": {
         const { avatarId } = command.payload;
-        this.#claimAvatar(avatarId, "a job or command is already changing this avatar; wait for it to finish");
+        this.#claimAvatarForEdit(avatarId, "a job or command is already changing this avatar; wait for it to finish");
         this.#paidCommands++;
         try {
           return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#rewriteDescriptor(command.payload) };
         } finally {
           this.#paidCommands--;
-          this.#busyAvatars.delete(avatarId);
+          this.#releaseAvatarEdit(avatarId);
         }
       }
       case "avatars.estimateImport": {
@@ -4225,7 +4250,7 @@ export class Engine {
     }
     this.#caps.delete(scopeKey(job.scope));
     this.#paidCommands--;
-    this.#busyAvatars.delete(job.avatarId);
+    this.#releaseAvatarEdit(job.avatarId);
     try {
       this.#emitMoney();
       const state = this.#jobs.finish(job.jobId, end);
@@ -4317,7 +4342,7 @@ export class Engine {
     // Claimed before the (now async) #liveLibrary() re-verification below, so
     // this still marks the avatar busy synchronously, before this method's
     // first await — library.confirm's own race check relies on that.
-    this.#claimAvatar(avatarId, "a job is changing this avatar; archive it when the job ends");
+    this.#claimAvatarForEdit(avatarId, "a job is changing this avatar; archive it when the job ends");
     try {
       const library = await this.#liveLibrary();
       const manifest = library.getAvatar(avatarId);
@@ -4329,8 +4354,39 @@ export class Engine {
       await library.updateAvatar(avatarId, { status: "archived" });
       return { avatar: this.#announceAvatar(library, avatarId) };
     } finally {
-      this.#busyAvatars.delete(avatarId);
+      this.#releaseAvatarEdit(avatarId);
     }
+  }
+
+  /**
+   * `avatars.editDescriptor` (Stage 5, S5.0a): the owner's own text for a saved avatar's descriptor. Free, and the only writer of the text outside the paid create,
+   * import and rewrite jobs (I5.6). The order: the live library; the claim (IN_FLIGHT while one of
+   * the five non-run jobs or a pending delete holds the avatar, never for a photo run or a launch); the manifest or NOT_FOUND; a saved avatar (a draft is VALIDATION); a stale `expectedText`; the text's own rules; then the write, whose
+   * composite check runs inside the library's exclusive section against the manifest read under the lock (I5.7).
+   */
+  async #editDescriptor(payload: CommandPayload<"avatars.editDescriptor">): Promise<{ avatar: AvatarSummary }> {
+    const { avatarId, text, expectedText } = payload;
+    const library = await this.#liveLibrary();
+    // The claim is read before the manifest: a delete takes the avatar out of the library's indexes at its prepare, so a lookup first would answer NOT_FOUND for an
+    // avatar that a kept delete gives back a moment later. (The plan lists the manifest first; this is the one deliberate reordering.)
+    if (this.#avatarEdits.has(avatarId) || this.#pendingDelete?.avatarId === avatarId) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; edit the description when that ends" });
+    }
+    const manifest = this.#manifestOrNotFound(library, avatarId);
+    if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` });
+    if (expectedText !== manifest.descriptor) throw new EngineFailure({ code: "VALIDATION", descriptorReason: "stale", detail: "the stored description is not the one this edit was made against" });
+    const checked = descriptorEditOrFailure(text, manifest.age);
+    // The same rules once more, against the manifest as it is under the lock: whatever lands between the early check above and the write (the composite will hold
+    // the body phrase from S5.2a) is judged here, before anything is written.
+    await library
+      .updateAvatar(avatarId, { descriptor: checked }, (next) => {
+        descriptorEditOrFailure(checked, next.age);
+      })
+      .catch((error: unknown) => {
+        if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        throw error;
+      });
+    return { avatar: this.#announceAvatar(library, avatarId) };
   }
 
   // ---------- «Удалить аватар» ----------
@@ -4385,7 +4441,7 @@ export class Engine {
     this.#pendingDelete = slot;
     try {
       // Claimed before the first await too: nothing else (a library switch included) may change the avatar from here to the finish.
-      this.#claimAvatar(avatarId, "a job or command is changing this avatar; delete it when that ends");
+      this.#claimAvatarForEdit(avatarId, "a job or command is changing this avatar; delete it when that ends");
     } catch (error) {
       if (this.#pendingDelete === slot) this.#pendingDelete = null;
       throw error;
@@ -4421,7 +4477,7 @@ export class Engine {
         if (slot.abandoned) this.#announceRestored(slot.library, avatarId);
       }
       if (this.#pendingDelete === slot) this.#pendingDelete = null;
-      this.#busyAvatars.delete(avatarId);
+      this.#releaseAvatarEdit(avatarId);
       throw error;
     }
   }
@@ -4463,7 +4519,7 @@ export class Engine {
       for (const sceneSetId of pending.sceneSetIds) this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "scenes.changed", payload: { change: "removed", sceneSetId, avatarId } });
       this.#emit({ v: PROTOCOL_VERSION, id: this.#deps.newId(), kind: "event", type: "avatar.removed", payload: { avatarId } });
     } finally {
-      this.#busyAvatars.delete(avatarId);
+      this.#releaseAvatarEdit(avatarId);
     }
   }
 
@@ -4522,6 +4578,18 @@ export class Engine {
   #claimAvatar(avatarId: string, detail: string): void {
     if (this.#busyAvatars.has(avatarId)) throw new EngineFailure({ code: "IN_FLIGHT", detail });
     this.#busyAvatars.add(avatarId);
+  }
+
+  /** `#claimAvatar` for one of the five non-run jobs (see `#avatarEdits`): the avatar also becomes one that an edit of its descriptor or body must wait for. */
+  #claimAvatarForEdit(avatarId: string, detail: string): void {
+    this.#claimAvatar(avatarId, detail);
+    this.#avatarEdits.add(avatarId);
+  }
+
+  /** The release that pairs with `#claimAvatarForEdit`. */
+  #releaseAvatarEdit(avatarId: string): void {
+    this.#avatarEdits.delete(avatarId);
+    this.#busyAvatars.delete(avatarId);
   }
 
   /**
