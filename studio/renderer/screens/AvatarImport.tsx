@@ -200,6 +200,31 @@ export function AvatarImport() {
               {NBSP}px по короткой стороне.
             </Notice>
           )}
+          {/* S5.2d (mockup 04): what the paid click reads, said before it — the body only when the photo shows it, and then the owner's own choice. */}
+          {preview && (
+            <>
+              <div className="import-reads-block">
+                <p className="fl">Что прочитает Studio</p>
+                <ul className="import-reads">
+                  <li>
+                    <Icon name="check" size={14} strokeWidth={2.4} />
+                    лицо, волосы, глаза, приметы
+                  </li>
+                  <li className="import-reads-maybe">
+                    <Icon name="info" size={14} strokeWidth={2} />
+                    тело — только если оно в кадре
+                  </li>
+                  <li>
+                    <Icon name="check" size={14} strokeWidth={2.4} />
+                    сверит описание с фото
+                  </li>
+                </ul>
+              </div>
+              <Notice tone="info" title="По фото лица тело не определить" role="status">
+                Если на фото только лицо и плечи, рост, грудь, фигуру, ноги и попу после импорта выберете сами — или оставите «не задано».
+              </Notice>
+            </>
+          )}
           <div className="wizard-form-footer">
             <button
               type="button"
@@ -281,7 +306,7 @@ export function AvatarImport() {
                         ? `Подтвердить новую цену · до ${formatUsd(estimate.worstMicros, 2, "up")}`
                         : `Импортировать · до ${formatUsd(estimate.worstMicros, 2, "up")}`}
                   </button>
-                  {blockedReason && <p className="field-hint">{blockedReason}</p>}
+                  {blockedReason ? <p className="field-hint">{blockedReason}</p> : <p className="field-hint">Дальше — страница аватара: тело и итог сверки.</p>}
                 </div>
               </div>
             </section>

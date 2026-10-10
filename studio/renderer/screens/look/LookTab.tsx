@@ -1,25 +1,20 @@
-import type { AvatarSummary } from "../../../shared/engine";
+import { useState } from "react";
+import type { AvatarBody, AvatarSummary } from "../../../shared/engine";
 import type { EngineView } from "../../engine/store";
+import { proposedBody } from "../../lib/body";
 import { paidStop } from "../../lib/paidStop";
 import type { LookLanding } from "../../navigation";
 import { Notice } from "../../ui/Notice";
 import { Portrait } from "../../ui/Portrait";
 import { modelName, paidBlockedReason } from "../photos/runForm";
+import { BodyCard } from "./BodyCard";
 import { CheckCard, proposalOpen } from "./CheckCard";
 import { DescriptionCard } from "./DescriptionCard";
-import { avatarHeld, runDrawing } from "./lookModel";
+import { avatarHeld, landingText, runDrawing } from "./lookModel";
 import type { LookCheck } from "./useLookCheck";
 
 // S5.0d: the avatar page's «Внешность» (.omc/stage5/design 07, 09–13; 05–06 and 11 after «Импортировать» and «Сохранить»). Left: the master portrait,
-// and under it «Сверка с фото» — what is compared with what, at a glance. Right: «Описание». The «Тело» card of the mockup is S5.2d's.
-
-/** The line over the tab right after the avatar was made, as the mockup's 05, 06 and 11 say it. */
-function landingText(landing: LookLanding, name: string): string {
-  if (landing.kind === "created") return `Аватар «${name}» сохранён. Мастер-портрет готов для фото.`;
-  const { check } = landing;
-  if (check === null) return `Аватар «${name}» импортирован. Описание прочитано с фото.`;
-  return check.matches ? `Аватар «${name}» импортирован. Описание прочитано с фото и сверено с ним.` : `Аватар «${name}» импортирован. Описание прочитано с фото — проверьте сверку.`;
-}
+// and under it «Сверка с фото» — what is compared with what, at a glance. Right: «Описание», and (S5.2d, 05–08) «Тело» under it.
 
 export function LookTab({
   avatar,
@@ -42,10 +37,16 @@ export function LookTab({
   // The way to the key is offered only when the key is what stops the check: an engine away is said first (`paidBlockedReason`'s order).
   const keyMissing = paidStop(view)?.kind !== "offline" && (key === undefined || !key.stored || key.rejected);
   const checking = look.phase.kind === "running";
+  const drawing = runDrawing(view, avatarId);
+  /**
+   * S5.2d: the body «Изменить тело» is editing (null: the summary). Held here, so «Описание» previews the phrase it would write. An import's proposal
+   * opens it at once (05–06); «Позже» closes it and the proposal waits in the card.
+   */
+  const [bodyDraft, setBodyDraft] = useState<AvatarBody | null>(() => (avatar.bodyProposal === undefined ? null : proposedBody(avatar.body, avatar.bodyProposal)));
 
   return (
     <>
-      {landing !== null && <Notice tone="ok">{landingText(landing, avatar.name)}</Notice>}
+      {landing !== null && <Notice tone="ok">{landingText(landing, avatar.name, avatar.bodyProposal !== undefined)}</Notice>}
       <div className="look">
         <div className="look-side">
           <div className="ph look-master">
@@ -68,9 +69,11 @@ export function LookTab({
             proposal={proposalOpen(look, text)}
             ready={ready}
             editHeld={checking}
-            runDrawing={runDrawing(view, avatarId)}
+            runDrawing={drawing}
             fresh={readFromPhoto}
+            bodyDraft={bodyDraft}
           />
+          <BodyCard avatar={avatar} draft={bodyDraft} onDraft={setBodyDraft} ready={ready} held={checking} runDrawing={drawing} />
         </div>
       </div>
     </>

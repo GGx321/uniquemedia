@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bodyPhrase, type AvatarBody, type AvatarSummary, type EventMessage } from "../../shared/engine";
+import { AvatarSummary as AvatarSummarySchema, bodyPhrase, type AvatarBody, type AvatarSummary, type EventMessage } from "../../shared/engine";
 import { MockEngine, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
 
@@ -263,4 +263,23 @@ test("a failed import consumes the scripted body too: the next import does not g
 test("a scripted body with no values is refused: an empty proposal is never stored", () => {
   const { engine } = makeMock();
   expect(() => engine.queueImportBodyProposal({ values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z" })).toThrow();
+});
+
+test("S5.2d: the dev build's `demoBody` seeds every body state the mockup draws, each a valid summary, and nothing else changes", async () => {
+  const seeded = makeMock({ preset: "demo", demoBody: true });
+  const plain = makeMock({ preset: "demo" });
+  const { avatars } = await unwrap(seeded.client.request("avatars.list", {}));
+  const { avatars: before } = await unwrap(plain.client.request("avatars.list", {}));
+  const byName = (name: string): AvatarSummary | undefined => avatars.find((a) => a.name === name);
+
+  for (const avatar of avatars) expect(AvatarSummarySchema.safeParse(avatar).success).toBe(true);
+  expect(byName("Mia")?.body).toEqual({ height: "average", bust: "medium", figure: "hourglass", legLength: "long", legShape: "slim", bottomSize: "medium", bottomShape: "round", bodyMarks: ["tattoo-ankle"] });
+  expect(byName("Sofia")?.body).toBeUndefined();
+  expect(byName("Ava")?.bodyProposal?.values).toEqual({ bust: "medium", figure: "hourglass" });
+  expect(byName("Ava")?.bodyProposal?.seen.bust).toBe("photo");
+  expect(byName("Kira")?.bodyProposal?.values).toEqual({});
+  expect(Object.values(byName("Kira")?.bodyProposal?.seen ?? {}).join(",")).toBe(Array(8).fill("not-visible").join(","));
+  // Without the option the demo library is as it was, and with it only the body fields differ.
+  expect(before.some((a) => a.body !== undefined || a.bodyProposal !== undefined)).toBe(false);
+  expect(avatars.map(({ body: _body, bodyProposal: _proposal, ...rest }) => rest)).toEqual(before);
 });

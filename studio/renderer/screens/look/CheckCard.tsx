@@ -81,9 +81,20 @@ function afterword(check: DescriptorCheck, look: LookCheck, currentText: string)
   if (look.fate === "stale") return <Pointer>Описание уже изменилось — проверьте ещё раз.</Pointer>;
   if (check.checkedText !== currentText) return <Pointer>Описание изменено после сверки — проверьте ещё раз.</Pointer>;
   if (check.matches) return null;
-  if (check.proposal !== null) return <Pointer>Исправленный текст — в «Описании» справа. Сам он не применится.</Pointer>;
-  if (textMismatch(check)) return <Pointer>Готового исправления нет — поправьте описание сами: «Изменить текст» справа.</Pointer>;
-  return null;
+  const text =
+    check.proposal !== null ? (
+      <Pointer>Исправленный текст — в «Описании» справа. Сам он не применится.</Pointer>
+    ) : textMismatch(check) ? (
+      <Pointer>Готового исправления нет — поправьте описание сами: «Изменить текст» справа.</Pointer>
+    ) : null;
+  // S5.2d: a body mismatch is never fixed in text (S5.0c): it goes to the body traits, and the build word (D1) to the description's own text.
+  const body = check.aspects.body?.state === "mismatch" ? <Pointer>Тело на фото другое — поправьте его в карточке «Тело» справа, а телосложение — в «Описании».</Pointer> : null;
+  return text === null && body === null ? null : (
+    <>
+      {text}
+      {body}
+    </>
+  );
 }
 
 /** Whether a proposal still waits for «Исправить описание» or «Оставить» in «Описание»: the card then ends at its pointer, as the mockup's 10 does. */

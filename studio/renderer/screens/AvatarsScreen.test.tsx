@@ -149,7 +149,8 @@ test("a draft from the snapshot is listed and reopens the wizard with its candid
   fireEvent.click(within(card).getByRole("button", { name: "Продолжить" }));
   await screen.findByRole("heading", { level: 1, name: "Новый аватар" });
   expect(screen.getAllByRole("radio", { name: /^Вариант [A-D]$/ })).toHaveLength(4);
-  expect(screen.getByText("зафиксирована в черновике")).toBeDefined();
+  // S5.2d re-pin: the head holds the «Лицо и волосы» | «Тело» tabs now; the lock is said under the form, as the mockup's 03 does.
+  expect(screen.getByText(/^Внешность и тело зафиксированы в черновике\./)).toBeDefined();
   expect(screen.getByText(draft.descriptor.text)).toBeDefined();
 
   fireEvent.click(screen.getByRole("radio", { name: "Вариант C" }));

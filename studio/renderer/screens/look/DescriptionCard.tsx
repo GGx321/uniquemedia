@@ -1,11 +1,13 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { DESCRIPTOR_MAX_CHARS, descriptorReasonRu, type AvatarSummary, type DescriptorCheck, type EngineError } from "../../../shared/engine";
+import { useEffect, useId, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { bodyPhrase, DESCRIPTOR_MAX_CHARS, descriptorReasonRu, type AvatarBody, type AvatarSummary, type DescriptorCheck, type EngineError } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
+import { bodyPhraseDiff, descriptorHead, textLimit } from "../../lib/body";
 import { errorText } from "../../lib/errors";
+import { plural } from "../../lib/format";
 import { Icon, Spin } from "../../ui/Icon";
 import { useAnnouncer } from "../../ui/useAnnouncer";
 import { useMounted } from "../photos/shared";
-import { EDIT_HELD_REASON, proposalReason, wordDiff } from "./lookModel";
+import { EDIT_HELD_REASON, proposalReason, wordDiff, type DiffPart } from "./lookModel";
 import type { LookCheck } from "./useLookCheck";
 
 // S5.0d: «Описание» (.omc/stage5/design 07, 10): the stored English text that goes into every prompt, the owner's own edit of it, and a check's
@@ -45,6 +47,39 @@ type Edit = {
 /** A refusal of the text itself (a rule it breaks), as opposed to a busy avatar or a description that moved meanwhile. */
 const ruleRefusal = (error: EngineError): boolean => error.code === "VALIDATION" && error.descriptorReason !== undefined && error.descriptorReason !== "stale";
 
+/** An edit as runs of kept, struck-out and inserted text (a check's proposal, or a body phrase while «Изменить тело» is open). */
+function Diff({ parts }: { parts: readonly DiffPart[] }) {
+  return (
+    <>
+      {parts.map((part, i) =>
+        part.kind === "same" ? (
+          <span key={i}>{part.text}</span>
+        ) : part.kind === "del" ? (
+          <del key={i} className="dx">
+            <span className="sr-only">убрать: </span>
+            {part.text}
+          </del>
+        ) : (
+          <ins key={i} className="dx">
+            <span className="sr-only">вставить: </span>
+            {part.text}
+          </ins>
+        ),
+      )}
+    </>
+  );
+}
+
+/** The swatch legend under the text: where the marked phrase at its end comes from. */
+function BodyLegend({ children }: { children: ReactNode }) {
+  return (
+    <p className="look-legend">
+      <span className="look-legend-sw" aria-hidden="true" />
+      {children}
+    </p>
+  );
+}
+
 export function DescriptionCard({
   avatar,
   look,
@@ -53,6 +88,7 @@ export function DescriptionCard({
   editHeld,
   runDrawing,
   fresh,
+  bodyDraft,
 }: {
   avatar: AvatarSummary;
   look: LookCheck;
@@ -65,6 +101,8 @@ export function DescriptionCard({
   runDrawing: boolean;
   /** Read from the photo at import and not edited since: «прочитано с фото». */
   fresh: boolean;
+  /** S5.2d: the body «Изменить тело» is editing, or null: the text then previews the body phrase it would end with (mockup 08). */
+  bodyDraft: AvatarBody | null;
 }) {
   const { client, store } = useEngine();
   const mounted = useMounted();
@@ -82,6 +120,34 @@ export function DescriptionCard({
   const [focusNext, setFocusNext] = useState<"field" | "edit" | null>(null);
   const { avatarId } = avatar;
   const { text, age } = avatar.descriptor;
+  // S5.2d: the body phrase that closes the descriptor in every prompt (the code writes it; it is never in the stored text). While «Изменить тело» is
+  // open, the phrase it would write instead. The text may be as long as 600 less «; » and the phrase (L10).
+  const storedPhrase = avatar.body === undefined ? undefined : bodyPhrase(avatar.body);
+  const nextPhrase = bodyDraft === null ? storedPhrase : bodyPhrase(bodyDraft);
+  const hasTail = storedPhrase !== undefined || nextPhrase !== undefined;
+  // A preview only says something when there is a phrase before or after (an import's face-only proposal, untouched, has none: 05).
+  const previewing = bodyDraft !== null && hasTail;
+  /**
+   * «; <the phrase>» after the text, as `promptSubject` joins them (the closing period is the display's own), the change struck out and inserted slot by
+   * slot while it is previewed. A body cleared to nothing strikes out its «; » and period too: the text then ends the descriptor.
+   */
+  const tail: ReactNode = !hasTail ? null : bodyDraft !== null && nextPhrase === undefined ? (
+    <span className="desc-body">
+      <del className="dx">
+        <span className="sr-only">убрать: </span>; {storedPhrase}.
+      </del>
+    </span>
+  ) : (
+    <>
+      {"; "}
+      <span className="desc-body">
+        {bodyDraft !== null && storedPhrase !== nextPhrase ? <Diff parts={bodyPhraseDiff(avatar.body ?? {}, bodyDraft)} /> : nextPhrase}
+      </span>
+      .
+    </>
+  );
+  /** The card itself, for the focus when the button it would go back to is not drawn (the preview of «Изменить тело» has none). */
+  const card = useRef<HTMLElement>(null);
 
   // A check started or ended is about the description as it is now: the refusal of an earlier proposal (a stale text, say) goes with it.
   useEffect(() => {
@@ -93,7 +159,7 @@ export function DescriptionCard({
       const node = field.current;
       node?.focus();
       node?.setSelectionRange(node.value.length, node.value.length);
-    } else if (focusNext === "edit") editButton.current?.focus();
+    } else if (focusNext === "edit") (editButton.current ?? card.current)?.focus();
     if (focusNext !== null) setFocusNext(null);
   }, [focusNext]);
 
@@ -193,17 +259,20 @@ export function DescriptionCard({
   const problemId = `${ids}-problem`;
 
   if (edit !== null) {
-    const over = edit.draft.length > DESCRIPTOR_MAX_CHARS;
+    // The engine judges the text beside her stored body phrase (`checkDescriptorEdit` with the body): that is the limit the owner types against.
+    const limit = textLimit(storedPhrase);
+    const over = edit.draft.length > limit;
     // A rule's reason is about the text it refused: once the owner types on, it goes until the next save says otherwise.
     const problem = editError !== null && (!ruleRefusal(editError) || edit.draft === edit.refused) ? editError : null;
     return (
-      <section className="card look-desc look-desc-edit" aria-label="Описание">
+      <section ref={card} tabIndex={-1} className="card look-desc look-desc-edit" aria-label="Описание">
+        {live}
         <div className="card-head">
           <Title />
           <div className="look-desc-meta">
             <span className="tag tag-info">правка</span>
             <span className={over ? "mono danger-text" : "mono faint"}>
-              {edit.draft.length} / {DESCRIPTOR_MAX_CHARS}
+              {edit.draft.length} / {limit}
             </span>
           </div>
         </div>
@@ -240,6 +309,12 @@ export function DescriptionCard({
             </button>
           </div>
         )}
+        {storedPhrase !== undefined && (
+          <BodyLegend>
+            Ещё {2 + storedPhrase.length} {plural(2 + storedPhrase.length, ["знак", "знака", "знаков"])} занимает фраза о теле — на текст остаётся {limit} из{" "}
+            {DESCRIPTOR_MAX_CHARS}.
+          </BodyLegend>
+        )}
         {runDrawing && (
           <p className="look-legend">
             <Icon name="info" size={13} strokeWidth={2} />
@@ -262,39 +337,34 @@ export function DescriptionCard({
           </button>
           <p className="field-hint">Бесплатно — без запроса к модели. Английскими словами; текст проходит ту же проверку, что и любое описание.</p>
         </div>
-        {live}
       </section>
     );
   }
 
   if (proposal !== null && proposal.proposal !== null) {
     const fix = proposal.proposal;
+    // «Исправить описание» is judged beside her STORED body phrase, whatever «Изменить тело» is previewing: that is the limit the fix must meet.
+    const limit = textLimit(storedPhrase);
     return (
-      <section className="card look-desc look-desc-proposal" aria-label="Описание">
+      <section ref={card} tabIndex={-1} className="card look-desc look-desc-proposal" aria-label="Описание">
+        {live}
         <div className="card-head">
           <Title />
           <div className="look-desc-meta">
             <span className="tag tag-warn">предложение сверки</span>
-            <span className="mono faint">
-              {fix.length} / {DESCRIPTOR_MAX_CHARS}
+            <span className={fix.length > limit ? "mono danger-text" : "mono faint"}>
+              {fix.length} / {limit}
             </span>
           </div>
         </div>
         <p className="descriptor-text mono" lang="en">
-          {wordDiff(proposal.checkedText, fix).map((part, i) =>
-            part.kind === "same" ? (
-              <span key={i}>{part.text}</span>
-            ) : part.kind === "del" ? (
-              <del key={i} className="dx">
-                <span className="sr-only">убрать: </span>
-                {part.text}
-              </del>
-            ) : (
-              <ins key={i} className="dx">
-                <span className="sr-only">вставить: </span>
-                {part.text}
-              </ins>
-            ),
+          {hasTail ? (
+            <>
+              <Diff parts={wordDiff(descriptorHead(proposal.checkedText), descriptorHead(fix))} />
+              {tail}
+            </>
+          ) : (
+            <Diff parts={wordDiff(proposal.checkedText, fix)} />
           )}
         </p>
         {applyError !== null && (
@@ -322,29 +392,48 @@ export function DescriptionCard({
           </button>
           <p className="field-hint">{proposalReason(proposal)} Бесплатно: без запроса к модели; новый текст проходит ту же проверку, что и любое описание.</p>
         </div>
-        {live}
       </section>
     );
   }
 
+  const limit = textLimit(nextPhrase);
   return (
-    <section className="card look-desc" aria-label="Описание">
+    <section ref={card} tabIndex={-1} className={previewing ? "card look-desc look-desc-live" : "card look-desc"} aria-label="Описание">
+      {live}
       <div className="card-head">
         <Title />
         <div className="look-desc-meta">
-          {fresh && <span className="tag">прочитано с фото</span>}
-          <span className="mono faint">
-            {text.length} / {DESCRIPTOR_MAX_CHARS}
+          {previewing ? <span className="tag tag-info">предпросмотр</span> : fresh && <span className="tag">прочитано с фото</span>}
+          <span className={text.length > limit ? "mono danger-text" : "mono faint"}>
+            {text.length} / {limit}
           </span>
-          <button ref={editButton} type="button" className="btn btn-s" disabled={!ready || editHeld} onClick={open}>
-            <Icon name="pencil" size={14} strokeWidth={2} />
-            Изменить текст
-          </button>
+          {/* While «Изменить тело» changes the phrase, the card is its preview (mockup 08) and offers no text edit; with no phrase either side (an
+              untouched face-only proposal, 05) the text stays editable. Every save is judged by the engine against the stored state. */}
+          {!previewing && (
+            <button ref={editButton} type="button" className="btn btn-s" disabled={!ready || editHeld} onClick={open}>
+              <Icon name="pencil" size={14} strokeWidth={2} />
+              Изменить текст
+            </button>
+          )}
         </div>
       </div>
       <p className="descriptor-text mono" lang="en">
-        {text}
+        {hasTail ? (
+          <>
+            {descriptorHead(text)}
+            {tail}
+          </>
+        ) : (
+          text
+        )}
       </p>
+      {previewing ? (
+        <BodyLegend>меняется только фраза о теле — остальной текст не трогается</BodyLegend>
+      ) : storedPhrase !== undefined ? (
+        <BodyLegend>фраза о теле — её пишет блок «Тело», не модель</BodyLegend>
+      ) : (
+        <BodyLegend>фразы о теле пока нет — она появится, когда вы зададите тело</BodyLegend>
+      )}
       {applyError !== null && isStale(applyError) && (
         <p className="look-edit-problem" role="alert">
           <Icon name="alert" size={14} strokeWidth={2} />
@@ -357,7 +446,6 @@ export function DescriptionCard({
           {EDIT_HELD_REASON}.
         </p>
       )}
-      {live}
     </section>
   );
 }
