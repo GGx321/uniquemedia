@@ -131,7 +131,7 @@ import { startMockCdn, withExcerptDurations, withFutureExpiry } from "./mockCdn"
 import { startMockFlashapi } from "./mockFlashapi";
 import { faceWorkerProblems, photoDecodeWorkerProblems, productionBundleProblems, productionEngineBundleProblems, productionMainProblems, productionMoneyTimingProblems, productionRendererCssProblems, productionRendererPageProblems, stickerEncodeWorkerProblems, textWorkerProblems } from "./bundleChecks";
 import { authorizationLabel, DEFAULT_IMPORT_DESCRIBE_ANSWER, markerMatch, requestCarries, startMockOpenRouter, type ImageHold, type MockOpenRouter, type MockRequest } from "./mockOpenRouter";
-import { acceptedRemainingProblems, launchIsActive, ledgerProblems, oneSetOneRunProblems, readLedger, restartPauseProblems, reviewRowOf, videosOnDiskProblems } from "./autopilotSmoke";
+import { acceptedRemainingProblems, launchIsActive, ledgerProblems, midRenderProblems, oneSetOneRunProblems, photoAttemptProblems, postsByModel, quietRestartProblems, readLedger, restartNoticeProblems, restartPauseProblems, reviewRowOf, videosOnDiskProblems } from "./autopilotSmoke";
 import { electronBinary } from "./electronBinary";
 import { failureDetail } from "./failureDetail";
 import { textAssetPackageProblems, textRasteriserOutputProblems } from "./textSmoke";
@@ -3189,8 +3189,29 @@ async function runPackagedRenderScenario(target: Target): Promise<void> {
 // ---------- the autopilot scenario (S4.E2E: plan §14, §3.6, §3.8, §28) ----------
 
 const AUTOPILOT = "autopilot scenario";
-/** A ceiling for one launch end to end on the slowest runner: it only ends a hang, nothing waits for it. */
-const AUTOPILOT_LAUNCH_MS = 420_000;
+// Every wait of the scenario has the ceiling of its own phase, and all of them together have one deadline. The CI step is bounded (`timeout-minutes` in studio.yml), and a step the runner
+// kills says nothing about the cause; a wait that gives up first fails with the launch's state, and the part's `finally` still runs. The ceilings only end a hang, nothing waits for them.
+/** One deadline for the whole scenario: the step's 15 minutes less what the scenarios before it take (about 5 minutes on Windows). It took 161 s on Windows in CI. */
+const AUTOPILOT_DEADLINE_MS = 480_000;
+/** The image requests of a slice to be in flight. */
+const AUTOPILOT_IN_FLIGHT_MS = 60_000;
+/** The scenes to come back from the writer and wait for the review. */
+const AUTOPILOT_REVIEW_MS = 120_000;
+/** A render to be mid-way (the slice before it, the montage, then the render). */
+const AUTOPILOT_MID_RENDER_MS = 180_000;
+/** A launch to go from a click to `done`. */
+const AUTOPILOT_DONE_MS = 240_000;
+/** How many image requests a slice has in flight at once: the engine's network pool. */
+const AUTOPILOT_SLICE_POOL = 6;
+
+let autopilotDeadlineAt = Number.POSITIVE_INFINITY;
+
+/** `ms`, or what is left of the scenario's deadline if that is less; throws when nothing is left, naming what was about to be waited for. */
+function autopilotWait(ms: number, what: string): number {
+  const left = autopilotDeadlineAt - Date.now();
+  if (left <= 0) throw new Error(`the autopilot scenario's deadline (${AUTOPILOT_DEADLINE_MS / 1000} s) passed before ${what}`);
+  return Math.min(ms, left);
+}
 /** The attempts the launch's near-duplicate gate must never see twice: more than the default pool of 48 for the launch that draws about forty pictures. */
 const AUTOPILOT_POOL = 80;
 
@@ -3220,7 +3241,6 @@ interface AutopilotWorld {
  */
 async function openAutopilotWorld(target: Target, names: readonly string[], poolSize: number): Promise<AutopilotWorld> {
   const mock = await startMockOpenRouter({ descriptorText: AVATAR_DESCRIPTOR, distinctImages: true, faceFixture: true, poolSize });
-  const listFile: unknown = JSON.parse(await readFile(musicLists.kyiv.file, "utf8"));
   // The fixtures' URLs expire after 2026-10-01: the list the mock serves gets URLs that live for the whole run.
   const flashapi = startMockFlashapi({ key: SMOKE_MUSIC_KEY, transformResponse: (response) => withFutureExpiry(withExcerptDurations(response), Date.now() + 100 * 3600 * 1000) });
   const cdn = startMockCdn({});
@@ -3229,26 +3249,24 @@ async function openAutopilotWorld(target: Target, names: readonly string[], pool
     await flashapi.stop();
     await cdn.stop();
   };
-  const tmp = await mkdtemp(join(tmpdir(), "studio-smoke-autopilot-"));
-  const userData = join(tmp, "userData");
-  const libraryRoot = join(tmp, "autopilot-library");
-  const exportRoot = join(tmp, "export");
-  for (const dir of [userData, libraryRoot, exportRoot]) await mkdir(dir, { recursive: true });
-  await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: RENDER_ROOT_ID, createdAt: new Date().toISOString() }));
-  // Two renders at once, like the render scenario's; a month budget that fits a launch of this size (the default would refuse the start as BUDGET_EXCEEDED).
-  await saveSettings(userData, { ...defaultSettings(userData), exportPath: exportRoot, renderConcurrency: 2, monthlyBudgetMicros: 25_000_000 });
-  const parsed = parseFlashapiList(field(listFile, "response"));
-  if (!parsed.ok) throw new Error("the Kyiv fixture does not parse");
-
-  let running: Running;
+  // Whatever fails from here on leaves nothing behind: the app, the three servers and the temp folder are ended in the catch below.
+  let tmp = "";
+  let running: Running | null = null;
   try {
-    running = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`, `--studio-flashapi-base-url=${flashapi.url}`, `--studio-music-cdn-base-url=${cdn.url}`]);
-  } catch (error) {
-    await stopMocks();
-    throw error;
-  }
-  const { cdp } = running;
-  try {
+    const listFile: unknown = JSON.parse(await readFile(musicLists.kyiv.file, "utf8"));
+    const parsed = parseFlashapiList(field(listFile, "response"));
+    if (!parsed.ok) throw new Error("the Kyiv fixture does not parse");
+    tmp = await mkdtemp(join(tmpdir(), "studio-smoke-autopilot-"));
+    const userData = join(tmp, "userData");
+    const libraryRoot = join(tmp, "autopilot-library");
+    const exportRoot = join(tmp, "export");
+    for (const dir of [userData, libraryRoot, exportRoot]) await mkdir(dir, { recursive: true });
+    await writeFile(join(exportRoot, EXPORT_MARKER_FILE), JSON.stringify({ schemaVersion: 1, rootId: RENDER_ROOT_ID, createdAt: new Date().toISOString() }));
+    // Two renders at once, like the render scenario's; a month budget that fits a launch of this size (the default would refuse the start as BUDGET_EXCEEDED).
+    await saveSettings(userData, { ...defaultSettings(userData), exportPath: exportRoot, renderConcurrency: 2, monthlyBudgetMicros: 25_000_000 });
+    const started = await launch(target, userData, [`--studio-openrouter-base-url=${mock.url}`, `--studio-pick-folder=${libraryRoot}`, `--studio-flashapi-base-url=${flashapi.url}`, `--studio-music-cdn-base-url=${cdn.url}`]);
+    running = started;
+    const { cdp } = started;
     const keySet = await req(cdp, "settings.setApiKey", { key: SMOKE_KEY });
     check(`${AUTOPILOT}: settings.setApiKey stores the fake key`, field(keySet, "ok") === true, keySet);
     const libSet = await req(cdp, "settings.setLibraryPath", { path: libraryRoot });
@@ -3268,18 +3286,21 @@ async function openAutopilotWorld(target: Target, names: readonly string[], pool
         const state = field(status, "result", "refresh", "state");
         return state === "idle" || state === "failed" ? status : null;
       },
-      120_000,
+      autopilotWait(120_000, "the music refresh"),
       500,
     );
     check(`${AUTOPILOT}: the refresh ends idle with the tracks stored`, field(ended, "result", "refresh", "state") === "idle" && Number(field(ended, "result", "trackCount")) >= 10, ended);
 
     const avatars: { id: string; name: string }[] = [];
     for (const name of names) avatars.push({ id: String(await createActiveAvatarForRun(cdp, name, AUTOPILOT)), name });
-    return { tmp, userData, libraryRoot, exportRoot, mock, running, avatars, stopMocks };
+    return { tmp, userData, libraryRoot, exportRoot, mock, running: started, avatars, stopMocks };
   } catch (error) {
-    killTree(running.child);
+    if (running !== null) {
+      running.cdp.close();
+      killTree(running.child);
+    }
     await stopMocks();
-    await removeTemp(tmp);
+    if (tmp !== "") await removeTemp(tmp).catch((cleanup: unknown) => console.log(`${AUTOPILOT}: the temp folder could not be removed: ${String(cleanup)}`));
     throw error;
   }
 }
@@ -3301,6 +3322,15 @@ async function closeAutopilotWorld(world: AutopilotWorld, failed: boolean): Prom
     console.log(`${AUTOPILOT}: a launch is active or the part failed: the app is ended without asking to quit`);
     running.cdp.close();
     killTree(running.child);
+  } else if (process.platform === "darwin") {
+    // The same quit as `quit()`, but it says whether the app went by itself: with a finished launch the quit asks nothing (S4.7), so SIGTERM must end the app well before the forced
+    // kill. An app still there after 10 s would be holding the quit question's dialog.
+    running.cdp.close();
+    const exited = running.child.exitCode !== null || running.child.signalCode !== null ? Promise.resolve(true) : new Promise<boolean>((resolve) => running.child.once("exit", () => resolve(true)));
+    running.child.kill("SIGTERM");
+    const byItself = await Promise.race([exited, Bun.sleep(10_000).then(() => false)]);
+    killTree(running.child);
+    check(`${AUTOPILOT}: the app quit by itself on SIGTERM with no launch active: the quit question was not asked`, byItself, { exitCode: running.child.exitCode, signalCode: running.child.signalCode });
   } else {
     await quit(running);
   }
@@ -3332,7 +3362,7 @@ async function failedJobsSeen(cdp: Cdp): Promise<string> {
  * scenario clicks through one, so waiting on would only turn the cause into a timeout. A progress line every 20 s keeps a slow CI run readable.
  */
 async function waitLaunch(cdp: Cdp, launchId: string, what: string, want: (got: AutopilotGetResult) => boolean, ms: number, between?: (got: AutopilotGetResult) => Promise<void>): Promise<AutopilotGetResult> {
-  const deadline = Date.now() + ms;
+  const deadline = Date.now() + autopilotWait(ms, what);
   let printedAt = Date.now();
   for (;;) {
     const got = await getLaunch(cdp, launchId);
@@ -3370,7 +3400,7 @@ async function startAutopilotLaunch(cdp: Cdp, label: string, draft: Record<strin
 }
 
 const driveToDone = (world: AutopilotWorld, launchId: string, what: string): Promise<AutopilotGetResult> =>
-  waitLaunch(world.running.cdp, launchId, what, (got) => got.launch.status === "done", AUTOPILOT_LAUNCH_MS);
+  waitLaunch(world.running.cdp, launchId, what, (got) => got.launch.status === "done", AUTOPILOT_DONE_MS);
 
 async function launchFilesOf(libraryRoot: string): Promise<LaunchFile[]> {
   const dir = join(libraryRoot, "autopilot");
@@ -3411,8 +3441,11 @@ async function checkFinishedLaunches(world: AutopilotWorld, label: string): Prom
   const photoIds = videos.flatMap((v) => v.photoIds);
   check(`${AUTOPILOT}: ${label}: no photo is in two videos`, new Set(photoIds).size === photoIds.length, photoIds.length - new Set(photoIds).size);
 
+  // Listed once for the whole check: the per-video lookup below reads this, not the engine again for each video.
+  const allListed: Awaited<ReturnType<typeof listVideos>> = [];
   for (const avatar of world.avatars) {
     const listed = await listVideos(running.cdp, avatar.id);
+    allListed.push(...listed);
     check(`${AUTOPILOT}: ${label}: ${avatar.name}'s videos are all files that exist`, listed.every((v) => v.fileState === "present" && v.bytes > 0 && existsSync(join(exportRoot, v.relPath))), listed);
   }
   for (const f of files) {
@@ -3420,7 +3453,7 @@ async function checkFinishedLaunches(world: AutopilotWorld, label: string): Prom
     const finished = got.videos.filter((v) => v.state === "done");
     check(`${AUTOPILOT}: ${label}: every finished video of ${f.launchId.slice(0, 8)} has a track`, finished.length > 0 && finished.every((v) => v.track !== null && v.videoId !== null && v.removed === undefined), finished.map((v) => v.track));
     for (const v of finished) {
-      const listed = (await Promise.all(world.avatars.map((a) => listVideos(running.cdp, a.id)))).flat().find((l) => l.videoId === v.videoId);
+      const listed = allListed.find((l) => l.videoId === v.videoId);
       if (listed === undefined) {
         check(`${AUTOPILOT}: ${label}: video ${v.key} is listed`, false, v.videoId);
         continue;
@@ -3438,10 +3471,22 @@ async function checkFinishedLaunches(world: AutopilotWorld, label: string): Prom
   // The wire against the ledger. An attempt id never leaves the engine (the provider's request carries none, and the canary pins that), so the mock's log cannot name ids; it can count,
   // and a count is enough: a restart that sent an attempt again under its old id would leave a request without its own reserve, or a reserve twice.
   const ledger = readLedger(await readFile(join(userData, "ledger.jsonl"), "utf8"));
-  const paid = mock.requests.filter((r) => r.method === "POST").length;
+  const paid = postsByModel(mock.requests);
   const problems = ledgerProblems(ledger, paid);
-  check(`${AUTOPILOT}: ${label}: every paid request the mock received has one reserve that went out, and no attempt id was reserved twice`, problems.length === 0, problems);
-  fact(`${label}: ledger`, { reserves: ledger.reserved.length, released: ledger.released.size, settled: ledger.settled.size, mockPaidRequests: paid, images: mock.imageRequests().length, writers: mock.sceneWriterRequests().length });
+  check(`${AUTOPILOT}: ${label}: every paid request the mock received has one reserve that went out, kind by kind, and no attempt id was reserved twice`, problems.length === 0, problems);
+  fact(`${label}: ledger`, { reserves: ledger.reserved.length, released: ledger.released.size, settled: ledger.settled.size, mockPaidRequestsByModel: Object.fromEntries(paid), images: mock.imageRequests().length, writers: mock.sceneWriterRequests().length });
+  // The photos the launches saved: each from an attempt of its own, whose reserve was settled (a photo bought twice, or kept from a request the ledger released, would show here).
+  const photoAttemptIds: string[] = [];
+  for (const avatar of world.avatars) {
+    const photosDir = join(libraryRoot, "avatars", avatar.id, "photos");
+    for (const name of (await namesIn(photosDir)).filter((n) => n.endsWith(".json") && !n.startsWith("."))) {
+      const sidecar: unknown = JSON.parse(await readFile(join(photosDir, name), "utf8"));
+      const attemptId = field(sidecar, "source", "attemptId");
+      if (field(sidecar, "source", "kind") === "generated" && field(sidecar, "source", "category") !== undefined && typeof attemptId === "string") photoAttemptIds.push(attemptId);
+    }
+  }
+  const photoProblems = photoAttemptProblems(photoAttemptIds, ledger);
+  check(`${AUTOPILOT}: ${label}: every scene photo came from an attempt of its own with a settled reserve`, photoAttemptIds.length >= photoIds.length && photoProblems.length === 0, { photos: photoAttemptIds.length, usedInVideos: photoIds.length, photoProblems });
   const reused = (await eventsMentioning(running.cdp, "ATTEMPT_ID_REUSED")) + (running.output().includes("ATTEMPT_ID_REUSED") ? 1 : 0);
   check(`${AUTOPILOT}: ${label}: no job failed with ATTEMPT_ID_REUSED`, reused === 0, reused);
   const money = await req(running.cdp, "money.status");
@@ -3460,7 +3505,7 @@ async function eventsMentioning(cdp: Cdp, text: string): Promise<number> {
 function checkLaunchMoney(label: string, got: AutopilotGetResult): void {
   const v = got.launch;
   check(`${AUTOPILOT}: ${label}: spent ${v.spentMicros} never passed W′ ${v.plannedWorstMicros}, which never passed the click ${v.acceptedMicros}`, v.spentMicros <= v.plannedWorstMicros && v.plannedWorstMicros <= v.acceptedMicros, v);
-  check(`${AUTOPILOT}: ${label}: nothing is in flight or unsettled when it is done`, v.inFlight.requests === 0 && (v.unsettled?.requests ?? 0) === 0, v.inFlight);
+  check(`${AUTOPILOT}: ${label}: it paid for its work and wrote nothing for a review it did not have`, v.spentMicros > 0 && v.endedAt !== null && v.reviewWritesMicros === 0, { spent: v.spentMicros, endedAt: v.endedAt, reviewWrites: v.reviewWritesMicros });
 }
 
 /** Part 1: the launches that nothing interrupts. 2 avatars x 3 videos with the review off, then a smaller launch with the review on. */
@@ -3490,7 +3535,7 @@ async function runAutopilotHappyPath(target: Target): Promise<void> {
     const writersBefore = world.mock.sceneWriterRequests().length;
     const reviewStartedAt = Date.now();
     const second = await startAutopilotLaunch(cdp, "1 x 1 with review", autopilotDraft(ids.slice(0, 1), 1, true));
-    const waiting = await waitLaunch(cdp, second, "the scenes to wait for the review", (got) => reviewRowOf(got.launch) !== null, AUTOPILOT_LAUNCH_MS);
+    const waiting = await waitLaunch(cdp, second, "the scenes to wait for the review", (got) => reviewRowOf(got.launch) !== null, AUTOPILOT_REVIEW_MS);
     const row = reviewRowOf(waiting.launch);
     if (row === null) throw new Error("the review row vanished");
     check(`${AUTOPILOT}: review: the writer was paid for the scenes and no picture was drawn yet`, world.mock.sceneWriterRequests().length > writersBefore && world.mock.imageRequests().length === imagesBefore, { writers: world.mock.sceneWriterRequests().length - writersBefore, images: world.mock.imageRequests().length - imagesBefore });
@@ -3540,20 +3585,23 @@ async function runAutopilotKill(target: Target, where: "slice" | "render"): Prom
     // 1. Reach the moment. The engine's pid and boot id are taken first: finding a pid takes seconds on Windows (a CIM query), and nothing slow may sit between "the render is mid-way" and the kill.
     const pid = await waitFor("the engine process", async () => enginePid(mainPid), 5_000);
     const bootBefore = field(await req(cdp, "engine.snapshot"), "result", "bootId");
-    // Slice: every request the mock was sent is one the engine reports in flight, and both are not zero (nothing in transit, so the ledger and the wire agree).
+    const noticesBefore = await restartNotices(cdp);
+    // Slice: the pool's six requests are all in flight and all of them are at the mock (the engine's count equals the mock's, so nothing is in transit and the ledger and the wire agree).
     let inFlightAtKill = 0;
+    let postsWhenStable = -1;
     if (where === "slice") {
       const stable = await waitLaunch(
         cdp,
         launchId,
         "image requests to be in flight",
-        (got) => got.launch.inFlight.requests > 0 && got.launch.inFlight.requests === (hold?.arrived() ?? -1),
-        AUTOPILOT_LAUNCH_MS,
+        (got) => got.launch.inFlight.requests === AUTOPILOT_SLICE_POOL && got.launch.inFlight.requests === (hold?.arrived() ?? -1),
+        AUTOPILOT_IN_FLIGHT_MS,
       );
       await Bun.sleep(300);
       const again = await getLaunch(cdp, launchId);
       check(`${AUTOPILOT}: ${label}: the slice is drawing with requests in flight that the mock holds, none in transit`, again.launch.avatars[0]?.phase === "drawing" && again.launch.inFlight.requests === stable.launch.inFlight.requests && again.launch.inFlight.requests === hold?.arrived(), describeLaunch(again));
       inFlightAtKill = again.launch.inFlight.requests;
+      postsWhenStable = paidPostsSeen(world.mock);
       fact(`${label}: the launch at the kill`, describeLaunch(again));
     }
     let midRender: unknown = null;
@@ -3573,21 +3621,23 @@ async function runAutopilotKill(target: Target, where: "slice" | "render"): Prom
           }
           return null;
         },
-        AUTOPILOT_LAUNCH_MS,
+        autopilotWait(AUTOPILOT_MID_RENDER_MS, "a render to be mid-way"),
         50,
       );
     }
 
-    // 2. The kill: the engine's process alone (Windows without /T), as a crash would.
-    killEngineOnly(pid);
+    // 2. The kill: the engine's process alone (Windows without /T), as a crash would. The mock's paid requests are counted right before it: with the images held, that count is exact.
+    const postsAtKill = paidPostsSeen(world.mock);
+    if (where === "slice") check(`${AUTOPILOT}: ${label}: the mock's paid requests did not move between the held slice and the kill, so the count at the kill is exact`, postsAtKill === postsWhenStable, { postsWhenStable, postsAtKill });
+    killEngineChecked(pid);
     await waitFor(
       "an engine-restarted notice",
-      async () => {
-        const events = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice" && e.payload.notice.code === "engine-restarted")`);
-        return Array.isArray(events) && events.length > 0 ? events[0] : null;
-      },
+      async () => ((await restartNotices(cdp)) > 0 ? true : null),
       30_000,
     );
+    // The render job the kill met had not ended before it: nothing the old engine emitted can arrive after the new engine's notice, so an end event seen here would be from before the kill.
+    const midRenderJobId = field(midRender, "payload", "jobId");
+    const endedBeforeKill = where === "render" && typeof midRenderJobId === "string" ? (await endEventOf(cdp, midRenderJobId)) !== null : false;
     const after = await waitFor(
       "a snapshot from the restarted engine",
       async () => {
@@ -3597,16 +3647,23 @@ async function runAutopilotKill(target: Target, where: "slice" | "render"): Prom
       30_000,
     );
     check(`${AUTOPILOT}: ${label}: the engine was killed and came back with a new bootId`, typeof field(after, "result", "bootId") === "string" && field(after, "result", "bootId") !== bootBefore, { bootBefore, bootAfter: field(after, "result", "bootId") });
+    const noticeProblems = restartNoticeProblems(noticesBefore, await restartNotices(cdp));
+    check(`${AUTOPILOT}: ${label}: the kill raised one engine-restarted notice, and none was there before`, noticeProblems.length === 0, noticeProblems);
     // The provider would have billed what it had been sent; the held answers go out now, to nobody.
     hold?.release();
-
-    if (where === "render") check(`${AUTOPILOT}: ${label}: a render was mid-way when the engine was killed`, Number(field(midRender, "payload", "done")) >= 1, midRender);
 
     // 3. The window shows paused { engine-restart }: in the snapshot a window opened now would read, and in the event that told the open one.
     const paused = await waitLaunch(cdp, launchId, "the launch to read as paused by the restart", (got) => got.launch.status === "paused", 60_000);
     fact(`${label}: the launch after the restart`, describeLaunch(paused));
-    const pausedProblems = restartPauseProblems(paused.launch);
-    check(`${AUTOPILOT}: ${label}: the launch is paused { engine-restart } and blocked by nothing but a reconcile`, pausedProblems.length === 0, { pausedProblems, view: describeLaunch(paused) });
+    // The restarted engine has nothing of its own in flight, and exactly the requests that were out at the kill are the ones it reads as unsettled (none for a render).
+    const pausedProblems = restartPauseProblems(paused.launch, inFlightAtKill);
+    check(`${AUTOPILOT}: ${label}: the launch is paused { engine-restart }, nothing is in flight, ${inFlightAtKill} requests are unsettled, and only a reconcile blocks «Продолжить»`, pausedProblems.length === 0, { pausedProblems, view: describeLaunch(paused) });
+    if (where === "render") {
+      // Mid-render proved from the far side as well: when the launch is read after the kill, a video of it is still unfinished, and the render job the kill met had not ended.
+      const row = paused.launch.avatars[0];
+      const midProblems = midRenderProblems({ videosDone: row?.videos.done ?? -1, planned: paused.launch.plan.videos, endedBeforeKill });
+      check(`${AUTOPILOT}: ${label}: a render was mid-way (it had progressed, had not ended, and a video of the launch was unfinished) when the engine was killed`, Number(field(midRender, "payload", "done")) >= 1 && typeof midRenderJobId === "string" && midProblems.length === 0, { midRender, midProblems });
+    }
     const snapshotLaunch = field(await req(cdp, "engine.snapshot"), "result", "autopilot");
     check(`${AUTOPILOT}: ${label}: engine.snapshot carries the same paused launch for a window opened now`, field(snapshotLaunch, "launchId") === launchId && field(snapshotLaunch, "status") === "paused" && field(snapshotLaunch, "paused", "cause") === "engine-restart", snapshotLaunch);
     const told = await waitFor(
@@ -3621,11 +3678,9 @@ async function runAutopilotKill(target: Target, where: "slice" | "render"): Prom
     );
     check(`${AUTOPILOT}: ${label}: the open window was told, by autopilot.changed, that the launch is paused by the restart`, field(told, "type") === "autopilot.changed", told);
     if (where === "slice") {
-      check(`${AUTOPILOT}: ${label}: the lost requests keep the launch blocked until a reconcile`, paused.launch.resumeBlockedBy === "reconcile-required" && (paused.launch.unsettled?.requests ?? 0) >= inFlightAtKill && inFlightAtKill > 0, { blockedBy: paused.launch.resumeBlockedBy, unsettled: paused.launch.unsettled, inFlightAtKill });
+      check(`${AUTOPILOT}: ${label}: the lost requests keep the launch blocked until a reconcile`, paused.launch.resumeBlockedBy === "reconcile-required" && inFlightAtKill === AUTOPILOT_SLICE_POOL, { blockedBy: paused.launch.resumeBlockedBy, unsettled: paused.launch.unsettled, inFlightAtKill });
     }
-    const requestsAtRestart = world.mock.requests.filter((r) => r.method === "POST").length;
-    await Bun.sleep(1_500); // invariant 4 / A5: after a restart nothing happens until the click
-    check(`${AUTOPILOT}: ${label}: nothing was sent to the provider while the launch waited for «Продолжить»`, world.mock.requests.filter((r) => r.method === "POST").length === requestsAtRestart, { before: requestsAtRestart, after: world.mock.requests.filter((r) => r.method === "POST").length });
+    await Bun.sleep(2_000); // a quiet spell on top of everything since the kill: a restarted engine that meant to send or render would have started by now
 
     // 4. Reconcile where the view asks for one (the E2E build shortens its quiet window), then «Продолжить · до $R» with the R the view states.
     if (paused.launch.resumeBlockedBy === "reconcile-required") {
@@ -3636,7 +3691,7 @@ async function runAutopilotKill(target: Target, where: "slice" | "render"): Prom
           if (field(r, "ok") !== true || field(r, "result", "status") === "too-early") return null;
           return r;
         },
-        120_000,
+        autopilotWait(120_000, "money.reconcile"),
         1_000,
       );
       check(`${AUTOPILOT}: ${label}: money.reconcile closes what the kill left open`, field(reconciled, "result", "status") === "done", reconciled);
@@ -3648,6 +3703,10 @@ async function runAutopilotKill(target: Target, where: "slice" | "render"): Prom
       const short = await req(cdp, "autopilot.resume", { launchId, acceptedRemainingMicros: accepted - 1 });
       check(`${AUTOPILOT}: ${label}: one micro-dollar under R is refused PRICE_CHANGED and the launch stays paused`, field(short, "ok") === false && field(short, "error", "code") === "PRICE_CHANGED" && (await getLaunch(cdp, launchId)).launch.status === "paused", short);
     }
+    // A5 and invariant 4 over the whole time since the kill (the restarted engine's boot, the paused view, the reconcile and the refused click included): not one paid request reached the
+    // provider, so no new reserve was opened, and no render moved. The kill's own count was taken right before it, and with the images held it is exact.
+    const quietProblems = quietRestartProblems({ postsAtKill, postsBeforeClick: paidPostsSeen(world.mock), renderProgressAfterRestart: await renderProgressAfterRestart(cdp) });
+    check(`${AUTOPILOT}: ${label}: from the kill to the click nothing was sent to the provider and no render moved`, quietProblems.length === 0, quietProblems);
     const resumed = await req(cdp, "autopilot.resume", { launchId, acceptedRemainingMicros: accepted });
     check(`${AUTOPILOT}: ${label}: «Продолжить · до $R» (R = ${accepted}) resumes the launch`, field(resumed, "ok") === true, resumed);
 
@@ -3665,20 +3724,58 @@ async function runAutopilotKill(target: Target, where: "slice" | "render"): Prom
     check(`${AUTOPILOT}: ${label}: no launch is active when the app quits`, typeof status !== "string" || !launchIsActive(status), status);
     failed = false;
   } finally {
-    hold?.release();
-    await closeAutopilotWorld(world, failed);
+    // The app is ended first; releasing the hold before that would let a held request go to an engine that is still there.
+    try {
+      await closeAutopilotWorld(world, failed);
+    } finally {
+      hold?.release();
+    }
   }
+}
+
+/** How many paid requests (POSTs) the mock has received so far. */
+function paidPostsSeen(mock: MockOpenRouter): number {
+  return mock.requests.filter((r) => r.method === "POST").length;
+}
+
+/** How many engine-restarted notices the window has seen. */
+async function restartNotices(cdp: Cdp): Promise<number> {
+  const count = await cdp.evaluate(`window.__smoke.events.filter((e) => e.type === "engine.notice" && e.payload.notice.code === "engine-restarted").length`);
+  return typeof count === "number" ? count : -1;
+}
+
+/** The render progress events the window has seen after the first engine-restarted notice: a render that moved after the engine came back. */
+async function renderProgressAfterRestart(cdp: Cdp): Promise<number> {
+  const count = await cdp.evaluate(
+    `(() => { const ev = window.__smoke.events; const at = ev.findIndex((e) => e.type === "engine.notice" && e.payload.notice.code === "engine-restarted"); return at < 0 ? -1 : ev.slice(at + 1).filter((e) => e.type === "job.progress" && e.payload.kind === "render").length; })()`,
+  );
+  return typeof count === "number" ? count : -1;
+}
+
+/** `killEngineOnly`, but a refusal is an error: `taskkill` answers with a status, and a kill that did not happen would turn the whole part into a test of nothing. */
+function killEngineChecked(pid: number): void {
+  if (process.platform === "win32") {
+    const result = spawnSync("taskkill", ["/PID", String(pid), "/F"], { encoding: "utf8" });
+    if (result.status !== 0) throw new Error(`taskkill /PID ${pid} /F exited ${String(result.status)}: ${result.stdout} ${result.stderr}`);
+    return;
+  }
+  process.kill(pid, "SIGKILL");
 }
 
 async function runAutopilotScenario(target: Target): Promise<void> {
   const startedAt = Date.now();
-  await runAutopilotHappyPath(target);
-  fact("autopilot scenario: the happy path took, seconds", Math.round((Date.now() - startedAt) / 1000));
-  const killsAt = Date.now();
-  await runAutopilotKill(target, "slice");
-  await runAutopilotKill(target, "render");
-  fact("autopilot scenario: the two kills took, seconds", Math.round((Date.now() - killsAt) / 1000));
-  fact("autopilot scenario: the whole scenario took, seconds", Math.round((Date.now() - startedAt) / 1000));
+  autopilotDeadlineAt = startedAt + AUTOPILOT_DEADLINE_MS;
+  try {
+    await runAutopilotHappyPath(target);
+    fact("autopilot scenario: the happy path took, seconds", Math.round((Date.now() - startedAt) / 1000));
+    const killsAt = Date.now();
+    await runAutopilotKill(target, "slice");
+    await runAutopilotKill(target, "render");
+    fact("autopilot scenario: the two kills took, seconds", Math.round((Date.now() - killsAt) / 1000));
+    fact("autopilot scenario: the whole scenario took, seconds", Math.round((Date.now() - startedAt) / 1000));
+  } finally {
+    autopilotDeadlineAt = Number.POSITIVE_INFINITY;
+  }
 }
 
 function finish(): void {

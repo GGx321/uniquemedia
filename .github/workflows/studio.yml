@@ -261,15 +261,18 @@ jobs:
           else
             bun run dist:studio:win:e2e
           fi
-      - name: Smoke-test the E2E package (avatar end-to-end against the mock, and the render scenario)
+      - name: Smoke-test the E2E package (avatar end-to-end against the mock, the render scenario, and the autopilot scenario)
         if: env.PACKAGE == 'true'
         # The E2E build shortens the two waits that dominated this step (STUDIO_E2E in money/reconcile.ts and money/budget.ts:
         # the reconcile quiet period 120 s -> 5 s and the request timeout 180 s -> 15 s, which the kill-and-resume scenario
         # waits out on top of it, ~300 s -> ~20 s); a production build carries the real ones (the production smoke checks it).
         # That took the step from about 465 s to about a minute. Since 3a.9 the step also runs the render scenario (six real
         # renders, two engine kills with restarts, playback; plan 3a.9 and 3e.1): CI measured 154 s on macOS and 194 s on
-        # Windows (the runners have 3 to 4 cores). 10 minutes keeps margin for a slow runner and still ends a hang.
-        timeout-minutes: 10
+        # Windows (the runners have 3 to 4 cores). S4.E2E added the autopilot scenario (three app instances: 2 x 3 and a review launch,
+        # then a real engine kill mid-slice and one mid-render, each followed by a reconcile and «Продолжить»): CI measured 116 s on macOS
+        # and 161 s on Windows, which took the step to 5 min 3 s and 7 min 44 s. 15 minutes keeps margin for a slow runner and still ends a
+        # hang; the scenario bounds its own waits (smoke-engine.ts `AUTOPILOT_DEADLINE_MS`) so that a hang fails with its diagnosis first.
+        timeout-minutes: 15
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "macOS" ]; then

@@ -417,6 +417,33 @@ describe("holdImages", () => {
     await bounded(pending, 5_000, "the released request");
     expect(m.totalUsageUsd()).toBeGreaterThan(0);
   });
+
+  test("a new hold releases the one before it, and holds what comes after", async () => {
+    const m = await started();
+    const first = m.holdImages();
+    const heldByFirst = postImage(m);
+    await until(() => first.arrived() === 1, "the first request to arrive");
+    const second = m.holdImages();
+    expect((await bounded(heldByFirst, 5_000, "the request the first hold held")).status).toBe(200);
+    const heldBySecond = postImage(m);
+    await until(() => second.arrived() === 1, "the second request to arrive");
+    expect(first.arrived()).toBe(1);
+    const early = await Promise.race([heldBySecond.then(() => "answered"), Bun.sleep(150).then(() => "held")]);
+    expect(early).toBe("held");
+    second.release();
+    expect((await bounded(heldBySecond, 5_000, "the request the second hold held")).status).toBe(200);
+  });
+
+  test("stopping the mock lets a held request go on, so no handler is left waiting for ever", async () => {
+    const m = await started();
+    const hold = m.holdImages();
+    const pending = postImage(m).catch(() => ({ status: -1, b64: "" }));
+    await until(() => hold.arrived() === 1, "the request to arrive");
+    expect(m.totalUsageUsd()).toBe(0);
+    await m.stop();
+    await until(() => m.totalUsageUsd() > 0, "the held handler to run on after the stop");
+    await bounded(pending, 5_000, "the held request to end");
+  });
 });
 
 // S4.E2E: a launch of two avatars and a second one draw about fifty images from one mock; the default pool of 48 would repeat a picture inside the run, and the near-duplicate gate would retry it.
