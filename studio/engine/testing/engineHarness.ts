@@ -125,7 +125,22 @@ export function ageReply(adult: boolean, confidence = 0.95): Reply {
   return { status: 200, body: chatBody(JSON.stringify({ adult, confidence, reason: "Mature features of a woman in her mid-20s." }), { cost: 0.0014 }) };
 }
 
-/** The JSON schema a chat completion asks for: "avatar_descriptor", "age_check", or null. */
+/**
+ * A descriptor check's answer (Stage 5, S5.0c, schema "descriptor_check"): every aspect agrees with the photo (the body is not visible), so nothing is proposed.
+ * `overrides` replaces the whole answer's fields; `cost` is usage.cost in dollars.
+ */
+export function checkReply(overrides: Record<string, unknown> = {}, cost = 0.0021): Reply {
+  const ok = { state: "ok", descriptor: "", photo: "" };
+  const answer = { aspects: { hair: ok, eyes: ok, marks: ok, body: { state: "not-visible", descriptor: "", photo: "" } }, descriptor: "", ...overrides };
+  return { status: 200, body: chatBody(JSON.stringify(answer), { cost }) };
+}
+
+/** The descriptor-check requests (Stage 5, S5.0c) among a fake network's calls. */
+export function checkCalls(net: { calls: readonly FetchCall[] }): FetchCall[] {
+  return net.calls.filter((c) => c.url.endsWith("/chat/completions") && schemaName(c) === "descriptor_check");
+}
+
+/** The JSON schema a chat completion asks for: "avatar_descriptor", "age_check", "descriptor_check", or null. */
 export function schemaName(call: FetchCall): string | null {
   const body: unknown = call.body === undefined ? null : JSON.parse(call.body);
   if (typeof body !== "object" || body === null || !("response_format" in body)) return null;
@@ -142,10 +157,11 @@ type Handler = (call: FetchCall, n: number) => Reply | Promise<Reply>;
  * descriptor chats take `descriptors` in turn, images and age checks their
  * handler with its own call count (by default: portrait n, a confident adult).
  */
-export function network(opts: { prices?: (call: FetchCall) => Reply | Promise<Reply>; descriptors?: Step[]; image?: Handler; age?: Handler } = {}) {
+export function network(opts: { prices?: (call: FetchCall) => Reply | Promise<Reply>; descriptors?: Step[]; image?: Handler; age?: Handler; check?: Handler } = {}) {
   const descriptors = [...(opts.descriptors ?? [])];
   let images = 0;
   let ages = 0;
+  let checks = 0;
   const route = async (call: FetchCall): Promise<Reply> => {
     if (call.url.endsWith("/images")) {
       const n = ++images;
@@ -153,6 +169,8 @@ export function network(opts: { prices?: (call: FetchCall) => Reply | Promise<Re
     }
     if (call.url.endsWith("/chat/completions")) {
       if (schemaName(call) === "age_check") return (opts.age ?? (() => ageReply(true)))(call, ++ages);
+      // Stage 5, S5.0c: a descriptor check has its own handler, a confident «everything agrees» by default, so a test that is not about it (an import's) needs no step for it.
+      if (schemaName(call) === "descriptor_check") return (opts.check ?? (() => checkReply()))(call, ++checks);
       const step = descriptors.shift();
       if (step === undefined) throw new Error("unexpected descriptor request");
       return typeof step === "function" ? step(call) : step;

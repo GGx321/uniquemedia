@@ -153,6 +153,18 @@ export function importJobEstimate(priced: PricedBook, models: AvatarModels): Est
 /** At most 2 attempts: an unparseable answer is asked once more, like the descriptor's and the describe's. */
 export const DESCRIPTOR_CHECK_MAX_ATTEMPTS = 2;
 
+/**
+ * How long one HTTP try of a check may wait for its answer: 60 s, shorter than the 180 s default (openrouter/types.ts). The import runs the check inside the same command that
+ * saved the avatar, and a stuck check must not hold the owner at the import screen for minutes. A timeout leaves that attempt's reserve open at its worst case until the next
+ * reconcile (the usual notice), which is the price of not knowing whether the request was billed.
+ */
+export const DESCRIPTOR_CHECK_TIMEOUT_MS = 60_000;
+
+/** The models a check prices: the settings' text model alone (the vision call), like the import's. */
+export function descriptorCheckPriceModels(models: AvatarModels): PriceModels {
+  return { imageModels: [], chatModels: [models.textModel] };
+}
+
 /** One check attempt on the settings' text model. */
 export function descriptorCheckCall(textModel: string): ChatCall {
   return { ...DESCRIPTOR_CHECK_CALL, model: textModel, typical: { ...DESCRIPTOR_CHECK_CALL.typical } };
