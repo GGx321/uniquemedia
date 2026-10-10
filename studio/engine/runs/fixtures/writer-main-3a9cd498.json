@@ -1,15 +1,15 @@
 {
-  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
+  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c (new plan from the pool rewrite; pose labels speak of the viewer): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
   "messages": {
-    "chunk1": "755fa0a0bc1b4621fc6edb14a38280972b998f67bc36431dc7b3a6ae80749eb8",
-    "chunk1-empty": "d1fda6c068f09237b3f651048791cf5dcd3adf9c7a0a75296de8c5d0f0d41670",
-    "chunk2": "6c216ff3dcc4361eb156884a0cbfc27198e7af06136dc38e8c6e8dd7e491c023",
-    "chunk2-empty": "6effcf53a3ad6a97e7b6e999c2dd41605ddca60be905336a711e1f9829785a35"
+    "chunk1": "566184c8d20a17dd89d08e6953aba4a5bb38eead31089e3c0312b9db508d1c97",
+    "chunk1-empty": "f343e326a36dfc8a52a6890e76dd3d845278bf5af6b25e0e63ae08e4dad5a0de",
+    "chunk2": "153c8e22065ac04e77332cbb5c136a3ba6bf0d7f1ae8da0415e7c518e02ff209",
+    "chunk2-empty": "b24960ad40bdd99cb9301fe7e64b33da77296050f91ed1e2325da8d0e40669e0"
   },
   "bodies": [
-    "d19f4d4d474e7d06566ee87b6378200d5bd917126cf29caa75489dafb6fde875",
-    "cf95e82df72fdcff566f7cd8a4985109c39bae66bc84cf6a51ccfd7db1227947",
-    "1596c0aa4c7cc159e5a25c892b37268bb4d29493c397fbedf78f7966b174864d"
+    "bb687add7f3417f14361e14876c58ef2ace50f2dd83fd63d8f8e6c0e68627bea",
+    "9e128f5ae31b91cbeef0571764f71e9d1832a3de1f4dae56d50d6a90b62d992f",
+    "c30ea8732e1df9e534164c757ac8fdbf2720a2e2509bbd86df9c5ab6933eea04"
   ],
   "reserves": [
     { "attemptId": "run-00000001:writer-1#1", "worstMicros": 37500, "model": "x-ai/grok-4.3" },

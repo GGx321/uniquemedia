@@ -71,8 +71,8 @@ describe("writerMessages", () => {
     expect(user?.role).toBe("user");
     const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
     expect(body).toEqual([
-      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "a phone snap a friend took", pose: "facing the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
-      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "her own front-camera selfie", pose: "a three-quarter view, turned slightly from the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "a phone snap a friend took", pose: "facing the viewer", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "her own front-camera selfie", pose: "a three-quarter view, turned slightly from the viewer", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
     ]);
   });
 
@@ -330,6 +330,18 @@ describe("phrase constants never suggest a minor or use a revealing word (round 
   test.each(allPhrases())("%s has no youth word and no revealing word", (_name, text) => {
     expect(youthWords(text, "descriptor")).toEqual([]);
     expect(revealingWordsIn(text)).toEqual([]);
+  });
+});
+
+// S5.1c: the writer is told never to write about the camera and to say she looks at the viewer, so the pose labels it reads speak of the viewer too.
+describe("POSE_LABEL speaks of the viewer, never the camera", () => {
+  test("no pose label names the camera, the lens or the photographer", () => {
+    for (const label of Object.values(POSE_LABEL)) expect(label).not.toMatch(/camera|lens|photographer/i);
+  });
+
+  test("the front and three-quarter labels are worded around the viewer", () => {
+    expect(POSE_LABEL.front).toBe("facing the viewer");
+    expect(POSE_LABEL["three-quarter"]).toBe("a three-quarter view, turned slightly from the viewer");
   });
 });
 

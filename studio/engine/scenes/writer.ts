@@ -97,8 +97,8 @@ export const SHOT_LABEL: Record<Shot, string> = {
  * pose is separate — this is only what the writer is told to write around).
  */
 export const POSE_LABEL: Record<Pose, string> = {
-  front: "facing the camera",
-  "three-quarter": "a three-quarter view, turned slightly from the camera",
+  front: "facing the viewer",
+  "three-quarter": "a three-quarter view, turned slightly from the viewer",
   profile: "in profile, her face turned fully to the side",
   back: "from behind, her face not visible",
 };

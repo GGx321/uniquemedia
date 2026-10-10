@@ -224,7 +224,7 @@ describe("a rewrite of an own scene", () => {
     expect(await end).toMatchObject({ status: "done", written: 1 });
     const messages = messagesOf(net.calls[0] as FetchCall);
     expect(messages[0]?.content).toBe(ideaSystemPrompt());
-    expect(listAsked(net.calls[0] as FetchCall)).toEqual([{ slotIndex: 5, idea: "кофе на балконе утром", shot: SHOT_LABEL.selfie, pose: "facing the camera" }]);
+    expect(listAsked(net.calls[0] as FetchCall)).toEqual([{ slotIndex: 5, idea: "кофе на балконе утром", shot: SHOT_LABEL.selfie, pose: "facing the viewer" }]);
     expect(JSON.stringify(messages)).not.toContain("Typed by hand");
   });
 
@@ -403,7 +403,7 @@ describe("an idea write", () => {
       const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
 
       expect(await end).toMatchObject({ status: "done" });
-      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([[SHOT_LABEL.selfie, "facing the camera"]]);
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([[SHOT_LABEL.selfie, "facing the viewer"]]);
       const scene = (await setNow()).scenes.find((s) => s.sceneId === 5);
       expect(scene?.origin === "own" && [scene.shot, scene.pose]).toEqual(["selfie", "front"]);
     });
