@@ -8,7 +8,9 @@ import {
   CANDIDATES_PER_BATCH,
   descriptorCheckCall,
   descriptorCheckEstimate,
+  descriptorCheckPriceModels,
   DESCRIPTOR_CHECK_MAX_ATTEMPTS,
+  DESCRIPTOR_CHECK_TIMEOUT_MS,
   descriptorJobCap,
   importDescribeCall,
   IMPORT_DESCRIBE_MAX_ATTEMPTS,
@@ -277,6 +279,15 @@ describe("the descriptor-vs-master check (Stage 5, S5.0c)", () => {
       images: 1,
       typical: { inputTokens: 1_000, outputTokens: 450 },
     });
+  });
+
+  test("one HTTP try waits 60 s for its answer, shorter than the 180 s default, so a stuck check does not hold the import for minutes", () => {
+    expect(DESCRIPTOR_CHECK_TIMEOUT_MS).toBe(60_000);
+  });
+
+  test("prices only the settings' text model: no image model and no age-check model", () => {
+    expect(descriptorCheckPriceModels(DEFAULTS)).toEqual({ imageModels: [], chatModels: ["x-ai/grok-4.3"] });
+    expect(descriptorCheckPriceModels({ ...DEFAULTS, textModel: "acme/vision" })).toEqual({ imageModels: [], chatModels: ["acme/vision"] });
   });
 
   test("a check alone: 2 attempts at 12 500 µ$ worst, $0.002375 expected", () => {
