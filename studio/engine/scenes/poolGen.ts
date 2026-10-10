@@ -204,7 +204,7 @@ const REASON: Record<PoolProblem, string> = {
   "not-json": "it was not the JSON object asked for",
   empty: "it was empty",
   "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash, or it suggested a young person',
-  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one free-hand activity that does not use her phone) ${LENGTH_NOTE}`,
+  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name that does not say mirror, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one free-hand activity that does not use her phone) ${LENGTH_NOTE}`,
   "too-few-outfits": `fewer than ${POOL_OUTFITS_MIN} of its outfits were usable ${LENGTH_NOTE}`,
   "bad-shot-deck": `its "shotDeck" was not exactly five shots from ${POOL_SHOTS.join(", ")}`,
   "mirror-without-place": 'its "shotDeck" had a mirror shot but no place had "mirror": true',

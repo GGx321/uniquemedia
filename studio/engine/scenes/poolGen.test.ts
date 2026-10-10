@@ -569,6 +569,11 @@ describe("poolMessages", () => {
     expect(poolMessages("x", { problems: ["too-few-places"], words: [] })[1]?.content).toContain("one free-hand activity that does not use her phone");
   });
 
+  test("S5.R1: the too-few-places retry reason tells that a place name must not say mirror, so the retry can fix the places that were dropped for it", () => {
+    const text = poolMessages("x", { problems: ["too-few-places"], words: [] })[1]?.content ?? "";
+    expect(text).toContain("a plain name that does not say mirror");
+  });
+
   test("S5.R1 M1: every place of the example has a free-hand activity that does not use her phone", () => {
     const example: { locations: { name: string; activities: { text: string; twoHanded: boolean }[] }[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
     for (const place of example.locations) expect(place.activities.some((a) => !a.twoHanded && !/\bphones?\b/i.test(a.text))).toBe(true);
