@@ -2497,6 +2497,11 @@ export class MockEngine implements EngineBridge {
         const kept = bodyFromRecord(body);
         const refusal = bodyCompositeRefusal(avatar.descriptor.text, kept === undefined ? undefined : bodyPhrase(kept));
         if (refusal !== null) return this.fail(c, refusal);
+        // The whole contract, as the engine's validator judges it: the stored text beside the new phrase.
+        const phrase = kept === undefined ? undefined : bodyPhrase(kept);
+        if (!AvatarDescriptor.safeParse({ ...avatar.descriptor, ...(phrase === undefined ? {} : { body: phrase }) }).success) {
+          return this.fail(c, { code: "VALIDATION", descriptorReason: "invalid", detail: "the description with this body does not pass the rules" });
+        }
         const { body: _body, bodyProposal: _proposal, ...rest } = avatar;
         const next: AvatarSummary = { ...rest, ...(kept === undefined ? {} : { body: kept }) };
         this.avatars = this.avatars.map((a) => (a === avatar ? next : a));

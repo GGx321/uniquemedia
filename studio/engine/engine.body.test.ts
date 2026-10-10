@@ -261,6 +261,33 @@ describe("avatars.setBody: refusals", () => {
     expect("height" in stored(avatarId).traits).toBe(false);
   });
 
+  test("the validator it hands the library judges the whole contract: a text that now fails the rules refuses the body as «invalid»", async () => {
+    const avatarId = await seedAvatar();
+    const { engine } = await started();
+    const library = engine.library;
+    if (library === null) throw new Error("no library");
+    const original = library.updateAvatarTraits.bind(library);
+    // Stands for a text that stopped fitting the rules between the early check and the write.
+    library.updateAvatarTraits = (id, merge, validate, options) => original(id, merge, validate === undefined ? undefined : (next, current) => validate({ ...next, descriptor: "a petite woman" }, current), options);
+
+    const answer = failed(await engine.handle(setBody(avatarId, BODY)));
+
+    expect(answer.error).toMatchObject({ code: "VALIDATION", descriptorReason: "invalid" });
+    expect("height" in stored(avatarId).traits).toBe(false);
+  });
+
+  test("a rewrite is allowed for a descriptor that fits alone but not with its body (a composite over 600 is not a dead end)", async () => {
+    const avatarId = await seedAvatar({ descriptor: textOf(590), body: BODY });
+    const net = network({ descriptors: [descriptorReply(GOOD)] });
+    const { engine } = await started({ net });
+
+    ok(await engine.handle(command("avatars.estimateRewriteDescriptor", { avatarId })));
+    ok(await engine.handle(command("avatars.rewriteDescriptor", { avatarId, acceptedWorstMicros: 1_000_000 })));
+
+    expect(stored(avatarId).descriptor).toBe(GOOD);
+    expect(stored(avatarId).traits.height).toBe("tall");
+  });
+
   test("a write that fails answers INTERNAL, keeps the old body and announces nothing", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await started();
@@ -376,6 +403,45 @@ describe("avatars.setBody and avatars.dismissBodyProposal: claims", () => {
 
     expect(failed(refused).error.code).toBe("IN_FLIGHT");
     expect(stored(avatarId).traits.height).toBeUndefined();
+  });
+
+  test.each([
+    ["setBody", (avatarId: string) => setBody(avatarId, BODY)],
+    ["dismissBodyProposal", (avatarId: string) => dismiss(avatarId)],
+  ])("a delete prepared while %s's write is in flight is refused IN_FLIGHT, and the avatar stays in the index", async (_name, write) => {
+    const avatarId = await seedAvatar({ proposal: true });
+    const gate = manifestWriteGate();
+    const { engine, posted } = await started({ deps: gate.deps });
+    gate.arm();
+    const writing = engine.handle(write(avatarId));
+    await gate.reached;
+
+    await engine.receive(deletePrepare(avatarId));
+    const reply = posted.at(-1);
+    gate.release();
+    ok(await writing);
+
+    expect(reply).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "IN_FLIGHT" } });
+    expect(ok(await engine.handle(command("avatars.list")))).toMatchObject({ result: { avatars: [{ avatarId }] } });
+  });
+
+  test.each([
+    ["setBody", (avatarId: string) => setBody(avatarId, BODY)],
+    ["dismissBodyProposal", (avatarId: string) => dismiss(avatarId)],
+  ])("a library switch is refused while %s's write is in flight", async (_name, write) => {
+    const avatarId = await seedAvatar({ proposal: true });
+    const gate = manifestWriteGate();
+    const { engine, posted } = await started({ deps: gate.deps });
+    gate.arm();
+    const writing = engine.handle(write(avatarId));
+    await gate.reached;
+
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000009", path: join(dir(), "other-library") });
+    const reply = posted.at(-1);
+    gate.release();
+    ok(await writing);
+
+    expect(reply).toMatchObject({ kind: "control", type: "reply", callId: "call-00000009", error: { code: "IN_FLIGHT" } });
   });
 
   test("setBody is allowed while a photo run runs, and the run keeps going", async () => {

@@ -3589,7 +3589,8 @@ export class Engine {
    * such a record, so estimating or paying for it would be a dead end.
    */
   #assertRewritable(avatarId: string, manifest: AvatarManifest): void {
-    if (AvatarDescriptor.safeParse({ age: manifest.age, text: manifest.descriptor }).success) {
+    // The composite a prompt carries (S5.2a): a text that fits alone but not beside its body phrase is rewritable, not a dead end.
+    if (AvatarDescriptor.safeParse(promptDescriptorOf(manifest)).success) {
       throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId}'s descriptor already fits today's rules; nothing to rewrite` });
     }
     if (!isRewritable(manifest)) {
@@ -4629,6 +4630,10 @@ export class Engine {
           (next) => {
             const refusal = tooLong(next.descriptor);
             if (refusal !== null) throw refusal;
+            // The whole contract, as a prompt will meet it (I5.7), against the manifest read under the lock.
+            if (!AvatarDescriptor.safeParse(promptDescriptorOf(next)).success) {
+              throw new EngineFailure({ code: "VALIDATION", descriptorReason: "invalid", detail: "the description with this body does not pass the rules" });
+            }
           },
           { clearBodyProposal: true },
         )

@@ -118,6 +118,14 @@ test("setBody refuses a composite of 601 with the reason too-long-with-body, and
   expect((await unwrap(client.request("avatars.setBody", { avatarId: "avatar-fits-0001", body: BODY }))).avatar.body).toEqual(BODY);
 });
 
+test("setBody judges the whole contract as the engine does: a stored text that fails the rules refuses the body as «invalid»", async () => {
+  const { client, engine } = makeMock({ preset: "demo" });
+  const base = await demoAvatar(client);
+  engine.addAvatarSilently({ ...base, avatarId: "avatar-stale-0001", descriptor: { age: base.descriptor.age, text: `${base.descriptor.age}-year-old petite woman, hazel eyes.` } });
+
+  expect(await client.request("avatars.setBody", { avatarId: "avatar-stale-0001", body: BODY })).toMatchObject({ ok: false, error: { code: "VALIDATION", descriptorReason: "invalid" } });
+});
+
 test("setBody refuses a body the contract refuses (three marks, a value off the list)", async () => {
   const { client } = makeMock({ preset: "demo" });
   const { avatarId } = await demoAvatar(client);
