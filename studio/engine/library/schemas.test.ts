@@ -95,6 +95,21 @@ describe("AvatarManifestSchema", () => {
     expect(AvatarManifestSchema.safeParse(validManifest({ age: 25.5 })).success).toBe(false);
   });
 
+  test("accepts an optional bodyProposal (S5.2a) and keeps a manifest without one valid", () => {
+    const bodyProposal = { values: { bust: "full", bodyMarks: ["mole-back"] }, seen: { bust: "photo" }, at: "2026-10-10T10:00:00.000Z" };
+    expect(AvatarManifestSchema.safeParse(validManifest({ bodyProposal })).success).toBe(true);
+    expect("bodyProposal" in AvatarManifestSchema.parse(validManifest())).toBe(false);
+  });
+
+  test("drops a bodyProposal with an extra key, a bad timestamp or no timestamp, and keeps the manifest", () => {
+    const good = { values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z" };
+    for (const bodyProposal of [{ ...good, note: "x" }, { ...good, at: "yesterday" }, { values: {}, seen: {} }]) {
+      const parsed = AvatarManifestSchema.safeParse(validManifest({ bodyProposal }));
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.bodyProposal).toBeUndefined();
+    }
+  });
+
   test("rejects a manifest that still carries a language key", () => {
     expect(AvatarManifestSchema.safeParse(validManifest({ language: "en" })).success).toBe(false);
   });

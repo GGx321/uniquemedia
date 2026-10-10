@@ -253,3 +253,46 @@ describe("reviewer probes on the descriptor", () => {
     },
   );
 });
+
+describe("the descriptor beside her body phrase (Stage 5, S5.2a)", () => {
+  const BODY = "tall, a full bust and long slim legs";
+  const limit = 600 - 2 - BODY.length;
+  /** A valid text of exactly `length` characters. */
+  const textOf = (length: number): string => `${GOOD.slice(0, -1)}, `.padEnd(length - 1, "x").padEnd(length, "x");
+
+  test("an answer whose composite with the body is exactly 600 is taken", () => {
+    const text = textOf(limit);
+    expect(readDescriptorAnswer(answer(text), 25, BODY)).toEqual({ ok: true, descriptor: { age: 25, text } });
+  });
+
+  test("an answer one character over is refused as too-long, and the retry is told the real limit", () => {
+    const read = readDescriptorAnswer(answer(textOf(limit + 1)), 25, BODY);
+    expect(read).toEqual({ ok: false, problems: ["too-long"], words: [], maxChars: limit });
+  });
+
+  test("the same answer without a body is fine: the old limit of 600 stands", () => {
+    expect(readDescriptorAnswer(answer(textOf(limit + 1)), 25).ok).toBe(true);
+  });
+
+  test("a plain over-600 answer is refused with the real limit too, when there is a body", () => {
+    expect(readDescriptorAnswer(answer(textOf(601)), 25, BODY)).toEqual({ ok: false, problems: ["too-long"], words: [], maxChars: limit });
+  });
+
+  test("a plain over-600 answer with no body names no special limit", () => {
+    expect(readDescriptorAnswer(answer(textOf(601)), 25)).toEqual({ ok: false, problems: ["too-long"], words: [] });
+  });
+
+  test("the retry message names the shorter limit", () => {
+    const messages = descriptorMessages(TRAITS, { problems: ["too-long"], words: [], maxChars: limit });
+    expect(messages[1]?.content).toContain(`longer than ${limit} characters`);
+  });
+
+  test("the retry message without a limit names 600, as before", () => {
+    expect(descriptorMessages(TRAITS, { problems: ["too-long"], words: [] })[1]?.content).toContain("longer than 600 characters");
+  });
+
+  test("the model never receives a body trait: not a key, not a value, not a phrase", () => {
+    const traits: AvatarTraits = { ...TRAITS, height: "tall", bust: "full", figure: "apple", legLength: "long", legShape: "toned", bottomSize: "small", bottomShape: "wide", bodyMarks: ["tattoo-ankle", "mole-back"] };
+    expect(descriptorMessages(traits)).toEqual(descriptorMessages(TRAITS));
+  });
+});

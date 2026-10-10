@@ -52,11 +52,13 @@ import {
   RejectedEntrySchema,
   type AvatarManifest,
   type AvatarStatus,
+  type BodyProposalRecord,
   type HistoryEntry,
   type PhotoQa,
   type PhotoSidecar,
   type PhotoSource,
   type RejectedEntry,
+  type TraitValue,
 } from "./schemas";
 import { surveyLibrary, type LogIssue } from "./survey";
 import { readVideoRecordFile, readVideoRecords, VIDEOS_NOT_A_FOLDER, type ReadVideoRecordsOptions, type VideoRecordProblem, type VideoRecordUse } from "./videoRecords";
@@ -131,6 +133,8 @@ export type AvatarPatch = Partial<Pick<AvatarManifest, "name" | "status" | "mast
 export type NewImportedAvatar = NewAvatar & {
   photoBytes: Uint8Array;
   photoMeta: NewPhotoMeta;
+  /** Stage 5, S5.2a: the body the import read, published in the same atomic write as the avatar (never as traits). */
+  bodyProposal?: BodyProposalRecord;
 };
 
 /**
@@ -375,6 +379,7 @@ export class Library {
       masterPhotoId: photoId,
       status: "active",
       createdAt: now,
+      ...(input.bodyProposal === undefined ? {} : { bodyProposal: input.bodyProposal }),
     });
     const sidecarCandidate = {
       schemaVersion: SIDECAR_SCHEMA_VERSION,
@@ -536,6 +541,53 @@ export class Library {
       }
       const next = this.#validManifest({ ...current, ...patch });
       validate?.(next, current);
+      await writeJsonAtomic(path, next, { beforeRename: this.#beforeRename });
+      this.#avatars.set(avatarId, next);
+      return next;
+    });
+  }
+
+  /**
+   * Stage 5, S5.2a: merges trait keys onto the stored traits under the manifest's lock and writes the manifest. `merge` sets a key, or removes it when its value is
+   * null. `validate(next, current)` runs inside the exclusive section after the merge and before anything is written, exactly as in `updateAvatar`; it is where the
+   * composite rule (the descriptor text beside the body phrase these traits render to) is judged against the manifest stored right now, which closes the
+   * check-then-write race with a descriptor edit. `clearBodyProposal` drops the stored import proposal in the same write (`avatars.setBody`). A schema-version-1
+   * manifest is refused: its traits are text only, and `bodyMarks` is a list.
+   */
+  async updateAvatarTraits(
+    avatarId: string,
+    merge: Readonly<Record<string, TraitValue | null>>,
+    validate?: (next: AvatarManifest, current: AvatarManifest) => void,
+    options: { clearBodyProposal?: boolean } = {},
+  ): Promise<AvatarManifest> {
+    const path = join(this.#avatarDir(avatarId), MANIFEST_FILE);
+    return runExclusive(`manifest:${path}`, async () => {
+      const current = this.#avatars.get(avatarId);
+      if (!current) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+      if (current.schemaVersion < 2) throw new LibraryError("invalid-record", `avatar ${avatarId} is a schema-version-1 record; its traits cannot hold the body`);
+      const traits: Record<string, TraitValue> = { ...current.traits };
+      for (const [key, value] of Object.entries(merge)) {
+        if (value === null) delete traits[key];
+        else traits[key] = value;
+      }
+      const { bodyProposal, ...rest } = current;
+      const next = this.#validManifest({ ...(options.clearBodyProposal === true ? rest : { ...rest, ...(bodyProposal === undefined ? {} : { bodyProposal }) }), traits });
+      validate?.(next, current);
+      await writeJsonAtomic(path, next, { beforeRename: this.#beforeRename });
+      this.#avatars.set(avatarId, next);
+      return next;
+    });
+  }
+
+  /** Stage 5, S5.2a: drops the stored body proposal (`avatars.dismissBodyProposal`). An avatar with none is returned as it is, with nothing written. */
+  async clearBodyProposal(avatarId: string): Promise<AvatarManifest> {
+    const path = join(this.#avatarDir(avatarId), MANIFEST_FILE);
+    return runExclusive(`manifest:${path}`, async () => {
+      const current = this.#avatars.get(avatarId);
+      if (!current) throw new LibraryError("avatar-not-found", `no avatar ${avatarId}`);
+      if (current.bodyProposal === undefined) return current;
+      const { bodyProposal: _dropped, ...rest } = current;
+      const next = this.#validManifest(rest);
       await writeJsonAtomic(path, next, { beforeRename: this.#beforeRename });
       this.#avatars.set(avatarId, next);
       return next;

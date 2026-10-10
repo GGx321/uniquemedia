@@ -281,7 +281,7 @@ const CheckChatBody = z.object({
 });
 
 /**
- * S5.0c: the check's answer when every aspect agrees: "ok" for all four, and the quoted description (`descriptorCheck.ts`'s user message line
+ * S5.0c: the check's answer when every aspect agrees: "ok" for hair, eyes and marks (and for the body when a body phrase was sent, S5.2b), and the quoted description (`descriptorCheck.ts`'s user message line
  * `Description: "<JSON text>"`) back character for character. The engine's reader then finds a match and no proposal.
  */
 function descriptorCheckAnswerFor(body: unknown): { aspects: Record<"hair" | "eyes" | "marks" | "body", { state: string; descriptor: string; photo: string }>; descriptor: string } {
@@ -297,7 +297,27 @@ function descriptorCheckAnswerFor(body: unknown): { aspects: Record<"hair" | "ey
   } catch {
     descriptor = "";
   }
-  return { aspects: { hair: verdict, eyes: verdict, marks: verdict, body: verdict }, descriptor };
+  // S5.2b: her body is judged only when the request carries her body phrase; otherwise the photo "does not show" it.
+  const bodyVerdict = text.split("\n").some((l) => l.startsWith("Body phrase: ")) ? verdict : { ...verdict, state: "not-visible" };
+  return { aspects: { hair: verdict, eyes: verdict, marks: verdict, body: bodyVerdict }, descriptor };
+}
+
+const SchemaProperties = z.object({ response_format: z.object({ json_schema: z.object({ schema: z.object({ properties: z.record(z.string(), z.unknown()) }).loose() }).loose() }).loose() }).loose();
+
+/**
+ * S5.2b review M1: whether the describe request's schema asks for the body. The attempt after an unusable answer sends the schema without the eight body keys (no `bodyMarks`); a schema
+ * with no property list at all (a bare probe) is answered as a full one.
+ */
+function schemaAsksBody(body: unknown): boolean {
+  const parsed = SchemaProperties.safeParse(body);
+  return !parsed.success || "bodyMarks" in parsed.data.response_format.json_schema.schema.properties;
+}
+
+/** The describe answer for a request: the whole one, or without the body keys when the request's schema has none. */
+function importDescribeAnswerFor(answer: MockImportDescribeAnswer, body: unknown): Record<string, unknown> {
+  if (schemaAsksBody(body)) return { ...answer };
+  const { height: _h, bust: _b, figure: _f, legLength: _ll, legShape: _ls, bottomSize: _bs, bottomShape: _bh, bodyMarks: _m, ...withoutBody } = answer;
+  return withoutBody;
 }
 
 /** The JSON schema a chat completion asked for ("avatar_descriptor", "age_check"), or null — studio/engine/testing/engineHarness.ts's `schemaName`, read from the parsed body instead of a captured fetch call. */
@@ -373,6 +393,15 @@ export interface MockImportDescribeAnswer {
   eyeColor: string;
   build: string;
   marks: string[];
+  /** Stage 5, S5.2b: the eight body keys, each a choice or "unknown" (the photo does not clearly show it); `bodyMarks` a list, empty when none show. */
+  height: string;
+  bust: string;
+  figure: string;
+  legLength: string;
+  legShape: string;
+  bottomSize: string;
+  bottomShape: string;
+  bodyMarks: string[];
   descriptor: string;
 }
 
@@ -389,6 +418,15 @@ export const DEFAULT_IMPORT_DESCRIBE_ANSWER: MockImportDescribeAnswer = {
   eyeColor: "brown",
   build: "athletic",
   marks: [],
+  // A face-only photo shows no body: every key unknown, so the import stores no proposal. A scenario scripts a body by spreading over these.
+  height: "unknown",
+  bust: "unknown",
+  figure: "unknown",
+  legLength: "unknown",
+  legShape: "unknown",
+  bottomSize: "unknown",
+  bottomShape: "unknown",
+  bodyMarks: [],
   descriptor: "27-year-old Latina woman, tan skin, brown eyes, long wavy black hair, athletic build.",
 };
 
@@ -621,7 +659,7 @@ export async function startMockOpenRouter(opts: MockOpenRouterOptions): Promise<
         }
         if (entry.schemaName === "import_describe") {
           const answer = opts.importDescribeAnswer ?? DEFAULT_IMPORT_DESCRIBE_ANSWER;
-          return json(chatCompletion(JSON.stringify(answer), costs.importDescribe));
+          return json(chatCompletion(JSON.stringify(importDescribeAnswerFor(answer, entry.body)), costs.importDescribe));
         }
         if (entry.schemaName === DESCRIPTOR_CHECK_JSON_SCHEMA.name) {
           return json(chatCompletion(JSON.stringify(descriptorCheckAnswerFor(entry.body)), costs.descriptorCheck));

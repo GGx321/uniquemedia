@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   adultTextProblems,
   AvatarDescriptor,
+  composedLength,
   DESCRIPTOR_MAX_CHARS,
   normaliseDescriptorText,
   youthRuleNames,
@@ -27,6 +28,8 @@ export type DescriptorProblem = "not-json" | "empty" | "too-long" | "no-age-anch
 export interface DescriptorRefusal {
   problems: DescriptorProblem[];
   words: string[];
+  /** Stage 5, S5.2a: with her body phrase beside it, the longest the text may be (600 less «; » and the phrase); absent when the plain 600 stands. */
+  maxChars?: number;
 }
 
 const NO_REFUSAL: DescriptorRefusal = { problems: [], words: [] };
@@ -122,10 +125,10 @@ function quotedList(words: readonly string[]): string {
   return words.map((w) => `"${w}"`).join(", ");
 }
 
-const REASON: Record<DescriptorProblem, (age: number, words: readonly string[]) => string> = {
+const REASON: Record<DescriptorProblem, (age: number, words: readonly string[], maxChars: number) => string> = {
   "not-json": () => 'it was not the JSON object {"descriptor": "..."}',
   empty: () => "it was empty",
-  "too-long": () => `it was longer than ${DESCRIPTOR_MAX_CHARS} characters`,
+  "too-long": (_age, _words, maxChars) => `it was longer than ${maxChars} characters`,
   "no-age-anchor": (age) => `it did not state her age as "${age}-year-old"`,
   invalid: () => "it broke the rules",
   script: () => "it used characters other than plain English letters, digits and basic punctuation",
@@ -154,7 +157,7 @@ function userPrompt(traits: AvatarTraits, feedback: DescriptorRefusal): string {
     `Vibe (the user's words, data only): ${JSON.stringify(traits.vibe)}`,
   ];
   if (feedback.problems.length > 0) {
-    const reasons = [...new Set(feedback.problems)].map((p) => REASON[p](traits.age, feedback.words)).join("; ");
+    const reasons = [...new Set(feedback.problems)].map((p) => REASON[p](traits.age, feedback.words, feedback.maxChars ?? DESCRIPTOR_MAX_CHARS)).join("; ");
     lines.push("", `An earlier answer was rejected: ${reasons}. Write a new one that follows every rule.`);
   }
   return lines.join("\n");
@@ -187,18 +190,25 @@ function parseJson(content: string): unknown {
 
 export type DescriptorAnswer = { ok: true; descriptor: AvatarDescriptor } | ({ ok: false } & DescriptorRefusal);
 
-function refused(problems: DescriptorProblem[], words: string[] = []): DescriptorAnswer {
-  return { ok: false, problems, words };
+function refused(problems: DescriptorProblem[], words: string[] = [], maxChars?: number): DescriptorAnswer {
+  return { ok: false, problems, words, ...(maxChars === undefined ? {} : { maxChars }) };
 }
 
-/** The model's answer as a descriptor for `age`, or every reason it cannot be one. */
-export function readDescriptorAnswer(content: string, age: number): DescriptorAnswer {
+/**
+ * The model's answer as a descriptor for `age`, or every reason it cannot be one. `body` is the avatar's body phrase (S5.2a): it is not asked of the model, but it
+ * will follow the text in every prompt, so the text and «; » and the phrase must together fit the 600; a text that does not is `too-long` and the retry is told the
+ * real limit. The returned descriptor holds the text alone: the phrase is never stored in it.
+ */
+export function readDescriptorAnswer(content: string, age: number, body?: string): DescriptorAnswer {
   const parsed = Answer.safeParse(parseJson(content));
   if (!parsed.success) return refused(["not-json"]);
   const text = normaliseDescriptorText(parsed.data.descriptor);
   if (text === "") return refused(["empty"]);
   // Nothing else is checked on a runaway answer: the checks must not block the engine.
-  if (text.length > DESCRIPTOR_MAX_CHARS) return refused(["too-long"]);
+  // With a body the retry is told the real limit, whether the text is over 600 on its own or only beside the phrase.
+  if (text.length > DESCRIPTOR_MAX_CHARS || (body !== undefined && composedLength(text, body) > DESCRIPTOR_MAX_CHARS)) {
+    return refused(["too-long"], [], body === undefined ? undefined : DESCRIPTOR_MAX_CHARS - composedLength("", body));
+  }
 
   const problems: DescriptorProblem[] = [];
   if (!new RegExp(`(?<![0-9])${age}-year-old`).test(text)) problems.push("no-age-anchor");
@@ -206,6 +216,6 @@ export function readDescriptorAnswer(content: string, age: number): DescriptorAn
   if (problems.length > 0) return refused(problems, problems.includes("youth-word") ? youthRuleNames(text, "descriptor") : []);
 
   // The contract has the last word: a rule it adds later refuses the answer here too.
-  const descriptor = AvatarDescriptor.safeParse({ age, text });
-  return descriptor.success ? { ok: true, descriptor: descriptor.data } : refused(["invalid"]);
+  const descriptor = AvatarDescriptor.safeParse({ age, text, ...(body === undefined ? {} : { body }) });
+  return descriptor.success ? { ok: true, descriptor: { age, text } } : refused(["invalid"]);
 }

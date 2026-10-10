@@ -13,7 +13,7 @@ const JOB_ID = "import-00000001";
 const SCOPE: Scope = { avatarJobId: JOB_ID };
 const DESCRIBE_JPEG = JPEG_2;
 const JOB: ImportJob = { jobId: JOB_ID, scope: SCOPE, textModel: "x-ai/grok-4.3", describeJpeg: DESCRIBE_JPEG };
-const DESCRIBE_WORST = 17_500;
+const DESCRIBE_WORST = 18_750;
 const MODERATION: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 
 const GOOD_DESCRIBE_ANSWER = {
@@ -118,4 +118,16 @@ describe("the describe job's own failures propagate", () => {
     expect(describeLines.filter((l) => l.type === "reserve")).toMatchObject([{ worstMicros: DESCRIBE_WORST }, { worstMicros: DESCRIBE_WORST }]);
     expect(money.budget.status().heldMicros).toBe(0);
   });
+});
+
+const BODY_UNKNOWN = { height: "unknown", bust: "unknown", figure: "unknown", legLength: "unknown", legShape: "unknown", bottomSize: "unknown", bottomShape: "unknown", bodyMarks: [] };
+
+test("the body the describe call read is passed on (S5.2b)", async () => {
+  const outcome = await run([describeAnswer({ ...BODY_UNKNOWN, figure: "hourglass" })]).result;
+  expect(outcome.ok && outcome.body?.values).toEqual({ figure: "hourglass" });
+});
+
+test("a photo that showed no body leaves the body out of the result (S5.2b)", async () => {
+  const outcome = await run([describeAnswer(BODY_UNKNOWN)]).result;
+  expect(outcome.ok && "body" in outcome).toBe(false);
 });

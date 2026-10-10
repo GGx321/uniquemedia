@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { perfTest } from "../../testing/bunTiers";
 import { assertBudget } from "../../testing/tiers";
 import { AdultAge, AvatarDescriptor, AvatarName, AvatarStatus, AvatarTraits, DescriptorCheck } from "./avatar";
+import { AvatarBody, BODY_KEYS, BODY_PHRASE_MAX, BodyProposal } from "./body";
 
 const traits = {
   age: 25,
@@ -85,7 +86,7 @@ describe("AvatarTraits", () => {
   });
 
   test("rejects an extra field", () => {
-    expect(AvatarTraits.safeParse({ ...traits, height: 170 }).success).toBe(false);
+    expect(AvatarTraits.safeParse({ ...traits, weight: 170 }).success).toBe(false);
   });
 
   test("rejects a missing field", () => {
@@ -435,5 +436,117 @@ describe("DescriptorCheck (Stage 5, S5.0c)", () => {
     const body = { ...good, matches: false, aspects: { body: verdict("mismatch", { descriptor: "стройное", photo: "пышное" }) } };
     expect(DescriptorCheck.safeParse(body).success).toBe(true);
     expect(DescriptorCheck.safeParse({ ...body, proposal: "25-year-old woman, curvy build" }).success).toBe(false);
+  });
+});
+
+describe("AvatarTraits body keys (Stage 5, S5.2a)", () => {
+  test("the eight body keys of AvatarTraits ARE AvatarBody's shape: one schema, never redeclared", () => {
+    const traitKeys = Object.keys(AvatarTraits.shape);
+    expect(Object.keys(AvatarBody.shape).sort()).toEqual([...BODY_KEYS].sort());
+    for (const key of BODY_KEYS) {
+      expect(traitKeys).toContain(key);
+      expect(AvatarTraits.shape[key]).toBe(AvatarBody.shape[key]);
+    }
+  });
+
+  test("traits written before the body keys existed still parse", () => {
+    expect(AvatarTraits.safeParse(traits).success).toBe(true);
+  });
+
+  test("accepts every body key beside the old traits", () => {
+    const body = { height: "tall", bust: "full", figure: "apple", legLength: "long", legShape: "toned", bottomSize: "small", bottomShape: "wide", bodyMarks: ["tattoo-ankle", "mole-back"] };
+    expect(AvatarTraits.safeParse({ ...traits, ...body }).success).toBe(true);
+  });
+
+  test("refuses three body marks and a repeated one inside the traits", () => {
+    expect(AvatarTraits.safeParse({ ...traits, bodyMarks: ["tattoo-ankle", "tattoo-hip", "mole-back"] }).success).toBe(false);
+    expect(AvatarTraits.safeParse({ ...traits, bodyMarks: ["mole-back", "mole-back"] }).success).toBe(false);
+  });
+
+  test("still refuses an unknown key (strict)", () => {
+    expect(AvatarTraits.safeParse({ ...traits, weight: "light" }).success).toBe(false);
+  });
+
+  test("the model-facing build trait stays required", () => {
+    const { build: _build, ...withoutBuild } = traits;
+    expect(AvatarTraits.safeParse({ ...withoutBuild, height: "tall" }).success).toBe(false);
+  });
+});
+
+describe("AvatarDescriptor body (Stage 5, S5.2a)", () => {
+  const base = { age: 25, text: "25-year-old woman, light olive skin, hazel eyes." };
+  /** A valid descriptor text of exactly `length` characters. */
+  const textOf = (length: number): string => ("25-year-old woman, hazel eyes, " + "wavy brown hair, ".repeat(40)).slice(0, length - 1).replace(/[\s,]+$/, "x").padEnd(length, "x");
+
+  test("a descriptor without a body is what it was", () => {
+    expect(AvatarDescriptor.safeParse(base).success).toBe(true);
+  });
+
+  test("accepts a body phrase", () => {
+    expect(AvatarDescriptor.safeParse({ ...base, body: "tall, a full bust and long slim legs" }).success).toBe(true);
+  });
+
+  test("accepts a body of exactly BODY_PHRASE_MAX and refuses one more", () => {
+    const text = "25-year-old woman, hazel eyes.";
+    const phrase = "tall ".repeat(60).trim();
+    expect(AvatarDescriptor.safeParse({ age: 25, text, body: phrase.slice(0, BODY_PHRASE_MAX) }).success).toBe(true);
+    expect(AvatarDescriptor.safeParse({ age: 25, text, body: phrase.slice(0, BODY_PHRASE_MAX + 1) }).success).toBe(false);
+  });
+
+  test("accepts text + «; » + body of exactly 600 characters and refuses 601", () => {
+    const body = "tall, a full bust and long slim legs";
+    const at600 = textOf(600 - 2 - body.length);
+    const at601 = textOf(601 - 2 - body.length);
+    expect(at600.length + 2 + body.length).toBe(600);
+    expect(at601.length + 2 + body.length).toBe(601);
+    expect(AvatarDescriptor.safeParse({ age: 25, text: at600, body }).success).toBe(true);
+    expect(AvatarDescriptor.safeParse({ age: 25, text: at601, body }).success).toBe(false);
+  });
+
+  test("a text of 600 characters is fine alone and refused with any body", () => {
+    const text = textOf(600);
+    expect(text.length).toBe(600);
+    expect(AvatarDescriptor.safeParse({ age: 25, text }).success).toBe(true);
+    expect(AvatarDescriptor.safeParse({ age: 25, text, body: "tall" }).success).toBe(false);
+  });
+
+  test.each([
+    ["a youth word", "a petite figure"],
+    ["another age", "looks 19"],
+    ["a number", "two tattoos"],
+    ["non-Latin text", "высокая"],
+    ["a hidden character", "tall​"],
+  ])("refuses a body with %s", (_label, body) => {
+    expect(AvatarDescriptor.safeParse({ ...base, body }).success).toBe(false);
+  });
+
+  test("refuses an empty body: an absent body is left out, not blank", () => {
+    expect(AvatarDescriptor.safeParse({ ...base, body: "" }).success).toBe(false);
+  });
+});
+
+describe("BodyProposal (Stage 5, S5.2a)", () => {
+  const proposal = { values: { height: "tall", bodyMarks: [] }, seen: { height: "photo", bust: "not-visible" }, at: "2026-10-10T10:00:00.000Z" };
+
+  test("accepts values, seen and a timestamp", () => {
+    expect(BodyProposal.safeParse(proposal).success).toBe(true);
+  });
+
+  test("refuses a seen mark other than photo or not-visible", () => {
+    expect(BodyProposal.safeParse({ ...proposal, seen: { height: "guessed" } }).success).toBe(false);
+  });
+
+  test("refuses a seen key that is not a body key", () => {
+    expect(BodyProposal.safeParse({ ...proposal, seen: { build: "photo" } }).success).toBe(false);
+  });
+
+  test("refuses values that break the body rules", () => {
+    expect(BodyProposal.safeParse({ ...proposal, values: { bodyMarks: ["tattoo-ankle", "tattoo-hip", "mole-back"] } }).success).toBe(false);
+  });
+
+  test("refuses an extra key and a missing timestamp", () => {
+    expect(BodyProposal.safeParse({ ...proposal, note: "x" }).success).toBe(false);
+    const { at: _at, ...noAt } = proposal;
+    expect(BodyProposal.safeParse(noAt).success).toBe(false);
   });
 });

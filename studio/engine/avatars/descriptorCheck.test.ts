@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
-import { AvatarDescriptor, DescriptorCheck } from "../../shared/engine";
+import { AvatarDescriptor, BODY_PHRASE_MAX, DescriptorCheck } from "../../shared/engine";
 import { DESCRIPTOR_CHECK_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import { addedBodyWords, BODY_WORDS, DESCRIPTOR_CHECK_JSON_SCHEMA, descriptorCheckMessages, readDescriptorCheckAnswer } from "./descriptorCheck";
@@ -201,6 +201,39 @@ describe("readDescriptorCheckAnswer: the proposal", () => {
     expect(checkOf(answer(HAIR_WRONG, padded)).proposal).toBe(padded);
     expect(checkOf(answer(HAIR_WRONG, padded), phrase).proposal).toBeNull();
   });
+
+  // S5.2b (L3): the composite joins the text and the body with «; », as every prompt carries it (`composedLength`), not with a space. The boundary is the one the contract draws.
+  describe("the composite is the contract's: text, «; », body (S5.2b)", () => {
+    const PHRASE = "tall, a full bust and long slim legs";
+    const textOfLength = (n: number) => `${FIXED_HAIR.slice(0, -1)}, ${"a".repeat(n - FIXED_HAIR.length - 2)}.`;
+    const fits = 600 - 2 - PHRASE.length;
+
+    test("a proposal that makes text + «; » + body exactly 600 is kept", () => {
+      expect(textOfLength(fits)).toHaveLength(fits);
+      expect(checkOf(answer(HAIR_WRONG, textOfLength(fits)), PHRASE).proposal).toHaveLength(fits);
+    });
+
+    test("one character more is null, although a one-character join would still fit", () => {
+      expect(fits + 1 + 1 + PHRASE.length).toBe(600);
+      expect(checkOf(answer(HAIR_WRONG, textOfLength(fits + 1)), PHRASE).proposal).toBeNull();
+    });
+
+    test("the verdict is still a verdict when the proposal is dropped for the composite", () => {
+      const check = checkOf(answer(HAIR_WRONG, textOfLength(fits + 1)), PHRASE);
+      expect(check.matches).toBe(false);
+      expect(check.aspects.hair?.state).toBe("mismatch");
+    });
+
+    test("a body mismatch beside her body phrase still never has a text fix", () => {
+      const check = checkOf(answer({ ...ALL_OK, body: { state: "mismatch", descriptor: "высокая", photo: "невысокая" } }, STORED_TEXT.replace("light freckles", "light freckles and long legs")), PHRASE);
+      expect(check.matches).toBe(false);
+      expect(check.proposal).toBeNull();
+    });
+
+    test("the body aspect is read like any other: ok and not-visible keep no phrases", () => {
+      expect(checkOf(answer({ ...ALL_OK, body: { state: "ok", descriptor: "x", photo: "y" } }), PHRASE).aspects.body).toEqual({ state: "ok" });
+    });
+  });
 });
 
 describe("the proposal's body words (N2: only the words it ADDS)", () => {
@@ -328,6 +361,13 @@ describe("descriptorCheckMessages", () => {
     expect(() => descriptorCheckMessages({ age: 25, text: "25-year-old young woman" })).toThrow();
   });
 
+  test("the descriptor and her body phrase together are judged with «; » between them: 600 reaches a prompt, 601 does not", () => {
+    const phrase = "tall, a full bust and long slim legs";
+    const text = (n: number) => STORED_TEXT.padEnd(n, "a");
+    expect(() => descriptorCheckMessages({ age: 25, text: text(600 - 2 - phrase.length) }, phrase)).not.toThrow();
+    expect(() => descriptorCheckMessages({ age: 25, text: text(600 - 2 - phrase.length + 1) }, phrase)).toThrow();
+  });
+
   test("a descriptor with her body phrase over 600 characters never reaches a prompt", () => {
     expect(() => descriptorCheckMessages({ age: 25, text: STORED_TEXT.padEnd(580, "a") }, "She is tall, with a full bust and long legs.")).toThrow();
   });
@@ -346,9 +386,10 @@ describe("descriptorCheckMessages", () => {
   });
 
   test("the longest prompt a check can send, with her body phrase, keeps its measured margin (the phrase line costs a label and a quote pair)", () => {
-    // One character of the 600 is the space between the descriptor and the phrase.
-    const floor = floorOf(`25-year-old ${'"'.repeat(1)}`, '"'.repeat(QUOTES_LEFT - 2));
-    expect(DESCRIPTOR_CHECK_CALL.inputTokens - floor).toBe(286);
+    // The contract's own limits: the body phrase is at most BODY_PHRASE_MAX, and text + «; » + body at most 600 (S5.2b: the earlier pin joined them with a space and let the body
+    // take 586 characters, a phrase no combination of traits renders to).
+    const floor = floorOf(`25-year-old ${'"'.repeat(QUOTES_LEFT - 2 - BODY_PHRASE_MAX)}`, '"'.repeat(BODY_PHRASE_MAX));
+    expect(DESCRIPTOR_CHECK_CALL.inputTokens - floor).toBe(288);
     expect(floor).toBeLessThanOrEqual(DESCRIPTOR_CHECK_CALL.inputTokens);
   });
 

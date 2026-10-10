@@ -589,6 +589,28 @@ describe("AvatarSummary", () => {
     expect(AvatarSummary.safeParse({ ...rest, archived: false }).success).toBe(false);
   });
 
+  test("a summary with no body and no proposal stays valid, and carries neither key (Stage 5, S5.2a)", () => {
+    const parsed = AvatarSummary.parse(avatar);
+    expect("body" in parsed).toBe(false);
+    expect("bodyProposal" in parsed).toBe(false);
+  });
+
+  test("accepts her body traits (S5.2a)", () => {
+    const parsed = AvatarSummary.parse({ ...avatar, body: { height: "tall", bodyMarks: ["mole-back"] } });
+    expect(parsed.body).toEqual({ height: "tall", bodyMarks: ["mole-back"] });
+  });
+
+  test("refuses body traits that break the body rules, and null in place of an absent body (S5.2a)", () => {
+    expect(AvatarSummary.safeParse({ ...avatar, body: { height: "giant" } }).success).toBe(false);
+    expect(AvatarSummary.safeParse({ ...avatar, body: null }).success).toBe(false);
+  });
+
+  test("accepts a stored body proposal, and refuses null in place of an absent one (S5.2a)", () => {
+    const bodyProposal = { values: { bust: "full" }, seen: { bust: "photo" }, at: "2026-10-10T10:00:00.000Z" };
+    expect(AvatarSummary.safeParse({ ...avatar, bodyProposal }).success).toBe(true);
+    expect(AvatarSummary.safeParse({ ...avatar, bodyProposal: null }).success).toBe(false);
+  });
+
   test("carries the number of video records and of eligible unused photos", () => {
     expect(AvatarSummary.safeParse({ ...avatar, photoCount: 12, videoCount: 3, eligibleUnusedCount: 9 }).success).toBe(true);
   });

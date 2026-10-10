@@ -8,6 +8,10 @@ import {
   CustomCategoryId,
   Id,
   AvatarTraits,
+  BODY_KEYS,
+  bodyPhrase,
+  composedLength,
+  DESCRIPTOR_MAX_CHARS,
   errorResponseFor,
   EventLog,
   isCustomCategory,
@@ -60,6 +64,7 @@ import { AGE_CHECK_MAX_SIDE, passesAgeThreshold } from "./avatars/ageCheck";
 import { candidateJobEnd, runCandidateJob, type SlotOutcome } from "./avatars/candidateJob";
 import { runDescriptorJob } from "./avatars/descriptorJob";
 import { runDescriptorCheckJob } from "./avatars/descriptorCheckJob";
+import type { ImportedBody } from "./avatars/importDescribe";
 import { runImportJob } from "./avatars/importJob";
 import { checkImportPhoto, IMPORT_DESCRIBE_MAX_SIDE } from "./avatars/importStaging";
 import {
@@ -75,7 +80,7 @@ import {
   type AvatarModels,
 } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
-import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./avatars/records";
+import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, promptDescriptorOf, traitsOf, unreadableFromQuarantine } from "./avatars/records";
 import { avatarDeleteCounts } from "./avatars/delete";
 import { EngineFailure } from "./engineFailure";
 import { JobRegistry, type CandidatesJobEnd } from "./jobs";
@@ -386,8 +391,8 @@ function detailOf(message: string): string {
  * The owner's text for an avatar of `age`, folded and checked (`checkDescriptorEdit`). A refusal is the VALIDATION a window words from its closed `descriptorReason`
  * (and, for a youth word, the owner's own `descriptorWords`). It throws, so it can also run as the library's validator inside its exclusive section.
  */
-function descriptorEditOrFailure(text: string, age: number): string {
-  const checked = checkDescriptorEdit(text, age);
+function descriptorEditOrFailure(text: string, age: number, body?: string): string {
+  const checked = checkDescriptorEdit(text, age, body);
   if (checked.ok) return checked.text;
   throw new EngineFailure({
     code: "VALIDATION",
@@ -2241,6 +2246,10 @@ export class Engine {
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#archive(command.payload) };
       case "avatars.editDescriptor":
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#editDescriptor(command.payload) };
+      case "avatars.setBody":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#setBody(command.payload) };
+      case "avatars.dismissBodyProposal":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#dismissBodyProposal(command.payload) };
       case "avatars.checkDescriptor": {
         // Claimed like a rewrite (the avatar becomes one that an edit of its descriptor must wait for; a photo run holding it refuses the check), and counted as a paid command
         // so a library switch is refused meanwhile.
@@ -3023,7 +3032,7 @@ export class Engine {
       categories: custom.map(snapshotOf),
     });
     await library.createRun(runId, plan, RunPlanSchema);
-    this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, 0);
+    this.#launchRun({ jobId, plan, descriptor: promptDescriptorOf(manifest), key, budget, library, priceBook: priced.book }, 0);
     return { runId, jobId };
   }
 
@@ -3149,7 +3158,7 @@ export class Engine {
     });
     // The set is used from here (its run's folder exists); every window hears it before any event of the run's job.
     await this.#sceneSets.announce(library, approved.set);
-    this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book }, 0);
+    this.#launchRun({ jobId, plan, descriptor: promptDescriptorOf(manifest), key, budget, library, priceBook: priced.book }, 0);
     return { runId: plan.runId, jobId };
   }
 
@@ -3205,7 +3214,7 @@ export class Engine {
       if (estimate.worstMicros > 0) Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
       const done =state.slots.filter((s) => s.end !== null).length;
       const jobId = this.#deps.newId();
-      this.#launchRun({ jobId, plan, descriptor: { age: manifest.age, text: manifest.descriptor }, key, budget, library, priceBook: priced.book, ...(launch === undefined ? {} : { onEnd: launch.onEnd }) }, done);
+      this.#launchRun({ jobId, plan, descriptor: promptDescriptorOf(manifest), key, budget, library, priceBook: priced.book, ...(launch === undefined ? {} : { onEnd: launch.onEnd }) }, done);
       launched = true;
       return { runId, jobId };
     } finally {
@@ -3564,7 +3573,8 @@ export class Engine {
    */
   #assertDescriptorReadable(manifest: AvatarManifest): void {
     try {
-      promptSubject({ age: manifest.age, text: manifest.descriptor });
+      // The descriptor as a prompt carries it, her body phrase included (I5.7): a composite over 600 refuses here, before any spend.
+      promptSubject(promptDescriptorOf(manifest));
     } catch (error) {
       if (!(error instanceof PromptSubjectError)) throw error;
       throw new EngineFailure({ code: "DESCRIPTOR_INVALID", detail: messageOf(error, "the stored descriptor fails today's rules") });
@@ -3580,7 +3590,8 @@ export class Engine {
    * such a record, so estimating or paying for it would be a dead end.
    */
   #assertRewritable(avatarId: string, manifest: AvatarManifest): void {
-    if (AvatarDescriptor.safeParse({ age: manifest.age, text: manifest.descriptor }).success) {
+    // The composite a prompt carries (S5.2a): a text that fits alone but not beside its body phrase is rewritable, not a dead end.
+    if (AvatarDescriptor.safeParse(promptDescriptorOf(manifest)).success) {
       throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId}'s descriptor already fits today's rules; nothing to rewrite` });
     }
     if (!isRewritable(manifest)) {
@@ -3606,8 +3617,9 @@ export class Engine {
     await this.#assertAvatarOnDisk(library, avatarId);
     this.#assertRewritable(avatarId, manifest);
     // isRewritable (inside #assertRewritable) already proved this parses; re-parsed here only to get its typed data.
-    const traits = AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age });
-    if (!traits.success) throw new Error(`unreachable: isRewritable said avatar ${avatarId}'s traits parse`);
+    // Read the way isRewritable reads them: a body key that does not parse is dropped with the rest of the body, never the avatar.
+    const traits = traitsOf(manifest);
+    if (traits === null) throw new Error(`unreachable: isRewritable said avatar ${avatarId}'s traits parse`);
     const models = this.#avatarModels();
     // rewrite-descriptor never touches candidates or age checks either way (see the estimate command's own comment above).
     const imageAgeCheck = this.#settings.imageAgeCheck;
@@ -3626,7 +3638,7 @@ export class Engine {
     try {
       result = await runDescriptorJob(
         { chat: (params) => client.chat(params), budget, priceBook: priced.book },
-        { jobId, scope, traits: traits.data, textModel: models.textModel },
+        { jobId, scope, traits, textModel: models.textModel },
       );
     } finally {
       this.#caps.delete(scopeKey(scope));
@@ -4146,7 +4158,7 @@ export class Engine {
         { jobId: importId, scope, textModel: models.textModel, describeJpeg: staged.describeJpeg },
       );
       if (outcome.ok) {
-        imported = await this.#saveImportedAvatar({ library, key, budget, priced: priced.book, textModel: models.textModel, importId, scope, staged, name: payload.name, traits: outcome.traits, descriptor: outcome.descriptor });
+        imported = await this.#saveImportedAvatar({ library, key, budget, priced: priced.book, textModel: models.textModel, importId, scope, staged, name: payload.name, traits: outcome.traits, descriptor: outcome.descriptor, body: outcome.body });
       }
     } finally {
       this.#caps.delete(scopeKey(scope));
@@ -4176,6 +4188,8 @@ export class Engine {
     name: string;
     traits: AvatarTraits;
     descriptor: AvatarDescriptor;
+    /** The body the photo showed (S5.2b): kept on the avatar as a proposal in the same write, never as traits. */
+    body: ImportedBody | undefined;
   }): Promise<{ avatar: AvatarSummary; descriptorCheck: DescriptorCheck | null }> {
     const { library, staged, traits, descriptor, importId } = args;
     // M3: the manifest (status "active", her master already set), the photo
@@ -4188,6 +4202,7 @@ export class Engine {
         age: traits.age,
         traits: manifestTraits(traits),
         descriptor: descriptor.text,
+        ...(args.body === undefined ? {} : { bodyProposal: { values: args.body.values, seen: args.body.seen, at: new Date(this.#deps.clock()).toISOString() } }),
         photoBytes: staged.rawBytes,
         photoMeta: {
           mediaType: staged.mediaType,
@@ -4200,7 +4215,7 @@ export class Engine {
       .catch(async (error: unknown) => {
         // Paid for: keep it where the owner can find it, and say where.
         const kept = `${importId}:import`;
-        const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ traits, descriptor })).then(
+        const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ traits, descriptor, ...(args.body === undefined ? {} : { body: args.body }) })).then(
           () => `the paid description is kept in raw/${rawFileName(kept)} next to the ledger`,
           (saveError: unknown) => `the paid description could not be kept either (${messageOf(saveError, "unknown error")})`,
         );
@@ -4265,7 +4280,8 @@ export class Engine {
     await this.#assertAvatarOnDisk(library, avatarId);
     if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar has a master photo to check against` });
     this.#assertDescriptorReadable(manifest);
-    const stored: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
+    // Her body phrase (S5.2b) is written by code from her body traits and judged beside the stored text, never merged into it.
+    const { body: bodyPhraseOf, ...stored } = promptDescriptorOf(manifest);
     const models = this.#avatarModels();
     const priced = await this.#prices.get(descriptorCheckPriceModels(models));
     const job = descriptorCheckEstimate(priced, models);
@@ -4283,7 +4299,7 @@ export class Engine {
     try {
       result = await runDescriptorCheckJob(
         { chat: (params) => client.chat(params), budget, priceBook: priced.book },
-        { jobId, scope, textModel: models.textModel, image, stored },
+        { jobId, scope, textModel: models.textModel, image, stored, bodyPhrase: bodyPhraseOf ?? null },
       );
     } finally {
       this.#caps.delete(scopeKey(scope));
@@ -4534,15 +4550,14 @@ export class Engine {
       const library = await this.#liveLibrary();
       // The claim is read before the manifest: a delete takes the avatar out of the library's indexes at its prepare, so a lookup first would answer NOT_FOUND for an
       // avatar that a kept delete gives back a moment later. (The plan lists the manifest first; this is the one deliberate reordering.)
-      if (this.#avatarEdits.has(avatarId) || this.#pendingDelete?.avatarId === avatarId) {
-        throw new EngineFailure({ code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; edit the description when that ends" });
-      }
+      this.#assertNotHeldForEdit(avatarId, "edit the description");
       const manifest = this.#manifestOrNotFound(library, avatarId);
       if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` });
       const stale = (): EngineFailure => new EngineFailure({ code: "VALIDATION", descriptorReason: "stale", detail: "the stored description is not the one this edit was made against" });
       // The polite, early refusal; the one that counts runs under the library's lock below.
       if (expectedText !== manifest.descriptor) throw stale();
-      const checked = descriptorEditOrFailure(text, manifest.age);
+      // Her stored body phrase counts toward the 600 (S5.2a): text + «; » + phrase.
+      const checked = descriptorEditOrFailure(text, manifest.age, promptDescriptorOf(manifest).body);
       // Never a write that succeeds and then answers INTERNAL: the summary the answer needs is built from the manifest as it will be, before anything is written.
       if (avatarSummaryFrom({ ...manifest, descriptor: checked }, avatarCounts(library, avatarId)) === null) {
         throw new EngineFailure({ code: "VALIDATION", descriptorReason: "invalid", detail: "the avatar would not fit the contract with this description" });
@@ -4552,12 +4567,113 @@ export class Engine {
       await library
         .updateAvatar(avatarId, { descriptor: checked }, (next, current) => {
           if (current.descriptor !== expectedText) throw stale();
-          descriptorEditOrFailure(checked, next.age);
+          // The body read from the manifest under the lock: one set since the early check above is judged here.
+          descriptorEditOrFailure(checked, next.age, promptDescriptorOf(next).body);
         })
         .catch((error: unknown) => {
           if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
           throw error;
         });
+      return { avatar: this.#announceAvatar(library, avatarId) };
+    } finally {
+      this.#librarySmallWrites--;
+    }
+  }
+
+  /**
+   * The claim an edit of a saved avatar's descriptor or body meets (`#avatarEdits`, S5.0a): IN_FLIGHT while one of the non-run jobs holds the avatar or a delete is pending
+   * for it. A photo run and an autopilot launch touch only `#busyAvatars`, so they never refuse an edit.
+   */
+  #assertNotHeldForEdit(avatarId: string, what: string): void {
+    if (this.#avatarEdits.has(avatarId) || this.#pendingDelete?.avatarId === avatarId) {
+      throw new EngineFailure({ code: "IN_FLIGHT", detail: `a job is changing this avatar, or it is being deleted; ${what} when that ends` });
+    }
+  }
+
+  /**
+   * `avatars.setBody` (Stage 5, S5.2a): the owner's body traits for a saved avatar, replacing the whole body. Free. The order of `editDescriptor`: the live library; the claim
+   * (IN_FLIGHT, never for a photo run or a launch); the manifest or NOT_FOUND; a saved avatar (a draft is VALIDATION); a record that can hold a list (schema version 2); the
+   * composite (text + «; » + the body phrase <= 600); then the write through `Library.updateAvatarTraits`, whose validator judges the composite again inside the library's exclusive
+   * section against the text stored by then (I5.7), and which drops a stored import proposal in the same write.
+   */
+  async #setBody(payload: CommandPayload<"avatars.setBody">): Promise<{ avatar: AvatarSummary }> {
+    const { avatarId, body } = payload;
+    this.#librarySmallWrites++;
+    try {
+      const library = await this.#liveLibrary();
+      this.#assertNotHeldForEdit(avatarId, "set the body");
+      const manifest = this.#manifestOrNotFound(library, avatarId);
+      if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; its body is chosen when it is created` });
+      if (manifest.schemaVersion < 2) throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a schema-version-1 record; its traits cannot hold a body` });
+      const phrase = bodyPhrase(body);
+      const tooLong = (text: string): EngineFailure | null =>
+        composedLength(text, phrase) > DESCRIPTOR_MAX_CHARS
+          ? new EngineFailure({ code: "VALIDATION", descriptorReason: "too-long-with-body", detail: "the description and the body phrase together are over the limit" })
+          : null;
+      const early = tooLong(manifest.descriptor);
+      if (early !== null) throw early;
+      // Every body key is set or removed: a key left out of `body` goes back to «не задано».
+      const merge: Record<string, string | string[] | null> = {};
+      for (const key of BODY_KEYS) {
+        const value = body[key];
+        merge[key] = value === undefined || (Array.isArray(value) && value.length === 0) ? null : value;
+      }
+      // Never a write that succeeds and then answers INTERNAL: the summary the answer needs is built from the manifest as it will be, before anything is written.
+      const traits: Record<string, string | number | string[]> = { ...manifest.traits };
+      for (const [key, value] of Object.entries(merge)) {
+        if (value === null) delete traits[key];
+        else traits[key] = value;
+      }
+      const { bodyProposal: _dropped, ...withoutProposal } = manifest;
+      if (avatarSummaryFrom({ ...withoutProposal, traits }, avatarCounts(library, avatarId)) === null) {
+        throw new EngineFailure({ code: "VALIDATION", detail: "the avatar would not fit the contract with this body" });
+      }
+      await library
+        .updateAvatarTraits(
+          avatarId,
+          merge,
+          (next) => {
+            const refusal = tooLong(next.descriptor);
+            if (refusal !== null) throw refusal;
+            // The whole contract, as a prompt will meet it (I5.7), against the manifest read under the lock.
+            if (!AvatarDescriptor.safeParse(promptDescriptorOf(next)).success) {
+              throw new EngineFailure({ code: "VALIDATION", descriptorReason: "invalid", detail: "the description with this body does not pass the rules" });
+            }
+          },
+          { clearBodyProposal: true },
+        )
+        .catch((error: unknown) => {
+          if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+          if (error instanceof LibraryError && error.code === "invalid-record") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId}'s record cannot hold this body` });
+          throw error;
+        });
+      return { avatar: this.#announceAvatar(library, avatarId) };
+    } finally {
+      this.#librarySmallWrites--;
+    }
+  }
+
+  /**
+   * `avatars.dismissBodyProposal` (Stage 5, S5.2a, «Не нужно»): drops the body a photo import proposed. Free, with `setBody`'s claim and refusals. An avatar with no proposal is
+   * answered as it is, with nothing written and nothing announced.
+   */
+  async #dismissBodyProposal(payload: CommandPayload<"avatars.dismissBodyProposal">): Promise<{ avatar: AvatarSummary }> {
+    const { avatarId } = payload;
+    this.#librarySmallWrites++;
+    try {
+      const library = await this.#liveLibrary();
+      this.#assertNotHeldForEdit(avatarId, "dismiss the body proposal");
+      const manifest = this.#manifestOrNotFound(library, avatarId);
+      if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; a body proposal belongs to a saved avatar` });
+      if (manifest.bodyProposal === undefined) {
+        const avatar = avatarSummaryFrom(manifest, avatarCounts(library, avatarId));
+        if (avatar === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `the avatar ${avatarId} does not fit the contract` });
+        return { avatar };
+      }
+      await library.clearBodyProposal(avatarId).catch((error: unknown) => {
+        if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        throw error;
+      });
       return { avatar: this.#announceAvatar(library, avatarId) };
     } finally {
       this.#librarySmallWrites--;

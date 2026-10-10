@@ -441,3 +441,228 @@ describe("updateAvatar", () => {
     expect(await tempFilesIn(avatarDir)).toEqual([]);
   });
 });
+
+describe("updateAvatarTraits (Stage 5, S5.2a: the body keys, merged under the manifest's lock)", () => {
+  const BODY_MIA: NewAvatar = { ...MIA, traits: { build: "slim", hairColor: "black", height: "tall" } };
+
+  test("merges the given keys onto the stored traits, keeps the others, and writes the manifest", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(BODY_MIA);
+
+    const updated = await library.updateAvatarTraits("avatar-0001", { bust: "full", bodyMarks: ["mole-back"] });
+
+    expect(updated.traits).toEqual({ build: "slim", hairColor: "black", height: "tall", bust: "full", bodyMarks: ["mole-back"] });
+    expect(library.getAvatar("avatar-0001")).toEqual(updated);
+    expect(await readJson(join(root(), "avatars", "avatar-0001", "avatar.json"))).toEqual(updated);
+  });
+
+  test("a key given as null is removed, and a key that was never there stays absent", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(BODY_MIA);
+
+    const updated = await library.updateAvatarTraits("avatar-0001", { height: null, figure: null });
+
+    expect(updated.traits).toEqual({ build: "slim", hairColor: "black" });
+    expect("height" in updated.traits).toBe(false);
+  });
+
+  test("changes nothing but the traits", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const before = await library.createAvatar(BODY_MIA);
+
+    const updated = await library.updateAvatarTraits("avatar-0001", { bust: "small" });
+
+    expect({ ...updated, traits: before.traits }).toEqual(before);
+  });
+
+  test("hands the validator the manifest as it would be written, and the one stored right now", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(BODY_MIA);
+    const seen: unknown[] = [];
+
+    await library.updateAvatarTraits("avatar-0001", { bust: "full" }, (next, current) => {
+      seen.push({ next: next.traits, current: current.traits });
+    });
+
+    expect(seen).toEqual([{ next: { build: "slim", hairColor: "black", height: "tall", bust: "full" }, current: BODY_MIA.traits }]);
+  });
+
+  test("a validator that throws refuses the update with its own error and leaves the file and the memory as they were", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(BODY_MIA);
+    const refusal = new Error("the composite is too long");
+
+    expect(await rejectionOf(library.updateAvatarTraits("avatar-0001", { bust: "full" }, () => { throw refusal; }))).toBe(refusal);
+
+    const avatarDir = join(root(), "avatars", "avatar-0001");
+    expect(await readJson(join(avatarDir, "avatar.json"))).toMatchObject({ traits: BODY_MIA.traits });
+    expect(library.getAvatar("avatar-0001")?.traits).toEqual(BODY_MIA.traits);
+    expect(await tempFilesIn(avatarDir)).toHaveLength(0);
+  });
+
+  test("the validator runs inside the exclusive section: it judges the manifest an update queued before it left", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(BODY_MIA);
+    const descriptorsSeen: string[] = [];
+
+    const first = library.updateAvatar("avatar-0001", { descriptor: "a changed 25-year-old woman." });
+    const second = library.updateAvatarTraits("avatar-0001", { bust: "full" }, (next) => {
+      descriptorsSeen.push(next.descriptor);
+    });
+    await Promise.all([first, second]);
+
+    expect(descriptorsSeen).toEqual(["a changed 25-year-old woman."]);
+    expect(library.getAvatar("avatar-0001")).toMatchObject({ descriptor: "a changed 25-year-old woman.", traits: { bust: "full" } });
+  });
+
+  test("two body updates in a row both land: the second merges onto the first", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(BODY_MIA);
+
+    await Promise.all([library.updateAvatarTraits("avatar-0001", { bust: "full" }), library.updateAvatarTraits("avatar-0001", { figure: "pear" })]);
+
+    expect(library.getAvatar("avatar-0001")?.traits).toMatchObject({ bust: "full", figure: "pear" });
+  });
+
+  test("refuses a schema-version-1 manifest (its traits are text only; a list of body marks cannot be stored) and leaves it alone", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(MIA);
+    const path = join(root(), "avatars", "avatar-0001", "avatar.json");
+    const v1 = { ...(await readJson(path) as Record<string, unknown>), schemaVersion: 1, traits: { hair: "chestnut" } };
+    await writeFile(path, JSON.stringify(v1));
+    const reopened = await openLibrary(root(), deps());
+
+    await expectLibraryError(reopened.library.updateAvatarTraits("avatar-0001", { bodyMarks: ["mole-back"] }), "invalid-record");
+    await expectLibraryError(reopened.library.updateAvatarTraits("avatar-0001", { height: "tall" }), "invalid-record");
+
+    expect(await readJson(path)).toEqual(v1);
+  });
+
+  test("an unknown avatar is avatar-not-found", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await expectLibraryError(library.updateAvatarTraits("unknown-avatar", { bust: "full" }), "avatar-not-found");
+  });
+
+  test("a crash between the temp write and the rename keeps the old manifest on disk and in memory", async () => {
+    let armed = false;
+    const crash = new Error("simulated crash");
+    const { library } = await openLibrary(root(), deps({ testHooks: { beforeRename: (finalPath) => { if (armed && finalPath.endsWith("avatar.json")) throw crash; } } }));
+    await library.createAvatar(BODY_MIA);
+    armed = true;
+
+    expect(await rejectionOf(library.updateAvatarTraits("avatar-0001", { bust: "full" }))).toBe(crash);
+
+    expect(await readJson(join(root(), "avatars", "avatar-0001", "avatar.json"))).toMatchObject({ traits: BODY_MIA.traits });
+    expect(library.getAvatar("avatar-0001")?.traits).toEqual(BODY_MIA.traits);
+  });
+
+  test("keeps the stored body proposal unless the caller asks to drop it", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL });
+    expect(avatar.bodyProposal).toEqual(PROPOSAL);
+
+    const kept = await library.updateAvatarTraits(avatar.id, { height: "tall" });
+    expect(kept.bodyProposal).toEqual(PROPOSAL);
+
+    const dropped = await library.updateAvatarTraits(avatar.id, { height: "tall" }, undefined, { clearBodyProposal: true });
+    expect("bodyProposal" in dropped).toBe(false);
+    expect("bodyProposal" in ((await readJson(join(root(), "avatars", avatar.id, "avatar.json"))) as object)).toBe(false);
+  });
+});
+
+const IMPORTED: NewImportedAvatar = {
+  name: "Zoe",
+  age: 27,
+  traits: { hairColor: "black" },
+  descriptor: "a 27-year-old woman with black hair",
+  photoBytes: PNG_1X1,
+  photoMeta: { mediaType: "image/png", width: 1, height: 1, source: SAMPLE_IMPORTED_SOURCE },
+};
+const PROPOSAL = { values: { bust: "full", bodyMarks: [] }, seen: { bust: "photo", height: "not-visible" }, at: "2026-10-10T10:00:00.000Z" };
+
+describe("the stored body proposal (Stage 5, S5.2a)", () => {
+  test("createImportedAvatar writes it in the SAME manifest as the avatar, and sets no trait from it", async () => {
+    const { library } = await openLibrary(root(), deps());
+
+    const { avatar } = await library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL });
+
+    expect(avatar.bodyProposal).toEqual(PROPOSAL);
+    expect(avatar.traits).toEqual({ hairColor: "black" });
+    expect(await readJson(join(root(), "avatars", "avatar-0001", "avatar.json"))).toEqual(avatar);
+    expect((await openLibrary(root(), deps())).library.getAvatar("avatar-0001")?.bodyProposal).toEqual(PROPOSAL);
+  });
+
+  test("an import with no proposal has no bodyProposal key at all", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar(IMPORTED);
+    expect("bodyProposal" in avatar).toBe(false);
+    expect("bodyProposal" in ((await readJson(join(root(), "avatars", "avatar-0001", "avatar.json"))) as object)).toBe(false);
+  });
+
+  test("a crash before the publish rename leaves neither the avatar nor her proposal", async () => {
+    const crash = new Error("simulated crash");
+    const { library } = await openLibrary(root(), deps({ testHooks: { beforeRename: () => { throw crash; } } }));
+
+    expect(await rejectionOf(library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL }))).toBe(crash);
+
+    expect(library.listAvatars()).toEqual([]);
+  });
+
+  test("clearBodyProposal removes it from the file and the memory", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL });
+
+    const cleared = await library.clearBodyProposal(avatar.id);
+
+    expect("bodyProposal" in cleared).toBe(false);
+    expect(library.getAvatar(avatar.id)).toEqual(cleared);
+    expect(await readJson(join(root(), "avatars", avatar.id, "avatar.json"))).toEqual(cleared);
+  });
+
+  test("clearBodyProposal on an avatar with none writes nothing", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar(IMPORTED);
+    const path = join(root(), "avatars", avatar.id, "avatar.json");
+    const before = (await stat(path)).mtimeMs;
+
+    const same = await library.clearBodyProposal(avatar.id);
+
+    expect(same).toEqual(avatar);
+    expect((await stat(path)).mtimeMs).toBe(before);
+  });
+
+  test("clearBodyProposal for an unknown avatar is avatar-not-found", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await expectLibraryError(library.clearBodyProposal("unknown-avatar"), "avatar-not-found");
+  });
+
+  test.each([
+    ["a bad timestamp", { values: {}, seen: {}, at: "yesterday" }],
+    ["an extra key", { values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z", note: "x" }],
+    ["a value of the wrong type", { values: { bust: { deep: 1 } }, seen: {}, at: "2026-10-10T10:00:00.000Z" }],
+    ["not an object", "full"],
+  ])("a hand-corrupted proposal (%s) is dropped on open: the avatar is kept, listed and not quarantined", async (_label, corrupted) => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL });
+    const path = join(root(), "avatars", avatar.id, "avatar.json");
+    await writeFile(path, JSON.stringify({ ...((await readJson(path)) as object), bodyProposal: corrupted }));
+
+    const reopened = await openLibrary(root(), deps());
+
+    expect(reopened.report.quarantined).toEqual([]);
+    expect(reopened.report.avatars).toBe(1);
+    const kept = reopened.library.getAvatar(avatar.id);
+    expect(kept).toMatchObject({ id: avatar.id, name: "Zoe", status: "active" });
+    expect(kept?.bodyProposal).toBeUndefined();
+    expect(reopened.library.referencePhoto(avatar.id)).not.toBeNull();
+  });
+
+  test("a rewritten descriptor keeps the proposal: only the body commands clear it", async () => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL });
+
+    const updated = await library.updateAvatar(avatar.id, { descriptor: "a new 27-year-old woman." });
+
+    expect(updated.bodyProposal).toEqual(PROPOSAL);
+  });
+});

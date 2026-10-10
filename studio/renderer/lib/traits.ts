@@ -169,6 +169,15 @@ const FIELD_LABELS: Record<keyof Traits, string> = {
   build: "Телосложение",
   marks: "Приметы",
   vibe: "Вайб",
+  // Stage 5, S5.2a: the body traits (the wizard's «Тело» tab is S5.2d).
+  height: "Рост",
+  bust: "Грудь",
+  figure: "Фигура",
+  legLength: "Длина ног",
+  legShape: "Форма ног",
+  bottomSize: "Размер попы",
+  bottomShape: "Форма попы",
+  bodyMarks: "Тату и родинки на теле",
 };
 
 function isTraitKey(key: unknown): key is keyof Traits {

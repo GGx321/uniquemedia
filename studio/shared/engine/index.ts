@@ -3,6 +3,7 @@ export * from "./ageText";
 export * from "./autopilot";
 export * from "./avatar";
 export * from "./avatarDelete";
+export * from "./body";
 export * from "./categories";
 export * from "./commands";
 export * from "./commandHold";

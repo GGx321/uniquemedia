@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { adultTextProblems, DESCRIPTOR_MAX_CHARS } from "./ageText";
+import { AvatarBody, BODY_PHRASE_MAX } from "./body";
 
 /** Avatar age: an integer 21-35. The lower bound is invariant 8 (every avatar is 21+). */
 export const AdultAge = z.number().int().min(21).max(35);
@@ -48,6 +49,8 @@ export const AvatarTraits = z
     hairTexture: HairTexture,
     eyeColor: EyeColor,
     build: Build,
+    // Stage 5, S5.2a: the eight optional body traits. The same schemas as `AvatarBody`'s, spread, so the two can never drift. The descriptor LLM never receives them.
+    ...AvatarBody.shape,
     marks: z
       .array(Mark)
       .max(Mark.options.length)
@@ -76,6 +79,11 @@ export const AvatarDescriptor = z
   .strictObject({
     age: AdultAge,
     text: z.string().min(1).max(DESCRIPTOR_MAX_CHARS).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters"),
+    /**
+     * Stage 5, S5.2a: the body phrase `bodyPhrase` renders from her body traits. It is never stored in the descriptor text: the engine adds it for a prompt
+     * (`promptDescriptorOf`) and `promptSubject` appends it after «; ». Absent for an avatar with no body.
+     */
+    body: z.string().min(1).max(BODY_PHRASE_MAX).regex(NO_HIDDEN_CHARS, "must not contain control or invisible characters").optional(),
   })
   .refine((d) => hasAgeAnchor(d.text, d.age), {
     message: "text must state the avatar's age as '<age>-year-old'",
@@ -84,7 +92,20 @@ export const AvatarDescriptor = z
   .refine((d) => adultTextProblems(d.text, d.age, "descriptor").length === 0, {
     message: ADULT_TEXT_MESSAGE,
     path: ["text"],
+  })
+  .refine((d) => d.body === undefined || adultTextProblems(d.body, d.age, "descriptor").length === 0, {
+    message: ADULT_TEXT_MESSAGE,
+    path: ["body"],
+  })
+  .refine((d) => composedLength(d.text, d.body) <= DESCRIPTOR_MAX_CHARS, {
+    message: `the text and the body phrase together must not exceed ${DESCRIPTOR_MAX_CHARS} characters`,
+    path: ["body"],
   });
+
+/** The length of the descriptor as a prompt carries it: the text, then «; » and the body phrase when there is one. */
+export function composedLength(text: string, body?: string): number {
+  return body === undefined ? text.length : text.length + 2 + body.length;
+}
 
 // ---------- Stage 5, S5.0c: the descriptor-vs-master check ----------
 

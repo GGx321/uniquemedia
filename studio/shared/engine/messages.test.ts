@@ -372,6 +372,11 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     payload: { avatarId: "avatar-0001", text: "25-year-old woman, hazel eyes", expectedText: "25-year-old woman, green eyes" },
     result: { avatar },
   },
+  "avatars.setBody": {
+    payload: { avatarId: "avatar-0001", body: { height: "tall", bust: "full", legLength: "long", legShape: "slim", bodyMarks: ["tattoo-ankle"] } },
+    result: { avatar: { ...avatar, body: { height: "tall", bust: "full", legLength: "long", legShape: "slim", bodyMarks: ["tattoo-ankle"] } } },
+  },
+  "avatars.dismissBodyProposal": { payload: { avatarId: "avatar-0001" }, result: { avatar } },
   "avatars.estimateCheckDescriptor": { payload: { avatarId: "avatar-0001" }, result: { ...estimate, expectedMicros: 3_375, worstMicros: 25_000 } },
   "avatars.checkDescriptor": {
     payload: { avatarId: "avatar-0001", acceptedWorstMicros: 25_000 },
@@ -626,6 +631,8 @@ describe("contract surface", () => {
         "avatars.pick",
         "avatars.archive",
         "avatars.editDescriptor",
+        "avatars.setBody",
+        "avatars.dismissBodyProposal",
         "avatars.estimateCheckDescriptor",
         "avatars.checkDescriptor",
         "avatars.deletePreview",

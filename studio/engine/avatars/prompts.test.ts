@@ -43,6 +43,34 @@ describe("the avatar in an image prompt is her descriptor, and nothing else of t
     expect(() => candidatePrompt({ age: 25, text: "25-year-old European woman who looks 17." })).toThrow(PromptSubjectError);
   });
 
+  describe("her body phrase (Stage 5, S5.2a)", () => {
+    const BODY = "tall, a full bust and long slim legs";
+
+    test("is appended after «; » at the END of the descriptor, once, without the text's closing period", () => {
+      expect(promptSubject({ age: 25, text: GOOD, body: BODY })).toBe(`${GOOD.replace(/\.$/, "")}; ${BODY}`);
+    });
+
+    test("a descriptor without a body is exactly what it was", () => {
+      expect(promptSubject({ age: 25, text: GOOD })).toBe(GOOD.replace(/\.$/, ""));
+    });
+
+    test("the composite over 600 characters is refused before any prompt is built", () => {
+      const text = `${GOOD} ${"x".repeat(600 - GOOD.length - 1)}`;
+      expect(text).toHaveLength(600);
+      expect(promptSubject({ age: 25, text })).toBe(text);
+      expect(() => promptSubject({ age: 25, text, body: BODY })).toThrow(PromptSubjectError);
+    });
+
+    test("a body phrase that breaks the adult rules is refused", () => {
+      expect(() => promptSubject({ age: 25, text: GOOD, body: "a petite figure" })).toThrow(PromptSubjectError);
+    });
+
+    test("the candidates prompt keeps the text alone: a head-and-shoulders portrait never carries the body", () => {
+      expect(candidatePrompt({ age: 25, text: GOOD, body: BODY })).toBe(candidatePrompt({ age: 25, text: GOOD }));
+      expect(candidatePrompt({ age: 25, text: GOOD, body: BODY })).not.toContain("full bust");
+    });
+  });
+
   test("the prompt builders take the descriptor alone", () => {
     expect([candidatePrompt.length, promptSubject.length]).toEqual([1, 1]);
   });

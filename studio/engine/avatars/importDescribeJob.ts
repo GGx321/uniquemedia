@@ -5,7 +5,7 @@ import type { PriceBook } from "../money/prices";
 import { toEngineError } from "../openrouter/engineError";
 import { truncate } from "../openrouter/transport";
 import type { OpenRouterClient } from "../openrouter/types";
-import { IMPORT_DESCRIBE_JSON_SCHEMA, importDescribeMessages, readImportDescribeAnswer, type ImportDescribeRefusal } from "./importDescribe";
+import { importDescribeJsonSchema, importDescribeMessages, readImportDescribeAnswer, type ImportDescribeRefusal, type ImportedBody } from "./importDescribe";
 import { importDescribeCall, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./plan";
 
 // T6c: the one-off vision call for an imported avatar (mirrors
@@ -31,7 +31,8 @@ export interface ImportDescribeJob {
   image: Uint8Array;
 }
 
-export type ImportDescribeJobResult = { ok: true; traits: AvatarTraits; descriptor: AvatarDescriptor } | { ok: false; error: EngineError };
+/** `body` is the body the photo showed (S5.2b), absent when it showed none. */
+export type ImportDescribeJobResult = { ok: true; traits: AvatarTraits; descriptor: AvatarDescriptor; body?: ImportedBody } | { ok: false; error: EngineError };
 
 /** The describe call cannot be cancelled: it is one short request inside a user's command. */
 const NEVER_ABORTED = new AbortController().signal;
@@ -69,7 +70,7 @@ export async function runImportDescribeJob(deps: ImportDescribeJobDeps, job: Imp
       priceBook: deps.priceBook,
       signal: NEVER_ABORTED,
       messages: importDescribeMessages(feedback),
-      jsonSchema: IMPORT_DESCRIBE_JSON_SCHEMA,
+      jsonSchema: importDescribeJsonSchema(feedback),
       maxTokens: call.maxTokens,
       inputTokens: call.inputTokens,
       images: [job.image],
@@ -79,7 +80,7 @@ export async function runImportDescribeJob(deps: ImportDescribeJobDeps, job: Imp
     // has halted every later reserve and the money status says so.
     if (result.status === "ok") {
       const read = readImportDescribeAnswer(result.content);
-      if (read.ok) return { ok: true, traits: read.traits, descriptor: read.descriptor };
+      if (read.ok) return { ok: true, traits: read.traits, descriptor: read.descriptor, ...(read.body === undefined ? {} : { body: read.body }) };
       // M5: the photo does not change between attempts, so a group photo or
       // the wrong gender is not worth asking again — final at once, unlike
       // every other rejection above (a malformed or rule-breaking answer,

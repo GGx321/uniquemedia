@@ -19,6 +19,17 @@ export type LibraryFile = z.infer<typeof LibraryFileSchema>;
 export const TraitValueSchema = z.union([z.string(), z.number(), z.array(z.string())]);
 export type TraitValue = z.infer<typeof TraitValueSchema>;
 
+/**
+ * Stage 5, S5.2a: the body a photo import read, kept on the avatar until the owner saves or dismisses it. Additive, no version bump. Like the traits, the library checks only
+ * its shape; the engine parses the values with the contract (`BodyProposal`) and drops a proposal that no longer fits.
+ */
+export const BodyProposalRecordSchema = z.strictObject({
+  values: z.record(z.string(), TraitValueSchema),
+  seen: z.record(z.string(), z.string()),
+  at: IsoTimestamp,
+});
+export type BodyProposalRecord = z.infer<typeof BodyProposalRecordSchema>;
+
 /** `avatars/<id>/avatar.json`. Strict: an unknown key (e.g. the dropped
  *  `language` — on-video text is English only) makes the manifest invalid.
  *  An avatar is a `draft` until a candidate portrait is picked as its master;
@@ -37,6 +48,8 @@ export const AvatarManifestSchema = z
     masterPhotoId: LibraryIdSchema.nullable(),
     status: z.enum(["draft", "active", "archived"]),
     createdAt: IsoTimestamp,
+    // Read leniently: a proposal that does not parse is dropped and the avatar kept, never the whole folder quarantined over a LOW-value field.
+    bodyProposal: BodyProposalRecordSchema.optional().catch(undefined),
   })
   .refine((m) => m.status === "draft" || m.masterPhotoId !== null, {
     message: "only a draft may have no master photo",

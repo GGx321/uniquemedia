@@ -170,7 +170,7 @@ describe("the image age check off (owner's decision, 2026-09-27: off by default)
 // Same fallback prices (grok-4.3): $1.25/M prompt, $2.50/M completion. The
 // vision describe call is longer than the plain descriptor call (every trait
 // field, not just one string) and carries one attached image.
-const IMPORT_DESCRIBE = { expected: 3_875, worst: 17_500 }; // 1_800 in / 650 out; ceilings 8K in / 3K out (S5.R1: 7K to 8K, room for the body proposal)
+const IMPORT_DESCRIBE = { expected: 3_875, worst: 18_750 }; // 1_800 in / 650 out; ceilings 9K in / 3K out (S5.R1: 7K to 8K; S5.2b: 8K to 9K, the body request)
 // S5.0c: the descriptor-vs-master check, one vision call: 1_700 in / 500 out typical (by analogy with the describe call's measured 1_800 / 650); ceilings 7K in / 1.5K out.
 const DESCRIPTOR_CHECK = { expected: 3_375, worst: 12_500 };
 
@@ -183,7 +183,7 @@ describe("import an existing avatar (T6c)", () => {
     expect(importDescribeCall("acme/vision")).toEqual({
       model: "acme/vision",
       maxTokens: 3_000,
-      inputTokens: 8_000,
+      inputTokens: 9_000,
       images: 1,
       typical: { inputTokens: 1_800, outputTokens: 650 },
     });
@@ -198,7 +198,7 @@ describe("import an existing avatar (T6c)", () => {
   });
 
   // S5.0c (deliberate re-pin): the import also runs the descriptor check on the saved avatar, accepted by the same click, so its figures are in the import's.
-  test("worst case: up to 2 describe attempts and up to 2 check attempts — $0.060000 worst, $0.007250 expected", () => {
+  test("worst case: up to 2 describe attempts and up to 2 check attempts — $0.062500 worst, $0.007250 expected", () => {
     const estimate = importJobEstimate(FALLBACK, DEFAULTS);
 
     expect(estimate).toEqual({
@@ -207,7 +207,7 @@ describe("import an existing avatar (T6c)", () => {
       prices: "fallback",
       pricesAsOf: "2026-09-24",
     });
-    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([7_250, 60_000]);
+    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([7_250, 62_500]);
     expect(Estimate.safeParse(estimate).success).toBe(true);
   });
 
@@ -250,7 +250,7 @@ describe("import an existing avatar (T6c)", () => {
 
     expect(estimate).toEqual({
       expectedMicros: 1_800 + 650 + 1_700 + 500,
-      worstMicros: 2 * (8_000 + 3_000) + 2 * (7_000 + 1_500),
+      worstMicros: 2 * (9_000 + 3_000) + 2 * (7_000 + 1_500),
       prices: "live",
       pricesAsOf: "2026-10-01",
     });

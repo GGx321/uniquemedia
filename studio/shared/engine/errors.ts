@@ -295,12 +295,13 @@ export type CategoryReason = z.infer<typeof CategoryReason>;
  *
  * - empty / hidden-chars: blank, or it holds invisible or control characters.
  * - too-long: over 600 characters.
+ * - too-long-with-body (S5.2a): the text alone fits, but the text, «; » and her body phrase together are over 600 characters (the owner shortens the description).
  * - no-anchor: the avatar's "<age>-year-old" is missing (it may stand anywhere in the text).
  * - script / non-ascii-digits / other-age / under-21-bound / youth-word / number: the `AdultTextProblem` of the same name.
  * - stale: the stored text is no longer the one the proposal was made for.
  * - invalid: the contract refused it for a reason none of the above names (a rule added later).
  */
-export const DESCRIPTOR_REASONS = ["empty", "hidden-chars", "too-long", "no-anchor", "script", "non-ascii-digits", "other-age", "under-21-bound", "youth-word", "number", "stale", "invalid"] as const;
+export const DESCRIPTOR_REASONS = ["empty", "hidden-chars", "too-long", "too-long-with-body", "no-anchor", "script", "non-ascii-digits", "other-age", "under-21-bound", "youth-word", "number", "stale", "invalid"] as const;
 export const DescriptorReason = z.enum(DESCRIPTOR_REASONS);
 export type DescriptorReason = z.infer<typeof DescriptorReason>;
 

@@ -93,6 +93,9 @@ import { z } from "zod";
 // Stage 5, S5.0c (additive, no bump; two new commands and one optional result field, nothing that exists changes): `avatars.estimateCheckDescriptor { avatarId }` → `Estimate` (free; also for a
 //   draft) and `avatars.checkDescriptor { avatarId, acceptedWorstMicros }` → `{ check: DescriptorCheck }` (paid; never writes); `avatars.importAvatar`'s result gains the optional nullable
 //   `descriptorCheck`. `DescriptorCheck`, `AspectVerdict`, `CheckAspect`, `CheckState` live in avatar.ts. No new ErrorCode.
+// Stage 5, S5.2a (additive, no bump; two new commands, optional fields, one new reason): `avatars.setBody { avatarId, body }` and `avatars.dismissBodyProposal { avatarId }` → `{ avatar }` (free);
+//   `AvatarBody` (the eight optional body traits, body.ts) whose keys are also keys of `AvatarTraits`; `AvatarDescriptor.body` (the code-written body phrase, never stored in the text);
+//   `AvatarSummary.body` and `AvatarSummary.bodyProposal` (OMITTED, never null, when unset); `DescriptorReason` `too-long-with-body`. No new ErrorCode.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
