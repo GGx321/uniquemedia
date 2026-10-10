@@ -3896,9 +3896,10 @@ export const GOLDEN: Record<string, string[]> = {
     "# a stale proposal is told so before the text is read",
     "> avatars.editDescriptor {\"avatarId\":\"avatar#1\",\"text\":\"\",\"expectedText\":\"an older stored text\"}",
     "< error VALIDATION {\"descriptorReason\":\"stale\"}",
-    "# none of it changed the stored text",
-    "> avatars.list {}",
-    "< ok {\"avatars\":[{\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":22},{\"avatarId\":\"avatar#2\",\"name\":\"Sofia\",\"status\":\"active\",\"photoCount\":2,\"videoCount\":0,\"eligibleUnusedCount\":2},{\"avatarId\":\"avatar#3\",\"name\":\"Nora\",\"status\":\"archived\",\"photoCount\":0,\"videoCount\":0,\"eligibleUnusedCount\":0}],\"unreadableTotal\":0}",
+    "# none of it changed the stored text: an edit made against the original is accepted",
+    "> avatars.editDescriptor {\"avatarId\":\"avatar#1\",\"text\":\"25-year-old woman, green eyes\",\"expectedText\":\"25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build, light freckles across the nose.\"}",
+    "event avatar.changed {\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":22}",
+    "< ok {\"avatarId\":\"avatar#1\",\"name\":\"Mia\",\"status\":\"active\",\"photoCount\":22,\"videoCount\":0,\"eligibleUnusedCount\":22,\"descriptor\":{\"age\":25,\"text\":\"25-year-old woman, green eyes\"}}",
   ],
   "editDescriptor: an unknown avatar is NOT_FOUND, a payload the contract refuses is VALIDATION, and an archived avatar can be edited and stays archived": [
     "> avatars.list {}",

@@ -68,8 +68,8 @@ export const AVATAR_EDIT_SCENARIOS: readonly Scenario[] = [
       await edit(`${age}-year-old petite woman, hazel eyes`);
       t.note("a stale proposal is told so before the text is read");
       await edit("", "an older stored text");
-      t.note("none of it changed the stored text");
-      await t.call("avatars.list", {});
+      t.note("none of it changed the stored text: an edit made against the original is accepted");
+      await edit(`${age}-year-old woman, green eyes`);
     },
   },
   {
