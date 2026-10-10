@@ -60,9 +60,9 @@ describe("the shipped pools", () => {
     }
   });
 
-  test('the photoshoot studio backdrop is the "studio lighting" time of day', () => {
-    const backdrop = POOLS.photoshoot.locations.find((l) => l.name.includes("seamless beige backdrop"));
-    expect(backdrop?.times).toEqual(["studio lighting"]);
+  test("the photoshoot hallway wall is lit by the morning or the evening, not by a studio", () => {
+    const wall = POOLS.photoshoot.locations.find((l) => l.name === "a plain wall in her hallway");
+    expect(wall?.times).toEqual(["morning", "evening"]);
   });
 });
 
