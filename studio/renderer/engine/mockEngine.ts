@@ -272,8 +272,8 @@ export interface MockEngineOptions {
    */
   demoOwnVideo?: boolean;
   /**
-   * S5.2d: with the `demo` preset, the dev build's «Внешность» shows every body state of .omc/stage5/design: Mia with a body set, Sofia with none, Ava
-   * and Kira with an import's body proposal waiting (a photo to the waist, and a face only); off unless asked.
+   * S5.2d: with the `demo` preset, the dev build's «Внешность» shows the body states of .omc/stage5/design: Mia with a body set, Sofia with none, Ava
+   * with an import's body proposal waiting (a photo to the waist); off unless asked. A face-only import (05) is the landing of an import itself.
    */
   demoBody?: boolean;
   scheduler?: Scheduler;
@@ -999,9 +999,10 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
-   * S5.2d: the dev build's bodies, as the mockup draws them — Mia's set (11), Sofia without one (07), and two imports whose body proposal waits: Ava's
-   * photo to the waist (06: bust and figure seen, the rest not) and Kira's face only (05: nothing seen). Nothing is announced; built in a method, never
-   * at module load: the mock's demo data must not reach a release bundle.
+   * S5.2d: the dev build's bodies, as the mockup draws them — Mia's set (11), Sofia without one (07), and an import whose body proposal waits: Ava's
+   * photo to the waist (06: bust and figure seen, the rest not). A face-only import (05) stores no proposal at all (S5.R2: an empty one is impossible);
+   * the dev build shows it after an import of its own. Nothing is announced; built in a method, never at module load: the mock's demo data must not
+   * reach a release bundle.
    */
   private seedDemoBody(): void {
     const at = new Date(START_OF_TIME - 86_400_000).toISOString();
@@ -1011,7 +1012,6 @@ export class MockEngine implements EngineBridge {
         body: { height: "average", bust: "medium", figure: "hourglass", legLength: "long", legShape: "slim", bottomSize: "medium", bottomShape: "round", bodyMarks: ["tattoo-ankle"] },
       },
       Ava: { bodyProposal: { values: { bust: "medium", figure: "hourglass" }, seen: { ...hidden, bust: "photo", figure: "photo" }, at } },
-      Kira: { bodyProposal: { values: {}, seen: { ...hidden, bust: "not-visible", figure: "not-visible" }, at } },
     };
     this.avatars = this.avatars.map((a) => ({ ...a, ...patch[a.name] }));
   }

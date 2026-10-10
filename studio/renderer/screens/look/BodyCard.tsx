@@ -1,7 +1,18 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { bodyPhrase, composedLength, DESCRIPTOR_MAX_CHARS, descriptorReasonRu, type AvatarBody, type AvatarSummary, type EngineError } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
-import { BODY_FIELDS, buildInText, FIELD_LABEL, fieldValue, proposalHint, proposalSources, proposedBody, sameBody, tidyBody } from "../../lib/body";
+import {
+  BODY_FIELDS,
+  buildInText,
+  FIELD_LABEL,
+  fieldValue,
+  proposalHint,
+  proposalSources,
+  proposedBody,
+  sameBody,
+  tidyBody,
+  type ProposalSources,
+} from "../../lib/body";
 import { errorText } from "../../lib/errors";
 import { BUILDS } from "../../lib/traits";
 import { Icon, Spin } from "../../ui/Icon";
@@ -15,6 +26,12 @@ import { BODY_HELD_REASON } from "./lookModel";
 // whole body: a field put back to «не задано» goes. After an import (S5.2b) the photo's reading waits as a proposal: the fields open with it, tagged
 // «с фото» / «не видно на фото», and «Позже» keeps it, «Не нужно» drops it (`avatars.dismissBodyProposal`), «Сохранить тело» saves and clears it.
 // «Телосложение» is read-only here (D1): the model wrote it into the description's text, and it is changed there.
+
+/** S5.R2 (mockup 05): the hint over the fields right after an import whose photo gave no body. */
+const UNREAD_HINT = "Тело с фото не прочитано — выберите сами или оставьте «не задано»";
+
+/** No field was read from the photo; the build in the description is the model's guess from the face. */
+const UNREAD_SOURCES: ProposalSources = { fields: {}, build: "guess" };
 
 /** The owner's words for a refused save or dismissal: the rule it broke, a busy avatar, or the engine's own text. */
 function refusalText(error: EngineError, age: number): string {
@@ -53,6 +70,7 @@ export function BodyCard({
   ready,
   held,
   runDrawing,
+  unread = false,
 }: {
   avatar: AvatarSummary;
   /** The body being edited, or null for the summary: held by the tab, so «Описание» previews it. */
@@ -63,6 +81,11 @@ export function BodyCard({
   held: boolean;
   /** A photo run of hers is drawing: a save is allowed, and that run finishes with the body it started with. */
   runDrawing: boolean;
+  /**
+   * S5.R2 (mockup 05): she was just imported and the photo gave no body — no proposal is stored then. The fields say so, «Телосложение» is the one
+   * the model guessed from the face, and «Позже» leaves the body for later.
+   */
+  unread?: boolean;
 }) {
   const { client, store } = useEngine();
   const mounted = useMounted();
@@ -78,6 +101,8 @@ export function BodyCard({
   const stored = avatar.body ?? {};
   const proposal = avatar.bodyProposal;
   const hasBody = bodyPhrase(stored) !== undefined;
+  // Only while she still has neither a body nor a proposal: once a body is saved, the card is an ordinary «Изменить тело».
+  const unreadNow = unread && proposal === undefined && !hasBody;
 
   useEffect(() => {
     if (focusNext === "fields") fields.current?.querySelector<HTMLInputElement>("input:checked:not(:disabled)")?.focus();
@@ -154,10 +179,10 @@ export function BodyCard({
         <div className="card-head">
           <div className="look-desc-title">
             <h2 className="card-title">Тело</h2>
-            {proposal !== undefined ? (
+            {proposal !== undefined || unreadNow ? (
               <span className="look-body-hint">
                 <Icon name="info" size={14} strokeWidth={2} />
-                {proposalHint(proposal)}
+                {proposal !== undefined ? proposalHint(proposal) : UNREAD_HINT}
               </span>
             ) : (
               <span className="muted">изменения — только в новых фото и клипах; готовые не меняются</span>
@@ -174,7 +199,7 @@ export function BodyCard({
             }}
             build={{ editable: false, value: buildInText(text) }}
             layout="columns"
-            sources={proposal === undefined ? null : proposalSources(proposal)}
+            sources={proposal !== undefined ? proposalSources(proposal) : unreadNow ? UNREAD_SOURCES : null}
           />
         </fieldset>
         {tooLong ? (
@@ -219,7 +244,7 @@ export function BodyCard({
             </>
           ) : (
             <button type="button" className="btn" disabled={busy !== null} onClick={close}>
-              Отмена
+              {unreadNow ? "Позже" : "Отмена"}
             </button>
           )}
           <p className="field-hint">Бесплатно — описание меняется без запроса к модели.</p>

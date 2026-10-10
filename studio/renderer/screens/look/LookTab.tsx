@@ -39,14 +39,23 @@ export function LookTab({
   const checking = look.phase.kind === "running";
   const drawing = runDrawing(view, avatarId);
   /**
-   * S5.2d: the body «Изменить тело» is editing (null: the summary). Held here, so «Описание» previews the phrase it would write. An import's proposal
-   * opens it at once (05–06); «Позже» closes it and the proposal waits in the card.
+   * S5.R2: right after an import whose photo gave no body (no proposal is stored then, and she has none): the body is still to choose, and «Тело» says
+   * the photo did not read it (mockup 05).
    */
-  const [bodyDraft, setBodyDraft] = useState<AvatarBody | null>(() => (avatar.bodyProposal === undefined ? null : proposedBody(avatar.body, avatar.bodyProposal)));
+  const unread = landing?.kind === "imported" && avatar.bodyProposal === undefined && avatar.body === undefined;
+  /**
+   * S5.2d: the body «Изменить тело» is editing (null: the summary). Held here, so «Описание» previews the phrase it would write. An import opens it at
+   * once: with its proposal (06), or empty when the photo gave none (05, S5.R2); «Позже» closes it, and a proposal waits in the card.
+   */
+  const [bodyDraft, setBodyDraft] = useState<AvatarBody | null>(() =>
+    avatar.bodyProposal !== undefined ? proposedBody(avatar.body, avatar.bodyProposal) : unread ? {} : null,
+  );
+  // The body is left to do after an import while its proposal waits or she has none (S5.R2).
+  const bodyWaits = avatar.bodyProposal !== undefined || avatar.body === undefined;
 
   return (
     <>
-      {landing !== null && <Notice tone="ok">{landingText(landing, avatar.name, avatar.bodyProposal !== undefined)}</Notice>}
+      {landing !== null && <Notice tone="ok">{landingText(landing, avatar.name, bodyWaits)}</Notice>}
       <div className="look">
         <div className="look-side">
           <div className="ph look-master">
@@ -73,7 +82,7 @@ export function LookTab({
             fresh={readFromPhoto}
             bodyDraft={bodyDraft}
           />
-          <BodyCard avatar={avatar} draft={bodyDraft} onDraft={setBodyDraft} ready={ready} held={checking} runDrawing={drawing} />
+          <BodyCard avatar={avatar} draft={bodyDraft} onDraft={setBodyDraft} ready={ready} held={checking} runDrawing={drawing} unread={unread} />
         </div>
       </div>
     </>

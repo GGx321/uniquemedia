@@ -131,7 +131,8 @@ test("happy path: pick, name it, import — lands on the new avatar's «Внеш
   expect(imported?.payload).toMatchObject({ name: "Zoe" });
   expect(imported?.payload).not.toHaveProperty("confirmedAiPersona");
   expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
-  expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним.").tagName).toBe("DIV");
+  // S5.R2 re-pin: the photo gave no body (the mock stores no proposal by default), so the body is left to choose.
+  expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.").tagName).toBe("DIV");
 });
 
 // T6c review round 3, L4: the old code guessed "consumed or not" from the

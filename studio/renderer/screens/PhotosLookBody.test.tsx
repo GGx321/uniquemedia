@@ -23,7 +23,8 @@ const HIDDEN: BodyProposal["seen"] = {
   bottomShape: "not-visible",
   bodyMarks: "not-visible",
 };
-const FACE_ONLY: BodyProposal = { values: {}, seen: HIDDEN, at: AT };
+/** A head-and-shoulders photo: only the bust was read (an import never stores a proposal with no value). */
+const HEAD: BodyProposal = { values: { bust: "small" }, seen: { ...HIDDEN, bust: "photo" }, at: AT };
 const WAIST: BodyProposal = { values: { bust: "medium", figure: "hourglass" }, seen: { ...HIDDEN, bust: "photo", figure: "photo" }, at: AT };
 /** Nini's body before the mockup's 08. */
 const OLD: AvatarBody = { height: "tall", bust: "full", figure: "straight" };
@@ -66,6 +67,21 @@ async function save(): Promise<void> {
   fireEvent.click(inBody().getByRole("button", { name: "Сохранить тело" }));
   await flush();
 }
+
+/** The real path of an import: from the grid, a photo picked and named Zoe, «Импортировать», landing on her «Внешность». */
+async function importZoe(): Promise<void> {
+  fireEvent.click(await screen.findByRole("button", { name: "Импортировать аватара" }));
+  await screen.findByRole("heading", { level: 1, name: "Импортировать аватара" });
+  fireEvent.click(screen.getByRole("button", { name: /Выбрать фото/ }));
+  await screen.findByRole("button", { name: /Импортировать · до/ });
+  fireEvent.change(screen.getByPlaceholderText("Mia"), { target: { value: "Zoe" } });
+  fireEvent.click(screen.getByRole("button", { name: /Импортировать · до/ }));
+  await screen.findByRole("heading", { level: 1, name: "Zoe" });
+  await flush();
+}
+
+/** The line over the tab after the landing. */
+const landingLine = (): string => text(screen.getByText(/^Аватар «Zoe» импортирован\./));
 
 describe("07 · no body yet", () => {
   test("the summary says «не задано» for each field, the build as the description says it, and offers «Задать тело»", async () => {
@@ -317,26 +333,87 @@ describe("setBody refused", () => {
   });
 });
 
-describe("05 · an import's proposal, face only", () => {
-  const LEA: AvatarSummary = { ...MIA, name: "Lea", bodyProposal: FACE_ONLY };
-
-  test("«Тело» opens at once: every field «не видно на фото», the build «угадано по лицу», the hint, and three ways out", async () => {
-    await openLook(LEA);
+describe("05 · an import whose photo showed no body (S5.R2: the real path — no proposal is stored)", () => {
+  test("«Тело» opens at once: nothing read, «Телосложение» guessed from the face, no marks on the fields, «Сохранить тело» and «Позже»", async () => {
+    const { engine } = setup();
+    await importZoe();
+    expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(1);
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
     expect(bodyCard().className).toContain("look-body-edit");
-    expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("на фото только лицо — тело выберите сами или оставьте «не задано»");
-    expect(Array.from(bodyCard().querySelectorAll(".src-none")).length).toBe(6);
+    expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("Тело с фото не прочитано — выберите сами или оставьте «не задано»");
     expect(text(bodyCard().querySelector(".body-build .src-guess") ?? bodyCard())).toBe("угадано по лицу");
-    expect(inBody().getByRole("group", { name: "Длина ног, не видно на фото" }).tagName).toBe("FIELDSET");
+    expect(bodyCard().querySelectorAll(".src-none, .src-photo").length).toBe(0);
+    expect(inBody().getByRole("group", { name: "Длина ног" }).tagName).toBe("FIELDSET");
     expect(isChecked(radio(/^Рост/, "не задано"))).toBe(true);
-    expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже", "Не нужно"]);
-    // Saving what the photo could not show is still a decision: it clears the proposal.
+    expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже"]);
+    // Nothing chosen yet: nothing to save.
+    expect(isDisabled(inBody().getByRole("button", { name: "Сохранить тело" }))).toBe(true);
+    pick(/^Грудь/, "Средняя");
     expect(isDisabled(inBody().getByRole("button", { name: "Сохранить тело" }))).toBe(false);
-    // Nothing to preview: «Описание» is as it is, and can be edited.
+    // Nothing to preview before a phrase: «Описание» stays editable.
+    pick(/^Грудь/, "не задано");
     expect(within(descCard()).queryByText("предпросмотр") === null).toBe(true);
     expect(isDisabled(within(descCard()).getByRole("button", { name: "Изменить текст" }))).toBe(false);
   });
 
-  test("«Позже» keeps the proposal: the card says it waits and «Посмотреть» brings it back", async () => {
+  test("a pick saved with «Сохранить тело»: free, the fields close, and the line no longer says the body is left", async () => {
+    const { engine } = setup();
+    await importZoe();
+    pick(/^Рост/, "Невысокий");
+    pick(/^Форма попы/, "Сердечком");
+    await save();
+    const zoe = callsOf(engine, "avatars.setBody")[0]?.payload;
+    expect(zoe?.body).toEqual({ height: "short", bottomShape: "heart" });
+    expect(bodyCard().className).not.toContain("look-body-edit");
+    expect(summary()[5]).toEqual(["Попа", "Сердечком"]);
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним.");
+  });
+
+  test("«Позже» closes the fields with nothing sent; «Задать тело» opens them again as the import left them", async () => {
+    const { engine } = setup();
+    await importZoe();
+    fireEvent.click(inBody().getByRole("button", { name: "Позже" }));
+    await flush();
+    expect(bodyCard().className).not.toContain("look-body-edit");
+    expect(focusedLabel()).toBe(describeElement(inBody().getByRole("button", { name: "Задать тело" })));
+    expect(callsOf(engine, "avatars.setBody").length + callsOf(engine, "avatars.dismissBodyProposal").length).toBe(0);
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
+    fireEvent.click(inBody().getByRole("button", { name: "Задать тело" }));
+    await flush();
+    expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("Тело с фото не прочитано — выберите сами или оставьте «не задано»");
+    expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже"]);
+  });
+
+  test("the same avatar opened later, not from the import, shows her summary as any avatar without a body", async () => {
+    const { engine } = setup();
+    await importZoe();
+    fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Zoe" }));
+    await screen.findByRole("heading", { level: 1, name: "Zoe" });
+    fireEvent.click(screen.getByRole("tab", { name: "Внешность" }));
+    await flush();
+    expect(bodyCard().className).not.toContain("look-body-edit");
+    expect(inBody().getByRole("button", { name: "Задать тело" }).tagName).toBe("BUTTON");
+    expect(callsOf(engine, "avatars.setBody")).toHaveLength(0);
+  });
+});
+
+describe("an import's proposal waits (a head-and-shoulders photo)", () => {
+  const LEA: AvatarSummary = { ...MIA, name: "Lea", bodyProposal: HEAD };
+
+  test("«Тело» opens at once with what was read, the rest «не видно на фото», and three ways out", async () => {
+    await openLook(LEA);
+    expect(bodyCard().className).toContain("look-body-edit");
+    expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("рост, фигуру, ноги, попу и тату или родинки на фото не видно — выберите сами или оставьте «не задано»");
+    expect(Array.from(bodyCard().querySelectorAll(".src-none")).length).toBe(5);
+    expect(text(bodyCard().querySelector(".body-build .src-photo") ?? bodyCard())).toBe("с фото");
+    expect(inBody().getByRole("group", { name: "Длина ног, не видно на фото" }).tagName).toBe("FIELDSET");
+    expect(isChecked(radio(/^Грудь/, "Небольшая"))).toBe(true);
+    expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже", "Не нужно"]);
+    expect(isDisabled(inBody().getByRole("button", { name: "Сохранить тело" }))).toBe(false);
+  });
+
+  test("«Позже» keeps the proposal: the card says it waits and «Посмотреть» brings it back as it was read", async () => {
     const { engine } = await openLook(LEA);
     pick(/^Грудь/, "Средняя");
     fireEvent.click(inBody().getByRole("button", { name: "Позже" }));
@@ -348,7 +425,7 @@ describe("05 · an import's proposal, face only", () => {
     fireEvent.click(inBody().getByRole("button", { name: "Посмотреть" }));
     await flush();
     expect(bodyCard().className).toContain("look-body-edit");
-    expect(isChecked(radio(/^Грудь/, "не задано"))).toBe(true);
+    expect(isChecked(radio(/^Грудь/, "Небольшая"))).toBe(true);
   });
 
   test("«Позже», then a look at «Фото» and back: the proposal opens again", async () => {
@@ -383,12 +460,12 @@ describe("05 · an import's proposal, face only", () => {
     expect(bodyCard().className).toContain("look-body-edit");
   });
 
-  test("the owner's picks are saved with «Сохранить тело», and the proposal goes with them", async () => {
+  test("the owner's picks are saved with «Сохранить тело», with what was read, and the proposal goes with them", async () => {
     const { engine } = await openLook(LEA);
     pick(/^Рост/, "Невысокий");
     pick(/^Форма попы/, "Сердечком");
     await save();
-    expect(callsOf(engine, "avatars.setBody").map((c) => c.payload)).toEqual([{ avatarId: MIA.avatarId, body: { height: "short", bottomShape: "heart" } }]);
+    expect(callsOf(engine, "avatars.setBody").map((c) => c.payload)).toEqual([{ avatarId: MIA.avatarId, body: { height: "short", bust: "small", bottomShape: "heart" } }]);
     expect(bodyCard().className).not.toContain("look-body-edit");
     expect(bodyCard().querySelector(".body-nudge") === null).toBe(true);
     expect(summary()[5]).toEqual(["Попа", "Сердечком"]);
@@ -397,6 +474,16 @@ describe("05 · an import's proposal, face only", () => {
 
 describe("06 · an import's proposal, photo to the waist", () => {
   const AVA: AvatarSummary = { ...MIA, name: "Ava", bodyProposal: WAIST };
+
+  test("on the real path: the import stores the proposal, the landing says the body is left, and «Тело» opens with it", async () => {
+    const { engine } = setup();
+    engine.queueImportBodyProposal(WAIST);
+    await importZoe();
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
+    expect(bodyCard().className).toContain("look-body-edit");
+    expect(isChecked(radio(/^Фигура/, "Песочные часы"))).toBe(true);
+    expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже", "Не нужно"]);
+  });
 
   test("what the photo showed is chosen and tagged «с фото», the rest «не видно на фото»; the hint names what is missing", async () => {
     await openLook(AVA);

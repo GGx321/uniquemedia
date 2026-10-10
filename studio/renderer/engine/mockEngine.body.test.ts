@@ -277,8 +277,10 @@ test("S5.2d: the dev build's `demoBody` seeds every body state the mockup draws,
   expect(byName("Sofia")?.body).toBeUndefined();
   expect(byName("Ava")?.bodyProposal?.values).toEqual({ bust: "medium", figure: "hourglass" });
   expect(byName("Ava")?.bodyProposal?.seen.bust).toBe("photo");
-  expect(byName("Kira")?.bodyProposal?.values).toEqual({});
-  expect(Object.values(byName("Kira")?.bodyProposal?.seen ?? {}).join(",")).toBe(Array(8).fill("not-visible").join(","));
+  // S5.R2: an import whose photo showed no body stores no proposal (an empty one is impossible), so the dev build has none to show for it.
+  expect(byName("Kira")?.bodyProposal).toBeUndefined();
+  expect(byName("Kira")?.body).toBeUndefined();
+  expect(avatars.filter((a) => a.bodyProposal !== undefined).map((a) => a.name)).toEqual(["Ava"]);
   // Without the option the demo library is as it was, and with it only the body fields differ.
   expect(before.some((a) => a.body !== undefined || a.bodyProposal !== undefined)).toBe(false);
   expect(avatars.map(({ body: _body, bodyProposal: _proposal, ...rest }) => rest)).toEqual(before);

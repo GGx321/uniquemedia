@@ -188,7 +188,8 @@ describe("after «Импортировать» (05–06)", () => {
     await importZoe();
 
     expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним.").tagName).toBe("DIV");
+    // S5.R2 re-pin: the mock's photo gives no body (no proposal is stored), so the line says the body is left.
+    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.").tagName).toBe("DIV");
     expect(text(checkCard())).toContain("Описание совпадает с фото");
     expect(text(checkCard())).toContain("при импорте");
     expect(within(descCard()).getByText(IMPORT_TEXT).tagName).toBe("P");
@@ -218,7 +219,8 @@ describe("after «Импортировать» (05–06)", () => {
     engine.setNextDescriptorCheck(mismatch(IMPORT_TEXT, "brown eyes", "green eyes"));
     await importZoe();
 
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — проверьте сверку.").tagName).toBe("DIV");
+    // S5.R2 re-pin: no body read from the photo either.
+    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — проверьте тело и сверку.").tagName).toBe("DIV");
     expect(text(checkCard())).toContain("Не совпадает: глаза");
     expect(text(checkCard())).toContain("В описании: карие");
     expect(text(checkCard())).toContain("На фото: зелёные");
@@ -240,7 +242,8 @@ describe("after «Импортировать» (05–06)", () => {
     engine.setNextDescriptorCheck({ code: "TIMEOUT" });
     await importZoe();
 
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото.").tagName).toBe("DIV");
+    // S5.R2 re-pin: no body read from the photo either.
+    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — осталось тело.").tagName).toBe("DIV");
     expect(text(checkCard())).toContain("Сверка при импорте не прошла");
     const button = within(checkCard()).getByRole("button", { name: /^Проверить описание/ });
     expect(button.textContent).toBe("Проверить описание · до $0.025");
