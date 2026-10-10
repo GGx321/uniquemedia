@@ -88,7 +88,7 @@ describe("the pool as shown", () => {
   });
 
   test("the style line under the shots", () => {
-    expect(styleNote("phone")).toBe("Стиль «телефон», как у Дома. С тремя кадрами «Фотограф» был бы «редакционный», как у Фотосессии.");
+    expect(styleNote("phone")).toBe("Стиль «телефон», как у Дома.");
     expect(styleNote("editorial")).toBe("Стиль «редакционный», как у Фотосессии: в наборе не меньше трёх кадров «Фотограф».");
   });
 });
