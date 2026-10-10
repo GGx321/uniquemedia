@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import type { DescriptorCheck } from "../../../shared/engine";
 import type { JobView } from "../../engine/store";
-import { aspectRows, avatarHeld, lastLine, mismatchTitle, proposalReason, runDrawing, textMismatch, whenLabel, wordDiff, type DiffPart } from "./lookModel";
+import type { LookLanding } from "../../navigation";
+import { aspectRows, avatarHeld, landingText, lastLine, mismatchTitle, proposalReason, runDrawing, textMismatch, whenLabel, wordDiff, type DiffPart } from "./lookModel";
 
 // S5.0d: the words of the «Внешность» tab, apart from the components: the verdict, the aspect rows, the proposal as an edit, «последняя: …», and
 // whether the avatar is held by work the paid check would be refused for.
@@ -181,5 +182,22 @@ describe("whether the avatar is held", () => {
   test("a photo run drawing now is told apart (an edit is allowed during it)", () => {
     expect(runDrawing({ jobs: [job({})] }, "a1")).toBe(true);
     expect(runDrawing({ jobs: [job({ kind: "avatar.candidates" })] }, "a1")).toBe(false);
+  });
+});
+
+describe("the line over the tab after the avatar was made (S5.2d: an import's body proposal still open)", () => {
+  test("after «Сохранить»: the same line whatever the body", () => {
+    expect(landingText({ kind: "created", checkWorstMicros: 25_000 }, "Mia", false)).toBe("Аватар «Mia» сохранён. Мастер-портрет готов для фото.");
+    expect(landingText({ kind: "created", checkWorstMicros: null }, "Mia", true)).toBe("Аватар «Mia» сохранён. Мастер-портрет готов для фото.");
+  });
+
+  test("after «Импортировать»: the check's outcome, then what is left — the body while its proposal waits (05, 06)", () => {
+    const imported = (c: DescriptorCheck | null): LookLanding => ({ kind: "imported", check: c });
+    expect(landingText(imported(null), "Lea", false)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото.");
+    expect(landingText(imported(null), "Lea", true)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото — осталось тело.");
+    expect(landingText(imported(check()), "Lea", false)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото и сверено с ним.");
+    expect(landingText(imported(check()), "Lea", true)).toBe("Аватар «Lea» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
+    expect(landingText(imported(hairMismatch), "Ava", false)).toBe("Аватар «Ava» импортирован. Описание прочитано с фото — проверьте сверку.");
+    expect(landingText(imported(hairMismatch), "Ava", true)).toBe("Аватар «Ava» импортирован. Описание прочитано с фото — проверьте тело и сверку.");
   });
 });

@@ -1,5 +1,6 @@
 import { CHECK_ASPECTS, type CheckAspect, type DescriptorCheck } from "../../../shared/engine";
 import { isActiveJob, type EngineView } from "../../engine/store";
+import type { LookLanding } from "../../navigation";
 
 // S5.0d: what the «Внешность» tab says, apart from the components that draw it — the check's verdict and its aspects, the proposal as an edit (struck
 // out and inserted), the «последняя: …» line, and whether the avatar is held by work the check must wait for. No money is computed here: every figure
@@ -110,6 +111,22 @@ export const CHECK_HELD_REASON = "Сверка доступна, когда за
 
 /** An edit refused IN_FLIGHT: a check, a delete or another job holds the avatar (a photo run does not). */
 export const EDIT_HELD_REASON = "Описание можно изменить, когда закончится сверка или другая задача этого аватара";
+
+/**
+ * The line over the tab right after the avatar was made, as the mockup's 05, 06 and 11 say it. `bodyWaits` (S5.2d): an import's body proposal is still
+ * open, so the line says the body is left to do.
+ */
+export function landingText(landing: LookLanding, name: string, bodyWaits: boolean): string {
+  if (landing.kind === "created") return `Аватар «${name}» сохранён. Мастер-портрет готов для фото.`;
+  const { check } = landing;
+  const head = `Аватар «${name}» импортирован.`;
+  if (check === null) return bodyWaits ? `${head} Описание прочитано с фото — осталось тело.` : `${head} Описание прочитано с фото.`;
+  if (check.matches) return bodyWaits ? `${head} Описание прочитано с фото и сверено с ним — осталось тело.` : `${head} Описание прочитано с фото и сверено с ним.`;
+  return bodyWaits ? `${head} Описание прочитано с фото — проверьте тело и сверку.` : `${head} Описание прочитано с фото — проверьте сверку.`;
+}
+
+/** S5.2d: `avatars.setBody` (or «Не нужно») refused IN_FLIGHT, or waiting for this window's own check: the same claim as an edit. */
+export const BODY_HELD_REASON = "Тело можно сохранить, когда закончится сверка или другая задача этого аватара";
 
 /**
  * Whether this window knows of work that holds the avatar, so the paid check would be refused IN_FLIGHT: a photo run or a candidates batch of hers that
