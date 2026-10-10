@@ -580,6 +580,18 @@ describe("the body in a draft and a summary", () => {
     expect(isRewritable(active({ ...manifestTraits(TRAITS), legShape: "wooden" }, { descriptor: "a woman with chestnut hair" }))).toBe(true);
   });
 
+  test("manifestTraits stores an empty list of body marks as absent, as setBody does", () => {
+    const stored = manifestTraits({ ...TRAITS, height: "tall", bodyMarks: [] });
+    expect(stored).toHaveProperty("height", "tall");
+    expect("bodyMarks" in stored).toBe(false);
+  });
+
+  test("a summary never carries bodyMarks: [] even when the record holds one beside other body keys", () => {
+    const summary = avatarSummaryFrom(active({ ...manifestTraits(TRAITS), height: "tall", bodyMarks: [] }), COUNTS);
+    expect(summary?.body).toEqual({ height: "tall" });
+    expect(summary?.body !== undefined && "bodyMarks" in summary.body).toBe(false);
+  });
+
   test("manifestTraits leaves a body key that was never set out of the record", () => {
     const traits = { ...TRAITS, height: "tall", bust: undefined } satisfies AvatarTraits;
     const stored = manifestTraits(traits);

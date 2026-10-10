@@ -188,19 +188,15 @@ describe("bodyPhrase passes the adult-text rules (I5.8)", () => {
     }
   });
 
-  test("a spread of whole phrases, every value of every slot at least once, passes both checks", () => {
-    const values = Object.entries(VALUES);
-    const picks = Math.max(...values.map(([, v]) => v.length));
-    for (let i = 0; i < picks; i++) {
-      const body: Record<string, unknown> = {};
-      for (const [key, list] of values) body[key] = list[i % list.length];
-      body.bodyMarks = [BodyMark.options[i % 7], BodyMark.options[(i + 3) % 7]];
-      const parsed = AvatarBody.parse(body);
-      const phrase = bodyPhrase(parsed) ?? "";
-      expect(phrase.length).toBeGreaterThan(0);
-      expect(youthWords(phrase, "descriptor")).toEqual([]);
-      expect(adultTextProblems(phrase, 21, "descriptor")).toEqual([]);
-      expect(adultTextProblems(phrase, 35, "descriptor")).toEqual([]);
+  test("every pair of items joined by «, » and by « and » passes the rules: the seams are where a phrase could newly read young", () => {
+    const items = [...new Set([...SINGLE.map(([, , phrase]) => phrase), ...BOTTOM_COMBOS.map(([, phrase]) => phrase)])];
+    for (const first of items) {
+      for (const second of items) {
+        for (const joined of [`${first}, ${second}`, `${first} and ${second}`]) {
+          expect(youthWords(joined, "descriptor")).toEqual([]);
+          expect(adultTextProblems(joined, 21, "descriptor")).toEqual([]);
+        }
+      }
     }
   });
 });
@@ -264,6 +260,12 @@ describe("bodyFromRecord", () => {
 
   test("is undefined when the record has no body key", () => {
     expect(bodyFromRecord({ build: "slim", marks: ["freckles"] })).toBeUndefined();
+  });
+
+  test("leaves an empty list of marks out of a body that has other keys: «no marks» is an absent key", () => {
+    const body = bodyFromRecord({ height: "tall", bodyMarks: [] });
+    expect(body).toEqual({ height: "tall" });
+    expect(body !== undefined && "bodyMarks" in body).toBe(false);
   });
 
   test("is undefined when the only body key is an empty list", () => {

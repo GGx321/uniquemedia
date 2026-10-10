@@ -127,5 +127,8 @@ export function bodyFromRecord(record: Readonly<Record<string, unknown>>): Avata
   for (const key of BODY_KEYS) if (record[key] !== undefined) picked[key] = record[key];
   const parsed = AvatarBody.safeParse(picked);
   if (!parsed.success) return undefined;
-  return bodyPhrase(parsed.data) === undefined ? undefined : parsed.data;
+  // «No marks» is an absent key, never an empty list (as `avatars.setBody` stores it).
+  const { bodyMarks, ...rest } = parsed.data;
+  const body: AvatarBody = bodyMarks === undefined || bodyMarks.length === 0 ? rest : { ...rest, bodyMarks };
+  return bodyPhrase(body) === undefined ? undefined : body;
 }

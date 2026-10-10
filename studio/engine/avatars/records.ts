@@ -39,7 +39,8 @@ export function manifestTraits(traits: AvatarTraits): Record<string, TraitValue>
   const { age: _age, ...rest } = traits;
   // A body key that was never set (or was cleared) is left out of the record, not stored as a hole.
   const stored: Record<string, TraitValue> = {};
-  for (const [key, value] of Object.entries(rest)) if (value !== undefined) stored[key] = value;
+  // An unset key and an empty list of body marks are both left out: «no marks» is an absent key.
+  for (const [key, value] of Object.entries(rest)) if (value !== undefined && !(key === "bodyMarks" && Array.isArray(value) && value.length === 0)) stored[key] = value;
   return stored;
 }
 
