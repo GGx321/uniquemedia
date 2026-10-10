@@ -69,6 +69,14 @@ describe("a torn tail means no request was sent (the line is fsynced before the 
     await seed('{"id":"c","at":17');
     expect(await log().summary(NOW)).toEqual({ count: 0, lastAt: null, damaged: false });
   });
+
+  test("a look that must not write (heal: false) counts the whole lines and leaves the file as it is", async () => {
+    const text = `${lineOf("a", NOW - 5 * HOUR)}${lineOf("b", NOW - 2 * HOUR)}{"id":"c","at":17`;
+    await seed(text);
+    expect(await log().summary(NOW, { heal: false })).toEqual({ count: 2, lastAt: NOW - 2 * HOUR, damaged: false });
+    expect(await readFile(path, "utf8")).toBe(text);
+    expect(await readFile(`${path}.torn`, "utf8").catch(() => "no file")).toBe("no file");
+  });
 });
 
 describe("a damaged file counts as the limit (10), the safe side", () => {

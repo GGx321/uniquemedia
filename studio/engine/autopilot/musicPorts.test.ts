@@ -196,3 +196,35 @@ describe("the auto-refresh port", () => {
     expect(r.released).toEqual(["launch-0001"]);
   });
 });
+
+// S4.10 fix B: the plan card counts from the SAME collection the free steps choose from.
+describe("candidates (the plan card's look)", () => {
+  test("counts the saved trends that are not explicit and the flagged own tracks, and the explicit ones left out", async () => {
+    const r = rig();
+    r.trends = [trend("a"), trend("b", { inList: false }), trend("rude", { explicit: true })];
+    r.own = [{ mediaId: "media-1", durationMs: 20_000 }];
+    const found = await r.ports.candidates();
+    expect([found.candidates.length, found.flaggedOwn.size, found.explicitSkipped]).toEqual([3, 1, 1]);
+  });
+
+  test("is the list chooseMusic picks from: the same keys", async () => {
+    const r = rig();
+    r.trends = [trend("a"), trend("rude", { explicit: true })];
+    r.own = [{ mediaId: "media-1", durationMs: 20_000 }];
+    const keys = (await r.ports.candidates()).candidates.map((c) => (c.source === "trending" ? trackKey("trending", c.trackId) : trackKey("own", c.mediaId)));
+    expect(keys).toEqual([...(await r.ports.autoRefresh.candidateKeys())]);
+  });
+
+  test("asks for no refresh and releases no launch", async () => {
+    const r = rig();
+    await r.ports.candidates();
+    expect([r.asked, r.released]).toEqual([[], []]);
+  });
+
+  test("reads the sources again at every call: a track that appeared meanwhile is counted", async () => {
+    const r = rig();
+    expect((await r.ports.candidates()).candidates).toHaveLength(0);
+    r.trends = [trend("a")];
+    expect((await r.ports.candidates()).candidates).toHaveLength(1);
+  });
+});

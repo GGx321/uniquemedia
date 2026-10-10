@@ -1,3 +1,4 @@
+import { autoRefreshOf, quotaRemainingOf } from "../../shared/autopilot/autoRefresh";
 import type { MarksRead } from "../../shared/autopilot/videoFacts";
 import {
   AvatarDescriptor,
@@ -335,11 +336,15 @@ export interface MockMusicOptions {
   tracks?: readonly MockTrackSeed[];
   serverRemaining?: { value: number; daysAgo: number };
   quotaLog?: MusicQuotaLog;
+  /** S4.10 fix B: the automatic refreshes the engine's `auto-sends.jsonl` holds, each as hours before the mock's start. Only the plan card's «will the trends refresh by themselves?» reads them. */
+  autoSendsHoursAgo?: readonly number[];
 }
 
 /** The mock's music: what the engine keeps in its quota log and its track store, as plain numbers (mock clock, epoch ms). */
 interface MockMusic {
   sends: number[];
+  /** The automatic refreshes (`auto-sends.jsonl`), epoch ms; the mock never makes one itself, a story seeds them. */
+  autoSends: number[];
   serverRemaining: { value: number; at: number } | null;
   quotaLog: MusicQuotaLog;
   list: { fetchedAt: number; trackCount: number; bytesOnDisk: number } | null;
@@ -375,6 +380,7 @@ function demoMusic(): MockMusicOptions {
 function mockMusic(options: MockMusicOptions, now: number): MockMusic {
   return {
     sends: (options.sendsDaysAgo ?? []).map((days) => now - days * DAY_MS),
+    autoSends: (options.autoSendsHoursAgo ?? []).map((hours) => now - hours * 3600 * 1000),
     serverRemaining: options.serverRemaining === undefined ? null : { value: options.serverRemaining.value, at: now - options.serverRemaining.daysAgo * DAY_MS },
     quotaLog: options.quotaLog ?? "ok",
     list:
@@ -3525,10 +3531,25 @@ export class MockEngine implements EngineBridge {
     const trends = this.music.tracks.filter((t) => !t.summary.explicit).length;
     const ownFlagged = this.ownMedia.flaggedTracks();
     const status = this.musicStatus();
-    const quotaRemaining = status.quotaLog === "ok" ? Math.max(0, status.limit - status.sentLast31d) : null;
+    const quotaRemaining = quotaRemainingOf(status);
     const key = this.settings.musicKey;
     const candidates = trends + ownFlagged;
-    const autoRefresh: AutoRefresh = !key.stored || key.rejected ? "no-key" : quotaRemaining !== null && quotaRemaining < 10 ? "no-quota" : candidates < 10 ? "will" : "not-needed";
+    // The engine's own rule (shared/autopilot/autoRefresh.ts) over the mock's figures: the engine's dry run feeds the same rule the same facts from its files.
+    const autoInWindow = this.music.autoSends.filter((at) => at > this.clock - MUSIC_WINDOW_MS);
+    const autoRefresh: AutoRefresh = autoRefreshOf({
+      now: this.clock,
+      hasKey: key.stored,
+      keyRejected: key.rejected,
+      refreshRunning: this.music.refresh.state === "running",
+      listFetchedAt: this.music.list?.fetchedAt ?? null,
+      candidateCount: candidates,
+      autoSendsInWindow: autoInWindow.length,
+      autoLogDamaged: false,
+      lastAutoSendAt: autoInWindow.length === 0 ? null : Math.max(...autoInWindow),
+      totalSendsInWindow: status.sentLast31d,
+      serverRemaining: status.serverRemaining,
+      launchRefreshed: false,
+    });
     return { candidates, ownFlagged, explicitSkipped: this.music.tracks.filter((t) => t.summary.explicit).length, autoRefresh, quotaRemaining };
   }
 

@@ -83,6 +83,8 @@ export function worldKey(view: EngineView, customCategories: readonly string[]):
     s === null ? null : [s.apiKey.stored, s.apiKey.rejected, s.monthlyBudgetMicros, s.imageModel, s.imageQuality, s.imageAgeCheck, s.textModel, s.musicKey.stored, s.musicKey.rejected, s.exportPath],
     m === null ? null : m.ledger === "open" ? [m.monthlyBudgetMicros, m.spentMicros, m.unsettledMicros, m.reconcileNeeded, m.halt !== null] : ["unavailable"],
     view.exportStatus?.status ?? null,
+    // The music card stands on these (S4.10 fix B): a refresh that starts or ends, a new list, a request sent, a log that cannot be read. Not the refresh's progress.
+    view.music === null ? null : [view.music.refresh.state, view.music.listFetchedAt, view.music.trackCount, view.music.sentLast31d, view.music.quotaLog],
     view.autopilot === null ? null : [view.autopilot.launchId, view.autopilot.status],
     ...avatarsKey(view, customCategories),
   ]);

@@ -36,6 +36,8 @@ export interface AutoRefreshDep {
 
 export interface MusicPorts {
   chooseMusic(input: ChooseMusicInput): Promise<TrackChoice>;
+  /** The candidate collection itself (S4.10 fix B): what the plan card counts, read from the very sources `chooseMusic` picks from. Free, read afresh at every call, asks for nothing. */
+  candidates(): Promise<AutopilotCandidates>;
   autoRefresh: AutoRefreshDep;
 }
 
@@ -61,6 +63,7 @@ export function createMusicPorts(sources: CandidateSources, service: AutoRefresh
     return read;
   };
   return {
+    candidates: () => collectAutopilotCandidates(sources),
     async chooseMusic(input) {
       const { candidates, flaggedOwn } = await candidatesFor(input.pass);
       return chooseTrack({ candidates, flaggedOwn, usage: input.usage, totalMs: input.totalMs, seed: input.seed });

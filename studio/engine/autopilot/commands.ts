@@ -17,6 +17,7 @@ import type { RunModels } from "../runs/plan";
 import { launchPriceModels, unitPricesOf } from "./prices";
 import { buildLaunchPreview } from "./preview";
 import { readDraftHolds, type DraftHoldsReader } from "./draftHolds";
+import { boundedRead } from "./launchWiring";
 import { planAvatarInput } from "./libraryInput";
 import { planLaunch, type LaunchPlan } from "./planner";
 import type { Orchestrator } from "./orchestrator";
@@ -45,10 +46,20 @@ export interface AutopilotCommandsDeps {
   /** The engine's first checks before any paid call: the key, then the ledger. Null when both are open. */
   paidGate(): EngineError | null;
   exportStatus(): ExportStatus;
-  musicKeyStored(): boolean;
+  /** The plan card's music line (S4.10 fix B): the candidates, the requests left and a dry run of the auto-refresh rule. Free; bounded by the engine; never rejects. */
+  musicCard(): Promise<LaunchPreview["music"]>;
+  /** The OpenRouter balance for the card's warning (S4.5e `readBalance`): null without a usable key or when it cannot be read. */
+  balance(): Promise<LaunchPreview["balance"]>;
+  /** Free bytes of the export volume; null when it does not say. */
+  freeBytes(): Promise<number | null>;
+  /** How long the balance and the free bytes may each take before the estimate goes on without them (about 2 s). */
+  previewReadMs: number;
   clock(): number;
   newId(): string;
 }
+
+/** The card's music line when it could not be read at all: no candidate is claimed, and the trends are not promised a refresh. */
+const UNKNOWN_MUSIC: LaunchPreview["music"] = { candidates: 0, ownFlagged: 0, explicitSkipped: 0, autoRefresh: "no-quota", quotaRemaining: null };
 
 interface Planned {
   draft: LaunchDraft;
@@ -78,6 +89,15 @@ export class AutopilotCommands {
     const blockers = await this.#launchBlockers(planned);
     const room = this.#d.monthRoom();
     const budgetMicros = this.#d.monthlyBudgetMicros();
+    // The three reads are free and independent, so they go together, each with its own bound: a share that does not answer costs the card its figure, never the estimate its answer.
+    const [music, balance, freeBytes] = await Promise.all([
+      // Bounded inside (each of its reads has `previewReadMs`); a card that rejects anyway reads as «nothing is known», not as an error.
+      Promise.resolve()
+        .then(() => this.#d.musicCard())
+        .catch((): LaunchPreview["music"] => UNKNOWN_MUSIC),
+      this.#bounded(() => this.#d.balance(), null),
+      this.#bounded(() => this.#d.freeBytes(), null),
+    ]);
     return buildLaunchPreview({
       draft: planned.draft,
       plan: planned.plan,
@@ -86,10 +106,9 @@ export class AutopilotCommands {
       month: room ?? { budgetMicros, committedMicros: budgetMicros, freeMicros: 0 },
       busy: new Set(planned.draft.avatarIds.filter((id) => this.#d.isBusy(id))),
       launchBlockers: blockers,
-      // The music card and the balance are filled by the tasks that own them (S4.5d, S4.5e, S4.6c2): until then nothing is claimed that is not known.
-      music: { candidates: 0, ownFlagged: 0, explicitSkipped: 0, autoRefresh: this.#d.musicKeyStored() ? "not-needed" : "no-key", quotaRemaining: null },
-      balance: null,
-      freeBytes: null,
+      music,
+      balance,
+      freeBytes,
     });
   }
 
@@ -128,6 +147,15 @@ export class AutopilotCommands {
   }
 
   // ---------- the plan ----------
+
+  /** A read of the card that gives `fallback` when it fails or does not answer in `previewReadMs`. */
+  async #bounded<T>(work: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await boundedRead(work, this.#d.previewReadMs, "a figure of the launch preview");
+    } catch {
+      return fallback;
+    }
+  }
 
   /** The seed is the owner's when the draft has one (a refresh keeps its videos), else drawn here: `hashText` of the clock and a fresh id. */
   #withSeed(input: LaunchDraftInput): LaunchDraft {

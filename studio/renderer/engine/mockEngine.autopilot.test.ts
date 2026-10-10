@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EngineError, EventMessage, LaunchDraftInput, PhotoSummary } from "../../shared/engine";
 import type { MockEngineOptions } from "./mockEngine";
+import { demoTracks } from "./mockMusicStore";
 import { draftOf, freePhotos, makeMock, MIA, NORA, PHOTO_IDS, renderDraft, SOFIA, unwrap, type Mock } from "./mockEngine.testkit";
 
 // Stage 4, S4.1: the mock's stubs of the autopilot. They answer typed data for the screens (S4.9) to be built on, validate as the engine will (the contract's own schemas at the
@@ -191,6 +192,65 @@ describe("autopilot.estimate", () => {
     const mock = world();
     await start(mock);
     expect((await estimate(mock)).blockers).toContainEqual({ code: "launch-active" });
+  });
+});
+
+// S4.10 fix B: the mock answers the plan card's music line through the SAME rule as the engine's dry run (shared/autopilot/autoRefresh.ts). It differed in four places: at exactly 10 requests
+// left it said «will» (the engine refuses), it knew nothing of the 72 h age of the list, of the 72 h spacing, or of the cap of 10 automatic sends.
+describe("autopilot.estimate: the music line follows the engine's auto-refresh rule", () => {
+  const KEY = { stored: true, last4: "0000", rejected: false } as const;
+  const HOURS_AGO = (hours: number): string => new Date(Date.UTC(2026, 8, 24, 10, 0, 0) - hours * 3600 * 1000).toISOString();
+  /** `n` sends spread over the last 20 days: inside the 31, clear of the 72 h rules. */
+  const sends = (n: number): number[] => Array.from({ length: n }, (_, i) => 20 - (i % 15) * 1);
+  const tracks = (n: number) => demoTracks(n);
+  const cleanOf = (n: number): number => tracks(n).filter((t) => !t.explicit).length;
+  const musicWorld = (music: NonNullable<MockEngineOptions["music"]>, over: MockEngineOptions = {}): Mock => world({ musicKey: KEY, music, ...over });
+  const musicOf = async (mock: Mock) => (await estimate(mock)).music;
+
+  test("counts the stored trends that are not explicit, and the explicit ones left out", async () => {
+    const music = await musicOf(musicWorld({ tracks: tracks(12) }));
+    expect(music).toMatchObject({ candidates: cleanOf(12), explicitSkipped: 12 - cleanOf(12), ownFlagged: 0 });
+  });
+
+  test("says will with a key, a stale list and room in the quota", async () => {
+    expect((await musicOf(musicWorld({ sendsDaysAgo: sends(5) }))).autoRefresh).toBe("will");
+  });
+
+  test("says no-key when the music key was rejected", async () => {
+    expect((await musicOf(musicWorld({}, { musicKey: { stored: true, last4: "0000", rejected: true } }))).autoRefresh).toBe("no-key");
+  });
+
+  test("11 requests left is will, 10 left is no-quota, 9 left is no-quota", async () => {
+    const left = async (n: number) => (await musicOf(musicWorld({ sendsDaysAgo: sends(30 - n) }))).autoRefresh;
+    expect([await left(11), await left(10), await left(9)]).toEqual(["will", "no-quota", "no-quota"]);
+  });
+
+  test("tells the requests left", async () => {
+    expect((await musicOf(musicWorld({ sendsDaysAgo: sends(9) }))).quotaRemaining).toBe(21);
+  });
+
+  test("a quota log that cannot be read is no-quota with no figure", async () => {
+    expect(await musicOf(musicWorld({ quotaLog: "corrupt" }))).toMatchObject({ autoRefresh: "no-quota", quotaRemaining: null });
+  });
+
+  test("a list 71 h old with enough candidates is not-needed, one 72 h old is will", async () => {
+    const list = (hours: number) => ({ fetchedAt: HOURS_AGO(hours), trackCount: 30, bytesOnDisk: 1 });
+    const word = async (hours: number) => (await musicOf(musicWorld({ tracks: tracks(30), list: list(hours) }))).autoRefresh;
+    expect([await word(71), await word(72)]).toEqual(["not-needed", "will"]);
+  });
+
+  test("a fresh list with fewer than 10 candidates is will", async () => {
+    expect((await musicOf(musicWorld({ tracks: tracks(5), list: { fetchedAt: HOURS_AGO(1), trackCount: 5, bytesOnDisk: 1 } }))).autoRefresh).toBe("will");
+  });
+
+  test("an automatic refresh 71 h ago is no-quota, one 72 h ago is will", async () => {
+    const word = async (hours: number) => (await musicOf(musicWorld({ autoSendsHoursAgo: [hours] }))).autoRefresh;
+    expect([await word(71), await word(72)]).toEqual(["no-quota", "will"]);
+  });
+
+  test("9 automatic refreshes in the window is will, 10 is no-quota", async () => {
+    const word = async (n: number) => (await musicOf(musicWorld({ autoSendsHoursAgo: Array.from({ length: n }, (_, i) => 96 + i * 2) }))).autoRefresh;
+    expect([await word(9), await word(10)]).toEqual(["will", "no-quota"]);
   });
 });
 

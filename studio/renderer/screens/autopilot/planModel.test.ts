@@ -289,6 +289,16 @@ describe("the library without generation, the music, a busy avatar", () => {
     expect(musicLine({ ...base, ...music })).toEqual({ chip, sub, warn });
   });
 
+  test("while the trends refresh the line says so instead of «свежие», and it is no warning", () => {
+    const music: LaunchPreview["music"] = { candidates: 22, ownFlagged: 0, explicitSkipped: 0, autoRefresh: "not-needed", quotaRemaining: 21 };
+    expect(musicLine(music, true)).toEqual({ chip: `Тренды + мои · 22${NBSP}трека`, sub: "тренды обновляются…", warn: false });
+  });
+
+  test("a refresh that is not running leaves the line as it was", () => {
+    const music: LaunchPreview["music"] = { candidates: 22, ownFlagged: 0, explicitSkipped: 0, autoRefresh: "not-needed", quotaRemaining: 21 };
+    expect(musicLine(music, false)).toEqual(musicLine(music));
+  });
+
   test("the disk: what the videos need, rounded up, and what the folder has, rounded down", () => {
     expect(diskLine({ neededBytes: 140_000_000, freeBytes: 212_000_000_000 })).toEqual({ text: `Диск: нужно ≈ 140${NBSP}МБ · свободно 212${NBSP}ГБ`, short: false });
     expect(diskLine({ neededBytes: 1_250_000_000, freeBytes: null })).toEqual({ text: `Диск: нужно ≈ 1.3${NBSP}ГБ`, short: false });

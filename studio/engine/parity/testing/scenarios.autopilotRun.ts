@@ -330,4 +330,34 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
       await t.callLaunch("runs.estimateImages", { launchId: launch, avatarId: row.avatarId });
     },
   },
+  // S4.10 fix B (appended): the plan card's figures. The engine answered stubs (no candidate, no balance, no free space) while the mock filled them, so no story saw it. The facts are unitless.
+  {
+    name: "autopilot (estimate): the plan card is filled — stored trends are candidates, a music key says how the trends refresh, an OpenRouter key gives a balance and the export folder its free space",
+    rig: { launch: true },
+    async run(t, w, control) {
+      control.freeSpace(50_000_000_000);
+      t.note("no music key and nothing stored: no candidate, and the trends cannot be refreshed");
+      await t.callCard({ draft: draftOf(w) });
+      t.note("a music key is stored: a refresh would leave by itself, there is still nothing to choose from");
+      await control.musicKey();
+      await t.callCard({ draft: draftOf(w) });
+      t.note("trends are stored: they are candidates");
+      await control.musicTracks();
+      await t.callCard({ draft: draftOf(w) });
+    },
+  },
+  {
+    name: "autopilot (estimate): a plan with every photo new says what blocks it — nothing enabled, more than 100 new photos for one avatar — and a library-only plan of single photos has none",
+    rig: { launch: true },
+    async run(t, w) {
+      t.note("every photo new: the plan");
+      await t.call("autopilot.estimate", { draft: draftOf(w) });
+      t.note("a blocker is an answer, not an error: both the library and the generation are off");
+      await t.call("autopilot.estimate", { draft: draftOf(w, { library: false, generate: false }) });
+      t.note("50 slides videos of 5 new photos are 250 photos for one avatar");
+      await t.call("autopilot.estimate", { draft: draftOf(w, { videosPerAvatar: 50, mix: { single: 0, collage: 0, slides: 100 }, library: false }) });
+      t.note("without generation, single videos take one library photo each");
+      await t.call("autopilot.estimate", { draft: draftOf(w, { videosPerAvatar: 4, mix: { single: 100, collage: 0, slides: 0 }, library: true, generate: false }) });
+    },
+  },
 ];

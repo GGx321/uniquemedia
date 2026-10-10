@@ -63,6 +63,7 @@ export const INTENTIONAL_DIFFERENCES: readonly string[] = [
   "the batch autopilot (Stage 4, S4.1): the real engine answers every autopilot command INTERNAL «<type> is not implemented yet» until its orchestrator lands (S4.6), the mock answers a plan, a price and a launch held in a canned state. So a story that needs the engine to serve the command is PENDING (`Scenario.pending`): the mock's transcript is bound to the golden, and the harness only checks that the real engine answers each named command with that one refusal; the story joins the full comparison when `pending` is taken off (S4.6 to S4.8). The payloads the CONTRACT refuses are refused by both and compared now. What a pending story writes is limited to what the engine will also say: the plan's counts, the states and the codes, not the prices (as for every estimate), the clock, or the spend of a launch",
   "a launch that RUNS (Stage 4, S4.8): the real rig runs the engine's default launch steps over a fake OpenRouter, the rig's fake ffmpeg and its track store; the mock runs its launch on its clock (`RigOptions.launch`). Both are read only at the STABLE points a story waits for (`Transcript.untilLaunch`), through `callLaunch`, which writes `launchFacts` (state, holds, reasons, rows' phases and progress, videos by state) and NOT: the prices, the clock, how many requests a batch sends or are in flight while the launch moves, the set file's revision (the engine's compose makes it 3, an approval 4: the contract says a set is named with one, not which), the text of a launch's refusals (sums and sentences of the engine's own: the code and the reason are written), or the events the launch causes (`autopilot.changed` is coalesced by the engine and sent per pass by the mock; the older stories' covered events are not written during a launch). The stories plan every photo NEW (`library: false`): a generated video asks for the same photos from both planners (1, 3, 5), but the photos a LIBRARY video takes are drawn by the engine's planner from the seed (collages of 2 to 4, slides of 5 to 7, near-duplicates refused) and are fixed in the mock, as are the order of the shapes and the categories: the library plan's counts are held by each engine's own tests, and the five S4.1 stories whose commands plan from the library stay pending for that reason. The bounded automatic continues after a drop (1 and 5 minutes) and the price list's retries (5, 15, 60) wait real minutes in the engine: the mock's tests hold them, the engine's own (paidHolds, engine.autopilotHolds), and no story waits for them. The quit is the graceful one (`paused { quit }`); the engine's other restart, a crash read as `paused { engine-restart }`, needs the crash matrix's copy of the folders (engine.autopilotCrashMatrix) and is played against the mock by its own tests",
   "the price of drawing photos (S4.6p, `runs.estimateImages`): the figures are each engine's own prices (the mock's fixed image price, the engine's bundled table), so the transcript writes the photos the price is for, that expected is within worst, that the figure is above zero exactly when there are photos, and that it names its source; the two are held to the same figure by the engine's and the mock's own suites. A refusal's text names the launch or the avatar in each engine's words: its code is compared",
+  "the plan card's figures (S4.10 fix B, `Transcript.callCard`): the number of candidate tracks, the OpenRouter balance in micro-dollars and the export volume's free bytes are each rig's own (the rig's track list and the mock's canned figures, the fake OpenRouter's credits, a free-space figure the story sets), so a story that asks writes only that they are FILLED (`candidates > 0`, `balance !== null`, `freeBytes !== null`); the word on the automatic refresh is written by every estimate and is the same rule in both engines (shared/autopilot/autoRefresh.ts)",
 ];
 
 /** A music status as both rigs can be bound to it: the counts, the log's state and the refresh's state; the times as set or null. */
@@ -371,7 +372,7 @@ function autopilotBrief(result: Record<string, unknown>): Record<string, unknown
  * An answer as a line. `running` (S4.8): an autopilot answer is written as `autopilotDetail` says, for a story that reads a launch that runs; `"brief"` as `autopilotBrief` says, for an
  * answer given while the launch moves.
  */
-export function answerLine(type: string, answer: Answer, norm: Normalizer, running: boolean | "brief" = false): string {
+export function answerLine(type: string, answer: Answer, norm: Normalizer, running: boolean | "brief" | "card" = false): string {
   if (!answer.ok) {
     const { code, detail, issues, exportReason, musicReason, captionIssue, photoReason, categoryReason, sceneReason, sceneId, launchReason } = answer.error;
     // The transport's VALIDATION text is the engine's or the client's own words: only its code is compared. A music error's
@@ -470,7 +471,7 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
   }
   if (type.startsWith("autopilot.")) {
     const detailed = running !== false && type !== "autopilot.removeUnreadable" && type !== "autopilot.estimate";
-    const facts = running === "brief" && "launch" in answer.result ? autopilotBrief(answer.result) : detailed ? autopilotDetail(type, answer.result) : autopilotFacts(type, answer.result);
+    const facts = running === "brief" && "launch" in answer.result ? autopilotBrief(answer.result) : detailed ? autopilotDetail(type, answer.result) : autopilotFacts(type, answer.result, running === "card");
     return `< ok ${compact(norm.value(facts))}`;
   }
   if (type === "videos.setPublished") {
@@ -490,7 +491,7 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
  * bundled table, as for every estimate), not the clock (the times of a hold, a pause or a log line), and not the spend and the progress of a launch (the mock holds a canned
  * mid-run state until S4.8). A story passes its own plan seed, which the preview echoes.
  */
-function autopilotFacts(type: string, result: Record<string, unknown>): Record<string, unknown> {
+function autopilotFacts(type: string, result: Record<string, unknown>, card = false): Record<string, unknown> {
   const list = (value: unknown): Record<string, unknown>[] => (Array.isArray(value) ? value.map((item) => objectOf(item)) : []);
   const launch = (value: unknown): Record<string, unknown> => {
     const v = objectOf(value);
@@ -515,6 +516,10 @@ function autopilotFacts(type: string, result: Record<string, unknown>): Record<s
         totals: p.totals,
         blockers: p.blockers,
         autoRefresh: objectOf(p.music).autoRefresh,
+        // S4.10 fix B, only for a story that asks for the plan card's figures (`Transcript.callCard`): that they are FILLED, not what they are. The counts of tracks, the balance in micro-dollars and
+        // the free bytes are each rig's own (the engine's bundled tables and statfs, the mock's canned figures); the card is bound to say that a stored music key and stored trends give
+        // candidates, an OpenRouter key a balance and a usable export folder its free bytes.
+        ...(card ? { card: { candidates: Number(objectOf(p.music).candidates) > 0, balance: p.balance !== null, freeBytes: objectOf(p.disk).freeBytes !== null } } : {}),
       },
     };
   }
@@ -589,6 +594,19 @@ export class Transcript {
     const answer = await this.#rig.send(type, payload);
     this.#drain();
     this.#lines.push(answerLine(type, answer, this.norm));
+    return answer;
+  }
+
+  /**
+   * Stage 4 (S4.10 fix B): `autopilot.estimate` with the plan card's filled figures written as unitless facts (`candidates > 0`, `balance !== null`, `freeBytes !== null`), beside the facts
+   * every estimate writes. Only the stories that ask for it carry them, so the older transcripts are unchanged.
+   */
+  async callCard(payload: unknown): Promise<Answer> {
+    this.#drain();
+    this.#lines.push(`> autopilot.estimate ${compact(this.norm.value(payload))}`);
+    const answer = await this.#rig.send("autopilot.estimate", payload);
+    this.#seen = this.#rig.events().length;
+    this.#lines.push(answerLine("autopilot.estimate", answer, this.norm, "card"));
     return answer;
   }
 

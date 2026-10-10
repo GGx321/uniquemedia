@@ -19,6 +19,9 @@ export const AUTOPILOT_NETWORK_WAITS_MS: readonly number[] = NETWORK_WAITS_MS;
 /** How long the free steps wait for one read of the library's side (the drafts that hold photos, the slice runs, an avatar's track usage). A folder that does not answer is «unknown», which waits; it never hangs a launch. */
 export const AUTOPILOT_READ_TIMEOUT_MS = 15_000;
 
+/** S4.10 fix B: how long each figure of the launch estimate that reads the world (the OpenRouter balance, the export volume's free bytes, the music candidates) may take. The plan card is asked for while the owner waits, so it is short. */
+export const AUTOPILOT_PREVIEW_READ_MS = 2_000;
+
 /**
  * `work()` with a bound: rejects, naming the read, when it does not answer in `ms`. The timer is cleared as soon as the read settles and is NOT unref'd: a drain waits on a read, and a read
  * that never answers must end by this timer and not by the process dying. A read that throws at once is a rejection.
