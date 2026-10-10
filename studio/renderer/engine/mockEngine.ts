@@ -3,6 +3,8 @@ import { monthRoomMicros } from "../../shared/autopilot/money";
 import type { MarksRead } from "../../shared/autopilot/videoFacts";
 import {
   AvatarDescriptor,
+  bodyFromRecord,
+  bodyPhrase,
   checkImageChoice,
   LaunchView,
   decodePhotoCursor,
@@ -96,7 +98,7 @@ import { mockFolderName, MOCK_MAX_UNFINISHED_RENDERS, mockRelPath, sceneCells, v
 import { MOCK_IMAGE_CATALOGUE } from "./mockImageModels";
 import { MockTextPreviews } from "./mockText";
 import { createEngineClient, type EngineBridge, type EngineClient } from "./client";
-import { descriptorEditOutcome } from "./mockAvatarEdit";
+import { bodyCompositeRefusal, descriptorEditOutcome } from "./mockAvatarEdit";
 import { matchingCheck, MOCK_CHECK_ESTIMATE } from "./mockDescriptorCheck";
 import { MockCategories } from "./mockCategories";
 import { MockSceneSets, MOCK_SCENE_ATTEMPT_WORST, type MockSceneAttempt, type MockSceneSetSeed } from "./mockSceneSets";
@@ -2430,6 +2432,8 @@ export class MockEngine implements EngineBridge {
         }
         if (this.jobRunningFor(draft.avatarId)) return this.fail(c, { code: "IN_FLIGHT" });
         if (!AvatarDescriptor.safeParse(draft.descriptor).success) return this.fail(c, { code: "DESCRIPTOR_INVALID" });
+        // The draft's body traits become the avatar's body (omitted when none, as in the engine).
+        const draftBody = bodyFromRecord(draft.traits);
         const avatar: AvatarSummary = {
           avatarId: draft.avatarId,
           name: c.payload.name.trim(),
@@ -2441,6 +2445,7 @@ export class MockEngine implements EngineBridge {
           videoCount: 0,
           eligibleUnusedCount: 0,
           usage: { state: "ok" },
+          ...(draftBody === undefined ? {} : { body: draftBody }),
         };
         this.drafts = this.drafts.filter((d) => d !== draft);
         this.avatars = [...this.avatars, avatar];
@@ -2469,12 +2474,51 @@ export class MockEngine implements EngineBridge {
             ? this.fail(c, { code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` })
             : this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
         }
-        const outcome = descriptorEditOutcome(avatar.descriptor.text, avatar.descriptor.age, text, expectedText);
+        // Her stored body phrase counts toward the 600 (S5.2a), as in the engine.
+        const outcome = descriptorEditOutcome(avatar.descriptor.text, avatar.descriptor.age, text, expectedText, avatar.body === undefined ? undefined : bodyPhrase(avatar.body));
         if ("error" in outcome) return this.fail(c, outcome.error);
         const edited: AvatarSummary = { ...avatar, descriptor: { ...avatar.descriptor, text: outcome.text } };
         this.avatars = this.avatars.map((a) => (a === avatar ? edited : a));
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: edited } });
         return this.ok(c, { avatar: edited });
+      }
+      case "avatars.setBody": {
+        // The engine's order: the library, the claim, the avatar (a draft is VALIDATION), then the composite. The body REPLACES the old one and a stored proposal goes with it.
+        const { avatarId, body } = c.payload;
+        const gone = this.writeLibraryGate();
+        if (gone) return this.fail(c, gone);
+        if (this.editingAvatars.has(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; set the body when that ends" });
+        const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+        if (avatar === undefined) {
+          return this.drafts.some((d) => d.avatarId === avatarId)
+            ? this.fail(c, { code: "VALIDATION", detail: `avatar ${avatarId} is a draft; its body is chosen when it is created` })
+            : this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        }
+        const kept = bodyFromRecord(body);
+        const refusal = bodyCompositeRefusal(avatar.descriptor.text, kept === undefined ? undefined : bodyPhrase(kept));
+        if (refusal !== null) return this.fail(c, refusal);
+        const { body: _body, bodyProposal: _proposal, ...rest } = avatar;
+        const next: AvatarSummary = { ...rest, ...(kept === undefined ? {} : { body: kept }) };
+        this.avatars = this.avatars.map((a) => (a === avatar ? next : a));
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: next } });
+        return this.ok(c, { avatar: next });
+      }
+      case "avatars.dismissBodyProposal": {
+        const { avatarId } = c.payload;
+        const gone = this.writeLibraryGate();
+        if (gone) return this.fail(c, gone);
+        if (this.editingAvatars.has(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; dismiss the body proposal when that ends" });
+        const avatar = this.avatars.find((a) => a.avatarId === avatarId);
+        if (avatar === undefined) {
+          return this.drafts.some((d) => d.avatarId === avatarId)
+            ? this.fail(c, { code: "VALIDATION", detail: `avatar ${avatarId} is a draft; a body proposal belongs to a saved avatar` })
+            : this.fail(c, { code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        }
+        if (avatar.bodyProposal === undefined) return this.ok(c, { avatar });
+        const { bodyProposal: _proposal, ...rest } = avatar;
+        this.avatars = this.avatars.map((a) => (a === avatar ? rest : a));
+        this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: rest } });
+        return this.ok(c, { avatar: rest });
       }
       case "avatars.estimateCheckDescriptor": {
         // The engine's order: the library, then the avatar (a draft is priced too: the wizard shows the price before «Сохранить»).

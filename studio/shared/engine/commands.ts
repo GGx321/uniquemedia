@@ -2,6 +2,7 @@ import { z } from "zod";
 import { AvatarName, AvatarTraits, DescriptorCheck } from "./avatar";
 import { AutopilotContinueResult, AutopilotEstimateResult, AutopilotGetResult, AutopilotLaunchResult, AutopilotListResult, LaunchDraft, LaunchDraftInput, LaunchEntryId, LaunchMicros, LaunchView } from "./autopilot";
 import { AvatarDeletePreview, AvatarDeleteResult } from "./avatarDelete";
+import { AvatarBody } from "./body";
 import { CategoriesListResult, CategoryDescription, CategoryName, CategoryPoses, CategorySummary, CustomCategoryId, POOL_OUTFITS_MAX, POOL_PLACES_MAX, PoolText } from "./categories";
 import { nonEmpty, ProtocolVersion } from "./envelope";
 import { EngineError } from "./errors";
@@ -347,6 +348,13 @@ const ENGINE_SPECS = [
     z.strictObject({ avatarId: Id, text: z.string().max(4_000), expectedText: z.string().max(4_000) }),
     z.strictObject({ avatar: AvatarSummary }),
   ),
+  // Stage 5, S5.2a (additive): the avatar's body traits. `setBody` REPLACES the whole body with `body` (a key left out goes back to «не задано»; `{}` clears it) and clears a stored
+  // import proposal in the same write. Free. VALIDATION for a body the contract refuses, a draft (its body is chosen in the wizard), a schema-version-1 record (its traits cannot hold the
+  // body), and a body that would leave the description and the body phrase together over 600 characters (`descriptorReason` `too-long-with-body`); NOT_FOUND for an unknown avatar; IN_FLIGHT
+  // while a rewrite, a candidates batch, an archive, a delete or a check holds the avatar (a photo run or a launch does not); LIBRARY_UNAVAILABLE without a library.
+  // `dismissBodyProposal` («Не нужно») drops the stored proposal, with the same claim and the same refusals; an avatar with none answers as it is.
+  defineCommand("avatars.setBody", z.strictObject({ avatarId: Id, body: AvatarBody }), z.strictObject({ avatar: AvatarSummary })),
+  defineCommand("avatars.dismissBodyProposal", z.strictObject({ avatarId: Id }), z.strictObject({ avatar: AvatarSummary })),
   // Stage 5, S5.0c (additive): the descriptor-vs-master check. One vision call compares a saved avatar's master photo with its stored descriptor and answers a verdict per aspect
   // (hair, eyes, marks, body) and, for a mismatch of the first three, a proposed text. It NEVER writes: the owner applies a proposal with the free `avatars.editDescriptor`, passing
   // the check's `checkedText` as `expectedText`. `estimateCheckDescriptor` is free and also prices a DRAFT (the wizard shows «Затем — сверка описания с ним · до $X» under
