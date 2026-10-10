@@ -5,7 +5,7 @@ import { EngineFailure } from "./engineFailure";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
-import { chatBody, fakeFetch, type FetchCall, type Reply } from "./openrouter/testing/fakes";
+import { chatBody, fakeFetch, imageBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import type { QaGate } from "./runs/qa";
 import { command, descriptorReply, engineSettings, failed, generate, GOOD, jobEnd, jobIdOf, network, OFFLINE, ok, portraitPng, seedDraft, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -44,6 +44,41 @@ function deletePrepare(avatarId: string): unknown {
 function storedText(avatarId: string): string {
   const manifest = JSON.parse(readFileSync(join(dir(), "library", "avatars", avatarId, "avatar.json"), "utf8")) as { descriptor: string };
   return manifest.descriptor;
+}
+
+/**
+ * A gate on the next write of an avatar's manifest (`avatar.json`): the write stops before its rename until `release()`, so a test can act while a write is in flight.
+ * It fires once, after `arm()`.
+ */
+function manifestWriteGate() {
+  let armed = false;
+  let reach: () => void = () => {};
+  let letGo: () => void = () => {};
+  const reached = new Promise<void>((resolve) => {
+    reach = resolve;
+  });
+  const released = new Promise<void>((resolve) => {
+    letGo = resolve;
+  });
+  return {
+    arm: () => {
+      armed = true;
+    },
+    reached,
+    release: letGo,
+    deps: {
+      library: {
+        testHooks: {
+          beforeRename: async (finalPath: string): Promise<void> => {
+            if (!armed || !finalPath.endsWith("avatar.json")) return;
+            armed = false;
+            reach();
+            await released;
+          },
+        },
+      },
+    },
+  };
 }
 
 async function started(opts: Parameters<typeof startEngine>[1] = {}) {
@@ -114,16 +149,17 @@ describe("avatars.editDescriptor: the write", () => {
   test("the next photo run's first image prompt carries the new text", async () => {
     const avatarId = await seedAvatar();
     const net = runNetwork();
-    const { engine } = await runEngine(net);
+    const { engine, events } = await runEngine(net);
     ok(await engine.handle(edit(avatarId, EDITED)));
 
-    const { runId } = startedRun(await engine.handle(startRun(avatarId)));
+    const { runId, jobId } = startedRun(await engine.handle(startRun(avatarId)));
     await until(() => net.imageCalls().length > 0, "the first image request");
 
     const prompt = String(net.imageCalls()[0]?.json().prompt);
     expect(prompt).toContain("green eyes, long straight blonde hair");
     expect(prompt).not.toContain("hazel eyes");
     ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
   });
 
   test("rewriteDescriptor still refuses a descriptor that now fits the rules", async () => {
@@ -222,7 +258,7 @@ describe("avatars.editDescriptor: the write is judged inside the library's exclu
     if (library === null) throw new Error("no library");
     const original = library.updateAvatar.bind(library);
     // Stands for a change landing between the engine's early check and the write: the validator is handed a manifest whose age no longer matches the text.
-    library.updateAvatar = (id, patch, validate) => original(id, patch, validate === undefined ? undefined : (next) => validate({ ...next, age: 30 }));
+    library.updateAvatar = (id, patch, validate) => original(id, patch, validate === undefined ? undefined : (next, current) => validate({ ...next, age: 30 }, current));
 
     const answer = failed(await engine.handle(edit(avatarId, EDITED)));
 
@@ -279,12 +315,16 @@ describe("avatars.editDescriptor: claims", () => {
     expect(ok(await engine.handle(edit(avatarId, EDITED, GOOD)))).toMatchObject({ result: { avatar: { descriptor: { text: EDITED } } } });
   });
 
-  test("is refused IN_FLIGHT while an archive holds the avatar", async () => {
+  test("is refused IN_FLIGHT while an archive holds the avatar, and the archive still lands", async () => {
     const avatarId = await seedAvatar();
-    const { engine } = await started();
-
+    const gate = manifestWriteGate();
+    const { engine } = await started({ deps: gate.deps });
+    gate.arm();
     const archiving = engine.handle(command("avatars.archive", { avatarId }));
+    await gate.reached;
+
     const refused = await engine.handle(edit(avatarId, EDITED));
+    gate.release();
     ok(await archiving);
 
     expect(failed(refused).error.code).toBe("IN_FLIGHT");
@@ -316,6 +356,55 @@ describe("avatars.editDescriptor: claims", () => {
     await jobEnd(events, jobId);
   });
 
+  test("a delete prepared while the edit's write is in flight is refused IN_FLIGHT, and the avatar stays in the index", async () => {
+    const avatarId = await seedAvatar();
+    const gate = manifestWriteGate();
+    const { engine, posted } = await started({ deps: gate.deps });
+    gate.arm();
+    const editing = engine.handle(edit(avatarId, EDITED));
+    await gate.reached;
+
+    await engine.receive(deletePrepare(avatarId));
+    const reply = posted.at(-1);
+    gate.release();
+    ok(await editing);
+
+    expect(reply).toMatchObject({ kind: "control", type: "reply", callId: "call-00000001", error: { code: "IN_FLIGHT" } });
+    expect(engine.library?.getAvatar(avatarId)?.descriptor).toBe(EDITED);
+    expect(ok(await engine.handle(command("avatars.list")))).toMatchObject({ result: { avatars: [{ avatarId, descriptor: { text: EDITED } }] } });
+  });
+
+  test("a library switch is refused while the edit's write is in flight", async () => {
+    const avatarId = await seedAvatar();
+    const gate = manifestWriteGate();
+    const { engine, posted } = await started({ deps: gate.deps });
+    gate.arm();
+    const editing = engine.handle(edit(avatarId, EDITED));
+    await gate.reached;
+
+    await engine.receive({ kind: "control", type: "library.open", callId: "call-00000009", path: join(dir(), "other-library") });
+    const reply = posted.at(-1);
+    gate.release();
+    ok(await editing);
+
+    expect(reply).toMatchObject({ kind: "control", type: "reply", callId: "call-00000009", error: { code: "IN_FLIGHT" } });
+  });
+
+  test("two edits made against the same stored text: the second is stale and never overwrites the first", async () => {
+    const avatarId = await seedAvatar();
+    const gate = manifestWriteGate();
+    const { engine } = await started({ deps: gate.deps });
+    gate.arm();
+    const first = engine.handle(edit(avatarId, EDITED));
+    await gate.reached;
+    const second = engine.handle(edit(avatarId, "25-year-old woman, a second hand edit"));
+    gate.release();
+
+    ok(await first);
+    expect(failed(await second).error).toMatchObject({ code: "VALIDATION", descriptorReason: "stale" });
+    expect(storedText(avatarId)).toBe(EDITED);
+  });
+
   test("is allowed while a photo run runs, and the run keeps going", async () => {
     const avatarId = await seedAvatar();
     const net = runNetwork();
@@ -328,19 +417,29 @@ describe("avatars.editDescriptor: claims", () => {
     expect(storedText(avatarId)).toBe(EDITED);
     expect(events().some((e) => e.type === "job.failed" && "jobId" in e.payload && e.payload.jobId === jobId)).toBe(false);
     ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
   });
 
-  test("a live run keeps the descriptor it started with", async () => {
+  test("a live run keeps the descriptor it started with: a request sent after the edit still carries the old text", async () => {
     const avatarId = await seedAvatar();
-    const net = runNetwork();
-    const { engine } = await runEngine(net);
-    const { runId } = startedRun(await engine.handle(startRun(avatarId)));
-    await until(() => net.imageCalls().length > 0, "the run's first image request");
+    let letFirstGo: (reply: Reply) => void = () => {};
+    const firstHeld = new Promise<Reply>((resolve) => {
+      letFirstGo = resolve;
+    });
+    // One image at a time: the second request leaves only after the first is answered, which the test does after the edit.
+    const net = runNetwork((n) => (n === 1 ? firstHeld : { hang: true }));
+    const { engine, events } = await runEngine(net, 1);
+    const { runId, jobId } = startedRun(await engine.handle(startRun(avatarId)));
+    await until(() => net.imageCalls().length === 1, "the run's first image request");
 
     ok(await engine.handle(edit(avatarId, EDITED)));
+    letFirstGo({ status: 200, body: imageBody(portraitPng(2), { cost: 0.04 }) });
+    await until(() => net.imageCalls().length === 2, "the run's second image request");
 
-    expect(String(net.imageCalls()[0]?.json().prompt)).toContain("hazel eyes");
+    expect(String(net.imageCalls()[1]?.json().prompt)).toContain("hazel eyes");
+    expect(String(net.imageCalls()[1]?.json().prompt)).not.toContain("green eyes");
     ok(await engine.handle(command("runs.cancel", { runId })));
+    await jobEnd(events, jobId);
   });
 });
 
@@ -366,9 +465,10 @@ function slotsAskedFor(call: FetchCall): number[] {
 }
 
 /** Writer answers, image requests hang (the run stays open until cancelled). */
-function runNetwork() {
+function runNetwork(image: (n: number) => Reply | Promise<Reply> = () => ({ hang: true })) {
+  let images = 0;
   const route = async (call: FetchCall): Promise<Reply> => {
-    if (call.url.endsWith("/images")) return { hang: true };
+    if (call.url.endsWith("/images")) return image(++images);
     if (isWriter(call)) {
       const scenes = slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: `A friend catches her mid-laugh at the kitchen counter in the morning light (${slotIndex}).` }));
       return { status: 200, body: chatBody(JSON.stringify({ scenes }), { cost: 0.0112 }) };
@@ -381,9 +481,9 @@ function runNetwork() {
   return { fetch: net.fetch, calls: net.calls, imageCalls: () => net.calls.filter((c) => c.url.endsWith("/images")) };
 }
 
-function runEngine(net: ReturnType<typeof runNetwork>) {
+function runEngine(net: ReturnType<typeof runNetwork>, network?: number) {
   return startEngine(dir(), {
-    init: { settings: engineSettings(dir(), { imageAgeCheck: "off" }) },
+    init: { settings: engineSettings(dir(), { imageAgeCheck: "off", ...(network === undefined ? {} : { concurrency: { network } }) }) },
     net: { fetch: net.fetch, calls: net.calls, imageCalls: net.imageCalls, ageCalls: () => [], descriptorCalls: () => [], paidCalls: () => net.calls.filter((c) => c.method === "POST") },
     deps: { qaGates: [faceGate()] },
   });

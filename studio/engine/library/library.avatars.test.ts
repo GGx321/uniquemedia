@@ -366,6 +366,18 @@ describe("updateAvatar", () => {
     expect(library.getAvatar("avatar-0001")?.descriptor).toBe("a new 25-year-old woman.");
   });
 
+  test("hands the validator the manifest that is stored right now as well, before the write", async () => {
+    const { library } = await openLibrary(root(), deps());
+    await library.createAvatar(MIA);
+    const stored: string[] = [];
+
+    await library.updateAvatar("avatar-0001", { descriptor: "a new 25-year-old woman." }, (_next, current) => {
+      stored.push(current.descriptor);
+    });
+
+    expect(stored).toEqual([MIA.descriptor]);
+  });
+
   test("a validator that throws refuses the update, with its own error, and leaves the manifest on disk and in memory", async () => {
     const { library } = await openLibrary(root(), deps());
     await library.createAvatar(MIA);

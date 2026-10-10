@@ -4366,27 +4366,41 @@ export class Engine {
    */
   async #editDescriptor(payload: CommandPayload<"avatars.editDescriptor">): Promise<{ avatar: AvatarSummary }> {
     const { avatarId, text, expectedText } = payload;
-    const library = await this.#liveLibrary();
-    // The claim is read before the manifest: a delete takes the avatar out of the library's indexes at its prepare, so a lookup first would answer NOT_FOUND for an
-    // avatar that a kept delete gives back a moment later. (The plan lists the manifest first; this is the one deliberate reordering.)
-    if (this.#avatarEdits.has(avatarId) || this.#pendingDelete?.avatarId === avatarId) {
-      throw new EngineFailure({ code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; edit the description when that ends" });
+    // Counted before the first await, like every small write of the library: a delete's prepare (`#deleteBusy`) and a library switch (`#busy`) must see an edit whose
+    // manifest write is in flight, or the write would put a detached avatar back into the index.
+    this.#librarySmallWrites++;
+    try {
+      const library = await this.#liveLibrary();
+      // The claim is read before the manifest: a delete takes the avatar out of the library's indexes at its prepare, so a lookup first would answer NOT_FOUND for an
+      // avatar that a kept delete gives back a moment later. (The plan lists the manifest first; this is the one deliberate reordering.)
+      if (this.#avatarEdits.has(avatarId) || this.#pendingDelete?.avatarId === avatarId) {
+        throw new EngineFailure({ code: "IN_FLIGHT", detail: "a job is changing this avatar, or it is being deleted; edit the description when that ends" });
+      }
+      const manifest = this.#manifestOrNotFound(library, avatarId);
+      if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` });
+      const stale = (): EngineFailure => new EngineFailure({ code: "VALIDATION", descriptorReason: "stale", detail: "the stored description is not the one this edit was made against" });
+      // The polite, early refusal; the one that counts runs under the library's lock below.
+      if (expectedText !== manifest.descriptor) throw stale();
+      const checked = descriptorEditOrFailure(text, manifest.age);
+      // Never a write that succeeds and then answers INTERNAL: the summary the answer needs is built from the manifest as it will be, before anything is written.
+      if (avatarSummaryFrom({ ...manifest, descriptor: checked }, avatarCounts(library, avatarId)) === null) {
+        throw new EngineFailure({ code: "VALIDATION", descriptorReason: "invalid", detail: "the avatar would not fit the contract with this description" });
+      }
+      // Under the lock, against the manifest stored at that moment: a second edit made against the same text finds it changed (a proposal never overwrites a later hand
+      // edit), and whatever else landed since the early checks (the composite will hold the body phrase from S5.2a) is judged here, before anything is written.
+      await library
+        .updateAvatar(avatarId, { descriptor: checked }, (next, current) => {
+          if (current.descriptor !== expectedText) throw stale();
+          descriptorEditOrFailure(checked, next.age);
+        })
+        .catch((error: unknown) => {
+          if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+          throw error;
+        });
+      return { avatar: this.#announceAvatar(library, avatarId) };
+    } finally {
+      this.#librarySmallWrites--;
     }
-    const manifest = this.#manifestOrNotFound(library, avatarId);
-    if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar's descriptor can be edited` });
-    if (expectedText !== manifest.descriptor) throw new EngineFailure({ code: "VALIDATION", descriptorReason: "stale", detail: "the stored description is not the one this edit was made against" });
-    const checked = descriptorEditOrFailure(text, manifest.age);
-    // The same rules once more, against the manifest as it is under the lock: whatever lands between the early check above and the write (the composite will hold
-    // the body phrase from S5.2a) is judged here, before anything is written.
-    await library
-      .updateAvatar(avatarId, { descriptor: checked }, (next) => {
-        descriptorEditOrFailure(checked, next.age);
-      })
-      .catch((error: unknown) => {
-        if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
-        throw error;
-      });
-    return { avatar: this.#announceAvatar(library, avatarId) };
   }
 
   // ---------- «Удалить аватар» ----------
