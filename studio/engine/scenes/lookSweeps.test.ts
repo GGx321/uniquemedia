@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { POOL_TIMES, youthWords } from "../../shared/engine";
-import type { AvatarDescriptor } from "../../shared/engine";
+import { BODY_PHRASE_MAX, BodyBust, BodyFigure, BodyHeight, BodyMark, BottomShape, BottomSize, LegLength, LegShape, POOL_TIMES, bodyPhrase, youthWords } from "../../shared/engine";
+import type { AvatarBody, AvatarDescriptor } from "../../shared/engine";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot } from "./assembler";
 import { plan, planWithPools } from "./planner";
@@ -45,6 +45,8 @@ const sentenceOf = (slot: PlanSlot): string => `She is ${slot.activity} at ${slo
 
 interface Swept {
   label: string;
+  /** The body phrase the descriptor carried, or undefined for an avatar with no body. */
+  body: string | undefined;
   slot: PlanSlot;
   realism: boolean;
   sentence: string;
@@ -53,7 +55,7 @@ interface Swept {
   prompt: string;
 }
 
-function assembleAll(slots: readonly PlanSlot[], runId: string, rooms: boolean): Swept[] {
+function assembleAll(slots: readonly PlanSlot[], runId: string, rooms: boolean, descriptor: AvatarDescriptor = DESCRIPTOR): Swept[] {
   const out: Swept[] = [];
   for (const base of slots) {
     const time = TIMES[base.slotIndex % TIMES.length] as string;
@@ -61,9 +63,9 @@ function assembleAll(slots: readonly PlanSlot[], runId: string, rooms: boolean):
       if (!PlanSlotSchema.safeParse(slot).success) continue;
       const sentence = sentenceOf(slot);
       for (const realism of [true, false]) {
-        const prompt = assembleSlot(DESCRIPTOR, slot, sentence, MASTER, { runId, cameraRealism: realism, ...(rooms ? { roomPlaceOf } : {}) }).prompt;
+        const prompt = assembleSlot(descriptor, slot, sentence, MASTER, { runId, cameraRealism: realism, ...(rooms ? { roomPlaceOf } : {}) }).prompt;
         if (!prompt.includes(sentence)) throw new Error(`the sentence is not in the prompt: ${sentence}`);
-        out.push({ label: `${runId}/${slot.slotIndex}/${slot.category}/${slot.shot}/${slot.pose}/${slot.timeOfDay}/${realism ? "on" : "off"}`, slot, realism, sentence, look: prompt.replace(sentence, "").replace(DESCRIPTOR.text.replace(/\.$/, ""), ""), prompt });
+        out.push({ body: descriptor.body, label: `${runId}/${slot.slotIndex}/${slot.category}/${slot.shot}/${slot.pose}/${slot.timeOfDay}/${realism ? "on" : "off"}`, slot, realism, sentence, look: prompt.replace(sentence, "").replace(descriptor.text.replace(/\.$/, ""), "").replace(descriptor.body === undefined ? "" : `; ${descriptor.body}`, ""), prompt });
       }
     }
   }
@@ -100,7 +102,34 @@ const REDRAWN: Swept[] = (() => {
   return all;
 })();
 
-const EVERYTHING = [...SWEPT, ...REDRAWN];
+// The body axis (S5.2c, L9): the same sweep with a body phrase in the descriptor. A representative set, not the whole product: the shortest phrase, one
+// mid-length one, one with marks, and the longest any body renders to (BODY_PHRASE_MAX). Three seeded plans each keep it fast; the shots, poses, times and
+// «Реализм камеры» states still all come up, and every check below (I5.2, I5.3, I5.10, I5.13) runs over these prompts too.
+const longestBody = (): AvatarBody => {
+  const lengthOf = (body: AvatarBody): number => (bodyPhrase(body) ?? "").length;
+  const best = (candidates: AvatarBody[]): AvatarBody => [...candidates].sort((a, b) => lengthOf(b) - lengthOf(a))[0] as AvatarBody;
+  const one = (key: "height" | "bust" | "figure", values: readonly string[]): AvatarBody[] => values.map((v) => ({ [key]: v }) as AvatarBody);
+  const two = (a: "legLength" | "bottomSize", av: readonly string[], b: "legShape" | "bottomShape", bv: readonly string[]): AvatarBody[] => av.flatMap((x) => bv.map((y) => ({ [a]: x, [b]: y }) as AvatarBody));
+  const marks = [...BodyMark.options].sort((a, b) => lengthOf({ bodyMarks: [b] }) - lengthOf({ bodyMarks: [a] }));
+  return {
+    ...best(one("height", BodyHeight.options)),
+    ...best(one("bust", BodyBust.options)),
+    ...best(one("figure", BodyFigure.options)),
+    ...best(two("legLength", LegLength.options, "legShape", LegShape.options)),
+    ...best(two("bottomSize", BottomSize.options, "bottomShape", BottomShape.options)),
+    bodyMarks: [marks[0] as (typeof marks)[number], marks[1] as (typeof marks)[number]],
+  };
+};
+const BODIES: AvatarBody[] = [{ height: "short" }, { height: "tall", bust: "full", figure: "hourglass" }, { figure: "pear", legLength: "long", legShape: "toned", bodyMarks: ["tattoo-ankle"] }, longestBody()];
+const BODY_PHRASES: string[] = BODIES.map((b) => bodyPhrase(b) ?? "");
+const BODIED: Swept[] = BODY_PHRASES.flatMap((body, i) => {
+  const descriptor: AvatarDescriptor = { ...DESCRIPTOR, body };
+  const all: Swept[] = [];
+  for (let seed = 1; seed <= 3; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 20, categories: [...CATEGORIES], poses: ALL_POSES }).slots, `run-b${i}-${seed}`, true, descriptor));
+  return all;
+});
+
+const EVERYTHING = [...SWEPT, ...REDRAWN, ...BODIED];
 const hits = (check: (s: Swept) => string | null): Array<{ label: string; hit: string }> =>
   EVERYTHING.flatMap((s) => {
     const hit = check(s);
@@ -133,6 +162,37 @@ describe("the sweep covers what it claims (it is not vacuous)", () => {
   test("a phone activity does reach friend, candid and photographer prompts (the allowance is exercised)", () => {
     const phoneShots = new Set(EVERYTHING.filter((s) => isPhoneActivity({ text: s.slot.activity })).map((s) => s.slot.shot));
     expect(phoneShots.has("friend") || phoneShots.has("candid") || phoneShots.has("photographer")).toBe(true);
+  });
+});
+
+describe("the body axis (S5.2c)", () => {
+  const BODY_CLAUSE = "and her exact body proportions as described";
+
+  test("the representative set holds the longest phrase any body renders to, and every phrase is distinct", () => {
+    expect(Math.max(...BODY_PHRASES.map((p) => p.length))).toBe(BODY_PHRASE_MAX);
+    expect(new Set(BODY_PHRASES).size).toBe(BODY_PHRASES.length);
+    expect(BODY_PHRASES.every((p) => p.length > 0)).toBe(true);
+  });
+
+  test("every body phrase is swept across every shot, every pose and both «Реализм камеры» states", () => {
+    for (const phrase of BODY_PHRASES) {
+      const mine = BODIED.filter((s) => s.body === phrase);
+      expect(new Set(mine.map((s) => s.slot.shot))).toEqual(new Set(SHOTS));
+      expect(new Set(mine.map((s) => s.slot.pose))).toEqual(new Set(PoseSchema.options));
+      expect(new Set(mine.map((s) => s.realism))).toEqual(new Set([true, false]));
+    }
+  });
+
+  test("the phrase is in a body prompt exactly once, after the descriptor text and before the artefact line", () => {
+    expect(hits((s) => (s.body === undefined || (s.prompt.split(s.body).length === 2 && s.prompt.indexOf(DESCRIPTOR.text.replace(/\.$/, "")) < s.prompt.indexOf(s.body)) ? null : "placement"))).toEqual([]);
+  });
+
+  test("a body prompt carries the binding clause once unless the shot is a selfie, and a prompt with no body never carries it", () => {
+    expect(hits((s) => (s.body !== undefined && s.slot.shot !== "selfie" ? (s.prompt.split(BODY_CLAUSE).length === 2 ? null : "missing") : s.prompt.includes(BODY_CLAUSE) ? "unexpected" : null))).toEqual([]);
+  });
+
+  test("a body prompt carries no youth or revealing word, phrase and clause included", () => {
+    expect(hits((s) => (s.body === undefined ? null : (youthWords(s.prompt, "descriptor")[0] ?? revealingWordsIn(s.body)[0] ?? null)))).toEqual([]);
   });
 });
 
