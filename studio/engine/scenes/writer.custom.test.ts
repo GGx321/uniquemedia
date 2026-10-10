@@ -287,6 +287,11 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
     expect(builtInFloor()).toBeLessThanOrEqual(floorOf(worstSlots(POOL_TEXT_MAX)));
   });
 
+  const BUILT_IN_MARGIN_PRINTED = 490;
+  test("the built-in margin printed here is the measured one: re-measure it when the writer's prompt or a built-in text changes", () => {
+    expect(CEILING - builtInFloor()).toBe(BUILT_IN_MARGIN_PRINTED);
+  });
+
   test("the worst built-in chunk is built from the longest real place, activity and outfit", () => {
     const slots = worstBuiltInSlots();
     expect(slots[0]?.location.length).toBe(Math.max(...placesOf().map((p) => p.length)));
