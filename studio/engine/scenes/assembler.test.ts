@@ -492,6 +492,16 @@ describe("what no new prompt may say", () => {
     for (const { label, shot, prompt } of everyPrompt()) expect({ label, says: PHONE_NOT_IN_PICTURE.test(prompt) }).toEqual({ label, says: shot === "selfie" });
   });
 
+  // The look text may say «phone» only as the kind of photo («Ordinary phone photo», «A quick phone snap», «her phone's front camera»), in the selfie
+  // line's «the phone itself is not in the picture» and in the selfie phone-hand line. Activities are S5.1c's concern: the sentence here has none.
+  test("I5.2: outside those places, no non-mirror prompt names a phone", () => {
+    const allowed = /Ordinary phone photo|A quick phone snap|her phone's front camera|the phone itself is not in the picture|Her phone arm runs out of the frame/g;
+    for (const { label, shot, prompt } of everyPrompt()) {
+      if (shot === "mirror") continue;
+      expect({ label, left: prompt.replace(allowed, "").match(/\bphones?\b/i)?.[0] ?? null }).toEqual({ label, left: null });
+    }
+  });
+
   test("the adult-woman line is in every prompt (I5.13)", () => {
     for (const { label, prompt } of everyPrompt()) expect({ label, adult: prompt.includes("She is an adult woman.") }).toEqual({ label, adult: true });
   });

@@ -56,8 +56,9 @@ describe("CAPTURE_LINE", () => {
     expect(CAPTURE_LINE.friend).toContain("her whole body is in the picture");
   });
 
-  test("the candid line is the friend line plus her being busy and not looking at the phone", () => {
-    expect(CAPTURE_LINE.candid).toBe(`${CAPTURE_LINE.friend} She is busy with something and not looking at the phone.`);
+  test("the candid line is the friend line plus her being busy and not looking toward the camera, with no further phone named", () => {
+    expect(CAPTURE_LINE.candid).toBe(`${CAPTURE_LINE.friend} She is busy with something and not looking toward the camera.`);
+    expect(CAPTURE_LINE.candid.replace("A quick phone snap", "")).not.toMatch(/\bphone\b/i);
   });
 
   test.each(NOT_MIRROR)("the %s line matches no held-phone pattern (I5.2)", (shot) => {
@@ -133,8 +134,8 @@ describe("lightOf", () => {
 });
 
 describe("IMPERFECTIONS and imperfectionOf", () => {
-  test("the selfie author's list is front-camera softness, wide-angle stretch and a tilted frame", () => {
-    expect(IMPERFECTIONS.selfie).toEqual(["front-camera softness", "a slight wide-angle stretch at the edges", "the frame slightly tilted"]);
+  test("the selfie author's list is a front-camera wide-angle look and a wide-angle stretch (the tilt is in the capture line)", () => {
+    expect(IMPERFECTIONS.selfie).toEqual(["a slight front-camera wide-angle look", "a slight wide-angle stretch at the edges"]);
   });
 
   test("the mirror author's list is smudges and glare on the mirror", () => {
@@ -146,7 +147,6 @@ describe("IMPERFECTIONS and imperfectionOf", () => {
       "a little motion blur on her moving hand",
       "slightly washed-out colours",
       "a slightly warm white balance",
-      "the horizon slightly tilted",
     ]);
   });
 
@@ -177,6 +177,27 @@ describe("IMPERFECTIONS and imperfectionOf", () => {
     // Same key, two draws: if both read one stream, a key that draws the first imperfection would always draw the same room state too.
     const pairs = new Set(KEYS.map((key) => `${imperfectionOf("friend", key)}|${roomStateOf(key, KITCHEN)}`));
     expect(pairs.size).toBeGreaterThan(IMPERFECTIONS.friend.length * 3);
+  });
+});
+
+describe("an imperfection never repeats its capture line", () => {
+  test.each([...SHOTS])("no %s imperfection is part of, or restates, the capture line over 1000 keys", (shot) => {
+    const line = CAPTURE_LINE[shot].toLowerCase();
+    for (const key of KEYS.slice(0, 1000)) {
+      const imperfection = imperfectionOf(shot, key);
+      expect(line).not.toContain(imperfection.toLowerCase());
+      // «tilted» is the one word both texts use: a capture line that says it leaves it out of the draw.
+      if (line.includes("tilted")) expect(imperfection).not.toContain("tilted");
+    }
+  });
+
+  test.each([...SHOTS])("every %s list entry is safe against the capture line, so no draw needs a retry", (shot) => {
+    const line = CAPTURE_LINE[shot].toLowerCase();
+    for (const entry of IMPERFECTIONS[shot]) expect(line).not.toContain(entry.toLowerCase());
+  });
+
+  test("no imperfection says softness or blur of focus, which conflicts with everything in focus", () => {
+    for (const shot of SHOTS) for (const entry of IMPERFECTIONS[shot]) expect(entry).not.toMatch(/softness|soft focus|blurry/i);
   });
 });
 

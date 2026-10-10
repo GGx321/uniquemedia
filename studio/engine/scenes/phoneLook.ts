@@ -25,7 +25,7 @@ export const CAPTURE_LINE: Readonly<Record<Shot, string>> = {
     "A mirror selfie she took herself: her phone in her hand at chest height, visible in the mirror and held low enough to leave her face clear, the room behind her in the reflection.",
   friend: FRIEND_SNAP,
   photographer: FRIEND_SNAP,
-  candid: `${FRIEND_SNAP} She is busy with something and not looking at the phone.`,
+  candid: `${FRIEND_SNAP} She is busy with something and not looking toward the camera.`,
 };
 
 /** The constraint about her hands: only the mirror author holds a phone in view, and a selfie's phone arm is out of the frame. Null for the rest. */
@@ -61,12 +61,11 @@ const FRIEND_IMPERFECTIONS: readonly string[] = [
   "a little motion blur on her moving hand",
   "slightly washed-out colours",
   "a slightly warm white balance",
-  "the horizon slightly tilted",
 ];
 
-/** One imperfection is drawn per photo from its author's list: what that kind of phone photo really gets wrong. */
+/** One imperfection is drawn per photo from its author's list: what that kind of phone photo really gets wrong. A list never repeats its capture line (the tilt is already there). */
 export const IMPERFECTIONS: Readonly<Record<Shot, readonly string[]>> = {
-  selfie: ["front-camera softness", "a slight wide-angle stretch at the edges", "the frame slightly tilted"],
+  selfie: ["a slight front-camera wide-angle look", "a slight wide-angle stretch at the edges"],
   mirror: ["a few smudges on the mirror", "a little glare from the ceiling light on the mirror"],
   friend: FRIEND_IMPERFECTIONS,
   candid: FRIEND_IMPERFECTIONS,
