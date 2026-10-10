@@ -274,8 +274,12 @@ describe("the descriptor beside her body phrase (Stage 5, S5.2a)", () => {
     expect(readDescriptorAnswer(answer(textOf(limit + 1)), 25).ok).toBe(true);
   });
 
-  test("a plain over-600 answer is refused with no special limit", () => {
-    expect(readDescriptorAnswer(answer(textOf(601)), 25, BODY)).toEqual({ ok: false, problems: ["too-long"], words: [] });
+  test("a plain over-600 answer is refused with the real limit too, when there is a body", () => {
+    expect(readDescriptorAnswer(answer(textOf(601)), 25, BODY)).toEqual({ ok: false, problems: ["too-long"], words: [], maxChars: limit });
+  });
+
+  test("a plain over-600 answer with no body names no special limit", () => {
+    expect(readDescriptorAnswer(answer(textOf(601)), 25)).toEqual({ ok: false, problems: ["too-long"], words: [] });
   });
 
   test("the retry message names the shorter limit", () => {

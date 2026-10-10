@@ -205,8 +205,10 @@ export function readDescriptorAnswer(content: string, age: number, body?: string
   const text = normaliseDescriptorText(parsed.data.descriptor);
   if (text === "") return refused(["empty"]);
   // Nothing else is checked on a runaway answer: the checks must not block the engine.
-  if (text.length > DESCRIPTOR_MAX_CHARS) return refused(["too-long"]);
-  if (body !== undefined && composedLength(text, body) > DESCRIPTOR_MAX_CHARS) return refused(["too-long"], [], DESCRIPTOR_MAX_CHARS - composedLength("", body));
+  // With a body the retry is told the real limit, whether the text is over 600 on its own or only beside the phrase.
+  if (text.length > DESCRIPTOR_MAX_CHARS || (body !== undefined && composedLength(text, body) > DESCRIPTOR_MAX_CHARS)) {
+    return refused(["too-long"], [], body === undefined ? undefined : DESCRIPTOR_MAX_CHARS - composedLength("", body));
+  }
 
   const problems: DescriptorProblem[] = [];
   if (!new RegExp(`(?<![0-9])${age}-year-old`).test(text)) problems.push("no-age-anchor");
