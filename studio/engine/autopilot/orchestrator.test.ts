@@ -520,6 +520,68 @@ describe("autopilot.resume", () => {
 
 // ---------- stop ----------
 
+describe("the final file of a launch holds nothing and waits for nothing (S4.10 LOW-3)", () => {
+  /** A running launch with a paid hold, an export hold and its avatar parked behind the paid hold. */
+  async function heldLaunch(r: Rig): Promise<LaunchView> {
+    const started = await r.start();
+    await r.steps.ctx.update((f) => ({ ...f, avatars: f.avatars.map((a) => ({ ...a, phase: "waiting" as const, waiting: { reason: "paid-hold" as const } })) }));
+    await r.steps.ctx.raisePaidHold({ reason: "key", at: AT, detail: {} });
+    await r.steps.ctx.setFreeHold({ reason: "export", at: AT, detail: { exportReason: "not-writable", neededBytes: null, freeBytes: null } });
+    expect(r.fileOf(started.launchId)).toMatchObject({ paidHold: { reason: "key" }, freeHold: { reason: "export" } });
+    return started;
+  }
+
+  test("a stop under a paid hold and an export hold writes a stopped file with neither hold and no waiting row", async () => {
+    const r = await rig();
+    const started = await heldLaunch(r);
+    const view = await r.orchestrator.stop(started.launchId);
+    const file = r.fileOf(started.launchId);
+    expect(file.status).toBe("stopped");
+    expect(file.paidHold).toBeNull();
+    expect(file.freeHold).toBeNull();
+    expect(file.avatars.map((a) => a.waiting)).toEqual([null]);
+    expect(file.avatars.map((a) => a.phase)).not.toContain("waiting");
+    expect(view.paidHold).toBeNull();
+    expect(view.freeHold).toBeNull();
+  });
+
+  test("a finish under a leftover hold writes a done file with neither hold and no waiting row", async () => {
+    const r = await rig();
+    const started = await heldLaunch(r);
+    await r.steps.ctx.finish();
+    const file = r.fileOf(started.launchId);
+    expect(file.status).toBe("done");
+    expect(file.paidHold).toBeNull();
+    expect(file.freeHold).toBeNull();
+    expect(file.avatars.map((a) => a.waiting)).toEqual([null]);
+  });
+});
+
+describe("the frozen figure comes from a readable ledger only (S4.10 L1)", () => {
+  test("a stop with an unreadable ledger freezes nothing, ends on the file's last figure and still ends", async () => {
+    const r = await rig({ deps: { budget: () => null } });
+    const started = await r.start();
+    const stopped = await r.orchestrator.stop(started.launchId);
+    expect(stopped.status).toBe("stopped");
+    expect(r.fileOf(started.launchId).reviewWritesMicros).toBeUndefined();
+    expect(r.fileOf(started.launchId).spentMicros).toBe(0);
+  });
+
+  test("a stop with a readable ledger freezes the figure, and the stopped file carries exactly it", async () => {
+    const r = await rig();
+    const started = await r.start();
+    await spend(r, started, 77_000);
+    let seen: number | undefined;
+    r.steps.release = async () => {
+      r.steps.calls.push("release");
+      seen = r.fileOf(started.launchId).spentMicros;
+    };
+    await r.orchestrator.stop(started.launchId);
+    expect(seen).toBe(77_000);
+    expect(r.fileOf(started.launchId).spentMicros).toBe(77_000);
+  });
+});
+
 describe("autopilot.stop", () => {
   test("persists «stopping» BEFORE it drains, then drains, releases, and ends the launch: stopped, its end, its final sum, its group finished", async () => {
     const r = await rig();
@@ -1192,6 +1254,20 @@ describe("M3: a scene set that cannot be read at open counts as spent in full", 
     expect(stopped.status).toBe("stopped");
     expect(second.fileOf(started.launchId).spentMicros).toBe(allocB);
     expect(stopped.spentMicros).toBe(allocB);
+  });
+
+  test("S4.10 OQ1: an unreadable file beside the avatar's own readable set cuts nothing: the group keeps the full cap and spent stays what the ledger says", async () => {
+    const first = await rig();
+    const started = await first.start({ avatarIds: ["avatar-mia-0001", B] });
+    const rows = first.fileOf(started.launchId).avatars;
+    const second = await rig({ root: first.root });
+    second.sets.push({ sceneSetId: rows[1]?.generation?.sceneSetId ?? "", launchId: started.launchId });
+    second.unreadableSets.add(B);
+    await second.adopt();
+    await second.orchestrator.settled();
+    const setId = rows[0]?.generation?.sceneSetId ?? "";
+    expect(second.groups.groupOf({ attemptId: `${setId}:writer-1#1`, scope: { runId: "x" } })?.capMicros).toBe(started.plannedWorstMicros);
+    expect(second.orchestrator.snapshotView()?.spentMicros).toBe(0);
   });
 
   test("a listing that fails outright is the same as an unreadable set", async () => {

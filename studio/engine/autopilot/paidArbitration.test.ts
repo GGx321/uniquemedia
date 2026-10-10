@@ -33,7 +33,7 @@ async function twoJobs(timers: FakeTimers, steps: Parameters<typeof rig>[0] = {}
     if (ids.sceneSetId === SET1) r.port.seed({ sceneSetId: SET1, runId: ids.runId, avatarId: A, launchId: LAUNCH });
     else {
       const set = r.port.seed({ sceneSetId: SET2, runId: ids.runId, avatarId: B, launchId: LAUNCH, written: 0 });
-      r.port.sets.set(SET2, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0002", stoppedBy: "failed", stoppedError: { code: "NETWORK", detail: "fetch failed" } } } as typeof set);
+      r.port.sets.set(SET2, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0002", stoppedBy: "network" } } as typeof set);
     }
     return { sceneSetId: ids.sceneSetId, jobId: "job-compose" };
   };
@@ -168,7 +168,7 @@ describe("one scene step is one job for the automatic continues (M4)", () => {
     const r = await rig({ steps: { timers, clock: timers.clock } });
     r.port.compose = async (_p, ids) => {
       const set = r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH, written: 0 });
-      r.port.sets.set(SET1, { ...set, write: { k: 1, kind: "compose", jobId: "job", stoppedBy: "failed", stoppedError: { code: "NETWORK", detail: "fetch failed" } } } as typeof set);
+      r.port.sets.set(SET1, { ...set, write: { k: 1, kind: "compose", jobId: "job", stoppedBy: "network" } } as typeof set);
       return { sceneSetId: ids.sceneSetId, jobId: "job-compose" };
     };
     r.port.write = async () => ({ jobId: "job-write" });

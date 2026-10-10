@@ -593,8 +593,9 @@ describe("the internal paid entry points need a launch that runs (MEDIUM)", () =
 
 });
 
-describe("an avatar cut by the unread-sets rule does no paid work (MEDIUM)", () => {
-  test("a foreign unreadable record beside a readable launch set: the avatar is skipped as set-unreadable and nothing is reserved after the restart", async () => {
+describe("an avatar is cut by the unread-sets rule only when the LAUNCH's own set cannot be read (MEDIUM, S4.10 OQ1)", () => {
+  /** An approved launch set, the engine killed, and a restart on the same folders after `damage` was done to the disk. */
+  async function restartedAfter(damage: (avatarId: string, sceneSetId: string) => Promise<void>) {
     const avatarId = await seedAvatar();
     const first = await boot(network());
     const launch = await startLaunch(first, draftOf([avatarId], { sceneReview: true }));
@@ -604,12 +605,28 @@ describe("an avatar cut by the unread-sets rule does no paid work (MEDIUM)", () 
     await first.engine.approveLaunchSet({ sceneSetId, launchId: launch.launchId, revision, plannedCount: 3 });
     await kill(first);
     await mkdir(join(libraryDir(), "avatars", avatarId, "scenes"), { recursive: true });
-    await Bun.write(join(libraryDir(), "avatars", avatarId, "scenes", "set-foreign-0001.json"), "{not json");
+    await damage(avatarId, sceneSetId);
     const linesBefore = ledgerLines(dir()).length;
     const net = network();
     const second = await boot(net);
     const paused = await viewOf(second, launch.launchId);
     await resume(second, paused);
+    return { avatarId, launch, net, second, linesBefore };
+  }
+
+  test("an old manual set of the avatar that cannot be read does not cut it: the launch's own set draws after the restart", async () => {
+    const { launch, net } = await restartedAfter(async (avatarId) => {
+      await Bun.write(join(libraryDir(), "avatars", avatarId, "scenes", "set-foreign-0001.json"), "{not json");
+    });
+    await until(() => net.imageCalls().length > 0, "the draw of the launch's own set");
+    expect(fileOf(launch.launchId).avatars[0]?.skipped).toBeNull();
+    expect(phaseOf(launch.launchId)).not.toBe("skipped");
+  });
+
+  test("the launch's own set that cannot be read cuts the avatar: it is skipped as set-unreadable and nothing is reserved after the restart", async () => {
+    const { launch, net, linesBefore } = await restartedAfter(async (avatarId, sceneSetId) => {
+      await Bun.write(join(libraryDir(), "avatars", avatarId, "scenes", `${sceneSetId}.json`), "{not json");
+    });
     await until(() => phaseOf(launch.launchId) === "skipped", "the skip");
     expect(fileOf(launch.launchId).avatars[0]?.skipped).toEqual({ reason: "set-unreadable" });
     expect(net.paidCalls()).toEqual([]);

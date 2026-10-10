@@ -106,6 +106,24 @@ describe("a library-only launch, end to end", () => {
     expect(r.queue.states().every((s) => s.status === "done" && s.kind === "render" && s.launchId === LAUNCH)).toBe(true);
   });
 
+  test("A13 (S4.10): free work goes on under a paid hold: photos already drawn are rendered to done through the real service while the hold stands", async () => {
+    const w = world();
+    await addPhotos(w, 3);
+    const hold = { reason: "credits" as const, at: "2026-10-09T10:00:00.000Z", detail: {} };
+    const r = rigFor(w);
+    const run = start(w, r, [], { videosPerAvatar: 3, mix: { single: 100, collage: 0, slides: 0 }, categories: ["home"] }, (file) => ({ ...file, paidHold: hold }));
+    // The first video is done while the hold stands (the hold is read at that moment, not only at the end).
+    await until(() => run.launch.file().avatars[0]?.videos.some((v) => v.state === "done") ?? false, "the first video to be done");
+    expect(run.launch.file().paidHold).toEqual(hold);
+    await until(() => run.launch.finished(), "the launch to finish");
+    await r.queue.idle();
+    const file = run.launch.file();
+    expect(file.avatars[0]?.videos.every((v) => v.state === "done")).toBe(true);
+    expect(file.paidHold).toEqual(hold);
+    const records = (await readVideoRecordFiles(w.libraryRoot, w.avatar.id)).records;
+    expect(records).toHaveLength(3);
+  });
+
   test("the focus is prefetched: the render command finds no photo left to judge (no detect during the render)", async () => {
     const w = world();
     await addPhotos(w, 3);

@@ -351,6 +351,8 @@ const LOG_LINES = [
   // The kinds the artboards draw beyond the log sheet: the holds, a busy avatar, a restart, scenes being written, the month ending mid-slice, a dropped render.
   line("hold-network", { drops: z.number().int().min(1) }),
   line("avatar-busy", {}),
+  // S4.10: the owner's own open scene set stands in the way of the avatar's compose; once per wait, not per look (the row says `waiting { open-set }`).
+  line("open-set", {}),
   // The library cannot tell which photos are free (S4.6c2): once per wait, not per look.
   line("library-unknown", {}),
   line("app-restarted", { cause: z.enum(["quit", "engine-restart"]), requests: Count }),

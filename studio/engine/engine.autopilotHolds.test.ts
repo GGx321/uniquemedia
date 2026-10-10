@@ -395,6 +395,37 @@ describe("host.power in the engine (plan §3.8)", () => {
     expect(fileOf(launch.launchId).avatars[0]?.photosDone).toBe(3);
   });
 
+  test("S4.10 M-1: the Mac wakes while the slice's requests are still in flight; they end after the wake-up: no hold, the slice goes on to the montage", async () => {
+    const avatarId = await seedAvatar();
+    const hold = gate();
+    const net = network({ image: async (call, n) => (n <= 3 ? (await hold.promise, goodImage(call, n)) : goodImage(call, n)) });
+    const started = await boot(net);
+    const launch = await startLaunch(started, draftOf([avatarId]));
+    await until(() => net.imageCalls().length === 3, "the slice's requests in flight", 30_000);
+    await bounded(started.engine.applyControl({ kind: "control", type: "host.power", state: "suspend" }), "suspend");
+    await bounded(started.engine.applyControl({ kind: "control", type: "host.power", state: "resume" }), "resume");
+    // The requests answer only now, AFTER the wake-up: the slice ends cancelled by the soft stop the sleep sent.
+    hold.open();
+    await until(() => phaseOf(launch.launchId) === "montage", "the montage after the wake-up", 45_000);
+    expect(holdOf(launch.launchId)).toBeNull();
+    expect(fileOf(launch.launchId).avatars[0]?.photosDone).toBe(3);
+  });
+
+  test("S4.10 M-2: a writer request that gets no answer is the no-answer rule of §4.6 (a minute, then «Дописать»), not an internal hold", async () => {
+    const avatarId = await seedAvatar();
+    const net = network({ writer: (call, n) => (n <= 3 ? OFFLINE : goodWriter(call, n)) });
+    const started = await boot(net);
+    const launch = await startLaunch(started, draftOf([avatarId]));
+    const hold = await reachHold(launch.launchId, "network");
+    expect(hold.detail).toEqual({ drops: 1, attempt: 1, nextAt: started.timers.iso(MIN) });
+    expect(Object.keys(fileOf(launch.launchId).autoContinues ?? {})).toEqual([expect.stringContaining(":scenes")]);
+    expect((await logOf(started, launch.launchId)).find((l) => l.kind === "network-retry")).toMatchObject({ attempt: 1, attempts: 2, afterMs: MIN });
+    expect(net.imageCalls()).toEqual([]);
+    started.timers.advance(MIN);
+    await until(() => phaseOf(launch.launchId) === "montage", "the montage after the automatic continue", 45_000);
+    expect(holdOf(launch.launchId)).toBeNull();
+  });
+
   test("suspend and resume with nothing running change nothing and send nothing", async () => {
     const net = network();
     const started = await boot(net);

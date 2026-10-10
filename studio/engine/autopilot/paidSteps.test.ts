@@ -247,6 +247,227 @@ describe("the paid path's own holds (plan §4.3 item 4, §4.4)", () => {
   });
 });
 
+// ---------- S4.10 fix A: no end without a state the owner can see ----------
+
+describe("a paid path that cannot go on never leaves the launch running with no hold (S4.10 M2)", () => {
+  function drawnEntry(r: Rig): void {
+    r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL, slices: [{ runId: RUN1, sceneIds: ALL, capMicros: PHOTO * 10 }] } });
+    r.port.statuses.set(RUN1, { finished: false });
+    r.port.start = async () => {
+      throw new EngineFailure({ code: "BUDGET_EXCEEDED", detail: "the month has no room for the next attempt" });
+    };
+  }
+
+  test("a slice refused by the month whose cap cannot fund a resume either is spent and cap-ended: the pass goes on to the montage, no hold", async () => {
+    const r = await rig();
+    drawnEntry(r);
+    r.port.resumeHoldError = new EngineFailure({ code: "RUN_CAP_EXCEEDED", detail: "run's cap leaves 0 micro-dollars, less than its next attempt could cost: it has ended" });
+    const launch = await r.start({ sceneReview: true });
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the slice to be given up as spent");
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+  });
+
+  test("a slice with nothing left to resume is spent the same way", async () => {
+    const r = await rig();
+    drawnEntry(r);
+    // The engine's words are not read (L4): the slice's STATUS says every slot ended by the time the hold is read.
+    const refusing = r.port.start;
+    r.port.start = async (runId) => {
+      r.port.statuses.set(RUN1, { finished: true, committedMicros: PHOTO });
+      return (refusing ?? (async () => ({ kind: "finished" as const })))(runId);
+    };
+    r.port.resumeHoldError = new EngineFailure({ code: "VALIDATION", detail: "some other words of the engine" });
+    const launch = await r.start({ sceneReview: true });
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the slice to be given up as spent");
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+  });
+
+  test("an unavailable price list while the hold is read is the price-unavailable hold with its retry", async () => {
+    const r = await rig();
+    drawnEntry(r);
+    r.port.resumeHoldError = new EngineFailure({ code: "PRICE_UNAVAILABLE", detail: "the price list could not be loaded" });
+    const launch = await r.start({ sceneReview: true });
+    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "price-unavailable", detail: { attempt: 1 } });
+  });
+
+  test("any other failure of the hold's read is an internal hold with the job's words, and the launch rests", async () => {
+    const r = await rig();
+    drawnEntry(r);
+    r.port.resumeHoldError = new EngineFailure({ code: "INTERNAL", detail: "ENOENT: no such file or directory, open '/Users/alex/Library/runs/plan.json'" });
+    const launch = await r.start({ sceneReview: true });
+    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    const hold = r.fileOf(launch.launchId).paidHold;
+    expect(hold).toMatchObject({ reason: "internal", detail: { kind: "job-failed" } });
+    expect(JSON.stringify(hold)).toContain("INTERNAL");
+    expect(JSON.stringify(hold)).not.toContain("/Users/alex");
+    expect(r.fileOf(launch.launchId).avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "paid-hold" } });
+  });
+
+  test("a state that is no job's end (the ledger cannot be read) holds the launch as internal with the reason's words, so «Продолжить» can retry", async () => {
+    const r = await rig();
+    r.port.budget = null;
+    r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, written: 0 });
+    const launch = await r.start({ sceneReview: true });
+    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: "the ledger cannot be read" } });
+    expect(r.orchestrator.snapshotView()?.paidHold).toMatchObject({ reason: "internal" });
+    const log = (await r.orchestrator.get(launch.launchId)).log;
+    expect(log.some((l) => l.kind === "hold-internal")).toBe(true);
+  });
+
+  test("review OFF and every chunk came back without text: the avatar's generated videos are dropped as not-enough-photos, it goes to the montage, no hold", async () => {
+    const r = await rig();
+    r.port.compose = composes(r.port, LAUNCH);
+    r.port.approve = async () => {
+      throw new EngineFailure({ code: "VALIDATION", sceneReason: "no-active-scenes", detail: "scene set orch-0002 has no scene with text to draw" });
+    };
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    const row = r.fileOf(launch.launchId).avatars[0];
+    expect(row?.videos.filter((v) => v.source === "generated").every((v) => v.state === "dropped" && v.dropReason === "not-enough-photos")).toBe(true);
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+    expect(r.port.calls).not.toContain("drawLaunchSlice");
+    // L3: the owner is told, as the free path's own drop for want of photos is.
+    const dropped = row?.videos.filter((v) => v.dropReason === "not-enough-photos") ?? [];
+    expect((await r.orchestrator.get(launch.launchId)).log.find((l) => l.kind === "degrade")).toMatchObject({ avatarId: A, fewerVideos: dropped.length });
+  });
+
+  test("L4: the budget hold of a refused start is still the budget hold when the read of it succeeds", async () => {
+    const r = await rig();
+    drawnEntry(r);
+    const launch = await r.start({ sceneReview: true });
+    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the budget hold");
+    expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "budget" });
+  });
+});
+
+describe("the owner's own open set mid-launch makes only that avatar wait (S4.10 L3)", () => {
+  const openSet = (): EngineFailure => new EngineFailure({ code: "VALIDATION", sceneReason: "open-set", detail: "avatar already has an open scene set; discard it or use its run first" });
+
+  /** Two generating avatars; A's compose is refused as long as `owner.open` is true. */
+  async function twoAvatars(owner: { open: boolean }) {
+    // A long poll: only an announced set can wake the waiting avatar in these tests.
+    const r = await rig({ steps: { retryMs: 60_000 } });
+    r.port.compose = async (payload, ids) => {
+      if (payload.avatarId === A && owner.open) throw openSet();
+      r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, avatarId: payload.avatarId, launchId: LAUNCH });
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    r.port.ownerOpen = (avatarId) => avatarId === A && owner.open;
+    r.port.approve = async (setId) => r.port.seed({ sceneSetId: setId, runId: setId === SET1 ? RUN1 : RUN2, avatarId: setId === SET1 ? A : B, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => ({ kind: "none-left" });
+    const launch = await r.start({ avatarIds: [A, B], sceneReview: false });
+    return { r, launch };
+  }
+
+  test("the avatar waits as «open-set» (no hold, no failed job) while the other avatar goes on to its montage", async () => {
+    const owner = { open: true };
+    const { r, launch } = await twoAvatars(owner);
+    await until(() => r.fileOf(launch.launchId).avatars[1]?.phase === "montage", "the other avatar's montage");
+    const rows = r.fileOf(launch.launchId).avatars;
+    expect(rows[0]).toMatchObject({ avatarId: A, phase: "waiting", waiting: { reason: "open-set" } });
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+    // L7: the launch does not outlive the test on a 60 s timer.
+    await r.orchestrator.stop(launch.launchId);
+  });
+
+  test("an announced scene set wakes the waiting avatar: it composes again once the owner has closed theirs", async () => {
+    const owner = { open: true };
+    const { r, launch } = await twoAvatars(owner);
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.waiting?.reason === "open-set", "the wait");
+    owner.open = false;
+    r.port.announce(r.port.seed({ sceneSetId: "set-owner-0001", runId: "run-owner-0001", avatarId: A }));
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the avatar to go on");
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+  });
+
+  test("S4.10 M-3: an open-set episode is cheap: 20 polls are ONE log line, no `composing` flips, no second compose call (which would claim the avatar)", async () => {
+    const owner = { open: true };
+    const r = await rig({ steps: { retryMs: 2 } });
+    r.port.ownerOpen = () => owner.open;
+    r.port.compose = async () => {
+      throw openSet();
+    };
+    const launch = await r.start({ sceneReview: false });
+    const polls = (): number => r.port.calls.filter((c) => c === "hasOpenSet").length;
+    await until(() => polls() >= 3, "the first polls");
+    const revision = r.fileOf(launch.launchId).revision;
+    await until(() => polls() >= 23, "twenty more polls");
+    expect(r.fileOf(launch.launchId).revision).toBe(revision);
+    expect(r.fileOf(launch.launchId).avatars[0]).toMatchObject({ phase: "waiting", waiting: { reason: "open-set" } });
+    expect(r.port.calls.filter((c) => c === "composeLaunchSet")).toHaveLength(1);
+    const log = (await r.orchestrator.get(launch.launchId)).log;
+    expect(log.filter((l) => l.kind === "open-set")).toHaveLength(1);
+    expect(log.filter((l) => l.kind === "scenes-writing")).toHaveLength(1);
+    await r.orchestrator.stop(launch.launchId);
+  });
+
+  test("S4.10 M-3: once the owner's set is gone the compose is called again and the episode ends without another «open-set» line or a second «scenes-writing»", async () => {
+    const owner = { open: true };
+    const r = await rig({ steps: { retryMs: 2 } });
+    r.port.ownerOpen = () => owner.open;
+    r.port.compose = async (_payload, ids) => {
+      if (owner.open) throw openSet();
+      r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH });
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => ({ kind: "none-left" });
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.port.calls.filter((c) => c === "hasOpenSet").length >= 3, "the polls");
+    owner.open = false;
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    const log = (await r.orchestrator.get(launch.launchId)).log;
+    expect(log.filter((l) => l.kind === "open-set")).toHaveLength(1);
+    expect(log.filter((l) => l.kind === "scenes-writing")).toHaveLength(1);
+  });
+});
+
+describe("an exception out of the pass never leaves the launch running with no hold (S4.10 M-4)", () => {
+  test("a library that cannot be confirmed for a moment (LIBRARY_UNAVAILABLE out of the set read) holds the launch as internal with the code", async () => {
+    const r = await rig();
+    r.port.libraryOpen = false;
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: expect.stringContaining("LIBRARY_UNAVAILABLE") } });
+    expect(r.orchestrator.snapshotView()?.paidHold).toMatchObject({ reason: "internal" });
+  });
+
+  test("a draw that throws a foreign error holds the launch as internal with the error's name only (a foreign message can name a path)", async () => {
+    const r = await rig();
+    r.port.compose = composes(r.port, LAUNCH);
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => {
+      throw new Error("EIO: i/o error, write '/Users/alex/Library/runs/plan.json'");
+    };
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
+    const hold = r.fileOf(launch.launchId).paidHold;
+    expect(hold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: "Error" } });
+    expect(JSON.stringify(hold)).not.toContain("/Users/alex");
+  });
+
+  test("a pass that throws while the launch is paused is left alone: the resume meets the same state", async () => {
+    const r = await rig();
+    r.port.compose = composes(r.port, LAUNCH);
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    const gate = deferred();
+    r.port.draw = async () => {
+      await gate.promise;
+      throw new Error("late failure");
+    };
+    const launch = await r.start({ sceneReview: false });
+    await until(() => r.port.calls.includes("drawLaunchSlice"), "the draw call");
+    // The pause drains the pass, which waits on the gate: the pause is clicked, then the draw fails inside it.
+    const pausing = r.orchestrator.pause(launch.launchId);
+    gate.resolve();
+    await pausing;
+    await r.orchestrator.settled();
+    expect(r.fileOf(launch.launchId).paidHold).toBeNull();
+  });
+});
+
 // ---------- release ----------
 
 describe("«Стоп»: the sets are released, and a set that is gone does not hold the stop", () => {
@@ -308,7 +529,8 @@ describe("a busy avatar is waited for, not given up on (MEDIUM)", () => {
     r.port.start = async (runId) => {
       started.push(runId);
       if (runId === RUN1 && !freeA) throw new EngineFailure({ code: "IN_FLIGHT", detail: "busy" });
-      return cancelledStart();
+      // The other avatar's slice ends on its cap (spent): a slice cancelled with nobody asking is a defect that now holds the whole launch (S4.10 M2), which is not what this test is about.
+      return { kind: "started", jobId: "job-run-0002", ended: Promise.resolve({ status: "failed", error: { code: "RUN_CAP_EXCEEDED", detail: "the slice's cap is spent" } } as RunJobEnd) };
     };
     await r.start({ avatarIds: [A, B], sceneReview: true });
     await until(() => started.includes(RUN2), "the other avatar's slice", 3_000);

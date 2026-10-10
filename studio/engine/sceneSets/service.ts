@@ -288,6 +288,18 @@ export class SceneSetService {
     }
   }
 
+  /**
+   * S4.10: whether the avatar has an open set (no run folder yet) other than `exceptSetId`: the very test a compose refuses on (`open-set`), as a free read. It claims nothing, takes no lock and
+   * writes nothing, so a launch that waits for the owner's set can ask it often. Rejects when the sets cannot be read.
+   */
+  async hasOpenSet(avatarId: string, exceptSetId: string): Promise<boolean> {
+    const library = this.#needLibrary();
+    for (const set of await this.#openSetCheck(library, avatarId)) {
+      if (set.sceneSetId !== exceptSetId && !(await library.runFolderExists(set.runId))) return true;
+    }
+    return false;
+  }
+
   /** Under the set's lock: the set's job runs (IN_FLIGHT), or its run's folder exists (the set is used: VALIDATION). */
   #guard(library: Library, change: "edit" | "discard"): SceneSetGuard {
     return async (current) => {

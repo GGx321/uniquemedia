@@ -5,8 +5,8 @@ import { createPaidSteps } from "./autopilot/paidSteps";
 import { LaunchStores } from "./autopilot/lookup";
 import type { EngineDeps } from "./engine";
 import { within } from "./testing/within";
-import { failed, ok, until, useEngineDir } from "./testing/engineHarness";
-import { crashKit, fakeRender, type Started } from "./testing/crashKit";
+import { failed, ledgerLines, ok, until, useEngineDir } from "./testing/engineHarness";
+import { crashKit, fakeRender, ledgerSpentOf, type Started } from "./testing/crashKit";
 import { draftOf, network, type WiringNetwork } from "./testing/wiringKit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -58,7 +58,7 @@ interface Scene {
 }
 
 /** An engine at `phase`, with the test hooks that take the copy at `point` of the stop's unlink. `taken()` says whether the copy was made. */
-async function atPhase(phase: Phase, point: Point, review: boolean) {
+async function atPhase(phase: Phase, point: Point, review: boolean, videos = 1) {
   const avatarId = await kit.seedAvatar(0);
   let open: () => void = () => undefined;
   const writerGate = phase === "composing" ? new Promise<void>((resolve) => (open = resolve)) : undefined;
@@ -102,7 +102,7 @@ async function atPhase(phase: Phase, point: Point, review: boolean) {
   };
   const first = await kit.boot(net, deps);
   holder.engine = first.engine;
-  const launch = await kit.startLaunch(first, draftOf([avatarId], { sceneReview: review, videosPerAvatar: 1 }));
+  const launch = await kit.startLaunch(first, draftOf([avatarId], { sceneReview: review, videosPerAvatar: videos }));
   state.launchId = launch.launchId;
   const generation = kit.fileOf(launch.launchId).avatars[0]?.generation;
   if (generation === null || generation === undefined) throw new Error("the avatar does not generate");
@@ -196,5 +196,112 @@ describe("a kill during the unlink of «Стоп»: the next start finishes it a
     }
     // The launch can not be resumed or stopped again: it is over.
     failed(await kit.call(second, "autopilot.resume", { launchId: scene.launchId, acceptedRemainingMicros: 0 }));
+  });
+});
+
+
+// S4.10 fix A, M1 (money): a launch of two slices (6 videos of 5-photo slides = 30 photos = 25 + 5). The unlink erases the set's `launchId` and `launchDraw`, and the launch file names only the
+// set's own run, so a restart that finds the launch after the release used to rebuild its Budget group WITHOUT the second slice and write a smaller figure over the right one.
+describe("a kill after the sets are released: the figure written at the end is the ledger's (S4.10 M1)", () => {
+  /** The runs of the avatar and the ledger's sum over the launch's scopes, read from the copy the second engine opened. */
+  async function ledgerSum(second: Started, scene: { avatarId: string; sceneSetId: string }): Promise<number> {
+    const runs = ok(await kit.call(second, "runs.list", {}));
+    if (runs.type !== "runs.list") throw new Error("wrong answer");
+    const runIds = runs.result.runs.filter((r) => r.avatarId === scene.avatarId).map((r) => r.runId);
+    expect(runIds).toHaveLength(2);
+    return ledgerSpentOf(ledgerLines(kit.root()), scene.sceneSetId, runIds);
+  }
+
+  test("a stop killed just before the final «stopped» write ends with spentMicros equal to the ledger sum of both slices", async () => {
+    const { scene, state } = await within(atPhase("drawn", "before the final write", false, 6), 90_000, "the launch to start");
+    await kit.waitFile(scene.launchId, "both slices to be drawn", (f) => f.avatars[0]?.phase === "montage");
+    await within(scene.stop(), 60_000, "«Стоп»");
+    await until(() => state.taken, "the copy inside the stop", 30_000);
+    await kit.kill(scene.first);
+    expect(kit.fileOf(scene.launchId).status).toBe("stopping");
+
+    const second = await kit.boot(network(), fakeRender());
+    await second.engine.settled();
+    const view = await kit.waitFor(second, scene.launchId, "the stop to be finished", (v) => v.status === "stopped", 30_000);
+    const expected = await ledgerSum(second, scene);
+    expect(expected).toBeGreaterThan(1_000_000);
+    expect(view.spentMicros).toBe(expected);
+    expect(kit.fileOf(scene.launchId).spentMicros).toBe(expected);
+  });
+
+  /** A launch of 6 videos that runs to its end on the default steps; the copy is taken right before the `done` write. */
+  async function finishingLaunch() {
+    const avatarId = await kit.seedAvatar(0);
+    const net = network();
+    const state = { taken: false, launchId: "" };
+    const launches = new LaunchStores({
+      beforeRename: (path: string): void => {
+        if (state.taken || state.launchId === "" || !basename(path).startsWith(state.launchId)) return;
+        if (parsed(pendingText(path, "before"))?.status === "done") {
+          state.taken = true;
+          kit.snapshot([net]);
+        }
+      },
+    });
+    const first = await kit.boot(net, { ...fakeRender(), launches });
+    const launch = await kit.startLaunch(first, draftOf([avatarId], { videosPerAvatar: 6 }));
+    state.launchId = launch.launchId;
+    const sceneSetId = kit.fileOf(launch.launchId).avatars[0]?.generation?.sceneSetId ?? "";
+    await until(() => state.taken, "the copy right before the «done» write", 150_000);
+    await kit.kill(first);
+    return { launchId: launch.launchId, avatarId, sceneSetId };
+  }
+
+  test("a finish killed just before the «done» write reports the ledger sum of both slices, not the group a restart could rebuild", async () => {
+    const scene = await within(finishingLaunch(), 180_000, "the launch to reach its end");
+    const onDisk = kit.fileOf(scene.launchId);
+    expect(onDisk.reviewWritesMicros).toBe(0);
+    const net2 = network();
+    const second = await kit.boot(net2, fakeRender());
+    await second.engine.settled();
+    const view = (await kit.getLaunch(second, scene.launchId)).launch;
+    expect(view.spentMicros).toBe(await ledgerSum(second, scene));
+    expect(net2.paidCalls()).toEqual([]);
+  });
+});
+
+// S4.10 fix A, crash LOW-1: the finish froze its figures and every video was final, but the process died before the `done` write. The restart used to pause such a launch and ask
+// «Продолжить · до $R» for nothing; it now ends it, the way it ends a stop it finds under way.
+describe("a finish killed before the «done» write comes back done (S4.10 LOW-1)", () => {
+  test("the restart completes the launch: done, nothing to continue, nothing sent", async () => {
+    const avatarId = await kit.seedAvatar(0);
+    const net = network();
+    const state = { taken: false, launchId: "" };
+    const launches = new LaunchStores({
+      beforeRename: (path: string): void => {
+        if (state.taken || state.launchId === "" || !basename(path).startsWith(state.launchId)) return;
+        if (parsed(pendingText(path, "before"))?.status === "done") {
+          state.taken = true;
+          kit.snapshot([net]);
+        }
+      },
+    });
+    const first = await kit.boot(net, { ...fakeRender(), launches });
+    const launch = await kit.startLaunch(first, draftOf([avatarId], { videosPerAvatar: 2 }));
+    state.launchId = launch.launchId;
+    await until(() => state.taken, "the copy right before the «done» write", 150_000);
+    await kit.kill(first);
+    const frozen = kit.fileOf(launch.launchId);
+    expect(frozen.status).toBe("running");
+    expect(frozen.reviewWritesMicros).toBe(0);
+
+    const net2 = network();
+    const second = await kit.boot(net2, fakeRender());
+    await second.engine.settled();
+    const view = (await kit.getLaunch(second, launch.launchId)).launch;
+    expect(view.status).toBe("done");
+    expect(view.resumeBlockedBy).toBeNull();
+    expect(view.paused).toBeNull();
+    const file = kit.fileOf(launch.launchId);
+    expect(file.status).toBe("done");
+    expect(file.endedAt).not.toBeNull();
+    expect(file.avatars[0]?.videos.every((v) => v.state === "done")).toBe(true);
+    expect(net2.paidCalls()).toEqual([]);
+    expect(second.engine.launchGroups.has(launch.launchId)).toBe(false);
   });
 });

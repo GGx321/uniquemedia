@@ -1,4 +1,4 @@
-import { budgetHoldDetail, drawAllocationLeft, sliceSize, SLICE_MAX_PHOTOS, type LaunchScopeMoney } from "../../shared/autopilot/money";
+import { budgetHoldDetail, drawAllocationLeft, sliceSize, SLICE_MAX_PHOTOS, type BudgetHoldDetail, type LaunchScopeMoney } from "../../shared/autopilot/money";
 import { ErrorCode } from "../../shared/engine";
 import { INTERNAL_HOLD_MESSAGE_MAX, type PaidHold, type SkipReason } from "../../shared/engine/autopilot";
 import { EngineFailure } from "../engineFailure";
@@ -38,7 +38,8 @@ import type { AvatarMirror, ContinueInput, ContinueOutcome, LaunchSteps, LaunchS
 // through every hold. The timer of an automatic continue is armed before its hold is written, cancelled by a drain, a suspend, a begin and a release, and checks the admission rule (A19)
 // when it fires. The failure-rate guard reads the finished slice's outcome before another slice is bought. `suspend` / `wake` are the engine's side of `host.power`.
 // A job that ends in a way the table has no row for (an INTERNAL, any code not listed) holds the launch as `internal { job-failed }` with the job's own words (S4.6r); «Продолжить» runs it again.
-// `#stuck` is left for a state that is no job's end (a defect of the steps themselves): a warning in the console, nothing sent.
+// `#stuck` is for a state that is no job's end (a defect of the steps themselves): a warning in the console and the same `internal { job-failed }` hold with the reason's words (S4.10), so the launch rests,
+// the host's blocker is released and «Продолжить» retries. An exception out of a pass does the same (`#start`). A job this process soft-stopped itself (a pause, a stop, a sleep) that ends `cancelled` is no defect.
 
 /** The steps' timers (the bounded automatic continues, the wait for a busy avatar): injectable so a test owns the clock. The default is the global `setTimeout`, NOT unref'd: a drain waits on these. */
 const REAL_TIMERS: StepTimers = { set: (run, ms) => setTimeout(run, ms), clear: (handle) => clearTimeout(handle) };
@@ -65,8 +66,11 @@ const DEFAULT_RETRY_MS = 3_000;
 const MAX_MOVES = 12;
 
 type SetRead = { kind: "set"; set: StoredSceneSet } | { kind: "missing" } | { kind: "unreadable" };
-/** What a compose, a «Дописать» or an approval came to: "ran" a job started and ended; "busy" the avatar is held by another job; "retry" read the set again; "end" stop this pass. */
-type Move = "ran" | "busy" | "retry" | "end";
+/**
+ * What a compose, a «Дописать» or an approval came to: "ran" a job started and ended; "busy" the avatar is held by another job; "open-set" the OWNER has an open scene set of their own for the
+ * avatar (S4.10 L3); "retry" read the set again; "end" stop this pass.
+ */
+type Move = "ran" | "busy" | "open-set" | "retry" | "end";
 
 const isFailure = (error: unknown, code: string): error is EngineFailure => error instanceof EngineFailure && error.error.code === code;
 /** The engine refused because the launch cannot pay now (paused, stopping, held): not a failure and not a busy avatar. The launch's own state will wake the steps again. */
@@ -175,6 +179,12 @@ export class PaidSteps implements LaunchSteps {
   readonly #pending = new Set<Arm>();
   /** Waits (a busy avatar) that a drain, a suspend or a stop must be able to end early. */
   readonly #sleepers = new Set<() => void>();
+  /** The waits that listen for one avatar's scene sets (S4.10 L3: an avatar that waits for the owner's open set), by avatar id. They are in `#sleepers` too. */
+  readonly #topicSleepers = new Map<string, Set<() => void>>();
+  /** S4.10 M-1: the set ids and run ids THIS process soft-stopped (`#softStopAll`: a pause, a stop, a sleep). Such a job that ends `cancelled`, even after the launch runs again, is the soft stop's end and no defect. Cleared by `begin`. */
+  readonly #softStopped = new Set<string>();
+  /** S4.10 M-3: the avatars (`<launchId>:<avatarId>`) in an «open-set» episode: the row and the log line are written once, the poll writes nothing and claims nothing. */
+  readonly #openSetKeys = new Set<string>();
   /** `host.power` `suspend`: the Mac sleeps. Nothing is sent and no timer is held until `wake` (or the owner's own `begin`). */
   #suspended = false;
 
@@ -188,6 +198,8 @@ export class PaidSteps implements LaunchSteps {
     // A begin is the owner's «Продолжить» (or the start): the Mac is awake, and a wait for an automatic continue is over (the owner took over).
     this.#suspended = false;
     this.#cancelTimers();
+    // The soft-stop marks are NOT cleared here: a job a sleep soft-stopped may still end `cancelled` after this click (a lost resume, or a hold the owner
+    // continues), and it must read as the asked-for stop it was. Each mark is one-shot and is dropped before the same id starts again (S4.10 fix A, N-1).
     this.#ctxs.set(ctx.launchId, ctx);
     this.#subscribe();
     this.#restart(ctx);
@@ -341,12 +353,20 @@ export class PaidSteps implements LaunchSteps {
       return;
     }
     const pass = this.#drive(ctx, avatarId)
-      .catch((error: unknown) => {
+      .catch(async (error: unknown) => {
         this.#warn(`studio engine: the paid path of avatar ${avatarId} stopped (${error instanceof Error ? error.message : typeof error})`);
+        // S4.10 M-4: an exception out of the pass (the library not confirmed for a moment, a draw that threw) is a failed job like any other: it goes through the table, so a launch that runs is never
+        // left with no hold. A launch that no longer runs is left alone (`#raise` checks): the resume meets the same state.
+        try {
+          await this.#raise(ctx, avatarId, `${avatarId}:pass`, error);
+        } catch (raising) {
+          this.#warn(`studio engine: the stop of avatar ${avatarId}'s paid path could not be recorded (${raising instanceof Error ? raising.name : typeof raising})`);
+        }
       })
       .finally(() => {
         this.#workers.delete(key);
         this.#busyKeys.delete(key);
+        this.#openSetKeys.delete(key);
         const next = this.#again.get(key);
         this.#again.delete(key);
         if (next !== undefined) this.#start(next, avatarId);
@@ -364,6 +384,10 @@ export class PaidSteps implements LaunchSteps {
       if (move === "end") return false;
       if (move === "busy") {
         await this.#busy(ctx, avatarId);
+        moves -= 1;
+      }
+      if (move === "open-set") {
+        await this.#openSet(ctx, avatarId);
         moves -= 1;
       }
       if (move === "ran") ranJob = true;
@@ -404,7 +428,7 @@ export class PaidSteps implements LaunchSteps {
       // Review OFF: the approval follows the compose at once, so the owner cannot rewrite or redraw in between (§19).
       if (!(await settle(await this.#approve(ctx, row, set)))) return;
     }
-    this.#stuck(avatarId, "the pass made too many moves");
+    await this.#stuck(ctx, avatarId, "the pass made too many moves");
   }
 
   // ---------- compose and «Дописать» ----------
@@ -416,13 +440,15 @@ export class PaidSteps implements LaunchSteps {
     const count = split.reduce((sum, s) => sum + s.count, 0);
     const key = this.#key(ctx.launchId, row.avatarId);
     return this.#inLane("compose", async () => {
-      if (!this.#busyKeys.has(key)) {
+      // Not again inside a busy or an open-set episode (S4.10 M-3): the row already says why it waits, and a repeat would write the file and the log on every retry.
+      if (!this.#busyKeys.has(key) && !this.#openSetKeys.has(key)) {
         await this.#setPhase(ctx, row.avatarId, "composing");
         await this.#log(ctx, { at: this.#now(), kind: "scenes-writing", avatarId: row.avatarId, scenes: count });
       }
       // No await between the check and the call: the set's live entry (and with it the soft stop) exists before the call's first await.
       if (!this.#mayPay(ctx)) return "end";
       const port = this.#d.port();
+      this.#softStopped.delete(generation.sceneSetId);
       this.#liveSets.add(generation.sceneSetId);
       this.#starting += 1;
       let started: { jobId: string | null };
@@ -443,6 +469,7 @@ export class PaidSteps implements LaunchSteps {
       // The start has returned: a soft stop that found no job before this instant is sent again.
       if (!ctx.isRunning()) port.softStopScenes(generation.sceneSetId);
       this.#busyKeys.delete(key);
+      this.#openSetKeys.delete(key);
       try {
         await this.#setPhase(ctx, row.avatarId, "composing");
         if (started.jobId !== null) await port.whenSceneSetIdle(generation.sceneSetId);
@@ -458,7 +485,7 @@ export class PaidSteps implements LaunchSteps {
     const generation = row.generation;
     const port = this.#d.port();
     const budget = port.budget;
-    if (generation === null || budget === null) return this.#stuck(row.avatarId, "the ledger cannot be read");
+    if (generation === null || budget === null) return this.#stuck(ctx, row.avatarId, "the ledger cannot be read");
     const key = this.#key(ctx.launchId, row.avatarId);
     return this.#inLane("compose", async () => {
       if (!this.#busyKeys.has(key)) await this.#setPhase(ctx, row.avatarId, "composing");
@@ -469,6 +496,7 @@ export class PaidSteps implements LaunchSteps {
         return "end";
       }
       if (!this.#mayPay(ctx)) return "end";
+      this.#softStopped.delete(generation.sceneSetId);
       this.#liveSets.add(generation.sceneSetId);
       this.#starting += 1;
       try {
@@ -501,11 +529,21 @@ export class PaidSteps implements LaunchSteps {
   async #sceneStepStopped(ctx: LaunchStepsContext, avatarId: string, set: StoredSceneSet): Promise<void> {
     if (!ctx.isRunning()) return;
     const write = set.write;
+    const jobKey = `${set.sceneSetId}:scenes`;
     if (write?.stoppedBy === "failed" && write.stoppedError !== undefined) {
-      await this.#raise(ctx, avatarId, `${set.sceneSetId}:scenes`, write.stoppedError, { sceneSetId: set.sceneSetId });
+      await this.#raise(ctx, avatarId, jobKey, write.stoppedError, { sceneSetId: set.sceneSetId });
       return;
     }
-    this.#stuck(avatarId, `the scenes of the set are not all written (the write stopped: ${write?.stoppedBy ?? "no record"})`);
+    // S4.10 M-2: the real store names a drop or a refusal by `stoppedBy` alone and keeps NO error for it (`stoppedByOf`, `withWriteStopped`). They are the no-answer rule of §4.6 (the 1 and 5 minute
+    // continues, then the `network` hold of A19), not a state this file has no rule for.
+    const dropCode = write?.stoppedBy === "network" || write?.stoppedBy === "provider-error" ? "NETWORK" : write?.stoppedBy === "timeout" ? "TIMEOUT" : write?.stoppedBy === "rate-limited" ? "RATE_LIMITED" : undefined;
+    if (dropCode !== undefined) {
+      await this.#raise(ctx, avatarId, jobKey, { code: dropCode, detail: `the scene write stopped: ${write?.stoppedBy}` }, { sceneSetId: set.sceneSetId });
+      return;
+    }
+    // S4.10 M-1: a soft stop this process asked for (a pause, a stop, a sleep) that the store records as `cancelled` and that is read only after the launch runs again: no hold, the pass runs anew.
+    if (write?.stoppedBy === "cancelled" && this.#softStopped.delete(set.sceneSetId)) return;
+    await this.#stuck(ctx, avatarId, `the scenes of the set are not all written (the write stopped: ${write?.stoppedBy ?? "no record"})`);
   }
 
   async #awaitReview(ctx: LaunchStepsContext, avatarId: string, set: StoredSceneSet): Promise<void> {
@@ -529,8 +567,36 @@ export class PaidSteps implements LaunchSteps {
       if (isFailure(error, "SCENES_CHANGED")) return "retry";
       if (isNotPayable(error)) return "end";
       if (isFailure(error, "IN_FLIGHT")) return "busy";
-      return this.#stuck(row.avatarId, `the set could not be approved (${error instanceof EngineFailure ? (error.error.sceneReason ?? error.error.code) : "unknown"})`);
+      if (isFailure(error, "VALIDATION") && error.error.sceneReason === "no-active-scenes") {
+        // S4.10 M2, path 2: review OFF and no scene has text. By now no chunk has an attempt left (the pass wrote until `#pendingWrites` was 0), so another click would meet the same answer: holding
+        // would trap the launch under a «Продолжить» that cannot work. The avatar's generated videos have no photos to get: they are dropped, and the avatar's library videos go on.
+        await this.#dropUnphotographed(ctx, row.avatarId);
+        return "end";
+      }
+      return this.#stuck(ctx, row.avatarId, `the set could not be approved (${error instanceof EngineFailure ? (error.error.sceneReason ?? error.error.code) : "unknown"})`);
     }
+  }
+
+  /** The avatar's paid path has no photo to give: its generated videos that wait for photos are dropped as `not-enough-photos`, and the row goes to the montage (the free path's, for what is left). */
+  async #dropUnphotographed(ctx: LaunchStepsContext, avatarId: string): Promise<void> {
+    this.#warn(`studio engine: avatar ${avatarId} has no scene with text to draw; its generated videos are dropped as not-enough-photos`);
+    const dropped = { videos: 0, photos: 0 };
+    await this.#rewrite(ctx, (file) => {
+      dropped.videos = 0;
+      dropped.photos = 0;
+      return this.#patchRow(file, avatarId, (a) => ({
+        ...a,
+        videos: a.videos.map((v) => {
+          if (v.source !== "generated" || !(v.state === "planned" || v.state === "waiting-photos")) return v;
+          dropped.videos += 1;
+          dropped.photos += v.size;
+          return { ...v, state: "dropped" as const, dropReason: "not-enough-photos" as const };
+        }),
+      }));
+    });
+    // The owner is told, like the free path's own drop for want of photos (`degrade`): how many videos went and how many photos they needed.
+    if (dropped.videos > 0) await this.#log(ctx, { at: this.#now(), avatarId, kind: "degrade", fewerVideos: dropped.videos, missingPhotos: Math.max(1, dropped.photos) });
+    await this.#setPhase(ctx, avatarId, "montage");
   }
 
   // ---------- slices ----------
@@ -561,7 +627,7 @@ export class PaidSteps implements LaunchSteps {
       const set = read.kind === "set" ? read.set : null;
       const draw = set?.launchDraw;
       if (set === null || draw === undefined) {
-        this.#stuck(avatarId, "the approved set cannot be read");
+        await this.#stuck(ctx, avatarId, "the approved set cannot be read");
         return "done";
       }
       limit = Math.max(40, draw.sceneIds.length * 4 + 20);
@@ -619,7 +685,7 @@ export class PaidSteps implements LaunchSteps {
       if (drawn.sceneIds.length < requested) await this.#log(ctx, { at: this.#now(), kind: "price-shrink", avatarId, fromPhotos: requested, toPhotos: drawn.sceneIds.length });
       await this.#log(ctx, { at: this.#now(), kind: "slice-start", avatarId, index, total: Math.max(index, Math.ceil(draw.sceneIds.length / SLICE_MAX_PHOTOS)), photos: drawn.sceneIds.length, capMicros: drawn.capMicros });
     }
-    this.#stuck(avatarId, "the draw made too many moves");
+    await this.#stuck(ctx, avatarId, "the draw made too many moves");
     return "done";
   }
 
@@ -638,7 +704,7 @@ export class PaidSteps implements LaunchSteps {
     await this.#composeSettled();
     if (!this.#mayPay(ctx)) return "end";
     const room = port.monthRoom(live);
-    if (room === null) return this.#stuck(row.avatarId, "the ledger cannot be read");
+    if (room === null) return this.#stuck(ctx, row.avatarId, "the ledger cannot be read");
     const scopes: LaunchScopeMoney[] = [];
     for (const entry of set.launchDraw?.slices ?? []) {
       const status = statuses.get(entry.runId);
@@ -678,6 +744,7 @@ export class PaidSteps implements LaunchSteps {
   async #runSlice(ctx: LaunchStepsContext, row: FileAvatar, set: StoredSceneSet, runId: string, status: SliceStatus | undefined): Promise<"again" | "spent" | "busy" | "end"> {
     const port = this.#d.port();
     if (!this.#mayPay(ctx)) return "end";
+    this.#softStopped.delete(runId);
     this.#liveRuns.add(runId);
     let started: Awaited<ReturnType<PaidPort["startLaunchSlice"]>>;
     try {
@@ -717,7 +784,11 @@ export class PaidSteps implements LaunchSteps {
     }
     // A soft stop (a pause, a stop, a sleep) ends the run cancelled with its slots open: «Продолжить» or the wake-up resumes it.
     if (!ctx.isRunning()) return "end";
-    if (end.status === "cancelled") return this.#stuck(row.avatarId, "the slice was cancelled and nothing asked for a stop");
+    if (end.status === "cancelled") {
+      // S4.10 M-1: a stop this process asked for (a sleep's soft stop included) that ended AFTER the launch ran again is that stop's end: the pass ends, `#again` runs it anew, no hold.
+      if (this.#softStopped.delete(runId)) return "end";
+      return this.#stuck(ctx, row.avatarId, "the slice was cancelled and nothing asked for a stop");
+    }
     const cause = causeOf(end.error.code);
     if (cause.kind === "cap") return "spent";
     if (cause.kind === "budget") return this.#budgetStopped(ctx, row, set, runId, true);
@@ -728,21 +799,30 @@ export class PaidSteps implements LaunchSteps {
    * The month has no room for the slice's next attempt (refused at its start, or mid-run as a `limit` that ended it): `paidHold { budget }` for a resume, naming the room the resume needs
    * (`Engine.resumeSliceHold`). Mid-run the log says how far the slice got («бюджет месяца закончился»).
    */
-  async #budgetStopped(ctx: LaunchStepsContext, row: FileAvatar, set: StoredSceneSet, runId: string, midRun: boolean): Promise<"end"> {
+  async #budgetStopped(ctx: LaunchStepsContext, row: FileAvatar, set: StoredSceneSet, runId: string, midRun: boolean): Promise<"end" | "spent"> {
     const port = this.#d.port();
+    let detail: BudgetHoldDetail;
+    // Only the READ of the hold is guarded: a failed write below (the log, the hold) is not a verdict on the slice and is not reclassified (S4.10 L4); it goes to the pass's own catch (M-4).
     try {
-      const detail = await port.resumeSliceHold(runId, await this.#liveSlices(ctx));
-      if (midRun) {
-        const total = set.launchDraw?.slices.find((entry) => entry.runId === runId)?.sceneIds.length ?? 0;
-        const left = (await port.sliceStatuses(set)).get(runId);
-        const open = left !== undefined && !left.finished ? (left.openSlots ?? total) : 0;
-        await this.#log(ctx, { at: this.#now(), kind: "budget-ended", avatarId: row.avatarId, done: Math.max(0, total - open), total });
-      }
-      await this.#hold(ctx, row.avatarId, { reason: "budget", at: this.#now(), detail });
-      return "end";
-    } catch {
-      return this.#stuck(row.avatarId, "the month has no room for the slice and its hold could not be read");
+      detail = await port.resumeSliceHold(runId, await this.#liveSlices(ctx));
+    } catch (error) {
+      // S4.10 M2, path 1: the hold could not be read. By WHY (the engine's `#remaining` is the one that refuses): the slice's own cap cannot fund a resume (RUN_CAP_EXCEEDED), or every slot of it has
+      // ended (read from the slice's STATUS, not from the words of the error), so the slice is spent and cap-ended (another slot hit the cap while the month ended the run): the pass goes on without it.
+      // A price list that cannot load is the price hold with its retry. Anything else is a failed job like any other: an internal hold with the job's words, never a launch that runs with no hold.
+      if (!ctx.isRunning()) return "end";
+      if (isFailure(error, "RUN_CAP_EXCEEDED")) return "spent";
+      if (isFailure(error, "PRICE_UNAVAILABLE")) return this.#priceUnavailable(ctx, row.avatarId);
+      if (isFailure(error, "VALIDATION") && (await port.sliceStatuses(set).then((statuses) => statuses.get(runId)?.finished === true, () => false))) return "spent";
+      return this.#jobFailed(ctx, row.avatarId, error, codeOf(error), this.#now());
     }
+    if (midRun) {
+      const total = set.launchDraw?.slices.find((entry) => entry.runId === runId)?.sceneIds.length ?? 0;
+      const left = (await port.sliceStatuses(set)).get(runId);
+      const open = left !== undefined && !left.finished ? (left.openSlots ?? total) : 0;
+      await this.#log(ctx, { at: this.#now(), kind: "budget-ended", avatarId: row.avatarId, done: Math.max(0, total - open), total });
+    }
+    await this.#hold(ctx, row.avatarId, { reason: "budget", at: this.#now(), detail });
+    return "end";
   }
 
   // ---------- holds, waits, skips ----------
@@ -757,6 +837,9 @@ export class PaidSteps implements LaunchSteps {
   ): Promise<Move> {
     if (isNotPayable(error)) return "end";
     if (isFailure(error, "IN_FLIGHT")) return ctx.isRunning() ? "busy" : "end";
+    // S4.10 L3: the owner opened a scene set of their own for this avatar after the plan was made. Plan §3.8: that avatar waits as «open-set», the others go on. It is no failed job.
+    if (isFailure(error, "VALIDATION") && error.error.sceneReason === "open-set") return ctx.isRunning() ? "open-set" : "end";
+    this.#openSetKeys.delete(this.#key(ctx.launchId, row.avatarId));
     if (isFailure(error, "PRICE_CHANGED")) {
       const detail = await price();
       if (detail.leftMicros < detail.needMicros) {
@@ -823,7 +906,7 @@ export class PaidSteps implements LaunchSteps {
       case "price-unavailable":
         return this.#priceUnavailable(ctx, avatarId);
       case "avatar":
-        if (avatarId === null) return this.#stuck("the launch", `a launch-wide step met an avatar's refusal (${failureWords(error, code)})`);
+        if (avatarId === null) return this.#stuck(ctx, null, `a launch-wide step met an avatar's refusal (${failureWords(error, code)})`);
         await this.#skip(ctx, avatarId, cause.reason);
         return "end";
       case "budget": {
@@ -1081,20 +1164,53 @@ export class PaidSteps implements LaunchSteps {
   }
 
   /**
+   * The owner's own open scene set stands in the way of this avatar's compose (S4.10 L3): the row waits as «open-set» and the compose is asked again when a scene set of this avatar is announced
+   * (the owner finished it, used it, edited it: the engine's `scenes.changed`), or after the poll interval, which also covers a discard (that event does not pass through `onSetChanged`). Nothing is
+   * reserved or sent meanwhile; the compose's refusal is free. A drain, a suspend or a stop ends the wait at once.
+   */
+  async #openSet(ctx: LaunchStepsContext, avatarId: string): Promise<void> {
+    const key = this.#key(ctx.launchId, avatarId);
+    // One row write and one log line per episode (S4.10 M-3), like a busy avatar's.
+    if (!this.#openSetKeys.has(key)) {
+      this.#openSetKeys.add(key);
+      await this.#setPhase(ctx, avatarId, "waiting", { reason: "open-set" });
+      await this.#log(ctx, { at: this.#now(), kind: "open-set", avatarId });
+    }
+    // The poll is a free read of the avatar's set listing: nothing is written, claimed or logged. The compose (which claims the avatar, and whose claim could make the owner's own `runs.start` answer
+    // IN_FLIGHT) is called again only once the owner's set is gone. A read that fails keeps the wait (unreadable: fail closed). Without the read (a double) the compose itself is the poll.
+    const generation = this.#rowOf(ctx, avatarId).generation;
+    const port = this.#d.port();
+    for (;;) {
+      await this.#sleep(this.#d.retryMs ?? DEFAULT_RETRY_MS, avatarId);
+      if (!ctx.isRunning() || generation === null || port.hasOpenSet === undefined) return;
+      const open = await port.hasOpenSet(avatarId, generation.sceneSetId).catch(() => true);
+      // A pause, a stop, a suspend or a shutdown may have come while the read was out: no new sleep after it (N-2).
+      if (!open || !ctx.isRunning()) return;
+    }
+  }
+
+  /**
    * A wait that a drain, a suspend or a stop ends at once. Not `unref`ed: a drain waits on the pass that sleeps here, and with an unref'd timer Bun on Windows idles for ever with that drain's
    * promise pending (the same reason as freeSteps' `#sleep`). Nothing outlives the wait: it clears its own timer however it ends.
    */
-  #sleep(ms: number): Promise<void> {
+  #sleep(ms: number, topic?: string): Promise<void> {
     return new Promise<void>((resolve) => {
       const timers = this.#timers();
       const done = (): void => {
         this.#sleepers.delete(done);
+        if (topic !== undefined) this.#topicSleepers.get(topic)?.delete(done);
         timers.clear(handle);
         resolve();
       };
       const handle = timers.set(done, ms);
       this.#sleepers.add(done);
+      if (topic !== undefined) this.#topicSleepers.set(topic, (this.#topicSleepers.get(topic) ?? new Set()).add(done));
     });
+  }
+
+  /** Ends the waits that listen for this avatar (an owner's scene set of it was announced). */
+  #wakeTopic(topic: string): void {
+    for (const wake of [...(this.#topicSleepers.get(topic) ?? [])]) wake();
   }
 
   /** The avatar leaves the launch; its allocation stays (nothing is released). Only generated videos that have no photos yet are dropped: a library or a rendering video is the free path's. */
@@ -1116,9 +1232,15 @@ export class PaidSteps implements LaunchSteps {
     await this.#log(ctx, { at: this.#now(), kind: "skipped", avatarId, reason, ...(reason === "failure-rate" ? { failed: counts?.failed ?? 0, total: counts?.total ?? 0 } : {}) });
   }
 
-  /** An end the table has no row for (a defect, or a cause that is not this file's): the avatar stays where it is and nothing more is sent. */
-  #stuck(avatarId: string, why: string): "end" {
-    this.#warn(`studio engine: the paid path of avatar ${avatarId} waits: ${why}`);
+  /**
+   * A state that is no job's end (a defect, or a cause that is not this file's): it is told in the console and the launch HOLDS as `internal { job-failed }` with the reason's words (paths scrubbed,
+   * S4.10 M2). Before this the launch stayed `running` with no hold, so the host's power blocker was held for ever and nobody was told. A hold rests the launch, releases the blocker, notifies, and
+   * «Продолжить» runs the pass again. A launch that no longer runs (a pause, a stop, a sleep) is left alone: the resume meets the same state.
+   */
+  async #stuck(ctx: LaunchStepsContext, avatarId: string | null, why: string): Promise<"end"> {
+    this.#warn(`studio engine: the paid path of ${avatarId === null ? "the launch" : `avatar ${avatarId}`} waits: ${why}`);
+    if (!ctx.isRunning()) return "end";
+    await this.#hold(ctx, avatarId, { reason: "internal", at: this.#now(), detail: { kind: "job-failed", message: scrubPaths(why).slice(0, INTERNAL_HOLD_MESSAGE_MAX) } });
     return "end";
   }
 
@@ -1253,6 +1375,8 @@ export class PaidSteps implements LaunchSteps {
       const port = this.#d.port();
       if (port.onSetChanged === undefined) return;
       port.onSetChanged((set) => {
+        // S4.10 L3: any scene set of the avatar being announced (the owner's too) is a reason for an avatar that waits for the owner's open set to look again.
+        this.#wakeTopic(set.avatarId);
         if (set.launchId === undefined || !(this.#ctxs.has(set.launchId) || this.#restored.has(set.launchId))) return;
         this.#remember(set.launchId, set);
         this.#ctxs.get(set.launchId)?.touch();
@@ -1296,8 +1420,14 @@ export class PaidSteps implements LaunchSteps {
   /** The soft stop of «Пауза» and «Стоп»: every job of the launch, started or starting. Idempotent; a start that returns later is stopped by its own re-check. */
   #softStopAll(): void {
     const port = this.#d.port();
-    for (const sceneSetId of this.#liveSets) port.softStopScenes(sceneSetId);
-    for (const runId of this.#liveRuns) port.softStopRun(runId);
+    for (const sceneSetId of this.#liveSets) {
+      this.#softStopped.add(sceneSetId);
+      port.softStopScenes(sceneSetId);
+    }
+    for (const runId of this.#liveRuns) {
+      this.#softStopped.add(runId);
+      port.softStopRun(runId);
+    }
   }
 
   #notifyReady(): void {

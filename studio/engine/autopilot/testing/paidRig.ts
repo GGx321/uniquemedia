@@ -207,10 +207,31 @@ export class FakePort implements PaidPort {
     return this.room;
   }
 
+  /** S4.10: a test makes the engine's `resumeSliceHold` refuse (its `#remaining` throws RUN_CAP_EXCEEDED, PRICE_UNAVAILABLE, ...). */
+  resumeHoldError: Error | null = null;
+
   async resumeSliceHold(runId: string, extraLive: readonly unknown[] = []): Promise<BudgetHoldDetail> {
     this.calls.push("resumeSliceHold");
     this.holdArgs.push([runId, extraLive]);
+    if (this.resumeHoldError !== null) throw this.resumeHoldError;
     return { kind: "resume-slice", freeMicros: 0, needMicros: 100_000 };
+  }
+
+  /** S4.10 M-3: whether the owner has an open scene set of their own for the avatar now (a free read of the set listing; it claims nothing and writes nothing). */
+  ownerOpen: (avatarId: string) => boolean = () => false;
+  async hasOpenSet(avatarId: string, _exceptSetId: string): Promise<boolean> {
+    this.calls.push("hasOpenSet");
+    return this.ownerOpen(avatarId);
+  }
+
+  /** S4.10: the engine's `onSetChanged`: every scene set it announces (the owner's too), here by `announce`. */
+  readonly setListeners = new Set<(set: StoredSceneSet) => void>();
+  onSetChanged(listener: (set: StoredSceneSet) => void): () => void {
+    this.setListeners.add(listener);
+    return () => void this.setListeners.delete(listener);
+  }
+  announce(set: StoredSceneSet): void {
+    for (const listener of [...this.setListeners]) listener(set);
   }
 
   admitted(): boolean {
@@ -245,7 +266,7 @@ export class FakePort implements PaidPort {
   }
 
   /** A set as a finished compose leaves it, linked to the launch. */
-  seed(over: { sceneSetId: string; runId: string; avatarId?: string; launchId: string; count?: number; written?: number; draw?: { sceneIds: number[]; slices?: { runId: string; sceneIds: number[]; capMicros: number }[] } }): StoredSceneSet {
+  seed(over: { sceneSetId: string; runId: string; avatarId?: string; launchId?: string; count?: number; written?: number; draw?: { sceneIds: number[]; slices?: { runId: string; sceneIds: number[]; capMicros: number }[] } }): StoredSceneSet {
     const base = sampleSet({ sceneSetId: over.sceneSetId, runId: over.runId, avatarId: over.avatarId ?? A, count: over.count ?? 10, written: over.written ?? over.count ?? 10 });
     const set = {
       ...base,

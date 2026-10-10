@@ -306,7 +306,7 @@ describe("PaidHold: a strict union by reason", () => {
 describe("LogLine", () => {
   test("the kinds are the 23 rows of the design's log sheet (the plan counted 22), the 13 more the artboards draw (holds, a busy avatar, a restart, scenes being written, a dropped render) the library-unknown wait (S4.6c2) and the free retry of a failed render (S4.6r)", () => {
     expect<string[]>([...LOG_KINDS].sort()).toEqual(Object.keys(LOG_SAMPLES).sort());
-    expect(LOG_KINDS.length).toBe(38);
+    expect(LOG_KINDS.length).toBe(39);
   });
 
   test.each(Object.keys(LOG_SAMPLES))("accepts a %s line and round-trips it", (kind) => {

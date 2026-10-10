@@ -81,6 +81,11 @@ export interface PaidPort {
   whenSceneSetIdle(sceneSetId: string): Promise<void>;
   /** Called with every scene set the engine announces (an owner's edit, a job's end, an approval); returns the way to stop. The paid steps keep the launch sets' mirrors from it. */
   onSetChanged?(listener: (set: StoredSceneSet) => void): () => void;
+  /**
+   * S4.10: whether the avatar has an open scene set other than `exceptSetId` (the launch's own): the owner's, which makes a compose refuse with `open-set`. A free read of the set listing that claims
+   * nothing and writes nothing, so an avatar that waits for the owner can poll it. Rejects when the listing cannot be read (the caller keeps waiting). Optional: a double without it makes the compose its own poll.
+   */
+  hasOpenSet?(avatarId: string, exceptSetId: string): Promise<boolean>;
   /** Releases the set from its launch by the phase it is in. */
   unlinkLaunchSet(sceneSetId: string): Promise<{ phase: UnlinkPhase }>;
 }

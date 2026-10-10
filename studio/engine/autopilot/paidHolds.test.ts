@@ -445,9 +445,17 @@ describe("§4.6: a scene step that fails (compose and the launch's own «Доп�
   function composeStopped(r: Rig, error: { code: ErrorCode; detail: string }): void {
     r.port.compose = async (_payload, ids) => {
       const set = r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH, written: 0 });
-      r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", stoppedBy: "failed", stoppedError: error } } as typeof set);
+      r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", ...realStop(error) } } as typeof set);
       return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
     };
+  }
+
+  /** How the real store records a stop (`stoppedByOf`, `withWriteStopped`): the drops and the provider's refusals are named by `stoppedBy` alone; only `failed` carries the error. */
+  function realStop(error: { code: ErrorCode; detail: string }): { stoppedBy: "network" | "timeout" | "rate-limited" | "failed"; stoppedError?: { code: ErrorCode; detail: string } } {
+    if (error.code === "NETWORK") return { stoppedBy: "network" };
+    if (error.code === "TIMEOUT") return { stoppedBy: "timeout" };
+    if (error.code === "RATE_LIMITED") return { stoppedBy: "rate-limited" };
+    return { stoppedBy: "failed", stoppedError: error };
   }
 
   test("a compose that stopped on INSUFFICIENT_CREDITS holds as «credits» and does not write again", async () => {
@@ -477,6 +485,42 @@ describe("§4.6: a scene step that fails (compose and the launch's own «Доп�
     expect(r.fileOf(launch.launchId).autoContinues).toEqual({ [`${SET1}:scenes`]: { drops: 1, continues: 1 } });
   });
 
+  test.each([
+    ["provider-error", "NETWORK"],
+    ["timeout", "TIMEOUT"],
+    ["rate-limited", "RATE_LIMITED"],
+  ] as const)("S4.10 M-2: a write the real store recorded as stopped by «%s» (no error kept) is a drop (%s): the first continue, not an internal hold", async (stoppedBy) => {
+    const timers = new FakeTimers();
+    const r = await rig({ steps: { timers, clock: () => timers.now } });
+    r.port.compose = async (_payload, ids) => {
+      const set = r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH, written: 0 });
+      r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", stoppedBy } } as typeof set);
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "network");
+    expect(hold.detail).toEqual({ drops: 1, attempt: 1, nextAt: timers.iso(MIN) });
+    expect(r.fileOf(launch.launchId).autoContinues).toEqual({ [`${SET1}:scenes`]: { drops: 1, continues: 1 } });
+  });
+
+  test("S4.10 M-2: the third drop of a scene step holds for a person as «network» with no retry (A19)", async () => {
+    const timers = new FakeTimers();
+    const r = await rig({ steps: { timers, clock: () => timers.now } });
+    r.port.compose = async (_payload, ids) => {
+      const set = r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH, written: 0 });
+      r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", stoppedBy: "network" } } as typeof set);
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    r.port.write = async () => ({ jobId: "job-write-0001" });
+    const launch = await r.start({ sceneReview: false });
+    await reachHold(r, launch.launchId, "network");
+    timers.advance(MIN);
+    await until(() => r.port.calls.filter((c) => c === "writeLaunchScenes").length === 1 && timers.pending() === 1, "the second drop and its wait");
+    timers.advance(5 * MIN);
+    await until(() => r.port.calls.filter((c) => c === "writeLaunchScenes").length === 2, "the third write");
+    await until(() => holdOf(r, launch.launchId)?.reason === "network" && (holdOf(r, launch.launchId)?.detail as { nextAt: string | null }).nextAt === null, "the hold for a person");
+  });
+
   test("a compose that stopped on INTERNAL holds as «internal» with the job's detail, and «Продолжить» writes the scenes again", async () => {
     const r = await rig();
     let broken = true;
@@ -496,10 +540,14 @@ describe("§4.6: a scene step that fails (compose and the launch's own «Доп�
       r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
       return { jobId: "job-write-0001" };
     };
+    // The pass goes on past the write (S4.10: an approval the double cannot answer is a stuck pass, which now holds the launch): the set is approved and has nothing to draw.
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => ({ kind: "none-left" });
     const held = (await r.orchestrator.get(launch.launchId)).launch;
     expect(held.resumeBlockedBy).toBeNull();
     await r.orchestrator.resume(launch.launchId, held.remainingMicros);
     await until(() => r.port.calls.includes("writeLaunchScenes"), "the scenes written again");
+    await until(() => r.port.calls.includes("drawLaunchSlice"), "the pass to go on to the draw");
     expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
@@ -631,7 +679,7 @@ describe("§4.6: a request that gets no answer continues by itself, twice, then 
     let composed = false;
     r.port.compose = async (_payload, ids) => {
       const set = r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH, written: composed ? 10 : 0 });
-      if (!composed) r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", stoppedBy: "failed", stoppedError: { code: "NETWORK", detail: "fetch failed" } } } as typeof set);
+      if (!composed) r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", stoppedBy: "network" } } as typeof set);
       composed = true;
       return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
     };
@@ -857,6 +905,56 @@ describe("host.power (plan §3.8): sleep stops new attempts, waking puts right w
     await until(() => starts() === 2, "the second start");
     expect(r.orchestrator.mayPay(launch.launchId)).toBe(true);
     await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+  });
+
+  test("S4.10 M-1: the Mac wakes BEFORE the soft-stopped slice ends: its cancelled end is the sleep's, no hold, and the slice is started again", async () => {
+    const { r, launch, ended, starts } = await inFlight();
+    await r.orchestrator.power("suspend");
+    await r.orchestrator.power("resume");
+    // The job ends cancelled only now, after the wake-up: the order the gate-before-resume test misses.
+    ended.resolve({ status: "cancelled" });
+    await until(() => starts() === 2, "the slice started again");
+    expect(holdOf(r, launch.launchId)).toBeNull();
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    expect(holdOf(r, launch.launchId)).toBeNull();
+  });
+
+  test("S4.10 M-1: a slice cancelled with nobody asking for a stop is still a defect that holds the launch", async () => {
+    const r = await rig();
+    drawnPath(r);
+    r.port.start = async (): Promise<LaunchSliceStart> => ({ kind: "started", jobId: "job-run-0001", ended: Promise.resolve({ status: "cancelled" } as RunJobEnd) });
+    const launch = await r.start({ sceneReview: false });
+    const hold = await reachHold(r, launch.launchId, "internal");
+    expect(hold.detail).toMatchObject({ kind: "job-failed", message: expect.stringContaining("cancelled") });
+  });
+
+  test("S4.10 M-1: the Mac wakes before a soft-stopped compose/«Дописать» ends cancelled: no hold, the scenes are written again", async () => {
+    const r = await rig();
+    const idleGate = deferred();
+    let live = false;
+    r.port.softScenes = () => live;
+    r.port.compose = async (_payload, ids) => {
+      live = true;
+      const set = r.port.seed({ sceneSetId: ids.sceneSetId, runId: ids.runId, launchId: LAUNCH, written: 0 });
+      // The soft stop is how the real store records it: `cancelled`, no error.
+      r.port.sets.set(ids.sceneSetId, { ...set, write: { k: 1, kind: "compose", jobId: "job-compose-0001", stoppedBy: "cancelled" } } as typeof set);
+      return { sceneSetId: ids.sceneSetId, jobId: "job-compose-0001" };
+    };
+    r.port.idleSet = () => idleGate.promise;
+    r.port.write = async () => {
+      r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH });
+      return { jobId: "job-write-0001" };
+    };
+    r.port.approve = async () => r.port.seed({ sceneSetId: SET1, runId: RUN1, launchId: LAUNCH, draw: { sceneIds: ALL } });
+    r.port.draw = async () => ({ kind: "none-left" });
+    const launch = await r.start({ sceneReview: false });
+    await until(() => live, "the compose in flight");
+    await r.orchestrator.power("suspend");
+    await r.orchestrator.power("resume");
+    idleGate.resolve();
+    await until(() => r.port.calls.includes("writeLaunchScenes"), "the scenes written again");
+    await until(() => r.fileOf(launch.launchId).avatars[0]?.phase === "montage", "the montage");
+    expect(holdOf(r, launch.launchId)).toBeNull();
   });
 
   test("a network that is still down after the wake-up shows as the next drop of the job, on the bounded continues", async () => {

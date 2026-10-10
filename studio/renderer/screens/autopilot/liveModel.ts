@@ -949,6 +949,8 @@ export function logText(line: LogLine, sceneReview: boolean): { text: string; to
       return { text: `нет ответа ${line.drops}-й раз · ждём сверки`, tone: "warn" };
     case "avatar-busy":
       return { text: "ждём: аватар занят вашей генерацией", tone: "warn" };
+    case "open-set":
+      return { text: "ждём: открыт ваш набор сцен", tone: "warn" };
     case "library-unknown":
       return { text: "ждём: не читается, какие фото свободны", tone: "warn" };
     case "app-restarted":

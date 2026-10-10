@@ -195,8 +195,18 @@ export class Orchestrator {
         const mirrorSets: MirrorSource[] = [];
         for (const row of launch.avatars) {
           // The sets' own `launchDraw.slices` name runs the launch file does not (§19): a slice run left out would reserve outside the group.
-          const listed = ended ? { sets: [] as readonly ListedSet[], unreadable: 0 } : await library.sceneSets.list(row.avatarId).catch((): { sets: readonly ListedSet[]; unreadable: number } => ({ sets: [], unreadable: 1 }));
-          if (listed.unreadable > 0) {
+          let listFailed = false;
+          const listed = ended
+            ? { sets: [] as readonly ListedSet[], unreadable: 0 }
+            : await library.sceneSets.list(row.avatarId).catch((): { sets: readonly ListedSet[]; unreadable: number } => {
+                listFailed = true;
+                return { sets: [], unreadable: 1 };
+              });
+          // S4.10 OQ1: a file of the avatar that cannot be read is only the launch's problem when it may be the launch's OWN set (the one `generation.sceneSetId` names, as `#launchSliceRuns` reads it, §25.1 M1).
+          // An old manual set that is broken cannot hold a slice of this launch. A listing that fails outright sees nothing of the avatar: cut. An unreadable file with the own set not among the readable ones
+          // may BE the own set (or the own set is not made yet): fail closed, as the paid path's `#readSet` does.
+          const ownReadable = row.generation === null || listed.sets.some((s) => s.sceneSetId === row.generation?.sceneSetId);
+          if (listFailed || (listed.unreadable > 0 && !ownReadable)) {
             // N1: an avatar whose sets cannot all be read has its WHOLE allocation counted as spent (below), so none of its sets or runs joins the group: its ledger lines would be counted twice.
             cut.push(row.avatarId);
             continue;
@@ -619,14 +629,14 @@ export class Orchestrator {
   async #completeStopOnce(launchId: string): Promise<LaunchFile> {
     // Frozen in a write of its own BEFORE the sets are let go (F1): from then on an edit of the owner's is no longer the launch's. A write that fails here releases nothing, and the repeated
     // «Стоп» (or the next start) tries again; one that succeeded stays whatever happens after the release.
-    await this.#freezeReviewWrites(launchId);
+    const frozen = await this.#freezeReviewWrites(launchId);
     try {
       await this.#d.steps.release(this.#ctx(launchId));
     } catch {
       // A launch whose sets could not be unlinked still ends: a stopped launch is no link at all (the unlinked rule), so nothing stays locked.
       this.#warn(`studio engine: launch ${launchId} could not release everything it held`);
     }
-    const spent = this.#finalSpent(launchId);
+    const spent = this.#endingSpent(launchId, frozen);
     const at = this.#nowIso();
     const ended = await this.#write(launchId, (f) => ({
       ...f,
@@ -634,11 +644,16 @@ export class Orchestrator {
       endedAt: at,
       activeSince: null,
       paused: null,
+      // A stopped launch holds nothing and waits for nothing (S4.10 LOW-3): the holds and the waiting rows are gone from the final file, as the mock's `completeStop` leaves them.
+      paidHold: null,
+      freeHold: null,
       spentMicros: spent,
-      avatars: f.avatars.map((a) => ({
-        ...a,
-        videos: a.videos.map((v) => (v.state === "done" || v.state === "dropped" ? v : { ...v, state: "dropped" as const, dropReason: "launch-stopped" as const })),
-      })),
+      avatars: f.avatars.map((a) =>
+        settledRow({
+          ...a,
+          videos: a.videos.map((v) => (v.state === "done" || v.state === "dropped" ? v : { ...v, state: "dropped" as const, dropReason: "launch-stopped" as const })),
+        }),
+      ),
     }));
     await this.#log(launchId, { at, kind: "stopped", spentMicros: spent });
     this.#d.groups.finish(launchId);
@@ -667,6 +682,10 @@ export class Orchestrator {
       }
       if (file.status === "stopping") {
         const ended = await this.#completeStop(launchId);
+        this.#announce(ended);
+      } else if (finishedBeforeTheEnd(file)) {
+        // S4.10 LOW-1: the finish froze its figures (F1) and every video was final when the process died before the `done` write. It is done, not paused: nothing is left to continue.
+        const ended = await this.#concludeDone(launchId, "paused");
         this.#announce(ended);
       }
     } catch (error) {
@@ -728,7 +747,28 @@ export class Orchestrator {
 
   #spentOf(file: LaunchFile): number {
     if (isEnded(file.status)) return file.spentMicros;
+    if (file.reviewWritesMicros !== undefined) return this.#frozenSpent(file);
     return this.#spentNow(file.launchId, file.spentMicros) + this.#unseenOf(file);
+  }
+
+  /**
+   * The sum of a launch whose figures are frozen (S4.10 M1): the file's own, which the freeze wrote while the Budget group still held every slice and the ledger could be read. After the release a
+   * restart rebuilds the group from what the sets still say, and the unlink has erased the slices from the sets, so the rebuilt group can only say something ELSE than the truth: it is not asked. (A
+   * `max` with it was tried and dropped: in the narrow windows after the release it could pick up spend that is not the launch's.)
+   */
+  #frozenSpent(file: LaunchFile): number {
+    return file.spentMicros;
+  }
+
+  /** The ledger's sum over the launch's Budget group; null when the ledger cannot say (no Budget, or it throws). */
+  #ledgerSum(launchId: string): number | null {
+    const budget = this.#d.budget();
+    if (budget === null) return null;
+    try {
+      return budget.committedOfGroup(launchGroupKey(launchId));
+    } catch {
+      return null;
+    }
   }
 
   /** An avatar whose scene set could not be read at open may have slices the ledger's group does not know: its whole allocation counts as spent (M3, N1). */
@@ -739,6 +779,7 @@ export class Orchestrator {
   /** The sum a launch ends with: the ledger's, and the unseen allocation of the avatars whose sets could not be read (N1). */
   #finalSpent(launchId: string): number {
     const file = this.#current?.launchId === launchId ? this.#current : null;
+    if (file !== null && file.reviewWritesMicros !== undefined) return this.#frozenSpent(file);
     return this.#spentNow(launchId) + (file === null ? 0 : this.#unseenOf(file));
   }
 
@@ -791,8 +832,20 @@ export class Orchestrator {
   }
 
   /** Writes the review-write figure into the launch file, once (a figure already there stands). Reads the fresh file and the ledger inside the store's write; rejects when the write does. */
-  async #freezeReviewWrites(launchId: string): Promise<void> {
-    await this.#write(launchId, (f) => (f.reviewWritesMicros !== undefined || isEnded(f.status) ? null : { ...f, reviewWritesMicros: this.#reviewWritesOf(f) }));
+  async #freezeReviewWrites(launchId: string): Promise<LaunchFile> {
+    // `spentMicros` is frozen with it (S4.10 M1): the ledger's sum over the group as it stands NOW, every slice still in it, plus the unseen allocation of a cut avatar. Only when the ledger can be
+    // read (L1): nothing is frozen from a guess, and a launch with an unreadable ledger ends on the file's last figure, as before. Returns the fresh file, frozen or not (L2).
+    return this.#write(launchId, (f) => {
+      if (f.reviewWritesMicros !== undefined || isEnded(f.status)) return null;
+      const sum = this.#ledgerSum(launchId);
+      if (sum === null) return null;
+      return { ...f, reviewWritesMicros: this.#reviewWritesOf(f), spentMicros: sum + this.#unseenOf(f) };
+    });
+  }
+
+  /** The sum a launch ends with, from the file the freeze returned when it is frozen (L2), else the ledger's. */
+  #endingSpent(launchId: string, frozen: LaunchFile): number {
+    return frozen.reviewWritesMicros !== undefined ? this.#frozenSpent(frozen) : this.#finalSpent(launchId);
   }
 
   // ---------- the file ----------
@@ -803,7 +856,10 @@ export class Orchestrator {
     const file = await store.update(launchId, (current) => {
       const next = change(current);
       if (next === null) return null;
-      return isEnded(next.status) ? next : { ...next, spentMicros: this.#spentNow(launchId, next.spentMicros) };
+      if (isEnded(next.status)) return next;
+      // A frozen file keeps its figure (the freeze's own write sets it, `#spentOf` above); the ledger is not asked again.
+      if (next.reviewWritesMicros !== undefined) return next;
+      return { ...next, spentMicros: this.#spentNow(launchId, next.spentMicros) };
     });
     if (this.#current?.launchId === launchId) this.#current = isEnded(file.status) ? null : file;
     this.#announce(file);
@@ -889,19 +945,28 @@ export class Orchestrator {
     if (flight.requests > 0 || flight.renders > 0) throw new Error(`launch ${launchId} still has work in flight (${flight.requests} requests, ${flight.renders} renders): it cannot finish`);
     // A pause (or a stop) that landed first wins: nothing is released for a launch that is not running now.
     if (this.#current?.launchId !== launchId || this.#current.status !== "running" || this.#pausing) throw new Error(`launch ${launchId} is not running: only a running launch finishes`);
-    // Frozen before the sets are let go, in a write of its own (F1): a final write that fails afterwards cannot fold the owner's later edits into the figure.
-    await this.#freezeReviewWrites(launchId);
+    return this.#concludeDone(launchId, "running");
+  }
+
+  /**
+   * The end of a launch that finished: the figures are frozen (F1), the sets are let go, `done` is written. `from` is the status the file must have: `running` for a finish, `paused` for one
+   * the restart found frozen and fully final (S4.10 LOW-1).
+   */
+  async #concludeDone(launchId: string, from: "running" | "paused"): Promise<LaunchFile> {
+    // Frozen before the sets are let go, in a write of its own (F1): a final write that fails afterwards cannot fold the owner's later edits into the figure, and (S4.10 M1) cannot lose the slices
+    // a restart can no longer find (the unlink erased them from the sets), because the freeze writes `spentMicros` with it.
+    const frozen = await this.#freezeReviewWrites(launchId);
     try {
       await this.#d.steps.complete?.(this.#ctx(launchId));
     } catch {
       this.#warn(`studio engine: launch ${launchId} could not release everything it held at its end`);
     }
-    const spent = this.#finalSpent(launchId);
+    const spent = this.#endingSpent(launchId, frozen);
     const now = this.#nowMs();
     const at = this.#nowIso();
     const done = await this.#write(launchId, (f) => {
-      if (f.status !== "running") throw new Error(`launch ${launchId} is ${f.status}: only a running launch finishes`);
-      return { ...closeActive(f, now), status: "done", endedAt: at, spentMicros: spent };
+      if (f.status !== from) throw new Error(`launch ${launchId} is ${f.status}: only a ${from} launch finishes here`);
+      return { ...closeActive(f, now), status: "done", endedAt: at, paused: null, paidHold: null, freeHold: null, spentMicros: spent, avatars: f.avatars.map(settledRow) };
     });
     const videosDone = done.avatars.reduce((sum, a) => sum + a.videos.filter((v) => v.state === "done").length, 0);
     await this.#log(launchId, { at, kind: "done", videosDone, videosPlanned: done.plan.videos });
@@ -1045,6 +1110,17 @@ export class Orchestrator {
 
 function wrongState(launchId: string, status: LaunchStatus, action: string): EngineFailure {
   return fail({ code: "VALIDATION", detail: `launch ${launchId} is ${status}: it cannot be asked to ${action} now` });
+}
+
+/** A row at the end of its launch waits for nothing: a waiting row has all its videos final, so it reads `done` (the mock's end leaves the same). */
+function settledRow(row: LaunchFile["avatars"][number]): LaunchFile["avatars"][number] {
+  return row.phase === "waiting" ? { ...row, phase: "done", waiting: null } : row;
+}
+
+/** A restart found the finish half done: the figures are frozen (F1) and every video is final. Nothing is left to continue. */
+function finishedBeforeTheEnd(file: LaunchFile): boolean {
+  if (file.status !== "paused" || file.reviewWritesMicros === undefined) return false;
+  return file.avatars.every((a) => a.videos.every((v) => v.state === "done" || v.state === "dropped"));
 }
 
 /** The file with the time of the work done so far added up and the clock stopped. */

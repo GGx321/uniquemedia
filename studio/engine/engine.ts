@@ -1484,6 +1484,11 @@ export class Engine {
     return this.#sceneSets.unlinkSet(sceneSetId);
   }
 
+  /** S4.10: whether the avatar has an open scene set besides the launch's own (a free read; see `SceneSetService.hasOpenSet`). */
+  hasOpenSet(avatarId: string, exceptSetId: string): Promise<boolean> {
+    return this.#sceneSets.hasOpenSet(avatarId, exceptSetId);
+  }
+
   /** Every scene set the engine announces from now on, to the listener (S4.6b1); returns the way to stop. */
   onSetChanged(listener: (set: StoredSceneSet) => void): () => void {
     this.#setListeners.add(listener);
