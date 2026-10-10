@@ -1,14 +1,14 @@
 {
   "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c (new plan from the pool rewrite; pose labels speak of the viewer): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
   "messages": {
-    "chunk1": "566184c8d20a17dd89d08e6953aba4a5bb38eead31089e3c0312b9db508d1c97",
-    "chunk1-empty": "f343e326a36dfc8a52a6890e76dd3d845278bf5af6b25e0e63ae08e4dad5a0de",
+    "chunk1": "03ddbe3572157db6c8117f4791952929254c6a36bcd58e3ade2ee2ca8b968fe2",
+    "chunk1-empty": "97ad713bbf86ecd3aa17e9723cabe2417986ec6b8fb86d397af3c1fdd63a5ade",
     "chunk2": "153c8e22065ac04e77332cbb5c136a3ba6bf0d7f1ae8da0415e7c518e02ff209",
     "chunk2-empty": "b24960ad40bdd99cb9301fe7e64b33da77296050f91ed1e2325da8d0e40669e0"
   },
   "bodies": [
-    "bb687add7f3417f14361e14876c58ef2ace50f2dd83fd63d8f8e6c0e68627bea",
-    "9e128f5ae31b91cbeef0571764f71e9d1832a3de1f4dae56d50d6a90b62d992f",
+    "6d97aa916ad32fe1b17c85f227f5c17327f940d2843efad0e7ba6d5e06f61f0c",
+    "b45e32b019ba471e87d88f40f32f46e7594b9e4e5ff48c112a4b48ae35da9ba5",
     "c30ea8732e1df9e534164c757ac8fdbf2720a2e2509bbd86df9c5ab6933eea04"
   ],
   "reserves": [
