@@ -170,6 +170,8 @@ const MOCK_IMPORT_TRAITS: AvatarTraits = {
 };
 
 type RunCategory = RunRequest["categories"][number];
+/** What an import's body proposal says the photo showed, per body key (S5.2d's dev-build seed). */
+type AvatarSummaryBodySeen = NonNullable<AvatarSummary["bodyProposal"]>["seen"];
 
 /**
  * T8b: the mock photo run's prices, in micro-dollars. One image attempt (always
@@ -268,6 +270,11 @@ export interface MockEngineOptions {
    * own video clip before «Мои» (3f.6) places one; off unless asked.
    */
   demoOwnVideo?: boolean;
+  /**
+   * S5.2d: with the `demo` preset, the dev build's «Внешность» shows every body state of .omc/stage5/design: Mia with a body set, Sofia with none, Ava
+   * and Kira with an import's body proposal waiting (a photo to the waist, and a face only); off unless asked.
+   */
+  demoBody?: boolean;
   scheduler?: Scheduler;
   /** Delay before each response; 0 answers on the next microtask. */
   latencyMs?: number;
@@ -985,6 +992,25 @@ export class MockEngine implements EngineBridge {
     if (options.preset === "demo" && options.demoVideos === true && options.photos === undefined) this.seedDemoVideos();
     if (options.preset === "demo" && options.seedOwnSticker === true) this.seedDemoOwnSticker();
     if (options.preset === "demo" && options.demoOwnVideo === true && options.photos === undefined) this.seedDemoOwnVideoClip();
+    if (options.preset === "demo" && options.demoBody === true && options.avatars === undefined) this.seedDemoBody();
+  }
+
+  /**
+   * S5.2d: the dev build's bodies, as the mockup draws them — Mia's set (11), Sofia without one (07), and two imports whose body proposal waits: Ava's
+   * photo to the waist (06: bust and figure seen, the rest not) and Kira's face only (05: nothing seen). Nothing is announced; built in a method, never
+   * at module load: the mock's demo data must not reach a release bundle.
+   */
+  private seedDemoBody(): void {
+    const at = new Date(START_OF_TIME - 86_400_000).toISOString();
+    const hidden: AvatarSummaryBodySeen = { height: "not-visible", legLength: "not-visible", legShape: "not-visible", bottomSize: "not-visible", bottomShape: "not-visible", bodyMarks: "not-visible" };
+    const patch: Record<string, Partial<AvatarSummary>> = {
+      Mia: {
+        body: { height: "average", bust: "medium", figure: "hourglass", legLength: "long", legShape: "slim", bottomSize: "medium", bottomShape: "round", bodyMarks: ["tattoo-ankle"] },
+      },
+      Ava: { bodyProposal: { values: { bust: "medium", figure: "hourglass" }, seen: { ...hidden, bust: "photo", figure: "photo" }, at } },
+      Kira: { bodyProposal: { values: {}, seen: { ...hidden, bust: "not-visible", figure: "not-visible" }, at } },
+    };
+    this.avatars = this.avatars.map((a) => ({ ...a, ...patch[a.name] }));
   }
 
   /**

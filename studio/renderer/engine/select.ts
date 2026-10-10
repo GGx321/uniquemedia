@@ -18,7 +18,7 @@ export function chooseEngineClient(dev: boolean, makeMock: () => EngineClient): 
  * holds a file of every kind with the drop zone's dialog scripted (3f.6, mockMineDemo.ts).
  */
 function demoMock(): EngineClient {
-  const engine = new MockEngine({ preset: "demo", demoVideos: true, demoOwnVideo: true, scheduler: realScheduler, latencyMs: 160, stepMs: 900, textDrawMs: 120 });
+  const engine = new MockEngine({ preset: "demo", demoVideos: true, demoOwnVideo: true, demoBody: true, scheduler: realScheduler, latencyMs: 160, stepMs: 900, textDrawMs: 120 });
   return withMineDemo(engine, mockEngineClient(engine));
 }
 

@@ -59,6 +59,9 @@ const FORBIDDEN_DEBUG_MARKERS = [
   // 3f.3b: the dev build's own video clip in the demo draft (the option and the method that seeds it): the mock is dev-only.
   "demoOwnVideo",
   "seedDemoOwnVideoClip",
+  // S5.2d: the dev build's body traits and import body proposals (the option and the method that seeds them): the mock is dev-only.
+  "demoBody",
+  "seedDemoBody",
   // 3f.6: the dev build's «Мои» (its seeded library and the drop zone's scripted dialog): the mock is dev-only.
   "withMineDemo",
   "mineDemoSeeds",
