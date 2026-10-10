@@ -3936,7 +3936,7 @@ export const GOLDEN: Record<string, string[]> = {
     "< ok check price {\"ordered\":true,\"priced\":true,\"source\":true}",
     "# an avatar the library does not have",
     "> avatars.estimateCheckDescriptor {\"avatarId\":\"avatar#4\"}",
-    "< error NOT_FOUND {}",
+    "< error NOT_FOUND {\"detail\":\"no avatar avatar#4 in the open library\"}",
     "# a payload with a stray field",
     "> avatars.estimateCheckDescriptor {\"avatarId\":\"avatar#1\",\"acceptedWorstMicros\":1}",
     "< error VALIDATION {}",
@@ -3944,7 +3944,7 @@ export const GOLDEN: Record<string, string[]> = {
   "checkDescriptor: the refusals that come before any spend are free, in the engine's order": [
     "# an avatar the library does not have",
     "> avatars.checkDescriptor {\"avatarId\":\"avatar#4\",\"acceptedWorstMicros\":10000000}",
-    "< error NOT_FOUND {}",
+    "< error NOT_FOUND {\"detail\":\"no avatar avatar#4 in the open library\"}",
     "# a worst case below the check's price: the owner must see the price again",
     "> avatars.checkDescriptor {\"avatarId\":\"avatar#1\",\"acceptedWorstMicros\":1}",
     "< error PRICE_CHANGED {}",
