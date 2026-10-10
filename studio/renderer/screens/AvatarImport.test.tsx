@@ -62,13 +62,13 @@ test("M1: the empty estimate state never mentions the wizard's own (nonexistent,
 });
 
 // Owner decision 2026-10-05 (personal-use app): an import makes no age check and asks for no AI-persona confirmation, so its estimate
-// caption names only the describe attempts.
-test("M1: the estimate's caption is the import's own — the describe attempts only, no age check, not avatar-creation wording", async () => {
+// caption names the describe attempts and (S5.0c, said since S5.2d: mockup 04) the descriptor check the price includes.
+test("M1: the estimate's caption is the import's own — the describe attempts and the check, no age check, not avatar-creation wording", async () => {
   setup();
   await openImport();
   await pickPhoto();
 
-  expect(await screen.findByText(/Описание по фото \(до 2 попыток\)/)).toBeTruthy();
+  expect(await screen.findByText(/Описание по фото \(до 2 попыток\) и сверка описания с фото\./)).toBeTruthy();
   expect(screen.queryByText(/проверка возраста/i) === null).toBe(true);
   expect(screen.queryByText(/Дескриптор и 4 портрета/) === null).toBe(true);
 });
@@ -242,4 +242,33 @@ test("H2: picking a larger photo after a small one drops the advice", async () =
   fireEvent.click(pickButton());
   await waitFor(() => expect(screen.getByText(/1024×1365/)).toBeTruthy());
   expect(adviceText()).toBeNull();
+});
+
+// S5.2d (mockup 04): before the paid click the screen says what the import reads — the body only when the photo shows it — and where it lands.
+test("04: «Что прочитает Studio» and «По фото лица тело не определить» appear with the picked photo, before anything is paid", async () => {
+  const { engine } = setup();
+  await openImport();
+  expect(screen.queryByText("Что прочитает Studio") === null).toBe(true);
+  expect(screen.queryByText("По фото лица тело не определить") === null).toBe(true);
+
+  await pickPhoto();
+  const reads = screen.getByText("Что прочитает Studio").parentElement;
+  expect(Array.from(reads?.querySelectorAll("li") ?? []).map((li) => li.textContent)).toEqual([
+    "лицо, волосы, глаза, приметы",
+    "тело — только если оно в кадре",
+    "сверит описание с фото",
+  ]);
+  const hint = screen.getByText("По фото лица тело не определить").closest(".notice");
+  expect(hint?.className).toContain("notice-info");
+  expect(hint?.textContent).toContain("Если на фото только лицо и плечи, рост, грудь, фигуру, ноги и попу после импорта выберете сами — или оставите «не задано».");
+  expect(screen.getByText("Дальше — страница аватара: тело и итог сверки.").className).toBe("field-hint");
+  expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(0);
+});
+
+test("04: a blocked import shows its reason in place of where it lands", async () => {
+  setup({ apiKey: { stored: false, last4: null, encryptionAvailable: true, rejected: false } });
+  await openImport();
+  await pickPhoto();
+  expect(screen.getByText("Нужен рабочий ключ OpenRouter — добавьте его в Настройках.").className).toBe("field-hint");
+  expect(screen.queryByText("Дальше — страница аватара: тело и итог сверки.") === null).toBe(true);
 });

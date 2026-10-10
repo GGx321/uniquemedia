@@ -40,7 +40,8 @@ interface EstimateCardProps {
 }
 
 function caption(variant: "avatar" | "import", repeat: boolean, imageAgeCheck: ImageAgeCheck | undefined): string {
-  if (variant === "import") return "Описание по фото (до 2 попыток). Худшая цена — это предел: дороже этот шаг не выйдет.";
+  // S5.0c put the check into the import's price; the caption says so (S5.2d, mockup 04).
+  if (variant === "import") return "Описание по фото (до 2 попыток) и сверка описания с фото. Худшая цена — это предел: дороже этот шаг не выйдет.";
   // Another batch: the descriptor is already paid for and this price is the
   // batch alone (avatars.estimateCandidates / the draft's own estimate) — not
   // the whole avatar's price used as a loose upper bound, so the caption must
