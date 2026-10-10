@@ -5,7 +5,7 @@
 
 import { formatUsd, MICROS_PER_DOLLAR, THIN_SPACE } from "../../shared/engine/usd";
 
-export { formatUsd, formatUsdTiered, MICROS_PER_DOLLAR, type Rounding } from "../../shared/engine/usd";
+export { formatUsd, formatUsdTiered, isFree, limitUsd, MICROS_PER_DOLLAR, type Rounding } from "../../shared/engine/usd";
 
 /**
  * "$0.01–0.04": an expected price to its worst case, sharing one "$" — or

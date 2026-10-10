@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { HOLDS, LOG_SAMPLES, drawingRow, libraryRow as fixtureLibraryRow, logLine, view as baseView } from "../../../shared/engine/autopilot.fixtures";
-import { LOG_KINDS, LaunchView, LogLine, PaidHold, type LaunchAvatarView } from "../../../shared/engine";
+import { EXPORT_UNAVAILABLE_REASONS_RU, LOG_KINDS, LaunchView, LogLine, PaidHold, type LaunchAvatarView } from "../../../shared/engine";
 import {
   askedView,
   avatarLine,
@@ -230,7 +230,9 @@ describe("the avatars' rows", () => {
     expect(skipped({ reason: "failure-rate", failed: 3, total: 5 })).toMatchObject({ phase: "пропущена: много неудачных фото", tone: "danger", action: { kind: "photos" } });
     expect(skipped({ reason: "master-unusable" })).toMatchObject({ phase: "пропущена: мастер-портрет не годится для проверки лица", action: { kind: "avatars", label: "Открыть аватар" } });
     expect(skipped({ reason: "archived" })).toMatchObject({ phase: "пропущена: аватар в архиве", action: null });
-    expect(skipped({ reason: "face-gate-unavailable" }).phase).toBe("пропущена: проверка лица недоступна");
+    // S4.10 fix C (M3): the face gate says what helps; the descriptor has words of its own.
+    expect(skipped({ reason: "face-gate-unavailable" })).toMatchObject({ phase: "пропущена: проверка лица недоступна — перезапустите Studio", action: null });
+    expect(skipped({ reason: "descriptor-invalid" })).toMatchObject({ phase: "пропущена: описание не проходит проверку", action: { kind: "avatars", label: "Открыть аватар" } });
     expect(skipped({ reason: "set-unreadable" }).phase).toBe("пропущена: набор сцен не читается");
   });
 
@@ -668,6 +670,85 @@ describe("S4.9d review LOWs on the card's money", () => {
     const over = spentBlock({ ...paused("owner", { inFlight: NONE, unsettled: { requests: 1, openMicros: 70_000 } }), plannedWorstMicros: 1_000_000, spentMicros: 1_400_000 });
     expect(over.settledPct + over.openPct).toBe(100);
     expect(over.openPct).toBe(5);
+  });
+});
+
+describe("S4.10 fix C: the skip reasons say what helps (M3)", () => {
+  const skippedOf = (reason: string) => launch({ avatars: [libraryRow(A), row(B, { phase: "skipped", skipped: { reason } as LaunchAvatarView["skipped"] })] });
+
+  test("descriptor-invalid: its own words, the rewrite on «Аватары», and «Открыть аватар»", () => {
+    const note = liveNote(skippedOf("descriptor-invalid"), "running", nameOf);
+    expect(note).toMatchObject({ title: "Sofia пропущена", tone: "warn", actions: [{ kind: "avatars", label: "Открыть аватар" }] });
+    expect(note?.text).toBe("Описание Sofia не проходит нынешнюю проверку — перепишите его на экране «Аватары». Новых фото Sofia в этом запуске не будет. Её доля предела не тратится.");
+    expect(note?.text).not.toContain("Проверка лица");
+    expect(logText(LogLine.parse(logLine("skipped", { reason: "descriptor-invalid", failed: undefined, total: undefined })), true)).toEqual({ text: "пропущена: описание не проходит проверку", tone: "danger" });
+  });
+
+  test("face-gate-unavailable: says to restart Studio, on the notice, the row and in the log", () => {
+    const note = liveNote(skippedOf("face-gate-unavailable"), "running", nameOf);
+    expect(note).toMatchObject({ title: "Sofia пропущена", actions: [] });
+    expect(note?.text).toBe("Проверка лица недоступна — новых фото Sofia в этом запуске не будет. Перезапустите Studio, чтобы проверка заработала снова. Её доля предела не тратится.");
+    expect(logText(LogLine.parse(logLine("skipped", { reason: "face-gate-unavailable", failed: undefined, total: undefined })), true).text).toBe("пропущена: проверка лица недоступна — нужен перезапуск Studio");
+  });
+});
+
+describe("S4.10 fix C round 1: the network hold words the automatic retries made (`attempt`), not the drops (UI LOW 8)", () => {
+  const stuck = (drops: number, attempt: number) =>
+    liveNote(launch({ paidHold: hold("network", { detail: { drops, attempt, nextAt: null } }), resumeBlockedBy: "network" }), "running", nameOf)?.text ?? "";
+
+  test("no retry made: the drops survive a reconcile and «Продолжить», so a third or a fourth drop under Q2 = Б claims no retry", () => {
+    expect(stuck(3, 0)).toStartWith("Связь пропала — платная часть ждёт.");
+    expect(stuck(4, 0)).toStartWith("Связь пропала — платная часть ждёт.");
+    expect(stuck(1, 0)).not.toContain("повтор");
+  });
+
+  test("retries made: the design's words for two (ApHoldNetwork), one in the singular", () => {
+    expect(stuck(3, 2)).toStartWith("Связь пропала 3 раза: 2 повтора (через 1 и 5 мин) не помогли — платная часть ждёт.");
+    expect(stuck(2, 1)).toStartWith("Связь пропала 2 раза: 1 повтор (через 1 мин) не помог — платная часть ждёт.");
+  });
+});
+
+describe("S4.10 fix C: the export folder's notice says the engine's reason (UI LOW 6)", () => {
+  const exportHeld = (exportReason: string) => launch({ freeHold: { reason: "export", at: "2026-10-08T14:02:00.000Z", detail: { exportReason, neededBytes: null, freeBytes: null } } });
+
+  test("overlaps, a newer marker and a damaged one: the engine's closed list of reasons, not the generic line", () => {
+    for (const reason of ["overlaps-library", "overlaps-work-folder", "newer-marker", "invalid-marker", "invalid-marker-with-records"] as const) {
+      const note = liveNote(exportHeld(reason), "running", nameOf);
+      expect(note?.title).toBe("Папка «Готовые видео» недоступна");
+      expect(note?.text).toBe(`${EXPORT_UNAVAILABLE_REASONS_RU[reason]} Фото рисуются дальше, видео подождут папку.`);
+      expect(note?.text).not.toContain("Studio не может записать в неё видео.");
+    }
+  });
+
+  test("a damaged marker once videos exist says not to delete it, and never advises deleting, moving or renaming it", () => {
+    const text = liveNote(exportHeld("invalid-marker-with-records"), "running", nameOf)?.text ?? "";
+    expect(text).toContain("Не удаляйте его");
+    expect(text).not.toMatch(/(?<!не )(удал|убер|сотр|переим|перенес|перемест)/i);
+  });
+
+  test("the design's own words stay for a missing folder, a file in its place and one that cannot be written", () => {
+    expect(liveNote(exportHeld("missing"), "running", nameOf)?.text).toBe("Диск отключён или папку переименовали. Фото рисуются дальше, видео подождут папку.");
+    expect(liveNote(exportHeld("not-a-directory"), "running", nameOf)?.text).toBe("На месте папки теперь файл. Фото рисуются дальше, видео подождут папку.");
+    expect(liveNote(exportHeld("not-writable"), "running", nameOf)?.text).toBe("В папку нельзя записать. Фото рисуются дальше, видео подождут папку.");
+  });
+});
+
+describe("S4.10 fix C: a hold names an avatar only when exactly one waits for it (UI LOW 9)", () => {
+  const waiting = (avatarId: string): LaunchAvatarView => row(avatarId, { phase: "waiting", waiting: { reason: "paid-hold" } });
+  const both = [waiting(A), waiting(B)];
+  const one = [libraryRow(A), waiting(B)];
+
+  test("budget: «Доделать партию Sofia» for one, no name for two", () => {
+    expect(liveNote(launch({ paidHold: hold("budget"), resumeBlockedBy: "budget", avatars: one }), "running", nameOf)?.text).toStartWith("Доделать партию Sofia: нужно до $1.05");
+    expect(liveNote(launch({ paidHold: hold("budget"), resumeBlockedBy: "budget", avatars: both }), "running", nameOf)?.text).toStartWith("Доделать партию: нужно до $1.05, свободно $0.18.");
+  });
+
+  test("a network retry and a failed job say «партия» and «задача» without a name when two wait", () => {
+    expect(liveNote(launch({ paidHold: hold("network"), avatars: both }), "running", nameOf)?.text).toStartWith("Запросы партии остались без ответа.");
+    expect(liveNote(launch({ paidHold: hold("network"), avatars: one }), "running", nameOf)?.text).toStartWith("Партия Sofia осталась без ответа.");
+    const failed = hold("internal", { detail: { kind: "job-failed" } });
+    expect(liveNote(launch({ paidHold: failed, avatars: both }), "running", nameOf)?.text).toStartWith("Платная задача закончилась ошибкой");
+    expect(liveNote(launch({ paidHold: failed, avatars: one }), "running", nameOf)?.text).toStartWith("Платная задача Sofia закончилась ошибкой");
   });
 });
 

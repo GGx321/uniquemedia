@@ -2,6 +2,7 @@ import { type RefObject, useCallback, useEffect, useLayoutEffect, useMemo, useRe
 import { MAX_LAUNCH_AVATARS, type CategoryRef, type LaunchMix, type LaunchPreview, type LaunchPreviewAvatar, type LaunchSummary, type LaunchView } from "../../shared/engine";
 import { useCategoryLibrary, useEngine, useEngineView } from "../engine/react";
 import { useNavigate } from "../navigation";
+import { Icon } from "../ui/Icon";
 import { ScreenTitle } from "../ui/ScreenTitle";
 import { AvatarColumn } from "./autopilot/AvatarColumn";
 import { lastLaunchLine, resultsDoneOf, statusTag } from "./autopilot/historyModel";
@@ -87,6 +88,24 @@ function LastLaunchCard({ summary, nameOf }: { summary: LaunchSummary; nameOf: (
       <button type="button" className="btn btn-s ap-last-go" onClick={() => navigate({ name: "launch", launchId: summary.launchId, from: "autopilot" })}>
         Результаты
       </button>
+    </section>
+  );
+}
+
+/**
+ * S4.10 fix C (UI LOW 1): the right column with no launch in the history (LaunchStates, «правая колонка без истории — вместо «Последний запуск»»; README
+ * decision 15): what to do for the first one.
+ */
+function NoLaunchesCard() {
+  return (
+    <section className="card ap-last ap-last-empty" aria-labelledby="ap-last-empty-title">
+      <span className="ap-empty-mark" aria-hidden="true">
+        <Icon name="bolt" size={20} strokeWidth={1.9} />
+      </span>
+      <h2 id="ap-last-empty-title" className="ap-empty-title">
+        Запусков пока не было
+      </h2>
+      <p className="faint ap-empty-text">Выберите аватаров слева и нажмите «Запустить» — здесь появится ход запуска.</p>
     </section>
   );
 }
@@ -308,6 +327,8 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
             />
           )}
           {launch === null && wide && last !== null && <LastLaunchCard summary={last} nameOf={knownName} />}
+          {/* Only once the history has answered with nothing at all: an entry that cannot be read is a launch too. */}
+          {launch === null && wide && history.state === "ready" && history.launches.length === 0 && history.unreadable.length === 0 && <NoLaunchesCard />}
         </PlanColumn>
       </div>
 

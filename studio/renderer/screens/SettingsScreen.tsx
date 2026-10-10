@@ -21,7 +21,16 @@ import {
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type SyncPhase } from "../engine/store";
 import { errorText } from "../lib/errors";
-import { EXPORT_UNAVAILABLE_TITLE, LIBRARY_RENDER_BUSY_TEXT, pickedNotice, refusedPickText, unavailableText, type PickedNotice } from "../lib/exportFolder";
+import {
+  EXPORT_UNAVAILABLE_TITLE,
+  LIBRARY_AUTOPILOT_BUSY_TEXT,
+  LIBRARY_RENDER_BUSY_TEXT,
+  launchHoldsLibrary,
+  pickedNotice,
+  refusedPickText,
+  unavailableText,
+  type PickedNotice,
+} from "../lib/exportFolder";
 import { countOf, monthName, NBSP, waitLabel } from "../lib/format";
 import { catalogueFreshMs, modelOptionLabel, photoPriceMicros, qualityOptionLabel } from "../lib/imageModels";
 import { dollarsInputValue, formatUsd, formatUsdRange, parseDollars, type DollarsParse } from "../lib/money";
@@ -883,14 +892,22 @@ function ImageModelRows({ settings }: { settings: Settings }) {
 
 function LibraryRow({ settings }: { settings: Settings }) {
   const { client, store } = useEngine();
+  const view = useEngineView();
   // A queued or running render is what holds the library folder then, and the generic text talks about paid requests.
-  const rendering = useEngineView().jobs.some((job) => job.kind === "render" && isActiveJob(job));
+  const rendering = view.jobs.some((job) => job.kind === "render" && isActiveJob(job));
+  // S4.10 fix C (M1): a launch that runs, pauses or stops holds it by its own check, its renders included. Read when the refusal comes, and kept with it: the
+  // words stay those of the refusal when the launch moves on afterwards.
+  const launchHolds = launchHoldsLibrary(view.autopilot);
+  const launchHoldsNow = useRef(launchHolds);
+  useEffect(() => {
+    launchHoldsNow.current = launchHolds;
+  });
   const inputId = useId();
   const issueId = useId();
   const [editing, setEditing] = useState(false);
   const [path, setPath] = useState(settings.libraryPath);
   const [issue, setIssue] = useState<string | null>(null);
-  const [error, setError] = useState<EngineError | null>(null);
+  const [error, setError] = useState<{ readonly error: EngineError; readonly launch: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function save(): Promise<void> {
@@ -910,7 +927,7 @@ function LibraryRow({ settings }: { settings: Settings }) {
       // The avatars and drafts belong to the folder: even the same path may
       // hold a library now that the engine could not open before.
       store.reload();
-    } else setError(reply.error);
+    } else setError({ error: reply.error, launch: reply.error.code === "IN_FLIGHT" && launchHoldsNow.current });
   }
 
   return (
@@ -985,7 +1002,14 @@ function LibraryRow({ settings }: { settings: Settings }) {
           {issue}
         </p>
       )}
-      {error && (error.code === "IN_FLIGHT" && rendering ? <Notice tone="danger">{LIBRARY_RENDER_BUSY_TEXT}</Notice> : <ErrorNotice error={error} />)}
+      {error &&
+        (error.launch ? (
+          <Notice tone="danger">{LIBRARY_AUTOPILOT_BUSY_TEXT}</Notice>
+        ) : error.error.code === "IN_FLIGHT" && rendering ? (
+          <Notice tone="danger">{LIBRARY_RENDER_BUSY_TEXT}</Notice>
+        ) : (
+          <ErrorNotice error={error.error} />
+        ))}
     </>
   );
 }

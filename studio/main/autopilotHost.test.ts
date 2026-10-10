@@ -497,6 +497,54 @@ describe("money in a notification is the card's: a ceiling rounds up, what is le
   });
 });
 
+describe("S4.10 fix C: the end of a launch in the card's one money rule (UI LOW 7)", () => {
+  const FREE = { acceptedMicros: 0, plannedWorstMicros: 0, plannedExpectedMicros: 0, spentMicros: 0, remainingMicros: 0 };
+  const endedWith = (status: "done" | "stopped", money: Record<string, unknown>): LaunchView => LaunchView.parse({ ...ended(status), ...money });
+
+  test("a free launch that ended says «бесплатный», as the card does, never «$0.000 из $0.000»", async () => {
+    for (const status of ["done", "stopped"] as const) {
+      const r = rig();
+      r.host.observe(changed(running));
+      r.host.observe(changed(endedWith(status, FREE)));
+      await settle();
+      expect(r.shown).toHaveLength(1);
+      expect(r.shown[0]?.body).not.toContain("$");
+      expect(r.shown[0]?.body).toEndWith("Запуск бесплатный.");
+    }
+  });
+
+  test("a launch planned free that still spent (an A2 breach) shows the engine's figures, «из $0», as the card does", async () => {
+    const r = rig();
+    r.host.observe(changed(running));
+    r.host.observe(changed(endedWith("done", { ...FREE, acceptedMicros: 0, spentMicros: 300_000 })));
+    await settle();
+    expect(r.shown[0]?.body).toBe("18 из 20 видео в «Готовых видео». Потрачено $0.30 из $0.");
+  });
+});
+
+describe("S4.10 fix C: the network notification words the automatic retries that were made, as the card does (UI LOW 8)", () => {
+  const networkHold = (drops: number, attempt: number) => idleRunning({ paidHold: { reason: "network", at: NOW, detail: { drops, attempt, nextAt: null } } });
+  const bodyOf = async (drops: number, attempt: number): Promise<string | undefined> => {
+    const r = rig();
+    r.host.observe(changed(networkHold(drops, attempt)));
+    await settle();
+    expect(r.shown.map((n) => n.title)).toEqual(["Автопилот ждёт: сверка"]);
+    return r.shown[0]?.body;
+  };
+
+  test("no automatic retry made (Q2 = Б, or a hold at once): never claims that retries failed, however many drops the job counts", async () => {
+    expect(await bodyOf(1, 0)).toBe("Нет ответа от OpenRouter: связь пропала. Сверьте расходы, потом «Продолжить».");
+    // Fix C round 1: the drops survive a reconcile and «Продолжить»; a fourth drop under Q2 = Б has made no retry either.
+    expect(await bodyOf(4, 0)).toBe("Нет ответа от OpenRouter: связь пропала. Сверьте расходы, потом «Продолжить».");
+  });
+
+  test("the retries made, counted: the design's words for two (HostStates), and one in the singular", async () => {
+    expect(await bodyOf(3, 2)).toBe("Нет ответа от OpenRouter: 2 повтора не помогли. Сверьте расходы, потом «Продолжить».");
+    expect(await bodyOf(4, 2)).toBe("Нет ответа от OpenRouter: 2 повтора не помогли. Сверьте расходы, потом «Продолжить».");
+    expect(await bodyOf(2, 1)).toBe("Нет ответа от OpenRouter: 1 повтор не помог. Сверьте расходы, потом «Продолжить».");
+  });
+});
+
 describe("the sleep", () => {
   /** Past the window in which a key-up from the shortcut that put the Mac to sleep still counts as nothing. */
   const pastIgnore = DEFAULT_HOST_POLICY.activityIgnoreMs + 1;

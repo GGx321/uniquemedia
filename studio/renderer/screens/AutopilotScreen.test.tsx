@@ -585,12 +585,17 @@ describe("«Стоп»", () => {
   test("a refused stop says why and offers «Стоп» again", async () => {
     const { engine } = await running();
     engine.failNext("autopilot.stop", { code: "VALIDATION", detail: "launch is stopping" });
+    const gets = callsOf(engine, "autopilot.get").length;
     fireEvent.click(screen.getByRole("button", { name: "Стоп" }));
     fireEvent.click(within(await screen.findByRole("alertdialog")).getByRole("button", { name: "Остановить" }));
     await flush();
     expect(screen.getByRole("heading", { level: 2, name: "Идёт запуск" })).toBeDefined();
     expect(screen.getByRole("button", { name: "Стоп" }).getAttribute("aria-disabled")).toBeNull();
-    expect(screen.getByRole("alert")).toBeDefined();
+    // S4.10 fix C (M2): the words of the refusal, not «Некорректные данные запроса.», and the launch read again.
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Состояние запуска уже изменилось — посмотрите карточку.");
+    expect(alert.textContent).not.toContain("Некорректные данные запроса.");
+    expect(callsOf(engine, "autopilot.get").length).toBeGreaterThan(gets);
   });
 });
 

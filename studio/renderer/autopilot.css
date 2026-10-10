@@ -1622,6 +1622,18 @@
   align-self: flex-start;
 }
 
+/* «Запусков пока не было» (S4.10 fix C, LOW 1): the column with no history, centred as the LaunchStates sheet draws it. */
+.ap-last-empty {
+  align-items: center;
+  padding: 36px 28px;
+  text-align: center;
+}
+
+.ap-last-empty .ap-empty-title,
+.ap-last-empty .ap-empty-text {
+  margin: 0;
+}
+
 /* «Выбраны на экране «Аватары»: 4» (ApFromMain), the ended card's «Результаты · N» / «Журнал», «Весь журнал» in the live card. */
 .ap-from-main {
   display: flex;

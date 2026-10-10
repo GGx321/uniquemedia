@@ -45,3 +45,23 @@ export function formatUsdTiered(micros: number, rounding: Rounding): string {
   assertMicros(micros);
   return formatUsd(micros, micros < TIERED_THREE_DECIMALS_BELOW ? 3 : 2, rounding);
 }
+
+// The one rule every place says a launch's money by (S4.9d; S4.10 fix C moved it here from the window so main's notification of a launch's end says what the
+// card says): the live card, the folded line at 1200, «Остановить запуск?», the history, a launch's page, «Последний запуск» and the notification. Only
+// formatting: the figures are the engine's (`spentMicros`, W′ = `plannedWorstMicros`), never computed here.
+
+/**
+ * A launch that paid for nothing AND spent nothing: «бесплатно» in place of «Потрачено $S из $W′». One with a W′ of 0 that still spent (an A2 breach, the
+ * orchestrator's own `paidHold { internal }`) is never called free: it shows the engine's figures, «$0.30 из $0».
+ */
+export function isFree(spentMicros: number, plannedWorstMicros: number): boolean {
+  return plannedWorstMicros === 0 && spentMicros === 0;
+}
+
+/**
+ * W′ after «из»: «$4.14», «$0.090», rounded up like every limit. A limit of 0 reads «$0» (S4.9c review N3): «из $0.000» would print three decimals of a
+ * sum that has none, which is what an A2 breach of a launch planned free shows.
+ */
+export function limitUsd(plannedWorstMicros: number): string {
+  return plannedWorstMicros === 0 ? "$0" : formatUsdTiered(plannedWorstMicros, "up");
+}
