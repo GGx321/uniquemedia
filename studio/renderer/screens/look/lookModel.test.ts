@@ -98,11 +98,39 @@ describe("when and «последняя»", () => {
 });
 
 describe("the proposal as an edit", () => {
-  test("a changed phrase is one strike and one insert, the rest kept", () => {
+  test("a changed phrase is one strike and one insert, the rest kept (the mockup's 10)", () => {
     const proposal = "24-year-old European woman with fair skin and grey-blue eyes, shoulder-length straight platinum-white hair with choppy layers and bangs, a small mole on the cheek";
     expect(written(wordDiff(TEXT, proposal))).toBe(
-      "24-year-old European woman with fair skin and grey-blue eyes, shoulder-length [-wavy blonde-]{+straight platinum-white+} hair{+ with choppy layers and bangs+}, a small mole on the cheek",
+      "24-year-old European woman with fair skin and grey-blue eyes, shoulder-length [-wavy blonde hair-]{+straight platinum-white hair with choppy layers and bangs+}, a small mole on the cheek",
     );
+  });
+
+  test("one kept word between two changes joins them; a kept phrase or a comma does not", () => {
+    expect(written(wordDiff("a red big hat on", "a blue big cap on"))).toBe("a [-red big hat-]{+blue big cap+} on");
+    expect(written(wordDiff("a red big wide hat on", "a blue big wide cap on"))).toBe("a [-red-]{+blue+} big wide [-hat-]{+cap+} on");
+    expect(written(wordDiff("brown eyes, long hair", "green eyes, short hair"))).toBe("[-brown-]{+green+} eyes, [-long-]{+short+} hair");
+  });
+
+  test("no strike or insert starts or ends with a space the two texts share", () => {
+    const cases: [string, string][] = [
+      ["24-year-old woman, wavy blonde hair, a mole", "24-year-old woman, straight platinum hair with bangs, a mole"],
+      ["25-year-old woman with hazel eyes and freckles", "25-year-old woman with green eyes and light freckles"],
+      ["a b c d e", "a x c y e"],
+      ["one two three", "uno dos three"],
+    ];
+    for (const [before, after] of cases) {
+      const parts = wordDiff(before, after);
+      for (let i = 0; i < parts.length - 1; i++) {
+        const [left, right] = [parts[i], parts[i + 1]];
+        // A strike followed by its insert: both end, or both start, with the same space only if it could have been kept.
+        if (left?.kind === "del" && right?.kind === "ins") {
+          expect(/\s$/.test(left.text) && /\s$/.test(right.text)).toBe(false);
+          expect(/^\s/.test(left.text) && /^\s/.test(right.text)).toBe(false);
+        }
+      }
+      expect(parts.filter((p) => p.kind !== "del").map((p) => p.text).join("")).toBe(after);
+      expect(parts.filter((p) => p.kind !== "ins").map((p) => p.text).join("")).toBe(before);
+    }
   });
 
   test("one word changed: one strike, one insert", () => {

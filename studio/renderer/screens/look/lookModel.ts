@@ -137,9 +137,11 @@ export interface DiffPart {
 const TOKEN = /\s+|[\p{L}\p{N}'-]+|[^\s\p{L}\p{N}'-]/gu;
 
 /**
- * The proposal against the text it was made from, as runs of kept, struck-out and inserted text («shoulder-length <del>wavy blonde</del>
- * <ins>straight platinum-white</ins> hair»). A longest common subsequence of the tokens; a lone space kept between two changes joins them, so a
- * changed phrase reads as one strike and one insert rather than a word-by-word ladder. Both texts are at most 600 chars (≈ 250 tokens).
+ * The proposal against the text it was made from, as runs of kept, struck-out and inserted text, the way the mockup's 10 draws it:
+ * «shoulder-length <del>wavy blonde hair</del> <ins>straight platinum-white hair with choppy layers and bangs</ins>, a small mole». A longest
+ * common subsequence of the tokens; then a kept run of at most one word (no punctuation) between two changes joins them, so a changed phrase reads
+ * as one strike and one insert rather than a word-by-word ladder, and the spaces a strike and its insert share at their edges stay kept text.
+ * Both texts are at most 600 chars (≈ 250 tokens).
  */
 export function wordDiff(before: string, after: string): DiffPart[] {
   const a = before.match(TOKEN) ?? [];
@@ -169,19 +171,73 @@ export function wordDiff(before: string, after: string): DiffPart[] {
       i++;
     }
   }
-  return groupRuns(absorbSpaces(steps));
+  return trimEdges(groupRuns(joinChanges(steps)));
 }
 
-/** A space kept between two changes belongs to both: struck out on one side and inserted on the other. */
-function absorbSpaces(steps: DiffPart[]): DiffPart[] {
+/** A kept run two changes may swallow: spaces only, or one word with its spaces — never a comma or another mark that divides the text. */
+const JOINABLE = /^\s*(?:[\p{L}\p{N}'-]+\s*)?$/u;
+
+/** A short kept run between two changes belongs to both: struck out on one side and inserted on the other. */
+function joinChanges(steps: DiffPart[]): DiffPart[] {
   const out: DiffPart[] = [];
-  steps.forEach((step, k) => {
-    const prev = steps[k - 1];
-    const next = steps[k + 1];
-    if (step.kind === "same" && /^\s+$/.test(step.text) && prev !== undefined && next !== undefined && prev.kind !== "same" && next.kind !== "same") {
-      out.push({ kind: "del", text: step.text }, { kind: "ins", text: step.text });
-    } else out.push(step);
-  });
+  let k = 0;
+  while (k < steps.length) {
+    const step = steps[k];
+    if (step === undefined) break;
+    if (step.kind !== "same") {
+      out.push(step);
+      k++;
+      continue;
+    }
+    let end = k;
+    let run = "";
+    for (let s = steps[end]; s?.kind === "same"; s = steps[++end]) run += s.text;
+    // Maximal runs: a step before `k` and one at `end` are both changes.
+    if (k > 0 && end < steps.length && JOINABLE.test(run)) out.push({ kind: "del", text: run }, { kind: "ins", text: run });
+    else out.push({ kind: "same", text: run });
+    k = end;
+  }
+  return out;
+}
+
+/** The longest run of spaces at the start (`end` false) or the end of a text. */
+function edgeSpace(text: string, end: boolean): string {
+  return (end ? /\s*$/u : /^\s*/u).exec(text)?.[0] ?? "";
+}
+
+/** The common prefix (or suffix) of two runs of spaces. */
+function shared(a: string, b: string, end: boolean): string {
+  let n = 0;
+  while (n < a.length && n < b.length && (end ? a[a.length - 1 - n] === b[b.length - 1 - n] : a[n] === b[n])) n++;
+  return end ? a.slice(a.length - n) : a.slice(0, n);
+}
+
+/** A strike and its insert that start or end with the same spaces give them back to the kept text around them. */
+function trimEdges(parts: DiffPart[]): DiffPart[] {
+  const out: DiffPart[] = [];
+  const keep = (text: string): void => {
+    if (text === "") return;
+    const last = out.at(-1);
+    if (last?.kind === "same") out[out.length - 1] = { kind: "same", text: last.text + text };
+    else out.push({ kind: "same", text });
+  };
+  for (let k = 0; k < parts.length; k++) {
+    const part = parts[k];
+    const next = parts[k + 1];
+    if (part === undefined) break;
+    if (part.kind === "same") keep(part.text);
+    else if (part.kind === "del" && next?.kind === "ins") {
+      const lead = shared(edgeSpace(part.text, false), edgeSpace(next.text, false), false);
+      const del = part.text.slice(lead.length);
+      const ins = next.text.slice(lead.length);
+      const trail = shared(edgeSpace(del, true), edgeSpace(ins, true), true);
+      keep(lead);
+      if (del.length > trail.length) out.push({ kind: "del", text: del.slice(0, del.length - trail.length) });
+      if (ins.length > trail.length) out.push({ kind: "ins", text: ins.slice(0, ins.length - trail.length) });
+      keep(trail);
+      k++;
+    } else out.push(part);
+  }
   return out;
 }
 

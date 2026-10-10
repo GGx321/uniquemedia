@@ -170,8 +170,9 @@ describe("10 · the description does not match", () => {
     expect(within(descCard()).getByText(`${PROPOSAL.length} / 600`).tagName).toBe("SPAN");
     const struck = Array.from(descCard().querySelectorAll("del.dx")).map(text);
     const inserted = Array.from(descCard().querySelectorAll("ins.dx")).map(text);
-    expect(struck).toEqual(["убрать: wavy chestnut"]);
-    expect(inserted).toEqual(["вставить: straight platinum-white", "вставить:  with bangs"]);
+    // One strike and one insert, as the mockup draws a changed phrase: the kept «hair» between two changes goes into both.
+    expect(struck).toEqual(["убрать: wavy chestnut hair"]);
+    expect(inserted).toEqual(["вставить: straight platinum-white hair with bangs"]);
     expect(text(descCard())).toContain("Сверка видит на фото: волосы — прямые платиновые с чёлкой.");
     expect(callsOf(engine, "avatars.editDescriptor")).toHaveLength(0);
   });
