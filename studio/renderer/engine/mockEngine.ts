@@ -921,7 +921,9 @@ export class MockEngine implements EngineBridge {
           }
         },
         openLaunchSet: (set) => this.sceneSets.add({ avatarId: set.avatarId, sceneSetId: set.sceneSetId, count: set.count, categories: set.categories, launchId: set.launchId }),
+        startLaunchCompose: (sceneSetId) => this.sceneSets.startLaunchCompose(sceneSetId),
         writeLaunchSet: (sceneSetId) => this.sceneSets.writeLaunchSet(sceneSetId),
+        endLaunchCompose: (sceneSetId, how) => this.sceneSets.endLaunchCompose(sceneSetId, how),
         freezeLaunchSet: (sceneSetId) => this.sceneSets.freezeLaunchSet(sceneSetId),
         releaseLaunchSet: (sceneSetId) => this.sceneSets.releaseLaunchSet(sceneSetId),
         launchSetRevision: (sceneSetId) => this.sceneSets.revisionOf(sceneSetId),
@@ -2046,6 +2048,7 @@ export class MockEngine implements EngineBridge {
    */
   private startLaunchSlice(slice: { launchId: string; avatarId: string; sceneSetId: string; index: number; photos: number; capMicros: number; category: CategoryRef; resume?: string }): string {
     const resumed = slice.resume === undefined ? undefined : this.runs.find((r) => r.runId === slice.resume);
+    if (slice.resume !== undefined && resumed === undefined) throw new Error(`startLaunchSlice: the run ${slice.resume} to take up again is not there`);
     if (resumed !== undefined) {
       const again: MockRunJob = { jobId: this.nextId("job"), runId: resumed.runId, avatarId: resumed.avatarId, status: "running", done: resumed.slots.filter((s) => s.end !== null).length, total: resumed.slots.length, error: null, reserveKeys: [], cancelTimers: [] };
       this.runJobs = [...this.runJobs, again];
@@ -2936,7 +2939,7 @@ export class MockEngine implements EngineBridge {
     const active = (j: { avatarId: string; status: JobState["status"] }): boolean => j.avatarId === avatarId && (j.status === "queued" || j.status === "running");
     // `exceptLaunch`: the question is the launch's own ("does ANOTHER job hold the avatar?"), so a slice job of a launch is not counted.
     const runs = opts.exceptLaunch === true ? this.runJobs.filter((j) => this.runs.find((r) => r.runId === j.runId)?.launchId === undefined) : this.runJobs;
-    return this.jobs.some(active) || runs.some(active) || this.sceneSets.liveFor(avatarId) || this.busyAvatars.has(avatarId);
+    return this.jobs.some(active) || runs.some(active) || this.sceneSets.liveFor(avatarId, { exceptLaunch: opts.exceptLaunch === true }) || this.busyAvatars.has(avatarId);
   }
 
   // ---------- «Удалить аватар» ----------

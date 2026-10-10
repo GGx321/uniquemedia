@@ -289,7 +289,7 @@ export class MockRun {
         dropped: topReason === undefined ? null : { count: dropped.length, reason: topReason },
         waitingMusic: work.slots.filter((s) => s.state === "waiting-music").length,
         // Disjoint, as the engine's mirror has them (plan §3.7): the scenes no slice has taken yet, and the open slots of the slices already begun.
-        undrawnScenes: drawing ? Math.max(0, work.toGenerate - Math.min(work.toGenerate, work.slices * LAUNCH_SLICE_MAX_PHOTOS)) : 0,
+        undrawnScenes: drawing || (work.phase === "approved-waiting" && this.#unfinished()) ? Math.max(0, work.toGenerate - Math.min(work.toGenerate, work.slices * LAUNCH_SLICE_MAX_PHOTOS)) : 0,
         resumableSlots: drawing ? this.#openSlots(work) : 0,
         drawAllocationMicros: generating ? work.toGenerate * this.#w.unit().photoWorstMicros : null,
       };
@@ -531,6 +531,7 @@ export class MockRun {
     if (step === "compose") {
       work.phase = "composing";
       this.#openSet(work);
+      if (work.setId !== null) this.#w.startLaunchCompose(work.setId);
       this.#log({ at: this.#at(), kind: "scenes-writing", avatarId: work.avatarId, scenes: work.toGenerate });
       this.#reserve("writer", work.avatarId, chunks * unit.writerChunkWorstMicros, true);
       return "moved";
@@ -560,11 +561,16 @@ export class MockRun {
     this.#w.openLaunchSet({ avatarId: work.avatarId, sceneSetId: work.setId, count: work.toGenerate, categories: this.#categories, launchId: this.#launch.launchId });
   }
 
-  /** The draw begins (the review's approval, or a compose with the review off): the set's scenes are frozen and the avatar draws. */
-  #startDraw(work: Work): void {
-    work.phase = "drawing";
+  /** The set's scenes are the launch's from the approval on, also an approval given in a pause: the engine writes the draw (`approveLaunchSet`) before it asks whether it may pay. */
+  #freeze(work: Work): void {
     work.frozen = true;
     if (work.setId !== null) this.#w.freezeLaunchSet(work.setId);
+  }
+
+  /** The avatar draws (a compose with the review off, the review's «Продолжить запуск», or «Продолжить» after an approval given in a pause). */
+  #startDraw(work: Work): void {
+    this.#freeze(work);
+    work.phase = "drawing";
   }
 
   /** Photos still to come in the slices begun: the open slots of the draw, which a resume could fill. */
@@ -1139,8 +1145,10 @@ export class MockRun {
   review(avatarId: string, paused: boolean): number | null {
     const work = this.#work.find((w) => w.avatarId === avatarId);
     if (work === undefined || work.phase !== "awaiting-review") return null;
-    if (paused) work.phase = "approved-waiting";
-    else this.#startDraw(work);
+    if (paused) {
+      this.#freeze(work);
+      work.phase = "approved-waiting";
+    } else this.#startDraw(work);
     this.#sync();
     if (!paused) this.#schedule(true);
     return work.toGenerate;
@@ -1150,6 +1158,7 @@ export class MockRun {
   processEnded(cause: "quit" | "engine-restart"): { requests: number } {
     this.#cancelAll();
     for (const work of this.#work) this.#closeSlice(work, "gone");
+    for (const work of this.#work) if (work.setId !== null && work.phase === "composing") this.#w.endLaunchCompose(work.setId, "gone");
     const requests = [...this.#open.values()].filter((r) => r.live).length;
     for (const reserve of this.#open.values()) reserve.live = false;
     for (const work of this.#work) {

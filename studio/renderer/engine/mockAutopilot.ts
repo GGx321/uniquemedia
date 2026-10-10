@@ -113,7 +113,10 @@ export interface MockAutopilotWorld {
    * (`writeLaunchSet`), the draw's start freezes its scenes (`freezeLaunchSet`), and the end of the launch lets it go (`releaseLaunchSet`: announced, no launch on it).
    */
   openLaunchSet(set: { avatarId: string; sceneSetId: string; count: number; categories: readonly CategoryRef[]; launchId: string }): void;
+  /** The compose request goes out: the set's writer job is live (the set reads `writing`, the avatar is claimed) until `writeLaunchSet` or `endLaunchCompose`. */
+  startLaunchCompose(sceneSetId: string): void;
   writeLaunchSet(sceneSetId: string): void;
+  endLaunchCompose(sceneSetId: string, how: "cancelled" | "gone"): void;
   freezeLaunchSet(sceneSetId: string): void;
   releaseLaunchSet(sceneSetId: string): void;
   /** The set's revision as the library holds it (the owner's edits move it), or null with no such set. */

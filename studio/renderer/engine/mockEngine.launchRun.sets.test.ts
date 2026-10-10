@@ -26,7 +26,31 @@ describe("the scene set of a launch that runs", () => {
     const mock = runWorld();
     const started = await startRun(mock, REVIEW);
     await runUntil(mock, started.launchId, "composing", (v) => v.avatars.some((a) => a.phase === "composing"));
-    expect(await setOf(mock)).toMatchObject({ launchId: started.launchId, status: "ready" });
+    expect(await setOf(mock)).toMatchObject({ launchId: started.launchId, status: "writing", write: { kind: "compose", count: 10 } });
+  });
+
+  test("while the launch composes the writer's job is live, as the engine's: the set reads writing, the avatar is claimed, and the owner's commands meet IN_FLIGHT first", async () => {
+    const mock = runWorld();
+    const started = await startRun(mock, REVIEW);
+    await runUntil(mock, started.launchId, "composing", (v) => v.avatars.some((a) => a.phase === "composing"));
+    const set = await setOf(mock);
+    if (set === null) throw new Error("the launch's set is not there");
+    const inFlight = [
+      await errorOf(mock.client.request("scenes.edit", { sceneSetId: set.sceneSetId, revision: set.revision, op: { op: "remove", sceneIds: [1] } })),
+      await errorOf(mock.client.request("scenes.discard", { sceneSetId: set.sceneSetId })),
+      await errorOf(mock.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 3, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 10_000_000 })),
+      await errorOf(mock.client.request("runs.start", { avatarId: MIA.avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 10_000_000 })),
+    ];
+    for (const error of inFlight) expect(error.code).toBe("IN_FLIGHT");
+  });
+
+  test("the compose is announced as a scenes job: progress when it begins, done when the writer has answered, and the set reads ready again", async () => {
+    const mock = runWorld();
+    const { set } = await reviewed(mock);
+    const kinds = mock.events.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "scenes" ? ["progress"] : e.type === "job.done" && e.payload.result.kind === "scenes" ? ["done"] : []));
+    expect(kinds[0]).toBe("progress");
+    expect(kinds.at(-1)).toBe("done");
+    expect(set).toMatchObject({ status: "ready", write: null });
   });
 
   test("once composed it has its ten sentences and the row names it with its revision", async () => {
@@ -78,13 +102,15 @@ describe("the scene set of a launch that runs", () => {
     expect(rewrite).toMatchObject(LAUNCH_SET);
   });
 
-  test("stays editable while the approval is only recorded in a pause", async () => {
+  test("is frozen by an approval given in a pause too: the engine writes the draw before it asks whether it may pay", async () => {
     const mock = runWorld();
     const { started, set } = await reviewed(mock);
     await unwrap(mock.client.request("autopilot.pause", { launchId: started.launchId }));
     await unwrap(mock.client.request("autopilot.continueAfterReview", { launchId: started.launchId, avatarId: MIA.avatarId, sceneSetId: set.sceneSetId, revision: set.revision }));
-    const edit = await mock.client.request("scenes.edit", { sceneSetId: set.sceneSetId, revision: set.revision, op: { op: "remove", sceneIds: [1] } });
-    expect(edit.ok).toBe(true);
+    const edit = await errorOf(mock.client.request("scenes.edit", { sceneSetId: set.sceneSetId, revision: set.revision, op: { op: "remove", sceneIds: [1] } }));
+    const rewrite = await errorOf(mock.client.request("scenes.write", { sceneSetId: set.sceneSetId, revision: set.revision, target: { kind: "rewrite", sceneIds: [1], redraw: false }, acceptedWorstMicros: 10_000_000 }));
+    expect(edit).toMatchObject(LAUNCH_SET);
+    expect(rewrite).toMatchObject(LAUNCH_SET);
   });
 
   test("is the owner's again after «Стоп»: no launch on it, and the owner may discard it", async () => {
@@ -139,7 +165,7 @@ describe("the slice runs of a launch that runs", () => {
     const progress = mine.flatMap((e) => (e.type === "job.progress" && e.payload.kind === "run" ? [e.payload.done] : []));
     expect(progress.at(-1)).toBe(10);
     expect(progress).toEqual([...progress].sort((a, b) => a - b));
-    const done = mine.find((e) => e.type === "job.done");
+    const done = mine.find((e) => e.type === "job.done" && e.payload.result.kind === "run");
     expect(done).toMatchObject({ payload: { result: { kind: "run", runId: run?.runId, avatarId: MIA.avatarId } } });
     expect(done?.type === "job.done" && done.payload.result.kind === "run" ? done.payload.result.photoIds : []).toHaveLength(10);
   });
@@ -164,6 +190,15 @@ describe("the slice runs of a launch that runs", () => {
     expect(drawing.avatars[0]?.waiting).toBeNull();
     const refused = await errorOf(mock.client.request("runs.start", { avatarId: MIA.avatarId, count: 1, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 10_000_000 }));
     expect(refused.code).toBe("IN_FLIGHT");
+  });
+
+  test("a slice taken up again names a run the mock holds: one it does not hold is a defect of the launch, never a second run under the set's id", async () => {
+    const mock = runWorld();
+    const { set } = await reviewed(mock);
+    const start = Reflect.get(mock.engine, "startLaunchSlice") as (slice: unknown) => string;
+    const slice = { launchId: "launch-00000001", avatarId: MIA.avatarId, sceneSetId: set.sceneSetId, index: 1, photos: 10, capMicros: 1, category: "home", resume: "run-nobody-0404" };
+    expect(() => start.call(mock.engine, slice)).toThrow(/run-nobody-0404/);
+    expect((await unwrap(mock.client.request("runs.list", {}))).runs).toHaveLength(0);
   });
 
   test("a pause ends the slice's job cancelled while the launch keeps the run, and «Продолжить» takes the same run up again under a new job", async () => {

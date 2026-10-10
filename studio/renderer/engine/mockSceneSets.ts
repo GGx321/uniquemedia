@@ -202,6 +202,8 @@ interface Job {
   written: number;
   unwritten: number;
   timers: (() => void)[];
+  /** Stage 4 (S4.10 fix D): the compose of a launch's set, which the launch's writer step answers (no timers of its own). */
+  launch?: boolean;
   /** The chunks still to be asked, in order. */
   queue: number[];
 }
@@ -493,13 +495,42 @@ export class MockSceneSets {
 
   // ---------- the launch's own set (S4.10 fix D) ----------
 
-  /** The launch's compose wrote the sentences of every scene: the set reads as a compose left it, announced. */
+  /**
+   * The launch's compose request goes out: the set's writer job is live, as the engine's compose is (it claims the avatar and records the live entry before its first await), so the set reads
+   * `writing`, the avatar is held, and the owner's commands meet IN_FLIGHT. Announced as a scenes job is. The launch's writer step ends it (`writeLaunchSet`, `endLaunchCompose`).
+   */
+  startLaunchCompose(sceneSetId: string): void {
+    const set = this.find(sceneSetId);
+    if (set === undefined || this.#liveJob(sceneSetId) !== undefined) return;
+    const job: Job = { jobId: this.#deps.nextId("job"), sceneSetId, avatarId: set.avatarId, kind: "compose", status: "running", done: 0, total: set.scenes.length, error: null, written: 0, unwritten: 0, timers: [], queue: [], launch: true };
+    this.#jobs.push(job);
+    this.#announce(set);
+    this.#progress(job);
+  }
+
+  /** The launch's compose wrote the sentences of every scene: the set reads as a compose left it, its job done and announced. */
   writeLaunchSet(sceneSetId: string): void {
     const set = this.find(sceneSetId);
     if (set === undefined) return;
     for (const scene of set.scenes) if (scene.text === null) scene.text = sentenceOf(scene);
     for (const chunk of set.chunks) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: true, cost: Math.round(chunk.sceneIds.length * TYPICAL_PER_SCENE), open: false });
-    this.#announce(set);
+    const job = this.#liveJob(sceneSetId);
+    if (job === undefined) {
+      this.#announce(set);
+      return;
+    }
+    job.done = job.total;
+    job.written = job.total;
+    this.#end(job, set, { status: "done" });
+  }
+
+  /** The launch's compose request ended without an answer: `gone` when the process died with it (nothing is announced), else the job is cancelled. */
+  endLaunchCompose(sceneSetId: string, how: "cancelled" | "gone"): void {
+    const set = this.find(sceneSetId);
+    const job = this.#liveJob(sceneSetId);
+    if (set === undefined || job === undefined) return;
+    if (how === "gone") job.status = "cancelled";
+    else this.#end(job, set, { status: "cancelled" });
   }
 
   /** The launch started to draw from the set: its scenes are the launch's from here, until the launch lets go. */
@@ -543,8 +574,8 @@ export class MockSceneSets {
   }
 
   /** Whether a scenes job of this avatar is queued or running. */
-  liveFor(avatarId: string): boolean {
-    return this.#jobs.some((j) => j.avatarId === avatarId && j.status === "running");
+  liveFor(avatarId: string, opts: { exceptLaunch?: boolean } = {}): boolean {
+    return this.#jobs.some((j) => j.avatarId === avatarId && j.status === "running" && !(opts.exceptLaunch === true && j.launch === true));
   }
 
   /** The jobs queued or running, for what a library switch or a reconcile waits for. */
@@ -1332,7 +1363,8 @@ export class MockSceneSets {
         set.write = { k, kind, stoppedBy: end.status === "cancelled" ? "cancelled" : end.stoppedBy, ...(end.status === "failed" && end.stoppedBy === "failed" ? { stoppedError: end.error } : {}) };
       }
     }
-    set.revision += 1;
+    // The engine's compose moves the file's revision (a count of writes the contract does not name); the launch's compose leaves the mock's at the one the set was made with.
+    if (job.launch !== true) set.revision += 1;
     if (review === undefined) set.lastOutcome = tallyOf(this.view(set).scenes);
     this.#deps.emitMoney();
     this.#announce(set);

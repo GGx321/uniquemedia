@@ -17,14 +17,17 @@ describe("the row's draw counts (LOW-4)", () => {
     expect(row?.resumableSlots).toBe(25 - (row?.photos.done ?? 0));
   });
 
-  test("a draw that has not begun its first slice has every scene undrawn and no slot to resume", async () => {
+  test("a set the owner approved in a pause is frozen with no slice begun: every scene undrawn and no slot to resume", async () => {
     const mock = runWorld();
     const started = await startRun(mock, { ...SLIDES_40, sceneReview: true });
     await runUntil(mock, started.launchId, "the review", (v) => v.avatars.some((a) => a.phase === "awaiting-review"));
+    const waiting = (await viewOf(mock, started.launchId)).avatars[0];
+    // Before the approval the engine's mirror counts no draw.
+    expect(waiting).toMatchObject({ undrawnScenes: 0, resumableSlots: 0 });
     await unwrap(mock.client.request("autopilot.pause", { launchId: started.launchId }));
+    await unwrap(mock.client.request("autopilot.continueAfterReview", { launchId: started.launchId, avatarId: MIA.avatarId, sceneSetId: waiting?.sceneSetId ?? "", revision: waiting?.setRevision ?? 0 }));
     const row = (await viewOf(mock, started.launchId)).avatars[0];
-    // Waiting for the review the draw has taken nothing: the row shows neither (the engine's mirror counts a draw only once the owner approved it).
-    expect(row).toMatchObject({ undrawnScenes: 0, resumableSlots: 0 });
+    expect(row).toMatchObject({ phase: "approved-waiting", undrawnScenes: 40, resumableSlots: 0 });
   });
 
   test("a single slice drawn in one go ends with nothing undrawn and nothing to resume", async () => {
