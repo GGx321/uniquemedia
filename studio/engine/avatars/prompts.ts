@@ -18,13 +18,16 @@ export class PromptSubjectError extends TypeError {}
 export function promptSubject(descriptor: AvatarDescriptor): string {
   const checked = AvatarDescriptor.safeParse(descriptor);
   if (!checked.success) throw new PromptSubjectError(`the avatar's descriptor no longer passes the contract: ${checked.error.issues.map((i) => i.message).join("; ")}`);
-  return checked.data.text.replace(/[.\s]+$/, "");
+  const text = checked.data.text.replace(/[.\s]+$/, "");
+  // Stage 5, S5.2a: her body phrase closes the descriptor, once, after «; ». The text never holds it.
+  return checked.data.body === undefined ? text : `${text}; ${checked.data.body}`;
 }
 
 /** A candidate portrait: head and shoulders on a plain background, before there is a face to refer to (the spike's CANDIDATE_PROMPT). */
 export function candidatePrompt(descriptor: AvatarDescriptor): string {
   return (
-    `Head-and-shoulders portrait photo of a ${promptSubject(descriptor)}, looking straight at the camera with a relaxed, slight smile. ` +
+    // The text alone: a head-and-shoulders portrait shows no body, and the master is made before any body is judged.
+    `Head-and-shoulders portrait photo of a ${promptSubject({ age: descriptor.age, text: descriptor.text })}, looking straight at the camera with a relaxed, slight smile. ` +
     "Soft natural daylight, plain light grey background. Natural skin texture, minimal makeup, smartphone photo, no retouching, no beauty filter."
   );
 }

@@ -6,7 +6,7 @@ import { openLibrary, type QuarantineEntry } from "../library";
 import { AvatarManifestSchema, type AvatarManifest, type PhotoSidecar } from "../library/schemas";
 import { PNG_1X1, SAMPLE_IMPORTED_SOURCE, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
 import { sceneSpec, writeVideoRecord } from "../library/testing/videoRecords";
-import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, unreadableFromQuarantine } from "./records";
+import { avatarCounts, avatarSummaryFrom, combineUnreadable, draftFrom, isRewritable, libraryView, manifestTraits, promptDescriptorOf, unreadableFromQuarantine } from "./records";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -481,5 +481,109 @@ describe("combineUnreadable (L2, L11)", () => {
   test("defaults to MAX_UNREADABLE_AVATARS", () => {
     const many = Array.from({ length: MAX_UNREADABLE_AVATARS + 5 }, (_, i) => manifestUnreadable(i));
     expect(combineUnreadable([], many)).toHaveLength(MAX_UNREADABLE_AVATARS);
+  });
+});
+
+// ---------- Stage 5, S5.2a: the body ----------
+
+describe("promptDescriptorOf: the descriptor a prompt carries", () => {
+  const BODY = { height: "tall", bust: "full", legLength: "long", legShape: "slim" } as const;
+  const withBody = (body: Record<string, unknown>, extra: Partial<AvatarManifest> = {}): AvatarManifest =>
+    manifest({ status: "active", masterPhotoId: "photo-0001", traits: { ...manifestTraits(TRAITS), ...body } as AvatarManifest["traits"], ...extra });
+
+  test("an avatar with no body keys is her age and text and nothing else: no body key at all", () => {
+    const descriptor = promptDescriptorOf(manifest());
+    expect(descriptor).toEqual({ age: 25, text: DESCRIPTOR });
+    expect("body" in descriptor).toBe(false);
+  });
+
+  test("carries the body phrase the code renders from her traits, apart from the text", () => {
+    expect(promptDescriptorOf(withBody(BODY))).toEqual({ age: 25, text: DESCRIPTOR, body: "tall, a full bust and long slim legs" });
+  });
+
+  test("never writes the phrase into the text", () => {
+    expect(promptDescriptorOf(withBody(BODY)).text).toBe(DESCRIPTOR);
+  });
+
+  test("a body key that does not parse drops the whole body, not the avatar", () => {
+    const descriptor = promptDescriptorOf(withBody({ ...BODY, bust: "gigantic" }));
+    expect(descriptor).toEqual({ age: 25, text: DESCRIPTOR });
+  });
+
+  test("a body of an empty list of marks adds nothing", () => {
+    expect("body" in promptDescriptorOf(withBody({ bodyMarks: [] }))).toBe(false);
+  });
+
+  test("a schema-version-1 record has no body: its traits are free text", () => {
+    expect("body" in promptDescriptorOf(withBody({ height: "tall" }, { schemaVersion: 1, traits: { height: "tall" } }))).toBe(false);
+  });
+
+  test("the text of the stored body proposal is never a body: only traits are", () => {
+    const proposed = withBody({}, { bodyProposal: { values: { height: "tall" }, seen: { height: "photo" }, at: "2026-10-10T10:00:00.000Z" } });
+    expect("body" in promptDescriptorOf(proposed)).toBe(false);
+  });
+});
+
+describe("the body in a draft and a summary", () => {
+  const active = (traits: Record<string, unknown>, extra: Partial<AvatarManifest> = {}): AvatarManifest =>
+    manifest({ status: "active", masterPhotoId: "photo-0001", traits: traits as AvatarManifest["traits"], ...extra });
+  const COUNTS = { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0, usage: { state: "ok" } } as const;
+
+  test("a summary of an avatar with no body carries neither body nor bodyProposal", () => {
+    const summary = avatarSummaryFrom(active(manifestTraits(TRAITS)), COUNTS);
+    expect(summary).not.toBeNull();
+    expect("body" in (summary ?? {})).toBe(false);
+    expect("bodyProposal" in (summary ?? {})).toBe(false);
+  });
+
+  test("a summary carries her body traits, parsed", () => {
+    const summary = avatarSummaryFrom(active({ ...manifestTraits(TRAITS), height: "tall", bodyMarks: ["mole-back"] }), COUNTS);
+    expect(summary?.body).toEqual({ height: "tall", bodyMarks: ["mole-back"] });
+  });
+
+  test("a body key that fails to parse drops the body: the avatar is still listed", () => {
+    const summary = avatarSummaryFrom(active({ ...manifestTraits(TRAITS), height: "tall", figure: "triangle" }), COUNTS);
+    expect(summary).not.toBeNull();
+    expect("body" in (summary ?? {})).toBe(false);
+  });
+
+  test("three body marks drop the body, not the avatar", () => {
+    const summary = avatarSummaryFrom(active({ ...manifestTraits(TRAITS), bodyMarks: ["tattoo-ankle", "tattoo-hip", "mole-back"] }), COUNTS);
+    expect(summary).not.toBeNull();
+    expect("body" in (summary ?? {})).toBe(false);
+  });
+
+  test("a stored body proposal is carried", () => {
+    const bodyProposal = { values: { bust: "full" }, seen: { bust: "photo" }, at: "2026-10-10T10:00:00.000Z" };
+    expect<unknown>(avatarSummaryFrom(active(manifestTraits(TRAITS), { bodyProposal }), COUNTS)?.bodyProposal).toEqual(bodyProposal);
+  });
+
+  test("a stored body proposal that no longer fits the contract is left out: the avatar is still listed", () => {
+    const bodyProposal = { values: { bust: "gigantic" }, seen: { bust: "photo" }, at: "2026-10-10T10:00:00.000Z" };
+    const summary = avatarSummaryFrom(active(manifestTraits(TRAITS), { bodyProposal }), COUNTS);
+    expect(summary).not.toBeNull();
+    expect("bodyProposal" in (summary ?? {})).toBe(false);
+  });
+
+  test("the summary's descriptor never holds the phrase", () => {
+    const summary = avatarSummaryFrom(active({ ...manifestTraits(TRAITS), height: "tall" }), COUNTS);
+    expect(summary?.descriptor).toEqual({ age: 25, text: DESCRIPTOR });
+  });
+
+  test("a draft keeps its body traits, and a bad body key does not make the draft unreadable", () => {
+    const traits = { ...TRAITS, height: "tall", bust: "full" } satisfies AvatarTraits;
+    expect(draftFrom(manifest({ traits: manifestTraits(traits) }), [])?.traits).toEqual(traits);
+    expect(draftFrom(manifest({ traits: { ...manifestTraits(TRAITS), height: "gigantic" } as AvatarManifest["traits"] }), [])?.traits).toEqual(TRAITS);
+  });
+
+  test("a bad body key does not make an avatar unrewritable", () => {
+    expect(isRewritable(active({ ...manifestTraits(TRAITS), legShape: "wooden" }, { descriptor: "a woman with chestnut hair" }))).toBe(true);
+  });
+
+  test("manifestTraits leaves a body key that was never set out of the record", () => {
+    const traits = { ...TRAITS, height: "tall", bust: undefined } satisfies AvatarTraits;
+    const stored = manifestTraits(traits);
+    expect(stored).toHaveProperty("height", "tall");
+    expect("bust" in stored).toBe(false);
   });
 });

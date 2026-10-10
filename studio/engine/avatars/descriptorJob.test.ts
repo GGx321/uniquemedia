@@ -183,3 +183,21 @@ test.each([
   expect(await result).toMatchObject({ ok: true });
   expect(money.lines().filter((l) => l.type === "reserve").map((l) => l.worstMicros)).toEqual([ATTEMPT_WORST, ATTEMPT_WORST]);
 });
+
+test("with a body (S5.2a) a text that leaves no room for her phrase is asked again with the real limit; the stored descriptor is the text alone", async () => {
+  const traits: AvatarTraits = { ...TRAITS, height: "tall", bust: "full" };
+  const phrase = "tall and a full bust";
+  const over = `${GOOD.slice(0, -1)}, `.padEnd(600 - 2 - phrase.length + 1, "x");
+  const { net, result } = run([reply(over), reply(GOOD)], { ...JOB, traits });
+
+  expect(await result).toEqual({ ok: true, descriptor: { age: 25, text: GOOD } });
+  expect(JSON.stringify(net.calls[1]?.json())).toContain(`longer than ${600 - 2 - phrase.length} characters`);
+});
+
+test("without a body the same text is taken at once: one attempt", async () => {
+  const text = `${GOOD.slice(0, -1)}, `.padEnd(600 - 2 - "tall and a full bust".length + 1, "x");
+  const { net, result } = run([reply(text)]);
+
+  expect((await result).ok).toBe(true);
+  expect(net.calls).toHaveLength(1);
+});

@@ -1,4 +1,4 @@
-import type { AvatarDescriptor, AvatarTraits, EngineError } from "../../shared/engine";
+import { bodyPhrase, type AvatarDescriptor, type AvatarTraits, type EngineError } from "../../shared/engine";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
@@ -75,9 +75,10 @@ export async function runDescriptorJob(deps: DescriptorJobDeps, job: DescriptorJ
     // A bill above the worst case still bought a usable answer; the Budget
     // has halted every later reserve and the money status says so.
     if (result.status === "ok") {
-      const read = readDescriptorAnswer(result.content, job.traits.age);
+      // Her body phrase (S5.2a) is never asked of the model, but it follows the text in every prompt: the text must leave room for it.
+      const read = readDescriptorAnswer(result.content, job.traits.age, bodyPhrase(job.traits));
       if (read.ok) return { ok: true, descriptor: read.descriptor };
-      feedback = { problems: read.problems, words: read.words };
+      feedback = { problems: read.problems, words: read.words, ...(read.maxChars === undefined ? {} : { maxChars: read.maxChars }) };
       continue;
     }
     if (result.status === "error" && result.kind === "EMPTY_CONTENT") {

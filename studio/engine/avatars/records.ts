@@ -1,8 +1,13 @@
 import { basename } from "node:path";
 import {
+  AvatarDescriptor,
   AvatarName,
   AvatarSummary,
   AvatarTraits,
+  BODY_KEYS,
+  BodyProposal,
+  bodyFromRecord,
+  bodyPhrase,
   Draft,
   MAX_UNREADABLE_AVATARS,
   UNREADABLE_REASON_DETAIL,
@@ -32,16 +37,46 @@ export type SkippedReason = Exclude<UnreadableReason, "manifest-unreadable">;
  */
 export function manifestTraits(traits: AvatarTraits): Record<string, TraitValue> {
   const { age: _age, ...rest } = traits;
-  return rest;
+  // A body key that was never set (or was cleared) is left out of the record, not stored as a hole.
+  const stored: Record<string, TraitValue> = {};
+  for (const [key, value] of Object.entries(rest)) if (value !== undefined) stored[key] = value;
+  return stored;
 }
 
-function traitsFrom(manifest: AvatarManifest): AvatarTraits | null {
-  const parsed = AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age });
+/**
+ * The body traits of a stored manifest, or undefined: none set, a key that does not parse (it drops the WHOLE body, never the avatar: a half body would be a different
+ * woman), or a schema-version-1 record, whose traits are free text.
+ */
+function bodyOf(manifest: AvatarManifest): ReturnType<typeof bodyFromRecord> {
+  return manifest.schemaVersion < 2 ? undefined : bodyFromRecord(manifest.traits);
+}
+
+/**
+ * The manifest's traits as the contract reads them, or null. A body key that fails to parse is dropped together with the rest of the body and the traits are read
+ * without it, so a bad body never makes an avatar unreadable or unrewritable.
+ */
+export function traitsOf(manifest: AvatarManifest): AvatarTraits | null {
+  const withoutBody = Object.fromEntries(Object.entries(manifest.traits).filter(([key]) => !(BODY_KEYS as readonly string[]).includes(key)));
+  const parsed = AvatarTraits.safeParse({ ...withoutBody, ...bodyOf(manifest), age: manifest.age });
   return parsed.success ? parsed.data : null;
 }
 
+const traitsFrom = traitsOf;
+
 function descriptorOf(manifest: AvatarManifest): { age: number; text: string } {
   return { age: manifest.age, text: manifest.descriptor };
+}
+
+/**
+ * The descriptor as every photo prompt of the avatar carries it: her age and the stored text, plus the body phrase the code renders from her body traits (I5.7, I5.8).
+ * The phrase is added here and never stored in the text. With no body there is no `body` key at all, so the prompts stay byte-identical. It is NOT validated here:
+ * `promptSubject` (and the run-start readiness check built on it) judges the composite against `AvatarDescriptor`. The candidates job does not use it: a head-and-shoulders
+ * portrait takes the text alone.
+ */
+export function promptDescriptorOf(manifest: AvatarManifest): AvatarDescriptor {
+  const body = bodyOf(manifest);
+  const phrase = body === undefined ? undefined : bodyPhrase(body);
+  return { ...descriptorOf(manifest), ...(phrase === undefined ? {} : { body: phrase }) };
 }
 
 /**
@@ -111,6 +146,10 @@ export function avatarCounts(library: Pick<Library, "photosByAvatar" | "videoCou
 /** A saved avatar as the grid lists it; null for a draft or a record the contract refuses. */
 export function avatarSummaryFrom(manifest: AvatarManifest, counts: AvatarCounts): AvatarSummary | null {
   if (manifest.status === "draft") return null;
+  const body = bodyOf(manifest);
+  // A stored proposal that no longer fits the contract is left out of the summary; the avatar is still listed.
+  const proposalParsed = manifest.bodyProposal === undefined ? undefined : BodyProposal.safeParse(manifest.bodyProposal);
+  const proposal = proposalParsed?.success === true ? proposalParsed.data : undefined;
   const parsed = AvatarSummary.safeParse({
     avatarId: manifest.id,
     name: manifest.name,
@@ -122,6 +161,9 @@ export function avatarSummaryFrom(manifest: AvatarManifest, counts: AvatarCounts
     videoCount: counts.videoCount,
     eligibleUnusedCount: counts.eligibleUnusedCount,
     usage: counts.usage,
+    // Omitted, never null, when unset: an avatar without a body lists exactly as it did before (the parity transcripts).
+    ...(body === undefined ? {} : { body }),
+    ...(proposal === undefined ? {} : { bodyProposal: proposal }),
   });
   return parsed.success ? parsed.data : null;
 }
@@ -159,7 +201,7 @@ function placeholderDescriptor(age: number): string {
  */
 export function isRewritable(manifest: AvatarManifest): boolean {
   if (manifest.schemaVersion < 2) return false;
-  if (!AvatarTraits.safeParse({ ...manifest.traits, age: manifest.age }).success) return false;
+  if (traitsOf(manifest) === null) return false;
   const withPlaceholder = { ...manifest, descriptor: placeholderDescriptor(manifest.age) };
   return manifest.status === "draft" ? draftFrom(withPlaceholder, []) !== null : avatarSummaryFrom(withPlaceholder, { photoCount: 0, videoCount: 0, eligibleUnusedCount: 0, usage: { state: "ok" } }) !== null;
 }
