@@ -4215,7 +4215,7 @@ export class Engine {
       .catch(async (error: unknown) => {
         // Paid for: keep it where the owner can find it, and say where.
         const kept = `${importId}:import`;
-        const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ traits, descriptor })).then(
+        const where = await saveRawBody(this.#rawDir, kept, JSON.stringify({ traits, descriptor, ...(args.body === undefined ? {} : { body: args.body }) })).then(
           () => `the paid description is kept in raw/${rawFileName(kept)} next to the ledger`,
           (saveError: unknown) => `the paid description could not be kept either (${messageOf(saveError, "unknown error")})`,
         );

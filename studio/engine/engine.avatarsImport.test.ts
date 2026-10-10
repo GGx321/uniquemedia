@@ -601,6 +601,28 @@ describe("avatars.importAvatar: a failing library write answers INTERNAL and kee
       expect(kept.descriptor).toMatchObject({ text: GOOD });
     },
   );
+
+  // S5.2b review L7: the body the photo showed is paid output too.
+  test.skipIf(process.platform === "win32")("the body the photo showed is kept in raw/ beside the description when the write fails", async () => {
+    const body = { height: "tall", bust: "full", figure: "unknown", legLength: "unknown", legShape: "unknown", bottomSize: "unknown", bottomShape: "unknown", bodyMarks: [] };
+    const net = network({ descriptors: [describeReply(body)] });
+    const { engine, stagingId } = await startWithStagedPhoto(net);
+    const worst = await estimateWorst(engine, stagingId);
+    const avatarsDir = join(dir(), "library", "avatars");
+
+    await chmod(avatarsDir, 0o555);
+    try {
+      failed(await engine.handle(importCommand(stagingId, "Zoe", worst)));
+    } finally {
+      await chmod(avatarsDir, 0o755);
+    }
+
+    const rawDir = join(dir(), "userData", "raw");
+    const [rawFile] = await readdir(rawDir);
+    if (rawFile === undefined) throw new Error("expected a kept raw file");
+    const kept = JSON.parse(await readFile(join(rawDir, rawFile), "utf8")) as { body?: { values: unknown } };
+    expect(kept.body?.values).toEqual({ height: "tall", bust: "full" });
+  });
 });
 
 describe("avatars.importAvatar: the description gate", () => {
