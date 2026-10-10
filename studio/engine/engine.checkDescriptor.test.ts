@@ -1,7 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import type { Estimate } from "../shared/engine";
+import { bodyPhrase, type AvatarBody, type Estimate } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
@@ -57,9 +57,9 @@ const HAIR_WRONG = {
 let seeded = 0;
 
 /** A saved avatar (a real portrait as master) with the given descriptor, in `status`. */
-async function seedAvatar(opts: { descriptor?: string; status?: "active" | "archived" | "draft" } = {}): Promise<string> {
+async function seedAvatar(opts: { descriptor?: string; status?: "active" | "archived" | "draft"; body?: AvatarBody } = {}): Promise<string> {
   const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds(`chk${++seeded}`) });
-  const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: opts.descriptor ?? GOOD });
+  const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: { ...manifestTraits(TRAITS), ...opts.body }, descriptor: opts.descriptor ?? GOOD });
   if (opts.status === "draft") return avatar.id;
   const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
@@ -188,6 +188,66 @@ describe("avatars.checkDescriptor: the check", () => {
     const body = JSON.stringify(call?.json());
     expect(body).toContain("data:image/jpeg;base64,");
     expect(body).toContain(JSON.stringify(GOOD).slice(1, -1));
+  });
+
+  // Stage 5, S5.2b: the check judges her body phrase too, once she has body traits. The phrase is written by code from the traits; it is quoted beside the stored text, never merged
+  // into it.
+  describe("her body (S5.2b)", () => {
+    const BODY: AvatarBody = { height: "tall", bust: "full", legLength: "long", legShape: "slim", bodyMarks: ["tattoo-ankle"] };
+
+    /** The text of the request's user message (its image part left out). */
+    function userText(call: FetchCall | undefined): string {
+      const messages = Array.isArray(call?.json().messages) ? (call?.json().messages as { role: string; content: unknown }[]) : [];
+      const content = messages.find((m) => m.role === "user")?.content;
+      if (typeof content === "string") return content;
+      return Array.isArray(content) ? content.map((part: { text?: unknown }) => (typeof part.text === "string" ? part.text : "")).join("\n") : "";
+    }
+
+    test("an avatar with body traits sends its body phrase, quoted, beside the stored description", async () => {
+      const avatarId = await seedAvatar({ body: BODY });
+      const net = network();
+      const { engine } = await started({ net });
+
+      ok(await engine.handle(check(avatarId)));
+
+      expect(userText(checkCalls(net)[0])).toContain(`Body phrase: ${JSON.stringify(bodyPhrase(BODY))}`);
+    });
+
+    test("the stored description is sent as it is, without the phrase merged into it", async () => {
+      const avatarId = await seedAvatar({ body: BODY });
+      const net = network();
+      const { engine } = await started({ net });
+
+      ok(await engine.handle(check(avatarId)));
+
+      expect(userText(checkCalls(net)[0])).toContain(`Description: ${JSON.stringify(GOOD)}\n`);
+    });
+
+    test("an avatar without body traits sends no body line", async () => {
+      const avatarId = await seedAvatar();
+      const net = network();
+      const { engine } = await started({ net });
+
+      ok(await engine.handle(check(avatarId)));
+
+      expect(userText(checkCalls(net)[0])).not.toContain("Body phrase");
+    });
+
+    test("a body mismatch comes back as a mismatch with no proposal, and nothing is written", async () => {
+      const avatarId = await seedAvatar({ body: BODY });
+      const before = manifestBytes(avatarId);
+      const ok_ = { state: "ok", descriptor: "", photo: "" };
+      const aspects = { hair: ok_, eyes: ok_, marks: ok_, body: { state: "mismatch", descriptor: "высокая", photo: "невысокая" } };
+      const net = network({ check: () => checkReply({ aspects, descriptor: GOOD.replace("athletic build", "athletic build and long legs") }) });
+      const { engine } = await started({ net });
+
+      const result = checkOf(await engine.handle(check(avatarId)));
+
+      expect(result.matches).toBe(false);
+      expect(result.aspects.body).toEqual({ state: "mismatch", descriptor: "высокая", photo: "невысокая" });
+      expect(result.proposal).toBeNull();
+      expect(manifestBytes(avatarId)).toBe(before);
+    });
   });
 
   test("the avatar's name is owner text and never reaches the prompt", async () => {

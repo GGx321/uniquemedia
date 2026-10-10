@@ -4276,7 +4276,8 @@ export class Engine {
     await this.#assertAvatarOnDisk(library, avatarId);
     if (manifest.status === "draft") throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} is a draft; only a saved avatar has a master photo to check against` });
     this.#assertDescriptorReadable(manifest);
-    const stored: AvatarDescriptor = { age: manifest.age, text: manifest.descriptor };
+    // Her body phrase (S5.2b) is written by code from her body traits and judged beside the stored text, never merged into it.
+    const { body: bodyPhraseOf, ...stored } = promptDescriptorOf(manifest);
     const models = this.#avatarModels();
     const priced = await this.#prices.get(descriptorCheckPriceModels(models));
     const job = descriptorCheckEstimate(priced, models);
@@ -4294,7 +4295,7 @@ export class Engine {
     try {
       result = await runDescriptorCheckJob(
         { chat: (params) => client.chat(params), budget, priceBook: priced.book },
-        { jobId, scope, textModel: models.textModel, image, stored },
+        { jobId, scope, textModel: models.textModel, image, stored, bodyPhrase: bodyPhraseOf ?? null },
       );
     } finally {
       this.#caps.delete(scopeKey(scope));
