@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { BuiltInPoolSchema, isPhoneActivity, PHONE_WORDS, POOLS, validatePools, type Activity, type Place, type Pool } from "./pools";
+import { POOL_TEXT_MAX } from "../../shared/engine";
 import { CATEGORIES } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -104,7 +105,7 @@ describe("the built-in pools are ordinary places", () => {
 describe("the built-in pool schema", () => {
   const one = (text: string, extra: Partial<Activity> = {}): Activity => ({ text, twoHanded: false, ...extra });
   const place: Place = { name: "her small kitchen", times: ["morning"], activities: [one("holding a ceramic coffee mug")], room: true, details: ["a kettle on the counter", "a fruit bowl"], at: "in her small kitchen" };
-  const pool: Pool = { locations: [place], outfits: ["a plain white t-shirt and cotton shorts"], shotDeck: ["friend"] };
+  const pool: Pool = { locations: [place], outfits: ["a white t-shirt and cotton shorts"], shotDeck: ["friend"] };
   const withPlace = (over: Partial<Place>): Pool => ({ ...pool, locations: [{ ...place, ...over }] });
 
   test("accepts a well-formed room place", () => {
@@ -149,5 +150,32 @@ describe("the built-in pool schema", () => {
 
   test("rejects a detail that suggests a minor", () => {
     expect(BuiltInPoolSchema.safeParse(withPlace({ details: ["a schoolgirl uniform on the chair", "a fruit bowl"] })).success).toBe(false);
+  });
+
+  // S5.R1 H1: a non-mirror shot can land on any place, so no place may say «mirror» in its name; the mirror capture line names the mirror itself.
+  test("rejects a place whose name says mirror, in any case", () => {
+    expect(BuiltInPoolSchema.safeParse(withPlace({ name: "her bedroom mirror" })).success).toBe(false);
+    expect(BuiltInPoolSchema.safeParse(withPlace({ name: "the Gym Mirror wall" })).success).toBe(false);
+  });
+
+  test("rejects a place whose locative phrase says mirror", () => {
+    expect(BuiltInPoolSchema.safeParse(withPlace({ at: "at her bedroom mirror" })).success).toBe(false);
+  });
+
+  test("keeps the mirror flag on a place that does not name a mirror", () => {
+    expect(BuiltInPoolSchema.safeParse(withPlace({ name: "her bedroom", at: "in her bedroom", mirror: true })).success).toBe(true);
+  });
+
+  // The writer's floor pins (writer.custom.test.ts) hold a custom pool to POOL_TEXT_MAX; the built-in pools are held to the same bound, so one worst chunk covers both.
+  test(`rejects a place name, an activity or an outfit of more than ${POOL_TEXT_MAX} characters`, () => {
+    const long = "x".repeat(POOL_TEXT_MAX + 1);
+    expect(BuiltInPoolSchema.safeParse(withPlace({ name: long })).success).toBe(false);
+    expect(BuiltInPoolSchema.safeParse(withPlace({ activities: [one(long)] })).success).toBe(false);
+    expect(BuiltInPoolSchema.safeParse({ ...pool, outfits: [long] }).success).toBe(false);
+  });
+
+  test(`accepts texts of exactly ${POOL_TEXT_MAX} characters`, () => {
+    const edge = "x".repeat(POOL_TEXT_MAX);
+    expect(BuiltInPoolSchema.safeParse({ ...withPlace({ name: edge, activities: [one(edge)] }), outfits: [edge] }).success).toBe(true);
   });
 });

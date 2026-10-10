@@ -263,4 +263,34 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
     expect(drawnSlots.every((s) => s.location.length === POOL_TEXT_MAX && s.outfit.length === POOL_TEXT_MAX && s.activity.length === POOL_TEXT_MAX)).toBe(true);
     expect(floorOf(drawnSlots)).toBeLessThanOrEqual(floorOf(worstSlots(POOL_TEXT_MAX)));
   });
+
+  // S5.R1: the built-in pools are not held to POOL_TEXT_MAX (they are engine text, not owner input), so their worst chunk is pinned from the tables themselves.
+  const placesOf = (): string[] => CATEGORIES.flatMap((c) => POOLS[c].locations.map((l) => l.name));
+  const activitiesOf = (): string[] => CATEGORIES.flatMap((c) => POOLS[c].locations.flatMap((l) => l.activities.map((a) => a.text)));
+  const outfitsOf = (): string[] => CATEGORIES.flatMap((c) => POOLS[c].outfits);
+  const longest = (texts: readonly string[]): string => texts.reduce((a, b) => (b.length > a.length ? b : a));
+  const WORST_BUILT_IN_LABEL = longest(CATEGORIES.map((c) => categoryLabelOf()(c)));
+
+  function worstBuiltInSlots(): PlanSlot[] {
+    return worstSlots(1).map((s) => ({ ...s, category: "photoshoot", location: longest(placesOf()), activity: longest(activitiesOf()), outfit: longest(outfitsOf()) }));
+  }
+  const builtInFloor = (): number => {
+    const slots = worstBuiltInSlots();
+    return promptTokenFloor({ messages: writerMessages(slots, worstRefusal(slots), () => WORST_BUILT_IN_LABEL), jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
+  };
+
+  test("the worst chunk the built-in pools can draw stays at least MARGIN tokens under the ceiling", () => {
+    expect(builtInFloor()).toBeLessThanOrEqual(CEILING - MARGIN);
+  });
+
+  test("the worst built-in chunk is never bigger than the worst custom chunk the floor pins already hold", () => {
+    expect(builtInFloor()).toBeLessThanOrEqual(floorOf(worstSlots(POOL_TEXT_MAX)));
+  });
+
+  test("the worst built-in chunk is built from the longest real place, activity and outfit", () => {
+    const slots = worstBuiltInSlots();
+    expect(slots[0]?.location.length).toBe(Math.max(...placesOf().map((p) => p.length)));
+    expect(slots[0]?.activity.length).toBe(Math.max(...activitiesOf().map((p) => p.length)));
+    expect(slots[0]?.outfit.length).toBe(Math.max(...outfitsOf().map((p) => p.length)));
+  });
 });
