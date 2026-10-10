@@ -181,6 +181,10 @@ export class PaidSteps implements LaunchSteps {
   readonly #sleepers = new Set<() => void>();
   /** The waits that listen for one avatar's scene sets (S4.10 L3: an avatar that waits for the owner's open set), by avatar id. They are in `#sleepers` too. */
   readonly #topicSleepers = new Map<string, Set<() => void>>();
+  /** How many times each avatar's topic was woken (by avatar id). A wake that finds no sleeper armed yet is not lost: the waiter compares the count with the one it saw before its awaits. */
+  readonly #topicEpochs = new Map<string, number>();
+  /** The topic count a compose saw just before its call, by pass key: an open-set wait that follows the refusal starts from it, so an announce during the call or the row write is not lost. */
+  readonly #composeEpochs = new Map<string, number>();
   /** S4.10 M-1: the set ids and run ids THIS process soft-stopped (`#softStopAll`: a pause, a stop, a sleep). Such a job that ends `cancelled`, even after the launch runs again, is the soft stop's end and no defect. Cleared by `begin`. */
   readonly #softStopped = new Set<string>();
   /** S4.10 M-3: the avatars (`<launchId>:<avatarId>`) in an «open-set» episode: the row and the log line are written once, the poll writes nothing and claims nothing. */
@@ -367,6 +371,9 @@ export class PaidSteps implements LaunchSteps {
         this.#workers.delete(key);
         this.#busyKeys.delete(key);
         this.#openSetKeys.delete(key);
+        this.#composeEpochs.delete(key);
+        // Only a live pass holds a captured count: the avatar's entry goes with its last pass.
+        if (![...this.#workers.keys()].some((k) => k.endsWith(`:${avatarId}`))) this.#topicEpochs.delete(avatarId);
         const next = this.#again.get(key);
         this.#again.delete(key);
         if (next !== undefined) this.#start(next, avatarId);
@@ -448,6 +455,7 @@ export class PaidSteps implements LaunchSteps {
       // No await between the check and the call: the set's live entry (and with it the soft stop) exists before the call's first await.
       if (!this.#mayPay(ctx)) return "end";
       const port = this.#d.port();
+      this.#composeEpochs.set(key, this.#epochOf(row.avatarId));
       this.#softStopped.delete(generation.sceneSetId);
       this.#liveSets.add(generation.sceneSetId);
       this.#starting += 1;
@@ -1160,7 +1168,8 @@ export class PaidSteps implements LaunchSteps {
       await this.#log(ctx, { at: this.#now(), kind: "avatar-busy", avatarId });
     }
     await this.#setPhase(ctx, avatarId, "waiting", { reason: "avatar-busy" });
-    await this.#sleep(this.#d.retryMs ?? DEFAULT_RETRY_MS);
+    // A drain, a suspend or a stop that came during the writes has woken no one: do not sleep through it.
+    if (ctx.isRunning()) await this.#sleep(this.#d.retryMs ?? DEFAULT_RETRY_MS);
   }
 
   /**
@@ -1170,6 +1179,8 @@ export class PaidSteps implements LaunchSteps {
    */
   async #openSet(ctx: LaunchStepsContext, avatarId: string): Promise<void> {
     const key = this.#key(ctx.launchId, avatarId);
+    // Taken before any await: an announce that comes during the row write, the log line or the read is a wake that finds no sleeper, and it must still end the next wait (lost wake).
+    let seen = this.#composeEpochs.get(key) ?? this.#epochOf(avatarId);
     // One row write and one log line per episode (S4.10 M-3), like a busy avatar's.
     if (!this.#openSetKeys.has(key)) {
       this.#openSetKeys.add(key);
@@ -1181,7 +1192,9 @@ export class PaidSteps implements LaunchSteps {
     const generation = this.#rowOf(ctx, avatarId).generation;
     const port = this.#d.port();
     for (;;) {
-      await this.#sleep(this.#d.retryMs ?? DEFAULT_RETRY_MS, avatarId);
+      // No sleep once a drain, a suspend or a stop has come: its wake may have passed while the row or the log was being written, and nothing would end this wait but the poll.
+      if (ctx.isRunning() && this.#epochOf(avatarId) === seen) await this.#sleep(this.#d.retryMs ?? DEFAULT_RETRY_MS, avatarId);
+      seen = this.#epochOf(avatarId);
       if (!ctx.isRunning() || generation === null || port.hasOpenSet === undefined) return;
       const open = await port.hasOpenSet(avatarId, generation.sceneSetId).catch(() => true);
       // A pause, a stop, a suspend or a shutdown may have come while the read was out: no new sleep after it (N-2).
@@ -1208,8 +1221,13 @@ export class PaidSteps implements LaunchSteps {
     });
   }
 
+  #epochOf(topic: string): number {
+    return this.#topicEpochs.get(topic) ?? 0;
+  }
+
   /** Ends the waits that listen for this avatar (an owner's scene set of it was announced). */
   #wakeTopic(topic: string): void {
+    this.#topicEpochs.set(topic, this.#epochOf(topic) + 1);
     for (const wake of [...(this.#topicSleepers.get(topic) ?? [])]) wake();
   }
 
