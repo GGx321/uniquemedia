@@ -270,3 +270,13 @@ test("a moderation refusal (HTTP 400) stays final: no second attempt without the
   expect(await result).toMatchObject({ ok: false });
   expect(net.calls).toHaveLength(1);
 });
+
+test("an apology written inside the JSON is followed by an attempt without the body request, which then succeeds", async () => {
+  const apology = "I'm sorry, but I can't help with assessing a person's body from a photo.";
+  const { net, result } = run([reply({ ...GOOD_ANSWER, ...BODY_UNKNOWN, descriptor: apology }, 0.002), reply(GOOD_ANSWER, 0.0022)]);
+
+  expect(await result).toMatchObject({ ok: true });
+  const second = requestShape(net.calls[1]);
+  expect(second.system).not.toContain("Body: answer each");
+  expect(second.keys).not.toContain("bodyMarks");
+});

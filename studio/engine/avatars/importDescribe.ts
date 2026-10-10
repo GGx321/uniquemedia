@@ -151,11 +151,11 @@ const REASON: Record<ImportDescribeProblem, (words: readonly string[]) => string
 
 /**
  * Whether the next attempt asks for the body (S5.2b review M1). A vision model may refuse a photo of a person once it is asked to estimate a body, so after an answer that was unusable by
- * nature (empty, or not the JSON asked for) the next attempt asks without the body and the import still reads her face and traits; it then has no body to propose. A readable answer that
+ * nature (empty, not the JSON asked for, or an apology written inside it: it never begins "<age>-year-old", so it reads as no-age-anchor; a false trigger only loses the body at the same price) the next attempt asks without the body and the import still reads her face and traits; it then has no body to propose. A readable answer that
  * only broke a descriptor rule keeps the request, and a moderation refusal is final before any next attempt (importDescribeJob.ts).
  */
 export function importDescribeAsksBody(feedback: ImportDescribeRefusal = NO_REFUSAL): boolean {
-  return !feedback.problems.some((problem) => problem === "not-json" || problem === "empty");
+  return !feedback.problems.some((problem) => problem === "not-json" || problem === "empty" || problem === "no-age-anchor");
 }
 
 /** The messages of one describe attempt; `feedback` is why the previous answer was rejected. Takes no other argument on purpose (see importDescribe.test.ts's canary): no owner-entered text ever reaches this prompt. */

@@ -260,7 +260,7 @@ describe("the describe prompt without the body request (S5.2b review M1)", () =>
     expect(importDescribeJsonSchema({ problems: [], words: [] })).toBe(IMPORT_DESCRIBE_JSON_SCHEMA);
   });
 
-  for (const problem of ["not-json", "empty"] as const) {
+  for (const problem of ["not-json", "empty", "no-age-anchor"] as const) {
     test(`an answer rejected as «${problem}» makes the next attempt ask without the body`, () => {
       const feedback: ImportDescribeRefusal = { problems: [problem], words: [] };
       expect(importDescribeAsksBody(feedback)).toBe(false);
@@ -269,11 +269,20 @@ describe("the describe prompt without the body request (S5.2b review M1)", () =>
     });
   }
 
+  test("a refusal written inside strict JSON (an apology as the descriptor) drops the body on the retry", () => {
+    const apology = "I'm sorry, but I can't help with assessing a person's body from a photo.";
+    const read = readImportDescribeAnswer(JSON.stringify(answer({ descriptor: apology })));
+    expect(read).toEqual({ ok: false, problems: ["no-age-anchor"], words: [] });
+    if (read.ok) return;
+    expect(importDescribeAsksBody(read)).toBe(false);
+    expect(String(importDescribeMessages(read)[0]?.content)).not.toContain(BODY_SECTION);
+  });
+
   test("one unreadable answer among other problems still drops the body", () => {
     expect(importDescribeAsksBody({ problems: ["youth-word", "not-json"], words: ["teen"] })).toBe(false);
   });
 
-  for (const problem of ["too-long", "no-age-anchor", "invalid-traits", "invalid-descriptor", "script", "non-ascii-digits", "other-age", "under-21-bound", "youth-word", "number"] as const) {
+  for (const problem of ["too-long", "invalid-traits", "invalid-descriptor", "script", "non-ascii-digits", "other-age", "under-21-bound", "youth-word", "number"] as const) {
     test(`an answer that was readable but broke a rule («${problem}») keeps the body request`, () => {
       expect(importDescribeAsksBody({ problems: [problem], words: [] })).toBe(true);
     });
@@ -487,7 +496,7 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
   const ALL_PROBLEMS = Object.keys(EVERY_PROBLEM) as ImportDescribeProblem[];
   const names = maximalNames(allYouthRuleNames("descriptor"));
   /** The full prompt's longest retry: every problem the next attempt can be told that keeps the body request (an empty or unreadable answer drops it), and the rule names. */
-  const worst: ImportDescribeRefusal = { problems: ALL_PROBLEMS.filter((p) => p !== "not-json" && p !== "empty"), words: names };
+  const worst: ImportDescribeRefusal = { problems: ALL_PROBLEMS.filter((p) => p !== "not-json" && p !== "empty" && p !== "no-age-anchor"), words: names };
   /** The no-body prompt's longest retry: every problem, the unreadable ones included, and the rule names. */
   const worstNoBody: ImportDescribeRefusal = { problems: ALL_PROBLEMS, words: names };
   const ceiling = importDescribeCall("x-ai/grok-4.3").inputTokens;
@@ -501,7 +510,7 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
   };
 
   test("the worst refusal is given every problem that keeps the body request and the most rule names the bound lets through, the longest first", () => {
-    expect(worst.problems).toHaveLength(12);
+    expect(worst.problems).toHaveLength(11);
     expect(worstNoBody.problems).toHaveLength(14);
     expect(worst.words.length).toBeGreaterThan(3);
     expect(Buffer.byteLength(worst.words[0] as string, "utf8")).toBeGreaterThanOrEqual(Buffer.byteLength(worst.words.at(-1) as string, "utf8"));
@@ -562,5 +571,5 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
   });
 });
 
-const FULL_MARGIN = 757;
+const FULL_MARGIN = 861;
 const NO_BODY_MARGIN = 2023;
