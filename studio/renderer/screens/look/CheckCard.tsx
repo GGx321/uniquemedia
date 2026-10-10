@@ -76,19 +76,37 @@ function Pointer({ children }: { children: ReactNode }) {
 }
 
 /** What a finished check says under its aspects: where its proposal is, what became of it, or that the description moved on since. */
-function afterword(check: DescriptorCheck, look: LookCheck, currentText: string): ReactNode {
-  if (look.fate === "kept") return <Pointer>Описание оставлено как было.</Pointer>;
-  if (look.fate === "stale") return <Pointer>Описание уже изменилось — проверьте ещё раз.</Pointer>;
+/**
+ * S5.R2: the check judged the body (it was in the photo) and her body phrase is not the one it judged: «Сохранить тело» since then left the body
+ * verdict stale. A verdict that could not see the body is not changed by it.
+ */
+function bodyChangedSince(check: DescriptorCheck, judged: string | undefined, current: string | undefined): boolean {
+  const state = check.aspects.body?.state;
+  return (state === "ok" || state === "mismatch") && judged !== current;
+}
+
+function afterword(check: DescriptorCheck, look: LookCheck, currentText: string, bodyChanged: boolean): ReactNode {
   if (check.checkedText !== currentText) return <Pointer>Описание изменено после сверки — проверьте ещё раз.</Pointer>;
-  if (check.matches) return null;
+  const stale = bodyChanged ? <Pointer>Тело изменено после сверки — проверьте ещё раз.</Pointer> : null;
+  if (look.fate === "kept" || look.fate === "stale") {
+    return (
+      <>
+        <Pointer>{look.fate === "kept" ? "Описание оставлено как было." : "Описание уже изменилось — проверьте ещё раз."}</Pointer>
+        {stale}
+      </>
+    );
+  }
+  if (check.matches) return stale;
   const text =
     check.proposal !== null ? (
       <Pointer>Исправленный текст — в «Описании» справа. Сам он не применится.</Pointer>
     ) : textMismatch(check) ? (
       <Pointer>Готового исправления нет — поправьте описание сами: «Изменить текст» справа.</Pointer>
     ) : null;
-  // S5.2d: a body mismatch is never fixed in text (S5.0c): it goes to the body traits, and the build word (D1) to the description's own text.
-  const body = check.aspects.body?.state === "mismatch" ? <Pointer>Тело на фото другое — поправьте его в карточке «Тело» справа, а телосложение — в «Описании».</Pointer> : null;
+  // S5.2d: a body mismatch is never fixed in text (S5.0c): it goes to the body traits, and the build word (D1) to the description's own text — unless
+  // the body was saved since, and then only a new check can say whether it matches now.
+  const body =
+    stale ?? (check.aspects.body?.state === "mismatch" ? <Pointer>Тело на фото другое — поправьте его в карточке «Тело» справа, а телосложение — в «Описании».</Pointer> : null);
   return text === null && body === null ? null : (
     <>
       {text}
@@ -108,6 +126,7 @@ export function proposalOpen(look: LookCheck, currentText: string): DescriptorCh
 export function CheckCard({
   look,
   currentText,
+  currentBodyPhrase,
   model,
   blockedReason,
   keyMissing,
@@ -116,6 +135,8 @@ export function CheckCard({
   look: LookCheck;
   /** The description as stored now: a verdict about an older text says so. */
   currentText: string;
+  /** Her body phrase as stored now (S5.R2): a body verdict about an older body says so. */
+  currentBodyPhrase: string | undefined;
   /** «grok-4.3»: the settings' text model, which runs the check. */
   model: string | null;
   /** Why no paid command can go now (no key, offline, a halt), or null. */
@@ -259,7 +280,7 @@ export function CheckCard({
           <>
             <Verdict tone={check.matches ? "ok" : "bad"} title={check.matches ? "Описание совпадает с фото" : mismatchTitle(check)} sub={sub} />
             <AspectList rows={aspectRows(check)} />
-            {afterword(check, look, currentText)}
+            {afterword(check, look, currentText, bodyChangedSince(check, phase.bodyPhrase, currentBodyPhrase))}
           </>
         )}
         {!waiting && button}

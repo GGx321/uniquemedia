@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
-import { MAX_CLIPS, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary } from "../../shared/engine";
+import { bodyPhrase, MAX_CLIPS, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary } from "../../shared/engine";
 import { useEngine, useEngineView, useSceneSet } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { useNavigate, type LookLanding, type PhotosTab } from "../navigation";
@@ -86,7 +86,12 @@ function AvatarPhotos({
   const panelId = useId();
   const [tab, setTab] = useState<PhotosTab>(initialTab);
   // S5.0d: the descriptor check lives with the screen, not the tab, so a look at «Фото» and back keeps its verdict.
-  const look = useLookCheck(avatarId, landing, { shown: tab === "look", ready, paidBlocked: paidBlockedReason(view) !== null });
+  const look = useLookCheck(avatarId, landing, {
+    shown: tab === "look",
+    ready,
+    paidBlocked: paidBlockedReason(view) !== null,
+    bodyPhrase: avatar.body === undefined ? undefined : bodyPhrase(avatar.body),
+  });
   const readFromPhoto = useReadFromPhoto(landing, avatar.descriptor.text);
 
   // CS.7 L4: kept by the window, so a look at Settings and back finds it as it was (a new category still on, the count, the poses).

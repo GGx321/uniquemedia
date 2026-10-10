@@ -632,3 +632,47 @@ describe("a body mismatch at the check", () => {
     ]);
   });
 });
+
+describe("a check's body verdict after «Сохранить тело» (S5.R2 LOW)", () => {
+  const STALE = "Тело изменено после сверки — проверьте ещё раз.";
+
+  async function checkThenSaveBody(body: "ok" | "mismatch" | "not-visible"): Promise<void> {
+    const { engine } = await openLook(MIA);
+    engine.setNextDescriptorCheck({
+      matches: body !== "mismatch",
+      aspects: {
+        hair: { state: "ok" },
+        eyes: { state: "ok" },
+        marks: { state: "ok" },
+        body: body === "mismatch" ? { state: "mismatch", descriptor: "спортивное", photo: "мягкие формы" } : { state: body },
+      },
+      proposal: null,
+      checkedText: TEXT,
+    });
+    fireEvent.click(within(checkCard()).getByRole("button", { name: /Проверить описание/ }));
+    await flush();
+    expect(text(checkCard())).not.toContain(STALE);
+    fireEvent.click(inBody().getByRole("button", { name: "Задать тело" }));
+    await flush();
+    pick(/^Фигура/, "Груша");
+    await save();
+  }
+
+  test("a verdict that judged the body says the body changed since, and the check is offered again", async () => {
+    await checkThenSaveBody("ok");
+    expect(text(checkCard())).toContain(STALE);
+    expect(text(checkCard())).toContain("Описание совпадает с фото");
+    expect(within(checkCard()).getByRole("button", { name: /^Проверить снова/ }).hasAttribute("disabled")).toBe(false);
+  });
+
+  test("a body mismatch changed since says so instead of pointing at «Тело» again", async () => {
+    await checkThenSaveBody("mismatch");
+    expect(text(checkCard())).toContain(STALE);
+    expect(text(checkCard())).not.toContain("Тело на фото другое");
+  });
+
+  test("a verdict that could not see the body stays as it was", async () => {
+    await checkThenSaveBody("not-visible");
+    expect(text(checkCard())).not.toContain(STALE);
+  });
+});

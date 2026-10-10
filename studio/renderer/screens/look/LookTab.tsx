@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { AvatarBody, AvatarSummary } from "../../../shared/engine";
+import { bodyPhrase, type AvatarBody, type AvatarSummary } from "../../../shared/engine";
 import type { EngineView } from "../../engine/store";
 import { proposedBody } from "../../lib/body";
 import { paidStop } from "../../lib/paidStop";
@@ -65,6 +65,7 @@ export function LookTab({
           <CheckCard
             look={look}
             currentText={text}
+            currentBodyPhrase={avatar.body === undefined ? undefined : bodyPhrase(avatar.body)}
             model={view.settings === null ? null : modelName(view.settings.textModel)}
             blockedReason={paidBlockedReason(view)}
             keyMissing={keyMissing}

@@ -12,7 +12,11 @@ import type { CheckContext, LastCheck } from "./lookModel";
 export type CheckPhase =
   | { readonly kind: "idle" }
   | { readonly kind: "running"; readonly context: CheckContext }
-  | { readonly kind: "done"; readonly check: DescriptorCheck; readonly context: CheckContext; readonly at: Date }
+  /**
+   * `bodyPhrase` (S5.R2): her body phrase when the check was sent. The check keeps only the text it judged (`checkedText`); a body saved since makes its
+   * body verdict stale, and the card says so.
+   */
+  | { readonly kind: "done"; readonly check: DescriptorCheck; readonly context: CheckContext; readonly at: Date; readonly bodyPhrase: string | undefined }
   | { readonly kind: "failed"; readonly error: EngineError; readonly context: CheckContext }
   /** The import's own check gave nothing (refused, timed out or unreadable): the avatar is kept, and a check can be asked for here. */
   | { readonly kind: "missed" };
@@ -53,22 +57,26 @@ export function useReadFromPhoto(landing: LookLanding | null, text: string): boo
 /** Landings already acted on: a screen mounted again for the same route (React's development double mount, say) never sends a second paid check. */
 const consumed = new WeakSet<LookLanding>();
 
-function initialPhase(landing: LookLanding | null, at: Date): CheckPhase {
+function initialPhase(landing: LookLanding | null, at: Date, bodyPhrase: string | undefined): CheckPhase {
   if (landing?.kind !== "imported") return { kind: "idle" };
-  return landing.check === null ? { kind: "missed" } : { kind: "done", check: landing.check, context: "import", at };
+  return landing.check === null ? { kind: "missed" } : { kind: "done", check: landing.check, context: "import", at, bodyPhrase };
 }
 
 /**
  * `shown`: the tab is on screen (its price is asked for then, not on every visit to «Фото»); `ready`: the engine answers; `paidBlocked`: a paid
  * command would be refused before any spend (no key, offline, a halt) — the automatic check after «Сохранить» is then not sent at all, and the card
- * says why.
+ * says why. `bodyPhrase`: her body phrase now (S5.R2), kept with each check as the body it judged.
  */
-export function useLookCheck(avatarId: string, landing: LookLanding | null, options: { shown: boolean; ready: boolean; paidBlocked: boolean }): LookCheck {
-  const { shown, ready, paidBlocked } = options;
+export function useLookCheck(
+  avatarId: string,
+  landing: LookLanding | null,
+  options: { shown: boolean; ready: boolean; paidBlocked: boolean; bodyPhrase: string | undefined },
+): LookCheck {
+  const { shown, ready, paidBlocked, bodyPhrase } = options;
   const { client } = useEngine();
   const mounted = useMounted();
   const [opened] = useState(() => new Date());
-  const [phase, setPhase] = useState<CheckPhase>(() => initialPhase(landing, opened));
+  const [phase, setPhase] = useState<CheckPhase>(() => initialPhase(landing, opened, bodyPhrase));
   const [last, setLast] = useState<LastCheck | null>(() =>
     landing?.kind === "imported" && landing.check !== null ? { at: opened, context: "import", matches: landing.check.matches } : null,
   );
@@ -109,12 +117,14 @@ export function useLookCheck(avatarId: string, landing: LookLanding | null, opti
   }
 
   async function sendOnce(acceptedWorstMicros: number, context: CheckContext): Promise<void> {
+    // The body the engine judges is the one stored when the check is sent.
+    const judged = bodyPhrase;
     setPhase({ kind: "running", context });
     const reply = await client.request("avatars.checkDescriptor", { avatarId, acceptedWorstMicros });
     if (!mounted.current) return;
     if (reply.ok) {
       const at = new Date();
-      setPhase({ kind: "done", check: reply.result.check, context, at });
+      setPhase({ kind: "done", check: reply.result.check, context, at, bodyPhrase: judged });
       setLast({ at, context, matches: reply.result.check.matches });
       setFate("open");
       setPreviousWorst(null);
