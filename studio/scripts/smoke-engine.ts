@@ -1471,7 +1471,7 @@ async function runImportScenario(target: Target): Promise<void> {
 
     const estimate = await req(cdp, "avatars.estimateImport", { stagingId });
     check(
-      "import scenario: avatars.estimateImport prices up to two describe attempts and no age check",
+      "import scenario: avatars.estimateImport prices up to two describe attempts and two descriptor-check attempts, and no age check",
       field(estimate, "ok") === true && typeof field(estimate, "result", "worstMicros") === "number",
       estimate,
     );
@@ -1510,10 +1510,20 @@ async function runImportScenario(target: Target): Promise<void> {
     );
     check("import scenario: studio-media:// serves the imported master photo (invariant 9 widened)", loaded === true);
 
-    // 5. Exactly one describe attempt reached the mock, no age check; the import never generates an image.
+    // 4b. Stage 5, S5.0c: the saved avatar's descriptor was checked against its master in the same command; the mock answers «every aspect agrees».
     check(
-      "import scenario: the mock saw exactly one describe attempt, no age check, no image generation",
-      mock.ageCheckRequests().length === 0 && mock.importDescribeRequests().length === 1 && mock.imageRequests().length === 0,
+      "import scenario: the import result carries a descriptor check that matches (the mock's all-ok answer, read by the engine)",
+      field(imported, "result", "descriptorCheck") !== null && field(imported, "result", "descriptorCheck", "matches") === true,
+      field(imported, "result", "descriptorCheck"),
+    );
+
+    // 5. Exactly one describe attempt and one check attempt reached the mock, no age check; the import never generates an image.
+    check(
+      "import scenario: the mock saw exactly one describe attempt and one check attempt, no age check, no image generation",
+      mock.ageCheckRequests().length === 0 &&
+        mock.importDescribeRequests().length === 1 &&
+        mock.descriptorCheckRequests().length === 1 &&
+        mock.imageRequests().length === 0,
       mock.requests,
     );
     check("import scenario: no request to the mock was on an unexpected route", mock.unexpected.length === 0, mock.unexpected);
@@ -1524,7 +1534,7 @@ async function runImportScenario(target: Target): Promise<void> {
     const nameLeaks = mock.requests.filter((r) => JSON.stringify(r.body).toLowerCase().includes(IMPORT_MARKER_NAME.toLowerCase()));
     check("import scenario: the owner's entered name never reaches the mock", nameLeaks.length === 0, nameLeaks);
 
-    // 7. Money: one describe attempt, exactly the mock's charged costs, nothing left open.
+    // 7. Money: one describe attempt and one check attempt, exactly the mock's charged costs, nothing left open.
     const expectedMicros = Math.round(mock.totalUsageUsd() * 1_000_000);
     const money = await req(cdp, "money.status");
     check(
