@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef } from "react";
+import type { DescriptorCheck } from "../shared/engine";
 
 export type SectionId = "avatars" | "photo" | "montage" | "autopilot" | "settings";
 
@@ -14,8 +15,9 @@ export type Route =
   /**
    * T8b: an avatar's photos; null opens the one shown last, else the first active avatar. `tab` (3e.2): the «Видео» tab, opened from the avatar tile's «K видео».
    * `focus` (S4.9b): «launch» — opened from «Автопилот» for a launch's scenes; the focus goes to «Продолжить запуск: M фото» of the set's strip.
+   * `landing` (S5.0d): opened on «Внешность» right after the avatar was saved or imported.
    */
-  | { name: "photos"; avatarId: string | null; tab?: PhotosTab; focus?: "launch" }
+  | { name: "photos"; avatarId: string | null; tab?: PhotosTab; focus?: "launch"; landing?: LookLanding }
   /** 3d.2: the drafts screen (the sidebar's «Монтаж», EditorEmpty). */
   | { name: "montages" }
   /** 3d.2: one draft in the editor. `created`: opened right after `montages.create`, so the header says «создан только что». */
@@ -29,8 +31,17 @@ export type Route =
 
 export type SettingsFocus = "key" | "money" | "export" | "music";
 
-/** The tabs of an avatar's Photos screen that work (3e.2): «Фото» and «Видео»; «История сцен» is not in Stage 3. */
-export type PhotosTab = "photos" | "videos";
+/** The tabs of an avatar's Photos screen that work: «Фото» and «Видео» (3e.2), «Внешность» (S5.0d); «История сцен» is not built yet. */
+export type PhotosTab = "photos" | "videos" | "look";
+
+/**
+ * S5.0d: how the window came to an avatar's «Внешность» right after making her. `created`: the wizard's «Сохранить», with the worst case of the check
+ * that the wizard showed under the button (the click accepted it; null when no price was shown, and then no check is sent). `imported`:
+ * «Импортировать», with the check the import ran itself (null when it was refused, timed out or could not be read; the import is kept either way).
+ */
+export type LookLanding =
+  | { readonly kind: "created"; readonly checkWorstMicros: number | null }
+  | { readonly kind: "imported"; readonly check: DescriptorCheck | null };
 
 export interface NavigateOptions {
   /** Skips the leave guard: the owner chose to leave without saving. */

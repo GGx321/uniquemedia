@@ -2,13 +2,15 @@ import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { MAX_CLIPS, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary } from "../../shared/engine";
 import { useEngine, useEngineView, useSceneSet } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
-import { useNavigate, type PhotosTab } from "../navigation";
+import { useNavigate, type LookLanding, type PhotosTab } from "../navigation";
 import { AccountBanner } from "../ui/AccountBanner";
 import { EngineOffline } from "../ui/EngineOffline";
 import { Icon, Spin } from "../ui/Icon";
 import { ErrorNotice } from "../ui/Notice";
 import { Portrait } from "../ui/Portrait";
 import { ScreenTitle } from "../ui/ScreenTitle";
+import { LookTab } from "./look/LookTab";
+import { useLookCheck } from "./look/useLookCheck";
 import { Gallery, type PendingSlots } from "./photos/Gallery";
 import { GenerateCard } from "./photos/GenerateCard";
 import type { MarkControl, MarkFailure } from "./photos/photoState";
@@ -62,14 +64,29 @@ function HeaderCounts({ avatar }: { avatar: AvatarSummary }) {
   );
 }
 
-function AvatarPhotos({ avatar, view, initialTab, focus }: { avatar: AvatarSummary; view: EngineView; initialTab: PhotosTab; focus: "launch" | null }) {
+function AvatarPhotos({
+  avatar,
+  view,
+  initialTab,
+  focus,
+  landing,
+}: {
+  avatar: AvatarSummary;
+  view: EngineView;
+  initialTab: PhotosTab;
+  focus: "launch" | null;
+  landing: LookLanding | null;
+}) {
   const { client, store } = useEngine();
   const ready = view.phase === "ready";
   const { avatarId } = avatar;
   const photosTabId = useId();
   const videosTabId = useId();
+  const lookTabId = useId();
   const panelId = useId();
   const [tab, setTab] = useState<PhotosTab>(initialTab);
+  // S5.0d: the descriptor check lives with the screen, not the tab, so a look at «Фото» and back keeps its verdict.
+  const look = useLookCheck(avatarId, landing, { shown: tab === "look", ready, paidBlocked: paidBlockedReason(view) !== null });
 
   // CS.7 L4: kept by the window, so a look at Settings and back finds it as it was (a new category still on, the count, the poses).
   const runForms = useRunForms();
@@ -298,12 +315,14 @@ function AvatarPhotos({ avatar, view, initialTab, focus }: { avatar: AvatarSumma
     onMark: (photo, rejected) => void markPhoto(photo, rejected),
   };
 
-  const tabIds: Record<PhotosTab, string> = { photos: photosTabId, videos: videosTabId };
-  // ← and → move between the two tabs that work («История сцен» is not in Stage 3).
+  const tabIds: Record<PhotosTab, string> = { photos: photosTabId, videos: videosTabId, look: lookTabId };
+  // ← and → move between the tabs that work, round the ends («История сцен» is not built yet).
   const onTabKey = (event: KeyboardEvent<HTMLButtonElement>): void => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const next: PhotosTab = tab === "photos" ? "videos" : "photos";
+    const order: readonly PhotosTab[] = ["photos", "videos", "look"];
+    const step = event.key === "ArrowRight" ? 1 : order.length - 1;
+    const next = order[(order.indexOf(tab) + step) % order.length] ?? "photos";
     setTab(next);
     document.getElementById(tabIds[next])?.focus();
   };
@@ -364,8 +383,21 @@ function AvatarPhotos({ avatar, view, initialTab, focus }: { avatar: AvatarSumma
           >
             Видео
           </button>
+          <button
+            type="button"
+            role="tab"
+            id={lookTabId}
+            aria-selected={tab === "look"}
+            aria-controls={panelId}
+            tabIndex={tab === "look" ? 0 : -1}
+            className={tab === "look" ? "on" : undefined}
+            onClick={() => setTab("look")}
+            onKeyDown={onTabKey}
+          >
+            Внешность
+          </button>
         </div>
-        {tab === "photos" ? (
+        {tab === "look" ? null : tab === "photos" ? (
           <div className="photos-montage">
             {montageWhy !== null && (
               <span id={whyId} className="faint photos-montage-why">
@@ -411,7 +443,9 @@ function AvatarPhotos({ avatar, view, initialTab, focus }: { avatar: AvatarSumma
         )}
         <UsageNotice key={avatarId} avatar={avatar} />
 
-        {tab === "photos" ? (
+        {tab === "look" ? (
+          <LookTab avatar={avatar} view={view} look={look} landing={landing} />
+        ) : tab === "photos" ? (
           <>
             <GenerateCard
               avatar={avatar}
@@ -526,7 +560,18 @@ function NoAvatar() {
  * «K видео» opens the «Видео» tab), or from the sidebar's «Фото» (the avatar
  * shown last, else the first active one).
  */
-export function PhotosScreen({ avatarId, tab = "photos", focus = null }: { avatarId: string | null; tab?: PhotosTab; focus?: "launch" | null }) {
+export function PhotosScreen({
+  avatarId,
+  tab = "photos",
+  focus = null,
+  landing = null,
+}: {
+  avatarId: string | null;
+  tab?: PhotosTab;
+  focus?: "launch" | null;
+  /** S5.0d: right after the avatar was saved or imported (its «Внешность»). */
+  landing?: LookLanding | null;
+}) {
   const view = useEngineView();
   // L11/N5: once the route names no avatar (the sidebar's own «Фото»), or
   // names one that is no longer present (a library switch, say — N5: a
@@ -573,5 +618,7 @@ export function PhotosScreen({ avatarId, tab = "photos", focus = null }: { avata
     }
     return <NoAvatar />;
   }
-  return <AvatarPhotos key={avatar.avatarId} avatar={avatar} view={view} initialTab={tab} focus={focus} />;
+  // The landing is the avatar's the route names: one resolved in its place (the named one gone) opens as it always does.
+  const ownLanding = landing !== null && avatar.avatarId === avatarId ? landing : null;
+  return <AvatarPhotos key={avatar.avatarId} avatar={avatar} view={view} initialTab={tab} focus={focus} landing={ownLanding} />;
 }
