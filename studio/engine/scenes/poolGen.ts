@@ -20,7 +20,7 @@ import {
   type CategoryStyle,
 } from "../../shared/engine";
 import type { ChatMessage } from "../openrouter/types";
-import { PoolSchema, type Pool } from "./pools";
+import { isPhoneActivity, PoolSchema, type Pool } from "./pools";
 import { isTwoHanded } from "./writer";
 import { revealingWordsIn } from "./words";
 
@@ -92,6 +92,7 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       activities: [
         { text: "tying her hair up", twoHanded: true },
         { text: "on her stomach, scrolling her phone", twoHanded: false },
+        { text: "on her stomach, propped on elbows", twoHanded: false },
       ],
       mirror: false,
     },
@@ -146,6 +147,7 @@ function systemPrompt(): string {
     '- Every text is plain English in ASCII: letters, digits, spaces and ordinary punctuation. Never a quote (") and never a backslash, and no space at either end.',
     "- No person's name, no brand and no readable sign. She is a grown adult woman: never a word that suggests she or anyone else is young.",
     "- Places are ordinary places she would really be in; no paper, books or screens other than her phone; never a photographer or a studio.",
+    "- Every place needs at least one free-hand activity that does not use her phone.",
     "- Outfits are everyday: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
     "- No two places, outfits or activities of one place alike.",
     "",
@@ -201,7 +203,7 @@ const REASON: Record<PoolProblem, string> = {
   "not-json": "it was not the JSON object asked for",
   empty: "it was empty",
   "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash',
-  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one with a free hand) ${LENGTH_NOTE}`,
+  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one free-hand activity that does not use her phone) ${LENGTH_NOTE}`,
   "too-few-outfits": `fewer than ${POOL_OUTFITS_MIN} of its outfits were usable ${LENGTH_NOTE}`,
   "bad-shot-deck": `its "shotDeck" was not exactly five shots from ${POOL_SHOTS.join(", ")}`,
   "mirror-without-place": 'its "shotDeck" had a mirror shot but no place had "mirror": true',
@@ -332,7 +334,7 @@ function readPlace(raw: unknown, collector: Collector): { place: ReadPlace; drop
     activities: distinct(goodActivities, (a) => a.text).slice(0, PLACE_ACTIVITIES_MAX),
     mirror: raw.mirror === true,
   };
-  if (!nameOk || place.times.length === 0 || place.activities.length < 2 || !place.activities.some((a) => !a.twoHanded)) return null;
+  if (!nameOk || place.times.length === 0 || place.activities.length < 2 || !place.activities.some((a) => !a.twoHanded && !isPhoneActivity(a))) return null;
   return { place, dropped: inner.dropped };
 }
 

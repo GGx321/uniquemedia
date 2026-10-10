@@ -251,6 +251,7 @@ const BACK_VIEW_POOL_ANSWER = {
     activities: [
       { text: "lying on her stomach, texting", twoHanded: false },
       { text: "lying on her stomach, writing", twoHanded: true },
+      { text: "lying on her stomach, sipping tea", twoHanded: false },
     ],
     mirror: i === 4,
   })),

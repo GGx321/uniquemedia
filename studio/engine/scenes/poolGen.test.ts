@@ -204,6 +204,29 @@ describe("readPoolAnswer: salvage drops the items that break the pool rules and 
     expect(result.pool.locations.map((l) => l.name)).toEqual(PLACES);
   });
 
+  // S5.R1 M1: a selfie or mirror shot needs a free hand that does not hold her phone, so a place needs one such activity; the phone ones are found by their words.
+  test("a place whose only free-hand activities use her phone is dropped", () => {
+    const phoneOnly = place("a sixth place", { activities: [{ text: "scrolling her phone", twoHanded: false }, { text: "kneading dough", twoHanded: true }] });
+    const result = okOf(answer({ locations: [...(answer().locations as Json[]), phoneOnly] }));
+    expect(result.pool.locations.map((l) => l.name)).toEqual(PLACES);
+  });
+
+  test.each(["texting a friend", "taking a selfie with her smartphone", "FaceTime with her mother", "checking her iPhone"])("a free-hand activity that says «%s» does not count as free-hand", (text) => {
+    const bad = place("a sixth place", { activities: [{ text, twoHanded: false }, { text: "kneading dough", twoHanded: true }] });
+    expect(okOf(answer({ locations: [...(answer().locations as Json[]), bad] })).pool.locations.map((l) => l.name)).toEqual(PLACES);
+  });
+
+  test("a place with a phone activity and a free-hand one that does not use it stays, both activities kept", () => {
+    const mixed = place("a sixth place", { activities: [{ text: "scrolling her phone", twoHanded: false }, { text: "sipping a cup of tea", twoHanded: false }] });
+    const result = okOf(answer({ locations: [...(answer().locations as Json[]), mixed] }));
+    expect(result.pool.locations.find((l) => l.name === "a sixth place")?.activities).toHaveLength(2);
+  });
+
+  test("a pool whose five places are all phone-only is refused as too-few-places", () => {
+    const phoneOnly = (name: string): Json => place(name, { activities: [{ text: "scrolling her phone", twoHanded: false }, { text: "kneading dough", twoHanded: true }] });
+    expect(refusalOf(answer({ locations: PLACES.map((name, i) => ({ ...phoneOnly(name), mirror: i === 2 })) })).problems).toContain("too-few-places");
+  });
+
   test("a repeated place, outfit, time or activity (in any letter case) is kept once", () => {
     const locations = [...(answer().locations as Json[]), place("A CORNER CAFE")];
     const result = okOf(answer({ locations, outfits: [...OUTFITS, "A BEIGE TRENCH COAT AND JEANS"] }));
@@ -368,10 +391,11 @@ describe("readPoolAnswer: the angles the description asks for (CS.8a)", () => {
     const activities = [
       { text: "lying on her stomach, texting", twoHanded: false },
       { text: "on her stomach, scrolling her phone", twoHanded: false },
+      { text: "on her stomach, kicking her feet", twoHanded: false },
     ];
     const result = okOf(answer({ poses: ["back"], locations: PLACES.map((name, i) => place(name, { mirror: i === 2, activities })) }));
     expect(result.dropped).toBe(0);
-    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "on her stomach, scrolling her phone"]);
+    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "on her stomach, scrolling her phone", "on her stomach, kicking her feet"]);
   });
 
   test("the body position leaves 13 characters of the 35: «lying on her stomach, » is 22, and a 40-character activity is dropped", () => {
@@ -500,6 +524,16 @@ describe("poolMessages", () => {
   test("a reason that has nothing to do with lengths does not carry the limit", () => {
     const text = poolMessages("x", { problems: ["bad-shot-deck"], words: [] })[1]?.content ?? "";
     expect(text).not.toContain("longer ones are dropped");
+  });
+
+  test("S5.R1 M1: the prompt asks for a free-hand activity that does not use her phone in every place, and the retry reason says so", () => {
+    expect(poolMessages("x")[0]?.content).toContain("Every place needs at least one free-hand activity that does not use her phone.");
+    expect(poolMessages("x", { problems: ["too-few-places"], words: [] })[1]?.content).toContain("one free-hand activity that does not use her phone");
+  });
+
+  test("S5.R1 M1: every place of the example has a free-hand activity that does not use her phone", () => {
+    const example: { locations: { name: string; activities: { text: string; twoHanded: boolean }[] }[] } = JSON.parse(POOL_EXAMPLE_ANSWER);
+    for (const place of example.locations) expect(place.activities.some((a) => !a.twoHanded && !/\bphones?\b/i.test(a.text))).toBe(true);
   });
 
   test("the example it shows is itself a pool the reader accepts", () => {
