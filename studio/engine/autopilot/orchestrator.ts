@@ -145,6 +145,8 @@ export class Orchestrator {
   #closing = false;
   /** `host.power` `suspend` (plan §3.8): the Mac is going to sleep. Set synchronously; from then on nothing counts as running and no paid entry point admits, until `resume` (or the owner's own click, which proves the Mac is awake). */
   #suspended = false;
+  /** Paid holds being written right now: the hold is on disk a few microtasks before the in-memory copy knows it, and no paid work is admitted in between. */
+  #holdsInFlight = 0;
   /** Launches whose stop has begun and not ended (its drain or its last write is under way): a repeated «Стоп» on one that is not here finishes it again (L1). */
   readonly #stopping = new Set<string>();
   /** The avatars of each launch whose scene sets could not be read at open (M3). */
@@ -310,7 +312,7 @@ export class Orchestrator {
    */
   mayPay(launchId: string): boolean {
     const file = this.#current;
-    return file !== null && file.launchId === launchId && !this.#closing && !this.#pausing && !this.#suspended && file.status === "running" && file.paidHold === null;
+    return file !== null && file.launchId === launchId && !this.#closing && !this.#pausing && !this.#suspended && this.#holdsInFlight === 0 && file.status === "running" && file.paidHold === null;
   }
 
   /**
@@ -896,11 +898,17 @@ export class Orchestrator {
       raisePaidHold: async (hold) => {
         // Decided on the fresh file inside the store's own write: two tasks that fail at the same moment cannot both believe they hold the launch.
         let won = false;
-        await this.#stepWrite(launchId, (f) => {
-          if (f.paidHold !== null && !displaces(hold, f.paidHold)) return null;
-          won = true;
-          return { ...f, paidHold: hold };
-        });
+        // Counted before the first await and released in `finally`: `#current` must not be assigned ahead of the write (a write that clears a hold would then see a hold that is not on disk yet).
+        this.#holdsInFlight += 1;
+        try {
+          await this.#stepWrite(launchId, (f) => {
+            if (f.paidHold !== null && !displaces(hold, f.paidHold)) return null;
+            won = true;
+            return { ...f, paidHold: hold };
+          });
+        } finally {
+          this.#holdsInFlight -= 1;
+        }
         if (won) await this.#log(launchId, holdLine(hold, this.#nowIso()));
         return { won };
       },

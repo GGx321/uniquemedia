@@ -7,7 +7,7 @@ import type { DrawSliceResult } from "../sceneSets/launchDraw";
 import type { LaunchFile } from "./launchFile";
 import { AUTOPILOT_DIR } from "./launchStore";
 import { NOT_PAYABLE_DETAIL, type LaunchComposePayload, type LaunchSliceStart } from "./paidPort";
-import { A, ALL, B, BIG, cleanupRigs, composes, deferred, FakePort, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, T0, until, WRITER, type Rig } from "./testing/paidRig";
+import { A, ALL, B, BIG, cleanupRigs, composes, deferred, FakePort, idle, LAUNCH, PHOTO, RUN1, RUN2, rig, SET1, SET2, T0, until, untilHeld, WRITER, type Rig } from "./testing/paidRig";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -311,7 +311,8 @@ describe("a paid path that cannot go on never leaves the launch running with no 
     const launch = await r.start({ sceneReview: true });
     await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: "the ledger cannot be read" } });
-    expect(r.orchestrator.snapshotView()?.paidHold).toMatchObject({ reason: "internal" });
+    // The hold reaches the file on disk first, then the engine's in-memory copy (the snapshot): the copy is awaited, not read at once.
+    expect(await untilHeld(r)).toMatchObject({ reason: "internal" });
     const log = (await r.orchestrator.get(launch.launchId)).log;
     expect(log.some((l) => l.kind === "hold-internal")).toBe(true);
   });
@@ -579,7 +580,7 @@ describe("an exception out of the pass never leaves the launch running with no h
     const launch = await r.start({ sceneReview: false });
     await until(() => r.fileOf(launch.launchId).paidHold !== null, "the hold");
     expect(r.fileOf(launch.launchId).paidHold).toMatchObject({ reason: "internal", detail: { kind: "job-failed", message: expect.stringContaining("LIBRARY_UNAVAILABLE") } });
-    expect(r.orchestrator.snapshotView()?.paidHold).toMatchObject({ reason: "internal" });
+    expect(await untilHeld(r)).toMatchObject({ reason: "internal" });
   });
 
   test("a draw that throws a foreign error holds the launch as internal with the error's name only (a foreign message can name a path)", async () => {
