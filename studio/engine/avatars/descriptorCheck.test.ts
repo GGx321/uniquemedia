@@ -334,10 +334,26 @@ describe("descriptorCheckMessages", () => {
 
   // The reserve never goes below the prompt's byte floor: a prompt edit that outgrows the ceiling the estimate priced (money/estimate.ts) makes every check reserve more than it
   // was shown and priced, so the scope's cap would refuse it. Raise the ceiling and the figures that quote it, deliberately, or shorten the prompt.
-  test("the longest prompt a check can send stays under the ceiling the estimate priced", () => {
-    const messages = descriptorCheckMessages({ age: 25, text: `25-year-old ${'"'.repeat(588)}` }, null, { problems: ["not-json", "no-aspects", "empty"] });
-    const floor = promptTokenFloor({ messages, jsonSchema: DESCRIPTOR_CHECK_JSON_SCHEMA, images: 1 });
+  // The pins are EXACT: any extra byte in the prompt, the schema or a reason moves the measured margin and fails them, so the prompt cannot creep toward the ceiling unseen. Re-measure
+  // when the check's prompt changes. The worst text is quotes (JSON-escaped to two bytes each) up to the 600 characters the descriptor and her body phrase may hold together.
+  const refusal = { problems: ["not-json", "no-aspects", "empty"] } as const;
+  const floorOf = (stored: string, bodyPhrase: string | null): number =>
+    promptTokenFloor({ messages: descriptorCheckMessages({ age: 25, text: stored }, bodyPhrase, { problems: [...refusal.problems] }), jsonSchema: DESCRIPTOR_CHECK_JSON_SCHEMA, images: 1 });
+  const QUOTES_LEFT = 600 - "25-year-old ".length;
+
+  test("the longest prompt a check can send, without her body phrase, keeps its measured margin under the ceiling the estimate priced", () => {
+    expect(DESCRIPTOR_CHECK_CALL.inputTokens - floorOf(`25-year-old ${'"'.repeat(QUOTES_LEFT)}`, null)).toBe(300);
+  });
+
+  test("the longest prompt a check can send, with her body phrase, keeps its measured margin (the phrase line costs a label and a quote pair)", () => {
+    // One character of the 600 is the space between the descriptor and the phrase.
+    const floor = floorOf(`25-year-old ${'"'.repeat(1)}`, '"'.repeat(QUOTES_LEFT - 2));
+    expect(DESCRIPTOR_CHECK_CALL.inputTokens - floor).toBe(286);
     expect(floor).toBeLessThanOrEqual(DESCRIPTOR_CHECK_CALL.inputTokens);
+  });
+
+  test("the pin measures: a plain descriptor with no phrase is smaller than the worst", () => {
+    expect(floorOf("25-year-old woman", null)).toBeLessThan(floorOf(`25-year-old ${'"'.repeat(QUOTES_LEFT)}`, null));
   });
 
   test("the prompt takes nothing the owner typed besides the stored descriptor and her body phrase", () => {

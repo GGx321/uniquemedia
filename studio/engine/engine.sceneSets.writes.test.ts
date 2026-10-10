@@ -955,7 +955,7 @@ describe("scenes.write: an idea", () => {
 
     expect(end).toMatchObject({ type: "job.done" });
     expect(net.writerCalls()).toHaveLength(2);
-    expect(JSON.stringify(net.writerCalls()[1]?.json())).toContain("An earlier answer was rejected: slot(s) 5, 6 gave a shot or a pose that is missing, outside the lists the rules give");
+    expect(JSON.stringify(net.writerCalls()[1]?.json())).toContain("An earlier answer was rejected: slot(s) 5-6 gave a shot or a pose that is missing, outside the lists the rules give");
     const own = (await setOf(engine, avatarId)).scenes.filter((s) => s.origin === "own");
     expect(own.every((s) => s.pose === "back" && s.shot === "candid")).toBe(true);
   });

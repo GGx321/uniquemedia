@@ -20,7 +20,7 @@ import {
   type CategoryStyle,
 } from "../../shared/engine";
 import type { ChatMessage } from "../openrouter/types";
-import { PoolSchema, type Pool } from "./pools";
+import { isPhoneActivity, PoolSchema, type Pool } from "./pools";
 import { isTwoHanded } from "./writer";
 import { revealingWordsIn } from "./words";
 
@@ -92,6 +92,7 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       activities: [
         { text: "tying her hair up", twoHanded: true },
         { text: "on her stomach, scrolling her phone", twoHanded: false },
+        { text: "on her stomach, on one elbow", twoHanded: false },
       ],
       mirror: false,
     },
@@ -105,7 +106,7 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       mirror: false,
     },
     {
-      name: "a bedroom with a tall mirror",
+      name: "a bedroom",
       times: ["morning", "evening"],
       activities: [
         { text: "adjusting a sleeve", twoHanded: false },
@@ -146,6 +147,8 @@ function systemPrompt(): string {
     '- Every text is plain English in ASCII: letters, digits, spaces and ordinary punctuation. Never a quote (") and never a backslash, and no space at either end.',
     "- No person's name, no brand and no readable sign. She is a grown adult woman: never a word that suggests she or anyone else is young.",
     "- Places are ordinary places she would really be in; no paper, books or screens other than her phone; never a photographer or a studio.",
+    "- Every place needs at least one free-hand activity that does not use her phone.",
+    "- Never name a mirror in a place's name; mark it with \"mirror\": true instead.",
     "- Outfits are everyday: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
     "- No two places, outfits or activities of one place alike.",
     "",
@@ -200,8 +203,8 @@ const LENGTH_NOTE = "(each text is at most 35 characters, the position included;
 const REASON: Record<PoolProblem, string> = {
   "not-json": "it was not the JSON object asked for",
   empty: "it was empty",
-  "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash',
-  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one with a free hand) ${LENGTH_NOTE}`,
+  "bad-label": 'its "label" was not 1 to 24 plain ASCII characters without a quote or a backslash, or it suggested a young person',
+  "too-few-places": `fewer than ${POOL_PLACES_MIN} of its places were usable (a place needs a plain name that does not say mirror, 1 to ${PLACE_TIMES_MAX} times, 2 to ${PLACE_ACTIVITIES_MAX} activities and one free-hand activity that does not use her phone) ${LENGTH_NOTE}`,
   "too-few-outfits": `fewer than ${POOL_OUTFITS_MIN} of its outfits were usable ${LENGTH_NOTE}`,
   "bad-shot-deck": `its "shotDeck" was not exactly five shots from ${POOL_SHOTS.join(", ")}`,
   "mirror-without-place": 'its "shotDeck" had a mirror shot but no place had "mirror": true',
@@ -285,6 +288,14 @@ function usableText(text: unknown, collector: Collector, revealing: boolean): te
   return youth.length === 0 && youthWords(value, "descriptor").length === 0 && reveal.length === 0;
 }
 
+/**
+ * Whether a category's label suggests a young person. The label goes to the writer with every slot of the category, so it is held to the check every pool text and
+ * the descriptor are (S5.R1 M2): when a pool is read, and when a stored record is (library/categories.ts).
+ */
+export function labelSuggestsAMinor(label: string): boolean {
+  return youthRuleNames(label, "descriptor").length > 0 || youthWords(label, "descriptor").length > 0;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -306,7 +317,8 @@ type ReadPlace = { name: string; times: string[]; activities: { text: string; tw
 function readPlace(raw: unknown, collector: Collector): { place: ReadPlace; dropped: number } | null {
   if (!isRecord(raw)) return null;
   const inner: Collector = { dropped: 0, words: collector.words };
-  const nameOk = usableText(raw.name, collector, false);
+  // S5.R1 H1: a place never names a mirror (a shot that is not a mirror can land on any place); the mirror shots use the place's mark.
+  const nameOk = usableText(raw.name, collector, false) && !/mirror/i.test(String(raw.name));
 
   const times = Array.isArray(raw.times) ? raw.times : [];
   const goodTimes = times.filter((t): t is string => {
@@ -332,7 +344,7 @@ function readPlace(raw: unknown, collector: Collector): { place: ReadPlace; drop
     activities: distinct(goodActivities, (a) => a.text).slice(0, PLACE_ACTIVITIES_MAX),
     mirror: raw.mirror === true,
   };
-  if (!nameOk || place.times.length === 0 || place.activities.length < 2 || !place.activities.some((a) => !a.twoHanded)) return null;
+  if (!nameOk || place.times.length === 0 || place.activities.length < 2 || !place.activities.some((a) => !a.twoHanded && !isPhoneActivity(a))) return null;
   return { place, dropped: inner.dropped };
 }
 
@@ -376,7 +388,12 @@ export function readPoolAnswer(content: string): PoolAnswer {
   const deckOk = deck.length === POOL_DECK_SIZE && deck.every((shot) => PoolShot.safeParse(shot).success);
 
   const problems: PoolProblem[] = [];
-  if (!label.success) problems.push("bad-label");
+  // A label that suggests a young person is refused like a malformed one, naming our words for the rule it broke (never the model's own text).
+  const labelRules = label.success ? youthRuleNames(label.data, "descriptor") : [];
+  if (!label.success || labelSuggestsAMinor(label.data)) {
+    problems.push("bad-label");
+    collector.words.push(...labelRules);
+  }
   if (locations.length < POOL_PLACES_MIN) problems.push("too-few-places");
   if (outfits.length < POOL_OUTFITS_MIN) problems.push("too-few-outfits");
   if (!deckOk) problems.push("bad-shot-deck");

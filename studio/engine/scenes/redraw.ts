@@ -1,7 +1,7 @@
-import { allowedActivities, type Place, type Pool } from "./pools";
+import { allowedActivities, hasCleanActivity, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, type PoseAllowance } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
-import type { PlanSlot, Pose } from "./schema";
+import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
 import type { Shot } from "./types";
 
 // CS.4b: the two draws a review-time write makes BEFORE its call. Both are pure functions of (set seed, write number, scene) and what they are given, on
@@ -50,6 +50,22 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
     const mirrors = places.filter((place) => place.mirror === true);
     if (mirrors.length === 0) shot = "selfie";
     else places = mirrors;
+  }
+  // S5.R1, the planner's rule (planner.ts settleHandShots): a selfie or mirror only goes where it has a clean activity. A mirror with no clean mirror place becomes a selfie on a clean
+  // place, and a pool with no clean place turns the scene into a friend's snap.
+  if (isPhoneInHandShot(shot)) {
+    const clean = places.filter(hasCleanActivity);
+    if (clean.length > 0) places = clean;
+    else {
+      const anywhere = pool.locations.filter(hasCleanActivity);
+      if (anywhere.length > 0) {
+        shot = "selfie";
+        places = anywhere;
+      } else {
+        shot = "friend";
+        places = pool.locations;
+      }
+    }
   }
   const place = rngPick(rng, preferred(places, (p) => p.name, avoid.locations, slot.location));
   const outfit = rngPick(rng, preferred(pool.outfits, (o) => o, avoid.outfits, slot.outfit));

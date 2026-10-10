@@ -408,6 +408,12 @@ export function hardYouthWords(text: string): string[] {
   return youthWords(text, "vibe");
 }
 
+/** Every fixed rule name `youthRuleNames` can answer in `scope`: the longest list a retry can be told (the floor pins of the prompts that tell it measure with all of them). */
+export function allYouthRuleNames(scope: AgeTextScope): string[] {
+  const rules = scope === "descriptor" ? [...HARD_YOUTH, ...DESCRIPTOR_YOUTH] : HARD_YOUTH;
+  return [...new Set(rules.map((rule) => rule.name))];
+}
+
 /** The fixed names of the rules the text breaks, each once: what a retry is told to avoid, never text of the answer. */
 export function youthRuleNames(text: string, scope: AgeTextScope): string[] {
   return [...new Set(youthMatches(text, scope).map((match) => match.rule.name))];

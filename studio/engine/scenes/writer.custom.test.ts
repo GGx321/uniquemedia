@@ -12,6 +12,7 @@ import { lightOf } from "./phoneLook";
 import type { PlanSlot, Pose } from "./schema";
 import { CATEGORIES, SHOTS as CANON_SHOTS } from "./types";
 import { chunkSlots, POSE_LABEL, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterRefusal } from "./writer";
+import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -164,7 +165,7 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   const snapshot: CategorySnapshot = { ref: CUSTOM, name: "я".repeat(40), label, style: "editorial" };
   /** What the reserve keeps clear of the ceiling: room for a field a later change adds to a slot or to a refusal. */
   const MARGIN = 250;
-  const MARGIN_PRINTED = 290;
+  const MARGIN_PRINTED = 268;
   /** A 100-photo run's last chunk is slots 76..100: the widest indices a chunk can carry. */
   const FIRST_INDEX = 100 - WRITER_CALL.slotsPerCall + 1;
 
@@ -194,14 +195,16 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   }).flat();
 
   function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
-    const indices = slots.map((s) => s.slotIndex);
-    const rest = indices.slice(0, -1);
+    // The subset of the chunk's numbers that `slotList` tells in the most characters (testing/worstSlotList.ts): not all of them (one range) and not every other one (a
+    // pair, a gap, a pair is dearer). Every list a refusal tells uses it.
+    const rest = worstSlotList(slots.map((s) => s.slotIndex));
     return {
-      problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction"],
-      missingSlots: indices.slice(-1),
+      problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie"],
+      missingSlots: rest,
       twoHandedSlots: rest,
       wordSlots: rest,
       poseSlots: rest,
+      phoneSlots: rest,
       words: hostileWords,
     };
   }
@@ -262,5 +265,40 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
     const drawnSlots = planWithPools({ seed: 20261005, count: WRITER_CALL.slotsPerCall, categories: [CUSTOM], poses: { profile: true, back: true } }, { ...POOLS, [CUSTOM]: pool }).slots;
     expect(drawnSlots.every((s) => s.location.length === POOL_TEXT_MAX && s.outfit.length === POOL_TEXT_MAX && s.activity.length === POOL_TEXT_MAX)).toBe(true);
     expect(floorOf(drawnSlots)).toBeLessThanOrEqual(floorOf(worstSlots(POOL_TEXT_MAX)));
+  });
+
+  // S5.R1: the built-in pools are held to POOL_TEXT_MAX too (BuiltInPoolSchema), but their worst chunk is pinned from the tables themselves, so a longer text in a table can never slip past.
+  const placesOf = (): string[] => CATEGORIES.flatMap((c) => POOLS[c].locations.map((l) => l.name));
+  const activitiesOf = (): string[] => CATEGORIES.flatMap((c) => POOLS[c].locations.flatMap((l) => l.activities.map((a) => a.text)));
+  const outfitsOf = (): string[] => CATEGORIES.flatMap((c) => POOLS[c].outfits);
+  const longest = (texts: readonly string[]): string => texts.reduce((a, b) => (b.length > a.length ? b : a));
+  const WORST_BUILT_IN_LABEL = longest(CATEGORIES.map((c) => categoryLabelOf()(c)));
+
+  function worstBuiltInSlots(): PlanSlot[] {
+    return worstSlots(1).map((s) => ({ ...s, category: "photoshoot", location: longest(placesOf()), activity: longest(activitiesOf()), outfit: longest(outfitsOf()) }));
+  }
+  const builtInFloor = (): number => {
+    const slots = worstBuiltInSlots();
+    return promptTokenFloor({ messages: writerMessages(slots, worstRefusal(slots), () => WORST_BUILT_IN_LABEL), jsonSchema: WRITER_JSON_SCHEMA, images: 0 });
+  };
+
+  test("the worst chunk the built-in pools can draw stays at least MARGIN tokens under the ceiling", () => {
+    expect(builtInFloor()).toBeLessThanOrEqual(CEILING - MARGIN);
+  });
+
+  test("the worst built-in chunk is never bigger than the worst custom chunk the floor pins already hold", () => {
+    expect(builtInFloor()).toBeLessThanOrEqual(floorOf(worstSlots(POOL_TEXT_MAX)));
+  });
+
+  const BUILT_IN_MARGIN_PRINTED = 468;
+  test("the built-in margin printed here is the measured one: re-measure it when the writer's prompt or a built-in text changes", () => {
+    expect(CEILING - builtInFloor()).toBe(BUILT_IN_MARGIN_PRINTED);
+  });
+
+  test("the worst built-in chunk is built from the longest real place, activity and outfit", () => {
+    const slots = worstBuiltInSlots();
+    expect(slots[0]?.location.length).toBe(Math.max(...placesOf().map((p) => p.length)));
+    expect(slots[0]?.activity.length).toBe(Math.max(...activitiesOf().map((p) => p.length)));
+    expect(slots[0]?.outfit.length).toBe(Math.max(...outfitsOf().map((p) => p.length)));
   });
 });

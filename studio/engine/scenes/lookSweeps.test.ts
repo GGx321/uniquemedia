@@ -188,6 +188,23 @@ describe("I5.2: only the mirror shows a phone", () => {
   });
 });
 
+describe("S5.R1 H1: a place never names a mirror the shot does not use", () => {
+  test("no slot of a shot other than the mirror has a location that matches /mirror/i", () => {
+    const offenders = EVERYTHING.filter((s) => s.slot.shot !== "mirror" && /mirror/i.test(s.slot.location)).map((s) => `${s.label}: ${s.slot.location}`);
+    expect(offenders).toEqual([]);
+  });
+
+  test("no non-mirror prompt says «mirror» in the writer's sentence, where the pools are the source", () => {
+    const offenders = EVERYTHING.filter((s) => s.slot.shot !== "mirror" && /mirror/i.test(s.sentence)).map((s) => s.label);
+    expect(offenders).toEqual([]);
+  });
+
+  test("the built-in sweep does draw non-mirror shots at places that may carry a mirror (the sweep is not vacuous)", () => {
+    const mirrorPlaces = new Set(CATEGORIES.flatMap((c) => POOLS[c].locations.filter((l) => l.mirror === true).map((l) => l.name)));
+    expect(EVERYTHING.some((s) => s.slot.shot !== "mirror" && mirrorPlaces.has(s.slot.location))).toBe(true);
+  });
+});
+
 describe("I5.3: no camera, staging or luxury word in a prompt assembled from a new plan", () => {
   test("none of the camera and staging phrases, in any prompt", () => {
     expect(hits((s) => firstHit(s.prompt, STAGING))).toEqual([]);

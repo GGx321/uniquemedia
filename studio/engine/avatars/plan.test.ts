@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import { AGE_CHECK_FALLBACK_PRICE, Estimate, IMPORT_FALLBACK_PRICE } from "../../shared/engine";
+import { REQUEST_TIMEOUT_MS } from "../money/budget";
 import { MAX_ATTEMPT_MS } from "../openrouter/transport";
 import { PriceBook, type ChatPrice, type ImagePrice, type PriceEntry } from "../money/prices";
 import {
@@ -167,7 +170,7 @@ describe("the image age check off (owner's decision, 2026-09-27: off by default)
 // Same fallback prices (grok-4.3): $1.25/M prompt, $2.50/M completion. The
 // vision describe call is longer than the plain descriptor call (every trait
 // field, not just one string) and carries one attached image.
-const IMPORT_DESCRIBE = { expected: 3_875, worst: 16_250 }; // 1_800 in / 650 out; ceilings 7K in / 3K out
+const IMPORT_DESCRIBE = { expected: 3_875, worst: 17_500 }; // 1_800 in / 650 out; ceilings 8K in / 3K out (S5.R1: 7K to 8K, room for the body proposal)
 // S5.0c: the descriptor-vs-master check, one vision call: 1_700 in / 500 out typical (by analogy with the describe call's measured 1_800 / 650); ceilings 7K in / 1.5K out.
 const DESCRIPTOR_CHECK = { expected: 3_375, worst: 12_500 };
 
@@ -180,7 +183,7 @@ describe("import an existing avatar (T6c)", () => {
     expect(importDescribeCall("acme/vision")).toEqual({
       model: "acme/vision",
       maxTokens: 3_000,
-      inputTokens: 7_000,
+      inputTokens: 8_000,
       images: 1,
       typical: { inputTokens: 1_800, outputTokens: 650 },
     });
@@ -195,7 +198,7 @@ describe("import an existing avatar (T6c)", () => {
   });
 
   // S5.0c (deliberate re-pin): the import also runs the descriptor check on the saved avatar, accepted by the same click, so its figures are in the import's.
-  test("worst case: up to 2 describe attempts and up to 2 check attempts — $0.057500 worst, $0.007250 expected", () => {
+  test("worst case: up to 2 describe attempts and up to 2 check attempts — $0.060000 worst, $0.007250 expected", () => {
     const estimate = importJobEstimate(FALLBACK, DEFAULTS);
 
     expect(estimate).toEqual({
@@ -204,7 +207,7 @@ describe("import an existing avatar (T6c)", () => {
       prices: "fallback",
       pricesAsOf: "2026-09-24",
     });
-    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([7_250, 57_500]);
+    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([7_250, 60_000]);
     expect(Estimate.safeParse(estimate).success).toBe(true);
   });
 
@@ -247,7 +250,7 @@ describe("import an existing avatar (T6c)", () => {
 
     expect(estimate).toEqual({
       expectedMicros: 1_800 + 650 + 1_700 + 500,
-      worstMicros: 2 * (7_000 + 3_000) + 2 * (7_000 + 1_500),
+      worstMicros: 2 * (8_000 + 3_000) + 2 * (7_000 + 1_500),
       prices: "live",
       pricesAsOf: "2026-10-01",
     });
@@ -290,6 +293,42 @@ describe("the descriptor-vs-master check (Stage 5, S5.0c)", () => {
   test("one attempt at its slowest: three tries to their 60 s timeout and two retry waits at the 60 s Retry-After cap plus 1 s jitter", () => {
     expect(DESCRIPTOR_CHECK_MAX_ATTEMPT_MS).toBe(3 * 60_000 + 2 * 61_000);
     expect(DESCRIPTOR_CHECK_MAX_ATTEMPT_MS).toBeLessThan(MAX_ATTEMPT_MS);
+  });
+
+  // S5.R1: the E2E build shortens REQUEST_TIMEOUT_MS to 15 s and the client refuses a timeout above it, so a 60 s check timeout made «Проверить описание» fail INTERNAL there.
+  test("a check never waits longer than the client allows a request to", () => {
+    expect(DESCRIPTOR_CHECK_TIMEOUT_MS).toBeLessThanOrEqual(REQUEST_TIMEOUT_MS);
+  });
+
+  describe("in the E2E build (__STUDIO_E2E__ defined true)", () => {
+    // The flag is a build-time constant, so the E2E values are read in a child process that defines it the way the build does.
+    const E2E_SOURCE = `
+      import { REQUEST_TIMEOUT_MS } from "./studio/engine/money/budget";
+      import { MAX_ATTEMPT_MS, JITTER_MS, MAX_RETRY_AFTER_MS, MAX_TRANSPORT_RETRIES } from "./studio/engine/openrouter/transport";
+      import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_TIMEOUT_MS } from "./studio/engine/avatars/plan";
+      console.log(JSON.stringify({ REQUEST_TIMEOUT_MS, MAX_ATTEMPT_MS, JITTER_MS, MAX_RETRY_AFTER_MS, MAX_TRANSPORT_RETRIES, DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_TIMEOUT_MS }));
+    `;
+    const e2e = (): Record<string, number> => {
+      const run = spawnSync("bun", ["--define", "__STUDIO_E2E__=true", "-e", E2E_SOURCE], { cwd: resolve(import.meta.dirname, "../../.."), encoding: "utf8" });
+      if (run.status !== 0) throw new Error(`child failed:\n${run.stdout}\n${run.stderr}`);
+      return JSON.parse(run.stdout.trim().split("\n").at(-1) ?? "{}") as Record<string, number>;
+    };
+
+    test("the build really shortens the request timeout (so this test would catch a 60 s check)", () => {
+      expect(e2e().REQUEST_TIMEOUT_MS).toBe(15_000);
+    });
+
+    test("the check's timeout fits inside the shortened request timeout", () => {
+      const v = e2e();
+      expect(v.DESCRIPTOR_CHECK_TIMEOUT_MS).toBeLessThanOrEqual(v.REQUEST_TIMEOUT_MS as number);
+    });
+
+    test("one check attempt at its slowest is sized from the shortened timeout, and stays within a request's own worst", () => {
+      const v = e2e() as Record<string, number>;
+      const t = v.DESCRIPTOR_CHECK_TIMEOUT_MS as number;
+      expect(v.DESCRIPTOR_CHECK_MAX_ATTEMPT_MS).toBe(((v.MAX_TRANSPORT_RETRIES as number) + 1) * t + (v.MAX_TRANSPORT_RETRIES as number) * ((v.MAX_RETRY_AFTER_MS as number) + (v.JITTER_MS as number)));
+      expect(v.DESCRIPTOR_CHECK_MAX_ATTEMPT_MS).toBeLessThanOrEqual(v.MAX_ATTEMPT_MS as number);
+    });
   });
 
   test("prices only the settings' text model: no image model and no age-check model", () => {

@@ -13,7 +13,7 @@ const JOB_ID = "import-00000001";
 const SCOPE: Scope = { avatarJobId: JOB_ID };
 const DESCRIBE_JPEG = JPEG_2;
 const JOB: ImportJob = { jobId: JOB_ID, scope: SCOPE, textModel: "x-ai/grok-4.3", describeJpeg: DESCRIBE_JPEG };
-const DESCRIBE_WORST = 16_250;
+const DESCRIBE_WORST = 17_500;
 const MODERATION: Reply = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
 
 const GOOD_DESCRIBE_ANSWER = {

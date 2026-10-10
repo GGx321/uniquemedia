@@ -1,0 +1,455 @@
+/* ── S5.0d · «Внешность»: the avatar's master portrait, «Сверка с фото» and «Описание» (.omc/stage5/design 07–13). App tokens only. ── */
+
+.look {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+  max-width: var(--page-max);
+}
+
+.look-side,
+.look-main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+
+.look-master {
+  height: 330px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  /* The image-less photo surface (theme.css) while the portrait loads or when it cannot. */
+  background: var(--photo-queued);
+}
+
+/* A 3:4 portrait in a 300 × 330 frame: the crop is taken mostly from below, so the hair — what the check compares first — stays whole. */
+.look-master .portrait-img {
+  object-position: 50% 22%;
+}
+
+.look-master-pill {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+}
+
+/* The wizard's «Затем — сверка описания с ним · до $X» under «Сохранить»: the paid step the click also accepts. */
+.save-check {
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+/* ── «Описание» ── */
+
+.look-desc {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+.look-desc-title {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  min-width: 0;
+}
+
+.look-desc-title .muted {
+  font-size: 12px;
+}
+
+.look-desc-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.look-desc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.look-desc-actions .field-hint {
+  flex: 1 1 260px;
+  min-width: 0;
+  margin: 0 0 0 4px;
+}
+
+.look-desc-proposal {
+  border-color: var(--warn-35);
+}
+
+.look-desc-edit {
+  border-color: var(--info-35);
+}
+
+.look-desc .descriptor-text {
+  overflow-wrap: anywhere;
+}
+
+.tag-warn {
+  background: var(--warn-12);
+  color: var(--warn);
+}
+
+.tag-info {
+  background: var(--info-08);
+  color: var(--info);
+  box-shadow: inset 0 0 0 1px var(--info-35);
+}
+
+/* The proposal as an edit: struck out in red, inserted in green, each run one box across a line break. */
+.descriptor-text del.dx,
+.descriptor-text ins.dx {
+  padding: 1px 2px;
+  border-radius: 3px;
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+del.dx {
+  background: var(--danger-08);
+  color: var(--danger);
+  text-decoration: line-through;
+  text-decoration-color: var(--danger-70);
+}
+
+ins.dx {
+  background: var(--ok-10);
+  color: var(--ok);
+  text-decoration: none;
+}
+
+/* A replacement reads as two words, not one: the insert stands a space apart from the strike. */
+del.dx + ins.dx {
+  margin-left: 1ch;
+}
+
+.look-legend {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.look-legend svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+/* The owner's own edit: the text area takes the paragraph's place, in the same mono, at the same line height. */
+.look-ta {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 104px;
+  padding: 10px 12px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.7;
+  letter-spacing: -0.02em;
+  resize: vertical;
+}
+
+.look-ta:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.look-edit-problem {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.look-edit-problem svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+/* A stale edit: what the description holds now, to compare with the owner's own words before saving again. */
+.look-current {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--warn-35);
+  border-radius: 10px;
+  background: var(--warn-08);
+}
+
+.look-current p {
+  margin: 0;
+}
+
+.look-current .descriptor-text {
+  font-size: 11px;
+}
+
+.look-current .btn {
+  align-self: flex-start;
+}
+
+/* ── «Сверка с фото» ── */
+
+.chk {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.chk-bad {
+  border-color: var(--warn-35);
+}
+
+.chk-text {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.chk-last {
+  margin: 0;
+}
+
+.chk .btn-stack {
+  width: 100%;
+}
+
+.chk .field-hint {
+  margin: 0;
+}
+
+.chk .notice {
+  padding: 10px 12px;
+}
+
+.chk-settings {
+  align-self: flex-start;
+}
+
+.chk-progress {
+  gap: 8px;
+  padding: 10px 12px 12px;
+}
+
+.chk-progress .job-progress-label {
+  font-size: 12.5px;
+}
+
+.chk-progress .mono {
+  font-size: 10.5px;
+}
+
+/* No length is known: a third of the bar sweeps across it, and stands still for reduced motion. */
+.bar-indet {
+  position: relative;
+}
+
+.bar-indet > span {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 38%;
+  animation: look-indet 1.5s ease-in-out -0.7s infinite;
+}
+
+@keyframes look-indet {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(265%);
+  }
+}
+
+.chk-aspects {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chk-a {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+
+.chk-ic {
+  display: flex;
+  justify-content: center;
+  padding-top: 1px;
+}
+
+.chk-a-ok .chk-ic {
+  color: var(--ok);
+}
+
+.chk-a-bad .chk-ic {
+  color: var(--warn);
+}
+
+.chk-a-skip .chk-ic,
+.chk-a-wait .chk-ic {
+  color: var(--faint);
+}
+
+.chk-a-name {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chk-a-skip .chk-a-name,
+.chk-a-wait .chk-a-name {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.chk-a-note {
+  color: var(--faint);
+}
+
+.chk-dot {
+  width: 6px;
+  height: 6px;
+  margin-top: 5px;
+  border-radius: 50%;
+  background: var(--faint);
+  animation: look-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes look-pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.chk-diff {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--inset);
+  font-size: 12px;
+}
+
+.chk-diff p {
+  margin: 0;
+  color: var(--text-2);
+}
+
+.chk-diff span {
+  color: var(--faint);
+}
+
+.chk-diff .chk-diff-photo {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+.chk-diff .chk-diff-photo span {
+  font-weight: 400;
+}
+
+.chk-verdict {
+  display: flex;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.chk-verdict-ic {
+  display: flex;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.chk-verdict-ok {
+  border-color: var(--ok-35);
+  background: var(--ok-08);
+}
+
+.chk-verdict-ok .chk-verdict-ic {
+  color: var(--ok);
+}
+
+.chk-verdict-bad {
+  border-color: var(--warn-35);
+  background: var(--warn-08);
+}
+
+.chk-verdict-bad .chk-verdict-ic {
+  color: var(--warn);
+}
+
+.chk-verdict-title {
+  margin: 0;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.chk-verdict-sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.chk-pointer {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.chk-pointer svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--info);
+}
+
+/* Held by a photo run or another job (the state the mockup lacks): the reason in the warning colour, under the disabled button. */
+.chk-held {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.chk-held svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bar-indet > span {
+    animation: none;
+    transform: translateX(70%);
+  }
+
+  .chk-dot {
+    animation: none;
+  }
+}

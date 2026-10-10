@@ -155,8 +155,11 @@ test("a draft from the snapshot is listed and reopens the wizard with its candid
   fireEvent.click(screen.getByRole("radio", { name: "Вариант C" }));
   fireEvent.change(screen.getByRole("textbox", { name: /Имя/ }), { target: { value: "Lena" } });
   fireEvent.click(screen.getByRole("button", { name: "Сохранить" }));
-  await screen.findByRole("heading", { level: 2, name: "Lena" });
+  // S5.0d re-pin: «Сохранить» ends on the new avatar's «Внешность»; the grid, opened again, lists her and no longer the draft.
+  await screen.findByRole("heading", { level: 1, name: "Lena" });
   expect(callsOf(engine, "avatars.pick")[0]?.payload).toEqual({ avatarId: draft.avatarId, photoId: "photo-draft-000c", name: "Lena" });
+  fireEvent.click(screen.getByRole("button", { name: "Аватары" }));
+  await screen.findByRole("heading", { level: 2, name: "Lena" });
   expect(screen.queryByRole("article", { name: "Черновик" }) === null).toBe(true);
 });
 
@@ -246,6 +249,8 @@ test("the rewrite recovery prices itself up front, sends nothing paid until the 
   const button = await screen.findByRole("button", { name: "Переписать описание · до $0.01" });
   expect(callsOf(engine, "avatars.estimateRewriteDescriptor").map((c) => c.payload)).toEqual([{ avatarId: "avatar-broken-0001" }]);
   expect(callsOf(engine, "avatars.rewriteDescriptor")).toHaveLength(0);
+  // S5.0d (plan §5.5): the known limit, beside the button — the rewrite brings the hair back to the nearest of the six stored colours.
+  expect(screen.getByText("Цвет волос вернётся к ближайшему из шести — после этого проверьте описание").className).toBe("field-hint");
   fireEvent.click(button);
 
   await screen.findByRole("heading", { level: 2, name: "Zoe" });
@@ -490,10 +495,10 @@ test("the import tile's price text is derived from IMPORT_FALLBACK_PRICE, not a 
   // literal, not computed with formatUsdRange itself — a bug in that
   // function must still be caught here, not just agree with itself.
   // S5.0c (deliberate re-pin): the import also runs the descriptor check on the avatar it saves, accepted by the same click: up to 2 describe attempts and up to 2 check attempts.
-  expect(IMPORT_FALLBACK_PRICE.whole).toEqual({ expectedMicros: 7_250, worstMicros: 57_500 });
+  expect(IMPORT_FALLBACK_PRICE.whole).toEqual({ expectedMicros: 7_250, worstMicros: 60_000 });
   setup({ preset: "demo" });
   const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
-  expect(within(tile).getByText("1 фото · ≈ $0.007–0.058")).toBeDefined();
+  expect(within(tile).getByText("1 фото · ≈ $0.007–0.060")).toBeDefined();
 });
 
 test("the new-avatar tile's «до $X» is the engine's own free estimate, never a spend", async () => {

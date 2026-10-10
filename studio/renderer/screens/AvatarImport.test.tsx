@@ -117,20 +117,21 @@ test("a name is required before the import is sent", async () => {
   expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(0);
 });
 
-test("happy path: pick, name it, import — lands back on Avatars with the new avatar saved", async () => {
+// S5.0d re-pin (the owner's decision, plan §5.5): an import no longer ends on the Avatars grid but on the new avatar's «Внешность», with its check.
+test("happy path: pick, name it, import — lands on the new avatar's «Внешность»", async () => {
   const { engine } = setup();
   await openImport();
   await pickPhoto();
   fireEvent.change(nameInput(), { target: { value: "Zoe" } });
 
   fireEvent.click(importButton());
-  await screen.findByRole("heading", { level: 1, name: "Аватары" });
+  await screen.findByRole("heading", { level: 1, name: "Zoe" });
 
   const [imported] = callsOf(engine, "avatars.importAvatar");
   expect(imported?.payload).toMatchObject({ name: "Zoe" });
   expect(imported?.payload).not.toHaveProperty("confirmedAiPersona");
-  await screen.findByText(/Аватар «Zoe» сохранён/);
-  await screen.findByRole("heading", { level: 2, name: "Zoe" });
+  expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним.").tagName).toBe("DIV");
 });
 
 // T6c review round 3, L4: the old code guessed "consumed or not" from the
@@ -203,7 +204,8 @@ test("H2: a photo under 768 px on its short side is advised against, with its si
   fireEvent.change(nameInput(), { target: { value: "Zoe" } });
   expect(importButton().hasAttribute("disabled")).toBe(false);
   fireEvent.click(importButton());
-  await screen.findByRole("heading", { level: 1, name: "Аватары" });
+  // S5.0d re-pin: the import lands on the new avatar's «Внешность».
+  await screen.findByRole("heading", { level: 1, name: "Zoe" });
 
   const [imported] = callsOf(engine, "avatars.importAvatar");
   expect(imported?.payload.stagingId).toBe("staging-small-0001");

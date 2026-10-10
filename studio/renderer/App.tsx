@@ -113,7 +113,7 @@ function Screen({ route, lastPhotos }: { route: Route; lastPhotos: string | null
     case "settings":
       return <SettingsScreen focus={route.focus} back={route.back} />;
     case "photos":
-      return <PhotosScreen avatarId={route.avatarId} tab={route.tab ?? "photos"} focus={route.focus ?? null} />;
+      return <PhotosScreen avatarId={route.avatarId} tab={route.tab ?? "photos"} focus={route.focus ?? null} landing={route.landing ?? null} />;
     case "montages":
       return <DraftsScreen lastAvatarId={lastPhotos} />;
     case "editor":

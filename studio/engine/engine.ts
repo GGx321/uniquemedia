@@ -4275,9 +4275,9 @@ export class Engine {
 
     const jobId = this.#deps.newId();
     const scope: Scope = { avatarJobId: jobId };
-    // The scope only ever sends the check's attempts: its cap is theirs.
-    this.#caps.set(scopeKey(scope), job.worstMicros);
+    // The client first: one that cannot be made (a timeout the client refuses) must not leave the cap behind. The scope only ever sends the check's attempts: its cap is theirs.
     const client = this.#openRouter(key, this.#deps.fetch, this.#descriptorCheckTimeoutMs);
+    this.#caps.set(scopeKey(scope), job.worstMicros);
     const linesBefore = budget.ledger.lines.length;
     let result: Awaited<ReturnType<typeof runDescriptorCheckJob>>;
     try {

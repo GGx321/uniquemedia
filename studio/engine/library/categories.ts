@@ -17,7 +17,7 @@ import {
   type CategorySnapshot,
   type CategoryStyle,
 } from "../../shared/engine";
-import { poolOf } from "../scenes/poolGen";
+import { labelSuggestsAMinor, poolOf } from "../scenes/poolGen";
 import { PoolSchema } from "../scenes/pools";
 import { fsyncDir, hasErrorCode, readFolderNames, readRecordFile, writeJsonAtomic } from "./durableFs";
 import { CATEGORIES_DIR, CATEGORY_FILE_SCHEMA_VERSION, isFromNewerVersion } from "./layout";
@@ -121,10 +121,12 @@ function sameText(a: string, b: string): boolean {
   return categoryNameKey(a) === categoryNameKey(b);
 }
 
-/** A record is readable when it is this version's schema and its pool passes the engine's own pool rules. */
+/** A record is readable when it is this version's schema, its label is clean and its pool passes the engine's own pool rules. */
 function readRecord(raw: unknown, fileId: string): StoredCategory | null {
   const parsed = StoredCategory.safeParse(raw);
   if (!parsed.success || parsed.data.categoryId !== fileId) return null;
+  // The label goes to the writer with every slot, so a label that suggests a young person makes the record unreadable like a pool text would (S5.R1 M2).
+  if (labelSuggestsAMinor(parsed.data.label)) return null;
   return PoolSchema.safeParse(poolOf(parsed.data.pool)).success ? parsed.data : null;
 }
 

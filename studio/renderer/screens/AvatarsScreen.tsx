@@ -418,6 +418,8 @@ function UnreadableTile({ entry, view, index, hidden }: { entry: UnreadableAvata
             )}
           </button>
         )}
+        {/* S5.0d (plan §5.2): the rewrite writes from the six stored hair colours, so a platinum or dyed hair comes back as the nearest of them. */}
+        {rewritable && !notRewritable && <p className="field-hint">Цвет волос вернётся к ближайшему из шести — после этого проверьте описание</p>}
         {notRewritable && <p className="field-hint">Эту запись переписать нельзя</p>}
         {rewritable && !notRewritable && blockedReason && (
           <p id={hintId} className="field-hint">

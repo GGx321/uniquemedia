@@ -25,6 +25,7 @@ import {
   type WriterProblem,
   type WriterRefusal,
 } from "./writer";
+import { worstSlotList } from "./testing/worstSlotList";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -106,7 +107,7 @@ describe("writerMessages", () => {
 
 describe("readWriterAnswer", () => {
   const SLOTS = [slot({ slotIndex: 1, shot: "selfie" }), slot({ slotIndex: 2, shot: "friend" })];
-  const GOOD_SELFIE = "She holds her phone in one hand and brushes a loose strand of hair back with the other, smiling softly at her reflection.";
+  const GOOD_SELFIE = "She brushes a loose strand of hair back with her free hand, smiling softly with a relaxed look.";
   const GOOD_FRIEND = "A friend catches her mid-laugh at the kitchen counter as morning light spills across the table.";
 
   test("a valid answer with one sentence per slot is read as the sentences", () => {
@@ -146,9 +147,63 @@ describe("readWriterAnswer", () => {
   });
 
   test("a two-handed action in a selfie slot is refused, naming the slot", () => {
-    const twoHanded = "She raises her phone for a selfie, holding a cup of coffee with both hands, glancing warmly at the camera.";
+    const twoHanded = "She raises her arm for a selfie, holding a cup of coffee with both hands, glancing warmly at the camera.";
     const answer = readWriterAnswer(output([{ slotIndex: 1, sentence: twoHanded }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS);
     expect(answer).toMatchObject({ ok: false, problems: ["two-handed"], twoHandedSlots: [1] });
+  });
+
+  // S5.R1 M3: a selfie's phone is the camera, so a sentence that names a phone shows a second one (the owner's «second phone» defect).
+  describe("a selfie sentence never names a phone (phone-in-selfie)", () => {
+    const NAMES_PHONE = "She holds her phone at arm's length and smiles, her other hand tucking a strand of hair behind her ear.";
+
+    test("a selfie sentence naming a phone is refused, naming the slot", () => {
+      const answer = readWriterAnswer(output([{ slotIndex: 1, sentence: NAMES_PHONE }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS);
+      expect(answer).toMatchObject({ ok: false, problems: ["phone-in-selfie"], phoneSlots: [1] });
+    });
+
+    test.each(["She is texting someone with her free hand.", "She checks her smartphone, one hand free.", "Her iPhone is in her left hand.", "She is on a FaceTime call."])("a selfie sentence saying %j is refused", (sentence) => {
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: false, problems: ["phone-in-selfie"] });
+    });
+
+    test("a mirror slot may name the phone: it is in the mirror", () => {
+      const slots = [slot({ slotIndex: 1, shot: "mirror" }), slot({ slotIndex: 2, shot: "friend" })];
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence: NAMES_PHONE }, { slotIndex: 2, sentence: GOOD_FRIEND }]), slots)).toMatchObject({ ok: true });
+    });
+
+    test("a friend's snap may name the phone", () => {
+      const slots = [slot({ slotIndex: 1, shot: "friend" })];
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence: NAMES_PHONE }]), slots)).toMatchObject({ ok: true });
+    });
+
+    test("a selfie sentence without a phone word passes, including «headphones»", () => {
+      const sentence = "She tucks a strand of hair behind her ear with her free hand, wearing headphones around her neck.";
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: true });
+    });
+
+    test("a selfie sentence naming a phone is refused even when the slot's own activity uses the phone: a phone in a selfie is the second phone", () => {
+      const slots = [slot({ slotIndex: 1, shot: "selfie", activity: "scrolling her phone" })];
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence: "She scrolls her phone with her free hand on a quiet bench." }]), slots)).toMatchObject({ ok: false, problems: ["phone-in-selfie"] });
+    });
+
+    test("the refusal is told as one fixed reason with an explanation, never the model's own wording", () => {
+      const text = writerRefusalText({ problems: ["phone-in-selfie"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], phoneSlots: [7] });
+      expect(text).not.toContain("7");
+      expect(text.toLowerCase()).toContain("phone");
+      expect(text.toLowerCase()).toContain("free hand");
+      expect(text).not.toContain("arm's length");
+    });
+
+    test("it is told together with the other problems of the same answer", () => {
+      const sentence = "She holds her phone while a girl waves behind her.";
+      const answer = readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS);
+      expect(answer).toMatchObject({ ok: false, problems: expect.arrayContaining(["phone-in-selfie", "youth-word"]) });
+    });
+
+    test("the system prompt no longer says the hand always holds the phone, which invites naming it", () => {
+      const [system] = writerMessages([slot()]);
+      expect(system?.content).not.toContain("always holds the phone");
+      expect(system?.content).toContain("only one hand is free");
+    });
   });
 
   test("the same two-handed wording in a non-selfie, non-mirror slot is not flagged", () => {
@@ -178,7 +233,7 @@ describe("readWriterAnswer", () => {
   test("several problems across slots are all reported at once, deduplicated", () => {
     const answer = readWriterAnswer(
       output([
-        { slotIndex: 1, sentence: "She raises her phone for a selfie, holding a mug with both hands." },
+        { slotIndex: 1, sentence: "She raises her arm for a selfie, holding a mug with both hands." },
         { slotIndex: 2, sentence: "A young girl in a bikini laughs in the kitchen." },
       ]),
       SLOTS,
@@ -220,6 +275,53 @@ describe("readWriterAnswer", () => {
         BACK_SLOTS,
       );
       expect(answer).toMatchObject({ ok: true });
+    });
+
+    // S5.R1 L1: in a friend's snap while she is busy she never looks at the viewer, whatever her pose.
+    describe("a candid slot never has her looking at the viewer", () => {
+      const CANDID_FRONT = [slot({ slotIndex: 1, shot: "candid", pose: "front" })];
+
+      test.each([
+        "She laughs while stirring a pot, looking at the viewer with a bright smile.",
+        "She is mid-step on the pavement, glancing at the camera.",
+        "She pauses at the counter and gazes into the lens.",
+        "She stirs the pot and smiles toward the viewer.",
+      ])("%j is refused as a pose contradiction, naming the slot", (sentence) => {
+        expect(readWriterAnswer(output([{ slotIndex: 1, sentence }]), CANDID_FRONT)).toMatchObject({ ok: false, problems: ["pose-contradiction"], poseSlots: [1] });
+      });
+
+      test("a candid sentence that has her busy and looking elsewhere passes", () => {
+        const sentence = "She stirs a pot at the stove, her eyes on the steam and a faint smile on her lips.";
+        expect(readWriterAnswer(output([{ slotIndex: 1, sentence }]), CANDID_FRONT)).toMatchObject({ ok: true });
+      });
+
+      test("«not looking at the viewer» passes in a candid, like it does for a back pose", () => {
+        const sentence = "She stirs a pot, not looking at the viewer, her mind on the stove.";
+        expect(readWriterAnswer(output([{ slotIndex: 1, sentence }]), CANDID_FRONT)).toMatchObject({ ok: true });
+      });
+
+      test("a friend's snap that is not a candid may still have her look at the viewer", () => {
+        const slots = [slot({ slotIndex: 1, shot: "friend", pose: "front" })];
+        expect(readWriterAnswer(output([{ slotIndex: 1, sentence: "She laughs at the counter, looking at the viewer." }]), slots)).toMatchObject({ ok: true });
+      });
+
+      test("contradictsPose takes the shot: a candid contradicts a gaze at the viewer in any pose, a friend's snap does not", () => {
+        expect(contradictsPose("She looks at the viewer.", "front", "candid")).toBe(true);
+        expect(contradictsPose("She looks at the viewer.", "three-quarter", "candid")).toBe(true);
+        expect(contradictsPose("She looks at the viewer.", "front", "friend")).toBe(false);
+        expect(contradictsPose("She looks at the viewer.", "front")).toBe(false);
+      });
+
+      test("the system prompt says it", () => {
+        const [system] = writerMessages([slot()]);
+        expect(system?.content).toContain("In a friend's snap while she is busy, she never looks at the viewer.");
+      });
+    });
+
+    // S5.R1 M4: the room's state is drawn separately (phoneLook.ts), so the sentence must not add mess of its own.
+    test("the system prompt tells the writer never to describe mess; the room's state is given separately", () => {
+      const [system] = writerMessages([slot()]);
+      expect(system?.content).toContain("Never describe mess, clutter or things lying around; the room's state is given separately.");
     });
 
     test("the same camera-facing wording on a front-pose slot is not flagged", () => {
@@ -372,6 +474,23 @@ describe("writerRefusalText", () => {
     expect(text).not.toContain("laughs in the kitchen");
   });
 
+  // S5.R1: consecutive slot numbers are told as a range, so a refusal over a whole chunk costs a few bytes, not one number per slot (the floor pins need the room).
+  test("tells consecutive slot numbers as a range and keeps the order and the others as they are", () => {
+    const text = writerRefusalText({ problems: ["two-handed"], missingSlots: [], twoHandedSlots: [1, 2, 3, 7, 9, 10], wordSlots: [], words: [], poseSlots: [] });
+    expect(text).toContain("slot(s) 1-3,7,9-10 used");
+  });
+
+  test("a single slot and a lone pair read as they did before", () => {
+    expect(writerRefusalText({ problems: ["pose-contradiction"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [4] })).toContain("slot(s) 4 contradicted");
+    expect(writerRefusalText({ problems: ["missing-slots"], missingSlots: [5, 7], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [] })).toContain("slot(s) 5,7");
+  });
+
+  test("a whole chunk of 25 consecutive slots is told in a handful of bytes", () => {
+    const all = Array.from({ length: 25 }, (_, i) => 76 + i);
+    const text = writerRefusalText({ problems: ["two-handed"], missingSlots: [], twoHandedSlots: all, wordSlots: [], words: [], poseSlots: [] });
+    expect(text).toContain("slot(s) 76-100 used");
+  });
+
   test("names the pose-contradiction slots and the rule", () => {
     const text = writerRefusalText({ problems: ["pose-contradiction"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [4] });
     expect(text).toContain("4");
@@ -478,15 +597,16 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
   // and carrying a youth/revealing word, one slot missing outright, and
   // (T5c) almost every slot also flagged for a pose contradiction.
   function worstRefusal(slots: readonly PlanSlot[]): WriterRefusal {
-    const indices = slots.map((s) => s.slotIndex);
-    const missingSlots = indices.slice(-1);
-    const rest = indices.slice(0, -1);
+    // The subset of the numbers that `slotList` tells in the most characters (testing/worstSlotList.ts), over a 100-photo run's last chunk (76..100), the widest numbers.
+    const rest = worstSlotList(Array.from({ length: slots.length }, (_, i) => 100 - slots.length + 1 + i));
+    const missingSlots = rest;
     return {
-      problems: ["missing-slots", "two-handed", "youth-word", "revealing-word", "pose-contradiction"],
+      problems: ["missing-slots", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie"],
       missingSlots,
       twoHandedSlots: rest,
       wordSlots: rest,
       poseSlots: rest,
+      phoneSlots: rest,
       words: ["girl", "teen", "child", "kid", "school uniform", "bikini", "lingerie", "stockings", "sports bra", "slip dress"],
     };
   }

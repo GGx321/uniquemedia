@@ -36,8 +36,8 @@ useNativeGlobals();
 const dir = useEngineDir("studio-engine-import-");
 
 /** The import job's price at the dated fallback table (plan.test.ts pins the same numbers). */
-const IMPORT_ESTIMATE: Estimate = { expectedMicros: 7_250, worstMicros: 57_500, prices: "fallback", pricesAsOf: "2026-09-24" };
-const DESCRIBE_WORST = 16_250;
+const IMPORT_ESTIMATE: Estimate = { expectedMicros: 7_250, worstMicros: 60_000, prices: "fallback", pricesAsOf: "2026-09-24" };
+const DESCRIBE_WORST = 17_500;
 
 function describeReply(overrides: Record<string, unknown> = {}, cost = 0.0021): Reply {
   const answer = {

@@ -58,9 +58,9 @@ function job(overrides: Partial<WriterRun> = {}): WriterRun {
 /** grok-4.3 fallback prices, WRITER_CALL's own ceiling (maxTokens 8_000, inputTokens 14_000, T5c round 2): 8_000 * $2.50/M + 14_000 * $1.25/M. */
 const ATTEMPT_WORST = 37_500;
 
-const GOOD_SELFIE = "She holds her phone in one hand and brushes a loose strand of hair back with the other, smiling softly at her reflection.";
+const GOOD_SELFIE = "She brushes a loose strand of hair back with her free hand, smiling softly with a relaxed look.";
 const GOOD_OTHER = "A friend catches her mid-laugh at the kitchen counter as morning light spills across the table.";
-const TWO_HANDED = "She raises her phone for a selfie, holding a cup of coffee with both hands, glancing warmly at the camera.";
+const TWO_HANDED = "She raises her arm for a selfie, holding a cup of coffee with both hands, glancing warmly at the camera.";
 
 function sentenceFor(slot: PlanSlot, twoHanded = false): string {
   if ((slot.shot === "selfie" || slot.shot === "mirror") && twoHanded) return TWO_HANDED;

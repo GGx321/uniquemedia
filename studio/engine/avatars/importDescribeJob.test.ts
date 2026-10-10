@@ -13,8 +13,8 @@ useNativeGlobals();
 const JPEG = Uint8Array.of(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x00, 0xaa);
 const SCOPE: Scope = { avatarJobId: "import-00000001" };
 const JOB: ImportDescribeJob = { jobId: "import-00000001", scope: SCOPE, textModel: "x-ai/grok-4.3", image: JPEG };
-/** One describe attempt at its ceilings on grok-4.3 (fallback prices): 3K out × $2.50/M + 7K in × $1.25/M. */
-const ATTEMPT_WORST = 16_250;
+/** One describe attempt at its ceilings on grok-4.3 (fallback prices): 3K out × $2.50/M + 8K in × $1.25/M. */
+const ATTEMPT_WORST = 17_500;
 
 const GOOD_ANSWER = {
   people: 1,

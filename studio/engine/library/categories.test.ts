@@ -154,6 +154,24 @@ describe("unreadable and newer records", () => {
     expect(await s.get("cat-paris-cafes")).toBeNull();
   });
 
+  // S5.R1 M2: the label goes to the writer in every slot, so a stored label is held to the youth check like the pool texts.
+  test("a record whose label suggests a young person is unreadable, not served", async () => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes" }));
+    await put("cat-paris-cafes.json", JSON.stringify({ ...made, label: "Teen cafes" }));
+
+    expect(await s.list()).toEqual({ categories: [], unreadable: 1, overLimit: 0 });
+    expect(await s.get("cat-paris-cafes")).toBeNull();
+  });
+
+  test("a record whose label is an ordinary phrase is still served", async () => {
+    const s = store();
+    const made = await s.create(input({ categoryId: "cat-paris-cafes" }));
+    await put("cat-paris-cafes.json", JSON.stringify({ ...made, label: "Paris cafes" }));
+
+    expect((await s.list()).unreadable).toBe(0);
+  });
+
   test("a record whose id does not match its file name is unreadable", async () => {
     const s = store();
     const made = await s.create(input({ categoryId: "cat-paris-cafes" }));

@@ -1,6 +1,7 @@
 import type { Estimate, ImageAgeCheck, ImageQuality } from "../../shared/engine";
 import { AGE_CHECK_CALL, DESCRIPTOR_CHECK_CALL, estimateAvatarJob, type AvatarJobInput, type ChatCall, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
+import { REQUEST_TIMEOUT_MS } from "../money/budget";
 import { JITTER_MS, MAX_RETRY_AFTER_MS, MAX_TRANSPORT_RETRIES } from "../openrouter/transport";
 import { descriptorCall, DESCRIPTOR_MAX_ATTEMPTS } from "./descriptor";
 
@@ -112,7 +113,7 @@ export const IMPORT_DESCRIBE_MAX_ATTEMPTS = 2;
  * 1024). Typical counts are an estimate,
  * like the descriptor call's own.
  */
-const IMPORT_DESCRIBE_LIMITS = { maxTokens: 3_000, inputTokens: 7_000, images: 1, typical: { inputTokens: 1_800, outputTokens: 650 } } as const;
+const IMPORT_DESCRIBE_LIMITS = { maxTokens: 3_000, inputTokens: 8_000, images: 1, typical: { inputTokens: 1_800, outputTokens: 650 } } as const;
 
 /** One describe attempt on the settings' text model. */
 export function importDescribeCall(textModel: string): ChatCall {
@@ -157,9 +158,10 @@ export const DESCRIPTOR_CHECK_MAX_ATTEMPTS = 2;
 /**
  * How long one HTTP try of a check may wait for its answer: 60 s, shorter than the 180 s default (openrouter/types.ts). The import runs the check inside the same command that
  * saved the avatar, and a stuck check must not hold the owner at the import screen for minutes. A timeout leaves that attempt's reserve open at its worst case until the next
- * reconcile (the usual notice), which is the price of not knowing whether the request was billed.
+ * reconcile (the usual notice), which is the price of not knowing whether the request was billed. Never above REQUEST_TIMEOUT_MS: the client refuses a longer timeout, and the E2E
+ * build shortens that to 15 s (S5.R1), so a 60 s check there could not even start.
  */
-export const DESCRIPTOR_CHECK_TIMEOUT_MS = 60_000;
+export const DESCRIPTOR_CHECK_TIMEOUT_MS = Math.min(60_000, REQUEST_TIMEOUT_MS);
 
 /**
  * One check attempt at its slowest: every HTTP try to the check's own 60 s timeout and the retry waits at their cap (transport.ts's `MAX_ATTEMPT_MS` with the shorter timeout).

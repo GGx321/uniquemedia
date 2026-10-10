@@ -58,8 +58,8 @@ describe("ideaMessages", () => {
   test("keeps the compose prompt's standing rules line for line: the woman, the phone hand, the pose, the adult rule, the clothing list, no text, no praise words", () => {
     const compose = (writerMessages(plan({ seed: 1, count: 1, categories: ["home"] }).slots)[0]?.content ?? "").split("\n");
     const idea = ideaSystemPrompt().split("\n");
-    const standing = compose.filter((line) => /^You write|^Reference images|holds the phone|Match each slot|grown adult|^- No text|^- Never write about|^- When she looks|^- No paper|^- Never use these words/.test(line));
-    expect(standing.length).toBe(10);
+    const standing = compose.filter((line) => /^You write|^Reference images|only one hand is free|Match each slot|grown adult|^- No text|^- Never write about|^- When she looks|^- No paper|^- Never describe mess|^- Never use these words/.test(line));
+    expect(standing.length).toBe(11);
     for (const line of standing) expect(idea).toContain(line);
     // The clothing line differs on purpose: the outfit is not "given" in an idea write, so it keeps its covering sentence (C-8).
     expect(idea.some((l) => l.startsWith("- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says"))).toBe(true);
@@ -395,6 +395,20 @@ describe("readWriterAnswer reads an idea's answer by the same rules", () => {
     const back: FixedIdeaSlot[] = [{ slotIndex: 3, idea: "walk", shot: "friend", pose: "back" }];
     expect(readWriterAnswer(answer({ slotIndex: 3, sentence: "She walks away, looking at the camera." }), back)).toMatchObject({ ok: false, problems: ["pose-contradiction"] });
   });
+
+  // S5.R1 L1: the idea prompt has no room for the candid rule's sentence (its floor pin), so the reader is what holds it.
+  test("refuses a candid scene that has her looking at the viewer, though the prompt does not carry the sentence", () => {
+    const candid: FixedIdeaSlot[] = [{ slotIndex: 3, idea: "stirring a pot", shot: "candid", pose: "front" }];
+    expect(readWriterAnswer(answer({ slotIndex: 3, sentence: "She stirs a pot, looking at the viewer with a smile." }), candid)).toMatchObject({ ok: false, problems: ["pose-contradiction"], poseSlots: [3] });
+    expect(ideaSystemPrompt()).not.toContain("In a friend's snap while she is busy");
+  });
+
+  test("S5.R1 M3: refuses a selfie scene that names a phone, whatever the idea says", () => {
+    const selfie: FixedIdeaSlot[] = [{ slotIndex: 3, idea: "reading on a bench", shot: "selfie", pose: "front" }];
+    expect(readIdeaAnswer(answer({ slotIndex: 3, sentence: "She sits on a bench holding her phone at arm's length." }), selfie)).toMatchObject({ ok: false, problems: ["phone-in-selfie"], phoneSlots: [3] });
+    const phoneIdea: FixedIdeaSlot[] = [{ slotIndex: 3, idea: "scrolling her phone on a bench", shot: "selfie", pose: "front" }];
+    expect(readIdeaAnswer(answer({ slotIndex: 3, sentence: "She sits on a bench scrolling her phone." }), phoneIdea)).toMatchObject({ ok: false, problems: ["phone-in-selfie"] });
+  });
 });
 
 describe("the idea prompt's floor", () => {
@@ -407,13 +421,19 @@ describe("the idea prompt's floor", () => {
     const n = String(i).padStart(4, "0");
     return [`${"W".repeat(12)}${n}`, `${"Я".repeat(6)}${n}`, `${"😀".repeat(3)}${n}`, `${"é".repeat(6)}${n}`];
   }).flat();
+  /**
+   * Five scene numbers that are never next to each other, so no list is told as a range (writer.ts slotList) and all five are told in every list: the longest a refusal can
+   * carry. Five digits is far wider than a write can need (a set holds at most 100 scenes), so the pin is stricter than the numbers a real write has.
+   */
+  const IDEA_IDS = [9_992, 9_994, 9_996, 9_998, 10_000];
   const worstRefusal = (indices: readonly number[]): WriterRefusal => ({
-    problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "bad-angle"],
-    missingSlots: indices.slice(-1),
-    twoHandedSlots: indices.slice(0, -1),
-    wordSlots: indices.slice(0, -1),
-    poseSlots: indices.slice(0, -1),
-    angleSlots: indices.slice(0, -1),
+    problems: ["not-json", "empty", "missing-slots", "unknown-slot", "duplicate-slot", "two-handed", "youth-word", "revealing-word", "pose-contradiction", "phone-in-selfie", "bad-angle"],
+    missingSlots: [...indices],
+    twoHandedSlots: [...indices],
+    wordSlots: [...indices],
+    poseSlots: [...indices],
+    angleSlots: [...indices],
+    phoneSlots: [...indices],
     words: hostileWords,
   });
 
@@ -423,7 +443,7 @@ describe("the idea prompt's floor", () => {
    * The label lengths differ, so the worst is a measurement, not a guess at one pair (CS.8a fix round 1: it is the photographer with a three-quarter view, not the mirror).
    */
   function worstFloor(idea: string): { floor: number; where: string } {
-    const indices = Array.from({ length: 5 }, (_, i) => 10_000 - i);
+    const indices = IDEA_IDS;
     const refusal = worstRefusal(indices);
     const cases: { where: string; floor: number }[] = [];
     for (const mirrorAllowed of [false, true]) {
@@ -449,10 +469,12 @@ describe("the idea prompt's floor", () => {
     expect(SceneWriteTarget.safeParse({ kind: "idea", idea: "中".repeat(500), count: 5, shot: null }).success).toBe(true);
     const { floor } = worstFloor("中".repeat(500));
     expect(floor).toBeLessThanOrEqual(CEILING - MARGIN);
+    // The measured margin of the honest worst (five non-adjacent five-digit numbers in every list): re-measure it when the idea prompt or a refusal text changes.
+    expect(CEILING - floor).toBe(223);
   });
 
   test("an idea of control characters, which would JSON-escape to six bytes each and break the pin, never reaches the prompt: the contract refuses it", () => {
-    const heavy: IdeaSlot[] = Array.from({ length: 5 }, (_, i) => ({ slotIndex: 10_000 - i, idea: "\u0001".repeat(500), shot: "mirror", pose: "three-quarter" }));
+    const heavy: IdeaSlot[] = Array.from({ length: 5 }, (_, i) => ({ slotIndex: IDEA_IDS[i] as number, idea: "\u0001".repeat(500), shot: "mirror", pose: "three-quarter" }));
     const floor = promptTokenFloor({ messages: ideaMessages(heavy, worstRefusal(heavy.map((s) => s.slotIndex))), jsonSchema: IDEA_JSON_SCHEMA, images: 0 });
     expect(floor).toBeGreaterThan(CEILING - MARGIN);
     expect(SceneWriteTarget.safeParse({ kind: "idea", idea: "\u0001".repeat(500), count: 5, shot: null }).success).toBe(false);
