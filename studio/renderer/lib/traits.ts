@@ -10,6 +10,7 @@ import {
   Mark,
   SkinTone,
 } from "../../shared/engine";
+import { randomBody } from "./body";
 
 export type Traits = AvatarTraits;
 type Ethnicity = Traits["ethnicity"];
@@ -87,7 +88,8 @@ export const BUILDS: readonly Choice<Build>[] = [
 
 export const MARKS: readonly Choice<Mark>[] = [
   { value: "freckles", label: "Веснушки" },
-  { value: "mole", label: "Родинка" },
+  // S5.2d (mockup decision 10): «на щеке», so it is never taken for a mole on the body («Тату и родинки на теле»).
+  { value: "mole", label: "Родинка на щеке" },
   { value: "dimples", label: "Ямочки" },
   { value: "nose-piercing", label: "Пирсинг в носу" },
   { value: "wrist-tattoo", label: "Тату на запястье" },
@@ -137,10 +139,10 @@ function pick<T>(items: readonly T[], rng: () => number): T {
   return item;
 }
 
-/** Valid random traits: every field from its fixed choices, 0–2 marks, a vetted vibe. */
+/** Valid random traits: every field from its fixed choices, 0–2 marks, a vetted vibe, and (S5.2d, owner's decision) the body: each field a value or «не задано», 0–1 marks. */
 export function randomTraits(rng: () => number = Math.random): Traits {
   const marks = MARKS.map((m) => m.value).filter(() => rng() < 0.3).slice(0, 2);
-  return {
+  const face: Traits = {
     age: MIN_AGE + (Math.floor(rng() * (MAX_AGE - MIN_AGE + 1)) % (MAX_AGE - MIN_AGE + 1)),
     ethnicity: pick(ETHNICITIES, rng).value,
     skinTone: pick(SKIN_TONES, rng).value,
@@ -152,6 +154,8 @@ export function randomTraits(rng: () => number = Math.random): Traits {
     marks,
     vibe: pick(RANDOM_VIBES, rng),
   };
+  // Drawn last, so the face takes the same draws it took before the body existed.
+  return { ...face, ...randomBody(rng) };
 }
 
 export function isValidTraits(traits: Traits): boolean {
