@@ -148,7 +148,7 @@ describe("what the poses do not touch", () => {
     expect(new Set(poseOf(ON))).toContain("back");
   });
 
-  test("a custom category without poses keeps today's plan, byte for byte (hash taken from main before CS.8a)", () => {
+  test("a custom category without poses keeps today's plan, byte for byte (hash taken from main before CS.8a; re-pinned at S5.R1: the fixture pool has places with no clean activity, whose selfie and mirror slots now move to a clean place)", () => {
     const pool = poolWith();
     const all: unknown[] = [];
     for (const seed of [1, 7, 42, 2026, 123456789]) {
@@ -157,7 +157,7 @@ describe("what the poses do not touch", () => {
         all.push(slotsOf(planOf(pool, { seed, count, poses: ON })));
       }
     }
-    expect(sha(all)).toBe("87f82156af8ed1fcce12cc3abb15c42e8830a1c95e929e3897a992b9808d9553");
+    expect(sha(all)).toBe("02e178fafa5053f06d977e71a9005ba7e62a8a484fc6a58cb1b3f12b04c79054");
   });
 
   test("a custom category without poses still follows the toggles", () => {
