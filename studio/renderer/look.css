@@ -20,7 +20,8 @@
   height: 330px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  background: #1b1b23;
+  /* The image-less photo surface (theme.css) while the portrait loads or when it cannot. */
+  background: var(--photo-queued);
 }
 
 /* A 3:4 portrait in a 300 × 330 frame: the crop is taken mostly from below, so the hair — what the check compares first — stays whole. */
