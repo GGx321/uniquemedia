@@ -53,6 +53,9 @@ export interface ImportDescribeRefusal {
 
 const NO_REFUSAL: ImportDescribeRefusal = { problems: [], words: [] };
 
+/** A youth-word refusal tells the next attempt at most this many of our rule names (S5.R1): all 80 would put the prompt over the ceiling its estimate priced. */
+export const IMPORT_DESCRIBE_WORDS_MAX = 6;
+
 function systemPrompt(): string {
   return [
     "You look at the attached photo and answer with three things: how many people it shows and whether the one person (if exactly one) is a woman, her typed traits read straight off the photo, and her appearance anchor.",
@@ -101,7 +104,7 @@ const REASON: Record<ImportDescribeProblem, (words: readonly string[]) => string
   "other-age": () => "the descriptor stated an age other than your own traits' age",
   "under-21-bound": () => "the descriptor stated an age limit",
   "youth-word": (words) =>
-    words.length > 0 ? `the descriptor used words we do not allow: ${words.map((w) => `"${w}"`).join(", ")}; call her a woman and use none of them` : "the descriptor used a word for a young person; call her a woman",
+    words.length > 0 ? `the descriptor used words we do not allow: ${words.slice(0, IMPORT_DESCRIBE_WORDS_MAX).map((w) => `"${w}"`).join(", ")}; call her a woman and use none of them` : "the descriptor used a word for a young person; call her a woman",
   number: () => 'the descriptor used a number other than "<age>-year-old" at the start',
 };
 

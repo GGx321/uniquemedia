@@ -2,11 +2,15 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "bun:test";
-import { adultTextProblems, AvatarDescriptor, AvatarTraits, HairColor } from "../../shared/engine";
+import { adultTextProblems, allYouthRuleNames, AvatarDescriptor, AvatarTraits, HairColor } from "../../shared/engine";
+import { promptTokenFloor } from "../openrouter/chat";
+import { importDescribeCall } from "./plan";
 import {
   IMPORT_DESCRIBE_JSON_SCHEMA,
   importDescribeMessages,
   readImportDescribeAnswer,
+  IMPORT_DESCRIBE_WORDS_MAX,
+  type ImportDescribeProblem,
   type ImportDescribeRefusal,
 } from "./importDescribe";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -239,5 +243,56 @@ describe("readImportDescribeAnswer", () => {
     test("exactly one woman passes, same as before", () => {
       expect(readImportDescribeAnswer(JSON.stringify(answer({ people: 1, woman: true }))).ok).toBe(true);
     });
+  });
+});
+
+// S5.R1: the reserve never goes below the prompt's byte floor (openrouter/chat.ts), so a describe prompt that outgrows the ceiling the estimate priced (money/estimate.ts, plan.ts's
+// IMPORT_DESCRIBE_LIMITS) makes every import reserve more than it was shown. The longest describe prompt there is: every problem the next attempt can be told, and the whole
+// list of rule names a youth-word refusal can carry. Raise the ceiling and the figures that quote it, deliberately, or shorten the prompt.
+describe("the describe prompt's byte floor (S5.R1)", () => {
+  const EVERY_PROBLEM: Record<ImportDescribeProblem, true> = {
+    "not-json": true,
+    empty: true,
+    "too-long": true,
+    "no-age-anchor": true,
+    "invalid-traits": true,
+    "invalid-descriptor": true,
+    "multiple-people": true,
+    "not-a-woman": true,
+    script: true,
+    "non-ascii-digits": true,
+    "other-age": true,
+    "under-21-bound": true,
+    "youth-word": true,
+    number: true,
+  };
+  const worst: ImportDescribeRefusal = { problems: Object.keys(EVERY_PROBLEM) as ImportDescribeProblem[], words: allYouthRuleNames("descriptor") };
+  const ceiling = importDescribeCall("x-ai/grok-4.3").inputTokens;
+  const floorOf = (refusal: ImportDescribeRefusal): number => promptTokenFloor({ messages: importDescribeMessages(refusal), jsonSchema: IMPORT_DESCRIBE_JSON_SCHEMA, images: 1 });
+
+  test("the worst refusal is given every problem and every rule name there is", () => {
+    expect(worst.problems).toHaveLength(14);
+    expect(worst.words.length).toBeGreaterThan(30);
+  });
+
+  // 80 rule names told in full would put the prompt 158 tokens over the ceiling (7,158 with the image allowance, against 7,000): a retry names the first few, which is all it needs.
+  test(`a retry tells at most ${IMPORT_DESCRIBE_WORDS_MAX} of the rule names, in the order they came`, () => {
+    const text = String(importDescribeMessages(worst)[1]?.content);
+    const reason = /words we do not allow: ([^;]*);/.exec(text)?.[1] ?? "";
+    const told = [...reason.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+    expect(told).toEqual(worst.words.slice(0, IMPORT_DESCRIBE_WORDS_MAX));
+  });
+
+  test("a short list reads exactly as before", () => {
+    const text = String(importDescribeMessages({ problems: ["youth-word"], words: ["teen", "girl"] })[1]?.content);
+    expect(text).toContain('the descriptor used words we do not allow: "teen", "girl"; call her a woman and use none of them');
+  });
+
+  test("the longest prompt a describe can send stays under the ceiling the estimate priced", () => {
+    expect(floorOf(worst)).toBeLessThanOrEqual(ceiling);
+  });
+
+  test("the pin measures: a refusal with nothing to tell is smaller than the worst", () => {
+    expect(floorOf({ problems: [], words: [] })).toBeLessThan(floorOf(worst));
   });
 });

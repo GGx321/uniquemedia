@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { perfTest } from "../../testing/bunTiers";
 import { assertBudget, medianElapsedMs } from "../../testing/tiers";
-import { adultTextProblems, ageMentions, ageUpperBounds, DESCRIPTOR_MAX_CHARS, hardYouthWords, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
+import { adultTextProblems, ageMentions, ageUpperBounds, allYouthRuleNames, DESCRIPTOR_MAX_CHARS, hardYouthWords, nonAsciiDigits, youthRuleNames, youthWords } from "./ageText";
 
 describe("ageMentions", () => {
   test.each([
@@ -759,6 +759,15 @@ describe("the descriptor names the rule a word broke, from our own list", () => 
 
   test("a name is ours, never text of the answer", () => {
     expect(youthRuleNames(`${F}, GiRlIsH, TEEENAGE look.`, "descriptor").sort()).toEqual(["girl", "teen"]);
+  });
+
+  test("allYouthRuleNames is the whole list a retry can be told: distinct, the descriptor's set a superset of the vibe's, and every name one a real text can break", () => {
+    const descriptor = allYouthRuleNames("descriptor");
+    const vibe = allYouthRuleNames("vibe");
+    expect(new Set(descriptor).size).toBe(descriptor.length);
+    expect(descriptor.length).toBeGreaterThan(vibe.length);
+    for (const name of vibe) expect(descriptor).toContain(name);
+    expect(descriptor).toEqual(expect.arrayContaining(["teen", "girl", "tiny", "fresh-faced", "Nth grade"]));
   });
 });
 
