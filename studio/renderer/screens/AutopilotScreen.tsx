@@ -93,7 +93,7 @@ function LastLaunchCard({ summary, nameOf }: { summary: LaunchSummary; nameOf: (
 
 export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] | null }) {
   const view = useEngineView();
-  const { client } = useEngine();
+  const { client, store } = useEngine();
   const navigate = useNavigate();
   const forms = useLaunchForms();
   const wide = useWide();
@@ -112,6 +112,10 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
   );
 
   const ready = view.phase === "ready";
+  // The music status (a refresh running, the list's age, the requests sent) is what the plan's music line stands on: ask for it, as the other music screens do (the store then follows `music.changed`).
+  useEffect(() => {
+    if (ready) void store.refreshMusic();
+  }, [ready, store]);
   const active = useMemo(() => view.avatars.filter((a) => a.status === "active"), [view.avatars]);
   const activeIds = useMemo(() => active.map((a) => a.avatarId), [active]);
   const names = useMemo(() => new Map(view.avatars.map((a) => [a.avatarId, a.name])), [view.avatars]);
@@ -223,7 +227,7 @@ export function AutopilotScreen({ chosen = null }: { chosen?: readonly string[] 
   useLayoutEffect(() => {
     if (musicNow !== null) lastMusic.current = musicNow;
   });
-  const music = musicLine(musicNow ?? lastMusic.current);
+  const music = musicLine(musicNow ?? lastMusic.current, view.music?.refresh.state === "running");
   const figures = figuresOf(plan.shown);
   const limit = running && launch !== null ? limitText(launch.plannedWorstMicros) : limitText(figures === null ? null : figures.estimate.worstMicros);
   const launches = history.state === "ready" ? history.launches : null;

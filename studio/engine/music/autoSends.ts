@@ -43,11 +43,14 @@ export class AutoSendsLog {
     this.#path = path;
   }
 
-  /** What the file says at `now`. Never throws. */
-  async summary(now: number): Promise<AutoSendsSummary> {
+  /**
+   * What the file says at `now`. Never throws. `heal: false` is a look that writes nothing (the plan card's dry run): a torn tail is left where it is and the whole lines before it are
+   * counted, which is what the count is after the heal.
+   */
+  async summary(now: number, options: { heal?: boolean } = {}): Promise<AutoSendsSummary> {
     try {
       let read = await readJsonl(this.#path, AutoSendLine);
-      if (read.torn !== null) {
+      if (read.torn !== null && options.heal !== false) {
         // The line is fsynced BEFORE the ledger's reserve, so a torn tail means the append never finished and no request was sent: it is moved to `.torn` and the whole lines are
         // counted. A line that is whole and cannot be read is another matter (below).
         await healJsonlTail(this.#path);

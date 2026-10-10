@@ -90,8 +90,9 @@ import { monthRoom, type LiveScope } from "./autopilot/room";
 import { createBalanceProbe, type Balance } from "./money/balance";
 import { exportGateOf } from "./autopilot/exportGate";
 import { createFreeSteps, freeLibraryOf, type FreeSteps, type FreeStepsDeps } from "./autopilot/freeSteps";
-import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedSingleFlight, boundedVideoFacts, createSpentSlices, liveRendersOf, normalizeTrackLabel, ownTrackTitle, renderFailureOf, renderLifeOf, sliceFactsOf, trendTrackLabel } from "./autopilot/launchWiring";
-import { createMusicPorts } from "./autopilot/musicPorts";
+import { AUTOPILOT_NETWORK_WAITS_MS, AUTOPILOT_PREVIEW_READ_MS, AUTOPILOT_READ_TIMEOUT_MS, boundedSingleFlight, boundedVideoFacts, createSpentSlices, liveRendersOf, normalizeTrackLabel, ownTrackTitle, renderFailureOf, renderLifeOf, sliceFactsOf, trendTrackLabel } from "./autopilot/launchWiring";
+import { createMusicPorts, type MusicPorts } from "./autopilot/musicPorts";
+import { LastGoodOwnTracks, musicCardOf } from "./autopilot/musicCard";
 import { checkFailuresOf } from "./autopilot/paidFailures";
 import { NOT_PAYABLE_DETAIL, type LaunchSliceStart, type SliceOutcome } from "./autopilot/paidPort";
 import { createPaidSteps } from "./autopilot/paidSteps";
@@ -102,7 +103,7 @@ import type { TrackUsage } from "../shared/autopilot/track";
 import type { LaunchSteps } from "./autopilot/steps";
 import { composeSteps } from "./autopilot/stepsComposer";
 import { trackUsage } from "./autopilot/trackUsage";
-import { NO_TRENDS, type AutopilotTrends } from "./music/autopilotCandidates";
+import { buildAutopilotCandidates, NO_TRENDS, type AutopilotTrends } from "./music/autopilotCandidates";
 import { Budget, scopeKey, type BudgetStatus } from "./money/budget";
 import { MoneyError } from "./money/errors";
 import { jobOpenReserveMicros, jobSpentMicros } from "./money/jobSpend";
@@ -233,6 +234,8 @@ export interface EngineDeps {
   folderFs?: FolderFs;
   /** The disk the export folder's check runs on; the real one unless a test plays a failing one. */
   exportRootFs?: ExportRootFs;
+  /** S4.10 fix B: how long each figure of the launch estimate that reads the world (the balance, the export volume's free bytes, the music candidates) may take; `AUTOPILOT_PREVIEW_READ_MS` unless a test says otherwise. */
+  autopilotReadMs?: number;
   /** Bounds each export folder check; EXPORT_CHECK_TIMEOUT_MS unless a test says otherwise. A function is asked at the start of each check (a test gives a hung check a short bound and the real check after it one that cannot race). */
   exportCheckTimeoutMs?: number | (() => number);
   /**
@@ -802,6 +805,16 @@ export class Engine {
   readonly #orchestrator: Orchestrator;
   /** S4.6w: the free steps of the default wiring (null when a test injected its own steps): poked when the world they wait for changes, disposed by `shutdown`. */
   #freeSteps: FreeSteps | null = null;
+  /** The ONE set of music ports: the free steps choose from it and the launch estimate counts from it. Built on first use (`#musicPorts`). */
+  #ports: MusicPorts | null = null;
+  /** The flagged own tracks, read for a library: bounded and single-flight, so a share that does not answer is asked about once (the free steps' passes and the estimate share it). */
+  readonly #ownTracksRead = boundedSingleFlight<{ mediaId: string; durationMs: number }[]>(AUTOPILOT_READ_TIMEOUT_MS, "the flagged own tracks");
+  /** The last good read of the flagged own tracks, per library: what the plan card counts when the media area is slow to be ready. */
+  readonly #lastOwnTracks = new LastGoodOwnTracks();
+  /** The export volume's free bytes for the estimate, one read at a time per folder. */
+  readonly #freeBytesRead = boundedSingleFlight<number | null>(AUTOPILOT_READ_TIMEOUT_MS, "the export volume's free bytes");
+  /** How long each figure of the launch estimate that reads the world may take. */
+  readonly #previewReadMs: number;
   /** The slice runs that have ended, so a pass of the free steps reads a finished slice's journal once and not at every poll (a finished slice stays finished: the owner cannot resume a launch's run). */
   readonly #finishedSlices = new Set<string>();
   /** Slice runs whose job the engine saw end on a cap (`RUN_CAP_EXCEEDED`: the run's own or the LAUNCH group's, which the run's own cap cannot tell). Their open slots will never be drawn: they are spent. */
@@ -854,6 +867,7 @@ export class Engine {
     this.#launches = new LaunchRegistry(deps.launches ?? launchStores);
     this.#folderFs = deps.folderFs ?? NODE_FOLDER_FS;
     this.#exportRootFs = deps.exportRootFs ?? NODE_EXPORT_ROOT_FS;
+    this.#previewReadMs = deps.autopilotReadMs ?? AUTOPILOT_PREVIEW_READ_MS;
     const checkTimeout = deps.exportCheckTimeoutMs ?? EXPORT_CHECK_TIMEOUT_MS;
     this.#exportCheckTimeoutMs = typeof checkTimeout === "function" ? checkTimeout : () => checkTimeout;
     this.#caseProbe = deps.caseProbe ?? new CaseSensitivityProbe();
@@ -1092,10 +1106,57 @@ export class Engine {
       photoIdsInDrafts: (library, avatarId) => this.#drafts.photoIdsInDrafts(library, avatarId),
       paidGate: () => this.#launchPaidGate(),
       exportStatus: () => this.#exportStatus,
-      musicKeyStored: () => this.#musicKey !== null,
+      // S4.10 fix B: the plan card's figures. The music is counted from the free steps' own ports (one instance) and the auto-refresh word is a dry run of the service's rule; the balance is
+      // S4.5e's `readBalance` (cached 60 s, a 401 marks the key rejected); the free bytes are the export volume's, read once at a time and only while the folder is usable.
+      musicCard: () =>
+        musicCardOf({
+          candidates: () => this.#musicPorts().candidates(),
+          // Saved trends are in memory; the own tracks are the last good read of THIS library (a slow share must not turn into «no music»).
+          fallback: () => buildAutopilotCandidates({ trends: (this.#deps.musicTrends ?? NO_TRENDS).storedTrends(), ownFlagged: this.#lastOwnTracks.recall(this.#live?.library.root ?? "") }),
+          outlook: (candidateCount) => this.#music.autoRefreshOutlook(candidateCount),
+          readMs: this.#previewReadMs,
+        }),
+      balance: () => this.readBalance(),
+      freeBytes: () => this.#previewFreeBytes(),
+      previewReadMs: this.#previewReadMs,
       clock: () => deps.clock(),
       newId: () => deps.newId(),
     });
+  }
+
+  /** The export volume's free bytes for the plan card: null while the folder is unusable (nothing to measure), or when the volume does not say. One read at a time per folder; the caller bounds it. */
+  async #previewFreeBytes(): Promise<number | null> {
+    if (this.#exportStatus.status === "unavailable") return null;
+    const path = this.#settings.exportPath;
+    return this.#freeBytesRead(path, () => this.#exportRootFs.freeBytes(path).catch(() => null));
+  }
+
+  /**
+   * The ONE set of music ports (S4.10 fix B): the free steps choose from it and the plan card counts from it. Built on first use, from the saved trends and the flagged own tracks; the own-tracks read
+   * is bounded and single-flight per library (a share that does not answer is asked about once, not once per pass or per estimate).
+   */
+  #musicPorts(): MusicPorts {
+    this.#ports ??= createMusicPorts(
+      {
+        trends: this.#deps.musicTrends ?? NO_TRENDS,
+        media: {
+          autopilotTracks: async () => {
+            const root = this.#live?.library.root;
+            const tracks = await this.#ownTracksRead(this.#libraryKey("own"), () => this.#media.autopilotTracks());
+            // Remembered for the plan card, even when the card has given up waiting: the read goes on in the background and the next estimate finds it.
+            if (root !== undefined) this.#lastOwnTracks.remember(root, tracks);
+            return tracks;
+          },
+        },
+      },
+      this.#music,
+    );
+    return this.#ports;
+  }
+
+  /** A read belongs to a library: after a switch an answer for the old one is not joined. */
+  #libraryKey(name: string): string {
+    return [this.#live?.library.root ?? "", name].join("|");
   }
 
   // ---------- S4.6w: the autopilot's steps, built from the engine's own parts ----------
@@ -1118,12 +1179,11 @@ export class Engine {
     const draftsRead = boundedSingleFlight<{ photoIds: ReadonlySet<string>; complete: boolean }>(AUTOPILOT_READ_TIMEOUT_MS, "the drafts of the avatar");
     const slicesRead = boundedSingleFlight<{ runIds: readonly string[]; over: boolean }>(AUTOPILOT_READ_TIMEOUT_MS, "the slice runs of the avatar");
     const usageRead = boundedSingleFlight<TrackUsage>(AUTOPILOT_READ_TIMEOUT_MS, "the track usage of the avatar");
-    const ownTracksRead = boundedSingleFlight<{ mediaId: string; durationMs: number }[]>(AUTOPILOT_READ_TIMEOUT_MS, "the flagged own tracks");
     const scanRead = boundedSingleFlight<ProvenanceScan>(AUTOPILOT_READ_TIMEOUT_MS, "the records of the avatar's videos");
     const lookupRead = boundedSingleFlight<VideoLookup>(AUTOPILOT_READ_TIMEOUT_MS, "a video's record");
-    // A read belongs to a library: after a switch an answer for the old one is not joined.
-    const keyOf = (name: string): string => [this.#live?.library.root ?? "", name].join("|");
-    const ports = createMusicPorts({ trends: this.#deps.musicTrends ?? NO_TRENDS, media: { autopilotTracks: () => ownTracksRead(keyOf("own"), () => this.#media.autopilotTracks()) } }, this.#music);
+    const keyOf = (name: string): string => this.#libraryKey(name);
+    // The ports are the engine's ONE set (the plan card counts from them too, S4.10 fix B).
+    const ports = this.#musicPorts();
     const live = (): Library => {
       const library = this.#live?.library;
       if (library === undefined) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open" });

@@ -1,6 +1,6 @@
 import { dirname, join } from "node:path";
 import { MUSIC_QUOTA_LIMIT, redactSecrets, type EngineError, type MusicQuotaLog, type MusicStatus, type MusicUnavailableReason, type TrackSummary } from "../../shared/engine";
-import { decideAutoRefresh, type AutoRefreshRefusal } from "./autoRefresh";
+import { autoRefreshOf, decideAutoRefresh, quotaRemainingOf, type AutoRefreshRefusal, type AutoRefreshWord } from "./autoRefresh";
 import { AUTO_SENDS_FILE, AutoSendsLog, AutoSendsLogError } from "./autoSends";
 import { createFlashapiClient, FlashapiConfigError, FlashapiError, type FlashapiFetch, type FlashapiResponseInfo } from "./client";
 import type { ListParse, MusicTrack } from "./listSchema";
@@ -523,6 +523,52 @@ export class MusicService {
    */
   releaseLaunch(launchId: string): void {
     this.#autoLaunches.delete(launchId);
+  }
+
+  /**
+   * The plan card's DRY RUN of `autoRefresh` (S4.10 fix B): what the rule would say if a launch asked now, in the card's word, and the requests left of the 30. It reads the very files the
+   * real decision reads (the ledger, the automatic sends, the list's age) and applies the very rule (`autoRefreshOf` over `decideAutoRefresh`), but reserves nothing, writes no line, heals
+   * no torn tail, marks no launch as refreshed and sends nothing. Never rejects: what cannot be read is read on the safe side (no automatic refresh, no figure for the requests left).
+   * A service that could not refresh at all (no music folder, a list that is not kept across a restart, a clock that is not a real date) reads like a log that cannot be trusted.
+   */
+  async autoRefreshOutlook(candidateCount: number): Promise<{ autoRefresh: AutoRefreshWord; quotaRemaining: number | null }> {
+    const now = this.#deps.clock();
+    const key = this.#deps.key();
+    let summary: QuotaSummary | null = null;
+    let quotaLog: MusicQuotaLog = "ok";
+    try {
+      summary = await this.#summaryNow();
+      if (this.#pending.length > 0) quotaLog = "held";
+    } catch {
+      quotaLog = "unreadable";
+    }
+    const log = this.#autoSends;
+    const sends = log === null ? null : await log.summary(now, { heal: false });
+    let listFetchedAt: number | null;
+    try {
+      listFetchedAt = this.#sink.summary().listFetchedAt;
+    } catch {
+      listFetchedAt = null;
+    }
+    const cannotSend = log === null || this.#ledger === null || !this.#sink.persistent || !clockInRange(now);
+    const sent = Math.min(MUSIC_QUOTA_LIMIT, summary?.sentInWindow ?? MUSIC_QUOTA_LIMIT);
+    return {
+      autoRefresh: autoRefreshOf({
+        now,
+        hasKey: key !== null,
+        keyRejected: this.#deps.keyRejected() || (key !== null && summary?.rejectedKey === last4(key)),
+        refreshRunning: this.#busy,
+        listFetchedAt,
+        candidateCount,
+        autoSendsInWindow: sends?.count ?? 0,
+        autoLogDamaged: cannotSend || sends?.damaged === true,
+        lastAutoSendAt: sends?.lastAt ?? null,
+        totalSendsInWindow: sent,
+        serverRemaining: summary?.serverRemaining ?? null,
+        launchRefreshed: false,
+      }),
+      quotaRemaining: quotaRemainingOf({ quotaLog, sentLast31d: sent }),
+    };
   }
 
   /** Lets `stop()` wait for an admission that has not started its request yet. */

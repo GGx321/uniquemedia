@@ -366,9 +366,11 @@ export interface MusicLine {
 }
 
 /** The «Музыка» row: the chip counts the candidates (trends without E and own tracks marked «для автопилота»), the line under it says how the trends refresh. */
-export function musicLine(music: LaunchPreview["music"] | null): MusicLine {
+export function musicLine(music: LaunchPreview["music"] | null, refreshing = false): MusicLine {
   if (music === null) return { chip: "Тренды + мои", sub: "тренды и свои треки с отметкой «для автопилота»", warn: false };
   const chip = `Тренды + мои · ${countOf(music.candidates, TRACK_FORMS)}`;
+  // A refresh is running now (the music status says so; the plan was asked before it began or while it ran): its tracks are on the way, so the list is neither «свежие» nor a warning.
+  if (refreshing) return { chip, sub: "тренды обновляются…", warn: false };
   const left = music.quotaRemaining === null ? "" : ` — осталось ${music.quotaRemaining} из 30`;
   switch (music.autoRefresh) {
     case "will":
