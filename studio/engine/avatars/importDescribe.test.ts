@@ -9,7 +9,7 @@ import {
   IMPORT_DESCRIBE_JSON_SCHEMA,
   importDescribeMessages,
   readImportDescribeAnswer,
-  IMPORT_DESCRIBE_WORDS_MAX,
+  IMPORT_DESCRIBE_WORDS_BYTES_MAX,
   type ImportDescribeProblem,
   type ImportDescribeRefusal,
 } from "./importDescribe";
@@ -266,21 +266,40 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
     "youth-word": true,
     number: true,
   };
-  const worst: ImportDescribeRefusal = { problems: Object.keys(EVERY_PROBLEM) as ImportDescribeProblem[], words: allYouthRuleNames("descriptor") };
+  // The words come from the model's own descriptor, in the order its text broke the rules, so the worst a retry can be told is the LONGEST names first (the Cyrillic ones are ~2 bytes a letter).
+  const byBytesDescending = (names: readonly string[]): string[] => [...names].sort((a, b) => Buffer.byteLength(b, "utf8") - Buffer.byteLength(a, "utf8"));
+  const worst: ImportDescribeRefusal = { problems: Object.keys(EVERY_PROBLEM) as ImportDescribeProblem[], words: byBytesDescending(allYouthRuleNames("descriptor")) };
   const ceiling = importDescribeCall("x-ai/grok-4.3").inputTokens;
+  /** What the pin keeps clear of the ceiling: room for S5.2b's body-proposal text and a later rule. */
+  const MARGIN = 500;
   const floorOf = (refusal: ImportDescribeRefusal): number => promptTokenFloor({ messages: importDescribeMessages(refusal), jsonSchema: IMPORT_DESCRIBE_JSON_SCHEMA, images: 1 });
+  const toldOf = (refusal: ImportDescribeRefusal): string[] => {
+    const text = String(importDescribeMessages(refusal)[1]?.content);
+    const reason = /words we do not allow: ([^;]*);/.exec(text)?.[1] ?? "";
+    return [...reason.matchAll(/"([^"]+)"/g)].map((m) => m[1] as string);
+  };
 
-  test("the worst refusal is given every problem and every rule name there is", () => {
+  test("the worst refusal is given every problem and every rule name there is, the longest first", () => {
     expect(worst.problems).toHaveLength(14);
     expect(worst.words.length).toBeGreaterThan(30);
+    expect(Buffer.byteLength(worst.words[0] as string, "utf8")).toBeGreaterThanOrEqual(Buffer.byteLength(worst.words.at(-1) as string, "utf8"));
   });
 
-  // 80 rule names told in full would put the prompt 158 tokens over the ceiling (7,158 with the image allowance, against 7,000): a retry names the first few, which is all it needs.
-  test(`a retry tells at most ${IMPORT_DESCRIBE_WORDS_MAX} of the rule names, in the order they came`, () => {
-    const text = String(importDescribeMessages(worst)[1]?.content);
-    const reason = /words we do not allow: ([^;]*);/.exec(text)?.[1] ?? "";
-    const told = [...reason.matchAll(/"([^"]+)"/g)].map((m) => m[1]);
-    expect(told).toEqual(worst.words.slice(0, IMPORT_DESCRIBE_WORDS_MAX));
+  // The names are bounded by their bytes, not by a count: six long Cyrillic names are ~135 bytes, six short English ones ~55 (the first pin took the short ones).
+  test(`a retry tells names up to ${IMPORT_DESCRIBE_WORDS_BYTES_MAX} bytes as they are written («"name", »), in the order they came, and stops before the one that would pass it`, () => {
+    const told = toldOf(worst);
+    const written = told.reduce((sum, name) => sum + Buffer.byteLength(name, "utf8") + 4, 0);
+    expect(told).toEqual(worst.words.slice(0, told.length));
+    expect(told.length).toBeGreaterThan(0);
+    expect(written).toBeLessThanOrEqual(IMPORT_DESCRIBE_WORDS_BYTES_MAX);
+    const next = worst.words[told.length] as string;
+    expect(written + Buffer.byteLength(next, "utf8") + 4).toBeGreaterThan(IMPORT_DESCRIBE_WORDS_BYTES_MAX);
+  });
+
+  test("many short names fit where few long ones do: the bound is bytes", () => {
+    const short = ["teen", "girl", "kid", "minor", "child", "tween", "loli", "tiny"];
+    expect(toldOf({ problems: ["youth-word"], words: short })).toEqual(short);
+    expect(toldOf({ problems: ["youth-word"], words: [...short, ...worst.words] }).length).toBeLessThan(short.length + worst.words.length);
   });
 
   test("a short list reads exactly as before", () => {
@@ -288,8 +307,8 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
     expect(text).toContain('the descriptor used words we do not allow: "teen", "girl"; call her a woman and use none of them');
   });
 
-  test("the longest prompt a describe can send stays under the ceiling the estimate priced", () => {
-    expect(floorOf(worst)).toBeLessThanOrEqual(ceiling);
+  test("the longest prompt a describe can send stays at least 500 tokens under the ceiling the estimate priced", () => {
+    expect(floorOf(worst)).toBeLessThanOrEqual(ceiling - MARGIN);
   });
 
   test("the pin measures: a refusal with nothing to tell is smaller than the worst", () => {

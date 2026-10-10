@@ -53,8 +53,23 @@ export interface ImportDescribeRefusal {
 
 const NO_REFUSAL: ImportDescribeRefusal = { problems: [], words: [] };
 
-/** A youth-word refusal tells the next attempt at most this many of our rule names (S5.R1): all 80 would put the prompt over the ceiling its estimate priced. */
-export const IMPORT_DESCRIBE_WORDS_MAX = 6;
+/**
+ * A youth-word refusal tells the next attempt our rule names up to this many bytes as they are written (`"name", `: the name's UTF-8 bytes and four more): all 80 would put
+ * the prompt over the ceiling its estimate priced. Bytes, not a count: a Cyrillic name is two bytes a letter, so six of them cost 135 and six English ones 55.
+ */
+export const IMPORT_DESCRIBE_WORDS_BYTES_MAX = 160;
+
+/** The rule names a retry is told: the first ones, in order, that fit IMPORT_DESCRIBE_WORDS_BYTES_MAX as written; the first that does not ends the list. */
+function toldNames(words: readonly string[]): string[] {
+  const told: string[] = [];
+  let written = 0;
+  for (const word of words) {
+    written += Buffer.byteLength(word, "utf8") + 4;
+    if (written > IMPORT_DESCRIBE_WORDS_BYTES_MAX) break;
+    told.push(word);
+  }
+  return told;
+}
 
 function systemPrompt(): string {
   return [
@@ -104,7 +119,7 @@ const REASON: Record<ImportDescribeProblem, (words: readonly string[]) => string
   "other-age": () => "the descriptor stated an age other than your own traits' age",
   "under-21-bound": () => "the descriptor stated an age limit",
   "youth-word": (words) =>
-    words.length > 0 ? `the descriptor used words we do not allow: ${words.slice(0, IMPORT_DESCRIBE_WORDS_MAX).map((w) => `"${w}"`).join(", ")}; call her a woman and use none of them` : "the descriptor used a word for a young person; call her a woman",
+    words.length > 0 ? `the descriptor used words we do not allow: ${toldNames(words).map((w) => `"${w}"`).join(", ")}; call her a woman and use none of them` : "the descriptor used a word for a young person; call her a woman",
   number: () => 'the descriptor used a number other than "<age>-year-old" at the start',
 };
 
