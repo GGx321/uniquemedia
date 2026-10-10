@@ -5,7 +5,7 @@ import type { PriceBook } from "../money/prices";
 import { toEngineError } from "../openrouter/engineError";
 import { truncate } from "../openrouter/transport";
 import type { OpenRouterClient } from "../openrouter/types";
-import { IMPORT_DESCRIBE_JSON_SCHEMA, importDescribeMessages, readImportDescribeAnswer, type ImportDescribeRefusal, type ImportedBody } from "./importDescribe";
+import { importDescribeJsonSchema, importDescribeMessages, readImportDescribeAnswer, type ImportDescribeRefusal, type ImportedBody } from "./importDescribe";
 import { importDescribeCall, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./plan";
 
 // T6c: the one-off vision call for an imported avatar (mirrors
@@ -70,7 +70,7 @@ export async function runImportDescribeJob(deps: ImportDescribeJobDeps, job: Imp
       priceBook: deps.priceBook,
       signal: NEVER_ABORTED,
       messages: importDescribeMessages(feedback),
-      jsonSchema: IMPORT_DESCRIBE_JSON_SCHEMA,
+      jsonSchema: importDescribeJsonSchema(feedback),
       maxTokens: call.maxTokens,
       inputTokens: call.inputTokens,
       images: [job.image],

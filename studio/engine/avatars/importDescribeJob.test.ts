@@ -199,3 +199,74 @@ test("a photo that showed no body leaves the body out of the result (S5.2b)", as
   const outcome = await run([reply({ ...GOOD_ANSWER, ...BODY_UNKNOWN })]).result;
   expect(outcome.ok && "body" in outcome).toBe(false);
 });
+
+// S5.2b review M1: a model that refuses to estimate a body must not make every import fail. An unusable first answer (prose or an empty one) is followed by an attempt that asks
+// without the «Body» section and without the body keys in the schema; a readable answer that broke a rule keeps the body request.
+function requestShape(call: { json(): Record<string, unknown> } | undefined): { system: string; keys: string[] } {
+  const body = call?.json() ?? {};
+  const messages = Array.isArray(body.messages) ? (body.messages as { role: string; content: unknown }[]) : [];
+  const format = body.response_format as { json_schema?: { schema?: { properties?: Record<string, unknown> } } } | undefined;
+  return { system: String(messages.find((m) => m.role === "system")?.content ?? ""), keys: Object.keys(format?.json_schema?.schema?.properties ?? {}) };
+}
+
+test("the first attempt asks for the body: the section is in the prompt and the eight keys are in the schema", async () => {
+  const { net, result } = run([reply({ ...GOOD_ANSWER, ...BODY_UNKNOWN })]);
+  await result;
+
+  const first = requestShape(net.calls[0]);
+  expect(first.system).toContain("Body: answer each");
+  expect(first.keys).toContain("bodyMarks");
+  expect(first.keys).toContain("height");
+});
+
+test("a refusal in prose is followed by an attempt without the body request, which then succeeds", async () => {
+  const { net, result } = run([{ status: 200, body: chatBody("I'm sorry, I can't assess a person's body from a photo.", { cost: 0.002 }) }, reply(GOOD_ANSWER, 0.0022)]);
+
+  expect(await result).toMatchObject({ ok: true });
+  const second = requestShape(net.calls[1]);
+  expect(second.system).not.toContain("Body: answer each");
+  expect(second.keys).not.toContain("bodyMarks");
+  expect(second.keys).not.toContain("height");
+  expect(second.keys).toContain("descriptor");
+});
+
+test("the second attempt is on the same job and the same ceiling: both attempts are reserved at the worst case and settled", async () => {
+  const { result } = run([{ status: 200, body: chatBody("no", { cost: 0.002 }) }, reply(GOOD_ANSWER, 0.0022)]);
+  await result;
+
+  expect(withoutAt(money.lines()).map((l) => [l.type, l.attemptId, l.costMicros ?? l.worstMicros])).toEqual([
+    ["reserve", "import-00000001:describe#1", ATTEMPT_WORST],
+    ["settle", "import-00000001:describe#1", 2_000],
+    ["reserve", "import-00000001:describe#2", ATTEMPT_WORST],
+    ["settle", "import-00000001:describe#2", 2_200],
+  ]);
+});
+
+test("an answer without body that came after the refusal proposes no body", async () => {
+  const { result } = run([{ status: 200, body: chatBody("{", { cost: 0.002 }) }, reply(GOOD_ANSWER, 0.0022)]);
+
+  const outcome = await result;
+  expect(outcome.ok && "body" in outcome).toBe(false);
+});
+
+test("an empty first answer is followed by an attempt without the body request", async () => {
+  const { net, result } = run([{ status: 200, body: chatBody("", { cost: 0.002 }) }, reply(GOOD_ANSWER, 0.0022)]);
+
+  expect(await result).toMatchObject({ ok: true });
+  expect(requestShape(net.calls[1]).system).not.toContain("Body: answer each");
+});
+
+test("a readable answer that broke a rule is asked again WITH the body request", async () => {
+  const { net, result } = run([reply({ ...GOOD_ANSWER, ...BODY_UNKNOWN, ethnicity: "martian" }), reply({ ...GOOD_ANSWER, ...BODY_UNKNOWN, height: "tall" })]);
+
+  const outcome = await result;
+  expect(requestShape(net.calls[1]).system).toContain("Body: answer each");
+  expect(outcome.ok && outcome.body?.values).toEqual({ height: "tall" });
+});
+
+test("a moderation refusal (HTTP 400) stays final: no second attempt without the body", async () => {
+  const { net, result } = run([{ status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } }, reply(GOOD_ANSWER)]);
+
+  expect(await result).toMatchObject({ ok: false });
+  expect(net.calls).toHaveLength(1);
+});

@@ -24,6 +24,9 @@ import { promptTokenFloor } from "../openrouter/chat";
 import { importDescribeCall } from "./plan";
 import {
   IMPORT_DESCRIBE_JSON_SCHEMA,
+  IMPORT_DESCRIBE_NO_BODY_JSON_SCHEMA,
+  importDescribeAsksBody,
+  importDescribeJsonSchema,
   importDescribeMessages,
   readImportDescribeAnswer,
   IMPORT_DESCRIBE_WORDS_BYTES_MAX,
@@ -106,9 +109,9 @@ describe("importDescribeMessages", () => {
     expect(system).toContain("No counts");
   });
 
-  test("a retry's feedback does not change the pinned system prompt", () => {
+  test("a retry after a rule was broken does not change the pinned system prompt (only an unreadable answer drops the body section)", () => {
     const first = importDescribeMessages()[0]?.content;
-    expect(importDescribeMessages({ problems: ["empty"], words: [] })[0]?.content).toBe(first);
+    expect(importDescribeMessages({ problems: ["youth-word"], words: ["teen"] })[0]?.content).toBe(first);
   });
 
   test("no user-entered text ever reaches the prompt: the messages take no arguments besides the previous refusal", () => {
@@ -222,10 +225,95 @@ describe("the body request (S5.2b)", () => {
     expect(Object.keys(read.body?.values ?? {})).not.toContain("build");
   });
 
-  test("a proposed body whose phrase breaks the adult rules is not proposed (the phrases are ours, so none does; the guard is the contract's own)", () => {
+  test("a proposed body's phrase passes the contract beside the descriptor it came with (the phrases are ours, so the adult rules cannot refuse them)", () => {
     const read = readImportDescribeAnswer(JSON.stringify(answer({ ...ALL_UNKNOWN, height: "short" })));
     if (!read.ok) throw new Error("unreachable");
     expect(AvatarDescriptor.safeParse({ age: 26, text: read.descriptor.text, body: bodyPhrase(read.body?.values ?? {}) }).success).toBe(true);
+  });
+});
+
+describe("the body request in the prompt (S5.2b review)", () => {
+  const system = String(importDescribeMessages()[0]?.content);
+
+  test("height is asked only when something in the photo gives a clear scale", () => {
+    expect(system).toContain('- height: only when something in the photo gives a clear scale; otherwise "unknown".');
+  });
+
+  test("a face or shoulders alone show none of the sizes and shapes, and the marks are asked apart", () => {
+    expect(system).toContain("A face or shoulders alone show none of the sizes and shapes.");
+    expect(system).toContain("- bodyMarks: the tattoos and moles that clearly show on her body");
+  });
+
+  test("the descriptor keeps every body word out, hips and waist included", () => {
+    expect(system).toContain("Keep the body fields out of it: no height, bust, figure, hips, waist, legs or bottom.");
+  });
+});
+
+// S5.2b review M1: a vision model may refuse a photo of a person once it is asked to estimate a body. When the first answer is unusable by nature (empty, or not the JSON asked for), the
+// second attempt asks without the «Body» section and without the body keys in the schema, so the import still reads her face and traits (and finds no body to propose).
+describe("the describe prompt without the body request (S5.2b review M1)", () => {
+  const BODY_SECTION = "Body: answer each";
+
+  test("the first attempt asks for the body", () => {
+    expect(importDescribeAsksBody({ problems: [], words: [] })).toBe(true);
+    expect(String(importDescribeMessages()[0]?.content)).toContain(BODY_SECTION);
+    expect(importDescribeJsonSchema({ problems: [], words: [] })).toBe(IMPORT_DESCRIBE_JSON_SCHEMA);
+  });
+
+  for (const problem of ["not-json", "empty"] as const) {
+    test(`an answer rejected as «${problem}» makes the next attempt ask without the body`, () => {
+      const feedback: ImportDescribeRefusal = { problems: [problem], words: [] };
+      expect(importDescribeAsksBody(feedback)).toBe(false);
+      expect(String(importDescribeMessages(feedback)[0]?.content)).not.toContain(BODY_SECTION);
+      expect(importDescribeJsonSchema(feedback)).toBe(IMPORT_DESCRIBE_NO_BODY_JSON_SCHEMA);
+    });
+  }
+
+  test("one unreadable answer among other problems still drops the body", () => {
+    expect(importDescribeAsksBody({ problems: ["youth-word", "not-json"], words: ["teen"] })).toBe(false);
+  });
+
+  for (const problem of ["too-long", "no-age-anchor", "invalid-traits", "invalid-descriptor", "script", "non-ascii-digits", "other-age", "under-21-bound", "youth-word", "number"] as const) {
+    test(`an answer that was readable but broke a rule («${problem}») keeps the body request`, () => {
+      expect(importDescribeAsksBody({ problems: [problem], words: [] })).toBe(true);
+    });
+  }
+
+  test("the no-body prompt is pinned to its own fixture, word for word", () => {
+    const fixture = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixtures", "import-describe-no-body-system-prompt.txt"), "utf8");
+    expect(`${importDescribeMessages({ problems: ["not-json"], words: [] })[0]?.content}\n`).toBe(fixture);
+  });
+
+  test("the no-body prompt keeps every other rule: the traits, the hair rule and the descriptor rules", () => {
+    const system = String(importDescribeMessages({ problems: ["empty"], words: [] })[0]?.content);
+    expect(system).toContain("Describe her hair exactly as the photo shows it");
+    expect(system).toContain("no height or weight");
+    expect(system).toContain("No counts");
+    expect(system).not.toContain("bodyMarks");
+    expect(system).not.toContain("Keep the body fields out");
+  });
+
+  test("the no-body schema has no body key, and the full schema has all eight", () => {
+    const noBody = IMPORT_DESCRIBE_NO_BODY_JSON_SCHEMA.schema as { required: string[]; properties: Record<string, unknown> };
+    const full = IMPORT_DESCRIBE_JSON_SCHEMA.schema as { required: string[]; properties: Record<string, unknown> };
+    for (const key of BODY_KEYS) {
+      expect(noBody.required).not.toContain(key);
+      expect(key in noBody.properties).toBe(false);
+      expect(full.required).toContain(key);
+    }
+    expect(noBody.required).toEqual(["people", "woman", "age", "ethnicity", "skinTone", "hairColor", "hairLength", "hairTexture", "eyeColor", "build", "marks", "descriptor"]);
+  });
+
+  test("an answer to the no-body prompt (no body keys at all) is read whole, with no proposal", () => {
+    const read = readImportDescribeAnswer(JSON.stringify(answer()));
+    expect(read.ok).toBe(true);
+    expect(read.ok && read.body).toBeUndefined();
+  });
+
+  test("the no-body prompt is smaller than the full one: the second attempt is within what the estimate priced", () => {
+    const full = promptTokenFloor({ messages: importDescribeMessages(), jsonSchema: IMPORT_DESCRIBE_JSON_SCHEMA, images: 1 });
+    const noBody = promptTokenFloor({ messages: importDescribeMessages({ problems: ["not-json"], words: [] }), jsonSchema: IMPORT_DESCRIBE_NO_BODY_JSON_SCHEMA, images: 1 });
+    expect(noBody).toBeLessThan(full);
   });
 });
 
@@ -380,34 +468,65 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
     "youth-word": true,
     number: true,
   };
-  // The words come from the model's own descriptor, in the order its text broke the rules, so the worst a retry can be told is the LONGEST names first (the Cyrillic ones are ~2 bytes a letter).
+  // The words come from the model's own descriptor, in the order its text broke the rules. What a retry is told is the first names, in order, that fit IMPORT_DESCRIBE_WORDS_BYTES_MAX as
+  // written, so the worst is the MAXIMAL subset of all the rule names that fits (a subset-sum over bytes plus the separator), longest first: not the greedy longest-first prefix, which can
+  // leave a gap a shorter name would have filled (S5.2b review L1).
+  const writtenBytes = (name: string): number => Buffer.byteLength(name, "utf8") + 4;
   const byBytesDescending = (names: readonly string[]): string[] => [...names].sort((a, b) => Buffer.byteLength(b, "utf8") - Buffer.byteLength(a, "utf8"));
-  const worst: ImportDescribeRefusal = { problems: Object.keys(EVERY_PROBLEM) as ImportDescribeProblem[], words: byBytesDescending(allYouthRuleNames("descriptor")) };
+  function maximalNames(names: readonly string[]): string[] {
+    const best = new Map<number, string[]>([[0, []]]);
+    for (const name of names) {
+      for (const [sum, chosen] of [...best]) {
+        const next = sum + writtenBytes(name);
+        if (next <= IMPORT_DESCRIBE_WORDS_BYTES_MAX && !best.has(next)) best.set(next, [...chosen, name]);
+      }
+    }
+    const top = Math.max(...best.keys());
+    return [...(best.get(top) ?? [])].sort((a, b) => Buffer.byteLength(b, "utf8") - Buffer.byteLength(a, "utf8"));
+  }
+  const ALL_PROBLEMS = Object.keys(EVERY_PROBLEM) as ImportDescribeProblem[];
+  const names = maximalNames(allYouthRuleNames("descriptor"));
+  /** The full prompt's longest retry: every problem the next attempt can be told that keeps the body request (an empty or unreadable answer drops it), and the rule names. */
+  const worst: ImportDescribeRefusal = { problems: ALL_PROBLEMS.filter((p) => p !== "not-json" && p !== "empty"), words: names };
+  /** The no-body prompt's longest retry: every problem, the unreadable ones included, and the rule names. */
+  const worstNoBody: ImportDescribeRefusal = { problems: ALL_PROBLEMS, words: names };
   const ceiling = importDescribeCall("x-ai/grok-4.3").inputTokens;
   /** What the pin keeps clear of the ceiling: room for a later rule (S5.2b spent the first 1,024 of 8K on the body request and raised the ceiling to 9K). */
   const MARGIN = 500;
-  const floorOf = (refusal: ImportDescribeRefusal): number => promptTokenFloor({ messages: importDescribeMessages(refusal), jsonSchema: IMPORT_DESCRIBE_JSON_SCHEMA, images: 1 });
+  const floorOf = (refusal: ImportDescribeRefusal): number => promptTokenFloor({ messages: importDescribeMessages(refusal), jsonSchema: importDescribeJsonSchema(refusal), images: 1 });
   const toldOf = (refusal: ImportDescribeRefusal): string[] => {
     const text = String(importDescribeMessages(refusal)[1]?.content);
     const reason = /words we do not allow: ([^;]*);/.exec(text)?.[1] ?? "";
     return [...reason.matchAll(/"([^"]+)"/g)].map((m) => m[1] as string);
   };
 
-  test("the worst refusal is given every problem and every rule name there is, the longest first", () => {
-    expect(worst.problems).toHaveLength(14);
-    expect(worst.words.length).toBeGreaterThan(30);
+  test("the worst refusal is given every problem that keeps the body request and the most rule names the bound lets through, the longest first", () => {
+    expect(worst.problems).toHaveLength(12);
+    expect(worstNoBody.problems).toHaveLength(14);
+    expect(worst.words.length).toBeGreaterThan(3);
     expect(Buffer.byteLength(worst.words[0] as string, "utf8")).toBeGreaterThanOrEqual(Buffer.byteLength(worst.words.at(-1) as string, "utf8"));
+    expect(worst.words.reduce((sum, name) => sum + writtenBytes(name), 0)).toBeLessThanOrEqual(IMPORT_DESCRIBE_WORDS_BYTES_MAX);
+  });
+
+  test("no name can be added to the worst list without passing the bound: it is maximal", () => {
+    const written = worst.words.reduce((sum, name) => sum + writtenBytes(name), 0);
+    for (const name of allYouthRuleNames("descriptor")) if (!worst.words.includes(name)) expect(written + writtenBytes(name)).toBeGreaterThan(IMPORT_DESCRIBE_WORDS_BYTES_MAX);
+  });
+
+  test("the worst list is told whole", () => {
+    expect(toldOf(worst)).toEqual(worst.words);
   });
 
   // The names are bounded by their bytes, not by a count: six long Cyrillic names are ~135 bytes, six short English ones ~55 (the first pin took the short ones).
   test(`a retry tells names up to ${IMPORT_DESCRIBE_WORDS_BYTES_MAX} bytes as they are written («"name", »), in the order they came, and stops before the one that would pass it`, () => {
-    const told = toldOf(worst);
-    const written = told.reduce((sum, name) => sum + Buffer.byteLength(name, "utf8") + 4, 0);
-    expect(told).toEqual(worst.words.slice(0, told.length));
+    const every = byBytesDescending(allYouthRuleNames("descriptor"));
+    const told = toldOf({ problems: ["youth-word"], words: every });
+    const written = told.reduce((sum, name) => sum + writtenBytes(name), 0);
+    expect(told).toEqual(every.slice(0, told.length));
     expect(told.length).toBeGreaterThan(0);
     expect(written).toBeLessThanOrEqual(IMPORT_DESCRIBE_WORDS_BYTES_MAX);
-    const next = worst.words[told.length] as string;
-    expect(written + Buffer.byteLength(next, "utf8") + 4).toBeGreaterThan(IMPORT_DESCRIBE_WORDS_BYTES_MAX);
+    const next = every[told.length] as string;
+    expect(written + writtenBytes(next)).toBeGreaterThan(IMPORT_DESCRIBE_WORDS_BYTES_MAX);
   });
 
   test("many short names fit where few long ones do: the bound is bytes", () => {
@@ -421,17 +540,27 @@ describe("the describe prompt's byte floor (S5.R1)", () => {
     expect(text).toContain('the descriptor used words we do not allow: "teen", "girl"; call her a woman and use none of them');
   });
 
-  test("the longest prompt a describe can send stays at least 500 tokens under the ceiling the estimate priced", () => {
+  test("the longest prompt a describe can send, with the body request or without it, stays at least 500 tokens under the ceiling the estimate priced", () => {
     expect(floorOf(worst)).toBeLessThanOrEqual(ceiling - MARGIN);
+    expect(floorOf(worstNoBody)).toBeLessThanOrEqual(ceiling - MARGIN);
   });
 
   // EXACT, like the writer's pins: any extra byte in the prompt, the schema or a reason moves the margin and fails this, so the prompt cannot creep toward the ceiling unseen.
   // Re-measure when the describe prompt changes.
-  test("the worst prompt keeps its measured margin under the ceiling (9,000 less the floor of 8,209)", () => {
-    expect(ceiling - floorOf(worst)).toBe(791);
+  test("the worst prompt with the body request keeps its measured margin under the ceiling", () => {
+    expect(String(importDescribeMessages(worst)[0]?.content)).toContain("Body: answer each");
+    expect(ceiling - floorOf(worst)).toBe(FULL_MARGIN);
+  });
+
+  test("the worst prompt without the body request keeps its measured margin under the ceiling", () => {
+    expect(String(importDescribeMessages(worstNoBody)[0]?.content)).not.toContain("Body: answer each");
+    expect(ceiling - floorOf(worstNoBody)).toBe(NO_BODY_MARGIN);
   });
 
   test("the pin measures: a refusal with nothing to tell is smaller than the worst", () => {
     expect(floorOf({ problems: [], words: [] })).toBeLessThan(floorOf(worst));
   });
 });
+
+const FULL_MARGIN = 757;
+const NO_BODY_MARGIN = 2023;
