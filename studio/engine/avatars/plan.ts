@@ -1,6 +1,7 @@
 import type { Estimate, ImageAgeCheck, ImageQuality } from "../../shared/engine";
 import { AGE_CHECK_CALL, DESCRIPTOR_CHECK_CALL, estimateAvatarJob, type AvatarJobInput, type ChatCall, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
+import { JITTER_MS, MAX_RETRY_AFTER_MS, MAX_TRANSPORT_RETRIES } from "../openrouter/transport";
 import { descriptorCall, DESCRIPTOR_MAX_ATTEMPTS } from "./descriptor";
 
 // What an avatar job consists of, in one place: the estimate commands price
@@ -159,6 +160,12 @@ export const DESCRIPTOR_CHECK_MAX_ATTEMPTS = 2;
  * reconcile (the usual notice), which is the price of not knowing whether the request was billed.
  */
 export const DESCRIPTOR_CHECK_TIMEOUT_MS = 60_000;
+
+/**
+ * One check attempt at its slowest: every HTTP try to the check's own 60 s timeout and the retry waits at their cap (transport.ts's `MAX_ATTEMPT_MS` with the shorter timeout).
+ * Main's deadlines for the check and for the import are sized from it, so they are never below the real worst and never the longer 180 s sizing.
+ */
+export const DESCRIPTOR_CHECK_MAX_ATTEMPT_MS = (MAX_TRANSPORT_RETRIES + 1) * DESCRIPTOR_CHECK_TIMEOUT_MS + MAX_TRANSPORT_RETRIES * (MAX_RETRY_AFTER_MS + JITTER_MS);
 
 /** The models a check prices: the settings' text model alone (the vision call), like the import's. */
 export function descriptorCheckPriceModels(models: AvatarModels): PriceModels {

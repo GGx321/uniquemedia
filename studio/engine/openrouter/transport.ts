@@ -447,7 +447,7 @@ export const MAX_RETRY_AFTER_MS = 60_000;
 /** A reported `Retry-After` is clamped to this. */
 export const MAX_RETRY_HINT_MS = 24 * 60 * 60 * 1_000;
 const BACKOFF_BASE_MS = 1_000;
-const JITTER_MS = 1_000;
+export const JITTER_MS = 1_000;
 
 /**
  * The longest one paid attempt can legitimately take: every HTTP try (the

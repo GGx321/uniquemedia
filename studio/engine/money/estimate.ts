@@ -116,14 +116,15 @@ export const AGE_CHECK_CALL: ChatCall = {
  * model's reasoning (1K may truncate it). The input ceiling is 7K, not the 3K the plan first said: the reserve never goes below the prompt's byte floor (chat.ts's
  * `promptTokenFloor`: a token per byte of the system prompt, the schema and the message, plus the image allowance), which is about 5.3K for the shortest descriptor and 6.7K
  * for the longest one the contract allows, so a 3K ceiling would reserve more than the estimate priced and the scope's cap would refuse the call (descriptorCheck.test.ts
- * holds the longest prompt under this number). Typical (the expected figure, ≈ $0.0024) is the plan's 1K in / 450 out; the first live check measures it.
+ * holds the longest prompt under this number). Typical (the expected figure, ≈ $0.0034) is 1.7K in / 500 out, by analogy with the describe call's measured 1.8K / 650 (the check prompt is about 85% of the describe's, with the same 1024 px image);
+ * the first live check measures it.
  */
 export const DESCRIPTOR_CHECK_CALL: ChatCall = {
   model: "x-ai/grok-4.3",
   maxTokens: 1_500,
   inputTokens: 7_000,
   images: 1,
-  typical: { inputTokens: 1_000, outputTokens: 450 },
+  typical: { inputTokens: 1_700, outputTokens: 500 },
 };
 
 export interface RunPlanInput {

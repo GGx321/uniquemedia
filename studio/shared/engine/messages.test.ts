@@ -372,7 +372,7 @@ const commandCases: { [T in CommandType]: CommandCase<T> } = {
     payload: { avatarId: "avatar-0001", text: "25-year-old woman, hazel eyes", expectedText: "25-year-old woman, green eyes" },
     result: { avatar },
   },
-  "avatars.estimateCheckDescriptor": { payload: { avatarId: "avatar-0001" }, result: { ...estimate, expectedMicros: 2_375, worstMicros: 25_000 } },
+  "avatars.estimateCheckDescriptor": { payload: { avatarId: "avatar-0001" }, result: { ...estimate, expectedMicros: 3_375, worstMicros: 25_000 } },
   "avatars.checkDescriptor": {
     payload: { avatarId: "avatar-0001", acceptedWorstMicros: 25_000 },
     result: {

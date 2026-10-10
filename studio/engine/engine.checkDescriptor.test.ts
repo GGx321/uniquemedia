@@ -41,7 +41,7 @@ const BAD = "a young woman with hazel eyes";
 const FIXED = "25-year-old European woman, light olive skin, hazel eyes, long straight platinum hair with bangs, athletic build, light freckles across the nose.";
 
 /** Two attempts at their ceilings on grok-4.3 (fallback table): 2 × (7K in × $1.25/M + 1.5K out × $2.50/M). */
-const CHECK_ESTIMATE: Estimate = { expectedMicros: 2_375, worstMicros: 25_000, prices: "fallback", pricesAsOf: "2026-09-24" };
+const CHECK_ESTIMATE: Estimate = { expectedMicros: 3_375, worstMicros: 25_000, prices: "fallback", pricesAsOf: "2026-09-24" };
 const ATTEMPT_WORST = 12_500;
 
 const HAIR_WRONG = {
