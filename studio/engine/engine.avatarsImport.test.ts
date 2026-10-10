@@ -34,7 +34,7 @@ useNativeGlobals();
 const dir = useEngineDir("studio-engine-import-");
 
 /** The import job's price at the dated fallback table (plan.test.ts pins the same numbers). */
-const IMPORT_ESTIMATE: Estimate = { expectedMicros: 3_875, worstMicros: 32_500, prices: "fallback", pricesAsOf: "2026-09-24" };
+const IMPORT_ESTIMATE: Estimate = { expectedMicros: 6_250, worstMicros: 57_500, prices: "fallback", pricesAsOf: "2026-09-24" };
 const DESCRIBE_WORST = 16_250;
 
 function describeReply(overrides: Record<string, unknown> = {}, cost = 0.0021): Reply {
@@ -273,7 +273,7 @@ describe("avatars.estimateImport", () => {
     expect(failed(response).error.code).toBe("NOT_FOUND");
   });
 
-  test("prices up to two describe attempts and nothing else", async () => {
+  test("prices up to two describe attempts and up to two checks of the avatar it saves (S5.0c)", async () => {
     const { engine, stagingId } = await startWithStagedPhoto(network());
     const response = await engine.handle(command("avatars.estimateImport", { stagingId }));
     expect(ok(response).result).toEqual(IMPORT_ESTIMATE);

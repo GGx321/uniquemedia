@@ -6,6 +6,9 @@ import {
   avatarPriceModels,
   candidateImage,
   CANDIDATES_PER_BATCH,
+  descriptorCheckCall,
+  descriptorCheckEstimate,
+  DESCRIPTOR_CHECK_MAX_ATTEMPTS,
   descriptorJobCap,
   importDescribeCall,
   IMPORT_DESCRIBE_MAX_ATTEMPTS,
@@ -161,6 +164,8 @@ describe("the image age check off (owner's decision, 2026-09-27: off by default)
 // vision describe call is longer than the plain descriptor call (every trait
 // field, not just one string) and carries one attached image.
 const IMPORT_DESCRIBE = { expected: 3_875, worst: 16_250 }; // 1_800 in / 650 out; ceilings 7K in / 3K out
+// S5.0c: the descriptor-vs-master check, one vision call: 1_000 in / 450 out typical; ceilings 7K in / 1.5K out.
+const DESCRIPTOR_CHECK = { expected: 2_375, worst: 12_500 };
 
 describe("import an existing avatar (T6c)", () => {
   test("at most 2 describe attempts, mirroring the descriptor job's own retry limit", () => {
@@ -185,16 +190,17 @@ describe("import an existing avatar (T6c)", () => {
     });
   });
 
-  test("worst case: up to 2 describe attempts and nothing else — $0.032500 worst, $0.003875 expected", () => {
+  // S5.0c (deliberate re-pin): the import also runs the descriptor check on the saved avatar, accepted by the same click, so its figures are in the import's.
+  test("worst case: up to 2 describe attempts and up to 2 check attempts — $0.057500 worst, $0.006250 expected", () => {
     const estimate = importJobEstimate(FALLBACK, DEFAULTS);
 
     expect(estimate).toEqual({
-      expectedMicros: IMPORT_DESCRIBE.expected,
-      worstMicros: IMPORT_DESCRIBE_MAX_ATTEMPTS * IMPORT_DESCRIBE.worst,
+      expectedMicros: IMPORT_DESCRIBE.expected + DESCRIPTOR_CHECK.expected,
+      worstMicros: IMPORT_DESCRIBE_MAX_ATTEMPTS * IMPORT_DESCRIBE.worst + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK.worst,
       prices: "fallback",
       pricesAsOf: "2026-09-24",
     });
-    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([3_875, 32_500]);
+    expect([estimate.expectedMicros, estimate.worstMicros]).toEqual([6_250, 57_500]);
     expect(Estimate.safeParse(estimate).success).toBe(true);
   });
 
@@ -208,6 +214,7 @@ describe("import an existing avatar (T6c)", () => {
     // The age check alone is still priced for the photo runs' own toggle (Settings text); it is no part of the import's whole.
     expect({ expectedMicros: AGE_CHECK.expected, worstMicros: AGE_CHECK.worst }).toEqual(AGE_CHECK_FALLBACK_PRICE);
     expect({ expectedMicros: IMPORT_DESCRIBE.expected, worstMicros: IMPORT_DESCRIBE.worst }).toEqual(IMPORT_FALLBACK_PRICE.describe);
+    expect({ expectedMicros: DESCRIPTOR_CHECK.expected, worstMicros: DESCRIPTOR_CHECK.worst }).toEqual(IMPORT_FALLBACK_PRICE.check);
     expect({ expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros }).toEqual(IMPORT_FALLBACK_PRICE.whole);
     expect(estimate.pricesAsOf).toBe(IMPORT_FALLBACK_PRICE.asOf);
   });
@@ -220,7 +227,7 @@ describe("import an existing avatar (T6c)", () => {
     expect(() => importJobEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/vision" })).not.toThrow();
   });
 
-  test("the text model from the settings prices the describe call, and nothing else is added", () => {
+  test("the text model from the settings prices the describe call and the check, and nothing else is added", () => {
     const rates = (promptPico: number, completionPico: number): PriceEntry<ChatPrice> => ({
       price: { promptPico, completionPico, imagePico: 0, requestPico: 0, overrides: [] },
       source: "live",
@@ -235,8 +242,8 @@ describe("import an existing avatar (T6c)", () => {
     const estimate = importJobEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/vision" });
 
     expect(estimate).toEqual({
-      expectedMicros: 1_800 + 650,
-      worstMicros: 2 * (7_000 + 3_000),
+      expectedMicros: 1_800 + 650 + 1_000 + 450,
+      worstMicros: 2 * (7_000 + 3_000) + 2 * (7_000 + 1_500),
       prices: "live",
       pricesAsOf: "2026-10-01",
     });
@@ -255,4 +262,40 @@ test("rewriting a descriptor: the descriptor call alone (asked at most twice), n
   // Exactly the descriptor job's cap: the command's own scope never sends anything else.
   expect(estimate.worstMicros).toBe(descriptorJobCap(FALLBACK, DEFAULTS));
   expect(Estimate.safeParse(estimate).success).toBe(true);
+});
+
+describe("the descriptor-vs-master check (Stage 5, S5.0c)", () => {
+  test("at most 2 attempts: an unparseable answer is asked once more", () => {
+    expect(DESCRIPTOR_CHECK_MAX_ATTEMPTS).toBe(2);
+  });
+
+  test("one attempt on the settings' text model: 7K in and 1.5K out at the ceilings, one attached image", () => {
+    expect(descriptorCheckCall("acme/vision")).toEqual({
+      model: "acme/vision",
+      maxTokens: 1_500,
+      inputTokens: 7_000,
+      images: 1,
+      typical: { inputTokens: 1_000, outputTokens: 450 },
+    });
+  });
+
+  test("a check alone: 2 attempts at 12 500 µ$ worst, $0.002375 expected", () => {
+    const estimate = descriptorCheckEstimate(FALLBACK, DEFAULTS);
+
+    expect(estimate).toEqual({ expectedMicros: DESCRIPTOR_CHECK.expected, worstMicros: 2 * DESCRIPTOR_CHECK.worst, prices: "fallback", pricesAsOf: "2026-09-24" });
+    expect(Estimate.safeParse(estimate).success).toBe(true);
+  });
+
+  test("it prices the text model alone, like the import: no image model is needed", () => {
+    const book = new PriceBook(
+      new Map(),
+      new Map([["acme/vision", { price: { promptPico: 1_000_000, completionPico: 1_000_000, imagePico: 0, requestPico: 0, overrides: [] }, source: "live" }]]),
+    );
+    expect(descriptorCheckEstimate({ book, asOf: "2026-10-01" }, { ...DEFAULTS, textModel: "acme/vision" })).toEqual({
+      expectedMicros: 1_000 + 450,
+      worstMicros: 2 * (7_000 + 1_500),
+      prices: "live",
+      pricesAsOf: "2026-10-01",
+    });
+  });
 });

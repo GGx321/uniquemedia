@@ -1,5 +1,5 @@
 import type { Estimate, ImageAgeCheck, ImageQuality } from "../../shared/engine";
-import { AGE_CHECK_CALL, estimateAvatarJob, type AvatarJobInput, type ChatCall, type ImageChoice } from "../money/estimate";
+import { AGE_CHECK_CALL, DESCRIPTOR_CHECK_CALL, estimateAvatarJob, type AvatarJobInput, type ChatCall, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { descriptorCall, DESCRIPTOR_MAX_ATTEMPTS } from "./descriptor";
 
@@ -125,19 +125,49 @@ export function importPriceModels(models: AvatarModels): PriceModels {
 
 /**
  * The import job's expected and worst cost: up to IMPORT_DESCRIBE_MAX_ATTEMPTS
- * describe attempts, nothing else. Unlike createDraft or generateCandidates,
- * there is no separate batch scope: the whole command runs in one scope, so
- * this estimate's own `worstMicros` is exactly that scope's cap.
+ * describe attempts, then (Stage 5, S5.0c) up to DESCRIPTOR_CHECK_MAX_ATTEMPTS
+ * attempts of the descriptor-vs-master check of the avatar it saved. Unlike
+ * createDraft or generateCandidates, there is no separate batch scope: the
+ * whole command runs in one scope, so this estimate's own `worstMicros` is
+ * exactly that scope's cap, and the scope keeps it until the check ends.
  */
 export function importJobEstimate(priced: PricedBook, models: AvatarModels): Estimate {
   const { book } = priced;
   const describe = importDescribeCall(models.textModel);
   const describeWorst = book.chatWorstCase({ model: describe.model, maxTokens: describe.maxTokens, inputTokens: describe.inputTokens, images: describe.images });
   const describeExpected = book.chatCost({ model: describe.model, images: describe.images, ...describe.typical });
+  const check = descriptorCheckEstimate(priced, models);
   return {
-    expectedMicros: describeExpected,
-    worstMicros: IMPORT_DESCRIBE_MAX_ATTEMPTS * describeWorst,
+    expectedMicros: describeExpected + check.expectedMicros,
+    worstMicros: IMPORT_DESCRIBE_MAX_ATTEMPTS * describeWorst + check.worstMicros,
     prices: book.source,
     pricesAsOf: priced.asOf,
   };
 }
+
+// ---------- Stage 5, S5.0c: the descriptor-vs-master check ----------
+
+// One vision call: the master photo and the stored descriptor in, a verdict per aspect and a proposed text out (descriptorCheck.ts). It never writes. It runs at
+// import (inside the import's scope and cap), at creation (the wizard sends `avatars.checkDescriptor` right after `avatars.pick`) and on demand.
+
+/** At most 2 attempts: an unparseable answer is asked once more, like the descriptor's and the describe's. */
+export const DESCRIPTOR_CHECK_MAX_ATTEMPTS = 2;
+
+/** One check attempt on the settings' text model. */
+export function descriptorCheckCall(textModel: string): ChatCall {
+  return { ...DESCRIPTOR_CHECK_CALL, model: textModel, typical: { ...DESCRIPTOR_CHECK_CALL.typical } };
+}
+
+/** The check's expected and worst cost: up to DESCRIPTOR_CHECK_MAX_ATTEMPTS attempts. The cap of its own scope is this worst case. */
+export function descriptorCheckEstimate(priced: PricedBook, models: AvatarModels): Estimate {
+  const { book } = priced;
+  const call = descriptorCheckCall(models.textModel);
+  const worst = book.chatWorstCase({ model: call.model, maxTokens: call.maxTokens, inputTokens: call.inputTokens, images: call.images });
+  return {
+    expectedMicros: book.chatCost({ model: call.model, images: call.images, ...call.typical }),
+    worstMicros: DESCRIPTOR_CHECK_MAX_ATTEMPTS * worst,
+    prices: book.source,
+    pricesAsOf: priced.asOf,
+  };
+}
+
