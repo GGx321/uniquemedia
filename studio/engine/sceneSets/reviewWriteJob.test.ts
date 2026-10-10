@@ -7,7 +7,7 @@ import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
 import type { PlanSlot } from "../scenes";
-import { writerMessages } from "../scenes/writer";
+import { SHOT_LABEL, writerMessages } from "../scenes/writer";
 import { ideaSystemPrompt } from "../scenes/ideaWriter";
 import { beginIdea, beginRewrite, withReviewWriteAccepted, withReviewWriteClosed } from "./reviewMutations";
 import { runReviewWrite, type ReviewWriteEnd } from "./reviewWriteJob";
@@ -224,7 +224,7 @@ describe("a rewrite of an own scene", () => {
     expect(await end).toMatchObject({ status: "done", written: 1 });
     const messages = messagesOf(net.calls[0] as FetchCall);
     expect(messages[0]?.content).toBe(ideaSystemPrompt());
-    expect(listAsked(net.calls[0] as FetchCall)).toEqual([{ slotIndex: 5, idea: "кофе на балконе утром", shot: "front-camera selfie", pose: "facing the camera" }]);
+    expect(listAsked(net.calls[0] as FetchCall)).toEqual([{ slotIndex: 5, idea: "кофе на балконе утром", shot: SHOT_LABEL.selfie, pose: "facing the camera" }]);
     expect(JSON.stringify(messages)).not.toContain("Typed by hand");
   });
 
@@ -341,7 +341,7 @@ describe("an idea write", () => {
       const { net, end } = run([ideaAnswer({ shot: "photographer", pose: "profile" })]);
 
       expect(await end).toMatchObject({ status: "done" });
-      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["photo taken by a friend", "choose"]]);
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([[SHOT_LABEL.friend, "choose"]]);
       expect((await setNow()).scenes.slice(5).map((s) => (s.origin === "own" ? [s.shot, s.pose] : null))).toEqual([["friend", "profile"]]);
     });
 
@@ -403,7 +403,7 @@ describe("an idea write", () => {
       const { net, end } = run([ideaAnswer({ shot: "candid", pose: "back" })]);
 
       expect(await end).toMatchObject({ status: "done" });
-      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([["front-camera selfie", "facing the camera"]]);
+      expect(listAsked(net.calls[0] as FetchCall).map((s) => [s.shot, s.pose])).toEqual([[SHOT_LABEL.selfie, "facing the camera"]]);
       const scene = (await setNow()).scenes.find((s) => s.sceneId === 5);
       expect(scene?.origin === "own" && [scene.shot, scene.pose]).toEqual(["selfie", "front"]);
     });

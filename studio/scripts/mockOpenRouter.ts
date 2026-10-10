@@ -47,6 +47,7 @@ import { FALLBACK_IMAGE_MODEL } from "../engine/runs/plan";
 import { WRITER_JSON_SCHEMA } from "../engine/scenes";
 import { ideaNamesMirror } from "../shared/engine";
 import { IDEA_JSON_SCHEMA } from "../engine/scenes/ideaWriter";
+import { SHOT_LABEL } from "../engine/scenes/writer";
 import { POOL_JSON_SCHEMA } from "../engine/scenes/poolGen";
 import { DEFAULT_IMAGE_MODEL } from "../main/settingsStore";
 import { ffmpegPath } from "../node/ffmpegBinary";
@@ -152,11 +153,11 @@ const WriterChatBody = z.object({ messages: z.array(z.object({ role: z.string(),
 /**
  * The plan's slots this writer chunk asked for, read back out of
  * `scenes/writer.ts`'s own request shape (`writerMessages`): a user message
- * whose text is `"Slots:\n" + JSON.stringify(slots, null, 2)`, optionally
- * followed by a re-ask paragraph after a blank line. The JSON itself never
- * contains a blank line (`JSON.stringify(..., null, 2)`'s own indentation
- * only ever uses single newlines), so splitting on the first blank line
- * isolates it safely.
+ * whose text is `"Slots:\n" + JSON.stringify(slots)` (compact since S5.1b),
+ * optionally followed by a re-ask paragraph after a blank line. The JSON
+ * itself never contains a newline, so splitting on the first blank line
+ * isolates it safely. The slot's `timeOfDay` is its light phrase
+ * (`phoneLook.ts`'s `lightOf`), not the stored time.
  */
 function writerSlotsOf(body: unknown): z.infer<typeof WriterRequestSlot>[] {
   const parsed = WriterChatBody.parse(body);
@@ -190,7 +191,7 @@ function ideaSlotsOf(body: unknown): z.infer<typeof IdeaRequestSlot>[] | null {
 function ideaAngleFor(slot: z.infer<typeof IdeaRequestSlot>): { shot?: string; pose?: string } {
   const idea = slot.idea.toLowerCase();
   const wanted = /сзади|\bback\b|from behind/.test(idea) ? "back" : /профил|profile/.test(idea) ? "profile" : "front";
-  const phoneInHand = slot.shot === "front-camera selfie" || slot.shot === "mirror selfie";
+  const phoneInHand = slot.shot === SHOT_LABEL.selfie || slot.shot === SHOT_LABEL.mirror;
   // The mirror, only for an idea that names one (the engine offers it then and not otherwise), facing the camera.
   const mirror = slot.shot === "choose" && ideaNamesMirror(slot.idea);
   const shot = mirror ? "mirror" : wanted === "front" ? "friend" : "candid";
@@ -213,7 +214,7 @@ function ideaSentenceFor(slot: z.infer<typeof IdeaRequestSlot>): string {
  * planner's pools), so every slot's sentence differs with its scene.
  */
 function writerSentenceFor(slot: z.infer<typeof WriterRequestSlot>): string {
-  return `She spends a quiet moment at ${slot.location} in the ${slot.timeOfDay}, wearing ${slot.outfit}, calm and unhurried.`;
+  return `She spends a quiet moment at ${slot.location}, lit by ${slot.timeOfDay}, wearing ${slot.outfit}, calm and unhurried.`;
 }
 
 /**
