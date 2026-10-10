@@ -636,6 +636,27 @@ describe("the stored body proposal (Stage 5, S5.2a)", () => {
     await expectLibraryError(library.clearBodyProposal("unknown-avatar"), "avatar-not-found");
   });
 
+  test.each([
+    ["a bad timestamp", { values: {}, seen: {}, at: "yesterday" }],
+    ["an extra key", { values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z", note: "x" }],
+    ["a value of the wrong type", { values: { bust: { deep: 1 } }, seen: {}, at: "2026-10-10T10:00:00.000Z" }],
+    ["not an object", "full"],
+  ])("a hand-corrupted proposal (%s) is dropped on open: the avatar is kept, listed and not quarantined", async (_label, corrupted) => {
+    const { library } = await openLibrary(root(), deps());
+    const { avatar } = await library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL });
+    const path = join(root(), "avatars", avatar.id, "avatar.json");
+    await writeFile(path, JSON.stringify({ ...((await readJson(path)) as object), bodyProposal: corrupted }));
+
+    const reopened = await openLibrary(root(), deps());
+
+    expect(reopened.report.quarantined).toEqual([]);
+    expect(reopened.report.avatars).toBe(1);
+    const kept = reopened.library.getAvatar(avatar.id);
+    expect(kept).toMatchObject({ id: avatar.id, name: "Zoe", status: "active" });
+    expect(kept?.bodyProposal).toBeUndefined();
+    expect(reopened.library.referencePhoto(avatar.id)).not.toBeNull();
+  });
+
   test("a rewritten descriptor keeps the proposal: only the body commands clear it", async () => {
     const { library } = await openLibrary(root(), deps());
     const { avatar } = await library.createImportedAvatar({ ...IMPORTED, bodyProposal: PROPOSAL });

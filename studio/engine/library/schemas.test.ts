@@ -101,11 +101,13 @@ describe("AvatarManifestSchema", () => {
     expect("bodyProposal" in AvatarManifestSchema.parse(validManifest())).toBe(false);
   });
 
-  test("rejects a bodyProposal with an extra key, a bad timestamp or no timestamp", () => {
+  test("drops a bodyProposal with an extra key, a bad timestamp or no timestamp, and keeps the manifest", () => {
     const good = { values: {}, seen: {}, at: "2026-10-10T10:00:00.000Z" };
-    expect(AvatarManifestSchema.safeParse(validManifest({ bodyProposal: { ...good, note: "x" } })).success).toBe(false);
-    expect(AvatarManifestSchema.safeParse(validManifest({ bodyProposal: { ...good, at: "yesterday" } })).success).toBe(false);
-    expect(AvatarManifestSchema.safeParse(validManifest({ bodyProposal: { values: {}, seen: {} } })).success).toBe(false);
+    for (const bodyProposal of [{ ...good, note: "x" }, { ...good, at: "yesterday" }, { values: {}, seen: {} }]) {
+      const parsed = AvatarManifestSchema.safeParse(validManifest({ bodyProposal }));
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.bodyProposal).toBeUndefined();
+    }
   });
 
   test("rejects a manifest that still carries a language key", () => {

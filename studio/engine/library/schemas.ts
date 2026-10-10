@@ -48,7 +48,8 @@ export const AvatarManifestSchema = z
     masterPhotoId: LibraryIdSchema.nullable(),
     status: z.enum(["draft", "active", "archived"]),
     createdAt: IsoTimestamp,
-    bodyProposal: BodyProposalRecordSchema.optional(),
+    // Read leniently: a proposal that does not parse is dropped and the avatar kept, never the whole folder quarantined over a LOW-value field.
+    bodyProposal: BodyProposalRecordSchema.optional().catch(undefined),
   })
   .refine((m) => m.status === "draft" || m.masterPhotoId !== null, {
     message: "only a draft may have no master photo",
