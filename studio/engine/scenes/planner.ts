@@ -193,8 +193,9 @@ function planCategory(
       outfit = outfitBag.next();
     }
     const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
-    // pools.ts's schema guarantees at least one one-handed activity per
-    // location, so allowedActivities is never empty even for a selfie/mirror shot.
+    // settleHandShots has already moved every selfie/mirror shot onto a place
+    // with a clean (one-handed, phone-free) activity, or turned it into a
+    // friend shot, so allowedActivities is never empty here.
     const slotIndex = startIndex + i;
     return {
       slotIndex,
