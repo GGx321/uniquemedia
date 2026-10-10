@@ -8,6 +8,7 @@ import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./librar
 import { ownScene, sampleSet } from "./library/testing/sceneSetSample";
 import type { PlanSlot } from "./scenes";
 import { poolOf } from "./scenes/poolGen";
+import { SHOT_LABEL } from "./scenes/writer";
 import { redrawSlot } from "./scenes/redraw";
 import { seedOfSet } from "./sceneSets/compose";
 import type { LedgerLine } from "./money/ledger";
@@ -133,7 +134,7 @@ const slotsAskedFor = (call: FetchCall): number[] => listAsked(call).map((s) => 
 function pickedAngle(slot: { [key: string]: unknown; idea?: unknown; shot?: unknown; pose?: unknown }): Record<string, unknown> {
   if (typeof slot.idea !== "string") return {};
   const behind = /сзади/i.test(slot.idea);
-  const phone = slot.shot === "front-camera selfie" || slot.shot === "mirror selfie";
+  const phone = slot.shot === SHOT_LABEL.selfie || slot.shot === SHOT_LABEL.mirror;
   const mirror = /зеркал/i.test(slot.idea);
   return { shot: slot.shot === "choose" ? (mirror ? "mirror" : behind ? "candid" : "friend") : null, pose: slot.pose === "choose" ? (behind && !phone ? "back" : "front") : null };
 }
@@ -862,7 +863,7 @@ describe("scenes.write: an idea", () => {
 
     const [auto, chosen] = net.writerCalls().map((call) => listAsked(call));
     expect(auto?.map((s) => [s.shot, s.pose])).toEqual([["choose", "choose"], ["choose", "choose"]]);
-    expect(chosen?.map((s) => [s.shot, s.pose])).toEqual([["photo taken by a friend", "choose"], ["photo taken by a friend", "choose"]]);
+    expect(chosen?.map((s) => [s.shot, s.pose])).toEqual([[SHOT_LABEL.friend, "choose"], [SHOT_LABEL.friend, "choose"]]);
     expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("scene_ideas");
   });
 

@@ -67,12 +67,12 @@ export const CATEGORY_NAME_MAX = 40;
  * (writer.custom.test.ts builds that chunk by hand and pins the bound).
  */
 export const POOL_TEXT_MAX = 35;
-/** A custom slot's time of day is at most this long (the longest built-in time, "studio lighting", is 15). */
+/** A custom slot's stored time of day is at most this long (the longest built-in time, "studio lighting", is 15). The writer sees its light phrase (`lightOf`), not this text. */
 export const TIME_OF_DAY_MAX = 15;
 
 /**
  * Printable ASCII with no quote and no backslash, and no space at either end.
- * The writer's slots go out as indented JSON, where a quote or a backslash costs
+ * The writer's slots go out as compact JSON, where a quote or a backslash costs
  * two bytes, and the reserve is priced on bytes: with them, a chunk of a bounded
  * pool could outgrow the ceiling its price was set at. Every other char costs one.
  */

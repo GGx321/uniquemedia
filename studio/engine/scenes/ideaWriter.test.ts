@@ -38,8 +38,8 @@ describe("ideaMessages", () => {
     const user = userContent(ideaMessages(slots));
     const parsed = JSON.parse(user.slice(user.indexOf("["), user.lastIndexOf("]") + 1));
     expect(parsed).toEqual([
-      { slotIndex: 7, idea: "кофе на балконе утром", shot: "photo taken by a friend", pose: "a three-quarter view, turned slightly from the camera" },
-      { slotIndex: 8, idea: "кофе на балконе утром", shot: "front-camera selfie", pose: "facing the camera" },
+      { slotIndex: 7, idea: "кофе на балконе утром", shot: "a phone snap a friend took", pose: "a three-quarter view, turned slightly from the viewer" },
+      { slotIndex: 8, idea: "кофе на балконе утром", shot: "her own front-camera selfie", pose: "facing the viewer" },
     ]);
   });
 
@@ -58,13 +58,25 @@ describe("ideaMessages", () => {
   test("keeps the compose prompt's standing rules line for line: the woman, the phone hand, the pose, the adult rule, the clothing list, no text, no praise words", () => {
     const compose = (writerMessages(plan({ seed: 1, count: 1, categories: ["home"] }).slots)[0]?.content ?? "").split("\n");
     const idea = ideaSystemPrompt().split("\n");
-    const standing = compose.filter((line) => /^You write|^Reference images|phone|Match each slot|grown adult|^- No revealing clothing|^- No text|Never use "stunning"/.test(line));
-    expect(standing.length).toBe(8);
-    for (const line of standing) {
-      // The revealing-clothing line ends differently on purpose: the outfit is not "given" in an idea write.
-      const wanted = line.startsWith("- No revealing clothing") ? line.slice(0, line.indexOf("whatever")) : line;
-      expect(idea.some((l) => l.startsWith(wanted))).toBe(true);
-    }
+    const standing = compose.filter((line) => /^You write|^Reference images|holds the phone|Match each slot|grown adult|^- No text|^- Never write about|^- When she looks|^- No paper|^- Never use these words/.test(line));
+    expect(standing.length).toBe(10);
+    for (const line of standing) expect(idea).toContain(line);
+    // The clothing line differs on purpose: the outfit is not "given" in an idea write, so it keeps its covering sentence (C-8).
+    expect(idea.some((l) => l.startsWith("- No revealing clothing (no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie): whatever the idea says"))).toBe(true);
+  });
+
+  test("S5.1b: the idea writer is told what the compose writer is: an ordinary phone photo, one ordinary detail, the light by its source, no camera talk", () => {
+    const prompt = ideaSystemPrompt();
+    expect(prompt).toContain("You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.");
+    expect(prompt).toContain("and never describe her hair, eyes or body type");
+    expect(prompt).toContain("her expression, and at most one ordinary detail of the place. Do not describe the light, the colours or the mood; if light comes up, name only its source.");
+    expect(prompt).toContain("vary the place, her outfit and what she does.");
+    expect(prompt).not.toContain("the time of day");
+    expect(prompt).toContain("When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.");
+    expect(prompt).toContain("For any other pose she may face or glance toward the viewer as the shot allows.");
+    expect(prompt).not.toContain('"the phone" in a gaze');
+    expect(prompt).not.toContain("photorealistic");
+    expect(prompt).not.toContain('Never use "stunning"');
   });
 
   test("tells the writer to vary scenes that share an idea", () => {
@@ -103,11 +115,11 @@ describe("ideaMessages: a slot whose angle the model picks", () => {
   });
 
   test("a slot whose shot the owner chose names it and asks for the pose only", () => {
-    expect(items(ideaMessages([SHOT_GIVEN]))).toEqual([{ slotIndex: 6, idea: "лежит на животе, вид сзади", shot: "photo taken by a friend", pose: "choose" }]);
+    expect(items(ideaMessages([SHOT_GIVEN]))).toEqual([{ slotIndex: 6, idea: "лежит на животе, вид сзади", shot: "a phone snap a friend took", pose: "choose" }]);
   });
 
   test("a slot that gives both (an own scene written again) is told as before", () => {
-    expect(items(ideaMessages([FIXED]))).toEqual([{ slotIndex: 8, idea: "лежит на животе, вид сзади", shot: "candid shot, not looking at the camera", pose: "from behind, her face not visible" }]);
+    expect(items(ideaMessages([FIXED]))).toEqual([{ slotIndex: 8, idea: "лежит на животе, вид сзади", shot: "a friend's snap while she is busy", pose: "from behind, her face not visible" }]);
   });
 
   test("the system prompt explains «choose»: from the idea, in the schema's words, back for a view from behind, null for what is given", () => {

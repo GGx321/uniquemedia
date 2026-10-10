@@ -149,14 +149,16 @@ describe("times and activities are drawn only from the slot's own location", () 
     }
   });
 
-  test('"studio lighting" counts as a time of day and is used whenever the backdrop location is drawn', () => {
-    // 25 slots over 5 photoshoot locations = exactly 5 full bag passes, so the
-    // studio-backdrop location (the only one whose times are ["studio lighting"])
-    // is guaranteed to appear, regardless of seed or shuffle order.
-    const p = plan({ seed: 1, count: 25, categories: ["photoshoot"] });
-    const backdropSlots = p.slots.filter((s) => s.location.includes("seamless beige backdrop"));
-    expect(backdropSlots.length).toBeGreaterThan(0);
-    expect(backdropSlots.every((s) => s.timeOfDay === "studio lighting")).toBe(true);
+  test('"studio lighting" stays a readable time of day: a place whose only time it is draws it whenever it is drawn', () => {
+    // S5.1c: no built-in place is lit by «studio lighting» any more, but the stored value stays readable (I5.5) and a custom pool may still use it. 10 slots
+    // over 2 places = exactly 5 full bag passes, so the studio place is guaranteed to appear, regardless of seed or shuffle order.
+    const studio = { name: "a white studio wall", times: ["studio lighting"], activities: [{ text: "sitting on a stool", twoHanded: false }] };
+    const street = { name: "a quiet street", times: ["morning"], activities: [{ text: "leaning on a wall", twoHanded: false }] };
+    const pool = { locations: [studio, street], outfits: ["a plain dress", "a denim jacket"], shotDeck: ["friend", "candid"] as const };
+    const p = planWithPools({ seed: 1, count: 10, categories: ["photoshoot"] }, { ...POOLS, photoshoot: pool });
+    const studioSlots = p.slots.filter((s) => s.location === studio.name);
+    expect(studioSlots.length).toBeGreaterThan(0);
+    expect(studioSlots.every((s) => s.timeOfDay === "studio lighting")).toBe(true);
   });
 });
 

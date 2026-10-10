@@ -1,20 +1,29 @@
 import { describe, expect, test } from "bun:test";
-import { CATEGORY_LABEL_MAX, POOL_TEXT_MAX, TIME_OF_DAY_MAX, type CategorySnapshot } from "../../shared/engine";
+import { CATEGORY_LABEL_MAX, POOL_TEXT_MAX, POOL_TIMES, type CategorySnapshot } from "../../shared/engine";
 import { SceneSetFile, type PlannedSceneSet } from "../library/sceneSets";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { WRITER_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import { runWriterConfig } from "../runs/plan";
 import { WRITER_JSON_SCHEMA, type PlanSlot, type WriterRefusal } from "../scenes";
+import { lightOf } from "../scenes/phoneLook";
+import { POSE_LABEL, SHOT_LABEL } from "../scenes/writer";
+import type { Pose } from "../scenes/schema";
+import { SHOTS } from "../scenes/types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
 // CS.4a: THE WRITER PROMPT FLOOR PIN holds for every chunk a scene set can send. The set's request is a subset of one chunk of at most 25 scenes, built by the
 // same `writerMessages` a run uses, and the set file holds every custom scene to the bounds a plan holds it to — so the worst chunk a set can carry is the worst
-// chunk CS.1 pinned (scenes/writer.custom.test.ts): 25 custom slots at POOL_TEXT_MAX, a 24-char label, the worst refusal, at least 200 tokens under the ceiling.
+// chunk CS.1 pinned (scenes/writer.custom.test.ts): 25 custom slots at POOL_TEXT_MAX, a 24-char label, the time, shot and pose with the widest labels (read from
+// the tables, S5.1b), the worst refusal, at least 200 tokens under the ceiling.
 // If the file accepted a longer text, the reserve of an attempt could exceed the worst case the owner accepted and the job's own cap would refuse it.
 
 const CUSTOM = "cat-paris-cafes" as const;
+const longestOf = <T extends string>(keys: readonly T[], label: (key: T) => string): T => keys.reduce((a, b) => (label(b).length > label(a).length ? b : a));
+const WORST_TIME = longestOf([...POOL_TIMES, "a time the table does not know"], lightOf);
+const WORST_SHOT = longestOf(SHOTS, (s) => SHOT_LABEL[s]);
+const WORST_POSE = longestOf(Object.keys(POSE_LABEL) as Pose[], (p) => POSE_LABEL[p]);
 const MARGIN = 200;
 const CEILING = WRITER_CALL.inputTokens;
 
@@ -34,11 +43,11 @@ function worstSet(textLength: number): Omit<PlannedSceneSet, "schemaVersion" | "
         slotIndex: scene.sceneId,
         category: CUSTOM,
         location: "x".repeat(textLength),
-        timeOfDay: "x".repeat(TIME_OF_DAY_MAX),
+        timeOfDay: WORST_TIME,
         activity: "x".repeat(textLength),
         outfit: "x".repeat(textLength),
-        shot: "photographer" as const,
-        pose: "three-quarter" as const,
+        shot: WORST_SHOT,
+        pose: WORST_POSE,
         attemptIdBase: `slot-${i + 1}`,
       },
     })),

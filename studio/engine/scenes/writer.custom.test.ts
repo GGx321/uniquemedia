@@ -2,15 +2,16 @@ import { describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { CATEGORY_LABEL_MAX, POOL_TEXT_MAX, TIME_OF_DAY_MAX, type CategorySnapshot } from "../../shared/engine";
+import { CATEGORY_LABEL_MAX, POOL_TEXT_MAX, POOL_TIMES, type CategorySnapshot } from "../../shared/engine";
 import { WRITER_CALL } from "../money/estimate";
 import { promptTokenFloor } from "../openrouter/chat";
 import { categoryLabelOf, categoryStyleOf } from "./categories";
 import { plan, planWithPools } from "./planner";
 import { POOLS, type Pool } from "./pools";
-import type { PlanSlot } from "./schema";
-import { CATEGORIES } from "./types";
-import { chunkSlots, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterRefusal } from "./writer";
+import { lightOf } from "./phoneLook";
+import type { PlanSlot, Pose } from "./schema";
+import { CATEGORIES, SHOTS as CANON_SHOTS } from "./types";
+import { chunkSlots, POSE_LABEL, REFUSAL_WORD_BYTES_MAX, REFUSAL_WORDS_MAX, SHOT_LABEL, writerMessages, writerRefusalText, WRITER_JSON_SCHEMA, type WriterRefusal } from "./writer";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -80,7 +81,7 @@ describe("categoryStyleOf", () => {
   });
 });
 
-describe("a built-in run's writer messages are byte-identical to main 3a9cd498", () => {
+describe("a built-in run's writer messages are pinned to the S5.1b phone-look prompts (re-pinned from main 3a9cd498)", () => {
   const fixture: { messages: Record<string, string> } = JSON.parse(readFileSync(join(import.meta.dir, "..", "runs", "fixtures", "writer-main-3a9cd498.json"), "utf8"));
   const slots = plan({ seed: 3, count: 30, categories: [...CATEGORIES], poses: { profile: true, back: true } }).slots;
 
@@ -147,17 +148,23 @@ describe("a refusal's feedback is bounded: the words are the model's own text, s
   });
 });
 
+
+/** The widest of each label the writer sends, read from the tables themselves so a longer phrase can never slip past the floor pins (S5.1b review). */
+const longestOf = <T extends string>(keys: readonly T[], label: (key: T) => string): T => keys.reduce((a, b) => (label(b).length > label(a).length ? b : a));
+const WORST_TIME = longestOf([...POOL_TIMES, "a time the table does not know"], lightOf);
+const WORST_SHOT = longestOf(CANON_SHOTS, (s) => SHOT_LABEL[s]);
+const WORST_POSE = longestOf(Object.keys(POSE_LABEL) as Pose[], (p) => POSE_LABEL[p]);
+
 describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS.1 floor pin)", () => {
   // The worst a custom category can send under the rules a pool and a plan are held to: 25 slots, every place, activity and
   // outfit at POOL_TEXT_MAX (printable ASCII without a quote or a backslash, so one byte each and never escaped by the
-  // JSON the slots go out as), a time of day at TIME_OF_DAY_MAX, the widest shot and pose labels (an all-photographer
-  // deck is a legal deck), a label at its 24 chars, and the worst refusal: every reason, and more distinct long words than
+  // JSON the slots go out as), the time with the widest light phrase, the widest shot and pose labels (read from the tables above), a label at its 24 chars, and the worst refusal: every reason, and more distinct long words than
   // the feedback will tell (it clips them). Built by hand, not drawn by the planner, so no draw can be luckier.
   const label = "L".repeat(CATEGORY_LABEL_MAX);
   const snapshot: CategorySnapshot = { ref: CUSTOM, name: "я".repeat(40), label, style: "editorial" };
   /** What the reserve keeps clear of the ceiling: room for a field a later change adds to a slot or to a refusal. */
-  const MARGIN = 200;
-  const MARGIN_PRINTED = 241;
+  const MARGIN = 250;
+  const MARGIN_PRINTED = 290;
   /** A 100-photo run's last chunk is slots 76..100: the widest indices a chunk can carry. */
   const FIRST_INDEX = 100 - WRITER_CALL.slotsPerCall + 1;
 
@@ -166,11 +173,11 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
       slotIndex: FIRST_INDEX + i,
       category: CUSTOM,
       location: text.repeat(textLength),
-      timeOfDay: text.repeat(TIME_OF_DAY_MAX),
+      timeOfDay: WORST_TIME,
       activity: text.repeat(textLength),
       outfit: text.repeat(textLength),
-      shot: "photographer" as const,
-      pose: "three-quarter" as const,
+      shot: WORST_SHOT,
+      pose: WORST_POSE,
       attemptIdBase: `slot-${i + 1}`,
       repeatedPair: false,
     }));
@@ -248,7 +255,7 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   test("a chunk the planner draws from a pool at the bound is never bigger than the hand-built worst", () => {
     const long = (stem: string): string => `${stem} ${"x".repeat(POOL_TEXT_MAX)}`.slice(0, POOL_TEXT_MAX);
     const pool: Pool = {
-      locations: Array.from({ length: 7 }, (_, i) => ({ name: long(`place ${i}`), times: ["studio lighting"], activities: [{ text: long(`activity ${i}`), twoHanded: false }], ...(i === 0 ? { mirror: true as const } : {}) })),
+      locations: Array.from({ length: 7 }, (_, i) => ({ name: long(`place ${i}`), times: [WORST_TIME], activities: [{ text: long(`activity ${i}`), twoHanded: false }], ...(i === 0 ? { mirror: true as const } : {}) })),
       outfits: Array.from({ length: 6 }, (_, i) => long(`outfit ${i}`)),
       shotDeck: ["photographer", "photographer", "photographer", "candid", "candid"],
     };

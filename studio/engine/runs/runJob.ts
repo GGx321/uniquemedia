@@ -10,7 +10,7 @@ import type { PriceBook } from "../money/prices";
 import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
 import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
-import { assembleRun, isOwnSlot, photoCategoryOf } from "../scenes";
+import { assembleRun, isOwnSlot, photoCategoryOf, roomPlaceOf } from "../scenes";
 import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
@@ -439,7 +439,7 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   }
   let assembled: Map<number, string>;
   try {
-    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { cameraRealism: plan.cameraRealism === true, categories: plan.categories }).map((a) => [a.slotIndex, a.prompt]));
+    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { runId: plan.runId, cameraRealism: plan.cameraRealism === true, roomPlaceOf }).map((a) => [a.slotIndex, a.prompt]));
   } catch (error) {
     return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the scene prompts could not be assembled: ${messageOf(error)}`) } } };
   }

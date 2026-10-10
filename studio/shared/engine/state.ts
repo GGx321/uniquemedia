@@ -97,8 +97,8 @@ export const Settings = z.strictObject({
   imageQuality: ImageQuality.nullable(),
   textModel: ModelId,
   /**
-   * «Реализм камеры»: when on, a fixed English camera-realism clause is appended to every NEW run's image prompts
-   * (engine/scenes/assembler.ts's CAMERA_REALISM_CLAUSE). Off by default; settingsStore.ts backfills `false` for an older file.
+   * «Реализм камеры»: when on, every NEW run's image prompts carry the camera-roll artefact line and one seeded imperfection
+   * (engine/scenes/phoneLook.ts's artefactLine; off keeps a shorter line with the light). Off by default; settingsStore.ts backfills `false` for an older file.
    */
   cameraRealism: z.boolean(),
   concurrency: z.strictObject({ network: NetworkConcurrency }),

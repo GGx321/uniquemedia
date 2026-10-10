@@ -329,7 +329,7 @@ describe("what blocks the launch", () => {
     fireEvent.click(screen.getByRole("switch", { name: "Догенерировать недостающие" }));
     expect(descriptionOf(goButton())).toBe(GO_WHY.nothingEnabled);
     fireEvent.click(screen.getByRole("switch", { name: "Сначала свободные фото из библиотеки" }));
-    for (const label of ["Дом", "Путешествия", "Фотосессия", "Фитнес"]) fireEvent.click(screen.getByRole("button", { name: label }));
+    for (const label of ["Дом", "Путешествия", "Фотосессия на телефон", "Фитнес"]) fireEvent.click(screen.getByRole("button", { name: label }));
     expect(descriptionOf(goButton())).toBe(GO_WHY.noCategory);
     expect(callsOf(engine, "autopilot.start")).toHaveLength(0);
   });

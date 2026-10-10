@@ -89,15 +89,15 @@ describe("readPoolAnswer: a sound answer", () => {
     expect(PoolSchema.safeParse(poolOf(result.pool)).success).toBe(true);
   });
 
-  test("is editorial when the deck holds three photographers or more, a phone photo otherwise", () => {
+  test("is always a phone photo, whatever the deck holds (S5.1b: a new pool is never editorial)", () => {
     const studio = okOf(answer({ shotDeck: ["photographer", "photographer", "photographer", "candid", "candid"] }));
-    expect(studio.style).toBe("editorial");
+    expect(studio.style).toBe("phone");
     const mostly = okOf(answer({ shotDeck: ["photographer", "photographer", "friend", "candid", "candid"] }));
     expect(mostly.style).toBe("phone");
   });
 
   test("the style rule is the deck's alone", () => {
-    expect(styleOfDeck(["photographer", "photographer", "photographer", "friend", "friend"])).toBe("editorial");
+    expect(styleOfDeck(["photographer", "photographer", "photographer", "friend", "friend"])).toBe("phone");
     expect(styleOfDeck(["photographer", "photographer", "friend", "friend", "friend"])).toBe("phone");
     expect(styleOfDeck(["friend", "friend", "friend", "friend", "friend"])).toBe("phone");
   });
@@ -367,11 +367,11 @@ describe("readPoolAnswer: the angles the description asks for (CS.8a)", () => {
   test("an activity that opens with a body position is kept when it fits the 35 characters", () => {
     const activities = [
       { text: "lying on her stomach, texting", twoHanded: false },
-      { text: "on her stomach, reading a book", twoHanded: false },
+      { text: "on her stomach, scrolling her phone", twoHanded: false },
     ];
     const result = okOf(answer({ poses: ["back"], locations: PLACES.map((name, i) => place(name, { mirror: i === 2, activities })) }));
     expect(result.dropped).toBe(0);
-    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "on her stomach, reading a book"]);
+    expect(result.pool.locations[0]?.activities.map((a) => a.text)).toEqual(["lying on her stomach, texting", "on her stomach, scrolling her phone"]);
   });
 
   test("the body position leaves 13 characters of the 35: «lying on her stomach, » is 22, and a 40-character activity is dropped", () => {
@@ -484,7 +484,7 @@ describe("poolMessages", () => {
     for (const needle of ['"on her stomach, "', '"on her back, "', '"sitting, "']) expect(system).toContain(needle);
     expect(system).toContain("counts toward the 35 characters");
     expect(system).toContain("keep the action to about 15");
-    expect(system).toContain("on her stomach, reading a book");
+    expect(system).toContain("on her stomach, scrolling her phone");
   });
 
   test("never teaches the long form of a position: «lying on her stomach, » alone eats 22 of the 35", () => {
@@ -570,5 +570,38 @@ describe("POOL_CALL", () => {
     expect(attempt).toBe(22_500);
     expect(POOL_MAX_ATTEMPTS * attempt).toBe(45_000);
     expect(book.chatCost({ model: call.model, images: 0, ...call.typical })).toBe(5_125);
+  });
+});
+
+describe("S5.1b: the pool writer's text is about ordinary places and an ordinary phone photo", () => {
+  const system = (): string => poolMessages("x")[0]?.content ?? "";
+
+  test("the example answer is her bedroom and kitchen, with no paper, laptop or desk", () => {
+    expect(POOL_EXAMPLE_ANSWER).toContain("a bright kitchen");
+    expect(POOL_EXAMPLE_ANSWER).toContain("her bedroom by the window");
+    expect(POOL_EXAMPLE_ANSWER).not.toMatch(/paperback|laptop|desk|office|reading|book|note/i);
+  });
+
+  test("the two-handed example and the body-position example are the new ones", () => {
+    expect(system()).toContain("such as cooking, carrying a tray or tying her hair up");
+    expect(system()).not.toContain("typing");
+    expect(system()).toContain('e.g. "on her stomach, scrolling her phone" (35)');
+    expect(system()).not.toContain("reading a book");
+  });
+
+  test("no photographer quota: the deck is mostly friend, selfie, mirror and candid", () => {
+    expect(system()).not.toContain("at least 3");
+    expect(system()).not.toContain("editorial theme");
+    expect(system()).toContain("Mostly friend, selfie, mirror and candid.");
+  });
+
+  test("the outfit rule allows everyday cuts and names what is still refused", () => {
+    expect(system()).toContain(
+      "everyday outfits that suit the theme, each at most 35 characters: shorts, tank tops, crop tops, mini skirts and fitted dresses are fine; never swimwear, lingerie, sports bras, thongs, stockings, slip dresses or robes.",
+    );
+  });
+
+  test("the places rule: ordinary places, no paper, books or screens but her phone, never a photographer or a studio", () => {
+    expect(system()).toContain("Places are ordinary places she would really be in; no paper, books or screens other than her phone; never a photographer or a studio.");
   });
 });

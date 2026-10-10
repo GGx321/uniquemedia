@@ -3,6 +3,8 @@ import { youthWords } from "../../shared/engine";
 import { estimateRun, WRITER_CALL, type RunPlanInput } from "../money/estimate";
 import { PriceBook } from "../money/prices";
 import { promptTokenFloor } from "../openrouter/chat";
+import { POOL_TIMES } from "../../shared/engine";
+import { lightOf } from "./phoneLook";
 import { CATEGORIES } from "./types";
 import { plan } from "./planner";
 import type { PlanSlot } from "./schema";
@@ -69,8 +71,8 @@ describe("writerMessages", () => {
     expect(user?.role).toBe("user");
     const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
     expect(body).toEqual([
-      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning", shot: "photo taken by a friend", pose: "facing the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
-      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning", shot: "front-camera selfie", pose: "a three-quarter view, turned slightly from the camera", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "a phone snap a friend took", pose: "facing the viewer", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "her own front-camera selfie", pose: "a three-quarter view, turned slightly from the viewer", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
     ]);
   });
 
@@ -300,6 +302,15 @@ describe("detectors", () => {
     // the camera is still a violation even in a sentence that also contains
     // an unrelated negation elsewhere.
     ["back", "She isn't holding anything, but she looks over her shoulder at the camera as the door closes.", true],
+    // S5.1b review: the viewer, the phone and the lens are the same forbidden gaze for a back or profile pose.
+    ["back", "she looks over her shoulder at the viewer as she leaves.", true],
+    ["profile", "she glances toward the viewer with a small smile.", true],
+    // Her own phone is the slot's activity, not a gaze at the viewer: it must not cost a paid retry.
+    ["back", "she looks down at the phone in her hand and walks away.", false],
+    ["profile", "she looks at the phone in her hand, smiling.", false],
+    ["profile", "she smiles into the lens.", true],
+    ["profile", "she is not looking at the viewer, her eyes on the window.", false],
+    ["front", "she looks at the viewer and laughs.", false],
   ] as const)("contradictsPose(%j, %j) -> %p", (pose, sentence, expected) => {
     expect(contradictsPose(sentence, pose)).toBe(expected);
   });
@@ -319,6 +330,18 @@ describe("phrase constants never suggest a minor or use a revealing word (round 
   test.each(allPhrases())("%s has no youth word and no revealing word", (_name, text) => {
     expect(youthWords(text, "descriptor")).toEqual([]);
     expect(revealingWordsIn(text)).toEqual([]);
+  });
+});
+
+// S5.1c: the writer is told never to write about the camera and to say she looks at the viewer, so the pose labels it reads speak of the viewer too.
+describe("POSE_LABEL speaks of the viewer, never the camera", () => {
+  test("no pose label names the camera, the lens or the photographer", () => {
+    for (const label of Object.values(POSE_LABEL)) expect(label).not.toMatch(/camera|lens|photographer/i);
+  });
+
+  test("the front and three-quarter labels are worded around the viewer", () => {
+    expect(POSE_LABEL.front).toBe("facing the viewer");
+    expect(POSE_LABEL["three-quarter"]).toBe("a three-quarter view, turned slightly from the viewer");
   });
 });
 
@@ -505,5 +528,90 @@ describe("WRITER_CALL's per-call ceilings cover one full chunk", () => {
 
   test("the output ceiling comfortably fits one full chunk, even generously overshooting the target sentence length", () => {
     expect(WRITER_CALL.slotsPerCall * WORST_OUTPUT_TOKENS_PER_SCENE).toBeLessThanOrEqual(WRITER_CALL.maxTokens);
+  });
+});
+
+/** The words the writers are told never to use (Spike A v3): 37, copied here so a silent edit of the prompt turns this red. */
+const TOLD_NEVER_WORDS = [
+  "professional", "photographer", "photoshoot", "studio", "editorial", "fashion", "model", "posing", "captures", "candid", "cinematic", "bokeh", "golden hour", "softly lit",
+  "soft light", "glow", "glowing", "dramatic", "moody", "dreamy", "elegant", "luxurious", "lavish", "glamorous", "chic", "sophisticated", "polished", "pristine", "marble",
+  "silk", "satin", "velvet", "stunning", "beautiful", "perfect", "flawless", "gorgeous",
+];
+
+describe("S5.1b: the writer is told to write what an ordinary phone photo shows, and nothing about how it was taken", () => {
+  const system = (): string => writerMessages([slot()])[0]?.content ?? "";
+
+  test("the opening lines say it is her own ordinary phone photo and never name her hair, eyes or body", () => {
+    const lines = system().split("\n");
+    expect(lines[0]).toBe("You write one plain sentence of what an ordinary phone photo of her shows, for each of the given slots, of one recurring adult woman who posts her own photos.");
+    expect(lines[1]).toContain("never describe her hair, eyes or body type");
+    expect(system()).not.toContain("photorealistic");
+    expect(system()).not.toContain("never change her hair");
+  });
+
+  test("the detail is at most one ordinary detail of the place, and the light is named by its source only", () => {
+    expect(system()).toContain("her expression, and at most one ordinary detail of the place.");
+    expect(system()).toContain("Do not describe the light, the colours or the mood; if light comes up, name only its source.");
+    expect(system()).not.toContain("the background and the light");
+  });
+
+  test("the gaze rule: she looks at the viewer, never at a named phone, camera or lens; her phone appears only with its activity", () => {
+    expect(system()).toContain(
+      "When she looks toward whoever takes the photo, write that she looks at the viewer; never name a phone, camera or lens for her gaze. Her own phone appears only when the slot's activity uses it.",
+    );
+    expect(system()).not.toContain('"the phone" in a gaze');
+    expect(system()).toContain("For any other pose she may face or glance toward the viewer as the shot allows.");
+    expect(system()).not.toContain("glance toward the camera");
+  });
+
+  test("forbids camera talk, paper, books, laptops and tablets", () => {
+    expect(system()).toContain("Never write about the camera, the lens, the photo, the shot or the framing.");
+    expect(system()).toContain("No paper, books, magazines, documents, notebooks, menus, maps, desks or studying; no laptops or tablets: her phone is the only screen.");
+  });
+
+  test("the outfit is described exactly as given, and the revealing words are still named as forbidden (the readers refuse them)", () => {
+    expect(system()).toContain(
+      "Describe the outfit exactly as given, in its own words: never more or less revealing, never add or remove a garment. Never name bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings or a robe over lingerie.",
+    );
+    expect(system()).not.toContain("describe it as covering and non-revealing");
+  });
+
+  test("tells the model the 37 words never to use", () => {
+    const line = system().split("\n").find((l) => l.startsWith("- Never use these words: ")) ?? "";
+    const told = line.slice("- Never use these words: ".length).replace(", unless the slot's own place, outfit or activity uses it.", "").split(", ");
+    expect(told).toEqual(TOLD_NEVER_WORDS);
+    expect(line.endsWith(", gorgeous, unless the slot's own place, outfit or activity uses it.")).toBe(true);
+    expect(told).toHaveLength(37);
+    expect(system()).not.toContain('Never use "stunning"');
+  });
+
+  test("SHOT_LABEL names who took the phone photo and carries no camera or photographer", () => {
+    expect(SHOT_LABEL).toEqual({
+      friend: "a phone snap a friend took",
+      selfie: "her own front-camera selfie",
+      mirror: "her mirror selfie",
+      candid: "a friend's snap while she is busy",
+      photographer: "a phone snap a friend took",
+    });
+    for (const label of Object.values(SHOT_LABEL)) expect(label).not.toMatch(/full-frame|photographer|candid shot|looking at the camera/);
+  });
+
+  test("the slot's time of day goes out as its light, by source, for every stored time", () => {
+    for (const time of POOL_TIMES) {
+      const [, user] = writerMessages([slot({ timeOfDay: time })]);
+      const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
+      expect(body[0].timeOfDay).toBe(lightOf(time));
+      expect(user?.content).not.toMatch(/golden hour|studio lighting|softly lit/);
+    }
+  });
+
+  test("a built-in photoshoot slot is called «Own phone photos», never a photoshoot", () => {
+    const [, user] = writerMessages([slot({ category: "photoshoot" })]);
+    expect(user?.content).toContain('"category":"Own phone photos"');
+    expect(user?.content).not.toContain("Photoshoot");
+  });
+
+  test("the slots go out as compact JSON (the worst custom chunk must stay under the writer ceiling: writer.custom.test.ts)", () => {
+    expect(writerMessages([slot(), slot({ slotIndex: 2 })])[1]?.content).not.toContain("\n  ");
   });
 });

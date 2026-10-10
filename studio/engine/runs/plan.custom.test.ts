@@ -165,7 +165,7 @@ describe("runWriterConfig: what a run passes its writer phase", () => {
     const built = buildRunPlan(input());
     const { messages } = runWriterConfig(built.categories);
     const body = messages(plannedSlots(built), undefined)[1]?.content ?? "";
-    expect(body).toContain('"category": "Paris cafes"');
-    expect(body).toContain('"category": "Home"');
+    expect(body).toContain('"category":"Paris cafes"');
+    expect(body).toContain('"category":"Home"');
   });
 });

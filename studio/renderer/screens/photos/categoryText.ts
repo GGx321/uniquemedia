@@ -68,11 +68,11 @@ export function poolCounts(pool: CategoryPool): string {
 
 const STYLE_RU: Record<CategoryStyle, string> = { phone: "телефон", editorial: "редакционный" };
 
-/** The line under the shot shares: which finish the deck gives (three photographer shots or more make it editorial, as the photoshoot). */
+/** The line under the shot shares: the stored style. A new pool is always a phone photo, and the style no longer changes the prompt (S5.1b). */
 export function styleNote(style: CategoryStyle): string {
   return style === "phone"
-    ? "Стиль «телефон», как у Дома. С тремя кадрами «Фотограф» был бы «редакционный», как у Фотосессии."
-    : "Стиль «редакционный», как у Фотосессии: в наборе не меньше трёх кадров «Фотограф».";
+    ? "Стиль «телефон», как у Дома."
+    : "Стиль «редакционный» сохранён со старой версии; новые фото снимаются как с телефона.";
 }
 
 const SHORT_DATE = new Intl.DateTimeFormat("ru-RU", { day: "numeric", month: "short", timeZone: "UTC" });

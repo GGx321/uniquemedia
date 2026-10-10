@@ -16,7 +16,7 @@ import { ffmpegPath } from "../node/ffmpegBinary";
 import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { plannedSlots, RunPlanSchema, type RunPlan } from "./runs/plan";
-import { CAMERA_REALISM_CLAUSE, plan as planScenes } from "./scenes";
+import { plan as planScenes } from "./scenes";
 import { faceModelPaths } from "../scripts/faceModelCache";
 import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
@@ -45,6 +45,8 @@ setDefaultTimeout(30_000);
 const dir = useEngineDir("studio-engine-runs-");
 
 /** The dated fallback table (offline prices), image age check on. */
+// The line «Реализм камеры» adds to a prompt (scenes/phoneLook.ts): only the ON artefact line says it is straight from the camera roll.
+const ON_ARTEFACT = "Ordinary phone photo straight from her camera roll";
 const TWENTY_ON = { expectedMicros: 1_042_350, worstMicros: 3_390_000, prices: "fallback", pricesAsOf: "2026-09-24" } as const;
 /** 4 photos, image age check off: 4 × 3 × $0.05 + one writer chunk × 2 × $0.0375 (T5c: 14K prompt tokens). */
 const FOUR_WORST = 4 * 3 * 50_000 + 75_000;
@@ -568,7 +570,7 @@ describe("runs.start", () => {
     expect(stored.models.imageQuality).toBe("medium");
     expect(stored.cameraRealism).toBe(true);
     expect(body.quality).toBe("medium");
-    expect(String(body.prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+    expect(String(body.prompt)).toContain(ON_ARTEFACT);
 
     ok(await engine.handle(command("runs.cancel", { runId })));
     await jobEnd(events, jobId);
@@ -584,7 +586,7 @@ describe("runs.start", () => {
     await until(() => net.imageCalls().length > 0, "the first image request");
 
     expect(planOf(runId).cameraRealism).toBe(true);
-    expect(String(net.imageCalls()[0]?.json().prompt)).toEndWith(CAMERA_REALISM_CLAUSE);
+    expect(String(net.imageCalls()[0]?.json().prompt)).toContain(ON_ARTEFACT);
 
     ok(await engine.handle(command("runs.cancel", { runId })));
     await jobEnd(events, jobId);

@@ -87,11 +87,11 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       mirror: false,
     },
     {
-      name: "a sunlit living room sofa",
-      times: ["midday", "golden hour"],
+      name: "her bedroom by the window",
+      times: ["morning", "midday"],
       activities: [
-        { text: "reading a paperback", twoHanded: true },
-        { text: "sipping a cup of tea", twoHanded: false },
+        { text: "tying her hair up", twoHanded: true },
+        { text: "on her stomach, scrolling her phone", twoHanded: false },
       ],
       mirror: false,
     },
@@ -114,11 +114,11 @@ export const POOL_EXAMPLE_ANSWER = JSON.stringify({
       mirror: true,
     },
     {
-      name: "a quiet home office desk",
-      times: ["midday", "night"],
+      name: "a sofa in the living room",
+      times: ["midday", "evening"],
       activities: [
-        { text: "typing on a laptop", twoHanded: true },
-        { text: "jotting a note", twoHanded: false },
+        { text: "sipping a cup of tea", twoHanded: false },
+        { text: "sitting, stretching her legs", twoHanded: false },
       ],
       mirror: false,
     },
@@ -136,16 +136,17 @@ function systemPrompt(): string {
     "",
     "Return one JSON object with:",
     '- "label": the theme\'s English name, 1 to 4 words, at most 24 characters.',
-    `- "locations": ${POOL_PLACES_MIN} to ${POOL_PLACES_MAX} places. Each has "name" (the place, at most 35 characters), "times" (1 to ${PLACE_TIMES_MAX} of: ${POOL_TIMES.join(", ")}; only the times the place really fits), "activities" (${2} to ${PLACE_ACTIVITIES_MAX} things she can do there, each at most 35 characters, with "twoHanded" true when it needs both hands, such as cooking, typing or carrying a tray, and false when one hand stays free; every place needs at least one with a free hand) and "mirror" (true only where a large mirror is natural).`,
-    `- "outfits": ${POOL_OUTFITS_MIN} to ${POOL_OUTFITS_MAX} everyday outfits that suit the theme, each at most 35 characters.`,
-    `- "shotDeck": exactly ${POOL_DECK_SIZE} shots chosen from ${POOL_SHOTS.join(", ")}: who or what takes the photo. Use "mirror" only if at least one place has "mirror": true. For a studio or editorial theme use at least 3 "photographer"; otherwise mostly friend, selfie, mirror and candid.`,
+    `- "locations": ${POOL_PLACES_MIN} to ${POOL_PLACES_MAX} places. Each has "name" (the place, at most 35 characters), "times" (1 to ${PLACE_TIMES_MAX} of: ${POOL_TIMES.join(", ")}; only the times the place really fits), "activities" (${2} to ${PLACE_ACTIVITIES_MAX} things she can do there, each at most 35 characters, with "twoHanded" true when it needs both hands, such as cooking, carrying a tray or tying her hair up, and false when one hand stays free; every place needs at least one with a free hand) and "mirror" (true only where a large mirror is natural).`,
+    `- "outfits": ${POOL_OUTFITS_MIN} to ${POOL_OUTFITS_MAX} everyday outfits that suit the theme, each at most 35 characters: shorts, tank tops, crop tops, mini skirts and fitted dresses are fine; never swimwear, lingerie, sports bras, thongs, stockings, slip dresses or robes.`,
+    `- "shotDeck": exactly ${POOL_DECK_SIZE} shots chosen from ${POOL_SHOTS.join(", ")}: who or what takes the photo. Use "mirror" only if at least one place has "mirror": true. Mostly friend, selfie, mirror and candid.`,
     `- "poses": the camera angles the description asks for, 0 to ${ScenePose.options.length} of: ${ScenePose.options.join(", ")} (back is seen from behind). An empty list when it says nothing about the angle.`,
     "",
     "Rules:",
-    '- If the description gives a body position, start EVERY activity with its SHORTEST form: "on her stomach, ", "on her back, " or "sitting, " (16 characters or less). The position counts toward the 35 characters: keep the action to about 15, e.g. "on her stomach, reading a book" (30). Places and outfits suit it.',
+    '- If the description gives a body position, start EVERY activity with its SHORTEST form: "on her stomach, ", "on her back, " or "sitting, " (16 characters or less). The position counts toward the 35 characters: keep the action to about 15, e.g. "on her stomach, scrolling her phone" (35). Places and outfits suit it.',
     '- Every text is plain English in ASCII: letters, digits, spaces and ordinary punctuation. Never a quote (") and never a backslash, and no space at either end.',
     "- No person's name, no brand and no readable sign. She is a grown adult woman: never a word that suggests she or anyone else is young.",
-    "- Outfits are covering and non-revealing: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
+    "- Places are ordinary places she would really be in; no paper, books or screens other than her phone; never a photographer or a studio.",
+    "- Outfits are everyday: no bikini, swimsuit, swimwear, lingerie, sports bra, thong, stockings, slip dress or robe.",
     "- No two places, outfits or activities of one place alike.",
     "",
     "An example of the shape, for a different theme:",
@@ -259,9 +260,9 @@ function readPoses(raw: unknown): ScenePose[] | undefined {
 
 export type PoolAnswer = { ok: true; label: string; style: CategoryStyle; pool: CategoryPool; dropped: number } | ({ ok: false } & PoolRefusal);
 
-/** How a custom category is finished: editorial when its deck holds three photographers or more (as the built-in photoshoot), a phone photo otherwise. */
-export function styleOfDeck(deck: readonly string[]): CategoryStyle {
-  return deck.filter((shot) => shot === "photographer").length >= 3 ? "editorial" : "phone";
+/** How a custom category is finished: always a phone photo, whatever the deck (the parameter stays so callers and the contract do not change). A stored "editorial" stays readable, but a new pool never gets it. */
+export function styleOfDeck(_deck: readonly string[]): CategoryStyle {
+  return "phone";
 }
 
 /** Our own list of revealing words: what a refusal may name, spelled the one way we spell it. */

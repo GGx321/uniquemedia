@@ -1287,7 +1287,8 @@ describe("categories.regenerate", () => {
     if (response.type !== "categories.regenerate") throw new Error("wrong type");
 
     expect(response.result.spentMicros).toBe(6_000);
-    expect(response.result.category).toMatchObject({ categoryId: id, name: "Кофейни", description: "кофейни и булочные у Сены", label: "Seine bakeries", style: "editorial", spentMicros: 11_000 });
+    // S5.1b: a regenerated pool is always a phone photo, even with three photographer shots in its deck (styleOfDeck).
+    expect(response.result.category).toMatchObject({ categoryId: id, name: "Кофейни", description: "кофейни и булочные у Сены", label: "Seine bakeries", style: "phone", spentMicros: 11_000 });
     expect(response.result.category.pool.outfits).toEqual(["a red coat", "a blue scarf", "a green dress"]);
     expect(events().filter((e) => e.type === "category.changed")).toHaveLength(1);
     expect(await folder()).toEqual([`${id}.json`]);

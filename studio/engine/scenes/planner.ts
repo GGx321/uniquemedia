@@ -1,9 +1,9 @@
 import { orderCategories, splitCount, type CategoryRef } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
-import { POOLS, type Place, type Pool } from "./pools";
+import { allowedActivities, POOLS, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
-import { Bag, makeRng, rngPick, type Rng } from "./rngUtil";
+import { Bag, makeRng, rngPick, subSeed, type Rng } from "./rngUtil";
 import { ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
 
 // The seeded scene planner (T5a, item 2). Each category draws from its own
@@ -62,32 +62,6 @@ export function explicitSplit(split: readonly { ref: CategoryRef; count: number 
 
 function pairKey(location: string, outfit: string): string {
   return `${location}\u0000${outfit}`;
-}
-
-/** FNV-1a over a string, 32-bit unsigned. Used only to mix a category name
- *  into the plan's seed below — not a general-purpose hash. */
-function fnv1a(text: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
-
-/**
- * A deterministic, independent rng seed from `seed` and a discriminator
- * string, run through a 32-bit avalanche mix (the murmur3/splitmix
- * finalizer) so nearby or related inputs do not produce nearby outputs. No
- * Math.random, no Date — pure function of (seed, discriminator), every time.
- * `categorySeed` and `poseSeed` below each call this with their own
- * discriminator, so their rng streams never collide or interleave.
- */
-export function subSeed(seed: number, discriminator: string): number {
-  let h = (seed ^ fnv1a(discriminator)) >>> 0;
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
-  return (h ^ (h >>> 16)) >>> 0;
 }
 
 /**
@@ -192,16 +166,14 @@ function planCategory(
     }
     const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
     // pools.ts's schema guarantees at least one one-handed activity per
-    // location, so this is never empty even for a selfie/mirror shot.
-    const phoneInHand = shot === "selfie" || shot === "mirror";
-    const activities = place.activities.filter((a) => !(phoneInHand && a.twoHanded));
+    // location, so allowedActivities is never empty even for a selfie/mirror shot.
     const slotIndex = startIndex + i;
     return {
       slotIndex,
       category,
       location: place.name,
       timeOfDay: rngPick(rng, place.times),
-      activity: rngPick(rng, activities).text,
+      activity: rngPick(rng, allowedActivities(place, shot)).text,
       outfit,
       shot,
       pose: angled === null ? drawPose(poseRng, shot, poses) : (angled[i] as { pose: Pose }).pose,

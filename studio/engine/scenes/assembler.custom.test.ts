@@ -1,15 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { DESCRIPTOR_MAX_CHARS, youthWords, type AvatarDescriptor, type CategorySnapshot } from "../../shared/engine";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
-import { AssemblerRefusalError, assembleRun, assembleSlot, CAMERA_REALISM_CLAUSE, CAMERA_REALISM_CLAUSE_EDITORIAL, sentenceProblems } from "./assembler";
-import type { PlanSlot } from "./schema";
+import { AssemblerRefusalError, assembleRun, assembleSlot as assembleWith, sentenceProblems, type AssembleOptions } from "./assembler";
+import type { OwnPlanSlot, PlanSlot } from "./schema";
 import { revealingWordsIn } from "./words";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
-// CS.1: the assembler picks the realism suffix from the plan's snapshot for a
-// custom category, and its last-gate sentence check is one exported function
-// that the owner's edit-time check can call too.
+// CS.1: the assembler's last-gate sentence check is one exported function that the owner's edit-time check can call too. A custom category's slot
+// is assembled like any other (S5.1a: the assembler no longer reads a category's style).
 
 const DESCRIPTOR: AvatarDescriptor = { age: 25, text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair." };
 const MASTER = asLibraryReference(JPEG);
@@ -17,6 +16,14 @@ const SENTENCE = "She leans on the bridge railing as the evening light turns the
 const CUSTOM = "cat-paris-cafes";
 const PHONE: CategorySnapshot = { ref: CUSTOM, name: "Кофейни Парижа", label: "Paris cafes", style: "phone" };
 const EDITORIAL: CategorySnapshot = { ...PHONE, style: "editorial" };
+
+const RUN_ID = "run-custom-1";
+
+/** assembleSlot with the run id every call needs (the look draws are seeded from it). */
+function assembleSlot(descriptor: AvatarDescriptor, planSlot: PlanSlot | OwnPlanSlot, sentence: string, master: typeof MASTER, options: Partial<AssembleOptions> = {}) {
+  return assembleWith(descriptor, planSlot, sentence, master, { runId: RUN_ID, ...options });
+}
+const OPTIONS: AssembleOptions = { runId: RUN_ID };
 
 function slot(overrides: Partial<PlanSlot> = {}): PlanSlot {
   return {
@@ -68,95 +75,74 @@ describe("assembleSlot still refuses what sentenceProblems finds, with the same 
   });
 });
 
-describe("a custom slot's realism suffix is its snapshot's style", () => {
-  test("phone style gets the smartphone suffix", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [PHONE] });
-    expect(prompt).toContain("Smartphone photo");
-    expect(prompt).not.toContain("Editorial photo");
-  });
-
-  test("editorial style gets the editorial suffix", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [EDITORIAL] });
-    expect(prompt).toContain("Editorial photo");
-    expect(prompt).not.toContain("Smartphone photo");
-  });
-
-  test("a custom slot with no snapshot entry is refused before any prompt is built", () => {
-    expect(() => assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER)).toThrow(RangeError);
-    expect(() => assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [] })).toThrow(RangeError);
+// S5.1a (T4): the assembler no longer reads a category's style. Every slot, built-in or custom, reads as the owner's own ordinary phone photo, so a
+// custom category's stored `style: "editorial"` (still readable, I5.5) changes nothing in the prompt.
+describe("a custom slot reads as an ordinary phone photo", () => {
+  test("with no snapshot and no category library to ask", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER);
+    expect(prompt).toContain("Ordinary phone photo");
+    expect(prompt).not.toMatch(/editorial/i);
   });
 
   test("the custom category's name and id never reach the prompt", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [PHONE] });
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER);
     expect(prompt).not.toContain(CUSTOM);
-    expect(prompt).not.toContain("Кофейни");
-    expect(prompt).not.toContain("Paris cafes");
+    expect(prompt).not.toContain(PHONE.name);
+    expect(prompt).not.toContain(PHONE.label);
+    expect(prompt).not.toContain(EDITORIAL.name);
   });
-});
 
-describe("a built-in slot's prompt does not depend on the snapshot", () => {
-  test("photoshoot stays editorial and home stays phone, snapshot or not", () => {
-    for (const snapshots of [[], [PHONE], [EDITORIAL]]) {
-      expect(assembleSlot(DESCRIPTOR, slot({ category: "photoshoot" }), SENTENCE, MASTER, { categories: snapshots }).prompt).toContain("Editorial photo");
-      expect(assembleSlot(DESCRIPTOR, slot({ category: "home" }), SENTENCE, MASTER, { categories: snapshots }).prompt).toContain("Smartphone photo");
+  test("the prompt is the same as a built-in's with the same fields: the category is not an input", () => {
+    for (const category of ["home", "photoshoot", "travel"] as const) {
+      expect(assembleSlot(DESCRIPTOR, slot({ category }), SENTENCE, MASTER).prompt).toBe(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER).prompt);
     }
   });
 
-  test("the prompt is byte-identical with and without a snapshot", () => {
-    expect(assembleSlot(DESCRIPTOR, slot({ category: "travel" }), SENTENCE, MASTER, { categories: [EDITORIAL] }).prompt).toBe(assembleSlot(DESCRIPTOR, slot({ category: "travel" }), SENTENCE, MASTER).prompt);
-  });
-});
-
-describe("assembleRun with a snapshot", () => {
-  test("assembles built-in and custom slots in one plan, each by its own style", () => {
+  test("assembleRun assembles built-in and custom slots of one plan alike", () => {
     const slots = [slot({ slotIndex: 1, category: "photoshoot", attemptIdBase: "slot-1" }), slot({ slotIndex: 2, attemptIdBase: "slot-2" })];
     const sentences = new Map([
       [1, SENTENCE],
       [2, SENTENCE],
     ]);
-    const prompts = assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots }, sentences, MASTER, { categories: [PHONE] });
-    expect(prompts[0]?.prompt).toContain("Editorial photo");
-    expect(prompts[1]?.prompt).toContain("Smartphone photo");
+    const prompts = assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots }, sentences, MASTER, OPTIONS);
+    for (const scene of prompts) {
+      expect(scene.prompt).toContain("Ordinary phone photo");
+      expect(scene.prompt).not.toMatch(/editorial/i);
+    }
   });
 });
 
-// «Реализм камеры» on a custom category: the clause follows the SNAPSHOT's style, so it never contradicts the finish before it.
+// «Реализм камеры» on a custom category: the same ON and OFF lines as everywhere.
 describe("camera realism on a custom category", () => {
-  test("an editorial snapshot gets the camera clause and no smartphone anywhere", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "photographer" }), SENTENCE, MASTER, { categories: [EDITORIAL], cameraRealism: true });
+  test("on: the camera-roll line, and no smartphone-vs-camera contradiction anywhere", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "photographer" }), SENTENCE, MASTER, { cameraRealism: true });
 
-    expect(prompt).toContain("Editorial photo");
-    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
-    expect(prompt.toLowerCase()).not.toContain("smartphone");
+    expect(prompt).toContain("Ordinary phone photo straight from her camera roll");
+    expect(prompt).not.toMatch(/editorial|photographer|full-frame|shot on a camera/i);
   });
 
-  test("a phone snapshot gets the smartphone clause", () => {
-    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [PHONE], cameraRealism: true });
-
-    expect(prompt).toContain("Smartphone photo");
-    expect(prompt.endsWith(CAMERA_REALISM_CLAUSE)).toBe(true);
+  test("off adds nothing of the ON line", () => {
+    const { prompt } = assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: false });
+    expect(prompt).not.toContain("camera roll");
   });
 
-  test("the switch off adds nothing, whatever the snapshot", () => {
-    for (const snapshot of [PHONE, EDITORIAL]) {
-      expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [snapshot], cameraRealism: false }).prompt).toBe(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { categories: [snapshot] }).prompt);
-    }
+  test("a refused sentence is still refused with the switch on", () => {
+    expect(() => assembleSlot(DESCRIPTOR, slot(), "The girl waves.", MASTER, { cameraRealism: true })).toThrow(AssemblerRefusalError);
   });
 
-  test("a refused sentence is still refused with the clause on", () => {
-    expect(() => assembleSlot(DESCRIPTOR, slot(), "The girl waves.", MASTER, { categories: [PHONE], cameraRealism: true })).toThrow(AssemblerRefusalError);
+  test("a custom slot gets no room phrase from the assembler alone (custom categories have none until 5a.2)", () => {
+    expect(assembleSlot(DESCRIPTOR, slot(), SENTENCE, MASTER, { cameraRealism: true }).prompt).not.toContain("The room ");
   });
 
   // The slot's own fields (place, time, activity, outfit) never reach the prompt: the writer's sentence carries them. What sets the prompt's size is
-  // the descriptor, the sentence and the clauses, so the bound is measured with the descriptor at its own limit.
-  test("the prompt with the descriptor at DESCRIPTOR_MAX_CHARS, a 400-character sentence and either realism clause stays under 2000 characters", () => {
+  // the descriptor, the sentence and the look lines, so the bound is measured with the descriptor at its own limit.
+  test("the prompt with the descriptor at DESCRIPTOR_MAX_CHARS, a 400-character sentence and the ON line stays under 2000 characters", () => {
     const text = `25-year-old European woman, ${"light olive skin, warm hazel eyes, soft wavy chestnut hair, ".repeat(12)}`.slice(0, DESCRIPTOR_MAX_CHARS - 1) + ".";
     expect(text).toHaveLength(DESCRIPTOR_MAX_CHARS);
     const sentence = `${"She walks along the quay in the soft evening light, ".repeat(8)}`.slice(0, 399) + ".";
-    for (const snapshot of [PHONE, EDITORIAL]) {
-      const { prompt } = assembleSlot({ age: 25, text }, slot(), sentence, MASTER, { categories: [snapshot], cameraRealism: true });
+    for (const shot of ["friend", "selfie", "mirror", "candid"] as const) {
+      const { prompt } = assembleSlot({ age: 25, text }, slot({ shot }), sentence, MASTER, { cameraRealism: true });
       expect(prompt).toContain(text);
-      expect(prompt.endsWith(snapshot.style === "phone" ? CAMERA_REALISM_CLAUSE : CAMERA_REALISM_CLAUSE_EDITORIAL)).toBe(true);
       expect(prompt.length).toBeLessThan(2000);
     }
   });
@@ -164,7 +150,7 @@ describe("camera realism on a custom category", () => {
   test("a custom slot's place, time, activity and outfit are not in the prompt at all, at their bounds or not", () => {
     const bounds = slot({ location: "lllll".repeat(7), activity: "aaaaa".repeat(7), outfit: "ooooo".repeat(7), timeOfDay: "t".repeat(15), shot: "photographer", pose: "three-quarter" });
 
-    const { prompt } = assembleSlot(DESCRIPTOR, bounds, SENTENCE, MASTER, { categories: [PHONE], cameraRealism: true });
+    const { prompt } = assembleSlot(DESCRIPTOR, bounds, SENTENCE, MASTER, { cameraRealism: true });
 
     for (const field of [bounds.location, bounds.activity, bounds.outfit, bounds.timeOfDay]) expect(prompt).not.toContain(field);
   });

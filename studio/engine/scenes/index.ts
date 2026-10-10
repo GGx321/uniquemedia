@@ -4,7 +4,8 @@
 // real ledger attempt ids.
 export { CATEGORIES, SHOTS, type Category, type PlannerCategory, type Shot } from "./types";
 export { BUILT_IN_LABEL, categoryLabelOf, categoryRefOf, categoryStyleOf, photoCategoryOf, plannerCategoryOf, type CategoryLabelOf } from "./categories";
-export { POOLS, PoolSchema, validatePools, type Activity, type Place, type Pool } from "./pools";
+export { allowedActivities, BuiltInPoolSchema, isPhoneActivity, POOLS, PoolSchema, validatePools, type Activity, type Place, type Pool } from "./pools";
+export { roomPlaceOf, type RoomSlotKey } from "./roomPlace";
 export {
   AttemptIdBaseSchema,
   CategorySchema,
@@ -43,4 +44,4 @@ export {
   type WriterRefusal,
   type WriterScene,
 } from "./writer";
-export { assembleRun, assembleSlot, AssemblerRefusalError, CAMERA_REALISM_CLAUSE, CAMERA_REALISM_CLAUSE_EDITORIAL, sentenceProblems, type AssembledScene, type AssembleOptions, type SentenceProblem } from "./assembler";
+export { assembleRun, assembleSlot, AssemblerRefusalError, sentenceProblems, type AssembledScene, type AssembleOptions, type SentenceProblem } from "./assembler";

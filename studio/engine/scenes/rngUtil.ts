@@ -6,6 +6,32 @@ import { makeRng, rngInt, rngPick, type Rng } from "../../../src/core/rng";
 
 export { makeRng, rngPick, type Rng };
 
+/** FNV-1a over a string, 32-bit unsigned. Mixes a name into a seed (subSeed below) and keys
+ *  the look module's per-slot draws — not a general-purpose hash. */
+export function fnv1a(text: string): number {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return hash >>> 0;
+}
+
+/**
+ * A deterministic, independent rng seed from `seed` and a discriminator
+ * string, run through a 32-bit avalanche mix (the murmur3/splitmix
+ * finalizer) so nearby or related inputs do not produce nearby outputs. No
+ * Math.random, no Date — pure function of (seed, discriminator), every time.
+ * `categorySeed` and `poseSeed` (planner.ts) each call this with their own
+ * discriminator, so their rng streams never collide or interleave.
+ */
+export function subSeed(seed: number, discriminator: string): number {
+  let h = (seed ^ fnv1a(discriminator)) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+  h = Math.imul(h ^ (h >>> 16), 0x45d9f3b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
 /** Fisher-Yates, seeded. Returns a new array; the source is never mutated. */
 export function shuffle<T>(rng: Rng, source: readonly T[]): T[] {
   const out = [...source];

@@ -101,7 +101,7 @@ export function mockCategoryPool(name: string, description: string): { label: st
   const editorial = hash % 5 === 0;
   return {
     label: `Mock theme ${(hash >>> 16).toString(16).padStart(4, "0")}`,
-    style: editorial ? "editorial" : "phone",
+    style: "phone",
     pool: {
       locations: locations.map((p) => ({ ...p, times: [...p.times], activities: p.activities.map((a) => ({ ...a })) })),
       outfits,

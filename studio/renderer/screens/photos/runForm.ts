@@ -33,7 +33,7 @@ export const DEFAULT_RUN_FORM: RunForm = {
 export const CATEGORY_LABEL: Record<SceneCategory, string> = {
   home: "Дом",
   travel: "Путешествия",
-  shoot: "Фотосессия",
+  shoot: "Фотосессия на телефон",
   glam: "Гламур 18+",
   fit: "Фитнес",
 };
