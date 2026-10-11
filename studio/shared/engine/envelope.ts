@@ -103,6 +103,8 @@ import { z } from "zod";
 //    `FailedPortraitSlot` (`age-rejected`, `unlike`, `no-face`, `multiple-faces`, `failed`) and `PortraitSlot` live in state.ts.
 //  - `EngineError.portraitReason` (`PORTRAIT_REASONS`, only on VALIDATION, never beside another reason; Russian texts `PORTRAIT_REASONS_RU`). No new ErrorCode.
 //  - `AvatarSummary` is unchanged: a portrait is an ordinary photo of the avatar and `masterPhotoId` moves to it.
+//  - S5.3c (a refinement of the shape above, before any window reads it): `AvatarPortraits.masterLikeness` is null exactly when the master is the source photo or the avatar has no source photo.
+//    An `avatar.portraits` job stores a slot's portrait BEFORE it emits the `job.progress` that counts it, so a window that re-reads `avatars.portraits` on every progress sees it.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
