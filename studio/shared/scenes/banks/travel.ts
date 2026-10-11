@@ -5,15 +5,15 @@ import type { CategoryBank } from "./types";
 export const TRAVEL: CategoryBank = {
   places: [
     {
-      name: "a balcony over the city rooftops",
-      at: "on a balcony over the city rooftops",
+      name: "a balcony over city rooftops",
+      at: "on a balcony over city rooftops",
       details: ["an iron railing", "a small table with two cups"],
       times: ["morning", "golden hour", "evening"],
       moments: [
         { text: "leans on the balcony railing", motion: "her hair lifts a little in the wind", captures: ["friend", "timer", "selfie"], twoHanded: false },
         { text: "looks out over the rooftops", motion: "she turns her head slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
         { text: "sips a coffee by the railing", motion: "she lowers the cup a little", captures: ["selfie", "friend", "candid", "timer"], twoHanded: false },
-        { text: "sits with her feet on the railing", motion: "she stretches her toes a little", captures: ["timer", "friend"], twoHanded: false, feetUp: true },
+        { text: "sits with her feet on the railing", motion: "she stretches her toes a little", captures: ["timer", "friend"], twoHanded: false, noLegwear: true },
       ],
     },
     {
@@ -57,7 +57,7 @@ export const TRAVEL: CategoryBank = {
   outfits: [
     { text: "a sundress", showsLegs: true },
     { text: "a strapless mini dress", showsLegs: true },
-    { text: "a tank top, pleated skirt and boots", showsLegs: true },
+    { text: "a tank top, pleated skirt, boots", showsLegs: true },
     { text: "a linen shirt and denim shorts", showsLegs: true },
     { text: "a cotton top and linen trousers" },
   ],

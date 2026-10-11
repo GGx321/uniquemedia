@@ -101,9 +101,8 @@ describe("a category bank", () => {
     ["a motion with a youth word", { ...plain, motion: "she sips like a girl, slowly" }, BANK_RULE.youth],
     ["a start pose over the pool text bound", { ...plain, startPose: "lying flat on her stomach with her hips down" }, BANK_RULE.text],
     ["a start pose with a youth prop", { ...plain, startPose: "holding a teddy bear" }, BANK_RULE.youthProp],
-    ["a feet-up moment without its tag (plan r1.4: Grok refused legs up in tights)", { ...plain, text: "lies on her stomach, feet raised" }, BANK_RULE.feetUp],
-    ["feet on a railing without the tag", { ...plain, text: "sits with her feet on the railing" }, BANK_RULE.feetUp],
-    ["a feet-up tag on a moment whose feet are down", { ...plain, feetUp: true }, BANK_RULE.feetUp],
+    ["a feet-up moment without the no-legwear tag (plan r1.4: Grok refused legs up in tights)", { ...plain, text: "lies on her stomach, feet raised" }, BANK_RULE.noLegwear],
+    ["feet on a railing without the no-legwear tag", { ...plain, text: "sits with her feet on the railing" }, BANK_RULE.noLegwear],
   ];
 
   test.each(MOMENT_ROWS)("refuses %s", (_name, moment, rule) => {
@@ -125,7 +124,8 @@ describe("a category bank", () => {
       { ...plain, outfits: ["grey lounge shorts and a fitted tee"], startPose: "lying flat on her stomach" },
       { ...plain, text: "leans on the lamppost", object: true },
       { ...plain, text: "stretches her legs out on the bed", captures: ["pov-legs", "mirror-hidden"], legs: { framing: "legs" } },
-      { ...plain, text: "lies on her back, legs up", feetUp: true },
+      { ...plain, text: "lies on her back, legs up", noLegwear: true },
+      { ...plain, text: "sits on the rug in her slippers", noLegwear: true },
     ];
     expect(categoryBankProblems({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, ...rich] }, STREET] }, "home")).toEqual([]);
   });

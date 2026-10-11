@@ -20,10 +20,11 @@ export { DEDUP_TRIES, gazeKindsFor, momentAllowed, type MomentTags, type Templat
 
 /**
  * Whether a moment may wear the legwear slot with this outfit (I5.29, plan r1.4): the outfit shows her legs, and the moment neither names legwear or
- * bare skin itself (never «bare feet … with knee-high socks») nor has her feet up (Grok refused legs up in tights). Legs alone do not stop it.
+ * bare skin itself (never «bare feet … with knee-high socks») nor is tagged `noLegwear` (her feet up: Grok refused legs up in tights). Legs alone
+ * («legs crossed», «stretches her legs») do not stop it.
  */
-export function legwearFits(moment: Pick<Moment, "text" | "feetUp">, outfit: Outfit): boolean {
-  return outfit.showsLegs === true && moment.feetUp !== true && !LEGWEAR_CLASH_WORDS.test(moment.text);
+export function legwearFits(moment: Pick<Moment, "text" | "noLegwear">, outfit: Outfit): boolean {
+  return outfit.showsLegs === true && moment.noLegwear !== true && !LEGWEAR_CLASH_WORDS.test(moment.text);
 }
 
 function bankCategory(category: string): BankCategory | undefined {

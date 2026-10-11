@@ -48,7 +48,7 @@ export const GAZE_VERBS = /^(looks|glances|gazes|stares|peers|watches|smiles)\b/
  */
 export const LEGWEAR_CLASH_WORDS = /\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels)\b/i;
 
-/** A moment whose feet or legs are up carries the `feetUp` tag (plan r1.4), so it takes no legwear either. */
+/** A moment whose feet or legs are up carries the `noLegwear` tag (plan r1.4), so it takes no legwear either. */
 export const FEET_UP_WORDS = /\b(?:feet|legs|foot)\s+(?:up|raised|in the air)\b|\b(?:feet|foot)\s+on\s+the\b|\blegs\s+bent\s+up\b/i;
 
 /** I5.35: a motion is small or slow. */

@@ -55,8 +55,8 @@ export interface Moment {
   outfits?: readonly string[];
   /** «Ножки» (5a.2c): a legs moment, drawn only on a legs slot. */
   legs?: { framing?: "legs" };
-  /** Her feet or legs are up (raised behind her, on a railing): no legwear slot (plan r1.4; Grok refused legs up in tights). */
-  feetUp?: true;
+  /** No legwear slot on this moment (plan r1.4): her feet or legs are up (Grok refused legs up in tights), or another reason the bank names. */
+  noLegwear?: true;
 }
 
 /** A place of a built-in category: its name (what a slot stores), its locative phrase, its times and 2-3 ordinary details. */

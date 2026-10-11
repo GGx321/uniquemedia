@@ -193,7 +193,7 @@ describe("outfits: pinned ones and the legwear slot", () => {
   const legsOutfit = BANKS.home.outfits.find((o) => o.showsLegs === true)?.text ?? "";
   const coveredOutfit = BANKS.home.outfits.find((o) => o.showsLegs !== true)?.text ?? "";
   const legwear = BANKS.home.legwear?.items[0] ?? "";
-  const sitting = find("home", room, (m) => plainFor("mirror")(m) && m.feetUp === undefined && !/\b(socks?|tights|bare|heels|soles?)\b/i.test(m.text));
+  const sitting = find("home", room, (m) => plainFor("mirror")(m) && m.noLegwear === undefined && !/\b(socks?|tights|bare|heels|soles?)\b/i.test(m.text));
 
   test("the prone selfie renders in its pinned outfit and not in another", () => {
     expect(templateSentence(slotOf("home", prone.place, prone.moment, "prone", "front"), { key: "k" })).not.toBeNull();
@@ -217,13 +217,13 @@ describe("outfits: pinned ones and the legwear slot", () => {
     ["a moment that names her socks does not", { ...sitting.moment, text: "pulls up her socks" }, false],
     ["a moment that names bare feet does not", { ...sitting.moment, text: "sits with her bare feet up" }, false],
     ["a moment in heels does not", { ...sitting.moment, text: "slips on her heels" }, false],
-    ["a feet-up moment does not (Grok refused legs up in tights)", { ...sitting.moment, text: "lies on her stomach, feet raised", feetUp: true }, false],
+    ["a moment tagged noLegwear does not (Grok refused legs up in tights)", { ...sitting.moment, text: "lies on her stomach, feet raised", noLegwear: true }, false],
   ])("%s", (_name, moment, fits) => {
     expect(legwearFits(moment, { text: legsOutfit, showsLegs: true })).toBe(fits);
   });
 
   test("a moment that clashes with legwear renders without it and is null with it", () => {
-    const feetUp = find("home", () => true, (m) => m.feetUp === true && m.captures.includes("prone"));
+    const feetUp = find("home", () => true, (m) => m.noLegwear === true && m.captures.includes("prone"));
     expect(templateSentence(slotOf("home", feetUp.place, feetUp.moment, "prone", "front"), { key: "k" })).not.toBeNull();
     expect(templateSentence(slotOf("home", feetUp.place, feetUp.moment, "prone", "front", { legwear }), { key: "k" })).toBeNull();
   });

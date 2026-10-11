@@ -108,7 +108,7 @@ test("legwear reaches the plans: on «Дом» outfits that show her legs, never
   const withLegwear = SEEDS.flatMap((seed) => simulatePlan("home", N, seed)).filter((s) => s.legwear !== undefined);
   expect(withLegwear.length).toBeGreaterThan(200);
   for (const slot of withLegwear) {
-    expect(slot.moment.feetUp).toBeUndefined();
+    expect(slot.moment.noLegwear).toBeUndefined();
     expect(slot.moment.text).not.toMatch(/\b(socks?|socked|tights|stockings?|bare|barefoot|soles?|heels)\b/i);
   }
 });

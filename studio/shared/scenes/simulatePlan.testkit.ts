@@ -11,7 +11,7 @@ import { legwearFits } from "./template";
 // the pose (a hand-held capture front or three-quarter; otherwise 5 : 5 : 1 : 1 when the run allows profile and back), then the moment, drawn as the
 // least-used one the slot allows at that place, then the outfit (a pinned one first) and the legwear. When the place has no moment for the slot, the
 // fallback chain runs and is counted: another place with one, then the capture's family (mirror-hidden → mirror → selfie, prone → above → selfie,
-// timer → friend), then a three-quarter pose, then a friend for a candid. The real planner must draw moments as evenly (I5.24).
+// timer → friend, but timer → selfie on «Дом»), then a three-quarter pose, then a friend for a candid. The real planner must draw moments as evenly (I5.24).
 
 /** A small seeded generator (mulberry32 over fnv1a): test-only, never in a production module. */
 function generator(seed: string): () => number {
@@ -44,6 +44,8 @@ function bag<T>(next: () => number, items: readonly T[]): () => T {
 
 const POSES_ALL: readonly ScenePose[] = ["front", "front", "front", "front", "front", "three-quarter", "three-quarter", "three-quarter", "three-quarter", "three-quarter", "profile", "back"];
 const STEP_DOWN: Partial<Record<Capture, Capture>> = { "mirror-hidden": "mirror", mirror: "selfie", prone: "above", above: "selfie", timer: "friend" };
+/** «Дом» stays self-shot: its timer steps down to a selfie, never to a friend (plan r1.3 M1). */
+const stepDown = (category: BankCategory, capture: Capture): Capture | undefined => (category === "home" && capture === "timer" ? "selfie" : STEP_DOWN[capture]);
 
 export interface SimulatedSlot extends TemplateSlot {
   key: string;
@@ -115,8 +117,8 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
       if (other !== undefined) {
         fallbacks.push(`place ${place.name} → ${other.name}`);
         place = other;
-      } else if (STEP_DOWN[capture] !== undefined) {
-        const down = STEP_DOWN[capture] as Capture;
+      } else if (stepDown(category, capture) !== undefined) {
+        const down = stepDown(category, capture) as Capture;
         fallbacks.push(`capture ${capture} → ${down}`);
         capture = down;
         if (!posesFor(capture).includes(pose)) pose = "three-quarter";

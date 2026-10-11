@@ -43,7 +43,7 @@ export const BANK_RULE = {
   momentViewer: "moment-viewer",
   momentGaze: "moment-gaze",
   backViewer: "back-viewer",
-  feetUp: "feet-up",
+  noLegwear: "no-legwear",
   captures: "captures",
   legsCapture: "legs-capture",
   pinnedOutfit: "pinned-outfit",
@@ -140,7 +140,7 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if (GAZE_VERBS.test(text) && moment.gaze !== "own" && moment.gaze !== "viewer") add(BANK_RULE.momentGaze, where, "a moment that opens on a look carries its own gaze");
   if (moment.angle === "back" && moment.gaze === "viewer") add(BANK_RULE.backViewer, where, "a moment seen from behind cannot look at the viewer");
   if (moment.messyOk === true && place.room !== true) add(BANK_RULE.messyOk, where, "only a room's moment may be messy");
-  if ((moment.feetUp === true) !== FEET_UP_WORDS.test(text)) add(BANK_RULE.feetUp, where, "carries the feet-up tag exactly when her feet or legs are up");
+  if (FEET_UP_WORDS.test(text) && moment.noLegwear !== true) add(BANK_RULE.noLegwear, where, "a moment with her feet or legs up is tagged noLegwear (Grok refused legs up in tights)");
 
   const captures = moment.captures;
   if (captures.length === 0 || new Set(captures).size !== captures.length) add(BANK_RULE.captures, where, "names one or more captures, each once");
@@ -170,7 +170,7 @@ const MomentSchema = z.strictObject({
   object: z.literal(true).optional(),
   outfits: z.array(z.string()).optional(),
   legs: z.strictObject({ framing: z.literal("legs").optional() }).optional(),
-  feetUp: z.literal(true).optional(),
+  noLegwear: z.literal(true).optional(),
 });
 
 const PlaceSchema = z.strictObject({
