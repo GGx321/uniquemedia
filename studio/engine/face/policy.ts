@@ -65,7 +65,11 @@ export function decideFaceVerdict(input: FaceGatePolicyInput, config: FaceGateCo
     if (similarity === undefined) {
       throw new Error(`face/policy: pose "body" with a face needs a similarity score (compute the embedding and cosine before deciding)`);
     }
-    return { kind: "marked", similarity, faces: faces.length, headRatio: headRatioOf(face, imageHeight) };
+    // A degenerate box or a broken embedding must not put a non-finite or non-positive value on the wire (the strict schema would kill the worker)
+    // or in the photo's qa (positive headRatio): nothing trustworthy to mark, so it reads as a frame with no face to check.
+    const headRatio = headRatioOf(face, imageHeight);
+    if (!Number.isFinite(similarity) || !Number.isFinite(headRatio) || headRatio <= 0) return { kind: "skipped-by-pose", faces: faces.length };
+    return { kind: "marked", similarity, faces: faces.length, headRatio };
   }
 
   if (pose === "back") {

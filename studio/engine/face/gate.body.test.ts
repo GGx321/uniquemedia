@@ -62,6 +62,11 @@ test("body, no face: skipped-by-pose, similarityFn never called", async () => {
   expect(called).toBe(false);
 });
 
+test("body, one prominent face but a NaN cosine: skipped-by-pose, nothing non-finite escapes the gate", async () => {
+  const verdict = await runFaceGate(bgr(), { pose: "body", masterEmbedding: MASTER }, fakeDetector(), config, async () => Number.NaN, async () => [faceRow(0, 0, 50, 50, 0.95)]);
+  expect(verdict).toEqual({ kind: "skipped-by-pose", faces: 1 });
+});
+
 test("body, two prominent faces: multiple-faces, similarityFn never called", async () => {
   let called = false;
   const verdict = await runFaceGate(

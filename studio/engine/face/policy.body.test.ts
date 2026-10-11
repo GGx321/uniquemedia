@@ -37,6 +37,22 @@ test("body, two prominent faces: multiple-faces, the one retry a face-hidden fra
   expect(decideFaceVerdict({ pose: "body", faces, imageHeight: IMAGE_HEIGHT }, config)).toEqual({ kind: "multiple-faces", faces: 2 });
 });
 
+// Round 2: a degenerate box or a broken embedding must never put a non-finite or non-positive value on the wire or in the photo's qa.
+test.each([Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY])("body, one face with a non-finite likeness (%p): skipped-by-pose, no values", (similarity) => {
+  const verdict = decideFaceVerdict({ pose: "body", faces: [box(0, 0, 100, 200, 0.9)], similarity, imageHeight: IMAGE_HEIGHT }, config);
+  expect(verdict).toEqual({ kind: "skipped-by-pose", faces: 1 });
+});
+
+test("body, one zero-size face: skipped-by-pose, never a headRatio of 0", () => {
+  const verdict = decideFaceVerdict({ pose: "body", faces: [box(0, 0, 0, 0, 0.9)], similarity: 0.8, imageHeight: IMAGE_HEIGHT }, config);
+  expect(verdict).toEqual({ kind: "skipped-by-pose", faces: 1 });
+});
+
+test("body, one face on a zero-height image: skipped-by-pose, never a headRatio of 0", () => {
+  const verdict = decideFaceVerdict({ pose: "body", faces: [box(0, 0, 100, 200, 0.9)], similarity: 0.8, imageHeight: 0 }, config);
+  expect(verdict).toEqual({ kind: "skipped-by-pose", faces: 1 });
+});
+
 test("body, a small background face beside the prominent one: marked on the prominent face", () => {
   const faces = [box(0, 0, 100, 200, 0.9), box(400, 0, 10, 10, 0.9)];
   const verdict = decideFaceVerdict({ pose: "body", faces, similarity: 0.7, imageHeight: IMAGE_HEIGHT }, config);
