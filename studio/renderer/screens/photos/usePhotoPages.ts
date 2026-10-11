@@ -71,6 +71,9 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
   const busy = useRef(false);
   /** A re-read asked and not started yet (the deeper kind wins). */
   const pending = useRef<Reread>("none");
+  /** The photos `replace` was given while the read in flight was on its way (LOW-B): that read may answer from before, and must not take them back. */
+  const marked = useRef(new Map<string, PhotoSummary>());
+  const withMarks = useCallback((list: PhotoPages): PhotoPages => [...marked.current.values()].reduce(replacePhoto, list), []);
   /** Cancels the wait before a pending re-read, once a read ended; null while there is no wait. */
   const timer = useRef<(() => void) | null>(null);
   const scheduler = usePagesScheduler();
@@ -115,6 +118,7 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
       return;
     }
     busy.current = true;
+    marked.current.clear();
     const reply = await read(cursor);
     if (!isCurrent()) return;
     // Appended to the list as it is now, not as it was when asked (review LOW-1): a mark set meanwhile is kept. Only a reply that still
@@ -125,7 +129,7 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
       if (!reply.ok) setMore({ status: "failed", error: reply.error });
       else if (!advances(cursor, reply.result)) setMore({ status: "failed", error: CURSOR_STUCK });
       else {
-        const appended = appendPage(now, reply.result);
+        const appended = withMarks(appendPage(now, reply.result));
         const brought = addedPhotos(now, appended);
         show(appended, brought);
         setAdded(brought.map((p) => p.photoId));
@@ -133,22 +137,23 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
       }
     }
     settled();
-  }, [read, isCurrent, show, settled]);
+  }, [read, isCurrent, show, settled, withMarks]);
 
   const reread = useCallback(
     async (kind: "top" | "deep"): Promise<void> => {
       busy.current = true;
+      marked.current.clear();
       const result = await (kind === "deep" ? readThrough : readTop)(read, held.current, isCurrent);
       if (result === null) return;
       if (result.ok) {
-        show(result.list, null);
+        show(withMarks(result.list), null);
         setError(null);
         // A failed «Показать ещё» stays said until asked again, unless there is no next page left to ask for.
         if (result.list.nextCursor === null) setMore((state) => (state.status === "failed" ? IDLE : state));
       } else setError(result.error);
       settled();
     },
-    [read, isCurrent, show, settled],
+    [read, isCurrent, show, settled, withMarks],
   );
 
   next.current = () => {
@@ -196,6 +201,7 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
   }, []);
 
   const replace = useCallback((photo: PhotoSummary): void => {
+    if (busy.current) marked.current.set(photo.photoId, photo);
     const list = held.current;
     if (list === null) return;
     const changed = replacePhoto(list, photo);
