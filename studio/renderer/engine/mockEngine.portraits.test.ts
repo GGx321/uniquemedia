@@ -354,6 +354,36 @@ describe("avatars.generatePortraits: refused before anything is spent", () => {
     await finish(m, jobId);
   });
 
+  test("a stored descriptor the rules refuse: DESCRIPTOR_INVALID, before the imported-photo check", async () => {
+    // The engine finds the avatar on disk with a descriptor today's rules refuse; the grid lists it as unreadable (reason descriptor-invalid).
+    const m = makeMock();
+    m.engine.seedUnreadable({ avatarId: "avatar-bad-0007", name: "Bad", reason: "descriptor-invalid", detail: "its stored descriptor no longer fits today's rules" });
+
+    await refusedFree(m, "avatar-bad-0007", "DESCRIPTOR_INVALID");
+  });
+
+  test("a face gate that is missing is refused before the price, like the engine: even a worst case below the price meets FACE_GATE_UNAVAILABLE", async () => {
+    const m = makeMock();
+    m.engine.scriptNextPortraits({ refuse: { code: "FACE_GATE_UNAVAILABLE" } });
+
+    await refusedFree(m, NINI.avatarId, "FACE_GATE_UNAVAILABLE", BATCH_OFF - 1);
+  });
+
+  test("a source with no face comes after the price: a worst case below the price meets PRICE_CHANGED first", async () => {
+    const m = makeMock();
+    m.engine.scriptNextPortraits({ refuse: { code: "MASTER_FACE_UNUSABLE" } });
+
+    await refusedFree(m, NINI.avatarId, "PRICE_CHANGED", BATCH_OFF - 1);
+    expect((await refusal(generate(m))).code).toBe("MASTER_FACE_UNUSABLE");
+  });
+
+  test("a missing source photo carries its portrait reason through the contract", async () => {
+    const m = makeMock();
+    m.engine.scriptNextPortraits({ refuse: { code: "INTERNAL", portraitReason: "source-unavailable" } });
+
+    expect(await refusal(generate(m))).toMatchObject({ code: "INTERNAL", portraitReason: "source-unavailable" });
+  });
+
   test("a worst case below the price: PRICE_CHANGED; exactly the price starts the batch", async () => {
     const m = makeMock();
 

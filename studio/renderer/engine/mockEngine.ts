@@ -4746,6 +4746,8 @@ export class MockEngine implements EngineBridge {
     if (this.portraitHeld(avatarId)) return this.fail(c, { code: "IN_FLIGHT", detail: "a photo run or another job is already changing this avatar; wait for it to finish" });
     const early = this.keyAndLedgerGate() ?? this.writeLibraryGate();
     if (early) return this.fail(c, early);
+    // An avatar the grid cannot list because its stored descriptor breaks today's rules is still there for the engine, which refuses it with DESCRIPTOR_INVALID.
+    if (this.unreadable.some((u) => u.avatarId === avatarId && u.reason === "descriptor-invalid")) return this.fail(c, { code: "DESCRIPTOR_INVALID" });
     const avatar = this.avatars.find((a) => a.avatarId === avatarId);
     if (avatar === undefined || avatar.status !== "active") return this.fail(c, { code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` });
     const state = this.portraitStates.get(avatarId);
@@ -4753,10 +4755,14 @@ export class MockEngine implements EngineBridge {
     if (state.pending.length + PORTRAITS_PER_BATCH > PORTRAIT_CANDIDATES_MAX) {
       return this.fail(c, { code: "VALIDATION", portraitReason: "too-many-candidates", detail: `avatar ${avatarId} already has ${PORTRAIT_CANDIDATES_MAX} unpicked portraits at most; pick one or discard them first` });
     }
+    // The engine looks at the face gate before the price, and at the imported photo's face after it.
+    const script = this.nextPortraits;
+    if (script?.refuse?.code === "FACE_GATE_UNAVAILABLE") {
+      this.nextPortraits = null;
+      return this.fail(c, script.refuse);
+    }
     const priced = this.priceGate(acceptedWorstMicros, this.portraitsPrice().worstMicros);
     if (priced) return this.fail(c, priced);
-    // After the price, like the engine's source checks (the face of the imported photo is looked at last).
-    const script = this.nextPortraits;
     this.nextPortraits = null;
     if (script?.refuse !== undefined) return this.fail(c, script.refuse);
     return this.ok(c, { jobId: this.startPortraitJob(avatarId, script?.slots ?? MOCK_PORTRAIT_SLOTS) });
@@ -4889,8 +4895,8 @@ export class MockEngine implements EngineBridge {
   }
 
   /**
-   * The NEXT batch of portraits plays `slots` instead of the table (every slot not hers, say), or is refused with `refuse` before any job is made, after the price (the engine's
-   * source-photo checks: MASTER_FACE_UNUSABLE, FACE_GATE_UNAVAILABLE). Used once.
+   * The NEXT batch of portraits plays `slots` instead of the table (every slot not hers, say), or is refused with `refuse` before any job is made: FACE_GATE_UNAVAILABLE before the price, as the engine's
+   * gate check is, and anything else (MASTER_FACE_UNUSABLE, a missing source photo) after it, as the engine's source-photo checks are. Used once.
    */
   scriptNextPortraits(script: { slots?: readonly MockPortraitSlot[]; refuse?: EngineError }): void {
     this.nextPortraits = { ...script };
