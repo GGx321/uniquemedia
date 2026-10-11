@@ -56,6 +56,7 @@ export const BANK_RULE = {
   timerHands: "timer-hands",
   aboveLying: "above-lying",
   hipsHigh: "hips-high",
+  repeat: "repeat",
   pinnedOutfit: "pinned-outfit",
   motionGrammar: "motion-grammar",
   motionStaging: "motion-staging",
@@ -129,6 +130,28 @@ function checkText(add: Add, where: string, text: string, max: number | null = P
 }
 
 const isMirrorCapture = (capture: Capture): boolean => shotOf(capture) === "mirror";
+
+/** Words a moment may share with its place: function words and the plain adjectives («small», «low»), never the place's nouns. */
+const SHARED_WORDS = new Set([
+  "her", "his", "the", "and", "with", "from", "into", "onto", "over", "under", "back", "down", "out", "off", "one", "two", "some", "little", "bit", "for",
+  "after", "before", "while", "way", "its", "side", "toward", "towards", "against", "along", "behind", "near", "nearby", "inside", "outside", "through",
+  "around", "across", "past", "above", "below", "ready", "small", "big", "low", "high", "old", "new", "light", "dark", "wet", "warm", "open", "quiet",
+  "cozy", "soft", "plain", "ordinary", "full", "long", "short", "wide", "front", "edge", "top", "end", "own", "other", "each", "just", "still", "again",
+]);
+
+/** A word's singular, roughly: enough to see «stairs» and «stair», «benches» and «bench» as one noun. */
+function singular(word: string): string {
+  if (word.endsWith("ies")) return `${word.slice(0, -3)}y`;
+  if (/(?:ch|sh|ss|x)es$/.test(word)) return word.slice(0, -2);
+  if (word.endsWith("s") && !word.endsWith("ss")) return word.slice(0, -1);
+  return word;
+}
+
+/** The nouns (and other content words) of a text; a moment's opening verb is skipped. */
+function contentWords(text: string, skipVerb: boolean): Set<string> {
+  const words = text.toLowerCase().match(/[a-z]+(?:-[a-z]+)*/g) ?? [];
+  return new Set((skipVerb ? words.slice(1) : words).filter((w) => w.length >= 3 && !SHARED_WORDS.has(w)).map(singular));
+}
 
 function checkMotion(add: Add, where: string, moment: Moment): void {
   const motion = moment.motion;
@@ -253,6 +276,12 @@ function categoryBankSchema(category: BankCategory) {
         const texts = place.moments.map((m) => m.text);
         if (new Set(texts).size !== texts.length) add(BANK_RULE.duplicate, `${where}.moments`, "a moment is given twice");
         place.moments.forEach((moment) => checkMoment(add, `${where}: ${moment.text}`, moment, place, outfits));
+        // Review L1: a sentence says the place («On her bed») and draws a detail; a moment that names either again reads «On her bed, she sits on the bed».
+        const placeWords = new Set([...contentWords(place.at, false), ...place.details.flatMap((d) => [...contentWords(d, false)])]);
+        for (const moment of place.moments) {
+          const again = [...contentWords(moment.text, true)].filter((w) => placeWords.has(w));
+          if (again.length > 0) add(BANK_RULE.repeat, `${where}: ${moment.text}`, `names «${again.join("», «")}» again: the place or its details already say it`);
+        }
         if (category === "glamour") {
           const all = [place.name, place.at, ...place.details, ...place.moments.map((m) => m.text)];
           if (all.some((t) => BED_WORDS.test(t))) add(BANK_RULE.glamourBed, where, "Glamour is an evening out: never on a bed");

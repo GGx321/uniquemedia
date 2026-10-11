@@ -7,8 +7,8 @@ import type { BankPlace, CategoryBank, Cue, Gaze, Hairstyle, Moment } from "./ty
 // (the revealing words, the paper, screen and staging lists, the «silk pajamas» exemption) are swept in engine/scenes/banks.sweep.test.ts.
 
 const MOMENTS: readonly Moment[] = [
-  { text: "waits for the kettle", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
-  { text: "slices fruit on a cutting board", motion: "she slices slowly", captures: ["friend"], twoHanded: true, gaze: "focus" },
+  { text: "waits for the toast", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
+  { text: "slices bread on a cutting board", motion: "she slices slowly", captures: ["friend"], twoHanded: true, gaze: "focus" },
   { text: "laughs at something on her phone", motion: "she laughs a little at her phone", captures: ["friend"], twoHanded: false, phone: true, gaze: "own", expression: true },
   { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["timer"], twoHanded: false, angle: "three-quarter", gaze: "own" },
   { text: "brushes her hair", motion: "she brushes slowly", captures: ["mirror"], twoHanded: false, hair: "own", messyOk: true },
@@ -34,7 +34,7 @@ const STREET: BankPlace = {
     { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["friend", "selfie", "candid"], twoHanded: false, outdoor: true },
     { text: "walks past old stone houses", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
     { text: "eats a gelato from a cone", motion: "she takes a small bite", captures: ["friend", "selfie"], twoHanded: false, outdoor: true },
-    { text: "walks away down the street", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", outdoor: true },
+    { text: "walks away toward the square", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", outdoor: true },
   ],
 };
 
@@ -108,6 +108,8 @@ describe("a category bank", () => {
     ["a moment that laughs without the expression tag (a cue would contradict it)", { ...plain, text: "laughs on her way inside" }, BANK_RULE.momentExpression],
     ["a moment that smiles without the expression tag", { ...plain, text: "smiles across the table", gaze: "own" }, BANK_RULE.momentExpression],
     ["an expression tag on a moment that shows none", { ...plain, expression: true }, BANK_RULE.momentExpression],
+    ["a moment that names its place again («In her small kitchen, she leans on the kitchen …»)", { ...plain, text: "leans on the kitchen wall" }, BANK_RULE.repeat],
+    ["a moment that names an object of its place's details («… with a fruit bowl»)", { ...plain, text: "picks at a fruit salad" }, BANK_RULE.repeat],
     ["hips high in a moment (the owner rejected it three times: it reads as a too-long torso)", { ...plain, text: "lies prone, hips high in the air" }, BANK_RULE.hipsHigh],
     ["hips higher in a motion", { ...plain, motion: "she lifts her hips a little higher" }, BANK_RULE.hipsHigh],
     ["hips above her head in a start pose", { ...plain, startPose: "hips above her head" }, BANK_RULE.hipsHigh],

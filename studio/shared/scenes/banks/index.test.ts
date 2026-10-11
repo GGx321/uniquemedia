@@ -131,7 +131,7 @@ describe("what any content must keep", () => {
     expect(hiddenProne.length).toBeGreaterThanOrEqual(2);
     expect(hiddenProne.some((m) => /elbows/.test(m.text))).toBe(true);
     expect((bed?.moments ?? []).some((m) => /cheek on her hand/.test(m.text) && m.captures.includes("prone"))).toBe(true);
-    const counter = places("home").flatMap((p) => p.moments).find((m) => /bathroom counter/.test(m.text));
+    const counter = places("home").find((p) => p.name === "her bathroom")?.moments.find((m) => /counter/.test(m.text));
     expect(counter).toMatchObject({ captures: ["mirror-hidden"], angle: "three-quarter", outfits: ["an open-back top and grey jeans"] });
     for (const moment of moments("home").filter((m) => /lies on her stomach/.test(m.text))) expect(moment.outfits ?? []).toContain("grey leggings and a cropped tee");
     expect(CUES.find((c) => c.text === "her tongue out a little")?.captures).toEqual(["above", "prone"]);

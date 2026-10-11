@@ -8,25 +8,25 @@ export const GLAMOUR: CategoryBank = {
     {
       name: "a cocktail bar",
       at: "at a cocktail bar",
-      details: ["a coaster on the counter", "a row of bottles behind the bar", "a small candle on the counter"],
+      details: ["a row of bottles", "a small candle", "a bowl of olives"],
       times: ["evening", "night"],
       moments: [
-        { text: "leans on the bar counter", motion: "she leans in a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
-        { text: "holds a cocktail glass", motion: "she turns her glass slowly", captures: ["friend", "selfie", "candid"], twoHanded: false },
+        { text: "leans on the counter", motion: "she leans in a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
+        { text: "holds a tall glass", motion: "she turns her glass slowly", captures: ["friend", "selfie", "candid"], twoHanded: false },
         { text: "laughs at something nearby", motion: "she laughs a little and looks away", captures: ["friend", "candid"], twoHanded: false, gaze: "own", expression: true },
         { text: "sips her drink through a straw", motion: "she sips slowly", captures: ["friend", "selfie"], twoHanded: false },
-        { text: "sits on a high bar stool", motion: "she swings one foot a little", captures: ["friend", "candid"], twoHanded: false },
+        { text: "sits on a high stool", motion: "she swings one foot a little", captures: ["friend", "candid"], twoHanded: false },
       ],
     },
     {
       name: "a restaurant table",
       at: "at a restaurant table",
-      details: ["a glass of water by her plate", "a small candle on the table", "a basket of bread"],
+      details: ["a small candle", "a basket of bread"],
       times: ["evening"],
       moments: [
         { text: "reaches for her glass", motion: "she lifts her glass a little", captures: ["friend", "candid"], twoHanded: false },
         { text: "rests her chin on her hand", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
-        { text: "smiles across the table", motion: "she laughs a little", captures: ["friend", "candid"], twoHanded: false, gaze: "own", expression: true },
+        { text: "smiles at someone opposite", motion: "she laughs a little", captures: ["friend", "candid"], twoHanded: false, gaze: "own", expression: true },
         { text: "lifts her glass for a toast", motion: "she raises her glass a bit higher", captures: ["friend", "selfie"], twoHanded: false },
         { text: "twirls pasta onto her fork", motion: "she twirls the fork slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "focus" },
       ],
@@ -34,14 +34,14 @@ export const GLAMOUR: CategoryBank = {
     {
       name: "the back seat of a taxi",
       at: "in the back seat of a taxi",
-      details: ["the city lights through the window", "a small clutch on the seat"],
+      details: ["the city lights outside", "a small clutch beside her"],
       times: ["night"],
       moments: [
         { text: "adjusts an earring", motion: "she turns the earring slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, gaze: "focus" },
         { text: "looks out of the window", motion: "she turns toward the window slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
-        { text: "leans back in the seat", motion: "she sinks back a little", captures: ["friend", "selfie"], twoHanded: false },
+        { text: "leans back, relaxed", motion: "she sinks back a little", captures: ["friend", "selfie"], twoHanded: false },
         { text: "scrolls through her phone", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },
-        { text: "fastens her seat belt", motion: "she pulls the belt across slowly", captures: ["candid", "friend"], twoHanded: true, gaze: "focus" },
+        { text: "fastens her safety belt", motion: "she pulls the belt across slowly", captures: ["candid", "friend"], twoHanded: true, gaze: "focus" },
       ],
     },
     {
@@ -54,14 +54,14 @@ export const GLAMOUR: CategoryBank = {
         { text: "waits by the door", motion: "she shifts her weight a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
         { text: "laughs on her way inside", motion: "she laughs a little and turns away", captures: ["friend", "candid"], twoHanded: false, expression: true },
-        { text: "stops under a street lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
+        { text: "stops under a lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
       ],
     },
     {
       name: "her bathroom while getting ready",
       at: "at her bathroom sink",
       room: true,
-      details: ["some makeup on the counter", "a hair dryer by the sink"],
+      details: ["some makeup on the counter", "a curling iron"],
       times: ["evening"],
       mirror: true,
       moments: [
@@ -76,7 +76,7 @@ export const GLAMOUR: CategoryBank = {
     {
       name: "an elevator",
       at: "in an elevator",
-      details: ["a row of floor buttons", "a brushed metal wall"],
+      details: ["a row of buttons", "a brushed metal door"],
       times: ["evening", "night"],
       mirror: true,
       moments: [
@@ -84,14 +84,14 @@ export const GLAMOUR: CategoryBank = {
         { text: "fixes her hair", motion: "she smooths her hair down slowly", captures: ["mirror", "selfie"], twoHanded: false, hair: "own" },
         { text: "rests a hand on the handrail", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "friend"], twoHanded: false },
         { text: "waits for her floor", motion: "she taps her foot a little", captures: ["mirror-hidden", "selfie", "candid"], twoHanded: false },
-        { text: "leans against the elevator wall", motion: "she tilts her head back a little", captures: ["mirror", "friend", "candid"], twoHanded: false },
+        { text: "leans against the wall", motion: "she tilts her head back a little", captures: ["mirror", "friend", "candid"], twoHanded: false },
       ],
     },
     {
       name: "her front door",
       at: "by her front door",
       room: true,
-      details: ["a coat rack", "her shoes by the door"],
+      details: ["a small shelf", "her shoes on the mat"],
       times: ["evening"],
       mirror: true,
       moments: [
