@@ -199,13 +199,45 @@ describe("covers: the template renders every slot the planner can draw from the 
     expect(covers({ ...pool, shotDeck: ["selfie", "selfie", "selfie", "selfie", "friend"] })).toBe(false);
   });
 
-  test("a pool limited to the back view, where a place's only activities look at the camera, is covered through the planner's fallback", () => {
+  // S5.6R: the real planner has no pose fallback. It draws the activity without asking the pose, so a viewer-gaze activity on a back slot is a null slot
+  // (engine/runs/covers.planner.property.test.ts checks this against the planner itself); the pool is priced with a writer, not counted free.
+  test("a pool limited to the back view, where a place's only activities look at the camera, is not covered: the planner draws them on a back slot", () => {
     const pool: CustomPool = {
       locations: [{ name: "a studio corner", mirror: false, activities: [{ text: "smiling at the camera", twoHanded: false }, { text: "looking at the viewer", twoHanded: false }] }],
       outfits: ["a cozy cardigan"],
       shotDeck: ["friend", "friend", "friend", "friend", "friend"],
       poses: ["back"],
     };
+    expect(covers(pool)).toBe(false);
+  });
+
+  test("a pool limited to the back view is covered when every activity of every place reads from behind", () => {
+    const pool: CustomPool = {
+      locations: [{ name: "a studio corner", mirror: false, activities: [{ text: "holding a mug", twoHanded: false }, { text: "browsing the shelves", twoHanded: false }] }],
+      outfits: ["a cozy cardigan"],
+      shotDeck: ["friend", "friend", "friend", "friend", "friend"],
+      poses: ["back"],
+    };
     expect(covers(pool)).toBe(true);
+  });
+
+  test("one viewer-gaze activity among others uncovers a pool that can draw a profile slot", () => {
+    const pool: CustomPool = {
+      locations: [{ name: "the beach", mirror: false, activities: [{ text: "browsing the shelves", twoHanded: false }, { text: "smiling at the camera", twoHanded: false }] }],
+      outfits: ["a cozy cardigan"],
+      shotDeck: ["friend", "friend", "friend", "friend", "friend"],
+      poses: ["profile"],
+    };
+    expect(covers(pool)).toBe(false);
+  });
+
+  test("a hand-held shot with no clean place becomes a friend's snap the deck does not hold, so that activity must read on a friend", () => {
+    const pool: CustomPool = {
+      locations: [{ name: "a studio corner", mirror: false, activities: [{ text: "scrolling her phone", twoHanded: false }, { text: "smiling at the camera", twoHanded: false }] }],
+      outfits: ["a cozy cardigan"],
+      shotDeck: ["selfie", "selfie", "selfie", "selfie", "selfie"],
+      poses: ["profile"],
+    };
+    expect(covers(pool)).toBe(false);
   });
 });

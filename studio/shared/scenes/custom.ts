@@ -109,31 +109,58 @@ export function customSentence(slot: TemplateSlot, ctx: TemplateContext): string
   return renderSentence(parts, { capture, pose: slot.pose, framing: slot.framing }, ctx);
 }
 
+/** A free-hand activity off the phone: what a hand-held shot may draw (the engine's `isCleanActivity`, pinned against the real planner by covers.planner.property.test.ts). */
+const isCleanCustomActivity = (activity: CustomActivity): boolean => !activity.twoHanded && !PHONE_WORDS.test(activity.text) && !SELFIE_WORDS.test(activity.text);
+
+/** Whether a selfie or mirror can sit at the place: a clean activity and no «selfie» in the name (the engine's `hasCleanActivity`). */
+const hasCleanCustomActivity = (place: CustomPool["locations"][number]): boolean => !SELFIE_WORDS.test(place.name) && place.activities.some(isCleanCustomActivity);
+
 /**
- * Whether the template renders every slot the planner can draw from the pool (I5.22; defined through the template itself, plan s5a2 M5). A custom
- * category keeps its stored deck of shots, and its captures are derived from them (plan r1.2 §5.1). A slot is a place, a capture of the deck (a
- * mirror only on a mirror place, a hand-held capture only where an activity allows it and the name says no selfie), a pose (the pool's own angles,
- * or any the capture can take), an activity the slot allows, and an outfit. A slot with no activity takes the planner's fallback: a three-quarter
- * pose, and a friend's photo for a candid. A covered pool needs no LLM writer, so its slots cost nothing to write.
+ * The shots the planner can put at a place. A deck shot sits anywhere, except a hand-held one: a selfie only where a clean activity is, a mirror only on a clean
+ * mirror place. The planner's fallbacks (settleHandShots, drawFromPoses) add a selfie for a mirror it cannot place, and a friend's snap for a hand-held shot with
+ * nowhere to go or one that drew a back or a profile pose; the deck may hold neither.
+ */
+function shotsAt(place: CustomPool["locations"][number], pool: CustomPool, deck: ReadonlySet<PoolShot>): Set<PoolShot> {
+  const clean = hasCleanCustomActivity(place);
+  const out = new Set<PoolShot>();
+  const handHeld = deck.has("mirror") || deck.has("selfie");
+  for (const shot of deck) {
+    if (shot === "mirror") {
+      if (place.mirror === true && clean) out.add("mirror");
+    } else if (shot === "selfie") {
+      if (clean) out.add("selfie");
+    } else out.add(shot);
+  }
+  if (deck.has("mirror") && clean) out.add("selfie");
+  // settleHandShots: a pool with no clean place turns every hand-held slot into a friend's snap. drawFromPoses: a back or a profile angle takes a non-phone shot
+  // of the deck, a friend's when it has none.
+  const noCleanPlace = !pool.locations.some(hasCleanCustomActivity);
+  const sidewaysAngle = pool.poses?.some((p) => p === "back" || p === "profile") === true;
+  const noPlainShot = ![...deck].some((shot) => shot !== "selfie" && shot !== "mirror");
+  if (handHeld && (noCleanPlace || (sidewaysAngle && noPlainShot))) out.add("friend");
+  return out;
+}
+
+/**
+ * Whether the template renders every slot the planner can draw from the pool (I5.22; defined through the template itself, plan s5a2 M5, and pinned against
+ * the REAL planner by engine/runs/covers.planner.property.test.ts). The planner draws a place, a shot of the deck (with the fallbacks of `shotsAt`), a pose
+ * (the pool's own angles, or any the capture can take) and, with no regard to the pose, ANY activity the shot allows at the place (a hand-held shot drops the
+ * two-handed, phone and selfie ones), then an outfit. So every one of those activities must read on every pose the shot can take: a viewer-gaze activity
+ * on a profile slot is a null slot, however many other activities the place has. A covered pool needs no LLM writer, so its slots cost nothing to write.
  */
 export function covers(pool: CustomPool): boolean {
   const ref = "cat-coveragecheck";
   const ctx: TemplateContext = { key: "covers", snapshots: [{ ref }] };
-  const poses = pool.poses ?? posesFor("friend");
+  const deck = new Set(pool.shotDeck);
   for (const place of pool.locations) {
-    for (const shot of new Set(pool.shotDeck)) {
+    for (const shot of shotsAt(place, pool, deck)) {
       const capture = captureOfShot(shot);
-      if (shot === "mirror" && place.mirror !== true) continue;
-      if (isHandCapture(capture) && (SELFIE_WORDS.test(place.name) || !place.activities.some((a) => customActivityAllowed(a, capture, "front")))) continue;
-      for (const drawnPose of poses.filter((p) => posesFor(capture).includes(p))) {
-        const direct = place.activities.filter((a) => customActivityAllowed(a, capture, drawnPose));
-        const fallback: Capture = capture === "candid" ? "friend" : capture;
-        const [slotCapture, slotPose, activities] =
-          direct.length > 0 ? [capture, drawnPose, direct] : ([fallback, "three-quarter", place.activities.filter((a) => customActivityAllowed(a, fallback, "three-quarter"))] as const);
-        const slotShot: PoolShot = slotCapture === capture ? shot : "friend";
+      const activities = isHandCapture(capture) ? place.activities.filter(isCleanCustomActivity) : place.activities;
+      const poses = (pool.poses ?? posesFor(capture)).filter((p) => posesFor(capture).includes(p));
+      for (const pose of poses) {
         for (const activity of activities) {
           for (const outfit of pool.outfits) {
-            if (customSentence({ category: ref, location: place.name, activity: activity.text, outfit, shot: slotShot, capture: slotCapture, pose: slotPose }, ctx) === null) return false;
+            if (customSentence({ category: ref, location: place.name, activity: activity.text, outfit, shot, capture, pose }, ctx) === null) return false;
           }
         }
       }
