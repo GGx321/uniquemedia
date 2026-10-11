@@ -28,6 +28,20 @@ function bankSlot(slotIndex: number, extra: Partial<TemplateSlot> = {}, category
 
 const keyOf = (slot: Slot): string => `run-00000001:slot-${slot.slotIndex}`;
 
+describe("localSentences carries «Подача» (S5.7b)", () => {
+  const flirtyCues = CUES.filter((c) => c.level === "flirty").map((c) => c.text);
+  const flirtyGaze = GAZE.filter((g) => g.level === "flirty").map((g) => g.text);
+  const saysFlirty = (text: string | null): boolean => flirtyCues.some((c) => (text ?? "").includes(c)) || flirtyGaze.some((g) => (text ?? "").includes(g));
+
+  test("a flirty slot says a flirty cue or gaze, and an ordinary slot of the same list says none", () => {
+    const flirty = bankSlot(1, { level: "flirty" }, "glamour", true);
+    const ordinary = bankSlot(2, {}, "glamour", true);
+    const local = localSentences({ slots: [flirty, ordinary], keyOf });
+    expect(saysFlirty(local(flirty))).toBe(true);
+    expect(saysFlirty(local(ordinary))).toBe(false);
+  });
+});
+
 describe("localSentences", () => {
   test("renders a slot whose place and moment are in the banks", () => {
     const slot = bankSlot(1);

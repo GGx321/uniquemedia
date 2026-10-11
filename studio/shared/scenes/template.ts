@@ -56,7 +56,9 @@ function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: Templa
 }
 
 /** The slot's sentence from the banks or the custom adapter, or null when neither can render it (it then goes to the LLM writer at its chunk's reserved ids). */
-export function templateSentence(slot: TemplateSlot, ctx: TemplateContext): string | null {
+export function templateSentence(slot: TemplateSlot, context: TemplateContext): string | null {
+  // S5.7b: the slot's own «Подача» wins; a run mixes flirty and ordinary slots, so the level is the slot's, not the list's.
+  const ctx: TemplateContext = slot.level === undefined ? context : { ...context, level: slot.level };
   const category = bankCategory(slot.category);
   if (category !== undefined) return builtInSentence(category, slot, ctx);
   if (isCustomCategory(slot.category) && (ctx.snapshots ?? []).some((s) => s.ref === slot.category)) return customSentence(slot, ctx);

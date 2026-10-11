@@ -288,6 +288,34 @@ describe("«Подача» (I5.28, 5a.2b): an ordinary slot never draws a flirty
   });
 });
 
+describe("«Подача» rides on the slot (S5.7b): a mixed run has flirty and ordinary slots side by side", () => {
+  const { place, moment } = find("glamour", nonRoom, plainFor("friend"));
+  const flirtyCues = CUES.filter((c) => c.level === "flirty").map((c) => c.text);
+  const flirtyGaze = GAZE.filter((g) => g.level === "flirty").map((g) => g.text);
+
+  test("a slot with level flirty draws flirty items though the context names no level", () => {
+    for (const key of KEYS) {
+      const sentence = templateSentence({ ...slotOf("glamour", place, moment, "friend", "front"), level: "flirty" }, { key }) ?? "";
+      expect(flirtyCues.some((c) => sentence.includes(c)) || flirtyGaze.some((g) => sentence.includes(g))).toBe(true);
+    }
+  });
+
+  test("a slot that names no level follows the context's (a caller that sets one level for the whole list)", () => {
+    for (const key of KEYS) {
+      const sentence = templateSentence(slotOf("glamour", place, moment, "friend", "front"), { key, level: "flirty" }) ?? "";
+      expect(flirtyCues.some((c) => sentence.includes(c))).toBe(true);
+    }
+  });
+
+  test("an ordinary slot in a run whose context says flirty stays ordinary when the slot says ordinary", () => {
+    for (const key of KEYS) {
+      const sentence = templateSentence({ ...slotOf("glamour", place, moment, "friend", "front"), level: "ordinary" }, { key, level: "flirty" }) ?? "";
+      expect(flirtyCues.some((c) => sentence.includes(c))).toBe(false);
+      expect(flirtyGaze.some((g) => sentence.includes(g))).toBe(false);
+    }
+  });
+});
+
 describe("null, never a throw (I5.22)", () => {
   const { place, moment } = find("home", room, plainFor("mirror"));
   const ok = slotOf("home", place, moment, "mirror", "front");

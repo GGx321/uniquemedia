@@ -2,7 +2,7 @@ import type { ScenePose } from "../../shared/engine";
 import { posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
 import { momentAllowed } from "../../shared/scenes/render";
 import { isOwnerBannedOutfit } from "../../shared/scenes/words";
-import type { Outfit } from "../../shared/scenes/banks/types";
+import type { Level, Outfit } from "../../shared/scenes/banks/types";
 import { EVERYDAY_OUTFITS, type Activity, type Place, type Pool } from "./pools";
 
 // 5a.2 (S5.6b, I5.23, plan s5a2 §5.2): the pure core of the built-in draw. The planner picks a slot's capture from the category's deck, then its pose, then
@@ -11,15 +11,15 @@ import { EVERYDAY_OUTFITS, type Activity, type Place, type Pool } from "./pools"
 // banks' coverage rule (every deck capture has a moment for every pose the slice can draw) every built-in slot finds a place and a moment here, so the
 // fallback chain below is never read by a built-in plan: only a custom pool, or an impossible case a test builds, ever reaches it, and it draws on `clean:`.
 
-/** The moments of a place a slot of this capture and pose may take (ordinary level: «Подача» is 5a.2b). */
-export function fittingMoments(place: { activities: readonly Activity[] }, capture: Capture, pose: ScenePose): readonly Activity[] {
-  return place.activities.filter((activity) => momentAllowed(activity, capture, pose));
+/** The moments of a place a slot of this capture, pose and level may take: a flirty slot takes the flirty moments and the ordinary ones, an ordinary slot only the ordinary. */
+export function fittingMoments(place: { activities: readonly Activity[] }, capture: Capture, pose: ScenePose, level: Level = "ordinary"): readonly Activity[] {
+  return place.activities.filter((activity) => momentAllowed(activity, capture, pose, level));
 }
 
 /** The places of a pool that have a fitting moment for the capture and pose; a mirror capture only on a mirror place. */
-export function fittingPlaces(pool: Pick<Pool, "locations">, capture: Capture, pose: ScenePose): Place[] {
+export function fittingPlaces(pool: Pick<Pool, "locations">, capture: Capture, pose: ScenePose, level: Level = "ordinary"): Place[] {
   const mirror = shotOf(capture) === "mirror";
-  return pool.locations.filter((place) => (!mirror || place.mirror === true) && fittingMoments(place, capture, pose).length > 0);
+  return pool.locations.filter((place) => (!mirror || place.mirror === true) && fittingMoments(place, capture, pose, level).length > 0);
 }
 
 /** Who takes a category's photos, read from its deck: all herself («Дом»: no friend), mostly someone she asked («Улица», «Виды»), or both («Гламур», «Фитнес»). */
@@ -59,11 +59,11 @@ export interface Settled {
  * Nothing is drawn here, so a built-in plan that needs no step never touches the `clean:` stream. Throws when the whole chain finds nothing (an empty pool):
  * that is a bug in the pool, never a run.
  */
-export function settleFit(pool: Pick<Pool, "locations">, kind: PoolKind, capture: Capture, pose: ScenePose): Settled {
+export function settleFit(pool: Pick<Pool, "locations">, kind: PoolKind, capture: Capture, pose: ScenePose, level: Level = "ordinary"): Settled {
   let current = capture;
   let currentPose = pose;
   for (let guard = 0; guard < 16; guard++) {
-    const places = fittingPlaces(pool, current, currentPose);
+    const places = fittingPlaces(pool, current, currentPose, level);
     if (places.length > 0) return { capture: current, pose: currentPose, places };
     const down = stepDownOf(kind, current);
     if (down !== undefined) {

@@ -1,7 +1,8 @@
-import type { PoolShot } from "../engine";
-import { BANKS } from "./banks";
+import type { PoolShot, ScenePose } from "../engine";
+import { BANKS, CUES } from "./banks";
 import { BANK_CATEGORIES } from "./banks/types";
-import { captureOfShot, shotOf, type Capture } from "./captures";
+import { captureOfShot, faceVisibleOf, shotOf, type Capture } from "./captures";
+import { pick } from "./hash";
 import { locativeOf, rendersActivity } from "./custom";
 import { PHONE_WORDS, SELFIE_WORDS } from "./words";
 
@@ -27,6 +28,10 @@ export interface PlainSlot {
   /** The stored shot and the capture riding on it: a self-shot slot is held to rule C1. Absent: not a self-shot. */
   shot?: PoolShot | undefined;
   capture?: Capture | undefined;
+  /** «Подача» (S5.7b): a flirty slot ends with one flirty cue, where her face shows. Absent: ordinary. */
+  level?: "ordinary" | "flirty" | undefined;
+  /** Whether her face shows reads the pose; absent: front. */
+  pose?: ScenePose | undefined;
 }
 
 /** An activity that opens with a preposition reads after «she is» («on the phone with her sister», «at the window, smiling»). */
@@ -77,6 +82,14 @@ export function plainSentence(slot: PlainSlot): string {
   const names = (text: string): boolean => selfShot && (PHONE_WORDS.test(text) || SELFIE_WORDS.test(text));
   const outfit = field(slot.outfit);
   const clauses = [names(at) ? null : capitalised(at), `she ${names(doing) ? "stands there" : doing}`, names(outfit) ? null : `wearing ${outfit}`].filter((c): c is string => c !== null);
+  // S5.7b: the flirty choice rides on the plain sentence too: one flirty cue, the same for the same slot, on a frame where her face shows and the moment does not
+  // already show an expression of its own.
+  const capture = slot.capture ?? captureOfShot(slot.shot ?? "friend");
+  const faceShows = faceVisibleOf({ capture, pose: slot.pose ?? "front" }) !== "no";
+  if (slot.level === "flirty" && faceShows && moment?.expression !== true) {
+    const cues = CUES.filter((c) => c.level === "flirty" && (c.captures === undefined || c.captures.includes(capture)));
+    if (cues.length > 0) clauses.push(pick(cues, `${field(slot.location)}|${activity}`, "plain-cue").text);
+  }
   const sentence = clauses.join(", ");
   return `${clauses[0] === undefined || names(at) ? capitalised(sentence) : sentence}.`;
 }

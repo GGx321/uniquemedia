@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
-import { BANKS } from "../../shared/scenes/banks";
+import { BANKS, CUES } from "../../shared/scenes/banks";
 import { sentenceProblems } from "./assembler";
 import { plainSentence } from "../../shared/scenes/plain";
 import { plan } from "./planner";
@@ -10,6 +10,39 @@ useNativeGlobals();
 // «{at or "At " + location}, she is {activity}, wearing {outfit}.», built from the slot's own texts alone.
 
 const SLOT = { category: "cat-paris-cafes", location: "the riverside cafe", activity: "walking along the river", outfit: "a denim jacket and a long skirt" };
+
+describe("plainSentence carries «Подача» (S5.7b)", () => {
+  const FLIRTY_CUES = CUES.filter((c) => c.level === "flirty").map((c) => c.text);
+  const bar = { category: "glamour", location: "a cocktail bar", activity: "leans on the counter", outfit: "a navy wrap dress", shot: "friend" as const, capture: "friend" as const };
+
+  test("a flirty slot ends with one flirty cue, before the full stop", () => {
+    const sentence = plainSentence({ ...bar, level: "flirty" });
+    expect(FLIRTY_CUES.filter((cue) => sentence.endsWith(`, ${cue}.`))).toHaveLength(1);
+  });
+
+  test("an ordinary slot reads as it always did", () => {
+    expect(plainSentence(bar)).toBe("At a cocktail bar, she leans on the counter, wearing a navy wrap dress.");
+  });
+
+  test("the same flirty slot always reads the same", () => {
+    expect(plainSentence({ ...bar, level: "flirty" })).toBe(plainSentence({ ...bar, level: "flirty" }));
+  });
+
+  test("a frame whose face does not show says no cue, flirty or not", () => {
+    const hidden = { ...bar, shot: "mirror" as const, capture: "mirror-hidden" as const, level: "flirty" as const };
+    expect(plainSentence(hidden)).toBe(plainSentence({ ...hidden, level: undefined }));
+  });
+
+  test("a moment that shows its own expression gets no cue", () => {
+    const laughs = { ...bar, activity: "laughs at something nearby", level: "flirty" as const };
+    expect(plainSentence(laughs)).toBe(plainSentence({ ...laughs, level: undefined }));
+  });
+
+  test("a self-shot slot's flirty cue names no phone and no selfie", () => {
+    const sentence = plainSentence({ ...bar, shot: "selfie", capture: "selfie", level: "flirty" });
+    expect(sentence).not.toMatch(/phone|selfie/i);
+  });
+});
 
 describe("plainSentence", () => {
   test("a custom slot reads «{place}, she is {activity}, wearing {outfit}.»", () => {

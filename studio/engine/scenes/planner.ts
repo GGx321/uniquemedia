@@ -1,13 +1,14 @@
-import { orderCategories, splitCount, type CategoryRef } from "../../shared/engine";
+import { orderCategories, splitCount, type CategoryRef, type SceneLevel } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
-import type { Outfit } from "../../shared/scenes/banks/types";
+import type { Level, Outfit } from "../../shared/scenes/banks/types";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { flirtyCountOf } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
-import { allowedActivities, hasCleanActivity, POOLS, usableOutfits, type Place, type Pool } from "./pools";
+import { allowedActivities, hasCleanActivity, POOLS, usableOutfits, type Activity, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
-import { Bag, makeRng, rngPick, subSeed, type Rng } from "./rngUtil";
+import { Bag, makeRng, rngPick, shuffle, subSeed, type Rng } from "./rngUtil";
 import { isPhoneInHandShot, ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
 
 // The seeded scene planner (T5a, item 2). Each category draws from its own
@@ -47,6 +48,11 @@ export interface PlanInput {
    *  are never gated here; a selfie or mirror shot always draws one of them,
    *  whatever this says (poses.ts's drawPose). */
   poses?: PoseAllowance;
+  /**
+   * «Подача» (S5.7b, I5.28): under "flirty", exactly round(0.6 × n) of each built-in category's n slots are flirty (which ones is drawn on `level:${category}`); absent or
+   * "ordinary", none is. A custom category stays ordinary.
+   */
+  level?: SceneLevel;
   /**
    * S4.5a, internal (a batch launch's compose): the exact number of scenes for each category instead of the even split. The counts add up to `count`, each
    * category once, every one of them among `categories`; a count of 0 is allowed. The slots keep the canonical category order whatever order this lists.
@@ -231,16 +237,24 @@ interface BuiltInStreams {
   legRng: Rng;
   /** `clean:${category}`: the fallback chain only; a built-in plan never reads it. */
   fixRng: Rng;
+  /** `level:${category}`: which slots of the category are flirty. Never read under «Обычная». */
+  levelRng: Rng;
 }
 
 const momentKey = (location: string, activity: string): string => `${location}\u0000${activity}`;
 
-/** The least-used of the items by `usage`, with the ties it broke on `rng`, among those `preferred` if any of the tied ones is. */
-function leastUsed<T>(items: readonly T[], usage: (item: T) => number, preferred: (item: T) => boolean, rng: Rng): T {
+/**
+ * The least-used of the items by `usage`, with the ties it broke on `rng`. Among the tied ones each preference in turn narrows the choice to the items that meet it,
+ * when any of them does (a preference is never ahead of the balance, and one nobody meets changes nothing).
+ */
+function leastUsed<T>(items: readonly T[], usage: (item: T) => number, preferences: readonly ((item: T) => boolean)[], rng: Rng): T {
   const fewest = Math.min(...items.map(usage));
-  const tied = items.filter((item) => usage(item) === fewest);
-  const soft = tied.filter(preferred);
-  return rngPick(rng, soft.length > 0 ? soft : tied);
+  let candidates = items.filter((item) => usage(item) === fewest);
+  for (const wanted of preferences) {
+    const soft = candidates.filter(wanted);
+    if (soft.length > 0) candidates = soft;
+  }
+  return rngPick(rng, candidates);
 }
 
 /**
@@ -258,6 +272,7 @@ function planBuiltIn(
   excluded: ReadonlySet<string>,
   recent: ReadonlySet<string>,
   poses: PoseAllowance,
+  level: SceneLevel,
 ): PlanSlot[] {
   const deck = new Bag(pool.captureDeck, streams.rng);
   const kind = kindOfDeck(pool.captureDeck);
@@ -267,17 +282,29 @@ function planBuiltIn(
   const placeUses = new Map<string, number>();
   const momentUses = new Map<string, number>();
 
+  // «Подача» (I5.28): exactly flirtyCountOf(n) of the n slots are flirty, drawn on the category's `level:` stream (never touched under «Обычная»).
+  const flirtyAt = new Set(level === "flirty" ? shuffle(streams.levelRng, Array.from({ length: n }, (_, i) => i)).slice(0, flirtyCountOf(n, level)) : []);
+
   const slots: PlanSlot[] = [];
   for (let i = 0; i < n; i++) {
+    const slotLevel: Level = flirtyAt.has(i) ? "flirty" : "ordinary";
     const drawnCapture = deck.next();
     const drawnPose = poseForCapture(drawnCapture, drawPose(streams.poseRng, shotOf(drawnCapture), poses));
-    const settled = settleFit(pool, kind, drawnCapture, drawnPose);
+    const settled = settleFit(pool, kind, drawnCapture, drawnPose, slotLevel);
     const { capture, pose } = settled;
     const stepped = capture !== drawnCapture || pose !== drawnPose;
     const tieRng = stepped ? streams.fixRng : streams.fitRng;
-    const hasFreshMoment = (place: Place): boolean => fittingMoments(place, capture, pose).some((m) => !recent.has(momentKey(place.name, m.text)));
-    const place = leastUsed(settled.places, (p) => placeUses.get(p.name) ?? 0, hasFreshMoment, tieRng);
-    const moment = leastUsed(fittingMoments(place, capture, pose), (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0, (m) => !recent.has(momentKey(place.name, m.text)), tieRng);
+    const isFlirty = (m: Activity): boolean => m.level === "flirty";
+    const hasFreshMoment = (place: Place): boolean => fittingMoments(place, capture, pose, slotLevel).some((m) => !recent.has(momentKey(place.name, m.text)));
+    // A flirty slot, among equals, goes where a flirty moment fits and takes one.
+    const hasFlirtyMoment = (place: Place): boolean => fittingMoments(place, capture, pose, slotLevel).some(isFlirty);
+    const place = leastUsed(settled.places, (p) => placeUses.get(p.name) ?? 0, slotLevel === "flirty" ? [hasFreshMoment, hasFlirtyMoment] : [hasFreshMoment], tieRng);
+    const moment = leastUsed(
+      fittingMoments(place, capture, pose, slotLevel),
+      (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0,
+      [(m) => !recent.has(momentKey(place.name, m.text)), ...(slotLevel === "flirty" ? [isFlirty] : [])],
+      tieRng,
+    );
     placeUses.set(place.name, (placeUses.get(place.name) ?? 0) + 1);
     momentUses.set(momentKey(place.name, moment.text), (momentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
 
@@ -313,6 +340,8 @@ function planBuiltIn(
       // I5.27: a capture is written only when it says more than the stored shot does.
       ...(capture === captureOfShot(shotOf(capture)) ? {} : { capture }),
       ...(legwear === undefined ? {} : { legwear }),
+      // I5.27: a level is written only when it differs from the default.
+      ...(slotLevel === "flirty" ? { level: slotLevel } : {}),
     });
   }
   return slots;
@@ -337,6 +366,7 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
   // 5a.2: the moments the avatar used recently, by (place, moment); a history line written before it names none.
   const recent = new Set((input.excludePairs ?? []).flatMap((p) => (p.activity === undefined ? [] : [momentKey(p.location, p.activity)])));
   const poses = input.poses ?? NO_EXTRA_POSES;
+  const level = input.level ?? "ordinary";
 
   const slots: PlanSlot[] = [];
   let nextIndex = 1;
@@ -351,8 +381,8 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     const fixRng = makeRng(subSeed(seed, `clean:${category}`));
     // A built-in pool carries its deck of captures and is drawn capture-first (planBuiltIn); a custom pool keeps the planner it always had.
     if (pool.captureDeck !== undefined) {
-      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)) };
-      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, poses));
+      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)), levelRng: makeRng(subSeed(seed, `level:${category}`)) };
+      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, poses, level));
     } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded, poses));
     nextIndex += n;
   }

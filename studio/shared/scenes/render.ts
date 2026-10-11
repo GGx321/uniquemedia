@@ -23,6 +23,8 @@ export interface TemplateSlot {
   pose: ScenePose;
   /** «Ножки» (5a.2c). */
   framing?: "legs" | undefined;
+  /** «Подача» of this slot (S5.7b): a slot's own level wins over the context's, since a run mixes flirty and ordinary slots. Absent: the context's, else ordinary. */
+  level?: Level | undefined;
 }
 
 export interface TemplateContext {
