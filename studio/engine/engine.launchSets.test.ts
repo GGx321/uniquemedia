@@ -6,7 +6,9 @@ import type { ResponseMessage, SceneSetView } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary, type Library } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
-import { sampleSet } from "./library/testing/sceneSetSample";
+import { llmOnlySet, sampleSet } from "./library/testing/sceneSetSample";
+import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
+import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { chatBody, fakeFetch, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { RunEventSchema } from "./runs/journal";
 import { buildSceneRunPlan, RunPlanSchema } from "./runs/plan";
@@ -43,6 +45,8 @@ async function seedAvatar(): Promise<string> {
   const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  // 5a.2 (S5.6c2, m11): the launch's model path plans from `cat-llm-only-fixture`; a built-in category is written by the code template with no request.
+  await seedLlmOnlyCategory(libraryDir());
   return avatar.id;
 }
 
@@ -184,8 +188,8 @@ const LAUNCH_SET = { code: "VALIDATION", sceneReason: "launch-set" } as const;
 /** Whether the command was turned away as part of a launch (an accepted command, or any other refusal, is not). */
 const isLaunchSet = (response: ResponseMessage): boolean => !response.ok && response.error.sceneReason === "launch-set";
 
-const composeBody = (avatarId: string, over: Record<string, unknown> = {}) => ({ avatarId, count: 10, categories: ["home", "travel"], poses: POSES, acceptedWorstMicros: 2 * ATTEMPT, ...over });
-const internal = (over: Record<string, unknown> = {}) => ({ ids: TWO, split: [{ ref: "home" as const, count: 7 }, { ref: "travel" as const, count: 3 }], launchId: LAUNCH, ...over });
+const composeBody = (avatarId: string, over: Record<string, unknown> = {}) => ({ avatarId, count: 10, categories: ["home", LLM_ONLY_REF], poses: POSES, acceptedWorstMicros: 2 * ATTEMPT, ...over });
+const internal = (over: Record<string, unknown> = {}) => ({ ids: TWO, split: [{ ref: "home" as const, count: 7 }, { ref: LLM_ONLY_REF, count: 3 }], launchId: LAUNCH, ...over });
 
 // ---------- compose with ids the launch issued ----------
 
@@ -203,9 +207,26 @@ describe("composeLaunchSet", () => {
     expect(sceneSetId).toBe(SET);
     expect(file).toMatchObject({ sceneSetId: SET, runId: RUN, launchId: LAUNCH });
     expect(file.scenes.filter((s) => s.slot.category === "home")).toHaveLength(7);
-    expect(file.scenes.filter((s) => s.slot.category === "travel")).toHaveLength(3);
+    expect(file.scenes.filter((s) => s.slot.category === LLM_ONLY_REF)).toHaveLength(3);
     expect(ledgerReserves().every((id) => id.startsWith(`${SET}:writer-`))).toBe(true);
     expect(ledgerReserves()).toContain(file.chunks[0]?.attemptIds[0]);
+  });
+
+  // 5a.2 (S5.6c2, m11): the twin of the test above on built-in categories. The code template writes every scene, so the launch's compose costs nothing.
+  test("a launch's compose over two built-in categories sends no writer request and reserves nothing", async () => {
+    const avatarId = await seedAvatar();
+    const net = sceneNetwork();
+    const { engine, events } = await engineOver(net);
+    const split = [{ ref: "home" as const, count: 7 }, { ref: "travel" as const, count: 3 }];
+
+    const { jobId } = await engine.composeLaunchSet(composeBody(avatarId, { categories: ["home", "travel"], acceptedWorstMicros: 0 }) as never, internal({ split }) as never);
+    if (jobId === null) throw new Error("expected a job");
+    await jobEnd(events, jobId);
+
+    const file = setFile(avatarId) as { scenes: { text: string | null }[] };
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
+    expect(file.scenes.every((s) => s.text !== null)).toBe(true);
   });
 
   test("a second compose with the same ids after a crash before the first request makes no second set, no request and no reserve", async () => {

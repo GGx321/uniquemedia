@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { PNG_1X1, samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
-import { sampleSet } from "./library/testing/sceneSetSample";
+import { llmOnlySet, sampleSet } from "./library/testing/sceneSetSample";
 import type { LedgerLine } from "./money/ledger";
 import { chatBody, fakeFetch, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { command, engineSettings, GOOD, jobEnd, ok, OFFLINE, startEngine, TRAITS, until, useEngineDir, writeLedger } from "./testing/engineHarness";
@@ -27,12 +27,14 @@ const JOB = "job-seed-0001";
 const AT = "2026-10-07T12:00:00.000Z";
 const BUDGET = 10_000_000;
 
-async function seedWrittenSet(): Promise<string> {
+async function seedWrittenSet(builtIn = false): Promise<string> {
   const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds("seed1") });
   const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
-  const set = sampleSet({ sceneSetId: SET, avatarId: avatar.id, runId: RUN, count: 3, written: 0 });
+  // 5a.2 (S5.6c2, m11): the set is `cat-llm-only-fixture` scenes, which only the model writes, so the launch group's cap on writer attempts is what these tests check.
+  const seed = { sceneSetId: SET, avatarId: avatar.id, runId: RUN, count: 3, written: 0 };
+  const set = builtIn ? sampleSet(seed) : llmOnlySet(seed);
   await library.sceneSets.create({ ...set, write: { k: 1, kind: "compose", jobId: JOB, stoppedBy: "network" }, writes: 1 });
   return avatar.id;
 }
@@ -110,6 +112,21 @@ describe("the launch group in the engine's Budget", () => {
 
     expect(net.writerCalls()).toHaveLength(1);
     expect(ledgerReserves()).toEqual([`${SET}:writer-1#1`]);
+  });
+
+  // The twin on built-in scenes: the code template writes them, so the launch group's cap is no obstacle and nothing is reserved.
+  test("a set of built-in scenes needs no writer attempt, so even a cap of one micro-dollar lets its «Дописать» through with no request", async () => {
+    const avatarId = await seedWrittenSet(true);
+    const net = network();
+    const { engine, events } = await engineOver(net);
+    engine.launchGroups.register({ launchId: "L1", capMicros: 1, setIds: [SET], runIds: [] });
+
+    const result = ok(await engine.handle(command("scenes.write", { sceneSetId: SET, revision: await setRevision(engine, avatarId), target: { kind: "unwritten" }, acceptedWorstMicros: 0 })));
+    if (result.type !== "scenes.write") throw new Error("expected a write answer");
+    await jobEnd(events, result.result.jobId);
+
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(ledgerReserves()).toEqual([]);
   });
 
   test("a set that is not in a launch is not limited", async () => {

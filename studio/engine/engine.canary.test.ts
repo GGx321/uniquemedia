@@ -4,6 +4,8 @@ import type { AvatarTraits, ResponseMessage } from "../shared/engine";
 import { manifestTraits } from "./avatars/records";
 import { openLibrary } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
+import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { chatBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { createAgeGate } from "./runs/ageGate";
 import { createPdqGate } from "./runs/pdqGate";
@@ -202,11 +204,13 @@ describe("photo runs: no writer, image or age-check request carries the vibe", (
     const avatar = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(traits), descriptor: GOOD });
     const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
     await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+    await seedLlmOnlyCategory(join(runsDir(), "library"));
     return avatar.id;
   }
 
   function runRequest(avatarId: string, count: number) {
-    return { avatarId, count, categories: ["home"], poses: { profile: false, back: false } };
+    // 5a.2 (S5.6c2, m11): the canary needs a writer request to inspect, so the run plans from `cat-llm-only-fixture`, which only the model writes.
+    return { avatarId, count, categories: [LLM_ONLY_REF], poses: { profile: false, back: false } };
   }
 
   /** The slot indices a writer chunk's own user message asks for (scenes/writer.ts's own JSON, embedded in the prompt text). */
