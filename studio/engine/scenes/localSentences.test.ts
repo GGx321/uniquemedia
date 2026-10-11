@@ -4,6 +4,8 @@ import type { BankCategory, Moment } from "../../shared/scenes/banks/types";
 import { shotOf, type Capture } from "../../shared/scenes/captures";
 import type { TemplateSlot } from "../../shared/scenes/template";
 import { localSentences } from "./localSentences";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // S5.6c1 (plan s5a2 r1.5 §5.4): the template's side of the writer seam. A slot renders only when its place AND its moment are found by name in today's
 // banks (m2); anything else is null and goes to the model. The draws are pure functions of the slot's key; an equal sentence in the run is redrawn.
