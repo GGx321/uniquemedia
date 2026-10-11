@@ -110,5 +110,5 @@ describe("every drawable built-in combination is coherent", () => {
 });
 
 test("the poses a capture is checked at are the ones it can take", () => {
-  for (const capture of new Set(CASES.map((c) => c.capture))) expect(posesFor(capture)).toEqual(isHandCapture(capture) ? ["front", "three-quarter"] : [...POSES_ALL]);
+  for (const capture of new Set(CASES.map((c) => c.capture))) expect(posesFor(capture)).toEqual(capture === "over-shoulder" ? ["three-quarter"] : isHandCapture(capture) ? ["front", "three-quarter"] : [...POSES_ALL]);
 });

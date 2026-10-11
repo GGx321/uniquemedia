@@ -292,7 +292,10 @@ describe("WRITER_CALL's ceiling covers a full chunk of the worst custom pool (CS
   });
 
   // 468 -> 453 at S5.4 (C1): the same 15-byte refusal reason. The worst built-in chunk itself did not move (the park path is no longer than the field it replaces).
-  const BUILT_IN_MARGIN_PRINTED = 453;
+  // 453 -> 678 at S5.6b (5a.2): re-measured on the same builders (the longest real place, activity and outfit of the pools, now the banks', and the longest built-in label) after the bank
+  // texts and BUILT_IN_LABEL changed. It only rose: the longest label went from «Own phone photos» (16) to «Glamour» / «Fitness» (7), 9 bytes in each of the 25 slots of a chunk (+225); the
+  // longest bank texts are the 35-character bound the banks are held to, as before. The custom (253), scene-set (253) and idea (208) pins did not move.
+  const BUILT_IN_MARGIN_PRINTED = 678;
   test("the built-in margin printed here is the measured one: re-measure it when the writer's prompt or a built-in text changes", () => {
     expect(CEILING - builtInFloor()).toBe(BUILT_IN_MARGIN_PRINTED);
   });

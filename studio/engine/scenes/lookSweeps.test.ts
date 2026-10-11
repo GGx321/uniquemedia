@@ -2,11 +2,15 @@ import { describe, expect, test } from "bun:test";
 import { BODY_PHRASE_MAX, BodyBust, BodyFigure, BodyHeight, BodyMark, BottomShape, BottomSize, LegLength, LegShape, POOL_TIMES, bodyPhrase, youthWords } from "../../shared/engine";
 import type { AvatarBody, AvatarDescriptor } from "../../shared/engine";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
+import { captureOfShot, type Capture } from "../../shared/scenes/captures";
+import { withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { assembleSlot } from "./assembler";
+import { hairLinesOf } from "./hairLines";
+import { phoneHandLineOf } from "./phoneLook";
 import { plan, planWithPools } from "./planner";
 import { isPhoneActivity, POOLS, type Activity, type Place, type Pool } from "./pools";
 import { redrawSlot } from "./redraw";
-import { roomPlaceOf } from "./roomPlace";
+import { roomPlaceOf, slotLookOf } from "./roomPlace";
 import { PlanSlotSchema, PoseSchema, type PlanSlot } from "./schema";
 import { CUSTOM_REF } from "./testing/customPool";
 import { firstHit, HELD_PHONE, NEGATED_LOOK, SOFT_LIST, STAGING, SWEEP_CUSTOM_POOL } from "./testing/lookRules";
@@ -43,8 +47,13 @@ const POOLS_ALL: Record<string, Pool> = { ...POOLS, [CUSTOM_REF]: SWEEP_CUSTOM_P
 /** The writer stand-in: one plain sentence made of the slot's own words. No trailing full stop (the assembler adds it). */
 const sentenceOf = (slot: PlanSlot): string => `She is ${slot.activity} at ${slot.location}, wearing ${slot.outfit}`;
 
+/** The captures that carry the body binding when the avatar has a body (plan r1.5 §5.4): the close self-shots from above and the plain selfie do not. */
+const BODY_CAPTURES: readonly Capture[] = ["mirror-hidden", "mirror", "prone", "over-shoulder", "timer", "friend", "candid", "pov-legs", "low-feet"];
+
 interface Swept {
   label: string;
+  /** Who took the photo: the slot's capture, or the one its stored shot says. */
+  capture: Capture;
   /** The body phrase the descriptor carried, or undefined for an avatar with no body. */
   body: string | undefined;
   slot: PlanSlot;
@@ -57,15 +66,17 @@ interface Swept {
 
 function assembleAll(slots: readonly PlanSlot[], runId: string, rooms: boolean, descriptor: AvatarDescriptor = DESCRIPTOR): Swept[] {
   const out: Swept[] = [];
+  // The hair line sweeps with the rest of the look: the run's styles, as the run job draws them.
+  const hair = hairLinesOf(slots, "shoulder", runId);
   for (const base of slots) {
     const time = TIMES[base.slotIndex % TIMES.length] as string;
     for (const slot of [base, { ...base, timeOfDay: time }]) {
       if (!PlanSlotSchema.safeParse(slot).success) continue;
       const sentence = sentenceOf(slot);
       for (const realism of [true, false]) {
-        const prompt = assembleSlot(descriptor, slot, sentence, MASTER, { runId, cameraRealism: realism, ...(rooms ? { roomPlaceOf } : {}) }).prompt;
+        const prompt = assembleSlot(descriptor, slot, sentence, MASTER, { runId, cameraRealism: realism, lookOf: slotLookOf, hairStyleOf: (hairSlot) => hair.get(hairSlot.slotIndex) ?? null, ...(rooms ? { roomPlaceOf } : {}) }).prompt;
         if (!prompt.includes(sentence)) throw new Error(`the sentence is not in the prompt: ${sentence}`);
-        out.push({ body: descriptor.body, label: `${runId}/${slot.slotIndex}/${slot.category}/${slot.shot}/${slot.pose}/${slot.timeOfDay}/${realism ? "on" : "off"}`, slot, realism, sentence, look: prompt.replace(sentence, "").replace(descriptor.text.replace(/\.$/, ""), "").replace(descriptor.body === undefined ? "" : `; ${descriptor.body}`, ""), prompt });
+        out.push({ body: descriptor.body, capture: slot.capture ?? captureOfShot(slot.shot), label: `${runId}/${slot.slotIndex}/${slot.category}/${slot.shot}/${slot.pose}/${slot.timeOfDay}/${realism ? "on" : "off"}`, slot, realism, sentence, look: prompt.replace(sentence, "").replace(descriptor.text.replace(/\.$/, ""), "").replace(descriptor.body === undefined ? "" : `; ${descriptor.body}`, ""), prompt });
       }
     }
   }
@@ -135,13 +146,24 @@ const MESSY_ROOMS: Swept[] = (() => {
   const all: Swept[] = [];
   // Friend, selfie and candid: the messy sentence sits differently around a phone in her hand (the selfie) and a snap she does not pose for (the candid).
   for (const shot of ["friend", "selfie", "candid"] as const) {
-    const slot = PlanSlotSchema.parse({ slotIndex: 1, category: "home", location: "her bed in the morning", timeOfDay: "morning", activity: "stretching after waking up", outfit: POOLS.home.outfits[0], shot, pose: "front", attemptIdBase: "slot-1", repeatedPair: false });
+    const slot = PlanSlotSchema.parse({ slotIndex: 1, category: "home", location: "her bed", timeOfDay: "morning", activity: "lies back on the pillow", outfit: POOLS.home.outfits[0], shot, pose: "front", attemptIdBase: "slot-1", repeatedPair: false });
     for (let run = 1; run <= 200; run++) all.push(...assembleAll([slot], `run-m${shot}${run}`, true));
   }
   return all;
 })();
 
-const EVERYTHING = [...SWEPT, ...REDRAWN, ...BODIED, ...MESSY_ROOMS];
+// A stored plan can still hold a photographer's shot (no new plan deals one): such a slot is a friend's, and its prompt takes the same look. Made here from new
+// plans' friend slots, so the old shot stays swept.
+const OLD_PHOTOGRAPHER: Swept[] = (() => {
+  const all: Swept[] = [];
+  for (let seed = 1; seed <= 6; seed++) {
+    const friends = plan({ seed: seed * 7919, count: 30, categories: [...CATEGORIES], poses: ALL_POSES }).slots.filter((s) => s.shot === "friend" && s.capture === undefined);
+    all.push(...assembleAll(friends.map((s) => ({ ...s, shot: "photographer" as const })), `run-p${seed}`, true));
+  }
+  return all;
+})();
+
+const EVERYTHING = [...SWEPT, ...REDRAWN, ...BODIED, ...MESSY_ROOMS, ...OLD_PHOTOGRAPHER];
 const hits = (check: (s: Swept) => string | null): Array<{ label: string; hit: string }> =>
   EVERYTHING.flatMap((s) => {
     const hit = check(s);
@@ -189,7 +211,8 @@ describe("the body axis (S5.2c)", () => {
   test("every body phrase is swept across every shot, every pose and both «Реализм камеры» states", () => {
     for (const phrase of BODY_PHRASES) {
       const mine = BODIED.filter((s) => s.body === phrase);
-      expect(new Set(mine.map((s) => s.slot.shot))).toEqual(new Set(SHOTS));
+      // No new plan deals a photographer's shot (a stored one is swept in OLD_PHOTOGRAPHER); the body binding of a friend's snap is the same.
+      expect(new Set(mine.map((s) => s.slot.shot))).toEqual(new Set(SHOTS.filter((shot) => shot !== "photographer")));
       expect(new Set(mine.map((s) => s.slot.pose))).toEqual(new Set(PoseSchema.options));
       expect(new Set(mine.map((s) => s.realism))).toEqual(new Set([true, false]));
     }
@@ -199,8 +222,8 @@ describe("the body axis (S5.2c)", () => {
     expect(hits((s) => (s.body === undefined || (s.prompt.split(s.body).length === 2 && s.prompt.indexOf(DESCRIPTOR.text.replace(/\.$/, "")) < s.prompt.indexOf(s.body)) ? null : "placement"))).toEqual([]);
   });
 
-  test("a body prompt carries the binding clause once unless the shot is a selfie, and a prompt with no body never carries it", () => {
-    expect(hits((s) => (s.body !== undefined && s.slot.shot !== "selfie" ? (s.prompt.split(BODY_CLAUSE).length === 2 ? null : "missing") : s.prompt.includes(BODY_CLAUSE) ? "unexpected" : null))).toEqual([]);
+  test("a body prompt carries the binding clause once on the captures that take it (not the plain selfie or the close shot from above), and a prompt with no body never carries it", () => {
+    expect(hits((s) => (s.body !== undefined && BODY_CAPTURES.includes(s.capture) ? (s.prompt.split(BODY_CLAUSE).length === 2 ? null : "missing") : s.prompt.includes(BODY_CLAUSE) ? "unexpected" : null))).toEqual([]);
   });
 
   test("a body prompt carries no youth or revealing word, phrase and clause included", () => {
@@ -210,8 +233,10 @@ describe("the body axis (S5.2c)", () => {
 
 describe("I5.2: only the mirror shows a phone", () => {
   // The look text may say «phone» only as the kind of photo and, for the mirror, in the mirror line and its phone-hand line. The sentence is not part of the look text.
-  const KIND_OF_PHOTO = /Ordinary phone photo|A quick phone snap/g;
-  const MIRROR_ONLY = /her phone in her hand at chest height|One hand holds the phone/g;
+  const KIND_OF_PHOTO = /Ordinary phone photo|A quick phone photo/g;
+  const MIRROR_ONLY = /her phone in her hand at chest height|One hand holds the phone|she holds her phone up in front of her face, so the phone hides most of her face|she holds the phone up and it hides her face|her face behind her phone/g;
+  // The lines of the 5a.2 self-shots name her phone to say where it is NOT: out of the frame, propped on a ledge on a timer with nobody holding one.
+  const SELF_SHOT_ONLY = /Her phone arm is out of the frame|A photo from her phone propped on a ledge|nobody holds a phone/g;
 
   test("no non-mirror look text matches a held-phone pattern", () => {
     expect(hits((s) => (s.slot.shot === "mirror" ? null : firstHit(s.look, HELD_PHONE)))).toEqual([]);
@@ -220,7 +245,7 @@ describe("I5.2: only the mirror shows a phone", () => {
   test("no look text names a phone beyond the places each author's lines allow", () => {
     expect(
       hits((s) => {
-        const allowed = s.slot.shot === "mirror" ? MIRROR_ONLY : /(?!)/g;
+        const allowed = s.slot.shot === "mirror" ? MIRROR_ONLY : SELF_SHOT_ONLY;
         return s.look.replace(KIND_OF_PHOTO, "").replace(allowed, "").match(/\bphones?\b/i)?.[0] ?? null;
       }),
     ).toEqual([]);
@@ -251,10 +276,14 @@ describe("I5.2: only the mirror shows a phone", () => {
     ).toEqual([]);
   });
 
-  test("the selfie author's near-arm line and the mirror's phone-hand line are the only ones, and every prompt ends with its own", () => {
-    expect(hits((s) => (s.slot.shot === "mirror" && !s.prompt.endsWith("One hand holds the phone; only her other hand acts.") ? "mirror" : null))).toEqual([]);
-    expect(hits((s) => (s.slot.shot === "selfie" && !s.prompt.endsWith("Her near arm is out of the frame; only her other hand acts.") ? "selfie" : null))).toEqual([]);
-    expect(hits((s) => (s.slot.shot !== "selfie" && s.slot.shot !== "mirror" && /only her other hand acts/.test(s.prompt) ? "other" : null))).toEqual([]);
+  test("every prompt ends with its own capture's hand line, and a photo someone else took ends with the constraints alone", () => {
+    expect(
+      hits((s) => {
+        const hand = phoneHandLineOf(s.capture);
+        return hand === null ? (s.prompt.endsWith("watermark.") ? null : "other") : s.prompt.endsWith(hand) ? null : s.capture;
+      }),
+    ).toEqual([]);
+    expect(hits((s) => (s.slot.shot !== "selfie" && s.slot.shot !== "mirror" && /only her other hand acts|her other hand is free/.test(s.prompt) ? "other" : null))).toEqual([]);
   });
 });
 
@@ -271,7 +300,7 @@ describe("C1: the word «selfie» draws a phone, so no selfie slot's image promp
   });
 
   test("a selfie prompt names a phone nowhere but in the kind of photo (the mirror alone shows one)", () => {
-    expect(hits((s) => (s.slot.shot === "selfie" ? (s.prompt.replace(/Ordinary phone photo/g, "").match(/\bphones?\b/i)?.[0] ?? null) : null))).toEqual([]);
+    expect(hits((s) => (s.slot.shot === "selfie" ? (s.prompt.replace(/Ordinary phone photo|Her phone arm is out of the frame/g, "").match(/\bphones?\b/i)?.[0] ?? null) : null))).toEqual([]);
   });
 
   test("the mirror prompt keeps saying selfie, because it must show the phone", () => {
@@ -304,7 +333,7 @@ describe("I5.3: no camera, staging or luxury word in a prompt assembled from a n
   });
 
   test("none of the soft list (studio, photographer, editorial, golden hour, softly lit, bokeh, cinematic, the luxury words…), in any prompt", () => {
-    expect(hits((s) => SOFT_LIST.exec(s.prompt)?.[0] ?? null)).toEqual([]);
+    expect(hits((s) => SOFT_LIST.exec(withoutExemptLookPhrases(s.prompt))?.[0] ?? null)).toEqual([]);
   });
 });
 
@@ -324,7 +353,11 @@ describe("what the look text must keep, whatever the draw (I5.13)", () => {
   });
 
   test("the artefact line is positive in both switch states: the sharp background is there, «Реализм камеры» adds the camera-roll artefacts", () => {
-    expect(hits((s) => (s.look.includes("the background as sharp as she is") ? null : "no sharp background"))).toEqual([]);
+    // I5.34: only «Дом»'s lamp places at evening and night swap the sharp background for the lamp mood; the sweep reaches both.
+    const lampMood = (s: Swept): boolean => s.look.includes("dim evening light from a bedside lamp");
+    expect(hits((s) => (lampMood(s) ? (s.look.includes("everything in focus") ? "lamp mood with the sharp line" : null) : s.look.includes("the background as sharp as she is") ? null : "no sharp background"))).toEqual([]);
+    expect(EVERYTHING.some(lampMood)).toBe(true);
+    expect(hits((s) => (lampMood(s) !== (POOLS_ALL[s.slot.category]?.locations.find((l) => l.name === s.slot.location)?.lamp === true && (s.slot.timeOfDay === "evening" || s.slot.timeOfDay === "night")) ? "lamp mood out of place" : null))).toEqual([]);
     expect(hits((s) => (s.realism !== s.look.includes("straight from her camera roll") ? "switch" : null))).toEqual([]);
   });
 });

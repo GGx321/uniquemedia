@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CustomCategoryId, isCustomCategory, PoolText, SceneText, TimeOfDay } from "../../shared/engine";
+import { CAPTURES, captureOfShot, shotOf } from "../../shared/scenes/captures";
 import { FacePoseSchema } from "../face/config";
 import { CATEGORIES, SHOTS } from "./types";
 
@@ -74,6 +75,14 @@ export const PlanSlotSchema = z
     // Additive (CS.5): the sentence a reviewed scene set already holds for this slot. Present on every slot of a run made from a set, never otherwise
     // (runs/plan.ts's invariant); a writer's sentence has no upper bound, so neither has this.
     sentence: SceneText.optional(),
+    // Additive (5a.2, I5.27): who took the photo, when it is not just what its stored `shot` says (a timer is a friend's shot, a prone selfie a selfie's), and
+    // the legwear slot of an outfit that shows her legs. A slot stored before them has neither and reads as it always did.
+    capture: z.enum(CAPTURES).optional(),
+    legwear: PoolText.optional(),
+  })
+  .refine((slot) => slot.capture === undefined || shotOf(slot.capture) === shotOf(captureOfShot(slot.shot)), {
+    message: "a capture rides on the shot the slot is stored with",
+    path: ["capture"],
   })
   .refine((slot) => !isPhoneInHandShot(slot.shot) || slot.pose === "front" || slot.pose === "three-quarter", {
     message: "a selfie or mirror shot always faces the camera: pose must be front or three-quarter",

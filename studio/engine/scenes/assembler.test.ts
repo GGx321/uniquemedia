@@ -8,8 +8,9 @@ import { POOL_TIMES } from "../../shared/engine";
 import { PlanSlotSchema, PoseSchema, type OwnPlanSlot, type PlanSlot } from "./schema";
 import { SHOTS } from "./types";
 import { revealingWordsIn } from "./words";
-import { AssemblerRefusalError, assembleRun, assembleSlot as assembleWith, BINDING_ANCHOR, POSE_PHRASE, type AssembleOptions } from "./assembler";
-import { artefactLine, CAPTURE_LINE, CONSTRAINTS, imperfectionOf, lightOf, NEUTRAL_LIGHT, phoneHandLine, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
+import { captureOfShot, CAPTURES } from "../../shared/scenes/captures";
+import { AssemblerRefusalError, assembleRun, assembleSlot as assembleWith, BINDING_ANCHOR, HIDDEN_FACE_POSE_PHRASE, NO_FACE_ANCHOR, POSE_PHRASE, type AssembleOptions } from "./assembler";
+import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, lightOf, MIRROR_BACK_LINE, NEUTRAL_LIGHT, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -74,7 +75,7 @@ describe("assembleSlot", () => {
 
   test.each([...SHOTS])("the %s capture line is the first sentence of the prompt", (shot) => {
     const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot }), SENTENCE, MASTER);
-    expect(prompt.startsWith(CAPTURE_LINE[shot])).toBe(true);
+    expect(prompt.startsWith(captureLineOf(captureOfShot(shot), slotKeyOf(RUN_ID, "slot-1")))).toBe(true);
   });
 
   test("a mirror slot's constraints say one hand holds the phone", () => {
@@ -272,7 +273,13 @@ describe("shot × pose coherence (round 2, HIGH)", () => {
 describe("phrase constants never suggest a minor or use a revealing word (round 2, LOW)", () => {
   function allPhrases(): [string, string][] {
     return [
-      ...Object.entries(CAPTURE_LINE).map(([k, v]): [string, string] => [`CAPTURE_LINE.${k}`, v]),
+      // Every line a capture can draw: the friend's three variants and the candid's, over a spread of keys.
+      ...CAPTURES.flatMap((capture) => [...new Set(Array.from({ length: 40 }, (_, i) => captureLineOf(capture, `run-${i}:slot-1`)))].map((line): [string, string] => [`captureLineOf(${capture})`, line])),
+      ["HIDDEN_FACE_POSE_PHRASE.front", HIDDEN_FACE_POSE_PHRASE.front],
+      ["HIDDEN_FACE_POSE_PHRASE.three-quarter", HIDDEN_FACE_POSE_PHRASE["three-quarter"]],
+      ["NO_FACE_ANCHOR", NO_FACE_ANCHOR],
+      ["MIRROR_BACK_LINE", MIRROR_BACK_LINE],
+      ["hairLine", hairLine("in a low ponytail")],
       ...Object.entries(POSE_PHRASE).map(([k, v]): [string, string] => [`POSE_PHRASE.${k}`, v]),
       ...Object.entries(BINDING_ANCHOR).map(([k, v]): [string, string] => [`BINDING_ANCHOR.${k}`, v]),
       ["CONSTRAINTS", CONSTRAINTS],
@@ -295,7 +302,7 @@ describe("the order of a prompt (T6)", () => {
     const room = roomStateOf(slotKeyOf(RUN_ID, "slot-1"), ROOM) ?? "";
     expect(room).not.toBe("");
     const parts = [
-      CAPTURE_LINE.friend,
+      captureLineOf("friend", slotKeyOf(RUN_ID, "slot-1")),
       POSE_PHRASE.front,
       "She leans on the balcony railing",
       room,
@@ -394,7 +401,7 @@ describe("camera realism (artefact line)", () => {
 
   test("the prompt of a selfie ends with the phone-arm line after the constraints", () => {
     const { prompt } = assembleSlot(DESCRIPTOR, slot({ shot: "selfie" }), SENTENCE, MASTER);
-    expect(prompt.endsWith(`${CONSTRAINTS} ${phoneHandLine("selfie")}`)).toBe(true);
+    expect(prompt.endsWith(`${CONSTRAINTS} ${phoneHandLineOf("selfie")}`)).toBe(true);
   });
 
   test("the stop-word filter leaves both artefact lines whole (they contain none of them)", () => {
@@ -493,9 +500,9 @@ describe("what no new prompt may say", () => {
     }
   });
 
-  // The look text may say «phone» only as the kind of photo («Ordinary phone photo», «A quick phone snap»). Activities are S5.1c's concern: the sentence here has none.
+  // The look text may say «phone» only as the kind of photo («Ordinary phone photo», «A quick phone photo»). Activities are S5.1c's concern: the sentence here has none.
   test("I5.2: outside those places, no non-mirror prompt names a phone", () => {
-    const allowed = /Ordinary phone photo|A quick phone snap/g;
+    const allowed = /Ordinary phone photo|A quick phone photo/g;
     for (const { label, shot, prompt } of everyPrompt()) {
       if (shot === "mirror") continue;
       expect({ label, left: prompt.replace(allowed, "").match(/\bphones?\b/i)?.[0] ?? null }).toEqual({ label, left: null });

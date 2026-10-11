@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { POOL_TIMES, youthWords } from "../../shared/engine";
+import { withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { sentenceProblems } from "./assembler";
-import { artefactLine, CAPTURE_LINE, CONSTRAINTS, IMPERFECTIONS, lightOf, phoneHandLine, roomStateOf } from "./phoneLook";
+import { CAPTURES } from "../../shared/scenes/captures";
+import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, IMPERFECTIONS, lightOf, MIRROR_BACK_LINE, phoneHandLineOf, roomStateOf } from "./phoneLook";
 import { POOLS, type Place, type Pool } from "./pools";
 import { firstHit, NEGATED_LOOK, PAPER_AND_SCREENS, SOFT_LIST, STAGING, SWEEP_CUSTOM_POOL } from "./testing/lookRules";
 import { CATEGORIES, SHOTS } from "./types";
@@ -71,8 +73,8 @@ describe("the built-in pools: the hard lists", () => {
 });
 
 describe("the built-in pools: the soft list, paper and screens", () => {
-  test("no text uses a word of the soft list (studio, photographer, editorial, golden hour, luxury and mood words)", () => {
-    expect(failures(BUILT_IN, (t) => SOFT_LIST.exec(t)?.[0] ?? null)).toEqual([]);
+  test("no text uses a word of the soft list (studio, photographer, editorial, golden hour, luxury and mood words), «silk pajamas» exempt (K-22)", () => {
+    expect(failures(BUILT_IN, (t) => SOFT_LIST.exec(withoutExemptLookPhrases(t))?.[0] ?? null)).toEqual([]);
   });
 
   test("no text names paper, a book, a screen, a desk or studying: her phone is the only screen", () => {
@@ -92,11 +94,13 @@ describe("the look module's own phrases take the same lists", () => {
   const ROOM = { room: true, details: ["a kettle on the counter", "a fruit bowl", "a towel on the oven door"], activity: { messyOk: true } };
   const phrases = (): PoolText[] => {
     const out: PoolText[] = [];
-    for (const shot of SHOTS) {
-      out.push({ where: `CAPTURE_LINE.${shot}`, text: CAPTURE_LINE[shot] });
-      out.push({ where: `phoneHandLine(${shot})`, text: phoneHandLine(shot) ?? "" });
-      for (const text of IMPERFECTIONS[shot]) out.push({ where: `IMPERFECTIONS.${shot}`, text });
+    for (const capture of CAPTURES) {
+      for (let i = 0; i < 12; i++) out.push({ where: `captureLineOf(${capture})`, text: captureLineOf(capture, `run-${i}:slot-1`) });
+      out.push({ where: `phoneHandLineOf(${capture})`, text: phoneHandLineOf(capture) ?? "" });
     }
+    for (const shot of SHOTS) for (const text of IMPERFECTIONS[shot]) out.push({ where: `IMPERFECTIONS.${shot}`, text });
+    out.push({ where: "MIRROR_BACK_LINE", text: MIRROR_BACK_LINE }, { where: "hairLine", text: hairLine("in a low ponytail") });
+    for (const cameraRealism of [true, false]) for (const imperfection of Object.values(IMPERFECTIONS).flat()) out.push({ where: "artefactLine (lamp mood)", text: artefactLine({ cameraRealism, light: "x", imperfection, lampMood: true }) });
     out.push({ where: "CONSTRAINTS", text: CONSTRAINTS });
     for (const time of [...POOL_TIMES, "twilight", undefined]) out.push({ where: `lightOf(${String(time)})`, text: lightOf(time) });
     for (const light of POOL_TIMES.map(lightOf)) for (const realism of [true, false]) for (const imperfection of Object.values(IMPERFECTIONS).flat()) out.push({ where: "artefactLine", text: artefactLine({ cameraRealism: realism, light, imperfection }) });

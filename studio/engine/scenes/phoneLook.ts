@@ -1,3 +1,5 @@
+import { shotOf, type Capture } from "../../shared/scenes/captures";
+import { pick } from "../../shared/scenes/hash";
 import { fnv1a, makeRng, rngPick, shuffle } from "./rngUtil";
 import type { Shot } from "./types";
 
@@ -15,26 +17,75 @@ import type { Shot } from "./types";
 // The draws (the imperfection, the room state) are pure functions of a key, `${runId}:${attemptIdBase}`, never of the plan's seed (a run made from a
 // scene set has seed 0) and never of a clock, so a resume assembles the same prompt (I5.4).
 
-// A `photographer` slot is a friend's snap too: the stored shot stays readable (I5.5), the author is a friend.
-const FRIEND_SNAP =
-  "A quick phone snap a friend took of her from three or four steps away, on the rear camera at eye level, a little off-centre, the horizon slightly tilted, with a little too much space above her head; she is not taking the photo herself, and her whole body is in the picture.";
+// 5a.2 (S5.6b, plan s5a2 r1.5 §5.4): the capture line is keyed by WHO TOOK THE PHOTO (the slot's capture), not by its stored shot. At home she shoots
+// herself (in the mirror, often with her phone over her face; at arm's length from above; lying on her stomach; over her own shoulder; on a timer); outside
+// she mostly asks someone. A slot stored before captures reads its capture from its shot (shared/scenes/captures.ts captureOfShot): a photographer is a
+// friend. Only the two mirror lines say «selfie», because they must show the phone (owner canary C1).
 
-/** The first sentence of every prompt: how the photo was taken. */
-export const CAPTURE_LINE: Readonly<Record<Shot, string>> = {
-  selfie:
-    "A photo she took of herself at arm's length, seen from the camera's own point of view, held a little above eye level, the frame slightly tilted; her near arm stretches toward the viewer and leaves the frame at the bottom edge, so nothing in her near hand can be seen.",
-  mirror:
-    "A mirror selfie she took herself: her phone in her hand at chest height, visible in the mirror and held low enough to leave her face clear, the room behind her in the reflection.",
-  friend: FRIEND_SNAP,
-  photographer: FRIEND_SNAP,
-  candid: `${FRIEND_SNAP} She is busy with something and not looking toward the camera.`,
+const MIRROR_LINE =
+  "A mirror selfie she took herself: her phone in her hand at chest height, visible in the mirror and held low enough to leave her face clear, the room behind her in the reflection.";
+
+const SELFIE_LINE =
+  "A photo she took of herself at arm's length, seen from the camera's own point of view, held a little above eye level, the frame slightly tilted; her near arm stretches toward the viewer and leaves the frame at the bottom edge, so nothing in her near hand can be seen.";
+
+/** The heights and distances a friend's photo is drawn from, on `${key}:friend`. */
+export const FRIEND_VARIANTS: readonly string[] = [
+  "from eye level a few steps away, her whole body in the picture",
+  "from a little below, a few steps away, her whole body in the picture",
+  "from eye level, from her knees up",
+];
+
+const friendLine = (key: string): string => `A quick phone photo someone she asked took of her, ${pick(FRIEND_VARIANTS, key, "friend")}; she is not taking the photo herself.`;
+
+/** A candid is a friend's photo of her busy with something. */
+const CANDID_CLAUSE = "She is busy with something and not looking toward the camera.";
+
+/** The fixed capture lines; `friend` and `candid` take a variant from the slot's key (`captureLineOf`). */
+const FIXED_CAPTURE_LINE: Readonly<Record<Exclude<Capture, "friend" | "candid">, string>> = {
+  "mirror-hidden":
+    "A mirror selfie she took herself: she holds her phone up in front of her face, so the phone hides most of her face, and the room behind her is in the reflection.",
+  mirror: MIRROR_LINE,
+  above: "A close photo she took of herself from slightly above as she lies there, at arm's length; her near arm leaves the frame, so nothing in her near hand can be seen.",
+  prone:
+    "A photo she took of herself at arm's length as she lies on her stomach on the bed, one arm stretched toward the viewer and out of the frame, her other hand free; behind her, the curve of her back and hips.",
+  "over-shoulder":
+    "A photo she took of herself from above her own shoulder while lying on her stomach on the bed, looking back along her own body: her hair in the foreground, her hips, and her feet raised up at the far end.",
+  selfie: SELFIE_LINE,
+  timer: "A photo from her phone propped on a ledge a few metres away on a timer; both of her hands are empty and nobody holds a phone; her whole body is in the picture.",
+  "pov-legs": "A photo she took looking down along her own legs from where she lies or sits, held at her eye level; nothing in her hand can be seen.",
+  "low-feet": "A quick phone photo a friend took of her, crouching a couple of metres away, low down near her feet; both of her hands are empty; she is not taking the photo herself.",
 };
 
-/** The constraint about her hands: only the mirror author holds a phone in view, and a selfie's near arm is out of the frame. Null for the rest. */
-export function phoneHandLine(shot: Shot): string | null {
-  if (shot === "mirror") return "One hand holds the phone; only her other hand acts.";
-  if (shot === "selfie") return "Her near arm is out of the frame; only her other hand acts.";
-  return null;
+/** The first sentence of every prompt: how the photo was taken. Pure in the capture and the slot's key (a resume assembles the same prompt, I5.4). */
+export function captureLineOf(capture: Capture, key: string): string {
+  if (capture === "friend") return friendLine(key);
+  if (capture === "candid") return `${friendLine(key)} ${CANDID_CLAUSE}`;
+  return FIXED_CAPTURE_LINE[capture];
+}
+
+/** Back or side to the mirror (owner note, r1.5): added after the capture line of a moment tagged `mirrorBack`. */
+export const MIRROR_BACK_LINE = "Only her reflection is in the picture; she holds the phone up and it hides her face.";
+
+/**
+ * The constraint about her hands. A mirror shot holds the phone in view in one hand; a selfie's near arm is out of the frame; the close self-shots (above,
+ * prone, over the shoulder, looking down at her legs) say her phone arm is out of the frame and her other hand holds nothing, which guards against the
+ * second phone the prone probe showed (Seedream). Null for a photo someone else took.
+ */
+export function phoneHandLineOf(capture: Capture): string | null {
+  switch (capture) {
+    case "mirror":
+    case "mirror-hidden":
+      return "One hand holds the phone; only her other hand acts.";
+    case "selfie":
+      return "Her near arm is out of the frame; only her other hand acts.";
+    case "above":
+    case "prone":
+    case "over-shoulder":
+    case "pov-legs":
+      return "Her phone arm is out of the frame; her other hand is free and holds nothing.";
+    default:
+      return null;
+  }
 }
 
 /** The constraints that end every prompt, before the phone-hand line. */
@@ -88,9 +139,24 @@ export function imperfectionOf(shot: Shot, key: string): string {
  * The artefact line. «Реализм камеры» on adds the camera-roll artefacts and the imperfection; off keeps the light and the sharp background, which
  * are the part of the look the owner rated. Both are positive: they say what the photo is, never what it lacks.
  */
-export function artefactLine(input: { cameraRealism: boolean; light: string; imperfection: string }): string {
+export function artefactLine(input: { cameraRealism: boolean; light: string; imperfection: string; lampMood?: boolean }): string {
+  // I5.34: «Дом»'s lamp places at evening and night keep the dim lamp light, the soft shadow and the grain the owner's references show, in place of «everything in focus».
+  if (input.lampMood === true) {
+    if (!input.cameraRealism) return "Ordinary phone photo: dim evening light from a bedside lamp, the room in soft shadow, muted colours.";
+    return `Ordinary phone photo straight from her camera roll: dim evening light from a bedside lamp, the room in soft shadow, visible grain from the low light, muted colours, slightly soft focus, ${input.imperfection}.`;
+  }
   if (!input.cameraRealism) return `Ordinary phone photo: ${input.light}, everything in focus, the background as sharp as she is.`;
   return `Ordinary phone photo straight from her camera roll: ${input.light}, flat auto-exposure, slight noise in the shadows, mild JPEG compression, ${input.imperfection}, everything in focus, the background as sharp as she is.`;
+}
+
+/** Whether a slot gets the lamp mood (I5.34): a place with a lamp (only «Дом»'s), at evening or night. */
+export function isLampMood(place: { lamp?: boolean | undefined } | null, timeOfDay: string | undefined): boolean {
+  return place?.lamp === true && (timeOfDay === "evening" || timeOfDay === "night");
+}
+
+/** The hair line (I5.25): hair varies from photo to photo, its colour never; the style is `hairstyleSequence`'s (shared/scenes/hair.ts). */
+export function hairLine(style: string): string {
+  return `Today her hair is ${style}: the same hair colour as in the reference photo, only styled differently.`;
 }
 
 /**

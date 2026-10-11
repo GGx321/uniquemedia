@@ -85,7 +85,7 @@ export interface SceneSetServiceDeps {
   emit: (event: UnsequencedEvent) => void;
   emitMoney: () => void;
   markKeyRejected: (key: string) => void;
-  recentPairs: (library: Library, avatarId: string) => Promise<readonly { location: string; outfit: string }[]>;
+  recentPairs: (library: Library, avatarId: string) => Promise<readonly { location: string; outfit: string; activity?: string | undefined }[]>;
   errorOf: (error: unknown) => EngineError;
   warn: (line: string) => void;
   /** Stage 4 (S4.5a): which sets and runs belong to an unfinished launch. Every refusal and mark asks it, through the unlinked rule. */

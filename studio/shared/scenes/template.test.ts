@@ -220,7 +220,7 @@ describe("outfits: pinned ones and the legwear slot", () => {
       for (const moment of place.moments) {
         for (const capture of moment.captures) {
           for (const outfit of pinOnly) {
-            const sentence = templateSentence(slotOf("home", place, moment, capture, "front", { outfit }), { key: "k" });
+            const sentence = templateSentence(slotOf("home", place, moment, capture, capture === "over-shoulder" ? "three-quarter" : "front", { outfit }), { key: "k" });
             if (moment.outfits?.includes(outfit) === true) {
               if (sentence !== null) pinnedRenders++;
             } else expect(sentence).toBeNull();
@@ -370,5 +370,29 @@ describe("the motion is never read: statically", () => {
   test.each(["render.ts", "template.ts", "custom.ts", "hair.ts", "captures.ts"])("%s never reads a moment's motion or start pose", (name) => {
     const source = readFileSync(join(import.meta.dir, name), "utf8");
     expect(source).not.toMatch(/\.motion\b|\bstartPose\b/);
+  });
+});
+
+// 5a.2 (S5.6b review, LOW): a moment with a hand already at her face (cheek on her hand) takes no hand cue («her hand at her cheek», «a finger near her lips»).
+describe("a hand at her face takes no hand cue", () => {
+  const HAND_CUES = CUES.filter((c) => c.hand === true).map((c) => c.text);
+
+  test("the hand cues exist", () => {
+    expect(HAND_CUES.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("a prone moment tagged handAtFace never draws one, over 200 keys", () => {
+    const { place, moment } = find("home", (p) => p.name === "her bed", (m) => m.handAtFace === true && m.captures.includes("prone"));
+    const slot: TemplateSlot = { category: "home", location: place.name, activity: moment.text, outfit: "grey lounge shorts and a fitted tee", shot: "selfie", capture: "prone", pose: "front" };
+    const sentences = Array.from({ length: 200 }, (_, i) => templateSentence(slot, { key: `run-${i}:slot-1` }) ?? "");
+    expect(sentences.every((sentence) => sentence !== "")).toBe(true);
+    for (const sentence of sentences) for (const cue of HAND_CUES) expect(sentence).not.toContain(cue);
+  });
+
+  test("an untagged prone moment does draw them (the exclusion is the tag's, not a blanket)", () => {
+    const { place, moment } = find("home", (p) => p.name === "her bed", (m) => m.handAtFace !== true && m.captures.includes("prone"));
+    const slot: TemplateSlot = { category: "home", location: place.name, activity: moment.text, outfit: "grey lounge shorts and a fitted tee", shot: "selfie", capture: "prone", pose: "front" };
+    const all = Array.from({ length: 200 }, (_, i) => templateSentence(slot, { key: `run-${i}:slot-1` }) ?? "").join(" ");
+    expect(HAND_CUES.some((cue) => all.includes(cue))).toBe(true);
   });
 });

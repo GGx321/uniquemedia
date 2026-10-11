@@ -221,6 +221,7 @@ function start(
     cancelledGateTimeoutMs?: number;
     referenceTimeoutMs?: number;
     gateTimeout?: RunJobDeps["gateTimeout"];
+    hairLengthOf?: RunJobDeps["hairLengthOf"];
   } = {},
 ): Harness {
   const net = opts.net ?? network();
@@ -253,6 +254,7 @@ function start(
       ...(opts.cancelledGateTimeoutMs === undefined ? {} : { cancelledGateTimeoutMs: opts.cancelledGateTimeoutMs }),
       ...(opts.referenceTimeoutMs === undefined ? {} : { referenceTimeoutMs: opts.referenceTimeoutMs }),
       ...(opts.gateTimeout === undefined ? {} : { gateTimeout: opts.gateTimeout }),
+      ...(opts.hairLengthOf === undefined ? {} : { hairLengthOf: opts.hairLengthOf }),
     },
     { plan: run, jobId: opts.jobId ?? JOB_ID, descriptor: DESCRIPTOR, signal: opts.signal ?? new AbortController().signal, ...(opts.softStop === undefined ? {} : { softStop: opts.softStop }) },
   );
@@ -467,6 +469,50 @@ describe("a run from the start", () => {
     await start(run).end;
     const recent = await library.recentPairs(avatarId, 10);
     expect(recent.map((e) => [e.location, e.outfit]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.outfit]).sort());
+  });
+
+  // 5a.2 (S5.6b, I5.25): the run reads the avatar's hair length and gives every prompt a hair line: the style varies, the colour is always the reference photo's.
+  test("with a hair length, every journalled prompt carries a hair line except where the moment names her hair itself", async () => {
+    const run = await newRun(8);
+    await start(run, { hairLengthOf: () => "shoulder" }).end;
+    const event = (await journal()).find((e) => e.type === "prompts");
+    const byIndex = new Map(event?.type === "prompts" ? event.prompts.map((p) => [p.slotIndex, p.prompt]) : []);
+    expect(byIndex.size).toBe(8);
+    for (const slot of plannedSlots(run)) {
+      const own = POOLS.home.locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity)?.hair === "own";
+      const prompt = byIndex.get(slot.slotIndex) ?? "";
+      if (own) expect(prompt).not.toContain("Today her hair");
+      else expect(prompt).toMatch(/Today her hair is [^:]+: the same hair colour as in the reference photo, only styled differently\./);
+    }
+  });
+
+  test("an avatar whose hair length is unknown gets no hair line", async () => {
+    const run = await newRun(3);
+    await start(run, { hairLengthOf: () => undefined }).end;
+    const event = (await journal()).find((e) => e.type === "prompts");
+    for (const prompt of event?.type === "prompts" ? event.prompts.map((p) => p.prompt) : []) expect(prompt).not.toContain("Today her hair");
+  });
+
+  // 5a.2 (S5.6b, I5.34): a «Дом» lamp place at evening or night keeps the lamp mood instead of «everything in focus».
+  test("a «Дом» lamp place at evening or night carries the lamp mood in its prompt, any other prompt keeps «everything in focus»", async () => {
+    const run = await newRun(12);
+    await start(run).end;
+    const event = (await journal()).find((e) => e.type === "prompts");
+    const prompts = new Map(event?.type === "prompts" ? event.prompts.map((p) => [p.slotIndex, p.prompt]) : []);
+    for (const slot of plannedSlots(run)) {
+      const lamp = POOLS.home.locations.find((l) => l.name === slot.location)?.lamp === true && (slot.timeOfDay === "evening" || slot.timeOfDay === "night");
+      const prompt = prompts.get(slot.slotIndex) ?? "";
+      expect(prompt.includes("bedside lamp, the room in soft shadow"), `${slot.location} at ${slot.timeOfDay}`).toBe(lamp);
+      expect(prompt.includes("everything in focus"), `${slot.location} at ${slot.timeOfDay}`).toBe(!lamp);
+    }
+  });
+
+  // 5a.2 (S5.6b): the history line also names the moment, so the next run steers away from the (place, moment) pairs the avatar used lately.
+  test("records each stored photo's moment too", async () => {
+    const run = await newRun(2);
+    await start(run).end;
+    const recent = await library.recentPairs(avatarId, 10);
+    expect(recent.map((e) => [e.location, e.activity]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.activity]).sort());
   });
 });
 

@@ -10,7 +10,8 @@ import type { PriceBook } from "../money/prices";
 import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
 import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
-import { assembleRun, isOwnSlot, photoCategoryOf, roomPlaceOf } from "../scenes";
+import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, roomPlaceOf, slotLookOf } from "../scenes";
+import type { HairLength } from "../../shared/scenes/banks/types";
 import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
@@ -92,6 +93,11 @@ export interface RunJobDeps {
   onSlot?: (progress: { done: number; total: number; photoId: string | null }) => void;
   /** Diagnostics that must not stop the run. */
   warn?: (line: string) => void;
+  /**
+   * 5a.2: the avatar's hair length, read from its manifest when the prompts are assembled (an edit during a run changes later prompts, by design). Absent, or
+   * undefined for an avatar whose length is not stored: the prompts carry no hair line.
+   */
+  hairLengthOf?: (avatarId: string) => HairLength | undefined;
   /** REFERENCE_TIMEOUT_MS unless a test says otherwise. */
   referenceTimeoutMs?: number;
   /** CANCELLED_GATE_TIMEOUT_MS unless a test says otherwise. */
@@ -399,7 +405,17 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   }
   let assembled: Map<number, string>;
   try {
-    assembled = new Map(assembleRun(job.descriptor, plan.scenes, written.sentences, master, { runId: plan.runId, cameraRealism: plan.cameraRealism === true, roomPlaceOf }).map((a) => [a.slotIndex, a.prompt]));
+    const hairLength = deps.hairLengthOf?.(plan.avatarId);
+    const hairLines = hairLength === undefined ? null : hairLinesOf(plan.scenes.slots, hairLength, plan.runId);
+    assembled = new Map(
+      assembleRun(job.descriptor, plan.scenes, written.sentences, master, {
+        runId: plan.runId,
+        cameraRealism: plan.cameraRealism === true,
+        roomPlaceOf,
+        lookOf: slotLookOf,
+        ...(hairLines === null ? {} : { hairStyleOf: (slot) => hairLines.get(slot.slotIndex) ?? null }),
+      }).map((a) => [a.slotIndex, a.prompt]),
+    );
   } catch (error) {
     return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the scene prompts could not be assembled: ${messageOf(error)}`) } } };
   }
@@ -696,8 +712,8 @@ async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model
     await endSlot(ctx, slot, { status: "done", photoId: photo.id });
     // The planner's hint for the next run (recentPairs); a failure here must not undo a stored photo. An own scene has no (location, outfit) pair to remember.
     if (!isOwnSlot(slot.slot)) {
-      const { location, outfit } = slot.slot;
-      await deps.library.appendHistory(plan.avatarId, { location, outfit, at: at(ctx) }).catch((error: unknown) => {
+      const { location, outfit, activity } = slot.slot;
+      await deps.library.appendHistory(plan.avatarId, { location, outfit, activity, at: at(ctx) }).catch((error: unknown) => {
         deps.warn?.(`studio engine: run ${plan.runId} could not record slot ${slot.slot.slotIndex}'s scene in the avatar's history (${messageOf(error)})`);
       });
     }

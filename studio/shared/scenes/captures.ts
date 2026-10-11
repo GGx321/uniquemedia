@@ -46,8 +46,11 @@ export function isHandCapture(capture: Capture): boolean {
 const FACING: readonly ScenePose[] = ["front", "three-quarter"];
 const ANY_POSE: readonly ScenePose[] = ["front", "three-quarter", "profile", "back"];
 
-/** The poses a capture can take: a hand-held capture faces the phone. */
+const LOOKING_BACK: readonly ScenePose[] = ["three-quarter"];
+
+/** The poses a capture can take: a hand-held capture faces the phone; the over-the-shoulder POV looks back along her body, so it is turned, three-quarter only. */
 export function posesFor(capture: Capture): readonly ScenePose[] {
+  if (capture === "over-shoulder") return LOOKING_BACK;
   return isHandCapture(capture) ? FACING : ANY_POSE;
 }
 

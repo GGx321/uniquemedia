@@ -13,8 +13,8 @@ useNativeGlobals();
 
 const slot = (over: Partial<RoomSlotKey> = {}): RoomSlotKey => ({
   category: "home",
-  location: "her small kitchen",
-  activity: "waiting for the kettle",
+  location: "her bedroom",
+  activity: "adjusts the hem of her top",
   ...over,
 });
 
@@ -22,22 +22,22 @@ describe("roomPlaceOf", () => {
   test("describes a room of a built-in category with its details", () => {
     const place = roomPlaceOf(slot());
     expect(place?.room).toBe(true);
-    expect(place?.details).toEqual(["a kettle on the counter", "a fruit bowl"]);
+    expect(place?.details).toEqual(["a string of fairy lights", "a bedside lamp", "a plain wall behind her"]);
   });
 
   test("carries messyOk of the slot's activity", () => {
-    expect(roomPlaceOf(slot({ location: "her bed in the morning", activity: "stretching after waking up" }))?.activity.messyOk).toBe(true);
-    expect(roomPlaceOf(slot({ location: "her bed in the morning", activity: "scrolling her phone" }))?.activity.messyOk).not.toBe(true);
+    expect(roomPlaceOf(slot({ location: "her bed", activity: "lies back on the pillow" }))?.activity.messyOk).toBe(true);
+    expect(roomPlaceOf(slot({ location: "her bed", activity: "sits cross-legged" }))?.activity.messyOk).not.toBe(true);
   });
 
   test("is not messy for an activity the place no longer has (a renamed activity of an old plan)", () => {
-    const place = roomPlaceOf(slot({ location: "her bed in the morning", activity: "yawning" }));
+    const place = roomPlaceOf(slot({ location: "her bed", activity: "yawning" }));
     expect(place?.room).toBe(true);
     expect(place?.activity.messyOk).not.toBe(true);
   });
 
   test("is null for a place that is not a room", () => {
-    expect(roomPlaceOf(slot({ location: "a small balcony with potted plants", activity: "watering plants" }))).toBeNull();
+    expect(roomPlaceOf(slot({ category: "photoshoot", location: "a city street at night", activity: "walks toward the viewer" }))).toBeNull();
   });
 
   test("is null for a place renamed since the plan was made", () => {
@@ -75,10 +75,10 @@ describe("the room phrase reaches the assembled prompt through roomPlaceOf", () 
   const full = (over: Partial<PlanSlot>): PlanSlot => ({
     slotIndex: 1,
     category: "home",
-    location: "her small kitchen",
+    location: "her bedroom",
     timeOfDay: "morning",
-    activity: "waiting for the kettle",
-    outfit: "a cozy hoodie",
+    activity: "adjusts the hem of her top",
+    outfit: "silk pajamas",
     shot: "friend",
     pose: "front",
     attemptIdBase: "slot-1",

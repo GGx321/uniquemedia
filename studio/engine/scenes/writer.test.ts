@@ -811,10 +811,17 @@ describe("S5.1b: the writer is told to write what an ordinary phone photo shows,
     }
   });
 
-  test("a built-in photoshoot slot is called «Own phone photos», never a photoshoot", () => {
+  // 5a.2 (S5.6b, plan §5.1): the built-in set is «Дом», «Улица», «Виды», «Гламур», «Фитнес» (the ids stay); the writer is told the English names, so «Улица» is
+  // «Street» and «Виды» is «Views». It is never told «photoshoot» (the soft list), and «Own phone photos» is gone.
+  test("a built-in photoshoot slot is called «Street», never a photoshoot", () => {
     const [, user] = writerMessages([slot({ category: "photoshoot" })]);
-    expect(user?.content).toContain('"category":"Own phone photos"');
-    expect(user?.content).not.toContain("Photoshoot");
+    expect(user?.content).toContain('"category":"Street"');
+    expect(user?.content).not.toMatch(/Photoshoot|Own phone photos/);
+  });
+
+  test("a built-in travel slot is called «Views»", () => {
+    const [, user] = writerMessages([slot({ category: "travel" })]);
+    expect(user?.content).toContain('"category":"Views"');
   });
 
   test("the slots go out as compact JSON (the worst custom chunk must stay under the writer ceiling: writer.custom.test.ts)", () => {

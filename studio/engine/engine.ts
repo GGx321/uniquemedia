@@ -147,7 +147,7 @@ import { FACE_GATE_NAME } from "./runs/faceGate";
 import { AGE_GATE_NAME, type QaGate } from "./runs/qa";
 import { capFundsResume, remainingPlan, remainingPlanOrNull, scopeCommitted } from "./runs/remaining";
 import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./runs/runJob";
-import { planWithPools, POOLS } from "./scenes";
+import { hairLengthOf, planWithPools, POOLS } from "./scenes";
 import { runCategoryJob } from "./scenes/categoryJob";
 import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
 import { poolOf } from "./scenes/poolGen";
@@ -3065,7 +3065,7 @@ export class Engine {
         seed: seedOf(runId),
         count,
         categories: categories.map(sceneCategory),
-        excludePairs: recent.map(({ location, outfit }) => ({ location, outfit })),
+        excludePairs: recent.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
         // Profile and back only when the run allows them (T5c, owner decision); selfie and mirror stay front or three-quarter.
         poses,
       },
@@ -3338,6 +3338,8 @@ export class Engine {
           errorOf: engineErrorFrom,
           onSlot: (progress) => this.#runSlotDone(run, progress),
           warn: (line) => console.warn(line),
+          // 5a.2: the hair line reads the avatar's stored hair length each time the prompts are assembled.
+          hairLengthOf: (avatarId) => hairLengthOf(run.library.getAvatar(avatarId)?.traits ?? {}),
         },
         { plan, jobId: run.jobId, descriptor: run.descriptor, signal: run.signal, softStop: run.softStop },
       );

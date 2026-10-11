@@ -1,7 +1,11 @@
 import { orderCategories, splitCount, type CategoryRef } from "../../shared/engine";
 import { categoryRefOf, plannerCategoryOf } from "./categories";
 import type { PlannerCategory, Shot } from "./types";
-import { allowedActivities, hasCleanActivity, POOLS, type Place, type Pool } from "./pools";
+import type { Outfit } from "../../shared/scenes/banks/types";
+import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
+import { legwearFits } from "../../shared/scenes/template";
+import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
+import { allowedActivities, hasCleanActivity, POOLS, usableOutfits, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
 import { Bag, makeRng, rngPick, subSeed, type Rng } from "./rngUtil";
 import { isPhoneInHandShot, ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
@@ -21,6 +25,8 @@ import { isPhoneInHandShot, ScenePlanSchema, type PlanSlot, type Pose, type Scen
 export interface ExcludedPair {
   location: string;
   outfit: string;
+  /** 5a.2: the moment the scene was (the history line's `activity`). Absent on a line written before it; such a line steers the outfit only. */
+  activity?: string | undefined;
 }
 
 export interface PlanInput {
@@ -170,7 +176,9 @@ function planCategory(
 ): PlanSlot[] {
   if (n === 0) return [];
   const locationBag = new Bag(pool.locations, rng);
-  const outfitBag = new Bag(pool.outfits, rng);
+  // The owner's denim rule (S5.6b): a custom pool stored before it may hold denim shorts or skirts; they are never drawn.
+  const outfits = usableOutfits(pool.outfits);
+  const outfitBag = new Bag(outfits, rng);
   const shotBag = new Bag(pool.shotDeck, rng);
 
   const places: Place[] = Array.from({ length: n }, () => locationBag.next());
@@ -185,7 +193,7 @@ function planCategory(
   // slot into a friend's snap. A built-in pool has a clean activity at every place, so nothing is drawn for it and its plans do not move.
   const { shots, places: settledPlaces } = settleHandShots(angledShots, places, pool, fixRng);
 
-  const maxOutfitAttempts = pool.outfits.length - 1;
+  const maxOutfitAttempts = outfits.length - 1;
   return settledPlaces.map((place, i) => {
     const shot = shots[i] as Shot;
     let outfit = outfitBag.next();
@@ -212,6 +220,104 @@ function planCategory(
   });
 }
 
+/** The streams a built-in category draws on, each step on its own (plan r1.5 §5.2). */
+interface BuiltInStreams {
+  /** The category's own stream (`categorySeed`): the deck's captures, the general outfits, the pinned picks and the time of day. */
+  rng: Rng;
+  poseRng: Rng;
+  /** `fit:${category}`: the ties of the balance step (the least-used place and moment). */
+  fitRng: Rng;
+  /** `legwear:${category}`: whether a slot that may wear legwear does, and which. */
+  legRng: Rng;
+  /** `clean:${category}`: the fallback chain only; a built-in plan never reads it. */
+  fixRng: Rng;
+}
+
+const momentKey = (location: string, activity: string): string => `${location}\u0000${activity}`;
+
+/** The least-used of the items by `usage`, with the ties it broke on `rng`, among those `preferred` if any of the tied ones is. */
+function leastUsed<T>(items: readonly T[], usage: (item: T) => number, preferred: (item: T) => boolean, rng: Rng): T {
+  const fewest = Math.min(...items.map(usage));
+  const tied = items.filter((item) => usage(item) === fewest);
+  const soft = tied.filter(preferred);
+  return rngPick(rng, soft.length > 0 ? soft : tied);
+}
+
+/**
+ * Plans one built-in category's `n` slots (plan r1.5 §5.2). Per slot: the capture, from the category's deck (exact Bag cycles, I5.32); the pose; a place that has
+ * a fitting moment, the least-used of them; the least-used fitting moment at that place; the outfit, the moment's pinned outfits first (after the owner's denim rule),
+ * else the general bag, which leaves out the pin-only outfits and every outfit some moment pins; the legwear. The balance step is deterministic and is not the
+ * fallback: with the banks' coverage rule every slot finds a place and a moment here, and `clean:` is never read. Recent (place, moment) pairs only break ties.
+ */
+function planBuiltIn(
+  streams: BuiltInStreams,
+  pool: Pool & { captureDeck: readonly Capture[] },
+  category: PlannerCategory,
+  n: number,
+  startIndex: number,
+  excluded: ReadonlySet<string>,
+  recent: ReadonlySet<string>,
+  poses: PoseAllowance,
+): PlanSlot[] {
+  const deck = new Bag(pool.captureDeck, streams.rng);
+  const kind = kindOfDeck(pool.captureDeck);
+  const info: readonly Outfit[] = outfitInfoOf(pool);
+  const general = generalOutfits(pool);
+  const outfitBag = new Bag(general, streams.rng);
+  const placeUses = new Map<string, number>();
+  const momentUses = new Map<string, number>();
+
+  const slots: PlanSlot[] = [];
+  for (let i = 0; i < n; i++) {
+    const drawnCapture = deck.next();
+    const drawnPose = poseForCapture(drawnCapture, drawPose(streams.poseRng, shotOf(drawnCapture), poses));
+    const settled = settleFit(pool, kind, drawnCapture, drawnPose);
+    const { capture, pose } = settled;
+    const stepped = capture !== drawnCapture || pose !== drawnPose;
+    const tieRng = stepped ? streams.fixRng : streams.fitRng;
+    const hasFreshMoment = (place: Place): boolean => fittingMoments(place, capture, pose).some((m) => !recent.has(momentKey(place.name, m.text)));
+    const place = leastUsed(settled.places, (p) => placeUses.get(p.name) ?? 0, hasFreshMoment, tieRng);
+    const moment = leastUsed(fittingMoments(place, capture, pose), (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0, (m) => !recent.has(momentKey(place.name, m.text)), tieRng);
+    placeUses.set(place.name, (placeUses.get(place.name) ?? 0) + 1);
+    momentUses.set(momentKey(place.name, moment.text), (momentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
+
+    const pinned = pinnedOutfitsOf(moment);
+    let outfit: string;
+    if (pinned.length > 0) {
+      const fresh = pinned.filter((o) => !excluded.has(pairKey(place.name, o)));
+      outfit = rngPick(streams.rng, fresh.length > 0 ? fresh : pinned);
+    } else {
+      outfit = outfitBag.next();
+      for (let attempt = 0; excluded.size > 0 && excluded.has(pairKey(place.name, outfit)) && attempt < general.length - 1; attempt++) outfit = outfitBag.next();
+    }
+    const repeatedPair = excluded.size > 0 && excluded.has(pairKey(place.name, outfit));
+
+    // The legwear slot: always two draws, so the stream does not depend on who may wear it.
+    const roll = streams.legRng();
+    const item = pool.legwear === undefined ? undefined : rngPick(streams.legRng, pool.legwear.items);
+    const meta = info.find((o) => o.text === outfit);
+    const legwear = pool.legwear !== undefined && meta !== undefined && legwearFits(moment, meta) && roll < pool.legwear.share ? item : undefined;
+
+    const slotIndex = startIndex + i;
+    slots.push({
+      slotIndex,
+      category,
+      location: place.name,
+      timeOfDay: rngPick(streams.rng, place.times),
+      activity: moment.text,
+      outfit,
+      shot: shotOf(capture),
+      pose,
+      attemptIdBase: `slot-${slotIndex}`,
+      repeatedPair,
+      // I5.27: a capture is written only when it says more than the stored shot does.
+      ...(capture === captureOfShot(shotOf(capture)) ? {} : { capture }),
+      ...(legwear === undefined ? {} : { legwear }),
+    });
+  }
+  return slots;
+}
+
 /**
  * `plan()`'s implementation, taking the pools as a parameter. Exported only
  * for the isolation test that proves editing one category's pool cannot
@@ -228,6 +334,8 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
   if (count === 0) return ScenePlanSchema.parse({ version: 1, seed, slots: [] });
 
   const excluded = new Set((input.excludePairs ?? []).map((p) => pairKey(p.location, p.outfit)));
+  // 5a.2: the moments the avatar used recently, by (place, moment); a history line written before it names none.
+  const recent = new Set((input.excludePairs ?? []).flatMap((p) => (p.activity === undefined ? [] : [momentKey(p.location, p.activity)])));
   const poses = input.poses ?? NO_EXTRA_POSES;
 
   const slots: PlanSlot[] = [];
@@ -241,7 +349,11 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     const poseRng = makeRng(poseSeed(seed, category));
     // The place redraws of S5.R1 have a stream of their own: a pool that needs none never reads it, and no other stream shifts.
     const fixRng = makeRng(subSeed(seed, `clean:${category}`));
-    slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded, poses));
+    // A built-in pool carries its deck of captures and is drawn capture-first (planBuiltIn); a custom pool keeps the planner it always had.
+    if (pool.captureDeck !== undefined) {
+      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)) };
+      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, poses));
+    } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded, poses));
     nextIndex += n;
   }
   return ScenePlanSchema.parse({ version: 1, seed, slots });

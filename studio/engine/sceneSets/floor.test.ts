@@ -41,11 +41,14 @@ function worstSet(textLength: number): Omit<PlannedSceneSet, "schemaVersion" | "
     categories: [snapshot],
     // A set holds up to 100 scenes, so a full chunk can be scenes 76..100: the widest numbers (the slot number is the scene's id, and the file checks it).
     chunks: base.chunks.map((chunk) => ({ ...chunk, sceneIds: chunk.sceneIds.map((id) => id + WORST_FIRST_ID - 1) })),
-    scenes: base.scenes.map((scene, i) => ({
+    scenes: base.scenes.map((scene, i) => {
+      // The sample set is planned from a built-in category, whose slots may carry a capture and legwear (5a.2); a custom slot carries neither, and a capture must ride on the slot's shot.
+      const { capture: _capture, legwear: _legwear, ...plain } = scene.slot;
+      return {
       ...scene,
       sceneId: scene.sceneId + WORST_FIRST_ID - 1,
       slot: {
-        ...scene.slot,
+        ...plain,
         slotIndex: scene.sceneId + WORST_FIRST_ID - 1,
         category: CUSTOM,
         location: "x".repeat(textLength),
@@ -56,7 +59,8 @@ function worstSet(textLength: number): Omit<PlannedSceneSet, "schemaVersion" | "
         pose: WORST_POSE,
         attemptIdBase: `slot-${i + 1}`,
       },
-    })),
+    };
+    }),
   };
 }
 

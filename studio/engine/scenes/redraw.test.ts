@@ -9,13 +9,20 @@ useNativeGlobals();
 // CS.4b: the one-slot redraw of «Другая сцена» and the draw of an own scene's shot and pose. Both are pure functions of (seed, write number, scene) and the
 // pool as it is now: a crash-resume of the same write needs no draw at all (the draw is stored with the write), and the same inputs draw the same slot.
 
-const POOL: Pool = POOLS.home;
+// 5a.2 (S5.6b): a built-in pool is redrawn capture-first (redraw.builtIn.test.ts). This file keeps the shot-based redraw of a STORED custom pool, so its pool is
+// «Гламур» cut down to what a stored custom pool holds: places with names, times, activities (text, hands) and a mirror mark, outfits and a deck of shots.
+const customLike = (pool: Pool): Pool => ({
+  locations: pool.locations.map((l) => ({ name: l.name, times: [...l.times], activities: l.activities.map((a) => ({ text: a.text, twoHanded: a.twoHanded })), ...(l.mirror === true ? { mirror: true as const } : {}) })),
+  outfits: [...pool.outfits],
+  shotDeck: [...pool.shotDeck],
+});
+const POOL: Pool = customLike(POOLS.glamour);
 const NO_AVOID = { locations: new Set<string>(), outfits: new Set<string>() };
 const NONE = { profile: false, back: false };
 const ALL = { profile: true, back: true };
 
 function slotOf(shot: PlanSlot["shot"], over: Partial<PlanSlot> = {}): PlanSlot {
-  const slots = plan({ seed: 7, count: 20, categories: ["home"] }).slots;
+  const slots = plan({ seed: 7, count: 20, categories: ["glamour"] }).slots;
   const base = slots.find((s) => s.shot === shot) ?? slots[0];
   if (base === undefined) throw new Error("no slot");
   return { ...base, shot, ...over };

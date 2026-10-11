@@ -23,7 +23,7 @@ export interface ComposeInput {
   /** A snapshot of every custom category the set uses (none for a built-in-only set). */
   snapshots: readonly CategorySnapshot[];
   /** The avatar's recent (location, outfit) pairs the planner steers away from. */
-  recentPairs: readonly { location: string; outfit: string }[];
+  recentPairs: readonly { location: string; outfit: string; activity?: string | undefined }[];
   textModel: string;
   /** S4.5a, internal: the exact scenes per category a batch launch asked for, in place of the even split. */
   split?: readonly { ref: CategoryRef; count: number }[];
@@ -46,7 +46,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
             seed: seedOfSet(input.sceneSetId),
             count: input.count,
             categories: input.categories.map(plannerCategoryOf),
-            excludePairs: input.recentPairs.map(({ location, outfit }) => ({ location, outfit })),
+            excludePairs: input.recentPairs.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
             poses: input.poses,
             ...(input.split === undefined ? {} : { split: input.split }),
           },
