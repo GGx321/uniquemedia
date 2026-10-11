@@ -35,6 +35,8 @@ export const HOME: CategoryBank = {
         { text: "adjusts the hem of her top", motion: "she smooths the hem down slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, gaze: "focus" },
         { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror", "timer"], twoHanded: false, hair: "own" },
         { text: "sits on the edge of the bed", motion: "she swings one foot a little", captures: ["mirror-hidden", "timer"], twoHanded: false },
+        // S5.7b: the angle comes from the moment. On a timer the phone stands across the room, so she can face the window with her back to it.
+        { text: "sits facing the window", motion: "she leans her head back slowly", captures: ["timer"], twoHanded: false, angle: "back" },
       ],
     },
     {
@@ -92,6 +94,7 @@ export const HOME: CategoryBank = {
         // S5.6R (the owner: prone only on a bed): it was «lies on the rug facing the mirror» in the prone outfits, lifting her hips, a prone frame off the bed.
         { text: "sits with her legs stretched out", motion: "she flexes her feet a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "lies back on the rug", motion: "she slowly turns her head", captures: ["above", "timer"], twoHanded: false },
+        { text: "sits side-on, hugging her knees", motion: "she rests her chin a little lower", captures: ["timer"], twoHanded: true, angle: "profile" },
       ],
     },
     {

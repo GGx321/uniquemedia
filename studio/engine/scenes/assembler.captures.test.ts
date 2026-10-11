@@ -99,7 +99,7 @@ describe("back or side to the mirror", () => {
     const tags = (activity: string): boolean => ["sits on the counter by the mirror", "stands sideways to the mirror", "turns to check her outfit"].includes(activity);
     let seen = 0;
     for (let seed = 1; seed <= 40; seed++) {
-      for (const slot of plan({ seed, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"], poses: { profile: true, back: true } }).slots) {
+      for (const slot of plan({ seed, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"] }).slots) {
         const hit = assemble(slot, { lookOf: slotLookOf }).includes(MIRROR_BACK_LINE);
         expect(hit, `${slot.location} / ${slot.activity}`).toBe(tags(slot.activity));
         if (hit) seen++;

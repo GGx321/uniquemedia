@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CAPTURES, posesFor, type Capture } from "../../shared/scenes/captures";
-import { fittingMoments, fittingPlaces, kindOfDeck, settleFit, stepDownOf, type PoolKind } from "./fit";
+import { fittingMoments, fittingPlaces, kindOfDeck, momentFits, settleFit, stepDownOf, type PoolKind } from "./fit";
 import { POOLS, type Place, type Pool } from "./pools";
 import { CATEGORIES } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -23,11 +23,20 @@ describe("fittingMoments", () => {
     expect(fits.every((m) => m.captures?.includes("prone") === true)).toBe(true);
   });
 
-  test("a moment with an angle fits only that pose", () => {
-    const backs = fittingMoments(bed(), "timer", "back");
-    expect(backs.length).toBeGreaterThan(0);
-    expect(backs.every((m) => m.angle === undefined || m.angle === "back")).toBe(true);
-    expect(fittingMoments(bed(), "timer", "front").some((m) => m.angle === "back")).toBe(false);
+  // S5.7b (I5.26): the pose argument is the DRAWN pose (front or three-quarter); a moment with an angle sets the slot's pose itself, so it fits whatever was drawn.
+  test("a moment with an angle fits whatever front or three-quarter pose was drawn, and sets its own pose", () => {
+    for (const drawn of ["front", "three-quarter"] as const) {
+      expect(fittingMoments(bed(), "timer", drawn).some((m) => m.angle === "back")).toBe(true);
+    }
+  });
+
+  test("a hand-held capture refuses a moment whose angle is profile or back, and a timer takes it", () => {
+    const away = POOLS.home.locations.flatMap((l) => l.activities).filter((m) => m.angle === "back" || m.angle === "profile");
+    expect(away.length).toBeGreaterThan(0);
+    for (const capture of ["selfie", "mirror", "mirror-hidden", "above", "prone", "over-shoulder"] as const) {
+      for (const moment of away) expect(momentFits(moment, capture, "front")).toBe(false);
+    }
+    expect(away.some((moment) => momentFits(moment, "timer", "front"))).toBe(true);
   });
 
   test("a hand-held capture never takes a two-handed or a phone moment", () => {

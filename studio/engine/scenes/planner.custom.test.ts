@@ -73,7 +73,7 @@ describe("built-in plans are pinned to the 5a.2 planner (re-pinned at S5.6b from
         for (const c of counts) {
           const base: PlanInput = { seed: s, count: c, categories };
           all.push(plan(base));
-          all.push(plan({ ...base, poses: { profile: true, back: true }, excludePairs }));
+          all.push(plan({ ...base, excludePairs }));
         }
       }
       expect(sha(all)).toBe(fixture.hashes[categories.join(",")]);
@@ -165,7 +165,7 @@ describe("custom categories draw on streams of their own (subSeed by ref)", () =
   const asRow = (s: PlanSlot) => [s.location, s.timeOfDay, s.activity, s.outfit, s.shot, s.pose];
 
   test("pins the draws of a custom category on its own streams: the first five slots for one seed are fixed", () => {
-    const p = planWithPools({ seed: 20261005, count: 5, categories: [CUSTOM_A], poses: { profile: true, back: true } }, POOLS_WITH_CUSTOM);
+    const p = planWithPools({ seed: 20261005, count: 5, categories: [CUSTOM_A] }, POOLS_WITH_CUSTOM);
     expect(p.slots.map(asRow)).toEqual([
       ["a Paris bakery counter", "morning", "choosing a croissant", "a striped knit top and a midi skirt", "mirror", "front"],
       ["a bridge over the Seine", "golden hour", "leaning on the railing", "a beige trench coat and jeans", "friend", "three-quarter"],
@@ -176,7 +176,7 @@ describe("custom categories draw on streams of their own (subSeed by ref)", () =
   });
 
   test("a custom category does not draw from a built-in's stream: the same pool under home's name draws other slots", () => {
-    const input = { seed: 20261005, count: 5, poses: { profile: true, back: true } };
+    const input = { seed: 20261005, count: 5 };
     const custom = planWithPools({ ...input, categories: [CUSTOM_A] }, POOLS_WITH_CUSTOM).slots.map(asRow);
     const underHome = planWithPools({ ...input, categories: ["home"] }, { ...POOLS, home: CUSTOM_POOL }).slots.map(asRow);
     expect(custom).not.toEqual(underHome);

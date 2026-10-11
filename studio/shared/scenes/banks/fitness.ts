@@ -20,6 +20,8 @@ export const FITNESS: CategoryBank = {
         { text: "wipes her face with a towel", motion: "she pats her face slowly", captures: ["friend", "candid"], twoHanded: false, hair: "sport" },
         { text: "stands at the mirror", motion: "she shifts slowly to one hip", captures: ["mirror-hidden", "mirror"], twoHanded: false, hair: "sport" },
         { text: "laces up her sneakers", motion: "she pulls the laces tight slowly", captures: ["friend", "candid"], twoHanded: true, gaze: "focus", hair: "sport" },
+        // S5.7b: the angle comes from the moment; someone catches her walking off between sets.
+        { text: "walks off toward the weights", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", hair: "sport" },
       ],
     },
     {
@@ -49,6 +51,7 @@ export const FITNESS: CategoryBank = {
         { text: "catches her breath after a run", motion: "she breathes out slowly", captures: ["friend", "selfie", "candid"], twoHanded: false, hair: "sport", outdoor: true },
         { text: "checks her run on her phone", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own", hair: "sport", outdoor: true },
         { text: "walks to cool down", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, hair: "sport", outdoor: true },
+        { text: "jogs away along the track", motion: "she keeps jogging slowly", captures: ["friend", "candid"], twoHanded: true, angle: "back", hair: "sport", outdoor: true },
       ],
     },
     {
@@ -78,6 +81,7 @@ export const FITNESS: CategoryBank = {
         { text: "rests her hands on her hips", motion: "she catches her breath slowly", captures: ["timer"], twoHanded: true, hair: "sport" },
         { text: "lifts a light dumbbell", motion: "she lifts the weight slowly", captures: ["selfie"], twoHanded: false, hair: "sport" },
         { text: "sits on the mat for a breather", motion: "she breathes out slowly", captures: ["timer", "selfie"], twoHanded: false, hair: "sport" },
+        { text: "stretches to one side, in profile", motion: "she reaches a little further", captures: ["timer"], twoHanded: true, angle: "profile", hair: "sport" },
       ],
     },
   ],

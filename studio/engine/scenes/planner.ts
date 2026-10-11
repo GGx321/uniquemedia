@@ -7,7 +7,7 @@ import { flirtyCountOf } from "../../shared/scenes/level";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { allowedActivities, hasCleanActivity, POOLS, usableOutfits, type Activity, type Place, type Pool } from "./pools";
-import { drawFromPoses, drawPose, NO_EXTRA_POSES, type PoseAllowance } from "./poses";
+import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { Bag, makeRng, rngPick, shuffle, subSeed, type Rng } from "./rngUtil";
 import { isPhoneInHandShot, ScenePlanSchema, type PlanSlot, type Pose, type ScenePlan } from "./schema";
 
@@ -42,12 +42,6 @@ export interface PlanInput {
   categories: readonly PlannerCategory[];
   /** Pairs to avoid repeating (see ExcludedPair); defaults to none. */
   excludePairs?: readonly ExcludedPair[];
-  /** Which poses beyond front/three-quarter this run allows (T5c, owner
-   *  decision 2026-09-27); defaults to neither (every slot then draws only
-   *  front/three-quarter). Front and three-quarter are always allowed and
-   *  are never gated here; a selfie or mirror shot always draws one of them,
-   *  whatever this says (poses.ts's drawPose). */
-  poses?: PoseAllowance;
   /**
    * «Подача» (S5.7b, I5.28): under "flirty", exactly round(0.6 × n) of each built-in category's n slots are flirty (which ones is drawn on `level:${category}`); absent or
    * "ordinary", none is. A custom category stays ordinary.
@@ -178,7 +172,6 @@ function planCategory(
   n: number,
   startIndex: number,
   excluded: ReadonlySet<string>,
-  poses: PoseAllowance,
 ): PlanSlot[] {
   if (n === 0) return [];
   const locationBag = new Bag(pool.locations, rng);
@@ -219,7 +212,7 @@ function planCategory(
       activity: rngPick(rng, allowedActivities(place, shot)).text,
       outfit,
       shot,
-      pose: angled === null ? drawPose(poseRng, shot, poses) : (angled[i] as { pose: Pose }).pose,
+      pose: angled === null ? drawPose(poseRng, shot, NO_EXTRA_POSES) : (angled[i] as { pose: Pose }).pose,
       attemptIdBase: `slot-${slotIndex}`,
       repeatedPair,
     };
@@ -239,7 +232,13 @@ interface BuiltInStreams {
   fixRng: Rng;
   /** `level:${category}`: which slots of the category are flirty. Never read under «Обычная». */
   levelRng: Rng;
+  /** `angle:${category}`: the redraw of a slot that would be a category's excess away slot. Never read by a plan with no away moment to cap. */
+  angleRng: Rng;
+  /** `away:${category}`: whether a slot that could face away is one of the plan's wanted away slots. One draw per slot. */
+  awayRng: Rng;
 }
+
+const isAwayAngle = (angle: Pose | undefined): boolean => angle === "profile" || angle === "back";
 
 const momentKey = (location: string, activity: string): string => `${location}\u0000${activity}`;
 
@@ -271,7 +270,6 @@ function planBuiltIn(
   startIndex: number,
   excluded: ReadonlySet<string>,
   recent: ReadonlySet<string>,
-  poses: PoseAllowance,
   level: SceneLevel,
 ): PlanSlot[] {
   const deck = new Bag(pool.captureDeck, streams.rng);
@@ -285,11 +283,21 @@ function planBuiltIn(
   // «Подача» (I5.28): exactly flirtyCountOf(n) of the n slots are flirty, drawn on the category's `level:` stream (never touched under «Обычная»).
   const flirtyAt = new Set(level === "flirty" ? shuffle(streams.levelRng, Array.from({ length: n }, (_, i) => i)).slice(0, flirtyCountOf(n, level)) : []);
 
+  // The angle comes from the scene (I5.26): at most ⌊n/5⌋ away (profile or back) slots in a built-in category.
+  const awayCap = Math.floor(n / 5);
+  let awayCount = 0;
+  // The lower bound is the plan's own care, not the bank's luck (a category whose only non-hand capture is one slot in twelve could never reach 5 % by chance): the plan
+  // WANTS ⌈n/10⌉ away slots (within the cap), and a slot whose capture can face away rolls on `away:${category}` whether it is one of them. The roll's odds rise as the
+  // slots that could still be away run out, so the wanted ones land anywhere in the run and are met whenever the deck allows.
+  const awayWanted = Math.min(Math.ceil(n / 10), awayCap);
+  const canFaceAway = (capture: Capture): boolean => pool.locations.some((p) => fittingMoments(p, capture, "front", "flirty").some((m) => isAwayAngle(m.angle)));
+  const awayShareOfDeck = pool.captureDeck.filter(canFaceAway).length / pool.captureDeck.length;
+
   const slots: PlanSlot[] = [];
   for (let i = 0; i < n; i++) {
     const slotLevel: Level = flirtyAt.has(i) ? "flirty" : "ordinary";
     const drawnCapture = deck.next();
-    const drawnPose = poseForCapture(drawnCapture, drawPose(streams.poseRng, shotOf(drawnCapture), poses));
+    const drawnPose = poseForCapture(drawnCapture, drawPose(streams.poseRng, shotOf(drawnCapture), NO_EXTRA_POSES));
     const settled = settleFit(pool, kind, drawnCapture, drawnPose, slotLevel);
     const { capture, pose } = settled;
     const stepped = capture !== drawnCapture || pose !== drawnPose;
@@ -298,13 +306,32 @@ function planBuiltIn(
     const hasFreshMoment = (place: Place): boolean => fittingMoments(place, capture, pose, slotLevel).some((m) => !recent.has(momentKey(place.name, m.text)));
     // A flirty slot, among equals, goes where a flirty moment fits and takes one.
     const hasFlirtyMoment = (place: Place): boolean => fittingMoments(place, capture, pose, slotLevel).some(isFlirty);
-    const place = leastUsed(settled.places, (p) => placeUses.get(p.name) ?? 0, slotLevel === "flirty" ? [hasFreshMoment, hasFlirtyMoment] : [hasFreshMoment], tieRng);
-    const moment = leastUsed(
-      fittingMoments(place, capture, pose, slotLevel),
-      (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0,
-      [(m) => !recent.has(momentKey(place.name, m.text)), ...(slotLevel === "flirty" ? [isFlirty] : [])],
-      tieRng,
-    );
+    const isAway = (m: Activity): boolean => isAwayAngle(m.angle);
+    const awayPlaces = settled.places.filter((p) => fittingMoments(p, capture, pose, slotLevel).some(isAway));
+    const awayRoll = streams.awayRng();
+    const awayNeeded = awayWanted - awayCount;
+    const wantsAway = awayNeeded > 0 && awayPlaces.length > 0 && awayRoll < Math.min(1, awayNeeded / Math.max(awayShareOfDeck * (n - i), 1e-9));
+    const placeUsage = (p: Place): number => placeUses.get(p.name) ?? 0;
+    // A wanted away slot goes, among the least-used places, to one with an away moment; when none of them has one it goes to the least-used place that does.
+    const hasAwayMoment = (p: Place): boolean => awayPlaces.includes(p);
+    const placePreferences = [...(wantsAway ? [hasAwayMoment] : []), hasFreshMoment, ...(slotLevel === "flirty" ? [hasFlirtyMoment] : [])];
+    let place = leastUsed(settled.places, placeUsage, placePreferences, tieRng);
+    if (wantsAway && !hasAwayMoment(place)) place = leastUsed(awayPlaces, placeUsage, [hasFreshMoment], tieRng);
+    const momentPreferences = (at: Place): ((m: Activity) => boolean)[] => [(m) => !recent.has(momentKey(at.name, m.text)), ...(slotLevel === "flirty" ? [isFlirty] : [])];
+    const momentsAt = (at: Place): readonly Activity[] => fittingMoments(at, capture, pose, slotLevel).filter((m) => !wantsAway || isAway(m));
+    let moment = leastUsed(momentsAt(place), (m) => momentUses.get(momentKey(place.name, m.text)) ?? 0, momentPreferences(place), tieRng);
+    if (isAwayAngle(moment.angle) && awayCount >= awayCap) {
+      // The category already holds its ⌊n/5⌋ away slots: this one redraws among the non-away moments, at this place or (when it has none for the slot) another, on `angle:`.
+      const nonAway = (m: Activity): boolean => !isAwayAngle(m.angle);
+      const where = fittingMoments(place, capture, pose, slotLevel).some(nonAway) ? [place] : settled.places.filter((p) => fittingMoments(p, capture, pose, slotLevel).some(nonAway));
+      if (where.length > 0) {
+        place = leastUsed(where, (p) => placeUses.get(p.name) ?? 0, [], streams.angleRng);
+        const at = place;
+        moment = leastUsed(fittingMoments(at, capture, pose, slotLevel).filter(nonAway), (m) => momentUses.get(momentKey(at.name, m.text)) ?? 0, momentPreferences(at), streams.angleRng);
+      }
+    }
+    const finalPose: Pose = moment.angle ?? pose;
+    if (isAwayAngle(finalPose)) awayCount++;
     placeUses.set(place.name, (placeUses.get(place.name) ?? 0) + 1);
     momentUses.set(momentKey(place.name, moment.text), (momentUses.get(momentKey(place.name, moment.text)) ?? 0) + 1);
 
@@ -334,7 +361,7 @@ function planBuiltIn(
       activity: moment.text,
       outfit,
       shot: shotOf(capture),
-      pose,
+      pose: finalPose,
       attemptIdBase: `slot-${slotIndex}`,
       repeatedPair,
       // I5.27: a capture is written only when it says more than the stored shot does.
@@ -365,7 +392,6 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
   const excluded = new Set((input.excludePairs ?? []).map((p) => pairKey(p.location, p.outfit)));
   // 5a.2: the moments the avatar used recently, by (place, moment); a history line written before it names none.
   const recent = new Set((input.excludePairs ?? []).flatMap((p) => (p.activity === undefined ? [] : [momentKey(p.location, p.activity)])));
-  const poses = input.poses ?? NO_EXTRA_POSES;
   const level = input.level ?? "ordinary";
 
   const slots: PlanSlot[] = [];
@@ -381,9 +407,9 @@ export function planWithPools(input: PlanInput, pools: Readonly<Record<string, P
     const fixRng = makeRng(subSeed(seed, `clean:${category}`));
     // A built-in pool carries its deck of captures and is drawn capture-first (planBuiltIn); a custom pool keeps the planner it always had.
     if (pool.captureDeck !== undefined) {
-      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)), levelRng: makeRng(subSeed(seed, `level:${category}`)) };
-      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, poses, level));
-    } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded, poses));
+      const streams: BuiltInStreams = { rng, poseRng, fixRng, fitRng: makeRng(subSeed(seed, `fit:${category}`)), legRng: makeRng(subSeed(seed, `legwear:${category}`)), levelRng: makeRng(subSeed(seed, `level:${category}`)), angleRng: makeRng(subSeed(seed, `angle:${category}`)), awayRng: makeRng(subSeed(seed, `away:${category}`)) };
+      slots.push(...planBuiltIn(streams, { ...pool, captureDeck: pool.captureDeck }, category, n, nextIndex, excluded, recent, level));
+    } else slots.push(...planCategory(rng, poseRng, fixRng, pool, category, n, nextIndex, excluded));
     nextIndex += n;
   }
   return ScenePlanSchema.parse({ version: 1, seed, slots });

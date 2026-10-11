@@ -73,7 +73,7 @@ describe("a custom pool with selfie words never feeds a selfie slot", () => {
     const offenders: string[] = [];
     let handShots = 0;
     for (let seed = 1; seed <= 200; seed++) {
-      for (const slot of planWithPools({ seed: seed * 7919, count: 20, categories: [REF], poses: { profile: true, back: true } }, POOLS_ALL).slots) {
+      for (const slot of planWithPools({ seed: seed * 7919, count: 20, categories: [REF] }, POOLS_ALL).slots) {
         if (!PHONE_IN_HAND.has(slot.shot)) continue;
         handShots += 1;
         const place = POOL.locations.find((l) => l.name === slot.location) as Place;

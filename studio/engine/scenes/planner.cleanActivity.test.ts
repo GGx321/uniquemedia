@@ -14,7 +14,7 @@ useNativeGlobals();
 
 const CUSTOM = "cat-home-lounging";
 const POOLS_WITH = (pool: Pool): Record<string, Pool> => ({ ...POOLS, [CUSTOM]: pool });
-const plan = (pool: Pool, seed: number, count = 25): PlanSlot[] => planWithPools({ seed, count, categories: [CUSTOM], poses: { profile: true, back: true } }, POOLS_WITH(pool)).slots;
+const plan = (pool: Pool, seed: number, count = 25): PlanSlot[] => planWithPools({ seed, count, categories: [CUSTOM] }, POOLS_WITH(pool)).slots;
 const handShot = (slot: PlanSlot): boolean => slot.shot === "selfie" || slot.shot === "mirror";
 const activityOf = (pool: Pool, slot: PlanSlot) => pool.locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
 const SEEDS = Array.from({ length: 1000 }, (_, i) => i * 7919 + 13);

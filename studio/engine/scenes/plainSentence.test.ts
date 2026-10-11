@@ -145,7 +145,7 @@ describe("plainSentence", () => {
   });
 
   test("every slot of a planned run reads as one sentence that passes the youth and revealing word rules", () => {
-    const slots = plan({ seed: 7, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"], poses: { profile: true, back: true } }).slots;
+    const slots = plan({ seed: 7, count: 60, categories: ["home", "travel", "photoshoot", "glamour", "fitness"] }).slots;
     for (const slot of slots) {
       const sentence = plainSentence(slot);
       expect(sentence.endsWith(".")).toBe(true);

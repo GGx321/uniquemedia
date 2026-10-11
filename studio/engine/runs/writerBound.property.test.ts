@@ -51,7 +51,7 @@ const MIXES: CategoryRef[][] = [
 const COUNTS = [1, 3, 7, 12, 24, 25, 26, 40, 49, 50, 51, 77, 100];
 
 function drawn(seed: number, count: number, mix: readonly CategoryRef[]) {
-  const scenes = planWithPools({ seed, count, categories: mix.map(sceneCategory), poses: { profile: seed % 2 === 0, back: seed % 3 === 0 } }, POOL_OF);
+  const scenes = planWithPools({ seed, count, categories: mix.map(sceneCategory) }, POOL_OF);
   const slots = scenes.slots;
   const local = localSentences({ slots, keyOf: (slot) => slotKeyOf("run-00000001", slot.attemptIdBase), snapshots: SNAPSHOTS });
   return { slots, local };

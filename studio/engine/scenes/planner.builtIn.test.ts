@@ -5,7 +5,7 @@ import { momentAllowed } from "../../shared/scenes/render";
 import { legwearFits, templateSentence } from "../../shared/scenes/template";
 import { fittingMoments, fittingPlaces, poseForCapture } from "./fit";
 import { plan, planWithPools, poseSeed } from "./planner";
-import { drawPose } from "./poses";
+import { drawPose, NO_EXTRA_POSES } from "./poses";
 import { POOLS, type Activity, type Pool } from "./pools";
 import { makeRng } from "./rngUtil";
 import { ScenePlanSchema, type PlanSlot } from "./schema";
@@ -17,7 +17,12 @@ useNativeGlobals();
 // (exact Bag cycles); the pose; a PLACE THAT HAS A FITTING MOMENT (the least-used of them, ties on `fit:${category}`); the least-used fitting moment there;
 // the outfit (the moment's pinned outfits first); the legwear. Nothing here reads `clean:` (the fallback chain is for a custom pool and impossible cases).
 
-const ALL_POSES = { profile: true, back: true } as const;
+const isAwayPose = (pose: string): boolean => pose === "profile" || pose === "back";
+/** The poses the pose stream drew for the plan's slots (front or three-quarter; the over-the-shoulder POV turns three-quarter). A moment's own angle then replaces it. */
+function drawnPosesOf(category: Category, seed: number, slots: readonly PlanSlot[]) {
+  const rng = makeRng(poseSeed(seed, category));
+  return slots.map((s) => poseForCapture(captureOf(s), drawPose(rng, s.shot, NO_EXTRA_POSES)));
+}
 const captureOf = (slot: PlanSlot): Capture => slot.capture ?? captureOfShot(slot.shot);
 const placeOf = (slot: PlanSlot) => POOLS[slot.category as Category].locations.find((l) => l.name === slot.location);
 const momentOf = (slot: PlanSlot): Activity | undefined => placeOf(slot)?.activities.find((a) => a.text === slot.activity);
@@ -26,7 +31,7 @@ const counted = <T,>(items: readonly T[]): Map<T, number> => items.reduce((m, it
 
 describe("the capture comes from the category's deck, in exact cycles (I5.32)", () => {
   test.each([...CATEGORIES])("%s: a plan of one deck holds exactly the deck's captures", (category) => {
-    const slots = plan({ seed: 7, count: deckLength(category), categories: [category], poses: ALL_POSES }).slots;
+    const slots = plan({ seed: 7, count: deckLength(category), categories: [category] }).slots;
     expect(counted(slots.map(captureOf))).toEqual(counted(POOLS[category].captureDeck ?? []));
   });
 
@@ -38,7 +43,7 @@ describe("the capture comes from the category's deck, in exact cycles (I5.32)", 
 
   test("«Дом» deals 4 phone-over-face mirror selfies and 1 over-the-shoulder POV in 12, and never a friend", () => {
     for (let seed = 1; seed <= 40; seed++) {
-      const captures = plan({ seed, count: 12, categories: ["home"], poses: ALL_POSES }).slots.map(captureOf);
+      const captures = plan({ seed, count: 12, categories: ["home"] }).slots.map(captureOf);
       expect(captures.filter((c) => c === "mirror-hidden")).toHaveLength(4);
       expect(captures.filter((c) => c === "over-shoulder")).toHaveLength(1);
       expect(captures).not.toContain("friend");
@@ -51,11 +56,11 @@ describe("the capture comes from the category's deck, in exact cycles (I5.32)", 
   });
 
   test("the stored shot is the shot of the capture", () => {
-    for (const category of CATEGORIES) for (const slot of plan({ seed: 5, count: 24, categories: [category], poses: ALL_POSES }).slots) expect(slot.shot).toBe(shotOf(captureOf(slot)));
+    for (const category of CATEGORIES) for (const slot of plan({ seed: 5, count: 24, categories: [category] }).slots) expect(slot.shot).toBe(shotOf(captureOf(slot)));
   });
 
   test("a capture is stored only when it says more than the stored shot does", () => {
-    for (const slot of plan({ seed: 5, count: 60, categories: [...CATEGORIES], poses: ALL_POSES }).slots) {
+    for (const slot of plan({ seed: 5, count: 60, categories: [...CATEGORIES] }).slots) {
       expect(slot.capture === undefined || slot.capture !== captureOfShot(slot.shot)).toBe(true);
     }
     const timer = plan({ seed: 5, count: 60, categories: ["home"] }).slots.find((s) => captureOf(s) === "timer");
@@ -66,7 +71,7 @@ describe("the capture comes from the category's deck, in exact cycles (I5.32)", 
   test("a prone or over-the-shoulder slot lies on her bed, and an over-the-shoulder slot is always three-quarter", () => {
     let seen = 0;
     for (let seed = 1; seed <= 60; seed++) {
-      for (const slot of plan({ seed, count: 24, categories: ["home"], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 24, categories: ["home"] }).slots) {
         const capture = captureOf(slot);
         if (capture !== "prone" && capture !== "over-shoulder") continue;
         seen++;
@@ -87,7 +92,7 @@ describe("the capture comes from the category's deck, in exact cycles (I5.32)", 
 describe("pose, then a place with a fitting moment, then the least-used moment (plan r1.5)", () => {
   test.each([...CATEGORIES])("%s: every slot's moment fits its capture and pose, at a place of the pool", (category) => {
     for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
-      for (const slot of plan({ seed, count: 30, categories: [category], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 30, categories: [category] }).slots) {
         const moment = momentOf(slot);
         expect(moment, `${slot.location} / ${slot.activity}`).toBeDefined();
         if (moment !== undefined) expect(momentAllowed(moment, captureOf(slot), slot.pose)).toBe(true);
@@ -95,32 +100,37 @@ describe("pose, then a place with a fitting moment, then the least-used moment (
     }
   });
 
-  test.each([...CATEGORIES])("%s: the pose is the pose stream's, drawn for the capture's shot, whatever the place and the moment (no step down)", (category) => {
+  test.each([...CATEGORIES])("%s: the pose is the moment's angle, else the pose stream's, drawn for the capture's shot, whatever the place and the moment (no step down)", (category) => {
     const seed = 42;
-    const slots = plan({ seed, count: 40, categories: [category], poses: ALL_POSES }).slots;
-    const rng = makeRng(poseSeed(seed, category));
+    const slots = plan({ seed, count: 40, categories: [category] }).slots;
     // The over-the-shoulder POV looks back along her body: whatever the stream draws, its pose is three-quarter (poseForCapture); no other pose moves.
-    expect(slots.map((s) => s.pose)).toEqual(slots.map((s) => poseForCapture(captureOf(s), drawPose(rng, s.shot, ALL_POSES))));
+    const drawn = drawnPosesOf(category, seed, slots);
+    expect(slots.map((s) => s.pose)).toEqual(slots.map((s, i) => momentOf(s)?.angle ?? drawn[i]));
   });
 
-  test.each([...CATEGORIES])("%s: each slot takes the least-used place that has a fitting moment, and the least-used fitting moment there", (category) => {
+  // The balance is kept inside each kind of slot: a slot facing away (its moment has a profile or back angle) takes the least-used place and moment among the ones that
+  // face away, any other slot the least-used among the ones that do not (a wanted away slot is restricted to the former, and an excess one redrawn among the latter).
+  test.each([...CATEGORIES])("%s: each slot takes the least-used place that has a fitting moment, and the least-used fitting moment there, of its own kind", (category) => {
     for (const seed of [3, 4, 5]) {
-      const slots = plan({ seed, count: 40, categories: [category], poses: ALL_POSES }).slots;
+      const slots = plan({ seed, count: 40, categories: [category] }).slots;
+      const drawn = drawnPosesOf(category, seed, slots);
       const placeUses = new Map<string, number>();
       const momentUses = new Map<string, number>();
-      for (const slot of slots) {
+      slots.forEach((slot, i) => {
         const pool = POOLS[category];
-        const places = fittingPlaces(pool, captureOf(slot), slot.pose);
+        const kindOf = (angle: string | undefined): boolean => isAwayPose(angle ?? "front");
+        const away = isAwayPose(slot.pose);
+        const places = fittingPlaces(pool, captureOf(slot), drawn[i] ?? "front").filter((p) => fittingMoments(p, captureOf(slot), drawn[i] ?? "front").some((m) => kindOf(m.angle) === away));
         const fewest = Math.min(...places.map((p) => placeUses.get(p.name) ?? 0));
         expect(placeUses.get(slot.location) ?? 0, `place ${slot.location}`).toBe(fewest);
         const place = placeOf(slot);
-        const moments = fittingMoments(place ?? { activities: [] }, captureOf(slot), slot.pose);
+        const moments = fittingMoments(place ?? { activities: [] }, captureOf(slot), drawn[i] ?? "front").filter((m) => kindOf(m.angle) === away);
         const key = (text: string): string => `${slot.location}\u0000${text}`;
         const fewestMoment = Math.min(...moments.map((m) => momentUses.get(key(m.text)) ?? 0));
         expect(momentUses.get(key(slot.activity)) ?? 0, `moment ${slot.activity}`).toBe(fewestMoment);
         placeUses.set(slot.location, (placeUses.get(slot.location) ?? 0) + 1);
         momentUses.set(key(slot.activity), (momentUses.get(key(slot.activity)) ?? 0) + 1);
-      }
+      });
     }
   });
 
@@ -128,39 +138,42 @@ describe("pose, then a place with a fitting moment, then the least-used moment (
     for (const seed of [1, 2, 3]) {
       const slots = plan({ seed, count: 12, categories: ["travel"] }).slots;
       const uses = [...counted(slots.map((s) => s.location)).values()];
-      const fitsAll = POOLS.travel.locations.every((place) => slots.every((s) => fittingMoments(place, captureOf(s), s.pose).length > 0));
+      const drawn = drawnPosesOf("travel", seed, slots);
+      const fitsAll = POOLS.travel.locations.every((place) => slots.every((s, i) => fittingMoments(place, captureOf(s), drawn[i] ?? "front").length > 0));
       if (fitsAll) expect(Math.max(...uses) - Math.min(...uses, 0)).toBeLessThanOrEqual(Math.ceil(12 / POOLS.travel.locations.length));
       expect(uses.reduce((a, b) => a + b, 0)).toBe(12);
     }
   });
 
   test("the same seed plans the same slots; a different seed another plan", () => {
-    const a = plan({ seed: 20261011, count: 24, categories: [...CATEGORIES], poses: ALL_POSES });
-    expect(plan({ seed: 20261011, count: 24, categories: [...CATEGORIES], poses: ALL_POSES })).toEqual(a);
-    expect(plan({ seed: 20261012, count: 24, categories: [...CATEGORIES], poses: ALL_POSES })).not.toEqual(a);
+    const a = plan({ seed: 20261011, count: 24, categories: [...CATEGORIES] });
+    expect(plan({ seed: 20261011, count: 24, categories: [...CATEGORIES] })).toEqual(a);
+    expect(plan({ seed: 20261012, count: 24, categories: [...CATEGORIES] })).not.toEqual(a);
   });
 
   test("every plan parses against the plan schema", () => {
-    for (const category of CATEGORIES) expect(() => ScenePlanSchema.parse(plan({ seed: 13, count: 30, categories: [category], poses: ALL_POSES }))).not.toThrow();
+    for (const category of CATEGORIES) expect(() => ScenePlanSchema.parse(plan({ seed: 13, count: 30, categories: [category] }))).not.toThrow();
   });
 
   test("a category's slots do not depend on which other categories are in the plan", () => {
-    const alone = plan({ seed: 77, count: 12, categories: ["home"], poses: ALL_POSES }).slots.map(({ slotIndex: _i, attemptIdBase: _b, ...rest }) => rest);
-    const withOthers = plan({ seed: 77, count: 60, categories: [...CATEGORIES], poses: ALL_POSES }).slots.filter((s) => s.category === "home").map(({ slotIndex: _i, attemptIdBase: _b, ...rest }) => rest);
+    const alone = plan({ seed: 77, count: 12, categories: ["home"] }).slots.map(({ slotIndex: _i, attemptIdBase: _b, ...rest }) => rest);
+    const withOthers = plan({ seed: 77, count: 60, categories: [...CATEGORIES] }).slots.filter((s) => s.category === "home").map(({ slotIndex: _i, attemptIdBase: _b, ...rest }) => rest);
     expect(withOthers).toEqual(alone);
   });
 });
 
 describe("no built-in plan reads the fallback chain (coverage, r1.3 M1)", () => {
-  test.each([...CATEGORIES])("%s: over 10 000 seeds, every slot's capture is a deck capture and its pose the one drawn", (category) => {
+  test.each([...CATEGORIES])("%s: over 10 000 seeds, every slot's capture is a deck capture and its pose the moment's angle or the one drawn", (category) => {
     const deck = new Set(POOLS[category].captureDeck);
     const n = deckLength(category);
     for (let seed = 1; seed <= 10_000; seed++) {
-      const slots = plan({ seed, count: n, categories: [category], poses: ALL_POSES }).slots;
+      const slots = plan({ seed, count: n, categories: [category] }).slots;
       const captures = slots.map(captureOf);
       if (!captures.every((c) => deck.has(c)) || counted(captures).size !== deck.size) throw new Error(`${category} seed ${seed}: a slot stepped off its deck (${captures.join(", ")})`);
-      const rng = makeRng(poseSeed(seed, category));
-      for (const slot of slots) if (slot.pose !== poseForCapture(captureOf(slot), drawPose(rng, slot.shot, ALL_POSES))) throw new Error(`${category} seed ${seed}: slot ${slot.slotIndex} changed its pose`);
+      const drawn = drawnPosesOf(category, seed, slots);
+      slots.forEach((slot, i) => {
+        if (slot.pose !== (momentOf(slot)?.angle ?? drawn[i])) throw new Error(`${category} seed ${seed}: slot ${slot.slotIndex} changed its pose`);
+      });
     }
   });
 });
@@ -171,7 +184,7 @@ describe("outfits: pinned and pin-only (plan r1.5, 22.3)", () => {
   test("a moment that pins outfits draws only those", () => {
     let pinned = 0;
     for (const seed of [1, 2, 3, 4, 5, 6]) {
-      for (const slot of plan({ seed, count: 48, categories: ["home"], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 48, categories: ["home"] }).slots) {
         const moment = momentOf(slot);
         if (moment?.outfits === undefined) continue;
         pinned++;
@@ -193,7 +206,7 @@ describe("outfits: pinned and pin-only (plan r1.5, 22.3)", () => {
     expect(banned.size).toBeGreaterThan(0);
     const worn = new Set<string>();
     for (const seed of [1, 2, 3, 4, 5, 6]) {
-      for (const slot of plan({ seed, count: 48, categories: ["home"], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 48, categories: ["home"] }).slots) {
         if (momentOf(slot)?.outfits === undefined) {
           expect(banned.has(slot.outfit), `${slot.activity} wore ${slot.outfit}`).toBe(false);
           worn.add(slot.outfit);
@@ -219,7 +232,7 @@ describe("legwear (I5.29, K-17, plan r1.4)", () => {
   test("only an outfit that shows her legs wears legwear, on a moment that names none and is not tagged noLegwear", () => {
     let withLegwear = 0;
     for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
-      for (const slot of plan({ seed, count: 60, categories: ["home"], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 60, categories: ["home"] }).slots) {
         if (slot.legwear === undefined) continue;
         withLegwear++;
         const outfit = info("home", slot.outfit);
@@ -235,7 +248,7 @@ describe("legwear (I5.29, K-17, plan r1.4)", () => {
     let may = 0;
     let wear = 0;
     for (let seed = 1; seed <= 60; seed++) {
-      for (const slot of plan({ seed, count: 60, categories: ["home"], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 60, categories: ["home"] }).slots) {
         const outfit = info("home", slot.outfit);
         const moment = momentOf(slot);
         if (outfit === undefined || moment === undefined || !legwearFits(moment, outfit)) continue;
@@ -300,7 +313,7 @@ describe("the fallback chain, on `clean:` only (a custom pool or an impossible c
   test("a «Дом» pool with no prone moment still plans every slot, never a friend or a candid", () => {
     const pool = without((c) => c === "prone");
     for (let seed = 1; seed <= 30; seed++) {
-      const slots = planWithPools({ seed, count: 24, categories: ["home"], poses: ALL_POSES }, { ...POOLS, home: pool }).slots;
+      const slots = planWithPools({ seed, count: 24, categories: ["home"] }, { ...POOLS, home: pool }).slots;
       expect(slots).toHaveLength(24);
       for (const slot of slots) {
         expect(captureOf(slot)).not.toBe("friend");
@@ -321,7 +334,7 @@ describe("the fallback chain, on `clean:` only (a custom pool or an impossible c
 
   test("the chain is deterministic", () => {
     const pool = without((c) => c === "prone");
-    const draw = (): PlanSlot[] => planWithPools({ seed: 9, count: 24, categories: ["home"], poses: ALL_POSES }, { ...POOLS, home: pool }).slots;
+    const draw = (): PlanSlot[] => planWithPools({ seed: 9, count: 24, categories: ["home"] }, { ...POOLS, home: pool }).slots;
     expect(draw()).toEqual(draw());
   });
 });
@@ -331,7 +344,7 @@ describe("what the planner draws, the template renders", () => {
   test.each([...CATEGORIES])("%s: every slot of 40 seeded plans renders a sentence, with every pose allowed", (category) => {
     for (let seed = 1; seed <= 40; seed++) {
       const seen = new Set<string>();
-      for (const slot of plan({ seed, count: 30, categories: [category], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 30, categories: [category] }).slots) {
         const sentence = templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
         expect(sentence, `${slot.location} / ${slot.activity} / ${captureOf(slot)} / ${slot.pose}`).not.toBeNull();
         if (sentence !== null) seen.add(sentence);
@@ -342,7 +355,7 @@ describe("what the planner draws, the template renders", () => {
   test.each([...CATEGORIES])("%s: at least 80 %% of a 100-slot plan's sentences are distinct (I5.24)", (category) => {
     for (const seed of [1, 2, 3, 4, 5]) {
       const seen = new Set<string>();
-      for (const slot of plan({ seed, count: 100, categories: [category], poses: ALL_POSES }).slots) {
+      for (const slot of plan({ seed, count: 100, categories: [category] }).slots) {
         const sentence = templateSentence(slot, { key: `run-${seed}:${slot.attemptIdBase}`, seen });
         if (sentence !== null) seen.add(sentence);
       }

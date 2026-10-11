@@ -1,7 +1,7 @@
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
-import { allowedActivities, hasCleanActivity, usableOutfits, type Place, type Pool } from "./pools";
+import { allowedActivities, hasCleanActivity, usableOutfits, type Activity, type Place, type Pool } from "./pools";
 import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
 import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
@@ -106,8 +106,13 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
   const level = slot.level ?? "ordinary";
   const settled = settleFit(pool, kindOfDeck(deck), capture, drawnPose, level);
   const stepped = settled.capture !== capture || settled.pose !== drawnPose;
-  const place = rngPick(stepped ? fixRng : rng, preferred(settled.places, (p) => p.name, avoid.locations, slot.location));
-  const moments = fittingMoments(place, settled.capture, settled.pose, level);
+  // The angle comes from the scene (S5.7b, I5.26): the redrawn scene's pose is its moment's `angle`. A redraw never adds an away scene (a scene facing the camera never
+  // redraws into one facing away), so a set keeps its ⌊n/5⌋ cap whatever its replacements; a scene that faces away may stay away or turn to the camera.
+  const wasAway = slot.pose === "profile" || slot.pose === "back";
+  const allowed = (m: Activity): boolean => wasAway || (m.angle !== "profile" && m.angle !== "back");
+  const permitted = settled.places.filter((p) => fittingMoments(p, settled.capture, settled.pose, level).some(allowed));
+  const place = rngPick(stepped ? fixRng : rng, preferred(permitted.length > 0 ? permitted : settled.places, (p) => p.name, avoid.locations, slot.location));
+  const moments = fittingMoments(place, settled.capture, settled.pose, level).filter(allowed);
   const others = moments.filter((m) => m.text !== slot.activity);
   const choices = others.length > 0 ? others : moments;
   const flirtyChoices = level === "flirty" ? choices.filter((m) => m.level === "flirty") : [];
@@ -126,7 +131,7 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
     activity: moment.text,
     outfit,
     shot: shotOf(settled.capture),
-    pose: settled.pose,
+    pose: moment.angle ?? settled.pose,
     attemptIdBase: slot.attemptIdBase,
     repeatedPair: false,
     ...(settled.capture === captureOfShot(shotOf(settled.capture)) ? {} : { capture: settled.capture }),

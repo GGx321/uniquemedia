@@ -14,6 +14,8 @@ export const TRAVEL: CategoryBank = {
         { text: "looks out at the view", motion: "she turns her head slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own", angle: "three-quarter" },
         { text: "sips a coffee by the railing", motion: "she lowers the cup a little", captures: ["selfie", "friend", "candid"], twoHanded: false },
         { text: "sits with her feet on the railing", motion: "she stretches her toes a little", captures: ["timer", "friend"], twoHanded: false, noLegwear: true },
+        // S5.7b: the angle comes from the moment; seen from behind, she faces the view.
+        { text: "stands facing the skyline", motion: "her hair lifts a little in the wind", captures: ["friend", "timer", "candid"], twoHanded: false, angle: "back" },
       ],
     },
     {
@@ -22,7 +24,7 @@ export const TRAVEL: CategoryBank = {
       details: ["a few lily pads", "some tall reeds", "a weeping willow"],
       times: ["morning", "midday", "golden hour"],
       moments: [
-        { text: "looks out over the water", motion: "she slowly turns toward the water", captures: ["friend"], twoHanded: false, gaze: "own", angle: "profile", outdoor: true },
+        { text: "looks out over the water", motion: "she slowly turns toward the water", captures: ["friend", "timer"], twoHanded: false, gaze: "own", angle: "profile", outdoor: true },
         { text: "crouches at the water's edge", motion: "she leans a little toward the water", captures: ["friend", "candid", "timer"], twoHanded: false, outdoor: true },
         { text: "sits on the wooden bench", motion: "she leans back a little", captures: ["friend", "timer", "selfie"], twoHanded: false, outdoor: true },
         { text: "walks along the path", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
@@ -39,6 +41,7 @@ export const TRAVEL: CategoryBank = {
         { text: "walks uphill", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
         { text: "sits on a wooden fence", motion: "she swings one foot a little", captures: ["friend", "timer"], twoHanded: false, outdoor: true },
         { text: "takes in the view", motion: "she breathes in slowly and smiles", captures: ["friend", "candid", "selfie", "timer"], twoHanded: false, gaze: "own", angle: "three-quarter", outdoor: true },
+        { text: "walks away toward the ridge", motion: "she keeps walking slowly", captures: ["friend", "candid", "timer"], twoHanded: false, angle: "back", outdoor: true },
       ],
     },
     {
@@ -51,6 +54,7 @@ export const TRAVEL: CategoryBank = {
         { text: "leans over the railing", motion: "she leans out a little and back", captures: ["friend", "candid", "timer"], twoHanded: false, outdoor: true },
         { text: "looks out over the water", motion: "she turns her head slowly", captures: ["friend", "candid", "selfie"], twoHanded: false, gaze: "own", angle: "three-quarter", outdoor: true },
         { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["selfie", "friend"], twoHanded: false, outdoor: true },
+        { text: "stands side-on, watching the water", motion: "she turns her head slowly", captures: ["friend", "candid", "timer"], twoHanded: false, gaze: "own", angle: "profile", outdoor: true },
       ],
     },
   ],

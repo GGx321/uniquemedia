@@ -86,9 +86,9 @@ function assembleAll(slots: readonly PlanSlot[], runId: string, rooms: boolean, 
 // The sweep set, built once: 25 seeded built-in plans (20 slots, every category, every pose) and 12 seeded plans over the custom categories.
 const SWEPT: Swept[] = (() => {
   const all: Swept[] = [];
-  for (let seed = 1; seed <= 25; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 20, categories: [...CATEGORIES], poses: ALL_POSES }).slots, `run-${seed}`, true));
+  for (let seed = 1; seed <= 25; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 20, categories: [...CATEGORIES] }).slots, `run-${seed}`, true));
   for (let seed = 1; seed <= 12; seed++) {
-    const scenes = planWithPools({ seed: seed * 104729, count: 15, categories: [CUSTOM_REF, PHONEFUL_REF, "home"], poses: ALL_POSES }, POOLS_ALL);
+    const scenes = planWithPools({ seed: seed * 104729, count: 15, categories: [CUSTOM_REF, PHONEFUL_REF, "home"] }, POOLS_ALL);
     all.push(...assembleAll(scenes.slots, `run-c${seed}`, true));
   }
   return all;
@@ -135,7 +135,7 @@ const BODY_PHRASES: string[] = BODIES.map((b) => bodyPhrase(b) ?? "");
 const BODIED: Swept[] = BODY_PHRASES.flatMap((body, i) => {
   const descriptor: AvatarDescriptor = { ...DESCRIPTOR, body };
   const all: Swept[] = [];
-  for (let seed = 1; seed <= 3; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 20, categories: [...CATEGORIES], poses: ALL_POSES }).slots, `run-b${i}-${seed}`, true, descriptor));
+  for (let seed = 1; seed <= 3; seed++) all.push(...assembleAll(plan({ seed: seed * 7919, count: 60, categories: [...CATEGORIES] }).slots, `run-b${i}-${seed}`, true, descriptor)); // 60 slots: a category faces away from 5 slots on (S5.7b)
   return all;
 });
 
@@ -156,7 +156,7 @@ const MESSY_ROOMS: Swept[] = (() => {
 const OLD_PHOTOGRAPHER: Swept[] = (() => {
   const all: Swept[] = [];
   for (let seed = 1; seed <= 6; seed++) {
-    const friends = plan({ seed: seed * 7919, count: 30, categories: [...CATEGORIES], poses: ALL_POSES }).slots.filter((s) => s.shot === "friend" && s.capture === undefined);
+    const friends = plan({ seed: seed * 7919, count: 30, categories: [...CATEGORIES] }).slots.filter((s) => s.shot === "friend" && s.capture === undefined);
     all.push(...assembleAll(friends.map((s) => ({ ...s, shot: "photographer" as const })), `run-p${seed}`, true));
   }
   return all;

@@ -62,7 +62,7 @@ describe("planSceneSet", () => {
   test("draws with the planner on the seed of the set's id, steering clear of the avatar's recent pairs", () => {
     const recent = [{ location: "a kitchen", outfit: "a linen shirt" }];
     const set = planSceneSet(input({ recentPairs: recent }));
-    const direct = planWithPools({ seed: seedOfSet("set-aaaa-0001"), count: 20, categories: ["home", "travel"], excludePairs: recent, poses: { profile: false, back: false } }, POOLS);
+    const direct = planWithPools({ seed: seedOfSet("set-aaaa-0001"), count: 20, categories: ["home", "travel"], excludePairs: recent }, POOLS);
     expect(set.scenes.map((s) => s.slot)).toEqual(direct.slots);
   });
 
@@ -85,9 +85,11 @@ describe("planSceneSet", () => {
     expect(planSceneSet(input({ sceneSetId: "set-aaaa-0002" })).scenes.map((s) => s.slot)).not.toEqual(planSceneSet(input()).scenes.map((s) => s.slot));
   });
 
-  test("allows the poses the request allows and no others", () => {
-    const set = planSceneSet(input({ count: 60, categories: ["home"], poses: { profile: false, back: false } }));
-    expect(set.scenes.every((s) => s.slot.pose === "front" || s.slot.pose === "three-quarter")).toBe(true);
+  test("ignores the request's poses for the angle: toggles on plan the scenes toggles off do, and a category holds at most a fifth of them facing away (S5.7b)", () => {
+    const off = planSceneSet(input({ count: 60, categories: ["home"], poses: { profile: false, back: false } }));
+    const on = planSceneSet(input({ count: 60, categories: ["home"], poses: { profile: true, back: true } }));
+    expect(on.scenes).toEqual(off.scenes);
+    expect(on.scenes.filter((s) => s.slot.pose === "profile" || s.slot.pose === "back").length).toBeLessThanOrEqual(12);
   });
 
   test("keeps the run id issued for the set, and the request as it was made", () => {

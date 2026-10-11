@@ -11,7 +11,7 @@ useNativeGlobals();
 
 const captureOf = (slot: PlanSlot): Capture => slot.capture ?? captureOfShot(slot.shot);
 const momentOf = (slot: PlanSlot): Activity | undefined => POOLS[slot.category as Category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
-const SEEDS = Array.from({ length: 60 }, (_, i) => i * 7919 + 3);
+const SEEDS = Array.from({ length: 300 }, (_, i) => i * 7919 + 3);
 
 describe("a flirty slot prefers flirty moments", () => {
   const FLIRTY_MOMENT = (category: Category): Set<string> => new Set(POOLS[category].locations.flatMap((l) => l.activities.filter((a) => a.level === "flirty").map((a) => `${l.name}\u0000${a.text}`)));
@@ -21,7 +21,7 @@ describe("a flirty slot prefers flirty moments", () => {
     expect(FLIRTY_MOMENT("glamour").size).toBeGreaterThanOrEqual(1);
   });
 
-  test("«Дом» under «Кокетливая»: some slot of most 12-slot plans is on a flirty moment, and an ordinary plan has none", () => {
+  test("«Дом» under «Кокетливая»: some slot of three in four 12-slot plans is on a flirty moment (the prone frames; the timer slot is the plan's away slot), and an ordinary plan has none", () => {
     const flirtyMoments = FLIRTY_MOMENT("home");
     const onFlirty = (slots: readonly PlanSlot[]): number => slots.filter((s) => flirtyMoments.has(`${s.location}\u0000${s.activity}`)).length;
     let plansWithOne = 0;
@@ -29,7 +29,7 @@ describe("a flirty slot prefers flirty moments", () => {
       expect(onFlirty(plan({ seed, count: 12, categories: ["home"] }).slots)).toBe(0);
       if (onFlirty(plan({ seed, count: 12, categories: ["home"], level: "flirty" }).slots) > 0) plansWithOne++;
     }
-    expect(plansWithOne / SEEDS.length).toBeGreaterThan(0.8);
+    expect(plansWithOne / SEEDS.length).toBeGreaterThan(0.75);
   });
 
   test("the first flirty prone slot of a «Дом» plan always takes the flirty prone moment", () => {

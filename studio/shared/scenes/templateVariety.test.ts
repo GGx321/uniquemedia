@@ -75,17 +75,15 @@ describe.each([...BANK_CATEGORIES])("%s: a 100-slot plan", (category) => {
 
   test.each([...LEVELS])("at %s: no moment repeats more than ⌈n / moments⌉ + 1 times", (level) => {
     const bound = Math.ceil(N / drawableMoments(category, level)) + 1;
-    for (const seed of SEEDS) for (const away of [true, false]) expect(worstMomentRepeat(simulatePlan(category, N, seed, level, away))).toBeLessThanOrEqual(bound);
+    for (const seed of SEEDS) expect(worstMomentRepeat(simulatePlan(category, N, seed, level))).toBeLessThanOrEqual(bound);
   });
 
   // The plan critic (r1.3): the capture fallback never fires for a built-in plan (a «Дом» timer would become a friend's photo); only a place may be
   // redrawn, when the drawn place has no moment for the capture.
   test("never steps a capture or a pose down: only the place is ever redrawn", () => {
     for (const seed of SEEDS) {
-      for (const away of [true, false]) {
-        const steps = simulatePlan(category, N, seed, "ordinary", away).flatMap((s) => s.fallbacks.filter((f) => !f.startsWith("place ")));
-        expect(steps).toEqual([]);
-      }
+      const steps = simulatePlan(category, N, seed, "ordinary").flatMap((s) => s.fallbacks.filter((f) => !f.startsWith("place ")));
+      expect(steps).toEqual([]);
     }
   });
 });

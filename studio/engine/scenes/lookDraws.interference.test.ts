@@ -51,7 +51,7 @@ describe("the look draws do not move the planner", () => {
       for (const c of counts) {
         const base: PlanInput = { seed: s, count: c, categories: [...CATEGORIES] };
         all.push(deepFreeze(plan(base)));
-        all.push(deepFreeze(plan({ ...base, poses: { profile: true, back: true }, excludePairs })));
+        all.push(deepFreeze(plan({ ...base, excludePairs })));
       }
     }
     for (const scenes of all) assemble(scenes, "run-00000001");

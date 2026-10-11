@@ -11,9 +11,17 @@ import { EVERYDAY_OUTFITS, type Activity, type Place, type Pool } from "./pools"
 // banks' coverage rule (every deck capture has a moment for every pose the slice can draw) every built-in slot finds a place and a moment here, so the
 // fallback chain below is never read by a built-in plan: only a custom pool, or an impossible case a test builds, ever reaches it, and it draws on `clean:`.
 
-/** The moments of a place a slot of this capture, pose and level may take: a flirty slot takes the flirty moments and the ordinary ones, an ordinary slot only the ordinary. */
-export function fittingMoments(place: { activities: readonly Activity[] }, capture: Capture, pose: ScenePose, level: Level = "ordinary"): readonly Activity[] {
-  return place.activities.filter((activity) => momentAllowed(activity, capture, pose, level));
+/**
+ * Whether a moment fits a slot of this capture, DRAWN pose (front or three-quarter) and level. The angle comes from the scene (S5.7b, I5.26): a moment with an
+ * `angle` sets the slot's pose itself, so it is asked at its own angle, and a hand-held capture, which cannot take a profile or a back pose, refuses it.
+ */
+export function momentFits(moment: Activity, capture: Capture, drawnPose: ScenePose, level: Level = "ordinary"): boolean {
+  return momentAllowed(moment, capture, moment.angle ?? drawnPose, level);
+}
+
+/** The moments of a place a slot of this capture, drawn pose and level may take: a flirty slot takes the flirty moments and the ordinary ones, an ordinary slot only the ordinary. */
+export function fittingMoments(place: { activities: readonly Activity[] }, capture: Capture, drawnPose: ScenePose, level: Level = "ordinary"): readonly Activity[] {
+  return place.activities.filter((activity) => momentFits(activity, capture, drawnPose, level));
 }
 
 /** The places of a pool that have a fitting moment for the capture and pose; a mirror capture only on a mirror place. */

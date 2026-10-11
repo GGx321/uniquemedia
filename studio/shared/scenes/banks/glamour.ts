@@ -16,6 +16,8 @@ export const GLAMOUR: CategoryBank = {
         { text: "laughs at something nearby", motion: "she laughs a little and looks away", captures: ["friend", "candid"], twoHanded: false, gaze: "own", expression: true },
         { text: "sips her drink through a straw", motion: "she sips slowly", captures: ["friend", "selfie"], twoHanded: false },
         { text: "sits on a high stool", motion: "she swings one foot a little", captures: ["friend", "candid"], twoHanded: false },
+        // S5.7b: the angle comes from the moment; a friend catches her turned to the room.
+        { text: "turns to talk to someone", motion: "she laughs a little and turns back", captures: ["friend", "candid"], twoHanded: false, gaze: "own", angle: "profile" },
         // S5.7b («Кокетливая», probe P-5a2: flirty Glamour drew 4 of 4, the owner: «кокетливо пойдёт»).
         { text: "leans in, chin on her hand", motion: "she tilts her head slowly", captures: ["friend", "selfie"], twoHanded: false, level: "flirty", handAtFace: true },
       ],
@@ -57,6 +59,7 @@ export const GLAMOUR: CategoryBank = {
         { text: "waits by the door", motion: "she shifts her weight a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
         { text: "laughs on her way inside", motion: "she laughs a little and turns away", captures: ["friend", "candid"], twoHanded: false, expression: true },
+        { text: "walks away down the pavement", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back" },
         { text: "stops under a lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
         // S5.6R: the taxi's phone moment left with its friend's photo; on the street she checks her phone for the ride home, caught by a friend.
         { text: "checks her phone for her ride", motion: "she scrolls her phone slowly", captures: ["candid", "friend"], twoHanded: false, phone: true, gaze: "own" },

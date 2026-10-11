@@ -7,8 +7,8 @@ import type { Shot } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
 
-// CS.8a: a custom category whose pool carries `poses` draws every slot's pose from that list, whatever the run's «Ракурсы» toggles say; the toggles keep
-// governing the built-ins and a custom category without `poses`. A selfie or a mirror shot faces the camera, so a slot that draws back or profile takes a
+// CS.8a: a custom category whose pool carries `poses` draws every slot's pose from that list; a custom category without `poses` draws front or three-quarter
+// (S5.7b: the run's «Ракурсы» toggles are gone). A selfie or a mirror shot faces the camera, so a slot that draws back or profile takes a
 // shot nobody holds a phone for: another shot of the category's deck, or a friend when the deck has none.
 
 const ANGLED = "cat-lying-down";
@@ -27,9 +27,6 @@ function poolWith(over: Partial<Pool> = {}): Pool {
   return { locations: PLACES, outfits: OUTFITS, shotDeck: ["friend", "selfie", "mirror", "candid", "friend"], ...over };
 }
 
-const OFF = { profile: false, back: false };
-const ON = { profile: true, back: true };
-
 function planOf(pool: Pool, over: Partial<PlanInput> = {}): PlanSlot[] {
   return planWithPools({ seed: 1, count: 20, categories: [ANGLED], ...over }, { ...POOLS, [ANGLED]: pool }).slots;
 }
@@ -47,12 +44,7 @@ describe("a category with poses [back]", () => {
     for (const seed of seeds) for (const slot of planOf(poolWith({ poses: ["back"] }), { seed })) expect(isPhoneInHandShot(slot.shot)).toBe(false);
   });
 
-  test("the run's toggles do not matter: all off and all on plan the same scenes", () => {
-    const pool = poolWith({ poses: ["back"] });
-    for (const seed of [1, 42, 2026]) expect(planOf(pool, { seed, poses: OFF })).toEqual(planOf(pool, { seed, poses: ON }));
-  });
-
-  test("with no toggles given at all the poses still come from the category", () => {
+  test("the poses still come from the category (the run's «Ракурсы» are gone, S5.7b)", () => {
     const slots = planOf(poolWith({ poses: ["back"] }));
     expect(new Set(slots.map((s) => s.pose))).toEqual(new Set<Pose>(["back"]));
   });
@@ -84,7 +76,7 @@ describe("a category with poses [back]", () => {
 describe("a category with several poses", () => {
   test("draws only from its list, and uses every one over enough slots", () => {
     const seen = new Set<Pose>();
-    for (const seed of seeds.slice(0, 20)) for (const slot of planOf(poolWith({ poses: ["front", "profile"] }), { seed, poses: OFF })) seen.add(slot.pose);
+    for (const seed of seeds.slice(0, 20)) for (const slot of planOf(poolWith({ poses: ["front", "profile"] }), { seed })) seen.add(slot.pose);
     expect([...seen].sort()).toEqual(["front", "profile"]);
   });
 
@@ -101,7 +93,7 @@ describe("a category with several poses", () => {
     expect(withPoses.map((s) => s.shot)).toEqual(without.map((s) => s.shot));
   });
 
-  test("a selfie or a mirror shot never faces away or sideways, whatever the list, the deck, the seed or the toggles", () => {
+  test("a selfie or a mirror shot never faces away or sideways, whatever the list, the deck, the seed", () => {
     const lists: Pose[][] = [["back"], ["profile"], ["back", "profile"], ["front", "back"], ["three-quarter", "profile"], ["front", "three-quarter", "profile", "back"]];
     const decks: Shot[][] = [
       ["friend", "selfie", "mirror", "candid", "friend"],
@@ -112,11 +104,9 @@ describe("a category with several poses", () => {
     for (const poses of lists) {
       for (const shotDeck of decks) {
         for (const seed of seeds.slice(0, 25)) {
-          for (const toggles of [OFF, ON]) {
-            for (const slot of planOf(poolWith({ poses, shotDeck }), { seed, poses: toggles, count: 12 })) {
-              if (isPhoneInHandShot(slot.shot)) expect(["front", "three-quarter"]).toContain(slot.pose);
-              expect(poses).toContain(slot.pose);
-            }
+          for (const slot of planOf(poolWith({ poses, shotDeck }), { seed, count: 12 })) {
+            if (isPhoneInHandShot(slot.shot)) expect(["front", "three-quarter"]).toContain(slot.pose);
+            expect(poses).toContain(slot.pose);
           }
         }
       }
@@ -136,40 +126,39 @@ describe("a category with several poses", () => {
 
 describe("what the poses do not touch", () => {
   test("a built-in category next to an angled one plans exactly as it does alone", () => {
-    const mixed = planWithPools({ seed: 77, count: 20, categories: ["home", ANGLED], poses: OFF }, { ...POOLS, [ANGLED]: poolWith({ poses: ["back"] }) }).slots;
-    const alone = plan({ seed: 77, count: 10, categories: ["home"], poses: OFF });
+    const mixed = planWithPools({ seed: 77, count: 20, categories: ["home", ANGLED] }, { ...POOLS, [ANGLED]: poolWith({ poses: ["back"] }) }).slots;
+    const alone = plan({ seed: 77, count: 10, categories: ["home"] });
     expect(mixed.filter((s) => s.category === "home")).toEqual(alone.slots);
   });
 
-  test("the run's toggles still govern the built-ins in the same plan", () => {
-    const pools = { ...POOLS, [ANGLED]: poolWith({ poses: ["front"] }) };
-    const poseOf = (toggles: typeof OFF) => planWithPools({ seed: 3, count: 200, categories: ["home", ANGLED], poses: toggles }, pools).slots.filter((s) => s.category === "home").map((s) => s.pose);
-    expect(new Set(poseOf(OFF))).not.toContain("back");
-    expect(new Set(poseOf(ON))).toContain("back");
+  test("the built-ins in the same plan are held to their own cap, the angled category is not", () => {
+    const pools = { ...POOLS, [ANGLED]: poolWith({ poses: ["back"] }) };
+    const slots = planWithPools({ seed: 3, count: 200, categories: ["home", ANGLED] }, pools).slots;
+    const home = slots.filter((s) => s.category === "home");
+    expect(home.filter((s) => s.pose === "back" || s.pose === "profile").length).toBeLessThanOrEqual(Math.floor(home.length / 5));
+    expect(slots.filter((s) => s.category === ANGLED).every((s) => s.pose === "back")).toBe(true);
   });
 
-  test("a custom category without poses keeps today's plan, byte for byte (hash taken from main before CS.8a; re-pinned at S5.R1: the fixture pool has places with no clean activity, whose selfie and mirror slots now move to a clean place)", () => {
+  test("a custom category without poses keeps today's plan, byte for byte (hash taken from main before CS.8a; S5.7b: the hash is over the plans without poses only, taken on feat/s5-7a too and equal there (the toggled plans are gone with the toggles); re-pinned at S5.R1: the fixture pool has places with no clean activity, whose selfie and mirror slots now move to a clean place)", () => {
     const pool = poolWith();
     const all: unknown[] = [];
     for (const seed of [1, 7, 42, 2026, 123456789]) {
       for (const count of [1, 7, 20, 33]) {
         all.push(slotsOf(planOf(pool, { seed, count })));
-        all.push(slotsOf(planOf(pool, { seed, count, poses: ON })));
       }
     }
-    expect(sha(all)).toBe("02e178fafa5053f06d977e71a9005ba7e62a8a484fc6a58cb1b3f12b04c79054");
+    expect(sha(all)).toBe("e50b40222e0d15e116d453ba3ef03c363e5c936e1ec5809ed8f5c44f7f67a581");
   });
 
-  test("a custom category without poses still follows the toggles", () => {
-    const off = planOf(poolWith(), { count: 100, poses: OFF }).map((s) => s.pose);
-    const on = planOf(poolWith(), { count: 100, poses: ON }).map((s) => s.pose);
-    expect(new Set(off)).not.toContain("back");
-    expect(new Set(on)).toContain("back");
+  test("a custom category without poses draws front or three-quarter only", () => {
+    const poses = planOf(poolWith(), { count: 100 }).map((s) => s.pose);
+    expect(new Set(poses)).not.toContain("back");
+    expect(new Set(poses)).not.toContain("profile");
   });
 
   test("an unrelated custom category without poses is not turned around by its neighbour's poses", () => {
     const pools = { ...POOLS, [ANGLED]: poolWith({ poses: ["back"] }), [PLAIN]: poolWith() };
-    const slots = planWithPools({ seed: 11, count: 40, categories: [ANGLED, PLAIN], poses: OFF }, pools).slots;
+    const slots = planWithPools({ seed: 11, count: 40, categories: [ANGLED, PLAIN] }, pools).slots;
     expect(new Set(slots.filter((s) => s.category === PLAIN).map((s) => s.pose))).not.toContain("back");
     expect(new Set(slots.filter((s) => s.category === ANGLED).map((s) => s.pose))).toEqual(new Set<Pose>(["back"]));
   });

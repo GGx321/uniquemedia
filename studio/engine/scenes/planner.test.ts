@@ -293,15 +293,10 @@ describe("outfits and locations never repeat within one category before every op
   });
 });
 
-describe("pose (T5c)", () => {
-  test("with no poses input, every slot is front or three-quarter", () => {
-    const p = plan({ seed: 1, count: 20, categories: ALL_CATEGORIES });
-    expect(p.slots.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
-  });
-
-  test("selfie and mirror slots never draw profile or back, even when the run allows both", () => {
+describe("pose (T5c; the angle comes from the scene since S5.7b)", () => {
+  test("selfie and mirror slots never draw profile or back", () => {
     for (let seed = 1; seed <= 20; seed++) {
-      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES });
       for (const slot of p.slots) {
         if (slot.shot !== "selfie" && slot.shot !== "mirror") continue;
         expect(slot.pose === "front" || slot.pose === "three-quarter").toBe(true);
@@ -309,37 +304,11 @@ describe("pose (T5c)", () => {
     }
   });
 
-  test("with profile and back disallowed, no slot of any shot draws them", () => {
-    for (let seed = 1; seed <= 20; seed++) {
-      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: false, back: false } });
-      expect(p.slots.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
-    }
-  });
-
-  test("with only profile allowed, some non-phone slot draws profile but none draws back, across enough seeds", () => {
-    const drawn = new Set<string>();
-    for (let seed = 1; seed <= 40; seed++) {
-      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: false } });
-      for (const slot of p.slots) drawn.add(slot.pose);
-    }
-    expect(drawn.has("profile")).toBe(true);
-    expect(drawn.has("back")).toBe(false);
-  });
-
-  test("with only back allowed, some non-phone slot draws back but none draws profile, across enough seeds", () => {
-    const drawn = new Set<string>();
-    for (let seed = 1; seed <= 40; seed++) {
-      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: false, back: true } });
-      for (const slot of p.slots) drawn.add(slot.pose);
-    }
-    expect(drawn.has("back")).toBe(true);
-    expect(drawn.has("profile")).toBe(false);
-  });
-
-  test("with both allowed, across many seeds every pose appears somewhere, still mostly front/three-quarter", () => {
+  test("across many seeds every pose appears somewhere (profile and back come from moments), still mostly front/three-quarter", () => {
     const counts: Record<string, number> = { front: 0, "three-quarter": 0, profile: 0, back: 0 };
+    // 60 slots over five categories is 12 each: a category holds an away slot from 5 slots on (⌊n/5⌋).
     for (let seed = 1; seed <= 40; seed++) {
-      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+      const p = plan({ seed, count: 60, categories: ALL_CATEGORIES });
       for (const slot of p.slots) counts[slot.pose]!++;
     }
     const total = Object.values(counts).reduce((a, b) => a + b, 0);
@@ -352,15 +321,15 @@ describe("pose (T5c)", () => {
 
   test("every slot satisfies the schema's own shot -> pose refine", () => {
     for (let seed = 1; seed <= 10; seed++) {
-      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+      const p = plan({ seed, count: 20, categories: ALL_CATEGORIES });
       expect(ScenePlanSchema.safeParse(p).success).toBe(true);
     }
   });
 
   describe("boundary cases (round 2, LOW)", () => {
-    test("count 1 with poses allowed still produces a valid, schema-conformant slot", () => {
+    test("count 1 still produces a valid, schema-conformant slot", () => {
       for (let seed = 1; seed <= 20; seed++) {
-        const p = plan({ seed, count: 1, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+        const p = plan({ seed, count: 1, categories: ALL_CATEGORIES });
         expect(p.slots).toHaveLength(1);
         expect(ScenePlanSchema.safeParse(p).success).toBe(true);
         const [only] = p.slots;
@@ -370,8 +339,8 @@ describe("pose (T5c)", () => {
       }
     });
 
-    test("count 100 (the contract's RunRequest.count maximum) with poses allowed: every slot valid, both extra poses appear", () => {
-      const p = plan({ seed: 20260924, count: 100, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
+    test("count 100 (the contract's RunRequest.count maximum): every slot valid, both extra poses appear", () => {
+      const p = plan({ seed: 20260924, count: 100, categories: ALL_CATEGORIES });
       expect(p.slots).toHaveLength(100);
       expect(ScenePlanSchema.safeParse(p).success).toBe(true);
       for (const slot of p.slots) {
@@ -384,10 +353,12 @@ describe("pose (T5c)", () => {
       expect(poses.has("back")).toBe(true);
     });
 
-    test("count 100 with poses disallowed: every slot is still front or three-quarter", () => {
-      const p = plan({ seed: 20260924, count: 100, categories: ALL_CATEGORIES, poses: { profile: false, back: false } });
-      expect(p.slots).toHaveLength(100);
-      expect(p.slots.every((s) => s.pose === "front" || s.pose === "three-quarter")).toBe(true);
+    test("count 100: each built-in category holds at most a fifth of its slots facing away", () => {
+      const p = plan({ seed: 20260924, count: 100, categories: ALL_CATEGORIES });
+      for (const category of ALL_CATEGORIES) {
+        const own = p.slots.filter((s) => s.category === category);
+        expect(own.filter((s) => s.pose === "profile" || s.pose === "back").length).toBeLessThanOrEqual(Math.floor(own.length / 5));
+      }
     });
   });
 
@@ -423,18 +394,10 @@ describe("pose (T5c)", () => {
   describe("rng isolation: adding pose draws never perturbs who takes each photo or where", () => {
     const drawnBeforeThePose = (p: ReturnType<typeof plan>) => p.slots.map(({ slotIndex, category, location, shot, capture, attemptIdBase }) => ({ slotIndex, category, location, shot, capture, attemptIdBase }));
 
-    test("with or without a pose allowance, the same seed draws the same captures at the same places", () => {
-      const withoutPoses = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES });
-      const withPoses = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
-      expect(drawnBeforeThePose(withPoses)).toEqual(drawnBeforeThePose(withoutPoses));
-    });
-
-    test("a different pose allowance never changes a slot's capture or place, over many seeds", () => {
-      for (let seed = 1; seed <= 200; seed++) {
-        const neither = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: false, back: false } });
-        const both = plan({ seed, count: 20, categories: ALL_CATEGORIES, poses: { profile: true, back: true } });
-        expect(drawnBeforeThePose(both)).toEqual(drawnBeforeThePose(neither));
-      }
+    test("with or without «Кокетливая», the same seed draws the same captures at the same places", () => {
+      const ordinary = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES });
+      const flirty = plan({ seed: 20260924, count: 20, categories: ALL_CATEGORIES, level: "flirty" });
+      expect(drawnBeforeThePose(flirty).map(({ location: _l, ...rest }) => rest)).toEqual(drawnBeforeThePose(ordinary).map(({ location: _l, ...rest }) => rest));
     });
   });
 });

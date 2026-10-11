@@ -1,14 +1,14 @@
 import type { ScenePose } from "../engine";
 import { BANKS } from "./banks";
 import type { BankCategory, BankPlace, Level, Moment, Outfit } from "./banks/types";
-import { isHandCapture, posesFor, shotOf, type Capture } from "./captures";
+import { posesFor, shotOf, type Capture } from "./captures";
 import { fnv1a } from "./hash";
 import { momentAllowed, type TemplateSlot } from "./render";
 import { legwearFits } from "./template";
 
 // Test-only: a stand-in for the 5a.2 planner (S5.6b builds the real one), so the variety and coverage sweeps can measure the banks before the planner
 // is wired. It keeps plan s5a2 r1.2 §5.2's order: a place (a bag), a capture (the category's deck, a bag), mirror captures moved onto mirror places,
-// the pose (a hand-held capture front or three-quarter; otherwise 5 : 5 : 1 : 1 when the run allows profile and back), then the moment, drawn as the
+// the pose (front or three-quarter, 5 : 5; S5.7b: the angle comes from the moment, so a moment with an angle sets the pose itself), then the moment, drawn as the
 // least-used one the slot allows at that place, then the outfit (a pinned one first) and the legwear. When the place has no moment for the slot, the
 // fallback chain runs and is counted: another place with one, then the capture's family (mirror-hidden → mirror → selfie, prone → above → selfie,
 // timer → friend, but timer → selfie on «Дом»), then a three-quarter pose, then a friend for a candid. The real planner must draw moments as evenly (I5.24).
@@ -42,7 +42,7 @@ function bag<T>(next: () => number, items: readonly T[]): () => T {
   };
 }
 
-const POSES_ALL: readonly ScenePose[] = ["front", "front", "front", "front", "front", "three-quarter", "three-quarter", "three-quarter", "three-quarter", "three-quarter", "profile", "back"];
+const POSES_FACING: readonly ScenePose[] = ["front", "front", "front", "front", "front", "three-quarter", "three-quarter", "three-quarter", "three-quarter", "three-quarter"];
 const STEP_DOWN: Partial<Record<Capture, Capture>> = { "mirror-hidden": "mirror", mirror: "selfie", prone: "above", above: "selfie", timer: "friend" };
 /** «Дом» stays self-shot: its timer steps down to a selfie, never to a friend (plan r1.3 M1). */
 const stepDown = (category: BankCategory, capture: Capture): Capture | undefined => (category === "home" && capture === "timer" ? "selfie" : STEP_DOWN[capture]);
@@ -59,8 +59,8 @@ export interface SimulatedSlot extends TemplateSlot {
 
 const canLand = (place: BankPlace, capture: Capture): boolean => shotOf(capture) !== "mirror" || place.mirror === true;
 
-/** One category's `n` slots of a run, as the 5a.2 planner would draw them (see above). `awayPoses` lets profile and back in at 1 : 1 : 5 : 5. */
-export function simulatePlan(category: BankCategory, n: number, seed: number, level: Level = "ordinary", awayPoses = true): SimulatedSlot[] {
+/** One category's `n` slots of a run, as the 5a.2 planner would draw them (see above). The away cap and the wanted away slots are the real planner's (engine/scenes/planner.ts), not modelled here. */
+export function simulatePlan(category: BankCategory, n: number, seed: number, level: Level = "ordinary"): SimulatedSlot[] {
   const bank = BANKS[category];
   const next = generator(`${category}:${seed}:${level}`);
   const nextPlace = bag(next, bank.places);
@@ -81,7 +81,7 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
   const used = new Map<Moment, number>();
   const order = new Map<string, Moment[]>(bank.places.map((place) => [place.name, shuffled(next, place.moments)]));
   const least = (place: BankPlace, capture: Capture, pose: ScenePose): Moment | undefined => {
-    const candidates = (order.get(place.name) ?? []).filter((m) => momentAllowed(m, capture, pose, level));
+    const candidates = (order.get(place.name) ?? []).filter((m) => momentAllowed(m, capture, m.angle ?? pose, level));
     const fewest = Math.min(...candidates.map((m) => used.get(m) ?? 0));
     return candidates.find((m) => (used.get(m) ?? 0) === fewest);
   };
@@ -89,7 +89,7 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
   return places.map((drawnPlace, i) => {
     let place = drawnPlace;
     let capture = captures[i] as Capture;
-    const deck = isHandCapture(capture) || !awayPoses ? posesFor(capture) : POSES_ALL;
+    const deck = POSES_FACING.filter((candidate) => posesFor(capture).includes(candidate));
     let pose = deck[Math.floor(next() * deck.length)] as ScenePose;
     const fallbacks: string[] = [];
     // Balance (I5.24): keep the bag's place unless its least-used moment for this slot is used more than the least-used one the slot allows at another
@@ -151,7 +151,7 @@ export function simulatePlan(category: BankCategory, n: number, seed: number, le
       wearing: legwear === undefined ? outfit.text : `${outfit.text} with ${legwear}`,
       shot: shotOf(capture),
       capture,
-      pose,
+      pose: moment.angle ?? pose,
       key: `run-${seed}:slot-${i + 1}`,
       place,
       moment,

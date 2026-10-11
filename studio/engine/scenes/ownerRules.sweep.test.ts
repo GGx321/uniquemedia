@@ -212,7 +212,7 @@ describe("a gaze or an expression is said at most twice in a run of 20", () => {
   const mostSaid = (sentences: readonly string[], voices: readonly string[]): number => Math.max(0, ...voices.map((voice) => sentences.filter((s) => s.includes(voice)).length));
   const RUNS: string[][] = Array.from({ length: 500 }, (_, i) => {
     const seed = (i + 1) * 104729;
-    const p = plan({ seed, count: 20, categories: [...CATEGORIES], poses: { profile: false, back: false } });
+    const p = plan({ seed, count: 20, categories: [...CATEGORIES] });
     const runId = `run-mix-${seed}`;
     const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
     return p.slots.map((slot) => local(slot) ?? plainSentence(slot));

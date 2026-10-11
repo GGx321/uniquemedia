@@ -16,6 +16,8 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "walks past mid-step", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, outdoor: true },
         { text: "adjusts the strap of her bag", motion: "she tugs the strap a little", captures: ["candid", "friend", "selfie"], twoHanded: false, gaze: "focus", outdoor: true },
         { text: "rests one foot against the wall", motion: "she taps her raised foot slowly", captures: ["friend", "timer"], twoHanded: false, outdoor: true },
+        // S5.7b: the angle comes from the moment; a friend or a passer-by can shoot her from behind or from the side.
+        { text: "walks away down the road", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back", outdoor: true },
       ],
     },
     {
@@ -29,6 +31,7 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "stirs her coffee", motion: "she stirs slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "focus" },
         { text: "laughs, looking down the street", motion: "she laughs a little and looks away", captures: ["candid", "friend"], twoHanded: false, gaze: "own", expression: true },
         { text: "sips her coffee", motion: "she lowers the cup a little", captures: ["selfie", "friend", "candid"], twoHanded: false },
+        { text: "turns to watch the passers-by", motion: "she turns her head slowly", captures: ["friend", "candid", "timer"], twoHanded: false, gaze: "own", angle: "profile" },
       ],
     },
     {
@@ -42,6 +45,7 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "walks toward the viewer mid-step", motion: "she keeps walking slowly", captures: ["friend"], twoHanded: false, gaze: "viewer" },
         { text: "waits at the crossing", motion: "she shifts her weight a little", captures: ["candid", "friend", "selfie"], twoHanded: false },
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
+        { text: "waits with her back to us", motion: "she shifts her weight a little", captures: ["friend", "candid"], twoHanded: false, angle: "back" },
       ],
     },
     {
@@ -54,6 +58,7 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "leans her arms on the railing", motion: "she rests her chin down slowly", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "looks out at the passing cars", motion: "she turns her head slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "own", angle: "three-quarter", outdoor: true },
         { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["selfie", "friend"], twoHanded: false, outdoor: true },
+        { text: "stands in profile by the cars", motion: "she turns her head slowly", captures: ["friend", "candid"], twoHanded: false, gaze: "own", angle: "profile", outdoor: true },
       ],
     },
     {
@@ -67,6 +72,7 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
         { text: "waits at the crossing", motion: "she shifts her weight a little", captures: ["candid", "friend", "selfie"], twoHanded: false },
         { text: "leans against a shop window", motion: "she shifts against the glass a bit", captures: ["friend", "timer"], twoHanded: false, object: true },
+        { text: "walks away under the lights", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false, angle: "back" },
       ],
     },
   ],
