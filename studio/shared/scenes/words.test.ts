@@ -20,6 +20,67 @@ describe("isOwnerBannedOutfit (the owner: no denim shorts, no denim skirts, anyw
   });
 });
 
+// S5.6R (HIGH 1): the rule caught only «denim» or «jean» right before the garment, so «a denim midi skirt», «denim bike shorts», «distressed denim short
+// shorts» and «a skirt in light denim» passed (about a quarter of the slots of a typical custom pool). Up to three words may now stand between the two,
+// and the garment may come first («(skirt|shorts|skort) in|of … denim»). A word that starts another garment or joins one («jacket», «and», «with») ends
+// the phrase, so a denim jacket worn with a linen skirt still passes.
+describe("isOwnerBannedOutfit: the words between, and the garment first (S5.6R)", () => {
+  const DENIM = ["denim", "jean", "jeans"];
+  const BETWEEN = ["", "light", "light-wash", "distressed", "frayed", "white", "high-waisted", "ripped", "dark wash", "soft washed", "cut-off", "button-front", "A-line"];
+  const BOTTOMS = [
+    "shorts", "skirt", "skirts", "skort", "mini", "midi", "maxi", "miniskirt", "mini skirt", "midi skirt", "maxi skirt", "pencil skirt", "wrap skirt", "pleated skirt",
+    "bike shorts", "bermuda shorts", "short shorts", "overall shorts", "hot pants",
+  ];
+  const OPENINGS = ["", "a ", "a white tee and ", "a crop top with "];
+
+  /** Every phrasing «{opening}{denim} {up to three words} {bottom}», each a ban: two words and a two-word garment, or three words and a one-word one. */
+  const forward = OPENINGS.flatMap((opening) =>
+    DENIM.flatMap((denim) => [
+      ...BETWEEN.flatMap((between) => BOTTOMS.map((bottom) => `${opening}${denim} ${between === "" ? "" : `${between} `}${bottom}`)),
+      ...["shorts", "skirt", "skort", "mini", "midi", "maxi"].map((bottom) => `${opening}${denim} faded blue stretch ${bottom}`),
+    ]),
+  );
+  /** Every phrasing «{bottom} in|of|made of {up to three words} {denim}», each a ban. */
+  const backward = ["a skirt", "shorts", "a skort", "a mini skirt", "short shorts", "bermuda shorts"].flatMap((bottom) =>
+    ["in", "of", "made of"].flatMap((join) => ["", "light", "a light-wash", "soft faded blue"].flatMap((between) => DENIM.map((denim) => `${bottom} ${join} ${between === "" ? "" : `${between} `}${denim}`))),
+  );
+
+  test(`refuses every one of ${forward.length} phrasings with the denim first, up to three words before the garment`, () => {
+    expect(forward.filter((outfit) => !isOwnerBannedOutfit(outfit))).toEqual([]);
+  });
+
+  test(`refuses every one of ${backward.length} phrasings with the garment first and the denim after «in» or «of»`, () => {
+    expect(backward.filter((outfit) => !isOwnerBannedOutfit(outfit))).toEqual([]);
+  });
+
+  test.each(["a denim midi skirt", "a denim maxi skirt", "a denim pencil skirt", "denim bike shorts", "a denim wrap skirt", "distressed denim short shorts", "a skirt in light denim", "denim bermuda shorts", "short shorts in denim", "a frayed denim pleated skirt", "a tee and a Denim Mini Skirt"])(
+    "refuses the review's «%s»",
+    (outfit) => {
+      expect(isOwnerBannedOutfit(outfit)).toBe(true);
+    },
+  );
+
+  test.each([
+    "a denim jacket with a linen skirt",
+    "a denim jacket and a mini skirt",
+    "a denim shirt over a midi skirt",
+    "a denim shirt tucked into a pleated skirt",
+    "jeans and a mini skirt",
+    "a jean jacket, a pleated skirt",
+    "a linen skirt and a denim jacket",
+    "shorts with a denim jacket",
+    "a midi skirt in linen and a denim jacket",
+    "a skirt in white linen with a jean jacket",
+    "a denim jacket over running shorts",
+    "a denim vest and a maxi skirt",
+    "a denim dress and bike shorts",
+    "a pleated mini and a fitted top",
+    "hot pants and a crop top",
+  ])("allows «%s»: the denim is another garment", (outfit) => {
+    expect(isOwnerBannedOutfit(outfit)).toBe(false);
+  });
+});
+
 describe("LEGWEAR_CLASH_WORDS", () => {
   test.each(["slips one heel off", "slips on her heels", "pulls up her socks", "sits with her bare feet up", "shows the soles of her feet"])("clashes: «%s»", (text) => {
     expect(LEGWEAR_CLASH_WORDS.test(text)).toBe(true);

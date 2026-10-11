@@ -467,6 +467,44 @@ describe("readWriterAnswer: what is marked and what is kept (S5.6d)", () => {
   });
 });
 
+// S5.6R (HIGH 1): the owner's «no denim shorts, no denim skirts, anywhere» holds in what the writer writes too. A sentence that puts her in one is a problem
+// of its slot, told as a revealing word under OUR name for it («denim shorts», «denim skirt»), never the model's own wording: the reason and the word cap are
+// the ones the floor pins already measure, so the re-ask is no larger than the worst one they hold (678, 253, 253 and 208 stay as they are).
+describe("readWriterAnswer: a sentence in denim shorts or a denim skirt (S5.6R)", () => {
+  const SLOTS = [slot({ slotIndex: 1, shot: "selfie" }), slot({ slotIndex: 2, shot: "friend" }), slot({ slotIndex: 3, shot: "friend", pose: "back" })];
+  const GOOD = (n: number): string => `Scene ${n}: she waters the plants on the sunny windowsill while a friend laughs behind the counter.`;
+  const goodScene = (slotIndex: number) => ({ slotIndex, sentence: GOOD(slotIndex) });
+  const answerWith = (sentence: string) => readWriterAnswer(output([goodScene(1), { slotIndex: 2, sentence }, goodScene(3)]), SLOTS);
+
+  test.each([
+    ["She leans on the railing in a frayed denim pleated skirt and a white tee.", "denim skirt"],
+    ["She sits on the steps in distressed denim short shorts, laughing.", "denim shorts"],
+    ["She walks along the river in a skirt of light-wash denim and sneakers.", "denim skirt"],
+    ["She stands by the door in denim bike shorts and an oversized hoodie.", "denim shorts"],
+    ["She waits at the crossing in a Jean Mini and a crop top.", "denim skirt"],
+    ["She sips a coffee in cut-offs and a tank top.", "denim shorts"],
+  ])("«%s» marks its slot, keeps the others and tells «%s»", (sentence, told) => {
+    const answer = answerWith(sentence);
+    expect(answer).toMatchObject({ ok: false, problems: ["revealing-word"], wordSlots: [2], words: [told] });
+    if (answer.ok) throw new Error("expected a refusal");
+    expect(answer.repair).toEqual({ marked: [2], accepted: new Map([[1, GOOD(1)], [3, GOOD(3)]]) });
+    expect(writerRefusalText(answer)).toContain(`"${told}"`);
+  });
+
+  test("the re-ask names our word, never the model's own wording", () => {
+    const answer = answerWith("She leans on the railing in a frayed denim pleated skirt and a white tee.");
+    if (answer.ok) throw new Error("expected a refusal");
+    expect(writerRefusalText(answer)).not.toMatch(/frayed|pleated/);
+  });
+
+  test.each(["She leans on the railing in a denim jacket and a linen skirt.", "She waits by the door in jeans and a white tee.", "She sits on the bench in a denim jacket over running shorts."])(
+    "«%s» passes: the denim is another garment",
+    (sentence) => {
+      expect(answerWith(sentence).ok).toBe(true);
+    },
+  );
+});
+
 describe("detectors", () => {
   test.each([
     ["holding a cup of coffee with both hands", true],

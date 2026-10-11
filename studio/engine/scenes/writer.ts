@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { youthWords } from "../../shared/engine";
+import { ownerBannedOutfitWords } from "../../shared/scenes/words";
 import { WRITER_CALL, writerWorstMicros, type Estimate } from "../money/estimate";
 import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
@@ -475,7 +476,8 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
     const sentence = bySlot.get(s.slotIndex);
     if (sentence === undefined) continue;
     const youth = youthWords(sentence, "descriptor");
-    const revealing = revealingWordsIn(sentence);
+    // S5.6R: the owner's denim shorts and skirts are refused as a revealing word under our name for them, so the reason and the word cap are the ones the floor pins measure.
+    const revealing = [...revealingWordsIn(sentence), ...ownerBannedOutfitWords(sentence)];
     if (youth.length > 0) {
       problems.add("youth-word");
       wordSlots.add(s.slotIndex);

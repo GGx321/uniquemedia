@@ -335,6 +335,13 @@ describe("readIdeaAnswer: what is marked and what is kept (S5.6d)", () => {
     expect(read).toMatchObject({ ok: false, problems: expect.arrayContaining(["youth-word", "bad-angle"]) });
     expect(repairOf(read)).toBeUndefined();
   });
+
+  // S5.6R (HIGH 1): an own scene is held to the owner's denim rule as a planned one is, whatever the idea asked for: the scene is marked and told «denim skirt».
+  test("an own scene in a denim skirt is marked under our word; the other is kept with its angle", () => {
+    const read = readIdeaAnswer(answer({ slotIndex: 5, sentence: "She walks along the river in a light-wash denim A-line skirt.", shot: "friend", pose: "back" }, GOOD_TWO), [AUTO, SECOND]);
+    expect(read).toMatchObject({ ok: false, problems: ["revealing-word"], wordSlots: [5], words: ["denim skirt"] });
+    expect(repairOf(read)).toEqual({ marked: [5], accepted: new Map([[6, SENTENCE]]), angles: new Map([[6, { shot: "friend", pose: "three-quarter" }]]) });
+  });
 });
 
 // ---------- CS.8a fix round 1: the bad-angle reason fits every case ----------
