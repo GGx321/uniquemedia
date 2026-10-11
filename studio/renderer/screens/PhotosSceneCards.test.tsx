@@ -281,6 +281,15 @@ describe("⟳ and its price popover", () => {
 });
 
 describe("«+ Своя сцена · по описанию»", () => {
+  test("offers the shots of the decks and no photographer: «Попросила снять» is listed once", async () => {
+    await ready(4);
+    fireEvent.click(within(column()).getByRole("button", { name: "Своя сцена" }));
+    await flush();
+    const form = within(column()).getByRole("region", { name: "Своя сцена · по описанию" });
+    const options = within(within(form).getByRole("combobox", { name: "Кадр" })).getAllByRole("option");
+    expect(options.map((o) => o.textContent)).toEqual(["Авто", "Попросила снять", "Селфи", "Зеркало", "Кэндид"]);
+  });
+
   test("opens with the focus in «Идея», its price, and sends the idea, the count and the shot; placeholders follow at the end (ReviewAddIdea, ReviewIdeaWriting)", async () => {
     const { engine, scheduler } = await ready(4);
     await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));

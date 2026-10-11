@@ -80,7 +80,7 @@ describe("the pose tag on a scene card (ReviewStates I)", () => {
     expect(sceneCard(1).textContent?.includes("ракурс:") ?? true).toBe(false);
     // The tag comes after the shot tag.
     const tags = Array.from(back.parentElement?.children ?? []).map((tag) => tag.textContent);
-    expect(tags).toEqual(["Домашнее у кровати", "Подруга снимает", "ракурс: со спины"]);
+    expect(tags).toEqual(["Домашнее у кровати", "Попросила снять", "ракурс: со спины"]);
   });
 });
 

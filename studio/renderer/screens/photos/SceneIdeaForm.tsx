@@ -6,7 +6,7 @@ import { errorText } from "../../lib/errors";
 import { formatUsdTiered } from "../../lib/money";
 import { Icon } from "../../ui/Icon";
 import { about, describedBy, InlinePaidButton, paidButtonState, PriceFailed, setPriceKey } from "./scenePaid";
-import { SHOT_LABEL, writeCapRefusal } from "./sceneReview";
+import { IDEA_SHOTS, SHOT_LABEL, writeCapRefusal } from "./sceneReview";
 import { ideaHint, ideaTitle, WRITE_CAP_TEXT } from "./sceneText";
 import { usePaidAction } from "./usePaidAction";
 
@@ -164,7 +164,7 @@ export function SceneIdeaForm({ set, view, start, blocked, onPaidInFlightChange,
             >
               {/* CS.7 V3: «Авто» alone keeps «Кадр» in the form's row at 1200; what it picks (shot and angle, the mirror only when the idea names one) is said in the hint below. */}
               <option value="">Авто</option>
-              {POOL_SHOTS.map((s) => (
+              {IDEA_SHOTS.map((s) => (
                 <option key={s} value={s}>
                   {SHOT_LABEL[s]}
                 </option>

@@ -1,6 +1,7 @@
 import {
   isCustomCategory,
   MAX_COMPOSE_SCENES,
+  POOL_SHOTS,
   type CategoryRef,
   type EngineError,
   type PoolShot,
@@ -53,14 +54,20 @@ export function writeSceneReview(storage: SwitchStorage | null, on: boolean): vo
 
 // ---------- labels ----------
 
-/** The design's shot names (Photos.dc.html's legend). */
+/**
+ * The shot names of a scene's tag (mockups 24 and 29). The decks no longer hold a photographer, but a set made before the scene system may: its scene
+ * reads «Попросила снять», like a friend's.
+ */
 export const SHOT_LABEL: Record<PoolShot, string> = {
-  friend: "Подруга снимает",
+  friend: "Попросила снять",
   selfie: "Селфи",
   mirror: "Зеркало",
   candid: "Кэндид",
-  photographer: "Фотограф",
+  photographer: "Попросила снять",
 };
+
+/** The shots an own scene's form offers: the decks' four. An old scene may carry the photographer; a new one never asks for it. */
+export const IDEA_SHOTS: readonly PoolShot[] = POOL_SHOTS.filter((shot) => shot !== "photographer");
 
 export const OWN_SCENE_LABEL = "Своя сцена";
 /** A custom category whose name the set's snapshot did not keep (it always does; the contract allows null). */

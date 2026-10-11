@@ -47,7 +47,8 @@ export const SHOT_LABEL: Record<PoolShot, string> = {
   selfie: "Селфи",
   mirror: "Зеркало",
   candid: "Кэндид",
-  photographer: "Фотограф",
+  // No deck holds a photographer now; a pool made before the scene system may, and reads like a friend who was asked.
+  photographer: "Попросила снять",
 };
 
 /** The shot deck as the bar and the legend show it: each shot the deck holds, in the legend's order, with its share of the deck. */

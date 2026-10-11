@@ -54,11 +54,10 @@ interface Priced {
  * the legend names them without the mockup's percentages or bar.
  */
 const SHOT_TYPES = [
-  { label: "Подруга снимает", tone: "friend" },
+  { label: "Попросила снять", tone: "friend" },
   { label: "Селфи", tone: "selfie" },
   { label: "Зеркало", tone: "mirror" },
   { label: "Кэндид", tone: "candid" },
-  { label: "Фотограф", tone: "photographer" },
 ] as const;
 
 /** Under a free «Сцены» price: the template writes them, no model is asked. */
