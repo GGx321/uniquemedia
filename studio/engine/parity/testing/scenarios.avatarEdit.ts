@@ -1,4 +1,5 @@
 import type { Scenario } from "./scenarios";
+import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
 import type { Answer } from "./transcript";
 
 // Stage 5, S5.0a (APPENDED; the golden is append-only): `avatars.editDescriptor`, the owner's own free edit of a saved avatar's descriptor, told against both engines. Played here: the
@@ -84,7 +85,7 @@ export const AVATAR_EDIT_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "editDescriptor: an edit is allowed while an autopilot launch holds the avatar, and the launch goes on",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       control.launch.hangWriter();
       const started = await t.callLaunch("autopilot.start", {
@@ -92,7 +93,7 @@ export const AVATAR_EDIT_SCENARIOS: readonly Scenario[] = [
           avatarIds: [w.avatarId],
           videosPerAvatar: 2,
           mix: { single: 0, collage: 0, slides: 100 },
-          categories: ["home"],
+          categories: [LLM_ONLY_REF],
           poses: { profile: false, back: false },
           library: false,
           generate: true,

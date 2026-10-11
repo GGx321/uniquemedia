@@ -12,6 +12,8 @@ import { FfmpegError, type RunFfmpegArgvOptions } from "../../../node/runFfmpeg"
 import { MockEngine, type MockExportPick, type MockMediaPick } from "../../../renderer/engine/mockEngine";
 import { MOCK_PORTRAIT_SLOTS, type MockPortraitSeed } from "../../../renderer/engine/mockPortraits";
 import { MIA, NORA, scenePhoto, SOFIA } from "../../../renderer/engine/mockEngine.testkit";
+import { LLM_ONLY_CATEGORY_RECORD } from "../../scenes/testing/llmOnlyFixture";
+import { createFaceQaGate } from "../../runs/faceGate";
 import { ManualScheduler } from "../../../renderer/engine/scheduler";
 import { IDLE_STEPS } from "../../autopilot/steps";
 import { manifestTraits } from "../../avatars/records";
@@ -79,6 +81,9 @@ export interface PortraitAvatars {
 /** The likeness of the three pending portraits of the `pending` avatar of a rig with `portraits`, and how many the `crowded` one holds. */
 export const PARITY_PENDING_LIKENESS: readonly number[] = [0.8, 0.7, 0.6];
 export const PARITY_CROWDED_COUNT = 11;
+/** The likeness a rig with `faceMarks` stores for a frame whose face is hidden (`marked`: below the 0.55 threshold, never judged, never retried), and for every other frame (`match`). */
+export const PARITY_MARKED_COS = 0.48;
+export const PARITY_MATCH_COS = 0.86;
 
 /** What only a rig can do to the outside world. */
 export interface Control {
@@ -178,6 +183,20 @@ export const PARITY_VIDEO_BYTES = 200;
 export const PARITY_VIDEO_FACTS = { width: 1080, height: 1920, durationMs: 6400, sourceFps: 29.97, hdrToSdr: true, loopFrames: null, delayFrames: null } as const;
 /** A clip with this in its first bytes is the one the real rig's video importer refuses as a `codec`. */
 const PARITY_UNSUPPORTED_CODEC = "vp09";
+
+/**
+ * The engine's face QA gate over a scripted worker (S5.6f's `marked` verdict end to end): a frame checked as `body` is marked at `PARITY_MARKED_COS`, any other is a match at `PARITY_MATCH_COS`. The
+ * gate adapter is the engine's own, so what the rig proves is that a hidden-face frame passes with its likeness stored, and is never sent back for another paid attempt.
+ */
+function scriptedFaceGate() {
+  return createFaceQaGate({
+    faceGate: {
+      embed: async () => Float32Array.of(1, 0, 0, 0),
+      check: async ({ pose }) => (pose === "body" ? { kind: "marked" as const, similarity: PARITY_MARKED_COS, faces: 1, headRatio: 0.2 } : { kind: "match" as const, similarity: PARITY_MATCH_COS, faces: 1, headRatio: 0.3 }),
+      isBroken: () => false,
+    },
+  });
+}
 
 /** Writes a clip (an ISO box file's `ftyp` and a body) into `folder`; the bad one carries the codec the importer refuses. */
 async function writeVideoMedia(folder: string, which: "good" | "bad" | "prepared"): Promise<string[]> {
@@ -343,6 +362,19 @@ export interface RigOptions {
    * either write, so each has both attempts. The real rig writes them through the library's own store; the mock is seeded with the same.
    */
   readonly reviewWrites?: boolean;
+  /**
+   * Stage 5 (S5.6e, plan s5a2 §5.7): the library holds `cat-llm-only-fixture` (ONE definition, `engine/scenes/testing/llmOnlyFixture.ts`): a custom category whose activities do not render, so the
+   * code template cannot write any of its scenes and a launch that names it asks the model for every one. A built-in category is written by the template with no request since S5.6c1, so a story
+   * about the compose writer (a fault or a hang there) plans from this category instead. The real rig writes it through the library's own store before the engine opens it; the mock is seeded
+   * with the same record. Seeded only for those stories, so no other story's lines move.
+   */
+  readonly llmOnlyFixture?: boolean;
+  /**
+   * Stage 5 (S5.6e): a launch's face gate is the engine's own `createFaceQaGate` over a scripted worker (no face models in a test): a frame whose face is hidden (the gate pose `body`) gets the verdict
+   * `marked` at `PARITY_MARKED_COS`, every other frame a `match` at `PARITY_MATCH_COS`. The mock's launch deals the same likeness to the same photos. Needs `launch`; without it the launch's gate passes
+   * everything and stores nothing (the older stories' lines are unchanged).
+   */
+  readonly faceMarks?: boolean;
   /** CS.2: with `categories`, a second readable category (`PARITY_SECOND_CATEGORY`), so a rename can meet a name another category holds. */
   readonly secondCategory?: boolean;
   /**
@@ -522,13 +554,16 @@ export function mockRig(options: RigOptions = {}): ParityRig {
     renderConcurrency: options.renderConcurrency ?? 1,
     // The S4.1 stories are bound to the mock's canned launch; a rig that asks for a running launch gets the mock that runs one.
     launchRun: options.launch === true ? "timers" : "canned",
-    ...(options.categories === true
+    ...(options.faceMarks === true ? { launchFaceMarks: { marked: PARITY_MARKED_COS, match: PARITY_MATCH_COS } } : {}),
+    ...(options.categories === true || options.llmOnlyFixture === true
       ? {
           categories: [
-            { ...PARITY_CATEGORY, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" },
-            ...(options.secondCategory === true ? [{ ...PARITY_SECOND_CATEGORY, createdAt: "2026-10-05T10:01:00.000Z", updatedAt: "2026-10-05T10:01:00.000Z" }] : []),
+            ...(options.categories === true ? [{ ...PARITY_CATEGORY, createdAt: "2026-10-05T10:00:00.000Z", updatedAt: "2026-10-05T10:00:00.000Z" }] : []),
+            ...(options.categories === true && options.secondCategory === true ? [{ ...PARITY_SECOND_CATEGORY, createdAt: "2026-10-05T10:01:00.000Z", updatedAt: "2026-10-05T10:01:00.000Z" }] : []),
+            ...(options.llmOnlyFixture === true ? [{ ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-10-05T10:02:00.000Z", updatedAt: "2026-10-05T10:02:00.000Z" }] : []),
           ],
-          unreadableCategories: 1, interruptedCategories: [{ ...PARITY_INTERRUPTED }] }
+          ...(options.categories === true ? { unreadableCategories: 1, interruptedCategories: [{ ...PARITY_INTERRUPTED }] } : {}),
+        }
       : {}),
     ...(options.sceneSets === true
       ? { sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: PARITY_SCENE_SET_ID, count: PARITY_SCENES.length, written: 1, stopped: "closed" as const, scenes: PARITY_SCENES }], unreadableSceneSets: 1 }
@@ -861,6 +896,8 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
     await writeFile(join(dir, "library", "categories", "cat-parity-broken.json"), "{not json");
   }
 
+  if (options.llmOnlyFixture === true) await library.categories.create(LLM_ONLY_CATEGORY_RECORD);
+
   if (options.sceneSets === true) {
     await library.sceneSets.create({
       sceneSetId: PARITY_SCENE_SET_ID,
@@ -1096,7 +1133,7 @@ export async function realRig(dir: string, options: RigOptions = {}): Promise<Pa
       musicSink: store,
       musicTracks: store,
       ...(launching
-        ? { musicTrends: store, qaGates: [{ name: "face", paid: false, check: async () => ({ verdict: "pass" as const }) }] }
+        ? { musicTrends: store, qaGates: [options.faceMarks === true ? scriptedFaceGate() : { name: "face", paid: false, check: async () => ({ verdict: "pass" as const }) }] }
         : { launchSteps: IDLE_STEPS }),
       text: { gate: textLane },
       ...(options.ownMedia === true ? { mediaImporters: { photo: parityPhotoImporter, video: parityVideoImporter, audio: parityTrackImporter, sticker: parityStickerImporter } } : {}),

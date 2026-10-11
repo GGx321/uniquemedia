@@ -1,4 +1,5 @@
 import type { Scenario } from "./scenarios";
+import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
 import type { Answer } from "./transcript";
 
 // Stage 5, S5.2a (APPENDED; the golden is append-only): `avatars.setBody` and `avatars.dismissBodyProposal`, the owner's free body traits and the «Не нужно» of an import's body proposal,
@@ -125,7 +126,7 @@ export const AVATAR_BODY_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "setBody: a body is allowed while an autopilot launch holds the avatar, and the launch goes on",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       control.launch.hangWriter();
       const started = await t.callLaunch("autopilot.start", {
@@ -133,7 +134,7 @@ export const AVATAR_BODY_SCENARIOS: readonly Scenario[] = [
           avatarIds: [w.avatarId],
           videosPerAvatar: 2,
           mix: { single: 0, collage: 0, slides: 100 },
-          categories: ["home"],
+          categories: [LLM_ONLY_REF],
           poses: { profile: false, back: false },
           library: false,
           generate: true,

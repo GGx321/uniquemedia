@@ -1,6 +1,7 @@
 import type { Scenario } from "./scenarios";
 import type { World } from "./rigs";
 import type { Answer } from "./transcript";
+import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
 
 // Stage 4, S4.8: the batch autopilot as a launch that RUNS, told through its commands and compared engine against mock, line for line. The real rig runs the engine as the app builds it (its
 // default launch steps over a fake OpenRouter, the rig's fake ffmpeg and a track store) and the mock runs its launch on its clock; a story reads the launch only at the STABLE points it waits
@@ -11,9 +12,15 @@ import type { Answer } from "./transcript";
 // The five stories S4.1 left pending stay pending (scenarios.autopilot.ts): their transcripts say «drawing» and «awaiting-review» in the answer to the start, which a canned mock gives and no
 // engine can (a phase is written by a pass that runs after the start has answered). These stories are their lifted equivalents on the real timeline, APPENDED.
 
-const ENOUGH = 10_000_000;
+export const ENOUGH = 10_000_000;
 const NOT_ENOUGH = 0;
 const NO_LAUNCH = "launch-00000000";
+
+/**
+ * 5a.2 (S5.6e, the dated list of plan s5a2 §5.7): the stories whose subject is a fault or a hang at the compose WRITER plan from `cat-llm-only-fixture` (the rig's `llmOnlyFixture`), a custom category
+ * whose activities the code template cannot write. A launch on «home» is composed by the template with no request since S5.6c1, so there is no writer to fault or to hang.
+ */
+const ON_THE_WRITER = { categories: [LLM_ONLY_REF] };
 
 /** The draft of these stories: Mia, two slides videos, every photo new. */
 const draftOf = (w: World, over: Record<string, unknown> = {}) => ({
@@ -30,7 +37,7 @@ const draftOf = (w: World, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-function record(value: unknown): Record<string, unknown> | null {
+export function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : null;
 }
 
@@ -52,20 +59,20 @@ function reviewRowOf(launch: Record<string, unknown>): { avatarId: string; scene
 }
 
 const phases = (launch: Record<string, unknown>): string[] => (Array.isArray(launch.avatars) ? launch.avatars.map((a) => String(record(a)?.phase)) : []);
-const isDone = (launch: Record<string, unknown>): boolean => launch.status === "done";
+export const isDone = (launch: Record<string, unknown>): boolean => launch.status === "done";
 const isAwaitingReview = (launch: Record<string, unknown>): boolean => phases(launch).includes("awaiting-review");
-const holds = (reason: string) => (launch: Record<string, unknown>): boolean => record(launch.paidHold)?.reason === reason;
+export const holds = (reason: string) => (launch: Record<string, unknown>): boolean => record(launch.paidHold)?.reason === reason;
 
-type Telling = Parameters<Scenario["run"]>[0];
+export type Telling = Parameters<Scenario["run"]>[0];
 
 /** Starts the launch and answers its id, and the row waiting for review when the story reviews. */
-async function begin(t: Telling, w: World, over: Record<string, unknown> = {}): Promise<{ launch: string }> {
+export async function begin(t: Telling, w: World, over: Record<string, unknown> = {}): Promise<{ launch: string }> {
   const started = await t.callLaunch("autopilot.start", { draft: draftOf(w, over), acceptedWorstMicros: ENOUGH });
   return { launch: launchIdOf(started) };
 }
 
 /** Waits until an avatar's scenes wait for the owner, and answers the row the owner would press «Продолжить запуск» on. */
-async function review(t: Telling, launch: string): Promise<{ avatarId: string; sceneSetId: string; revision: number }> {
+export async function review(t: Telling, launch: string): Promise<{ avatarId: string; sceneSetId: string; revision: number }> {
   let row: { avatarId: string; sceneSetId: string; revision: number } | null = null;
   await t.untilLaunch(launch, "the scenes wait for the owner's review", (l) => {
     row = reviewRowOf(l);
@@ -79,7 +86,7 @@ async function review(t: Telling, launch: string): Promise<{ avatarId: string; s
  * `autopilot.continueAfterReview` for the row the story waited for. `stale` sends a revision the set has moved past; the transcript writes the revision as seen (`<seen>`) or one more
  * (`<seen+1>`), because the number is the set file's own count of writes.
  */
-function proceed(t: Telling, launch: string, row: { avatarId: string; sceneSetId: string; revision: number }, over: { sceneSetId?: string; avatarId?: string; stale?: boolean } = {}, brief = false): Promise<Answer> {
+export function proceed(t: Telling, launch: string, row: { avatarId: string; sceneSetId: string; revision: number }, over: { sceneSetId?: string; avatarId?: string; stale?: boolean } = {}, brief = false): Promise<Answer> {
   const sent = { launchId: launch, avatarId: over.avatarId ?? row.avatarId, sceneSetId: over.sceneSetId ?? row.sceneSetId, revision: row.revision + (over.stale === true ? 1 : 0) };
   return t.callLaunch("autopilot.continueAfterReview", sent, { brief, written: { ...sent, revision: over.stale === true ? "<seen+1>" : "<seen>" } });
 }
@@ -196,11 +203,11 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "autopilot (running): OpenRouter's 402 holds the paid work for a person, «Продолжить» is open and clears the hold, and the launch ends done",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       await control.musicTracks();
       control.launch.fault("credits");
-      const { launch } = await begin(t, w);
+      const { launch } = await begin(t, w, ON_THE_WRITER);
       await t.untilLaunch(launch, "the credits hold", holds("credits"));
       t.note("held: the avatar is parked, nothing is spent, «Продолжить» is open");
       await t.callLaunch("autopilot.get", { launchId: launch });
@@ -214,11 +221,11 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "autopilot (running): OpenRouter's 401 holds the launch and closes «Продолжить» until a new key is stored, and then the launch ends done",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       await control.musicTracks();
       control.launch.fault("key");
-      const { launch } = await begin(t, w);
+      const { launch } = await begin(t, w, ON_THE_WRITER);
       await t.untilLaunch(launch, "the key hold", holds("key"));
       t.note("held, and «Продолжить» is closed by the key");
       await t.callLaunch("autopilot.get", { launchId: launch });
@@ -263,11 +270,11 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "autopilot (running): the app is quit with a request in flight; the launch is paused by the quit, «Продолжить» asks for a reconcile first, and after it the launch goes on to done",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       await control.musicTracks();
       control.launch.hangWriter();
-      const { launch } = await begin(t, w, { sceneReview: true });
+      const { launch } = await begin(t, w, { sceneReview: true, ...ON_THE_WRITER });
       await t.untilLaunch(launch, "a request in flight", (l) => Number(record(l.inFlight)?.requests) > 0);
       t.note("the owner quits the app and opens it again");
       await control.launch.quit();
@@ -290,12 +297,12 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "autopilot (running): a slice job that ends INTERNAL holds the launch as «internal» (a failed job), «Продолжить» is open and runs the job again, and the launch ends done",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       await control.musicTracks();
       t.note("the avatar's master photo cannot be prepared: the compose is paid, and the slice's job ends INTERNAL before any photo is requested");
       control.launch.fault("job-failed");
-      const { launch } = await begin(t, w);
+      const { launch } = await begin(t, w, ON_THE_WRITER);
       await t.untilLaunch(launch, "the internal hold", holds("internal"));
       t.note("held, with «Продолжить» open: the hold is a failed job, not the launch's own check");
       await t.callLaunch("autopilot.get", { launchId: launch });
@@ -418,11 +425,11 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
   // S4.10 fix D (appended): fix A made the engine's final stop write clear the holds and the waiting rows; the mock's `completeStop` does the same. Nothing told both engines the same story.
   {
     name: "autopilot (running): «Стоп» under a hold ends the launch with no hold and no row waiting, whether the hold was a paid one (402) or a free one (a full disk)",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       await control.musicTracks();
       control.launch.fault("credits");
-      const paid = await begin(t, w);
+      const paid = await begin(t, w, ON_THE_WRITER);
       await t.untilLaunch(paid.launch, "the credits hold", holds("credits"));
       t.note("held: the avatar is parked behind the hold");
       await t.callLaunch("autopilot.get", { launchId: paid.launch });
@@ -431,7 +438,7 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
       await t.callLaunch("autopilot.get", { launchId: paid.launch });
       t.note("the same for a free hold: the renders wait for room, and «Стоп» ends the launch (another avatar: the first one's composed set is its owner's open set now)");
       control.freeSpace(1_000_000);
-      const free = await begin(t, w, { avatarIds: [w.otherAvatarId] });
+      const free = await begin(t, w, { avatarIds: [w.otherAvatarId], ...ON_THE_WRITER });
       await t.untilLaunch(free.launch, "the disk hold", (l) => record(l.freeHold) !== null);
       await t.callLaunch("autopilot.stop", { launchId: free.launch });
       await t.callLaunch("autopilot.get", { launchId: free.launch });
@@ -466,10 +473,10 @@ export const LAUNCH_RUN_SCENARIOS: readonly Scenario[] = [
   // S4.10 fix D round 1 (appended): the launch's compose is a live scenes job, so the owner's commands on the set and the avatar meet IN_FLIGHT while the writer is out.
   {
     name: "autopilot (running): while the launch's writer is out the set is being written and the avatar is held — the owner's edit, discard, compose and photo run are IN_FLIGHT",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       control.launch.hangWriter();
-      const { launch } = await begin(t, w, { sceneReview: true });
+      const { launch } = await begin(t, w, { sceneReview: true, ...ON_THE_WRITER });
       await t.untilLaunch(launch, "a request in flight", (l) => Number(record(l.inFlight)?.requests) > 0);
       t.note("the set reads writing, held by the launch");
       const read = await t.callLaunch("scenes.get", { avatarId: w.avatarId });

@@ -1,4 +1,5 @@
 import type { Scenario } from "./scenarios";
+import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
 
 // Stage 5, S5.0c (APPENDED; the golden is append-only): the descriptor-vs-master check, `avatars.estimateCheckDescriptor` (free) and `avatars.checkDescriptor` (paid, never writes),
 // told against both engines. The rig scripts no chat, so only the FREE commands and the free refusals of the paid one are played: the price (as facts, each engine's own figures
@@ -19,7 +20,7 @@ async function launchAvatar(t: Telling, avatarId: string, control: Parameters<Sc
       avatarIds: [avatarId],
       videosPerAvatar: 2,
       mix: { single: 0, collage: 0, slides: 100 },
-      categories: ["home"],
+      categories: [LLM_ONLY_REF],
       poses: { profile: false, back: false },
       library: false,
       generate: true,
@@ -65,7 +66,7 @@ export const AVATAR_CHECK_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "checkDescriptor: a check is refused while an autopilot launch holds the avatar, and the launch goes on",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       const launchId = await launchAvatar(t, w.avatarId, control);
       t.note("the launch's writer is out and the launch holds the avatar: a check of its description is refused");

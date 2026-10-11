@@ -388,7 +388,7 @@ export function answerLine(type: string, answer: Answer, norm: Normalizer, runni
     // S4.8 (`running`): a launch's refusals say sums and sentences of the engine's own (the remaining worst case, the key's state); the code and the reason are the contract.
     // S4.6p: a launch the price is asked for is told in each engine's own words (which launch, which avatar); its code is the contract.
     // S4.10 fix D: an IN_FLIGHT given to a command sent while a launch runs names the job in each engine's own words; its code is the contract.
-    const text = code === "VALIDATION" || (running !== false && code === "IN_FLIGHT") || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" || (code === "PRICE_CHANGED" && (type === "avatars.checkDescriptor" || type === "avatars.generatePortraits")) ? undefined : detail;
+    const text = code === "VALIDATION" || (running !== false && code === "IN_FLIGHT") || code.startsWith("MUSIC_") || (running && type.startsWith("autopilot.")) || type === "runs.estimateImages" || (code === "PRICE_CHANGED" && (type === "avatars.checkDescriptor" || type === "avatars.generatePortraits" || type === "scenes.write")) ? undefined : detail;
     return `< error ${code} ${compact(
       norm.value({
         ...(text === undefined ? {} : { detail: text }),

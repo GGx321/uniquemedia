@@ -1,4 +1,5 @@
 import type { Scenario } from "./scenarios";
+import { LLM_ONLY_REF } from "../../scenes/testing/llmOnlyFixture";
 import type { PortraitAvatars } from "./rigs";
 import type { Answer } from "./transcript";
 
@@ -90,7 +91,7 @@ export const AVATAR_PORTRAIT_SCENARIOS: readonly Scenario[] = [
   },
   {
     name: "portraits: a batch is refused while an autopilot launch holds the avatar, and so are the pick and the discard",
-    rig: { launch: true },
+    rig: { launch: true, llmOnlyFixture: true },
     async run(t, w, control) {
       control.launch.hangWriter();
       const started = await t.callLaunch("autopilot.start", {
@@ -98,7 +99,7 @@ export const AVATAR_PORTRAIT_SCENARIOS: readonly Scenario[] = [
           avatarIds: [w.avatarId],
           videosPerAvatar: 2,
           mix: { single: 0, collage: 0, slides: 100 },
-          categories: ["home"],
+          categories: [LLM_ONLY_REF],
           poses: { profile: false, back: false },
           library: false,
           generate: true,
