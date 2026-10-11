@@ -2,7 +2,6 @@ import { hammingDistance } from "../../../src/core/pdq/hamming";
 import type { AvatarBlockerCode, LaunchDraft, VideoShape } from "../../shared/engine/autopilot";
 import { orderCategories, type CategoryPoses, type CategoryRef, type ScenePose } from "../../shared/engine/categories";
 import { MAX_COMPOSE_SCENES } from "../../shared/engine/scenes";
-import { NO_EXTRA_POSES } from "../scenes/poses";
 import type { AvatarUsage } from "../../shared/engine/state";
 import { defaultQaConfig } from "../runs/config";
 
@@ -223,9 +222,8 @@ interface Slot {
 function posesFor(category: CategoryRef, input: PlanInput): readonly ScenePose[] {
   const own = input.customPoses.get(category);
   if (own !== undefined) return [...own];
-  // S5.7a: a draft from a window of the new build carries no toggles; S5.7b retires them for the angle from the scene.
-  const { profile, back } = input.draft.poses ?? NO_EXTRA_POSES;
-  return [...BASE_POSES, ...(profile ? (["profile"] as const) : []), ...(back ? (["back"] as const) : [])];
+  // S5.7b: the angle comes from the scene, so a draft's old «Ракурсы» toggles (a launch file from before) are ignored: a built-in category asks for front and three-quarter.
+  return BASE_POSES;
 }
 
 /**

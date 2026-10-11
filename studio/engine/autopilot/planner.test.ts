@@ -236,29 +236,30 @@ describe("planLaunch: custom categories and angles (CS.8)", () => {
     expect(mia.generate[0]?.poses).toEqual(["back"]);
   });
 
-  test("a built-in category uses the toggles: front and three-quarter always, profile and back when on", () => {
+  // S5.7b: the angle comes from the scene, so an old launch's toggles are ignored: a built-in category asks for front and three-quarter whatever the draft carries.
+  test("a built-in category asks for front and three-quarter, whatever toggles an old draft carries", () => {
     const off = only(planLaunch(input({ avatars: [avatar([])], draft: { videosPerAvatar: 1 } })));
     const on = only(planLaunch(input({ avatars: [avatar([])], draft: { videosPerAvatar: 1, poses: { profile: true, back: true } } })));
     expect(off.generate[0]?.poses).toEqual(["front", "three-quarter"]);
-    expect(on.generate[0]?.poses).toEqual(["front", "three-quarter", "profile", "back"]);
+    expect(on.generate[0]?.poses).toEqual(["front", "three-quarter"]);
   });
 
-  // S5.7a: a draft may carry no `poses` (a window of the new build) and a `level`; the angle toggles are S5.7b's to retire, the level's mix is S5.7b's to draw.
+  // S5.7a: a draft may carry no `poses` (a window of the new build) and a `level`; the level's mix is drawn by the scene planner when the set is composed (S5.7b).
   test("a draft without poses asks for front and three-quarter, as one with both toggles off does", () => {
     const { poses: _poses, ...noPoses } = draft();
     const bare = only(planLaunch(input({ avatars: [avatar([])], draft: { ...noPoses, videosPerAvatar: 1 } })));
     expect(bare.generate[0]?.poses).toEqual(["front", "three-quarter"]);
   });
 
-  test("a flirty level changes nothing in the plan until S5.7b draws the mix", () => {
+  test("a flirty level changes nothing in the launch plan: the mix is drawn by the scene planner at compose", () => {
     const ordinary = planLaunch(input({ avatars: [avatar([])], draft: { videosPerAvatar: 6 } }));
     const flirty = planLaunch(input({ avatars: [avatar([])], draft: { videosPerAvatar: 6, level: "flirty" } }));
     expect(flirty).toEqual(ordinary);
   });
 
-  test("a custom category without its own angles uses the toggles", () => {
+  test("a custom category without its own angles asks for front and three-quarter: an old draft's toggles are ignored (S5.7b)", () => {
     const mia = only(planLaunch(input({ avatars: [avatar([])], draft: { categories: [custom], videosPerAvatar: 1, poses: { profile: true, back: false } } })));
-    expect(mia.generate[0]?.poses).toEqual(["front", "three-quarter", "profile"]);
+    expect(mia.generate[0]?.poses).toEqual(["front", "three-quarter"]);
   });
 });
 

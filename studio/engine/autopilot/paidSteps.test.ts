@@ -881,9 +881,9 @@ describe("restore: the slots a started slice could still draw (S4.6v)", () => {
   });
 });
 
-// ---------- S5.7a: the compose carries the draft's «Подача» and, only when it has them, its poses ----------
+// ---------- S5.7a/b: the compose carries the draft's «Подача»; the draft's old poses are not sent ----------
 
-describe("the compose a launch sends (S5.7a)", () => {
+describe("the compose a launch sends (S5.7a, S5.7b)", () => {
   async function composeSentFor(draft: Parameters<Rig["start"]>[0]): Promise<LaunchComposePayload> {
     const r = await rig();
     const sent: LaunchComposePayload[] = [];
@@ -908,8 +908,17 @@ describe("the compose a launch sends (S5.7a)", () => {
     expect("level" in (await composeSentFor({}))).toBe(false);
   });
 
-  test("a draft that still carries poses sends them, as a launch paused before this build does", async () => {
-    expect((await composeSentFor({ poses: { profile: true, back: false } })).poses).toEqual({ profile: true, back: false });
+  // S5.7b: the angle comes from the scene, so a launch paused by an older build resumes with its `poses` ignored (the compose does not even carry them) and its level ordinary.
+  test("a launch paused before this build, whose draft carries poses and no level, composes with neither", async () => {
+    const sent = await composeSentFor({ poses: { profile: true, back: true } });
+    expect("poses" in sent).toBe(false);
+    expect("level" in sent).toBe(false);
+  });
+
+  test("a flirty draft that also carries poses sends the level and no poses", async () => {
+    const sent = await composeSentFor({ level: "flirty", poses: { profile: true, back: false } });
+    expect(sent.level).toBe("flirty");
+    expect("poses" in sent).toBe(false);
   });
 
   test("a draft without poses sends none", async () => {
