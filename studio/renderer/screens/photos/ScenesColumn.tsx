@@ -242,13 +242,26 @@ function EndedRunRow({ run }: { run: RunSummary }) {
 }
 
 
+/** The one reason a run's slot ends with for free (I5.31): its sentence broke the word rules, so no attempt was asked. */
+const FREE_SLOT_REASON: SceneReason = "slot-text-problem";
+
 /**
- * S5.7a (I5.31): what follows «Не получилось: N» — the reason of the slots that ended with one (a sentence that broke the word rules ends alone and free), then the
- * paid-attempts line unless every failed slot was one of those. A result with no reasons reads as it always did.
+ * S5.7a (I5.31): what follows «Не получилось: N» — the reason of the slots that ended with one, then the paid-attempts line unless every failed slot ended free.
+ * Only `slot-text-problem` is free (S5.7a review): another reason is named, but its slot may have paid. One free slot of one failed reads as the reason itself;
+ * otherwise the free ones are counted («Из них 2 — …»). A result with no reasons reads as it always did.
  */
 function failedText(failed: number, reasons: readonly { reason: SceneReason }[] | undefined): string {
-  const named = [...new Set((reasons ?? []).map((r) => r.reason))].map((reason) => ` ${SCENE_REASONS_RU[reason]}`).join("");
-  return `${named}${(reasons?.length ?? 0) < failed ? " Если за попытки платили, это уже учтено в расходах." : ""}`;
+  const free = (reasons ?? []).filter((r) => r.reason === FREE_SLOT_REASON).length;
+  const freeText =
+    free === 0
+      ? ""
+      : free === 1 && failed === 1
+        ? ` ${SCENE_REASONS_RU[FREE_SLOT_REASON]}`
+        : free === 1
+          ? " Из них 1 — текст сцены не прошёл проверку слов: кадр пропущен, бесплатно."
+          : ` Из них ${free} — тексты сцен не прошли проверку слов: кадры пропущены, бесплатно.`;
+  const others = [...new Set((reasons ?? []).map((r) => r.reason).filter((reason) => reason !== FREE_SLOT_REASON))].map((reason) => ` ${SCENE_REASONS_RU[reason]}`).join("");
+  return `${freeText}${others}${free < failed ? " Если за попытки платили, это уже учтено в расходах." : ""}`;
 }
 
 /** How the run this screen watched ended: the gallery shows its photos, this says what else happened. A run made from a set says so (ReviewStates F). */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { render, screen } from "@testing-library/react";
-import type { PhotoSummary } from "../../shared/engine";
+import { SCENE_REASONS_RU, type PhotoSummary, type SceneReason } from "../../shared/engine";
 import type { JobView } from "../engine/store";
 import { RunOutcome } from "./photos/ScenesColumn";
 import { PhotoBadges } from "./photos/photoState";
@@ -68,13 +68,15 @@ describe("the badge of a frame the gate marked", () => {
   });
 });
 
-// S5.7a (I5.31): a slot a run ended alone, free, because its sentence broke the word rules says so where the failed slots are counted.
+// S5.7a (I5.31): a slot a run ended alone, free, because its sentence broke the word rules says so where the failed slots are counted. S5.7a review: only
+// that reason is free — another reason a slot ended with is named, but its attempts may have been paid — and several free slots are counted, not told in
+// the singular.
 describe("the end of a run with slots that ended with a reason", () => {
   const REASON = "Текст сцены не прошёл проверку слов — кадр пропущен, бесплатно.";
-  const withReasons = (photoIds: string[], failedSlots: number, slots: number[]): JobView => {
+  const withReasons = (photoIds: string[], failedSlots: number, slots: number[], reason: SceneReason = "slot-text-problem"): JobView => {
     const job = doneRun(photoIds, failedSlots);
     if (job.result?.kind !== "run") throw new Error("expected a run result");
-    return { ...job, result: { ...job.result, failedReasons: slots.map((slotIndex) => ({ slotIndex, reason: "slot-text-problem" as const })) } };
+    return { ...job, result: { ...job.result, failedReasons: slots.map((slotIndex) => ({ slotIndex, reason })) } };
   };
 
   test("says why a slot was skipped, and no longer says that paid attempts are in the spend when every failed slot was free", () => {
@@ -83,9 +85,32 @@ describe("the end of a run with slots that ended with a reason", () => {
     expect(screen.queryByText(/за попытки платили/) === null).toBe(true);
   });
 
-  test("keeps the paid-attempts line when only some of the failed slots were free", () => {
+  test("counts the free one among several failed slots, and keeps the paid-attempts line", () => {
     render(<RunOutcome job={withReasons(["p1"], 3, [2])} fromSet={false} photos={[photo("p1", 0.81)]} />);
-    expect(screen.getByText(new RegExp(`Не получилось: 3\\. ${REASON}.*Если за попытки платили, это уже учтено в расходах\\.`))).toBeDefined();
+    expect(
+      screen.getByText(/Не получилось: 3\. Из них 1 — текст сцены не прошёл проверку слов: кадр пропущен, бесплатно\. Если за попытки платили, это уже учтено в расходах\./),
+    ).toBeDefined();
+  });
+
+  test("counts several free slots in the plural", () => {
+    render(<RunOutcome job={withReasons(["p1"], 3, [2, 5])} fromSet={false} photos={[photo("p1", 0.81)]} />);
+    expect(
+      screen.getByText(/Не получилось: 3\. Из них 2 — тексты сцен не прошли проверку слов: кадры пропущены, бесплатно\. Если за попытки платили, это уже учтено в расходах\./),
+    ).toBeDefined();
+  });
+
+  test("drops the paid-attempts line when every one of several failed slots was free", () => {
+    render(<RunOutcome job={withReasons(["p1"], 2, [2, 5])} fromSet={false} photos={[photo("p1", 0.81)]} />);
+    expect(screen.getByText(/Не получилось: 2\. Из них 2 — тексты сцен не прошли проверку слов: кадры пропущены, бесплатно\./)).toBeDefined();
+    expect(screen.queryByText(/за попытки платили/) === null).toBe(true);
+  });
+
+  test("never calls a slot free for another reason: the paid-attempts line stays", () => {
+    render(<RunOutcome job={withReasons(["p1"], 1, [2], "scene-missing")} fromSet={false} photos={[photo("p1", 0.81)]} />);
+    const line = screen.getByText(/Не получилось: 1\./);
+    expect(line.textContent).toContain(SCENE_REASONS_RU["scene-missing"]);
+    expect(line.textContent).toContain("Если за попытки платили, это уже учтено в расходах.");
+    expect(line.textContent?.includes("бесплатно") ?? true).toBe(false);
   });
 
   test("says what it always said when no failed slot has a reason", () => {
