@@ -72,8 +72,15 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
   /** A re-read asked and not started yet (the deeper kind wins). */
   const pending = useRef<Reread>("none");
   /** The photos `replace` was given while the read in flight was on its way (LOW-B): that read may answer from before, and must not take them back. */
-  const marked = useRef(new Map<string, PhotoSummary>());
-  const withMarks = useCallback((list: PhotoPages): PhotoPages => [...marked.current.values()].reduce(replacePhoto, list), []);
+  const marked = useRef(new Map<string, boolean>());
+  /** The list with those marks laid over it: only `rejected`, so what else the read brought (used, reserved) stays as the read had it. */
+  const withMarks = useCallback(
+    (list: PhotoPages): PhotoPages =>
+      marked.current.size === 0
+        ? list
+        : { ...list, photos: list.photos.map((p) => (marked.current.has(p.photoId) && marked.current.get(p.photoId) !== p.rejected ? { ...p, rejected: marked.current.get(p.photoId) === true } : p)) },
+    [],
+  );
   /** Cancels the wait before a pending re-read, once a read ended; null while there is no wait. */
   const timer = useRef<(() => void) | null>(null);
   const scheduler = usePagesScheduler();
@@ -201,7 +208,7 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
   }, []);
 
   const replace = useCallback((photo: PhotoSummary): void => {
-    if (busy.current) marked.current.set(photo.photoId, photo);
+    if (busy.current) marked.current.set(photo.photoId, photo.rejected);
     const list = held.current;
     if (list === null) return;
     const changed = replacePhoto(list, photo);

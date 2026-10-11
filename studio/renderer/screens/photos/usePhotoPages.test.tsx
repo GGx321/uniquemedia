@@ -98,4 +98,24 @@ describe("a mark set while a read is in flight (LOW-B)", () => {
     await pass();
     await waitFor(() => expect(result.current.pages?.photos[0]?.rejected).toBe(false));
   });
+
+  test("only the mark is kept over a read that landed: what else the read brought stays (reserved)", async () => {
+    const { client, hold, release } = holdableClient(photos.map((p) => ({ ...p, reserved: true }))); // the read in flight says reserved
+    const { result, rerender } = renderHook(({ key }) => usePhotoPages(client, MIA.avatarId, { enabled: true, refresh: [key] }), { initialProps: { key: "a" } });
+    await waitFor(() => expect(result.current.pages?.photos).toHaveLength(6));
+    const target = result.current.pages?.photos[0];
+    if (target === undefined) throw new Error("no photo");
+
+    hold();
+    rerender({ key: "b" });
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    act(() => result.current.replace({ ...target, reserved: false, rejected: true })); // the mark's answer, older than the read on what else it says
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(result.current.pages?.photos[0]).toMatchObject({ rejected: true, reserved: true });
+  });
 });
