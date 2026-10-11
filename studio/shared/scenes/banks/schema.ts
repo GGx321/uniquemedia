@@ -28,8 +28,8 @@ import type { BankCategory, Moment } from "./types";
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
 // `[rule] where: what`, so a test can name the rule a bad item breaks (banks/schema.test.ts) and a malformed bank fails loudly at load
 // (banks/index.ts). The engine-only lists (the revealing words, the paper, screen and staging lists, the «silk pajamas» exemption) are swept by
-// engine/scenes/banks.sweep.test.ts. Every bank text is at most POOL_TEXT_MAX characters, motions and start poses included; only the locative `at`
-// is not bound (it is never sent to the writer).
+// engine/scenes/banks.sweep.test.ts. Every bank text is at most POOL_TEXT_MAX characters; a motion and a start pose at most MOTION_TEXT_MAX (they
+// never reach the writer or a photo prompt); the locative `at` is not bound (it is never sent to the writer).
 
 /** The rule ids a problem names. */
 export const BANK_RULE = {
@@ -85,6 +85,9 @@ export const BANK_RULE = {
 } as const;
 type Rule = (typeof BANK_RULE)[keyof typeof BANK_RULE];
 
+/** A motion's and a start pose's bound (plan I5.21, 5b.1 QV-5): the approved Kling wording, «she slowly lifts her hips behind her and lowers them», fits. */
+export const MOTION_TEXT_MAX = 60;
+
 /**
  * The verbs a moment may open with: third-person present, so «she {moment}» reads as a sentence. A new verb is added here on purpose (the
  * grammar test is a pinned list, plan s5a2 §5.1).
@@ -113,10 +116,10 @@ function adder(ctx: z.RefinementCtx): Add {
   return (rule, where, what) => ctx.addIssue({ code: "custom", message: `[${rule}] ${where}: ${what}`, path: [] });
 }
 
-/** The checks every bank text takes: printable, at most POOL_TEXT_MAX (unless unbound), no youth word or prop, no hair colour, no selfie word, no camera. */
-function checkText(add: Add, where: string, text: string, bound = true): void {
+/** The checks every bank text takes: printable, at most `max` characters (POOL_TEXT_MAX unless said; null: unbound), no youth word or prop, no hair colour, no selfie word, no camera. */
+function checkText(add: Add, where: string, text: string, max: number | null = POOL_TEXT_MAX): void {
   if (text.trim() !== text || text.length === 0 || !PRINTABLE.test(text)) add(BANK_RULE.text, where, "must be plain printable ASCII with no edge space");
-  if (bound && text.length > POOL_TEXT_MAX) add(BANK_RULE.text, where, `must be at most ${POOL_TEXT_MAX} characters`);
+  if (max !== null && text.length > max) add(BANK_RULE.text, where, `must be at most ${max} characters`);
   const youth = youthWords(text, "descriptor");
   if (youth.length > 0) add(BANK_RULE.youth, where, `names a youth word (${youth.join(", ")})`);
   if (YOUTH_PROPS.test(text)) add(BANK_RULE.youthProp, where, "names a youth prop");
@@ -129,13 +132,13 @@ const isMirrorCapture = (capture: Capture): boolean => shotOf(capture) === "mirr
 
 function checkMotion(add: Add, where: string, moment: Moment): void {
   const motion = moment.motion;
-  checkText(add, `${where} (motion)`, motion);
+  checkText(add, `${where} (motion)`, motion, MOTION_TEXT_MAX);
   if (!MOTION_START.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "opens with «she» or «her»");
   if (!MOTION_SMALL.test(motion)) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is small or slow: «slowly», «a little», «a bit», «slightly», «gently» or «small»");
   if (/\bthen\b|;/.test(motion) || (motion.match(/\band\b/g) ?? []).length > 1) add(BANK_RULE.motionGrammar, `${where} (motion)`, "is one movement (at most a there-and-back with one «and»)");
   if (MOTION_STAGING.test(motion)) add(BANK_RULE.motionStaging, `${where} (motion)`, "moves her, never the camera or the edit");
   if (PHONE_WORDS.test(motion) && moment.phone !== true) add(BANK_RULE.motionPhone, `${where} (motion)`, "brings in a phone the moment does not use (a second phone)");
-  if (moment.startPose !== undefined) checkText(add, `${where} (start pose)`, moment.startPose);
+  if (moment.startPose !== undefined) checkText(add, `${where} (start pose)`, moment.startPose, MOTION_TEXT_MAX);
 }
 
 function checkMoment(add: Add, where: string, moment: Moment, place: { room?: true | undefined; mirror?: true | undefined }, outfits: ReadonlySet<string>): void {
@@ -236,7 +239,7 @@ function categoryBankSchema(category: BankCategory) {
       for (const place of bank.places) {
         const where = place.name;
         checkText(add, `${where}.name`, place.name);
-        checkText(add, `${where}.at`, place.at, false);
+        checkText(add, `${where}.at`, place.at, null);
         if (MIRROR.test(place.name) || MIRROR.test(place.at)) add(BANK_RULE.mirrorWord, where, "a place must not name a mirror: only the mirror capture's own line does");
         if (!AT_START.test(place.at)) add(BANK_RULE.at, `${where}.at`, "opens with a preposition");
         if (place.times.length === 0 || place.times.includes("studio lighting")) add(BANK_RULE.times, `${where}.times`, "one or more times of day, never the stored «studio lighting»");

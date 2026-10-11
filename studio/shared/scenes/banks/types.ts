@@ -8,8 +8,8 @@ export type HairLength = (typeof HairLengthEnum)["options"][number];
 //
 // The core principle (the owner, 2026-10-11): a real girl documenting her own life. Every moment is first a PHOTO moment that ordinary photo runs draw,
 // listing the captures it fits (who takes the photo); its `motion` is how the same moment animates later (5b reads it; nothing in 5a.2 does), and an
-// optional `startPose` is the start still of a reveal motion (data only). Every bank text is at most POOL_TEXT_MAX (35) characters: a long wording
-// (the prone selfie's) lives in its capture line and its pinned outfits, never in a moment.
+// optional `startPose` is the start still of a reveal motion (data only). Every bank text is at most POOL_TEXT_MAX (35) characters, a motion and a
+// start pose at most 60: a long wording (the prone selfie's) lives in its capture line and its pinned outfits, never in a moment.
 
 /** The five built-in categories, by the engine's own names (engine/scenes/types.ts CATEGORIES; pinned equal in engine/scenes/banks.sweep.test.ts).
  *  Labels are computed from the id at render (I5.33): `photoshoot` is «Улица», `travel` is «Виды». */

@@ -90,7 +90,7 @@ describe("a category bank", () => {
     ["a phone moment on a hand-held capture", { ...plain, text: "scrolls through her phone", phone: true, gaze: "own", captures: ["above"] }, BANK_RULE.captures],
     ["a legs capture on a moment that is not a legs moment", { ...plain, captures: ["pov-legs"] }, BANK_RULE.legsCapture],
     ["a moment pinned to an outfit the category does not have", { ...plain, outfits: ["cotton shorts and a tee"] }, BANK_RULE.pinnedOutfit],
-    ["a motion over the pool text bound", { ...plain, motion: "she slowly lifts her hips behind her and lowers them" }, BANK_RULE.text],
+    ["a motion over its 60-character bound", { ...plain, motion: "she slowly lifts her hips behind her and lowers them back onto the bed" }, BANK_RULE.text],
     ["a motion that does not start with «she» or «her»", { ...plain, motion: "slowly she sips" }, BANK_RULE.motionGrammar],
     ["a motion that is not small or slow", { ...plain, motion: "she jumps up" }, BANK_RULE.motionGrammar],
     ["a motion of two movements («then»)", { ...plain, motion: "she sips then slowly smiles" }, BANK_RULE.motionGrammar],
@@ -99,7 +99,7 @@ describe("a category bank", () => {
     ["a motion that zooms or cuts", { ...plain, motion: "she sips as it zooms in slowly" }, BANK_RULE.motionStaging],
     ["a motion that brings in a phone the moment does not use", { ...plain, motion: "she checks her phone slowly" }, BANK_RULE.motionPhone],
     ["a motion with a youth word", { ...plain, motion: "she sips like a girl, slowly" }, BANK_RULE.youth],
-    ["a start pose over the pool text bound", { ...plain, startPose: "lying flat on her stomach with her hips down" }, BANK_RULE.text],
+    ["a start pose over its 60-character bound", { ...plain, startPose: "lying flat on her stomach on the bed with her hips down, arms out" }, BANK_RULE.text],
     ["a start pose with a youth prop", { ...plain, startPose: "holding a teddy bear" }, BANK_RULE.youthProp],
     ["a timer moment that holds something (its line: «both of her hands are empty», I5.32)", { ...plain, text: "holds a takeaway coffee" }, BANK_RULE.timerHands],
     ["a timer moment that sips a drink", { ...plain, text: "sips her coffee" }, BANK_RULE.timerHands],
@@ -122,6 +122,12 @@ describe("a category bank", () => {
   test("refuses a moment without a motion (I5.35: every moment carries one)", () => {
     const { motion: _motion, ...noMotion } = plain;
     expect(rulesOf(categoryBankProblems({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, noMotion] }, STREET] }, "home"))).toContain(BANK_RULE.shape);
+  });
+
+  // Review M5 (plan I5.21, 5b.1 QV-5): a motion and a start pose may run to 60 characters, so the approved Kling B2 wording fits as it is.
+  test("the approved Kling B2 motion and a long start pose fit their 60-character bound", () => {
+    const kling: Moment = { ...plain, motion: "she slowly lifts her hips behind her and lowers them", startPose: "lying flat on her stomach with her hips down" };
+    expect(categoryBankProblems(withMoment(kling), "home")).toEqual([]);
   });
 
   test("a motion may name her phone when the moment uses it", () => {
