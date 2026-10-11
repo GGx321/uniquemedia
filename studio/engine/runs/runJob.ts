@@ -10,7 +10,7 @@ import type { PriceBook } from "../money/prices";
 import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeoutSignal";
 import { truncate } from "../openrouter/transport";
 import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
-import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, plainSentence, roomPlaceOf, slotLookOf } from "../scenes";
+import { assembleRun, hairLinesOf, isOwnSlot, photoCategoryOf, plainSentence, roomPlaceOf, slotLookOf, type AssembledSlot } from "../scenes";
 import type { HairLength } from "../../shared/scenes/banks/types";
 import { localSentences } from "../scenes/localSentences";
 import { slotKeyOf } from "../scenes/phoneLook";
@@ -356,10 +356,17 @@ async function prepareGates(target: MasterTarget, reference: LibraryReference): 
   }
 }
 
+/** Whether the journal already holds exactly these prompts for these slots. Slots that ended earlier are not assembled, so the journal may hold more than `assembled`. */
 function samePrompts(journaled: ReadonlyMap<number, string> | null, assembled: ReadonlyMap<number, string>): boolean {
-  if (journaled === null || journaled.size !== assembled.size) return false;
+  if (journaled === null) return false;
   for (const [slotIndex, prompt] of assembled) if (journaled.get(slotIndex) !== prompt) return false;
   return true;
+}
+
+/** The end of a slot whose sentence broke today's word rules at the assembler: the rule and its words (ours to name), never the sentence. */
+function slotTextProblemOf(result: Extract<AssembledSlot, { ok: false }>): EngineError {
+  const why = result.problems.map((p) => `${p.reason === "youth-word" ? "a youth word" : "a revealing word"}: ${p.words.join(", ")}`).join("; ");
+  return { code: "VALIDATION", sceneReason: result.reason, detail: truncate(`the sentence for slot ${result.slotIndex} still carries ${why}`) };
 }
 
 /**
@@ -410,23 +417,28 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
     }
     return { ok: false, end: { status: "failed", error: written.error } };
   }
-  let assembled: Map<number, string>;
-  try {
-    const hairLength = deps.hairLengthOf?.(plan.avatarId);
-    const hairLines = hairLength === undefined ? null : hairLinesOf(plan.scenes.slots, hairLength, plan.runId);
-    assembled = new Map(
-      assembleRun(job.descriptor, plan.scenes, written.sentences, master, {
-        runId: plan.runId,
-        cameraRealism: plan.cameraRealism === true,
-        roomPlaceOf,
-        lookOf: slotLookOf,
-        ...(hairLines === null ? {} : { hairStyleOf: (slot) => hairLines.get(slot.slotIndex) ?? null }),
-      }).map((a) => [a.slotIndex, a.prompt]),
-    );
-  } catch (error) {
-    return { ok: false, end: { status: "failed", error: { code: "INTERNAL", detail: truncate(`the scene prompts could not be assembled: ${messageOf(error)}`) } } };
+  // 5a.2 (S5.6d, plan s5a2 §5.5): only the slots still open are assembled, and a sentence that breaks today's word rules ends ITS slot (free, nothing was reserved),
+  // not the run. Slots that ended earlier (on a resume) are neither assembled nor ended again.
+  const hairLength = deps.hairLengthOf?.(plan.avatarId);
+  const hairLines = hairLength === undefined ? null : hairLinesOf(plan.scenes.slots, hairLength, plan.runId);
+  const openSlots = state.slots.filter((s) => s.end === null);
+  const results = assembleRun(job.descriptor, { ...plan.scenes, slots: openSlots.map((s) => s.slot) }, written.sentences, master, {
+    runId: plan.runId,
+    cameraRealism: plan.cameraRealism === true,
+    roomPlaceOf,
+    lookOf: slotLookOf,
+    ...(hairLines === null ? {} : { hairStyleOf: (slot) => hairLines.get(slot.slotIndex) ?? null }),
+  });
+  const assembled = new Map<number, string>();
+  for (const result of results) {
+    if (result.ok) {
+      assembled.set(result.slotIndex, result.prompt);
+      continue;
+    }
+    const ended = openSlots.find((s) => s.slot.slotIndex === result.slotIndex);
+    if (ended !== undefined) await endSlot(ctx, ended, { status: "failed", error: slotTextProblemOf(result) });
   }
-  if (!samePrompts(state.prompts, assembled)) {
+  if (assembled.size > 0 && !samePrompts(state.prompts, assembled)) {
     await journal(ctx, { type: "prompts", prompts: [...assembled].map(([slotIndex, prompt]) => ({ slotIndex, prompt })), at: at(ctx) });
   }
   return { ok: true, prompts: assembled };

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { chatBody, fakeFetch, makeClient, setupMoney, asLibraryReference, JPEG, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
-import { assembleRun, hairLinesOf, POOLS, roomPlaceOf, slotLookOf, type PlanSlot } from "../scenes";
+import { assembledScenes, assembleRun, hairLinesOf, POOLS, roomPlaceOf, slotLookOf, type AssembledScene, type PlanSlot } from "../scenes";
 import { redrawSlot } from "../scenes/redraw";
 import { PlanSlotSchema } from "../scenes/schema";
 import { captureOfShot } from "../../shared/scenes/captures";
@@ -25,7 +25,7 @@ const SLOTS = plannedSlots(RUN);
 const DESCRIPTOR: AvatarDescriptor = { age: 25, text: "25-year-old European woman, light olive skin, hazel eyes, shoulder-length wavy chestnut hair, athletic build." };
 const MASTER = asLibraryReference(JPEG);
 const SENTENCES = new Map(SLOTS.map((s) => [s.slotIndex, `She is just there for a moment (${s.slotIndex}).`]));
-const assemble = (): ReturnType<typeof assembleRun> => assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf });
+const assemble = (): AssembledScene[] => assembledScenes(assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf }));
 const promptOf = (index: number): string => assemble().find((a) => a.slotIndex === index)?.prompt ?? "";
 const stillThere = (slot: PlanSlot): boolean => POOLS[slot.category as keyof typeof POOLS]?.locations.some((l) => l.name === slot.location) === true;
 
@@ -76,8 +76,8 @@ describe("a resume of the plan.json written by main 3a9cd498, on the Stage 5 cod
 // finds no moment tags at the places the banks renamed, and still assembles, redraws and parses. The file itself is never re-pinned.
 describe("a resume of the same plan.json with the 5a.2 look wired in", () => {
   const hair = hairLinesOf(SLOTS, "shoulder", RUN.runId);
-  const assembleFull = (): ReturnType<typeof assembleRun> =>
-    assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf, lookOf: slotLookOf, hairStyleOf: (slot) => hair.get(slot.slotIndex) ?? null, cameraRealism: true });
+  const assembleFull = (): AssembledScene[] =>
+    assembledScenes(assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf, lookOf: slotLookOf, hairStyleOf: (slot) => hair.get(slot.slotIndex) ?? null, cameraRealism: true }));
 
   test("its slots carry no capture and no legwear, so each reads its capture from its shot", () => {
     expect(SLOTS.every((slot) => slot.capture === undefined && slot.legwear === undefined)).toBe(true);

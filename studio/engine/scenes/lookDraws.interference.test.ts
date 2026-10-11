@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
-import { assembleRun } from "./assembler";
+import { assembledScenes, assembleRun } from "./assembler";
 import { imperfectionOf, roomStateOf } from "./phoneLook";
 import { plan, type PlanInput } from "./planner";
 import { roomPlaceOf } from "./roomPlace";
@@ -33,7 +33,7 @@ function deepFreeze<T>(value: T): T {
 /** Assembles every slot of the plan, the way a run does (the room lookup wired in). */
 function assemble(scenes: ScenePlan, runId: string): string[] {
   const sentences = new Map(scenes.slots.map((s) => [s.slotIndex, "She stands there for a moment."]));
-  return assembleRun(DESCRIPTOR, scenes, sentences, MASTER, { runId, roomPlaceOf, cameraRealism: true }).map((a) => a.prompt);
+  return assembledScenes(assembleRun(DESCRIPTOR, scenes, sentences, MASTER, { runId, roomPlaceOf, cameraRealism: true })).map((a) => a.prompt);
 }
 
 describe("the look draws do not move the planner", () => {

@@ -14,7 +14,7 @@ import { reconcile } from "../money/reconcile";
 import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type FetchCall, type Reply } from "../openrouter/testing/fakes";
 import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
-import { plan as planScenes, planWithPools, plainSentence, POOLS, type PlanSlot } from "../scenes";
+import { isOwnSlot, plan as planScenes, planWithPools, plainSentence, POOLS, type PlanSlot } from "../scenes";
 import { BANKS } from "../../shared/scenes/banks";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { LLM_ONLY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
@@ -2268,14 +2268,19 @@ describe("crash and resume", () => {
     expect(prompt).toContain(`${SENTENCE} (slot 1)`);
   });
 
-  test("review L3: a writer sentence edited in the journal to break today's rules stops the resume before anything is sent", async () => {
+  // 5a.2 (S5.6d, plan s5a2 I5.31): this test used to say «stops the resume (failed, INTERNAL) before anything is sent». A sentence that breaks today's rules now ends
+  // its slot alone, free, with the scene reason `slot-text-problem`; the run itself finishes (here its only slot ended, so it is done with one failed slot).
+  test("review L3: a writer sentence edited in the journal to break today's rules ends that slot before anything is sent", async () => {
     const run = await newRun(1);
     await cancelledAfterPrompts(run);
     await library.appendJournal(RUN_ID, { type: "writer", chunk: 1, sentences: [{ slotIndex: 1, sentence: "A teenage girl laughs at the kitchen counter." }], at: new Date(NOW).toISOString() }, RunEventSchema);
 
     const resumed = start(run, { jobId: "job-00000002" });
-    expect(await resumed.end).toMatchObject({ status: "failed", error: { code: "INTERNAL" } });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 1 });
     expect(resumed.net.calls).toHaveLength(0);
+    const ended = (await journal()).filter((e) => e.type === "slot");
+    expect(ended).toHaveLength(1);
+    expect(ended[0]).toMatchObject({ slotIndex: 1, status: "failed", error: { code: "VALIDATION", sceneReason: "slot-text-problem" } });
   });
 
   test("review L15: a crash between a refusal's settle and its journal line never resends that prompt to the primary", async () => {
@@ -2298,6 +2303,112 @@ describe("crash and resume", () => {
 });
 
 // ---------- T7a whole-slice review: a paid gate's own queue wait must not count against its timeout (finding 1) ----------
+
+// ---------- 5a.2 (S5.6d, plan s5a2 §5.5 «Per-slot assembler end», I5.31): one bad sentence ends one slot ----------
+
+describe("a slot whose sentence breaks the word rules ends alone", () => {
+  const BAD = "She lounges by the pool in a bikini, laughing at the camera.";
+  const writerLine = (sentences: { slotIndex: number; sentence: string }[]) => ({ type: "writer" as const, chunk: 1, sentences, at: new Date(NOW).toISOString() });
+
+  /** Journals the writer's chunk for `run` with slot 2's sentence replaced by `bad`, so the job starts with every sentence written and no writer request left. */
+  async function journalWriterWith(run: RunPlan, bad: string): Promise<void> {
+    const sentences = plannedSlots(run).map((slot) => ({ slotIndex: slot.slotIndex, sentence: slot.slotIndex === 2 ? bad : `${SENTENCE} (slot ${slot.slotIndex})` }));
+    await library.appendJournal(RUN_ID, writerLine(sentences), RunEventSchema);
+  }
+
+  const slotEnds = async () => (await journal()).filter((e) => e.type === "slot");
+
+  test("slot 2 ends failed with the scene reason, free; slots 1 and 3 are drawn; the run is done", async () => {
+    const run = await newRun(3);
+    await journalWriterWith(run, BAD);
+    const { end, net, sent } = start(run);
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(net.imageCalls()).toHaveLength(2);
+    expect(sent.sort()).toEqual([`${RUN_ID}:slot-1#1`, `${RUN_ID}:slot-3#1`]);
+    const ended = (await slotEnds()).find((e) => e.type === "slot" && e.slotIndex === 2);
+    expect(ended).toMatchObject({ status: "failed", error: { code: "VALIDATION", sceneReason: "slot-text-problem" } });
+    expect(reservedIds().some((id) => id.includes("slot-2"))).toBe(false);
+  });
+
+  test("the error says which rule and which words, and never carries the sentence", async () => {
+    const run = await newRun(3);
+    await journalWriterWith(run, BAD);
+    await start(run).end;
+
+    const ended = (await slotEnds()).find((e) => e.type === "slot" && e.slotIndex === 2);
+    const detail = ended?.type === "slot" ? (ended.error?.detail ?? "") : "";
+    expect(detail).toContain("slot 2");
+    expect(detail).toContain("revealing word");
+    expect(detail).toContain("bikini");
+    expect(detail).not.toContain("laughing at the camera");
+  });
+
+  test("it is announced as a finished slot like any other end, and the job's count includes it", async () => {
+    const run = await newRun(3);
+    await journalWriterWith(run, BAD);
+    const { end, progress } = start(run);
+    await end;
+
+    expect(progress.map((p) => p.done)).toEqual([1, 2, 3]);
+    expect(progress[0]).toMatchObject({ done: 1, total: 3, photoId: null });
+  });
+
+  test("the prompts journaled are the open slots' alone: the ended slot has none", async () => {
+    const run = await newRun(3);
+    await journalWriterWith(run, BAD);
+    await start(run).end;
+
+    const prompts = (await journal()).flatMap((e) => (e.type === "prompts" ? e.prompts.map((p) => p.slotIndex) : []));
+    expect(prompts.sort()).toEqual([1, 3]);
+  });
+
+  test("a resume does not assemble or end it again: one end in the journal, no new request, no empty prompts event", async () => {
+    const run = await newRun(3);
+    await journalWriterWith(run, BAD);
+    await start(run).end;
+    const before = await journal();
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(resumed.net.calls).toHaveLength(0);
+    const after = await journal();
+    expect(after.filter((e) => e.type === "slot" && e.slotIndex === 2)).toHaveLength(1);
+    expect(after.filter((e) => e.type === "prompts")).toHaveLength(before.filter((e) => e.type === "prompts").length);
+  });
+
+  test("a job cancelled with images in flight resumes to finish slots 1 and 3, and slot 2 stays ended once", async () => {
+    const run = await newRun(3);
+    await journalWriterWith(run, BAD);
+    const controller = new AbortController();
+    const hanging = network({ image: () => ({ hang: true }) });
+    const first = start(run, { net: hanging, signal: controller.signal });
+    await until(() => hanging.imageCalls().length === 2, "both open slots' first request");
+    controller.abort(new Error("cancelled by the user"));
+    await first.end;
+    expect((await slotEnds()).filter((e) => e.type === "slot" && e.slotIndex === 2)).toHaveLength(1);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect((await slotEnds()).filter((e) => e.type === "slot" && e.slotIndex === 2)).toHaveLength(1);
+    expect(resumed.net.imageCalls().length).toBeGreaterThan(0);
+    expect(resumed.net.imageCalls().map((c) => String(c.json().prompt)).every((prompt) => !prompt.includes("bikini"))).toBe(true);
+  });
+
+  test("a plain sentence that breaks the rules ends its slot too: a writer refusal never ends the run, and a bad stored text only its own slot", async () => {
+    const base = await newRun(3);
+    const run: RunPlan = { ...base, scenes: { ...base.scenes, slots: base.scenes.slots.map((slot) => (slot.slotIndex === 2 && !isOwnSlot(slot) ? { ...slot, outfit: "a red bikini" } : slot)) } };
+    const net = network({ writer: () => ({ status: 200, body: chatBody(JSON.stringify({ scenes: [] }), { cost: 0.002 }) }) });
+    const { end } = start(run, { net });
+
+    expect(await end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(net.writerCalls()).toHaveLength(2);
+    expect(net.imageCalls()).toHaveLength(2);
+    expect((await slotEnds()).find((e) => e.type === "slot" && e.slotIndex === 2)).toMatchObject({ status: "failed", error: { sceneReason: "slot-text-problem" } });
+    expect(scopeCommitted()).toBeLessThanOrEqual(run.capMicros);
+  });
+});
 
 describe("a paid gate's timeout starts only once it actually has a network slot", () => {
   test("repro A: pool 1, 3 slots, a 60 ms image and a 100 ms gate timeout — the gate's own instant check must not be timed out by the FIFO wait behind other slots' images", async () => {

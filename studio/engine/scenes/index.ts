@@ -47,4 +47,4 @@ export {
   type WriterScene,
 } from "./writer";
 export { plainSentence } from "./plainSentence";
-export { assembleRun, assembleSlot, AssemblerRefusalError, sentenceProblems, type AssembledScene, type AssembleOptions, type SentenceProblem } from "./assembler";
+export { assembledScenes, assembleRun, assembleSlot, AssemblerRefusalError, sentenceProblems, type AssembledScene, type AssembledSlot, type AssembleOptions, type SentenceProblem } from "./assembler";

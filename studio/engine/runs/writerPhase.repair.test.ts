@@ -272,7 +272,7 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
 
   test("a chunk whose every id is already used takes the plain sentence without a request", async () => {
     const used = { type: "reserve" as const, attemptId: "x", jobId: "job-00000000", scope: SCOPE, model: "x-ai/grok-4.3", worstMicros: 37_500, at: "2026-09-24T12:00:00.000Z" };
-    const release = { type: "release" as const, attemptId: "x", at: "2026-09-24T12:00:00.000Z" };
+    const release = { type: "release" as const, attemptId: "x", reason: "unsent", at: "2026-09-24T12:00:00.000Z" };
     const { net, result } = start([], phaseOf(4, { plain: plainOf, ledger: { reserveOf: () => used, closeOf: () => release } }));
 
     expect((await result).ok).toBe(true);

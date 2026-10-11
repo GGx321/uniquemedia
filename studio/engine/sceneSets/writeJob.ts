@@ -5,7 +5,7 @@ import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { runWriterConfig } from "../runs/plan";
 import { runWriterPhase, type WriterPhase, type WriterPhaseDeps } from "../runs/writerPhase";
-import { chunkState, pendingChunks } from "./chunks";
+import { pendingChunks } from "./chunks";
 import { plainSentence } from "../scenes";
 import { setLocal } from "./local";
 

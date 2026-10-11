@@ -9,7 +9,7 @@ import { PlanSlotSchema, PoseSchema, type OwnPlanSlot, type PlanSlot } from "./s
 import { SHOTS } from "./types";
 import { revealingWordsIn } from "./words";
 import { captureOfShot, CAPTURES } from "../../shared/scenes/captures";
-import { AssemblerRefusalError, assembleRun, assembleSlot as assembleWith, BINDING_ANCHOR, HIDDEN_FACE_POSE_PHRASE, NO_FACE_ANCHOR, POSE_PHRASE, type AssembleOptions } from "./assembler";
+import { AssemblerRefusalError, assembledScenes, assembleRun, assembleSlot as assembleWith, BINDING_ANCHOR, HIDDEN_FACE_POSE_PHRASE, NO_FACE_ANCHOR, POSE_PHRASE, type AssembleOptions } from "./assembler";
 import { artefactLine, captureLineOf, CONSTRAINTS, hairLine, imperfectionOf, lightOf, MIRROR_BACK_LINE, NEUTRAL_LIGHT, phoneHandLineOf, roomStateOf, slotKeyOf, type RoomPlace } from "./phoneLook";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -435,8 +435,8 @@ describe("deterministic per slot (I5.4)", () => {
 
   test("the plan's seed is not an input: two plans of one run id and slot assemble the same prompt", () => {
     const options = { ...OPTIONS, cameraRealism: true };
-    const first = assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots: [slot()] }, new Map([[1, SENTENCE]]), MASTER, options);
-    const second = assembleRun(DESCRIPTOR, { version: 1, seed: 0, slots: [slot()] }, new Map([[1, SENTENCE]]), MASTER, options);
+    const first = assembledScenes(assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots: [slot()] }, new Map([[1, SENTENCE]]), MASTER, options));
+    const second = assembledScenes(assembleRun(DESCRIPTOR, { version: 1, seed: 0, slots: [slot()] }, new Map([[1, SENTENCE]]), MASTER, options));
     expect(first[0]?.prompt).toBe(second[0]?.prompt);
   });
 
@@ -519,11 +519,61 @@ describe("assembleRun", () => {
     const scenePlan = plan({ seed: 1, count: 3, categories: ["home"] });
     const sentences = new Map(scenePlan.slots.map((s) => [s.slotIndex, SENTENCE]));
 
-    const scenes = assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER, OPTIONS);
+    const scenes = assembledScenes(assembleRun(DESCRIPTOR, scenePlan, sentences, MASTER, OPTIONS));
 
     expect(scenes).toHaveLength(3);
     expect(scenes.map((s) => s.slotIndex)).toEqual(scenePlan.slots.map((s) => s.slotIndex));
     for (const scene of scenes) expect(scene.references).toEqual([MASTER]);
+  });
+
+  // 5a.2 (S5.6d, plan s5a2 §5.5 «Per-slot assembler end»): one sentence that breaks today's word rules ends its slot, not the run.
+  describe("per-slot results", () => {
+    const scenePlan = plan({ seed: 1, count: 3, categories: ["home"] });
+    const [first, second, third] = scenePlan.slots;
+    if (first === undefined || second === undefined || third === undefined) throw new Error("the plan has fewer than three slots");
+    const sentencesWith = (bad: string) =>
+      new Map([
+        [first.slotIndex, SENTENCE],
+        [second.slotIndex, bad],
+        [third.slotIndex, SENTENCE],
+      ]);
+
+    test("every slot that passes is ok, with its prompt, in plan order", () => {
+      const results = assembleRun(DESCRIPTOR, scenePlan, sentencesWith(SENTENCE), MASTER, OPTIONS);
+
+      expect(results.map((r) => [r.slotIndex, r.ok])).toEqual(scenePlan.slots.map((s) => [s.slotIndex, true]));
+      for (const result of results) if (result.ok) expect(result.prompt.length).toBeGreaterThan(0);
+    });
+
+    test("a revealing word ends that slot as a slot-text-problem, naming the word; the other slots are assembled", () => {
+      const results = assembleRun(DESCRIPTOR, scenePlan, sentencesWith("She lounges by the pool in a bikini."), MASTER, OPTIONS);
+
+      expect(results.map((r) => r.ok)).toEqual([true, false, true]);
+      const ended = results[1];
+      expect(ended).toMatchObject({ ok: false, slotIndex: second.slotIndex, reason: "slot-text-problem", problems: [{ reason: "revealing-word" }] });
+      expect(ended?.ok === false && ended.problems[0]?.words.map((w) => w.toLowerCase())).toContain("bikini");
+    });
+
+    test("a youth word ends that slot the same way", () => {
+      const results = assembleRun(DESCRIPTOR, scenePlan, sentencesWith("A young girl laughs by the window."), MASTER, OPTIONS);
+
+      expect(results[1]).toMatchObject({ ok: false, reason: "slot-text-problem", problems: [{ reason: "youth-word" }] });
+      expect(results[0]?.ok && results[2]?.ok).toBe(true);
+    });
+
+    test("the slots after the one that ended get the very prompts they get without it", () => {
+      const clean = assembleRun(DESCRIPTOR, scenePlan, sentencesWith(SENTENCE), MASTER, OPTIONS);
+      const hit = assembleRun(DESCRIPTOR, scenePlan, sentencesWith("She lounges by the pool in a bikini."), MASTER, OPTIONS);
+
+      expect(hit[2]).toEqual(clean[2]);
+      expect(hit[0]).toEqual(clean[0]);
+    });
+
+    test("the error a hit carries names the rules' words only, never the sentence", () => {
+      const results = assembleRun(DESCRIPTOR, scenePlan, sentencesWith("She lounges by the pool in a bikini, a secret only the model wrote."), MASTER, OPTIONS);
+
+      expect(JSON.stringify(results[1])).not.toContain("secret only the model wrote");
+    });
   });
 
   test("throws when a slot has no sentence", () => {

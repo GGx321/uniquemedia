@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { DESCRIPTOR_MAX_CHARS, youthWords, type AvatarDescriptor, type CategorySnapshot } from "../../shared/engine";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
-import { AssemblerRefusalError, assembleRun, assembleSlot as assembleWith, sentenceProblems, type AssembleOptions } from "./assembler";
+import { AssemblerRefusalError, assembledScenes, assembleRun, assembleSlot as assembleWith, sentenceProblems, type AssembleOptions } from "./assembler";
 import type { OwnPlanSlot, PlanSlot } from "./schema";
 import { revealingWordsIn } from "./words";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
@@ -104,7 +104,7 @@ describe("a custom slot reads as an ordinary phone photo", () => {
       [1, SENTENCE],
       [2, SENTENCE],
     ]);
-    const prompts = assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots }, sentences, MASTER, OPTIONS);
+    const prompts = assembledScenes(assembleRun(DESCRIPTOR, { version: 1, seed: 1, slots }, sentences, MASTER, OPTIONS));
     for (const scene of prompts) {
       expect(scene.prompt).toContain("Ordinary phone photo");
       expect(scene.prompt).not.toMatch(/editorial/i);

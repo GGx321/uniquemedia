@@ -216,11 +216,27 @@ export function assembleSlot(descriptor: AvatarDescriptor, slot: RunSlot, senten
   return { slotIndex: slot.slotIndex, prompt: normalize(raw), references: [master] };
 }
 
-/** Assembles every slot of a plan against one sentence map (the writer job's result); throws if any slot has no sentence. */
-export function assembleRun(descriptor: AvatarDescriptor, scenePlan: { readonly slots: readonly RunSlot[] } & Partial<Omit<ScenePlan, "slots">>, sentences: ReadonlyMap<number, string>, master: LibraryReference, options: AssembleOptions): AssembledScene[] {
-  return scenePlan.slots.map((slot) => {
+/**
+ * 5a.2 (S5.6d, plan s5a2 §5.5): one slot of a run as the assembler leaves it. A slot whose sentence breaks today's youth or revealing word rules is not a defect of
+ * the run: it ends alone (`slot-text-problem`), free, before any image is paid for, and the other slots go on.
+ */
+export type AssembledSlot = ({ ok: true } & AssembledScene) | { ok: false; slotIndex: number; reason: "slot-text-problem"; problems: SentenceProblem[] };
+
+/** The scenes among a run's per-slot results, in order. */
+export function assembledScenes(results: readonly AssembledSlot[]): AssembledScene[] {
+  return results.flatMap((result) => (result.ok ? [{ slotIndex: result.slotIndex, prompt: result.prompt, references: result.references }] : []));
+}
+
+/**
+ * Assembles every slot of a plan against one sentence map (the writer job's result), one result per slot in plan order. A sentence that breaks the word rules
+ * is that slot's `slot-text-problem` result; a slot with no sentence at all is a defect and throws.
+ */
+export function assembleRun(descriptor: AvatarDescriptor, scenePlan: { readonly slots: readonly RunSlot[] } & Partial<Omit<ScenePlan, "slots">>, sentences: ReadonlyMap<number, string>, master: LibraryReference, options: AssembleOptions): AssembledSlot[] {
+  return scenePlan.slots.map((slot): AssembledSlot => {
     const sentence = sentences.get(slot.slotIndex);
     if (sentence === undefined) throw new RangeError(`no writer sentence for slot ${slot.slotIndex}`);
-    return assembleSlot(descriptor, slot, sentence, master, options);
+    const problems = sentenceProblems(sentence);
+    if (problems.length > 0) return { ok: false, slotIndex: slot.slotIndex, reason: "slot-text-problem", problems };
+    return { ok: true, ...assembleSlot(descriptor, slot, sentence, master, options) };
   });
 }
