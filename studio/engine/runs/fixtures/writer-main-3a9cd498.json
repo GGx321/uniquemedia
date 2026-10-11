@@ -1,14 +1,14 @@
 {
-  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer) and at S5.4 (2026-10-11, owner canary C1: the photoshoot park path and the glamour and photoshoot outfit changes re-plan chunk 1, and the selfie shot label reads «her own arm's-length photo» instead of «her own front-camera selfie», and both one-hand rules in the system prompt say «an arm's-length photo» in place of «a front-camera selfie», same byte length): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged.",
+  "source": "main 3a9cd498: sha256 of JSON.stringify(...) of what the writer sent for a built-in 30-slot run (plan seed 3, all five categories, profile and back allowed, run-00000001) RE-PINNED at S5.1b (2026-10-10) and again at S5.1c and S5.R1 (mirror-free place names, texts within POOL_TEXT_MAX; the selfie phone rule, never-describe-mess and candid-gaze lines, ranges in slot lists; new plan from the pool rewrite; pose labels speak of the viewer) and at S5.4 (2026-10-11, owner canary C1: the photoshoot park path and the glamour and photoshoot outfit changes re-plan chunk 1, and the selfie shot label reads «her own arm's-length photo» instead of «her own front-camera selfie», and both one-hand rules in the system prompt say «an arm's-length photo» in place of «a front-camera selfie», same byte length): the writer's system prompt, SHOT_LABEL, the light field and the compact slots JSON changed on purpose; the reserves are unchanged. RE-PINNED at S5.5 (2026-10-11, owner canary C1': glamour is an evening out, its seven new places re-plan chunk 1 only: chunk1, chunk1-empty and the first two bodies moved; chunk 2, the third body and the reserves are unchanged).",
   "messages": {
-    "chunk1": "dfff34a4ea24683e8000a83a93cbb786c8649e8ab60c3014cee61b2ae12cebd1",
-    "chunk1-empty": "e3ff26dafa5b2588e084276eb8e051a1bc3ef5b859d93a3a109a0ce5e2d5ffc4",
+    "chunk1": "b0d42b075faf6e09e69d9369e1c5e600d446f98166c6d0ea3cfdd2a89fa91028",
+    "chunk1-empty": "0e04ebfa1ce4bf536d65bcd04724c29e7551962006700441efbf554aae0d420f",
     "chunk2": "652e68d28fb5b6c82ca0e249f06e868b08615bdbd20bc4b40a311edba12995b0",
     "chunk2-empty": "5f77c1e17164e9b0efaa90af3540955205d314848b29b82e2d7e7fb5da08b732"
   },
   "bodies": [
-    "d8b69751dc4580a64002807bdd66cb0b35468640779b1379e49ac3516fac4750",
-    "d4b4d32afdb9993dc5d645f246d2813e24b36ada572359fa3c6fd7e06933b43e",
+    "79178b30360dd515038315e1c21e2464913278f17ed00b28306ae1df4aa02519",
+    "b936ff995e6e5c63380a976032536cda1994b22f05294c7d6909177e618dd1eb",
     "71580388f087d315e356a94acc3c90b38adb3a246ef2364370593f71cdd4c228"
   ],
   "reserves": [

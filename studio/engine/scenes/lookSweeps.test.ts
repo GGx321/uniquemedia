@@ -129,7 +129,16 @@ const BODIED: Swept[] = BODY_PHRASES.flatMap((body, i) => {
   return all;
 });
 
-const EVERYTHING = [...SWEPT, ...REDRAWN, ...BODIED];
+// S5.5: the only built-in activity that may happen in a messy room is the home bed's stretching (the glamour rooms are tidy now), and the messy draw is at most 5 %, so a
+// plan sweep may never reach it. This fixed slot, across 200 runs, makes the messy state a certainty of the sweep instead of a matter of the seeds.
+const MESSY_ROOMS: Swept[] = (() => {
+  const slot = PlanSlotSchema.parse({ slotIndex: 1, category: "home", location: "her bed in the morning", timeOfDay: "morning", activity: "stretching after waking up", outfit: POOLS.home.outfits[0], shot: "friend", pose: "front", attemptIdBase: "slot-1", repeatedPair: false });
+  const all: Swept[] = [];
+  for (let run = 1; run <= 200; run++) all.push(...assembleAll([slot], `run-m${run}`, true));
+  return all;
+})();
+
+const EVERYTHING = [...SWEPT, ...REDRAWN, ...BODIED, ...MESSY_ROOMS];
 const hits = (check: (s: Swept) => string | null): Array<{ label: string; hit: string }> =>
   EVERYTHING.flatMap((s) => {
     const hit = check(s);
