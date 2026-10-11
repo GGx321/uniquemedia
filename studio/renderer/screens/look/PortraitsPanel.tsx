@@ -1,5 +1,6 @@
 import { useId, type ReactNode } from "react";
 import { PORTRAITS_PER_BATCH } from "../../../shared/engine";
+import { errorText } from "../../lib/errors";
 import { formatUsdTiered } from "../../lib/money";
 import { countOf } from "../../lib/format";
 import { Icon, Spin } from "../../ui/Icon";
@@ -38,6 +39,7 @@ function AgainButton({ portraits: p, blockedReason, describedBy }: { portraits: 
     p.held ||
     p.pickPhase.kind === "saving" ||
     !batchFits(p.pending.length) ||
+    p.capRefused ||
     (p.start.kind === "refused" && p.start.error.code === "MASTER_FACE_UNUSABLE");
   return (
     <button type="button" className={priceChanged ? "btn btn-p" : "btn"} disabled={off} aria-busy={sending} aria-describedby={describedBy} onClick={() => p.startBatch()}>
@@ -61,11 +63,53 @@ function AgainButton({ portraits: p, blockedReason, describedBy }: { portraits: 
   );
 }
 
+/**
+ * The reset: every waiting portrait goes (`avatars.discardPortraits`), the master stays. It asks first (M3); a hold says so under it, and in its open
+ * question (review L2).
+ */
+function ResetBlock({ portraits: p, label }: { portraits: Portraits; label: string }) {
+  const resetId = useId();
+  const ask = useInlineAsk();
+  const saving = p.pickPhase.kind === "saving";
+  const discarding = p.discardPhase.kind === "saving";
+  const discardRefused = p.discardPhase.kind === "refused" ? p.discardPhase.error : null;
+  const held = p.held || discardRefused?.code === "IN_FLIGHT";
+  const wait = <HeldLine id={resetId}>{PORTRAIT_TEXT.discardHeld}</HeldLine>;
+  return (
+    <div className="rail-reset">
+      {ask.open ? (
+        <>
+          <InlineAskBox ask={ask} question={DISCARD_ASK[p.masterKind]} confirm="Удалить" busyLabel="Удаляем…" busy={discarding} onConfirm={() => p.discard()} />
+          {held && wait}
+        </>
+      ) : (
+        <>
+          <button
+            ref={ask.trigger}
+            type="button"
+            className="btn"
+            disabled={p.held || saving || p.start.kind === "sending"}
+            aria-describedby={resetId}
+            onClick={() => ask.ask()}
+          >
+            {label}
+          </button>
+          {held ? (
+            wait
+          ) : (
+            <p id={resetId} className="field-hint">
+              {PORTRAIT_TEXT.discardHint}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedReason: string | null }) {
   const pickId = useId();
   const againId = useId();
-  const resetId = useId();
-  const ask = useInlineAsk();
   if (p.running) {
     return (
       <div className="portraits-rail">
@@ -80,10 +124,10 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
   const saving = p.pickPhase.kind === "saving";
   const discarding = p.discardPhase.kind === "saving";
   const pickRefused = p.pickPhase.kind === "refused" ? p.pickPhase.error : null;
-  const discardRefused = p.discardPhase.kind === "refused" ? p.discardPhase.error : null;
-  const fits = batchFits(p.pending.length);
+  // The limit: what the window sees, or (review L4) what the engine counted and refused at.
+  const fits = batchFits(p.pending.length) && !p.capRefused;
   // Why «Ещё 5» waits: the engine's own stop first, then a face the imported photo lacks, then a hold (known, or met as IN_FLIGHT: review L1), then the
-  // limit, then a price that could not be had. A wait is said in the held style.
+  // limit (the engine's refusal in its words, else the count the window sees), then a price that could not be had. A wait is said in the held style.
   const startRefused = p.start.kind === "refused" ? p.start.error : null;
   const againWhy: { readonly text: string; readonly held: boolean } | null =
     blockedReason !== null
@@ -92,11 +136,13 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
         ? { text: PORTRAIT_TEXT.noFace, held: true }
         : p.held || startRefused?.code === "IN_FLIGHT"
           ? { text: PORTRAIT_TEXT.held, held: true }
-          : !fits
-            ? { text: capReason(p.pending.length), held: false }
-            : p.estimate === null && !p.estimating && p.estimateError !== null
-              ? { text: PORTRAIT_TEXT.priceUnknown, held: false }
-              : null;
+          : p.capRefused && startRefused !== null
+            ? { text: errorText(startRefused), held: false }
+            : !fits
+              ? { text: capReason(p.pending.length), held: false }
+              : p.estimate === null && !p.estimating && p.estimateError !== null
+                ? { text: PORTRAIT_TEXT.priceUnknown, held: false }
+                : null;
   const againReason =
     againWhy === null ? null : againWhy.held ? (
       <HeldLine id={againId}>{againWhy.text}</HeldLine>
@@ -108,24 +154,24 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
   const again = <AgainButton portraits={p} blockedReason={blockedReason} describedBy={againReason !== null ? againId : undefined} />;
 
   if (p.pending.length === 0) {
-    // 17, and a batch that failed or was cancelled before it drew anything: no portrait waits, so the reset only closes the panel.
+    // 17, and a batch that failed or was cancelled before it drew anything: no portrait waits, so the reset only closes the panel. At the limit the
+    // engine counted (review L4), the waiting portraits are hidden from the list: «Удалить варианты» clears them.
     return (
       <div className="portraits-rail">
         {again}
         {againReason}
-        <button type="button" className="btn" disabled={p.start.kind === "sending"} onClick={() => p.closePanel()}>
-          {RESET_LABEL[p.masterKind]}
-        </button>
+        {p.capRefused ? (
+          <ResetBlock portraits={p} label="Удалить варианты" />
+        ) : (
+          <button type="button" className="btn" disabled={p.start.kind === "sending"} onClick={() => p.closePanel()}>
+            {RESET_LABEL[p.masterKind]}
+          </button>
+        )}
       </div>
     );
   }
 
   const pickHeld = p.held || pickRefused?.code === "IN_FLIGHT";
-  // Review L2: a reset the avatar's other work holds says so under it (and in its open question), not what it would delete.
-  const discardHeld = p.held || discardRefused?.code === "IN_FLIGHT";
-  const discardWait = <HeldLine id={resetId}>{PORTRAIT_TEXT.discardHeld}</HeldLine>;
-  // 16c: at the limit the reset is the way on, and says what it does.
-  const resetLabel = fits ? RESET_LABEL[p.masterKind] : "Удалить варианты";
   return (
     <div className="portraits-rail">
       <button
@@ -155,34 +201,8 @@ function Rail({ portraits: p, blockedReason }: { portraits: Portraits; blockedRe
       <span className="portraits-rail-sep" aria-hidden="true" />
       {again}
       {againReason}
-      <div className="rail-reset">
-        {ask.open ? (
-          <>
-            <InlineAskBox ask={ask} question={DISCARD_ASK[p.masterKind]} confirm="Удалить" busyLabel="Удаляем…" busy={discarding} onConfirm={() => p.discard()} />
-            {discardHeld && discardWait}
-          </>
-        ) : (
-          <>
-            <button
-              ref={ask.trigger}
-              type="button"
-              className="btn"
-              disabled={p.held || saving || p.start.kind === "sending"}
-              aria-describedby={resetId}
-              onClick={() => ask.ask()}
-            >
-              {resetLabel}
-            </button>
-            {discardHeld ? (
-              discardWait
-            ) : (
-              <p id={resetId} className="field-hint">
-                {PORTRAIT_TEXT.discardHint}
-              </p>
-            )}
-          </>
-        )}
-      </div>
+      {/* 16c: at the limit the reset is the way on, and says what it does. */}
+      <ResetBlock portraits={p} label={fits ? RESET_LABEL[p.masterKind] : "Удалить варианты"} />
     </div>
   );
 }

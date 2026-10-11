@@ -32,7 +32,8 @@ function StartRefusal({ portraits: p }: { portraits: Portraits }) {
   if (p.start.kind === "unknown") return <Notice tone="warn">{startRefusalText(p.start.error)}</Notice>;
   if (p.start.kind !== "refused") return null;
   const { error } = p.start;
-  if (error.code === "MASTER_FACE_UNUSABLE" || error.code === "IN_FLIGHT") return null;
+  // Said at the button instead: a face the imported photo lacks, a hold, and the limit (review L4: the panel's «Ещё 5»).
+  if (error.code === "MASTER_FACE_UNUSABLE" || error.code === "IN_FLIGHT" || error.portraitReason === "too-many-candidates") return null;
   if (error.code === "PRICE_CHANGED" && p.previousWorst !== null && p.estimate !== null) {
     return (
       <Notice tone="warn" title="Цена выросла">

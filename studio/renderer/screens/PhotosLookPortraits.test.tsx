@@ -236,6 +236,34 @@ describe("16 · the batch is ready", () => {
     expect(radios()).toHaveLength(15);
   });
 
+  test("16c: the engine counts what the window cannot see (the age check's hidden ones): its refusal turns the panel to the limit (review L4)", async () => {
+    const eight = Array.from({ length: 8 }, (_, i) => ({ photoId: `photo-nini-c${String(i + 10)}`, likeness: 0.6 + i / 100 }));
+    const { engine } = await openLook(NINI, { portraits: [{ ...NINI_SEED, candidates: eight }, AVA_SEED] });
+    engine.scriptNextPortraits({ refuse: { code: "VALIDATION", portraitReason: "too-many-candidates" } });
+    fireEvent.click(within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ }));
+    await flush();
+    const again = within(panel()).getByRole("button", { name: /^Ещё 5 вариантов/ });
+    expect(isDisabled(again)).toBe(true);
+    expect(describedText(again)).toContain("Выберите один или нажмите «Удалить варианты», потом повторите.");
+    expect(within(panel()).getByRole("button", { name: "Удалить варианты" })).toBeDefined();
+    // Said once, at the button: no second copy over the panel.
+    expect(screen.getAllByText(/Невыбранных вариантов слишком много/)).toHaveLength(1);
+  });
+
+  test("16c: refused at the limit with none to see, the panel offers «Удалить варианты», which clears the hidden ones", async () => {
+    const { engine } = await openLook(NINI);
+    engine.scriptNextPortraits({ refuse: { code: "VALIDATION", portraitReason: "too-many-candidates" } });
+    await start();
+    expect(text(panel())).toContain("Выберите один или нажмите «Удалить варианты», потом повторите.");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Удалить варианты" }));
+    await flush();
+    fireEvent.click(within(within(panel()).getByRole("alert")).getByRole("button", { name: "Удалить" }));
+    await flush();
+    expect(callsOf(engine, "avatars.discardPortraits").map((c) => c.payload)).toEqual([{ avatarId: NINI.avatarId }]);
+    expect(noPanel()).toBe(true);
+    expect(isDisabled(startButton())).toBe(false);
+  });
+
   test("16c: from 11 waiting a batch of five would pass the limit, and the line says how many wait", async () => {
     const twelve = Array.from({ length: 12 }, (_, i) => ({ photoId: `photo-nini-c${String(i + 10)}`, likeness: 0.6 + i / 100 }));
     await openLook(NINI, { portraits: [{ ...NINI_SEED, candidates: twelve }, AVA_SEED] });

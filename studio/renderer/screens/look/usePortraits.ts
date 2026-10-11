@@ -52,6 +52,11 @@ export interface Portraits {
   readonly panelOpen: boolean;
   /** Only an active avatar draws, picks and resets (the engine refuses the rest NOT_FOUND). */
   readonly actionable: boolean;
+  /**
+   * Review L4: the engine refused a batch at the limit (`too-many-candidates`). It counts every waiting portrait, the ones the age threshold hides from
+   * the list too, so the window may meet the limit before it sees 15: the panel then offers «Удалить варианты», which clears them all.
+   */
+  readonly capRefused: boolean;
   readonly estimate: Estimate | null;
   readonly estimating: boolean;
   readonly estimateError: EngineError | null;
@@ -257,7 +262,8 @@ export function usePortraits(
   const masterMissing = list !== null && list.masterPhotoId === masterPhotoId && list.masterMissing === true;
   const actionable = avatar.status === "active";
   const shownJob = job !== null && job.jobId !== dismissed ? job : null;
-  const panelOpen = imported && actionable && (running || pending.length > 0 || shownJob !== null);
+  const capRefused = start.kind === "refused" && start.error.portraitReason === "too-many-candidates";
+  const panelOpen = imported && actionable && (running || pending.length > 0 || shownJob !== null || capRefused);
   const held = avatarHeld(view, avatarId) && start.kind !== "sending" && !running;
   const cancelling = cancelBusy || (job !== null && view.cancellingJobs.has(job.jobId));
 
@@ -284,6 +290,7 @@ export function usePortraits(
     running,
     panelOpen,
     actionable,
+    capRefused,
     estimate,
     estimating,
     estimateError,
@@ -359,6 +366,8 @@ export function usePortraits(
         setDiscardPhase({ kind: "idle" });
         setChosen(null);
         setDismissed(job?.jobId ?? null);
+        // Every waiting portrait went, the hidden ones too: the limit the engine met is gone.
+        setStart({ kind: "idle" });
         dropPending();
         setFocus("master");
       });
