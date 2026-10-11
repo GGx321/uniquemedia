@@ -144,6 +144,20 @@ describe("avatars.portraits", () => {
     expect(listOf(await engine.handle(list(avatarId))).candidates).toEqual([]);
   });
 
+  test("a portrait master whose photo is gone while the source is alive still answers, marked missing, and pickPortrait(source) is the way out", async () => {
+    const { avatarId, sourceId, portraitIds } = await seedImportedAvatar(dir(), { portraits: [0.76, 0.7], master: 0 });
+    const photos = join(dir(), "library", "avatars", avatarId, "photos");
+    await rm(join(photos, `${portraitIds[0]}.json`));
+    const { engine, events } = await started();
+
+    const answer = listOf(await engine.handle(list(avatarId)));
+    expect(answer).toEqual({ avatarId, masterPhotoId: portraitIds[0], sourcePhotoId: sourceId, masterLikeness: null, masterMissing: true, candidates: [{ avatarId, photoId: portraitIds[1], likeness: 0.7 }] });
+
+    ok(await engine.handle(pick(avatarId, sourceId)));
+    expect(avatarChanged(events(), avatarId)).toMatchObject([{ masterPhotoId: sourceId }]);
+    expect(listOf(await engine.handle(list(avatarId)))).toEqual({ avatarId, masterPhotoId: sourceId, sourcePhotoId: sourceId, masterLikeness: null, candidates: [] });
+  });
+
   test("a wizard avatar has no source photo and no candidates", async () => {
     const { library } = await openLibrary(join(dir(), "library"), { now: steppingClock(), newId: sequentialIds("wiz") });
     const mia = await library.createAvatar({ name: "Mia", age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });

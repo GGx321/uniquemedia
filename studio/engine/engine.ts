@@ -4785,9 +4785,15 @@ export class Engine {
     if (manifest === undefined || manifest.status === "draft" || manifest.masterPhotoId === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
     const source = library.sourcePhoto(avatarId);
     let masterLikeness: number | null = null;
+    // A portrait master whose photo is missing or quarantined while the source is alive: the list still answers, and says so, so the window can offer the only way out (the source as the master again).
+    let masterMissing = false;
     if (source !== null && source.id !== manifest.masterPhotoId) {
-      masterLikeness = library.getPhoto(manifest.masterPhotoId)?.qa.faceCos ?? null;
-      if (masterLikeness === null) throw new EngineFailure({ code: "INTERNAL", detail: `the master of avatar ${avatarId} is neither its source photo nor a scored portrait` });
+      const master = library.getPhoto(manifest.masterPhotoId);
+      if (master === undefined) masterMissing = true;
+      else {
+        masterLikeness = master.qa.faceCos ?? null;
+        if (masterLikeness === null) throw new EngineFailure({ code: "INTERNAL", detail: `the master of avatar ${avatarId} is neither its source photo nor a scored portrait` });
+      }
     }
     const candidates =
       source === null
@@ -4797,7 +4803,7 @@ export class Engine {
             .filter(isPickablePortrait)
             .slice(0, PORTRAIT_CANDIDATES_MAX)
             .flatMap((photo) => (photo.qa.faceCos === undefined ? [] : [{ avatarId, photoId: photo.id, likeness: photo.qa.faceCos }]));
-    return { avatarId, masterPhotoId: manifest.masterPhotoId, sourcePhotoId: source?.id ?? null, masterLikeness, candidates };
+    return { avatarId, masterPhotoId: manifest.masterPhotoId, sourcePhotoId: source?.id ?? null, masterLikeness, ...(masterMissing ? { masterMissing: true as const } : {}), candidates };
   }
 
   /**

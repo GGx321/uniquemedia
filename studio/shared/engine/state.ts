@@ -675,6 +675,8 @@ export const AvatarPortraits = z
     masterPhotoId: Id,
     sourcePhotoId: Id.nullable(),
     masterLikeness: z.number().min(-1).max(1).nullable(),
+    /** S5.3c, OMITTED unless true: the master is a portrait whose photo is missing or unreadable while the source is alive. The only way out is to make the source the master again. */
+    masterMissing: z.literal(true).optional(),
     candidates: z.array(PortraitCandidate).max(PORTRAIT_CANDIDATES_MAX),
   })
   .refine((r) => r.candidates.every((c) => c.avatarId === r.avatarId), {
@@ -690,8 +692,12 @@ export const AvatarPortraits = z
     message: "an avatar with no source photo has no portrait candidates",
     path: ["candidates"],
   })
-  .refine((r) => (r.masterLikeness === null) === (r.sourcePhotoId === null || r.masterPhotoId === r.sourcePhotoId), {
-    message: "the master's likeness is null exactly when the master is the source photo or the avatar has no source photo",
+  .refine((r) => r.masterMissing === undefined || (r.sourcePhotoId !== null && r.masterPhotoId !== r.sourcePhotoId), {
+    message: "only a master other than the source photo, of an avatar that has one, can be missing",
+    path: ["masterMissing"],
+  })
+  .refine((r) => (r.masterLikeness === null) === (r.sourcePhotoId === null || r.masterPhotoId === r.sourcePhotoId || r.masterMissing === true), {
+    message: "the master's likeness is null exactly when the master is the source photo, is missing, or the avatar has no source photo",
     path: ["masterLikeness"],
   });
 

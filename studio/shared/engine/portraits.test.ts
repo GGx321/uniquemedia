@@ -143,6 +143,22 @@ describe("avatars.portraits (the list)", () => {
     expect(parseMessage(list({ sourcePhotoId: null, masterLikeness: 0.7 })).ok).toBe(false);
   });
 
+  // S5.3c: a portrait master whose photo is gone while the source is alive. The list still answers (the owner's way out is to make the source the master again) and says so.
+  test("a missing master is marked, has no likeness, and leaves the source and the candidates", () => {
+    const gone = { masterPhotoId: "photo-0011", masterLikeness: null, masterMissing: true };
+    expect(parseMessage(list({ ...gone, candidates: [candidate("photo-0101", 0.7)] })).ok).toBe(true);
+  });
+
+  test("a missing master with a likeness, with no source, or that is the source is refused", () => {
+    expect(parseMessage(list({ masterPhotoId: "photo-0011", masterLikeness: 0.7, masterMissing: true })).ok).toBe(false);
+    expect(parseMessage(list({ masterPhotoId: "photo-0011", sourcePhotoId: null, masterLikeness: null, masterMissing: true })).ok).toBe(false);
+    expect(parseMessage(list({ masterLikeness: null, masterMissing: true })).ok).toBe(false);
+  });
+
+  test("masterMissing is only ever true", () => {
+    expect(parseMessage(list({ masterPhotoId: "photo-0011", masterLikeness: null, masterMissing: false })).ok).toBe(false);
+  });
+
   test("names the master, which is the source or a portrait", () => {
     expect(parseMessage(list({ masterPhotoId: "photo-0010" })).ok).toBe(true);
     expect(parseMessage(okResponse("avatars.portraits", { avatarId: AVATAR, sourcePhotoId: null, masterLikeness: null, candidates: [] })).ok).toBe(false);
