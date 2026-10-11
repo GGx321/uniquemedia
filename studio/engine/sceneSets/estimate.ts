@@ -40,8 +40,10 @@ function typicalOf(book: PriceBook, call: WriterCall, scenes: number): number {
 }
 
 /**
- * Composing `count` scenes: the writer's worst case for them (`writerWorstMicros`: chunks of 25, each retried up to twice at the ceiling, the very
- * figure a run's estimate carries for its writer), expected at the writer's typical tokens. An empty set (0) costs nothing and prices nothing.
+ * Composing a `split` of scenes: the writer's worst case for them (`writerChunksWorst` requests of at most 25 scenes, each asked up to twice at the ceiling,
+ * the very figure a run's estimate carries for its writer), expected at the writer's typical tokens for the scenes only the model can write. Since 5a.2 the
+ * code template writes every scene of a built-in category and of a custom one it covers (`covers`), so those cost nothing; an empty set, or one with no scene
+ * for the model, costs nothing and prices nothing.
  */
 export function composeEstimate(priced: PricedBook, textModel: string, split: readonly SplitEntry[], covers: CoversOf): Estimate {
   const free: Estimate = { expectedMicros: 0, worstMicros: 0, prices: priced.book.source, pricesAsOf: priced.asOf };
