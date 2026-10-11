@@ -489,7 +489,7 @@ export function GenerateCard({
               : paidInFlight && !compose.sending
                 ? "Дождитесь окончания другого платного действия."
                 : null);
-  const composeButton = paidButtonState(compose, composeTitle(form.count), composeBlocked !== null, form.count === 0);
+  const composeButton = paidButtonState(compose, composeTitle(form.count), composeBlocked !== null, form.count === 0 || writerFree);
 
   const fullCard = (
       <section className="card photos-gen" aria-label="Генерация фото">

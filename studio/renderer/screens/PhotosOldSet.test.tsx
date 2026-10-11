@@ -31,6 +31,19 @@ describe("«Другая сцена» on an old set", () => {
     expect(within(sceneCard(2)).queryByText(/^до \$/) === null).toBe(true);
   });
 
+  test("reads one separator on the button, not two", async () => {
+    await openWriterPriced(0, "on", OLD_SET);
+    fireEvent.click(await within(sceneCard(2)).findByRole("button", { name: "Другая сцена вместо 02" }));
+    const button = await within(sceneCard(2)).findByRole("button", { name: "Заменить · бесплатно" });
+    expect(button.textContent?.replace(/\s+/g, " ")).toBe("Заменить · бесплатно");
+  });
+
+  test("the ⟳ title does not call the action paid: the popover tells its price", async () => {
+    await openWriterPriced(0, "on", OLD_SET);
+    const redo = await within(sceneCard(2)).findByRole("button", { name: "Другая сцена вместо 02" });
+    expect(redo.getAttribute("title")).toBe("Другая сцена — цена перед отправкой");
+  });
+
   test("keeps its price where the model writes the new scene", async () => {
     await openWriterPriced(75_000, "on", OLD_SET);
     fireEvent.click(await within(sceneCard(2)).findByRole("button", { name: "Другая сцена вместо 02" }));

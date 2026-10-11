@@ -172,7 +172,7 @@ describe("⟳ and its price popover", () => {
     await ready(4);
     await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
     const redo = within(sceneCard(2)).getByRole("button", { name: "Другая сцена вместо 02" });
-    expect(redo.getAttribute("title")).toBe("Другая сцена — платно, цена перед отправкой");
+    expect(redo.getAttribute("title")).toBe("Другая сцена — цена перед отправкой");
     fireEvent.click(redo);
     await flush();
     const pop = within(sceneCard(2)).getByRole("dialog", { name: "Другая сцена" });

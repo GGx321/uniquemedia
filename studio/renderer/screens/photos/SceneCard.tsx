@@ -100,7 +100,7 @@ export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh,
                 type="button"
                 className={actionsOff ? "ibtn ibtn-s ibtn-off" : "ibtn ibtn-s"}
                 aria-label={own ? `Переписать свою сцену ${n}` : `Другая сцена вместо ${n}`}
-                title={own ? "Переписать — платно, цена перед отправкой" : "Другая сцена — платно, цена перед отправкой"}
+                title={own ? "Переписать — платно, цена перед отправкой" : "Другая сцена — цена перед отправкой"}
                 aria-haspopup="dialog"
                 aria-expanded={popoverOpen}
                 aria-disabled={actionsOff}

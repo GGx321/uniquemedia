@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { waitFor, within } from "@testing-library/react";
-import { card, column, priceRow } from "./photos/sceneScreenKit";
+import { card, column, goButton, nb, priceRow } from "./photos/sceneScreenKit";
 import { openWriterPriced } from "./photos/writerPricedKit";
 
 // S5.6e (mockups 24 and 32 of .omc/stage5/design): when the writer part of the price is zero — the scenes of built-in categories are written by the app
@@ -31,6 +31,18 @@ describe("the price column when the app writes the scenes", () => {
     await within(card()).findByRole("button", { name: /^Сгенерировать 20 фото · до \$/ });
     expect(() => priceRow("Сцены")).toThrow();
     expect(within(card()).queryByText("их пишет приложение") === null).toBe(true);
+  });
+});
+
+describe("«Составить» when the app writes the scenes", () => {
+  test("says бесплатно on the button instead of a price, and keeps the model's price when the model writes", async () => {
+    await openWriterPriced(0, "on");
+    await waitFor(() => expect(goButton().textContent).toBe(nb("Составить 20 сцен · бесплатно")));
+  });
+
+  test("keeps «до $0.075» when the model writes", async () => {
+    await openWriterPriced(75_000, "on");
+    await waitFor(() => expect(goButton().textContent).toBe(nb("Составить 20 сцен · до $0.075")));
   });
 });
 

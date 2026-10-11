@@ -109,8 +109,7 @@ export function InlinePaidButton({
         {state.title}
         {state.price !== null && (
           <>
-            <span aria-hidden="true">{" · "}</span>
-            <span className="sr-only"> · </span>
+            {" · "}
             <span className="nowrap">{state.price}</span>
           </>
         )}
