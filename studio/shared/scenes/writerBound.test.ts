@@ -46,6 +46,12 @@ describe("writerChunksWorst", () => {
     expect(writerChunksWorst([{ ref: "home", count: 10 }, { ref: customRef(1), count: 0 }], () => false)).toBe(0);
   });
 
+  test("takes the chunk size from the caller when the writer's differs from the default", () => {
+    const split: SplitEntry[] = [{ ref: customRef(1), count: 30 }];
+    expect(writerChunksWorst(split, () => false, 10)).toBe(3);
+    expect(writerChunksWorst(split, () => false)).toBe(2);
+  });
+
   test("covers is asked per custom category", () => {
     const covered = customRef(1);
     const open = customRef(2);

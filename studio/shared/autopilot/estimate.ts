@@ -1,5 +1,6 @@
 import type { Estimate } from "../engine";
 import { MAX_COMPOSE_SCENES } from "../engine/scenes";
+import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../scenes/writerBound";
 
 // Stage 4 (plan §4.2, §4.3, invariant A18): the launch estimate. ONE pure function shared by the engine's preview and start and by the mock, linear in the counts.
 // It takes unit prices, not a price book: the engine reads them from its own estimates (`engine/autopilot/prices.ts`, built on `composeEstimate` and
@@ -23,14 +24,23 @@ export interface LaunchUnitPrices {
   writerChunkSlots: number;
   writerMaxAttempts: number;
   writerTypicalMicros: readonly number[];
+  /**
+   * 5a.2 (S5.6c2): whether the code template covers a custom category's pool, so its scenes need no writer. Absent, no custom category is covered (the safe side);
+   * a built-in category is always covered. Read only for a need that names its `split`.
+   */
+  covers?: CoversOf;
   prices: Estimate["prices"];
   pricesAsOf: string;
 }
 
-/** How many new photos one avatar's plan needs (`n_a`). */
+/**
+ * How many new photos one avatar's plan needs (`n_a`), and — 5a.2 — how they split over its categories. With the split the compose is priced by what the
+ * model must write (`writerChunksWorst`, `llmPossibleSlots`); without it every photo may go to the model, as before.
+ */
 export interface AvatarNeed {
   avatarId: string;
   photos: number;
+  split?: readonly SplitEntry[];
 }
 
 export interface AvatarEstimate {
@@ -69,10 +79,21 @@ function safe(value: number): number {
   return value;
 }
 
-/** The compose of `photos` scenes at worst: chunks of `writerChunkSlots`, each asked `writerMaxAttempts` times at the ceiling (`writerWorstMicros`). */
-export function composeWorstMicros(unit: LaunchUnitPrices, photos: number): number {
+/** The writer's requests an avatar's compose can need at worst, and the scenes they carry: from its split and the unit's covers, or every photo without a split. */
+function writerLoadOf(unit: LaunchUnitPrices, photos: number, split: readonly SplitEntry[] | undefined): { chunks: number; scenes: number } {
+  if (split === undefined) return { chunks: Math.ceil(photos / unit.writerChunkSlots), scenes: photos };
+  if (split.reduce((sum, entry) => sum + entry.count, 0) !== photos) throw new RangeError(`the split's counts must add up to the ${photos} photos`);
+  const covers = unit.covers ?? (() => false);
+  return { chunks: writerChunksWorst(split, covers, unit.writerChunkSlots), scenes: llmPossibleSlots(split, covers) };
+}
+
+/**
+ * The compose of `photos` scenes at worst: the writer's requests (chunks of `writerChunkSlots`; with a `split`, only those that can hold a scene of an uncovered
+ * custom category), each asked `writerMaxAttempts` times at the ceiling (`writerChunksMicros`' arithmetic).
+ */
+export function composeWorstMicros(unit: LaunchUnitPrices, photos: number, split?: readonly SplitEntry[]): number {
   checkPhotos(photos);
-  return safe(Math.ceil(photos / unit.writerChunkSlots) * unit.writerMaxAttempts * unit.writerCeilingMicros);
+  return safe(writerLoadOf(unit, photos, split).chunks * unit.writerMaxAttempts * unit.writerCeilingMicros);
 }
 
 /**
@@ -88,10 +109,11 @@ export function launchEstimate(needs: readonly AvatarNeed[], unit: LaunchUnitPri
   if (!Number.isInteger(unit.writerMaxAttempts) || unit.writerMaxAttempts < 1) throw new RangeError(`writerMaxAttempts must be a positive integer, got ${unit.writerMaxAttempts}`);
   const avatars = needs.map((need): AvatarEstimate => {
     checkPhotos(need.photos);
-    const writerTypical = unit.writerTypicalMicros[need.photos];
-    if (writerTypical === undefined) throw new RangeError(`the writer's price table has no entry for ${need.photos} scenes`);
+    const load = writerLoadOf(unit, need.photos, need.split);
+    const writerTypical = unit.writerTypicalMicros[load.scenes];
+    if (writerTypical === undefined) throw new RangeError(`the writer's price table has no entry for ${load.scenes} scenes`);
     checkMicros("writerTypicalMicros", writerTypical);
-    const composeWorst = composeWorstMicros(unit, need.photos);
+    const composeWorst = composeWorstMicros(unit, need.photos, need.split);
     const drawWorst = safe(need.photos * unit.photoWorstMicros);
     const drawExpected = safe(need.photos * unit.photoExpectedMicros);
     // The compose is never expected to cost more than its worst case (the engine's `composeEstimate` caps it the same way).

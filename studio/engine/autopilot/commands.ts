@@ -10,8 +10,11 @@ import {
   type LaunchView,
 } from "../../shared/engine/autopilot";
 import { isCustomCategory, type CategoryPoses, type CategoryRef } from "../../shared/engine/categories";
+import type { CoversOf } from "../../shared/scenes/writerBound";
 import { EngineFailure } from "../engineFailure";
 import type { Library } from "../library";
+import type { StoredCategory } from "../library/categories";
+import { coversOfStored } from "../scenes/coverage";
 import type { PriceModels, PricedBook } from "../money/priceCache";
 import type { RunModels } from "../runs/plan";
 import { launchPriceModels, unitPricesOf } from "./prices";
@@ -169,12 +172,13 @@ export class AutopilotCommands {
     const avatars = [];
     for (const avatarId of draft.avatarIds) avatars.push(planAvatarInput(library, avatarId, await this.#hasOpenSet(library, avatarId), !holds.unknown.has(avatarId)));
     const plan = planLaunch({ draft, avatars, draftHeldPhotoIds: holds.held, customPoses: await this.#customPoses(library, draft.categories) });
-    const needs = plan.avatars.filter((a) => a.blocked === null).map((a) => ({ avatarId: a.avatarId, photos: a.toGenerate }));
+    // 5a.2 (S5.6c2): each avatar's compose is priced from its own split (the exact photos per category its compose will draw) and the coverage of the custom pools.
+    const needs = plan.avatars.filter((a) => a.blocked === null).map((a) => ({ avatarId: a.avatarId, photos: a.toGenerate, split: a.generate.map((need) => ({ ref: need.category, count: need.count })) }));
     const generates = needs.some((n) => n.photos > 0);
     // A plan that generates nothing (Σn = 0, a library-only launch) needs no price and asks for none (§19): `unitPricesOf` wants the text model's price, which such a launch has
     // no use for, and a price list that cannot be read must not refuse a launch that spends nothing. Its estimate is zero.
     let unit: LaunchUnitPrices | null = null;
-    if (generates) unit = await this.#unitPrices();
+    if (generates) unit = await this.#unitPrices(await this.#coversOf(library, draft.categories));
     const estimate = unit === null ? { avatars: [], worstMicros: 0, expectedMicros: 0, prices: "fallback" as const, pricesAsOf: new Date(this.#d.clock()).toISOString().slice(0, 10) } : launchEstimate(needs, unit);
     return { draft, plan, unit, estimate };
   }
@@ -189,10 +193,22 @@ export class AutopilotCommands {
     }
   }
 
-  async #unitPrices(): Promise<LaunchUnitPrices> {
+  async #unitPrices(covers: CoversOf): Promise<LaunchUnitPrices> {
     const models = this.#d.models();
     const check = this.#d.imageAgeCheck();
-    return unitPricesOf(await this.#d.prices(launchPriceModels(models, check)), models, check);
+    return unitPricesOf(await this.#d.prices(launchPriceModels(models, check)), models, check, covers);
+  }
+
+  /** Which of the draft's custom categories the code template covers, from their stored pools as the library holds them now (a built-in is always covered). */
+  async #coversOf(library: Library, categories: readonly CategoryRef[]): Promise<CoversOf> {
+    const stored: StoredCategory[] = [];
+    for (const ref of categories) {
+      if (!isCustomCategory(ref)) continue;
+      const found = await library.categories.get(ref);
+      if (found === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no custom category ${ref}` });
+      stored.push(found);
+    }
+    return coversOfStored(stored);
   }
 
   /** An avatar has an open scene set when one of its sets has no run folder yet. A set that cannot be read may be that set, so it counts (fail closed). */

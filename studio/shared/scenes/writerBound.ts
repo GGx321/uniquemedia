@@ -27,8 +27,8 @@ export function llmPossibleSlots(split: readonly SplitEntry[], covers: CoversOf)
  * of slots and the writer cuts the plan every `SCENE_CHUNK_SIZE`; the bound does not see the order, so a block of m slots may touch ⌈m/25⌉ + 1 chunks.
  * Summed over the uncovered custom categories and capped at the plan's own chunk count. Brute-forced in writerBound.test.ts.
  */
-export function writerChunksWorst(split: readonly SplitEntry[], covers: CoversOf): number {
+export function writerChunksWorst(split: readonly SplitEntry[], covers: CoversOf, chunkSlots: number = SCENE_CHUNK_SIZE): number {
   const total = split.reduce((sum, entry) => sum + entry.count, 0);
-  const touched = uncoveredOf(split, covers).reduce((sum, entry) => sum + Math.ceil(entry.count / SCENE_CHUNK_SIZE) + 1, 0);
-  return Math.min(touched, Math.ceil(total / SCENE_CHUNK_SIZE));
+  const touched = uncoveredOf(split, covers).reduce((sum, entry) => sum + Math.ceil(entry.count / chunkSlots) + 1, 0);
+  return Math.min(touched, Math.ceil(total / chunkSlots));
 }

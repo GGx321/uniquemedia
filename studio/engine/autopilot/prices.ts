@@ -1,5 +1,6 @@
 import { MAX_GENERATED_PER_AVATAR, type LaunchUnitPrices } from "../../shared/autopilot/estimate";
 import type { ImageAgeCheck } from "../../shared/engine";
+import type { CoversOf } from "../../shared/scenes/writerBound";
 import { WRITER_CALL } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { runEstimateFromScenes, runPriceModels, type RunModels } from "../runs/plan";
@@ -16,14 +17,24 @@ export function launchPriceModels(models: RunModels, imageAgeCheck: ImageAgeChec
   return runPriceModels(models, imageAgeCheck);
 }
 
+/** Stands for a custom category with no coverage in the writer's table: the typical cost of n model scenes, read off `composeEstimate` for n scenes of one such category. */
+const MODEL_ONLY_PROBE = "cat-table-probe" as const;
+
 /**
  * One photo and one scene at these prices. `photoWorst`/`photoExpected` are `runEstimateFromScenes` for ONE photo, so the dearer route model (the Seedream fallback
  * after a refusal), the three attempts per slot and the age-check toggle are priced exactly as a run prices them; the writer's ceiling, its chunk and its attempts
- * are the compose's, and its typical cost is tabulated per scene count from `composeEstimate` (a call's cost is rounded up, so it is not exactly linear).
+ * are the compose's, and its typical cost is tabulated per MODEL scene count from `composeEstimate` (a call's cost is rounded up, so it is not exactly linear).
+ *
+ * 5a.2 (S5.6c2): `covers` says which custom categories the code template covers. It travels in the unit, so `launchEstimate` prices each avatar's compose from its
+ * split exactly as `composeEstimate` prices the compose it will make (A18 over every shape of split).
  */
-export function unitPricesOf(priced: PricedBook, models: RunModels, imageAgeCheck: ImageAgeCheck): LaunchUnitPrices {
+export function unitPricesOf(priced: PricedBook, models: RunModels, imageAgeCheck: ImageAgeCheck, covers: CoversOf): LaunchUnitPrices {
   const photo = runEstimateFromScenes(priced, models, { count: 1 }, imageAgeCheck);
-  const writerTypicalMicros = Array.from({ length: MAX_GENERATED_PER_AVATAR + 1 }, (_, n) => composeEstimate(priced, models.textModel, n).expectedMicros);
+  const uncovered: CoversOf = () => false;
+  const writerTypicalMicros = Array.from(
+    { length: MAX_GENERATED_PER_AVATAR + 1 },
+    (_, n) => composeEstimate(priced, models.textModel, [{ ref: MODEL_ONLY_PROBE, count: n }], uncovered).expectedMicros,
+  );
   return {
     photoWorstMicros: photo.worstMicros,
     photoExpectedMicros: photo.expectedMicros,
@@ -31,6 +42,7 @@ export function unitPricesOf(priced: PricedBook, models: RunModels, imageAgeChec
     writerChunkSlots: WRITER_CALL.slotsPerCall,
     writerMaxAttempts: WRITER_CALL.maxAttempts,
     writerTypicalMicros,
+    covers,
     prices: priced.book.source,
     pricesAsOf: priced.asOf,
   };

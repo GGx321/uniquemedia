@@ -99,6 +99,64 @@ describe("launchEstimate", () => {
   });
 });
 
+// 5a.2 (S5.6c2, plan s5a2 §5.6, I5.30): an avatar's compose is priced from its split and the coverage of its custom categories. A built-in category and a
+// covered custom one are written by the code template, so only the slots of an uncovered custom category (`writerChunksWorst`) are writer requests.
+// A need without a split keeps the old arithmetic: every photo can go to the model.
+describe("a launch priced from the avatar's split and covers", () => {
+  const OPEN = "cat-open-fixture" as const;
+  const COVERED = "cat-covered-fixture" as const;
+  const covers = (ref: string): boolean => ref === COVERED;
+  const priced: LaunchUnitPrices = { ...UNIT, covers };
+  const need = (avatarId: string, split: { ref: "home" | typeof OPEN | typeof COVERED; count: number }[]) => ({ avatarId, photos: split.reduce((s, e) => s + e.count, 0), split });
+
+  test("a built-in avatar's compose costs nothing, and so does its writer's expected cost", () => {
+    const [mia] = launchEstimate([need("mia", [{ ref: "home", count: 40 }])], priced).avatars;
+    expect(mia).toMatchObject({ composeWorstMicros: 0, composeExpectedMicros: 0, drawWorstMicros: 40 * 210_000 });
+  });
+
+  test("a covered custom category costs nothing either", () => {
+    const [mia] = launchEstimate([need("mia", [{ ref: COVERED, count: 60 }])], priced).avatars;
+    expect(mia).toMatchObject({ composeWorstMicros: 0, composeExpectedMicros: 0 });
+  });
+
+  test("Home 50 plus an uncovered custom 50: 3 chunks × 2 attempts × the ceiling", () => {
+    const [mia] = launchEstimate([need("mia", [{ ref: "home", count: 50 }, { ref: OPEN, count: 50 }])], priced).avatars;
+    expect(mia?.composeWorstMicros).toBe(3 * 2 * 37_500);
+  });
+
+  test("the expected writer cost follows the uncovered category's scenes only", () => {
+    const [mia] = launchEstimate([need("mia", [{ ref: "home", count: 50 }, { ref: OPEN, count: 30 }])], priced).avatars;
+    expect(mia?.composeExpectedMicros).toBe(30 * 450);
+  });
+
+  test("with no covers at all (the unit lists none) every custom category is uncovered, the safe side", () => {
+    const [mia] = launchEstimate([need("mia", [{ ref: COVERED, count: 20 }])], UNIT).avatars;
+    expect(mia?.composeWorstMicros).toBe(2 * 37_500);
+  });
+
+  test("each avatar is priced from its own split", () => {
+    const estimate = launchEstimate([need("a", [{ ref: "home", count: 25 }]), need("b", [{ ref: OPEN, count: 25 }])], priced);
+    expect(estimate.avatars.map((a) => a.composeWorstMicros)).toEqual([0, 75_000]);
+    expect(estimate.worstMicros).toBe(50 * 210_000 + 75_000);
+  });
+
+  test("composeWorstMicros takes the same split", () => {
+    expect(composeWorstMicros(priced, 100, [{ ref: "home", count: 50 }, { ref: OPEN, count: 50 }])).toBe(225_000);
+    expect(composeWorstMicros(priced, 100)).toBe(300_000);
+  });
+
+  test("a split that does not add up to the photos is refused", () => {
+    expect(() => launchEstimate([{ avatarId: "a", photos: 10, split: [{ ref: OPEN, count: 9 }] }], priced)).toThrow(RangeError);
+  });
+
+  test("the expected cost never exceeds the worst case, over every count of an uncovered category", () => {
+    for (let n = 1; n <= 100; n++) {
+      const e = launchEstimate([need("a", [{ ref: OPEN, count: n }])], priced);
+      expect(e.expectedMicros).toBeLessThanOrEqual(e.worstMicros);
+    }
+  });
+});
+
 describe("allocateLaunch", () => {
   const estimate = launchEstimate(
     [
