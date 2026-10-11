@@ -15,9 +15,11 @@ mac:
   target:
     - dmg
   category: public.app-category.video
+  icon: build/icons/uniquemedia/AppIcon.icon
 win:
   target:
     - nsis
+  icon: build/icons/uniquemedia/icon.ico
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
