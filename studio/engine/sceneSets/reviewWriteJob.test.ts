@@ -543,8 +543,8 @@ describe("a write that cannot be answered", () => {
   test("a failed write leaves the scene exactly as it was, not one byte of it changed", async () => {
     await seed();
     const before = await setNow();
-    const slot: PlanSlot = { ...slotOf(before, 3), location: "a rooftop garden" };
-    await recordRewrite([3], { slots: [slot], snapshots: [FRESH_SNAPSHOT] });
+    // An own scene has no place to build a plain sentence from (a planned rewrite the provider refuses takes the plain sentence, S5.6d), so its refused rewrite changes nothing.
+    await recordRewrite([5]);
     await run([refusal]).end;
     const after = await setNow();
     expect(after.scenes).toEqual(before.scenes);

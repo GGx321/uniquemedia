@@ -86,9 +86,13 @@ function start<S extends ReadableSlot>(steps: Step[], phase: WriterPhase<S>) {
   const net = fakeFetch(steps);
   const { client } = makeClient(net.fetch);
   const chunks: { chunk: number; sentences: ReadonlyMap<number, string> }[] = [];
+  const partials: { chunk: number; sentences: ReadonlyMap<number, string> }[] = [];
   const pool = new NetworkPool({ max: 6 });
   const result = runWriterPhase<S>(
     {
+      onPartial: async (chunk, sentences) => {
+        partials.push({ chunk, sentences: new Map(sentences) });
+      },
       chat: client.chat,
       budget: money.budget,
       priceBook: money.priceBook,
@@ -99,7 +103,7 @@ function start<S extends ReadableSlot>(steps: Step[], phase: WriterPhase<S>) {
     },
     phase,
   );
-  return { net, chunks, result };
+  return { net, chunks, partials, result };
 }
 
 const reserveIds = (): string[] => money.lines().flatMap((l) => (l.type === "reserve" && typeof l.attemptId === "string" ? [l.attemptId] : []));
@@ -291,12 +295,74 @@ describe("runWriterPhase: after the last attempt a planned slot takes the plain 
     expect(net.calls).toHaveLength(0);
   });
 
-  test("a moderation refusal of the writer's prompt is still final and exhausted, whatever the fallback", async () => {
+  // Round-1 review (MEDIUM): a provider's refusal of the writer's prompt is final for the request (the same prompt would be refused again, so no second request), but it
+  // never ends a planned slot: the chunk's open slots take the plain sentence at once (plan s5a2 §5.5, I5.31).
+  test("a moderation refusal of the writer's prompt gives the open planned slots the plain sentence at once, with no second request", async () => {
     const refusal: Step = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
-    const { net, result } = start([refusal], phaseOf(4, { plain: plainOf }));
+    const phase = phaseOf(4, { plain: plainOf });
+    const { net, result } = start([refusal], phase);
+    const answer = await result;
+
+    expect(net.calls).toHaveLength(1);
+    expect(answer.ok).toBe(true);
+    if (!answer.ok) return;
+    expect([...answer.sentences]).toEqual(phase.slots.map((s) => [s.slotIndex, plainSentence(s)]));
+    expect(money.ledger.openReserves()).toEqual([]);
+  });
+
+  test("a refusal on attempt 2 keeps the sentences attempt 1 accepted and gives only the marked slot the plain sentence", async () => {
+    const refusal: Step = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
+    const phase = phaseOf(4, { plain: plainOf });
+    const { net, result } = start([answering((n) => (n === 2 ? REVEALING : GOOD)), refusal], phase);
+    const answer = await result;
+
+    expect(net.calls).toHaveLength(2);
+    expect(answer.ok).toBe(true);
+    if (!answer.ok) return;
+    const two = phase.slots.find((s) => s.slotIndex === 2);
+    if (two === undefined) throw new Error("no slot 2");
+    expect([1, 2, 3, 4].map((n) => answer.sentences.get(n))).toEqual([GOOD, plainSentence(two), GOOD, GOOD]);
+  });
+
+  test("a refusal in one chunk leaves the other chunks alone: the first is written by the model, the second takes the plain sentence", async () => {
+    const refusal: Step = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
+    const phase = phaseOf(30, { plain: plainOf });
+    const { chunks, result } = start([answering(() => GOOD), refusal], phase);
+    const answer = await result;
+
+    expect(chunks.map((c) => c.chunk)).toEqual([1, 2]);
+    expect(answer.ok).toBe(true);
+    if (!answer.ok) return;
+    expect(answer.sentences.get(1)).toBe(GOOD);
+    expect(answer.sentences.get(30)).toBe(plainSentence(phase.slots[29] as (typeof phase.slots)[number]));
+  });
+
+  test("an idea write (no plain sentence) is refused as before: exhausted, MODERATION_REFUSED", async () => {
+    const refusal: Step = { status: 400, body: { error: { message: "xAI blocked this request through content moderation." } } };
+    const { result } = start([refusal], phaseOf(4));
 
     expect(await result).toMatchObject({ ok: false, stop: "exhausted", error: { code: "MODERATION_REFUSED" } });
-    expect(net.calls).toHaveLength(1);
+  });
+
+  // Round-1 review (LOW): what attempt 1 accepted is paid for. A stop (an attempt that got no answer) hands it to `onPartial` so the caller keeps it, and a resume does not ask for it again.
+  test("a stop after attempt 1 hands the accepted sentences to onPartial", async () => {
+    const down: Step = { status: 503, body: { error: { message: "upstream unavailable" } } };
+    const { partials, result } = start([answering((n) => (n === 2 ? REVEALING : GOOD)), down, down, down], phaseOf(4, { plain: plainOf }));
+
+    expect(await result).toMatchObject({ ok: false, stop: "stopped" });
+    expect(partials.map((p) => [p.chunk, [...p.sentences]])).toEqual([[1, [[1, GOOD], [3, GOOD], [4, GOOD]]]]);
+  });
+
+  test("a resume does not ask again for the slots a stopped job already kept", async () => {
+    const kept = new Map<number, string>([[1, GOOD], [3, GOOD], [4, GOOD]]);
+    const reserved = await money.budget.tryReserve({ attemptId: `${RUN_ID}:writer-1#1`, jobId: "job-00000000", scope: SCOPE, model: "x-ai/grok-4.3", worstMicros: 37_500 });
+    if (!reserved.ok) throw new Error("reserve refused");
+    await money.budget.abandon(reserved.handle);
+    const { net, result } = start([answering(() => REPAIRED)], phaseOf(4, { plain: plainOf, sentences: kept }));
+    const answer = await result;
+
+    expect(askedSlots(net.calls[0] as FetchCall)).toEqual([2]);
+    expect(answer.ok && [1, 2, 3, 4].map((n) => answer.sentences.get(n))).toEqual([GOOD, REPAIRED, GOOD, GOOD]);
   });
 
   test("a failure that is not an answer (a 401) still stops the phase, never the fallback", async () => {

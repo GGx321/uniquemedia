@@ -137,6 +137,12 @@ export async function runSceneWrite(deps: SceneWriteDeps, request: SceneWriteReq
           written += sentences.size;
           deps.progress(written);
         },
+        // S5.6d: the scenes an earlier attempt of this job got right are written into the set even when the chunk stops unfinished (a stored scene with text leaves the request).
+        onPartial: async (chunk, sentences) => {
+          await deps.saveChunk(chunk, sentences);
+          written += sentences.size;
+          deps.progress(written);
+        },
       },
       phase,
     );

@@ -53,6 +53,8 @@ export const RunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("writer"),
     chunk: z.int().positive(),
     sentences: z.array(z.strictObject({ slotIndex: SlotIndex, sentence: z.string().min(1) })).min(1),
+    /** S5.6d (additive): the sentences a job accepted before the chunk stopped unfinished. The chunk is NOT done: a resume asks only about the slots still without one. */
+    partial: z.literal(true).optional(),
     at: At,
   }),
   /** Every slot's final image prompt: written once, before the first image request (invariant 6). */
@@ -173,7 +175,7 @@ export function foldRun(plan: RunPlan, sources: FoldSources): RunState {
       case "job":
         break;
       case "writer":
-        writerDone.add(event.chunk);
+        if (event.partial !== true) writerDone.add(event.chunk);
         for (const s of event.sentences) sentences.set(s.slotIndex, s.sentence);
         break;
       case "prompts":

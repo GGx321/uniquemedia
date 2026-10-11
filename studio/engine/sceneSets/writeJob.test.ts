@@ -176,13 +176,31 @@ describe("runSceneWrite: a chunk that cannot be written does not block the other
     expect(textsOf(set)).toEqual([SENTENCE, plainTextsOf(set)[1], SENTENCE]);
   });
 
-  test("a provider's refusal is final for its chunk: one call, given up as refused, and the next chunk is asked", async () => {
+  // Round-1 review of S5.6d: the provider's refusal is final for the REQUEST (one call, the same prompt would be refused again) but gives no scene up: the chunk's scenes
+  // take the plain sentence at once, and the next chunk is asked.
+  test("a provider's refusal takes one call, writes its chunk's scenes plain, gives nothing up, and the next chunk is asked", async () => {
     await seed(30);
     const { net, gaveUp, end } = run([refusal, good]);
 
-    expect(await end).toEqual({ status: "done", written: 5, unwritten: 25 });
-    expect(gaveUp).toEqual([{ chunk: 1, by: "refused" }]);
+    expect(await end).toEqual({ status: "done", written: 30, unwritten: 0 });
+    expect(gaveUp).toEqual([]);
     expect(net.calls).toHaveLength(2);
+    const set = await setNow();
+    expect(textsOf(set).slice(0, 25)).toEqual(plainTextsOf(set).slice(0, 25));
+    expect(textsOf(set).slice(25).every((t) => t === SENTENCE)).toBe(true);
+  });
+
+  test("the scenes attempt 1 got right are written into the set even when attempt 2 gets no answer; the next job asks only about the others", async () => {
+    await seed(3);
+    const wrongOnTwo: Step = (call) => ({ status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: slotIndex === 2 ? "She lounges by the pool in a bikini." : SENTENCE })) }), { cost: 0.0112 }) });
+    const first = run([wrongOnTwo, rateLimited]);
+
+    expect(await first.end).toMatchObject({ status: "failed", stoppedBy: "rate-limited" });
+    expect(textsOf(await setNow())).toEqual([SENTENCE, null, SENTENCE]);
+
+    const second = run([good], { jobId: "job-aaaa-0002" });
+    expect(await second.end).toMatchObject({ status: "done" });
+    expect(slotsAskedFor(second.net.calls[0] as FetchCall)).toEqual([2]);
   });
 
   test("a later job asks nothing about a chunk the first job wrote plain", async () => {

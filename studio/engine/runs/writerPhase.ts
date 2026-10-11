@@ -36,6 +36,11 @@ export interface WriterPhaseDeps {
   acquire: (signal: AbortSignal) => Promise<Release>;
   /** Persists one chunk's accepted sentences (the run's journal); awaited before the next chunk is asked. */
   onChunk: (chunk: number, sentences: ReadonlyMap<number, string>) => Promise<void>;
+  /**
+   * S5.6d: a chunk that did not finish (an attempt that got no answer, a stop, a cancel) hands over the sentences earlier attempts of this job had accepted: they are paid for,
+   * so the caller keeps them (a set's scenes, a run's journal marked partial), and a resume asks only about the slots still without one. Absent: they are not kept.
+   */
+  onPartial?: (chunk: number, sentences: ReadonlyMap<number, string>) => Promise<void>;
 }
 
 /**
@@ -202,10 +207,10 @@ async function writeChunk<S extends ReadableSlot>(
   phase: WriterPhase<S>,
   chunk: WriterPhase<S>["chunks"][number],
   slots: readonly S[],
+  kept: Map<number, string>,
 ): Promise<{ ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle>; unwritten?: number[] } | Extract<WriterPhaseResult, { ok: false }>> {
   let feedback: WriterRefusal | undefined;
-  /** What earlier attempts of this job accepted, and the slots still open. */
-  const kept = new Map<number, string>();
+  /** The slots still open (`kept` holds what earlier attempts of this job accepted). */
   const keptAngles = new Map<number, PhaseAngle>();
   let open: readonly S[] = slots;
   const done = (): { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } => ({ ok: true, sentences: kept, ...(keptAngles.size === 0 ? {} : { angles: keptAngles }) });
@@ -247,6 +252,12 @@ async function writeChunk<S extends ReadableSlot>(
     // A moderation refusal of the writer's own prompt is final: the same prompt would be refused again, so no job
     // will ever write this chunk, and a resume would only burn its spare ids (review round 3, L-b).
     const refused = result.status === "refused";
+    // S5.6d (I5.31): the provider's refusal of the writer's prompt is final for the REQUEST (the same prompt would be refused again, so no second one), but it never ends a
+    // planned slot: the chunk's open slots take the plain sentence at once. A phase with no `plain` (an idea write) ends as before.
+    if (refused && phase.plain !== undefined) {
+      for (const slot of open) kept.set(slot.slotIndex, phase.plain(slot));
+      return done();
+    }
     const { error } = refused ? { error: { code: "MODERATION_REFUSED" as const, detail: result.message } } : classifyFailure(result);
     const detail = feedback === undefined ? error.detail : `${error.detail ?? error.code} (after an answer rejected for: ${writerRefusalText(feedback)})`;
     return { ok: false, stop: refused ? "exhausted" : "stopped", error: { ...error, ...(detail === undefined ? {} : { detail: truncate(detail) }) } };
@@ -285,7 +296,8 @@ export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: Wr
       const local = new Map<number, string>();
       const open: S[] = [];
       for (const slot of slots) {
-        const text = phase.local?.(slot) ?? null;
+        // A sentence a stopped job kept for this slot (S5.6d `onPartial`) is not asked again.
+        const text = phase.sentences.get(slot.slotIndex) ?? phase.local?.(slot) ?? null;
         if (text === null) open.push(slot);
         else local.set(slot.slotIndex, text);
       }
@@ -296,8 +308,12 @@ export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: Wr
     if (phase.stop?.aborted === true) return softStopped();
     let written: Map<number, string> = new Map();
     if (open.length > 0) {
-      const asked = await writeChunk(deps, phase, chunk, open);
-      if (!asked.ok) return asked;
+      const kept = new Map<number, string>();
+      const asked = await writeChunk(deps, phase, chunk, open, kept);
+      if (!asked.ok) {
+        if (kept.size > 0) await deps.onPartial?.(chunk.chunk, kept);
+        return asked;
+      }
       written = asked.sentences;
       for (const [slotIndex, angle] of asked.angles ?? []) angles.set(slotIndex, angle);
       unwritten.push(...(asked.unwritten ?? []));

@@ -388,6 +388,8 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       priceBook: deps.priceBook,
       acquire: (signal) => deps.pool.acquire(signal),
       onChunk: (chunk, sentences) => journal(ctx, { type: "writer", chunk, sentences: [...sentences].map(([slotIndex, sentence]) => ({ slotIndex, sentence })), at: at(ctx) }),
+      // S5.6d: what attempt 1 accepted is paid for; a chunk that stops unfinished journals it as partial, and the resume asks only about the slots still without a sentence.
+      onPartial: (chunk, sentences) => journal(ctx, { type: "writer", chunk, partial: true, sentences: [...sentences].map(([slotIndex, sentence]) => ({ slotIndex, sentence })), at: at(ctx) }),
     },
     {
       jobId: job.jobId,
@@ -411,10 +413,6 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
   );
   if (!written.ok) {
     if (written.stop === "cancelled" || written.stop === "soft-stopped") return { ok: false, end: { status: "cancelled" } };
-    if (written.stop === "exhausted") {
-      // No job will ever write that chunk: every open slot ends, so the run is not offered for a resume that cannot help.
-      for (const slot of state.slots) if (slot.end === null) await endSlot(ctx, slot, { status: "failed", error: written.error });
-    }
     return { ok: false, end: { status: "failed", error: written.error } };
   }
   // 5a.2 (S5.6d, plan s5a2 §5.5): only the slots still open are assembled, and a sentence that breaks today's word rules ends ITS slot (free, nothing was reserved),

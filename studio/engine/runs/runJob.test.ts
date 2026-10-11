@@ -866,16 +866,35 @@ describe("an attempt that got no answer stops the run with its slots open", () =
     expect(scopeCommitted()).toBeLessThanOrEqual(run.capMicros);
   });
 
-  test("a writer whose prompt moderation refuses closes every slot: the run is not offered for resumes that would only burn its spare ids", async () => {
-    const run = await newRun(2);
-    const { end, net } = start(run, { net: network({ writer: () => MODERATION }) });
+  // Round-1 review of S5.6d (I5.31): a provider's refusal of the writer's prompt is final for the request (one call, no spare id burnt) but ends no slot: the chunk's slots take
+  // the plain sentence and are drawn, and another chunk is still asked.
+  test("a writer whose prompt moderation refuses writes its chunk's slots plain after one call, and the next chunk is still asked", async () => {
+    const run = await newRun(27);
+    const { end, net } = start(run, { net: network({ writer: (call, n) => (n === 1 ? MODERATION : writerReply(call)) }) });
 
-    expect(await end).toMatchObject({ status: "failed", error: { code: "MODERATION_REFUSED" } });
-    expect(net.writerCalls()).toHaveLength(1);
-    expect((await journal()).filter((e) => e.type === "slot").map((e) => (e.type === "slot" ? [e.status, e.error?.code] : null))).toEqual([
-      ["failed", "MODERATION_REFUSED"],
-      ["failed", "MODERATION_REFUSED"],
-    ]);
+    expect(await end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(net.writerCalls()).toHaveLength(2);
+    expect(reservedIds().filter((id) => id.includes(":writer-"))).toEqual([`${RUN_ID}:writer-1#1`, `${RUN_ID}:writer-2#1`]);
+    const written = (await journal()).flatMap((e) => (e.type === "writer" ? e.sentences : []));
+    const slots = plannedSlots(run);
+    expect(written.filter((s) => s.slotIndex <= 25).map((s) => s.sentence)).toEqual(slots.slice(0, 25).map((slot) => plainSentence(slot)));
+    expect(written.filter((s) => s.slotIndex > 25).every((s) => s.sentence.startsWith(SENTENCE))).toBe(true);
+    expect((await journal()).filter((e) => e.type === "slot" && e.status === "failed")).toEqual([]);
+  });
+
+  test("a chunk stopped after attempt 1 journals what attempt 1 accepted as partial, and the resume asks only about the slots left", async () => {
+    const run = await newRun(3);
+    const wrongOnTwo = (call: FetchCall): Reply => ({ status: 200, body: chatBody(JSON.stringify({ scenes: slotsAskedFor(call).map((slotIndex) => ({ slotIndex, sentence: slotIndex === 2 ? "She lounges by the pool in a bikini." : `${SENTENCE} (slot ${slotIndex})` })) }), { cost: 0.0112 }) });
+    const first = start(run, { net: network({ writer: (call, n) => (n === 1 ? wrongOnTwo(call) : UNAVAILABLE) }) });
+
+    expect(await first.end).toMatchObject({ status: "failed", error: { code: "NETWORK" } });
+    const events = (await journal()).filter((e) => e.type === "writer");
+    expect(events.map((e) => [e.type === "writer" ? e.partial : null, e.type === "writer" ? e.sentences.map((s) => s.slotIndex) : []])).toEqual([[true, [1, 3]]]);
+
+    const resumed = start(run, { jobId: "job-00000002" });
+    expect(await resumed.end).toMatchObject({ status: "done", failedSlots: 0 });
+    expect(resumed.net.writerCalls().map((c) => slotsAskedFor(c))).toEqual([[2]]);
+    expect(String(resumed.net.imageCalls().map((c) => c.json().prompt).find((p) => String(p).includes("(slot 1)")))).toContain(SENTENCE);
   });
 
   test("a writer that gets a 503 three times stops the run before any image, every slot still open", async () => {
