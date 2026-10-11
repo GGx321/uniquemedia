@@ -13,6 +13,7 @@ import {
   type MoneyStatus,
   type MusicKeyStatus,
   type MusicStatus,
+  PORTRAITS_PER_BATCH,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
@@ -553,6 +554,14 @@ export class EngineStore {
   }
 
   /**
+   * S5.3d: records a reference-portrait batch this window just started, with its five slots as the total until the first job.progress says otherwise
+   * (so «Генерация 0 / 5» and the panel's «0 из 5», never a candidates batch's 4); merges with any events that beat the reply.
+   */
+  trackPortraitsJob(jobId: string, avatarId: string): void {
+    this.patchJob({ kind: "avatar.portraits", jobId, avatarId }, (job) => ({ ...job, total: job.total || PORTRAITS_PER_BATCH }));
+  }
+
+  /**
    * CS.4a: records a scene set's writer job this window just started (a compose or a «Дописать»), with the scenes it will write as the total until the
    * first job.progress says otherwise; merges with any events that beat the reply.
    */
@@ -1044,7 +1053,8 @@ export class EngineStore {
               : result.kind === "render"
               ? // The result names no draft: a render first heard of here keeps none (one already known keeps its own).
                 { kind: "render", jobId, avatarId: result.avatarId, montageId: null, videoId: result.videoId }
-              : { kind: "avatar.candidates", jobId, avatarId: result.avatarId };
+              : // S5.3d: a portrait batch first heard of at its end is a portrait batch, never labelled a candidates batch.
+                { kind: result.kind, jobId, avatarId: result.avatarId };
         this.patchJob(
           ref,
           (job) => {

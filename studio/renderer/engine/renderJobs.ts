@@ -1,4 +1,4 @@
-import { NO_ANSWER_DETAIL_PREFIX, type EngineError, type VideoSummary } from "../../shared/engine";
+import { NO_ANSWER_DETAIL_PREFIX, PORTRAITS_PER_BATCH, type EngineError, type VideoSummary } from "../../shared/engine";
 import type { RenderBlock } from "../screens/montage/renderBlock";
 import type { EngineReply } from "./client";
 import type { JobView } from "./store";
@@ -77,12 +77,17 @@ export function nextRenderBatch(prev: ReadonlySet<string>, jobs: readonly JobVie
 export interface SidebarCounts {
   /** «Очередь · N задач»: everything queued or running, renders included. */
   readonly queue: number;
-  /** «Генерация»: the photo runs and candidate batches only. A job with no total yet counts its 4 slots. */
+  /** «Генерация»: the photo runs, candidate batches and portrait batches. A job with no total yet counts its slots: 4, or 5 for a portrait batch (S5.3d). */
   readonly generation: { readonly done: number; readonly total: number } | null;
   /** «Сцены» (CS.6, Sidebar.dc.html): the scene sets' writer jobs — compose, «Дописать», ⟳, «по описанию» — scenes written of scenes asked. */
   readonly scenes: { readonly done: number; readonly total: number } | null;
   /** «Рендер a / b»: `ended` of `size`, and the bar's `fraction` (running renders by their frames). Null while none is queued or running. */
   readonly render: { readonly ended: number; readonly size: number; readonly fraction: number } | null;
+}
+
+/** A job's slots before its first progress says its total: a portrait batch draws 5; anything else counts a candidates batch's 4, as it always has. */
+function slotsBeforeProgress(job: JobView): number {
+  return job.kind === "avatar.portraits" ? PORTRAITS_PER_BATCH : 4;
 }
 
 export function sidebarCounts(jobs: readonly JobView[], batch: ReadonlySet<string>): SidebarCounts {
@@ -93,7 +98,7 @@ export function sidebarCounts(jobs: readonly JobView[], batch: ReadonlySet<strin
   const running = batchJobs.filter(isActive);
   return {
     queue: active.length,
-    generation: photo.length === 0 ? null : { done: photo.reduce((sum, j) => sum + j.done, 0), total: photo.reduce((sum, j) => sum + (j.total || 4), 0) },
+    generation: photo.length === 0 ? null : { done: photo.reduce((sum, j) => sum + j.done, 0), total: photo.reduce((sum, j) => sum + (j.total || slotsBeforeProgress(j)), 0) },
     scenes: scenes.length === 0 ? null : { done: scenes.reduce((sum, j) => sum + j.done, 0), total: scenes.reduce((sum, j) => sum + j.total, 0) },
     render:
       running.length === 0
