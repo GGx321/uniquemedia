@@ -6,6 +6,7 @@ import { sampleRecipe } from "../core/sampler";
 import { samplePhotoRecipe } from "../core/photo/sampler";
 import type { RenderExecutor } from "../core/executor";
 import { shouldPreserveEdges } from "../core/photo/edges";
+import { DEFAULT_FRAME_PACK_DIR, listFrameBackgrounds } from "./framePack";
 import { EDGE_MODES, EXPORT_FORMATS, FIRST_FRAME_MODES, IDENTITY_MODES } from "../core/types";
 import type {
   EdgeMode,
@@ -104,6 +105,9 @@ export interface RouteBatchConfig {
   nowMs: number;
   concurrency?: number;
   signal?: AbortSignal;
+  /** Folder of the frame-mode backgrounds. Defaults to the repo's pack; a
+   *  packaged app passes the copy it extracted. */
+  framePackDir?: string;
   onProgress?: (index: number, attempt: number, fraction: number) => void;
   /** Fires again for a copy the inter-copy post-pass regenerated. */
   onCopyDone?: (result: RouteCopyResult) => void;
@@ -342,6 +346,7 @@ export async function uniquifyRoute(
       keepTrendAudio: _keepTrendAudio,
       firstFrame: _firstFrame,
       coverPath: _coverPath,
+      frame: _frame,
       ...rest
     } = opts;
     const photoOpts: ResolvedPhotoOptions = {
@@ -356,11 +361,14 @@ export async function uniquifyRoute(
   // `firstFrame` and `coverPath` are replaced by the resolved form, as a
   // still's `edgeMode` is above: the sampler gets numbers, and a request the
   // cover cannot honour is refused here, before a frame is rendered.
-  const { firstFrame: _firstFrame, coverPath: _coverPath, ...rest } = opts;
+  const { firstFrame: _firstFrame, coverPath: _coverPath, frame, ...rest } = opts;
   const videoOpts: ResolvedCopyOptions = {
     ...rest,
     keepTrendAudio: opts.keepTrendAudio ?? false,
     firstFrame: await resolveFirstFrame(route, opts),
+    ...(frame
+      ? { frame: { backgrounds: await listFrameBackgrounds(config.framePackDir ?? DEFAULT_FRAME_PACK_DIR) } }
+      : {}),
   };
   return uniquify<Recipe, ResolvedCopyOptions>(input, videoOpts, route.executor, count, {
     ...shared,

@@ -131,6 +131,27 @@ export type ResolvedFirstFrame =
  */
 export interface ResolvedCopyOptions extends Omit<CopyOptions, "firstFrame" | "coverPath"> {
   firstFrame: ResolvedFirstFrame;
+  /** Present when the copies go "in a frame": the pack the sampler draws each
+   *  copy's background from. Absent means frame mode is off. */
+  frame?: ResolvedFrame;
+}
+
+/** The background images frame mode draws from, listed where the files are. */
+export interface ResolvedFrame {
+  backgrounds: string[];
+}
+
+/**
+ * Where the finished video sits in frame mode: scaled to `w`x`h` and placed at
+ * `x`,`y` on the canvas (the export format's size), over `background`. All four
+ * numbers are even, and `x + w`/`y + h` never pass the canvas.
+ */
+export interface FrameSpec {
+  background: string;
+  w: number;
+  h: number;
+  x: number;
+  y: number;
 }
 
 /**
@@ -144,6 +165,8 @@ export type StartOptions = PhotoCopyOptions & {
   keepTrendAudio?: boolean;
   firstFrame?: FirstFrameMode;
   coverPath?: string | null;
+  /** Video only: put each copy in a frame over a nature background. */
+  frame?: boolean;
 };
 
 export interface Operation {
@@ -185,6 +208,9 @@ export interface Recipe {
    *  seed. The cover recipe inside the `photo` arm is drawn — on its own rng
    *  stream, so the rest of the recipe stays what it was. */
   firstFrame: FirstFrame;
+  /** Frame mode: set only when the mode is on. Drawn per copy on an rng of its
+   *  own, so the rest of the recipe is what it is with the mode off. */
+  frame?: FrameSpec;
   segments: SpeedSegment[];
   video: Operation[];
   audio: Operation[];

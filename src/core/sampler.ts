@@ -2,7 +2,15 @@ import { makeRng, type Rng } from "./rng";
 import { PARAMS } from "./presets";
 import { round, clamp } from "./util";
 import { samplePhotoRecipe } from "./photo/sampler";
-import type { FirstFrame, Operation, Recipe, ResolvedCopyOptions } from "./types";
+import {
+  EXPORT_DIMS,
+  type ExportFormat,
+  type FirstFrame,
+  type FrameSpec,
+  type Operation,
+  type Recipe,
+  type ResolvedCopyOptions,
+} from "./types";
 
 function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = false): number {
   const spec = PARAMS[key];
@@ -55,6 +63,39 @@ function firstFrameOf(opts: ResolvedCopyOptions, seed: number, intensity: number
     intensity
   );
   return { mode: "photo", path, info, recipe };
+}
+
+/** Frame mode's own stream, so enabling it moves no other draw. */
+const FRAME_RNG_SALT = 0x46524d45;
+const FRAME_MIN_SCALE = 0.72;
+const FRAME_MAX_SCALE = 0.9;
+
+const evenRound = (v: number): number => 2 * Math.round(v / 2);
+
+/**
+ * Where the video sits in a frame: 72-90% of the canvas, at a random offset
+ * that keeps it fully inside, over a background picked from the pack. The
+ * canvas is the export format's size, and `original` has none, so it becomes
+ * reels (9:16).
+ */
+function drawFrame(
+  opts: ResolvedCopyOptions,
+  canvasFormat: Exclude<ExportFormat, "original">,
+  seed: number
+): FrameSpec | undefined {
+  if (!opts.frame) return undefined;
+  const { backgrounds } = opts.frame;
+  if (backgrounds.length === 0) {
+    throw new Error("Frame mode needs at least one background image, and the pack is empty.");
+  }
+  const rng = makeRng((seed ^ FRAME_RNG_SALT) >>> 0);
+  const { w: W, h: H } = EXPORT_DIMS[canvasFormat];
+  const scale = FRAME_MIN_SCALE + rng() * (FRAME_MAX_SCALE - FRAME_MIN_SCALE);
+  const w = evenRound(W * scale);
+  const h = evenRound(H * scale);
+  const x = 2 * Math.floor(rng() * ((W - w) / 2 + 1));
+  const y = 2 * Math.floor(rng() * ((H - h) / 2 + 1));
+  return { background: pick(rng, backgrounds), w, h, x, y };
 }
 
 export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity = 1): Recipe {
@@ -118,13 +159,18 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
     ? []
     : [{ id: "aeq", params: { gain: round(dev(rng, "eqGain", s)) } }];
 
+  const exportFormat: ExportFormat =
+    opts.frame && opts.exportFormat === "original" ? "reels" : opts.exportFormat;
+  const frame = drawFrame(opts, exportFormat === "original" ? "reels" : exportFormat, seed);
+
   return {
     seed,
     intensity,
-    exportFormat: opts.exportFormat,
+    exportFormat,
     keepTrendAudio: opts.keepTrendAudio,
     identity: opts.identity,
     firstFrame: firstFrameOf(opts, seed, intensity),
+    ...(frame ? { frame } : {}),
     segments,
     video: [...video, { id: "encode", params: { crf, fps, gop, keyintMin, preset, audioKbps } }],
     audio,

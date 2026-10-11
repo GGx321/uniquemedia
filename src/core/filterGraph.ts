@@ -117,7 +117,22 @@ function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
   });
   const ff = recipe.firstFrame;
   const concat = `${splitLabels("s", n)}concat=n=${n}:v=1:a=0`;
-  if (ff.mode === "photo") {
+  const fr = recipe.frame;
+  if (fr) {
+    // The finished video is scaled down and laid over the background; the
+    // first-frame branch then works on the composed picture. The background
+    // input follows the cover's, if there is one.
+    const { w: W, h: H } = EXPORT_DIMS[recipe.exportFormat === "original" ? "reels" : recipe.exportFormat];
+    const bg = ff.mode === "photo" ? 2 : 1;
+    const composed = ff.mode === "off" ? "outv" : ff.mode === "black" ? "vfr" : "vc";
+    lines.push(
+      `${concat},fps=${fps},scale=${fr.w}:${fr.h},setsar=1[vsm]`,
+      `[${bg}:v]scale=${W}:${H}:force_original_aspect_ratio=increase,crop=${W}:${H},setsar=1[bg]`,
+      `[bg][vsm]overlay=x=${fr.x}:y=${fr.y}:shortest=1[${composed}]`
+    );
+    if (ff.mode === "black") lines.push(`[vfr]${blackFirstFrame(fps).slice(1)}[outv]`);
+    if (ff.mode === "photo") lines.push(...coverFirstFrame(ff, fps).lines);
+  } else if (ff.mode === "photo") {
     const { tail, lines: cover } = coverFirstFrame(ff, fps);
     lines.push(`${concat}${tail}`, ...cover);
   } else {
@@ -189,7 +204,12 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
     : videoComplex(recipe, info, fps);
   // The cover is the graph's second input, named here so the executor's
   // `-i <source>` is followed by `-i <cover>` and `[1:v]` means the still.
-  const inputs = recipe.firstFrame.mode === "photo" ? ["-i", recipe.firstFrame.path] : [];
+  // Frame mode's background is the next input after it: looped, at the encode
+  // rate so the overlay does not resample the footage's timing.
+  const inputs = [
+    ...(recipe.firstFrame.mode === "photo" ? ["-i", recipe.firstFrame.path] : []),
+    ...(recipe.frame ? ["-loop", "1", "-framerate", String(fps), "-i", recipe.frame.background] : []),
+  ];
   const args: string[] = [...inputs, "-filter_complex", complex, "-map", "[outv]"];
 
   if (info.hasAudio) {
