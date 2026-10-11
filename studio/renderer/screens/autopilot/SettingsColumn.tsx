@@ -1,7 +1,7 @@
 import { type ReactNode, type RefObject, useId, useRef } from "react";
 import { MAX_VIDEOS_PER_AVATAR, SceneCategory, type CategoryRef, type CategorySummary, type LaunchMix } from "../../../shared/engine";
 import { Icon } from "../../ui/Icon";
-import { CardAnglesLine } from "../photos/AnglesLines";
+import { OwnAnglesNote } from "../photos/AnglesLines";
 import { ownAnglesLine } from "../photos/categoryText";
 import { CATEGORY_LABEL } from "../photos/runForm";
 import { MIN_VIDEOS_PER_AVATAR, wantedShapes, type LaunchForm } from "./launchForm";
@@ -138,7 +138,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
                 <b id={id("ang")}>Ракурсы</b>
                 <span id={id("ang-hint")}>анфас и три четверти — всегда</span>
               </div>
-              <div className="ap-chips" role="group" aria-labelledby={id("ang")} aria-describedby={ownAngles !== null ? `${id("ang-hint")} ${id("ang-own")}` : id("ang-hint")}>
+              <div className="ap-chips" role="group" aria-labelledby={id("ang")} aria-describedby={id("ang-hint")}>
                 {(["profile", "back"] as const).map((pose) => {
                   const on = form.poses[pose];
                   return (
@@ -149,7 +149,7 @@ export function SettingsColumn(props: SettingsColumnProps) {
                 })}
               </div>
               <span className="faint ap-row-note">профиль и со спины — без проверки сходства</span>
-              {ownAngles !== null && <CardAnglesLine line={ownAngles} describedId={id("ang-own")} />}
+              {ownAngles !== null && <OwnAnglesNote line={ownAngles} className="ap-row-note" />}
             </div>
 
             <SwitchRow

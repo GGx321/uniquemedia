@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { fireEvent, screen, within } from "@testing-library/react";
-import { callsOf, describeElement, flush, runAll, withText } from "../testing";
-import { BED, BED_POOL, category, MIA, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
-import { isDisabled, nb, openReview } from "./photos/sceneScreenKit";
+import { callsOf, describeElement, flush, runAll } from "../testing";
+import { BED, BED_POOL, category, MIA, openPhotos, PARIS } from "./photos/categoryScreenKit";
+import { isDisabled, openReview } from "./photos/sceneScreenKit";
 
 // CS.8b: a custom category's angles on the categories' side (README «CS.8 — angles from descriptions»; CatCreateDone, CatCreateDoneAngles, CatSheet,
-// CatSheetAngles, CatChipsAngles; the CategoryStates sheet, section F, and its keyboard rows), against the mock engine.
+// CatSheetAngles; the CategoryStates sheet, section F, and its keyboard rows), against the mock engine.
 
 const BED_NOTE = "Её сцены — поровну в этих ракурсах; «Ракурсы» карточки их не касаются. Селфи станет меньше: только три четверти; со спины — без проверки сходства.";
 const NONE_HINT = "Как в карточке генерации: анфас и три четверти всегда, профиль и со спины — если они включены там.";
@@ -224,59 +224,5 @@ describe("«Мои категории»: the «Ракурсы» block (CatSheet,
         "Ниже — новые места, наряды, кадры и ракурсы. Они идут в следующие наборы и запуски. Уже составленные сцены остались как были; «Другая сцена» в открытом наборе возьмёт новые. Идущий запуск — со старым, у него своя копия.",
       ),
     ).toBeDefined();
-  });
-});
-
-describe("the generate card: the line under «Ракурсы» (CatChipsAngles)", () => {
-  function anglesRow(): HTMLElement {
-    return screen.getByRole("group", { name: "Ракурсы" });
-  }
-
-  test("a category of the run with its own angles: one line, the message first; a screen reader hears it with the group's hint", async () => {
-    const harness = await openPhotos({ categories: [PARIS, BED] });
-    const chips = screen.getByRole("group", { name: "Категории · фото в каждой" });
-    // Not in the run: no line.
-    expect(screen.queryByText(/^Эти переключатели не касаются/) === null).toBe(true);
-    fireEvent.click(within(chips).getByRole("button", { name: /^Домашнее у кровати/ }));
-    await flush();
-    // The visible line, whole, is hidden from a screen reader (which hears the full text the group names); its title repeats it.
-    const line = screen.getByText(withText(/^Эти переключатели не касаются «Домашнее у кровати» — у неё свои ракурсы: три четверти, со спины\.$/));
-    expect(line.getAttribute("aria-hidden")).toBe("true");
-    expect(line.closest("[title]")?.getAttribute("title")).toBe("Свои ракурсы — Домашнее у кровати: три четверти, со спины");
-    const described = (anglesRow().getAttribute("aria-describedby") ?? "").split(" ").map((id) => document.getElementById(id)?.textContent ?? "");
-    expect(described).toEqual([
-      "профиль и со спины — только если разрешите, без проверки сходства",
-      "Эти переключатели не касаются категорий со своими ракурсами: «Домашнее у кровати» — три четверти, со спины.",
-    ]);
-    fireEvent.click(within(chips).getByRole("button", { name: /^Домашнее у кровати/ }));
-    await flush();
-    expect(screen.queryByText(/^Эти переключатели не касаются/) === null).toBe(true);
-    harness.unmount();
-  });
-
-  test("several: «ещё N категорий» is a button that opens every category with its angles under the line, the focus staying on it", async () => {
-    const yoga = category(5, "Йога дома", { ...BED_POOL, poses: ["profile"] });
-    const city = category(6, "Ночной город", { ...BED_POOL, poses: ["back"] });
-    await openPhotos({ categories: [BED, yoga, city, MONO, WINTER] });
-    const chips = screen.getByRole("group", { name: "Категории · фото в каждой" });
-    for (const name of ["Домашнее у кровати", "Йога дома", "Ночной город"]) {
-      fireEvent.click(within(chips).getByRole("button", { name: new RegExp(`^${name}`) }));
-      await flush();
-    }
-    const more = screen.getByRole("button", { name: nb("ещё 2 категорий") });
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    const list = document.getElementById(more.getAttribute("aria-controls") ?? "");
-    expect(list === null || list.hidden).toBe(true);
-    more.focus();
-    fireEvent.click(more);
-    await flush();
-    expect(more.getAttribute("aria-expanded")).toBe("true");
-    const open = document.getElementById(more.getAttribute("aria-controls") ?? "");
-    expect(open?.hidden).toBe(false);
-    expect(Array.from(open?.querySelectorAll("li") ?? []).map((li) => li.textContent)).toEqual(["Домашнее у кровати — три четверти, со спины", "Йога дома — профиль", "Ночной город — со спины"]);
-    expect(describeElement(document.activeElement)).toBe(describeElement(more));
-    fireEvent.click(more);
-    await flush();
-    expect(more.getAttribute("aria-expanded")).toBe("false");
   });
 });

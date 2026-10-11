@@ -73,8 +73,26 @@ test("runForm's split matches the engine's for a subset of categories too, order
 
 // ---------- 2K removed (owner decision 2026-09-29) ----------
 
-test("runRequest asks for nothing about resolution: only the avatar, the count, the categories and the poses", () => {
-  expect(Object.keys(runRequest("avatar-0001", DEFAULT_RUN_FORM)).sort()).toEqual(["avatarId", "categories", "count", "poses"]);
+// S5.7c (plan s5a2 §6.1, changed on purpose): the window no longer sends «Ракурсы» — the angle comes from the scene — and sends «Подача» only when it is not
+// the default, so a stored request carries `level` only when it differs (I5.27).
+test("runRequest asks for nothing about resolution or poses: only the avatar, the count and the categories", () => {
+  expect(DEFAULT_RUN_FORM.level).toBe("ordinary");
+  expect(Object.keys(runRequest("avatar-0001", DEFAULT_RUN_FORM)).sort()).toEqual(["avatarId", "categories", "count"]);
+});
+
+test("runRequest adds «Подача» when it is «Кокетливая»", () => {
+  const request = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, level: "flirty" });
+  expect(Object.keys(request).sort()).toEqual(["avatarId", "categories", "count", "level"]);
+  expect(request.level).toBe("flirty");
+  expect(RunRequest.safeParse(request).success).toBe(true);
+});
+
+test("an ordinary and a flirty request are priced apart: their keys differ", () => {
+  const ordinary = runRequest("avatar-0001", DEFAULT_RUN_FORM);
+  const flirty = runRequest("avatar-0001", { ...DEFAULT_RUN_FORM, level: "flirty" });
+  expect(requestKey(ordinary)).not.toBe(requestKey(flirty));
+  // An old request that still names «Ракурсы» keys like the same request without them: poses change no plan (I5.26).
+  expect(requestKey({ ...ordinary, poses: { profile: true, back: true } })).toBe(requestKey(ordinary));
 });
 
 // ---------- CS.1: custom categories on the form (chips for them come with CS.3) ----------

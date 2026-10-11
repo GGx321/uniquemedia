@@ -382,37 +382,36 @@ describe("CS.8: a category's angles", () => {
     expect(ownAnglesLine([])).toBe(null);
   });
 
-  test("the card's line, one category: the message first, then the name, then its angles sorted", () => {
+  // S5.7c (mockup 27): the toggles are gone, so the line no longer says what they do not touch — it names the category and its angles.
+  test("the card's line, one category: «У «{имя}» свои ракурсы: {список}.», its angles sorted", () => {
     const line = ownAnglesLine([{ name: "Домашнее у кровати", poses: ["back", "three-quarter"] }]);
     expect(line).toEqual({
       name: "Домашнее у кровати",
       list: "три четверти, со спины",
       more: 0,
       moreLabel: "",
-      visible: "Эти переключатели не касаются «Домашнее у кровати» — у неё свои ракурсы: три четверти, со спины.",
+      visible: "У «Домашнее у кровати» свои ракурсы: три четверти, со спины.",
       rows: [{ name: "Домашнее у кровати", list: "три четверти, со спины" }],
-      full: "Эти переключатели не касаются категорий со своими ракурсами: «Домашнее у кровати» — три четверти, со спины.",
       title: "Свои ракурсы — Домашнее у кровати: три четверти, со спины",
     });
   });
 
-  test("the card's line, several: «и ещё N категорий» behind a button, every category with its angles in the list it opens and for a screen reader", () => {
+  test("the card's line, several: «У «{имя}» и ещё N — свои ракурсы.», «ещё N» opening every category with its angles", () => {
     const line = ownAnglesLine([
       { name: "Домашнее у кровати", poses: ["three-quarter", "back"] },
       { name: "Йога дома", poses: ["profile"] },
       { name: "Ночной город", poses: ["back"] },
     ]);
-    expect(line?.visible).toBe(nb("Эти переключатели не касаются «Домашнее у кровати» и ещё 2 категорий — у них свои ракурсы."));
+    expect(line?.visible).toBe("У «Домашнее у кровати» и ещё 2 — свои ракурсы.");
     expect(line?.list).toBe(null);
     expect(line?.more).toBe(2);
-    expect(line?.moreLabel).toBe(nb("ещё 2 категорий"));
+    expect(line?.moreLabel).toBe("ещё 2");
     expect(line?.rows).toEqual([
       { name: "Домашнее у кровати", list: "три четверти, со спины" },
       { name: "Йога дома", list: "профиль" },
       { name: "Ночной город", list: "со спины" },
     ]);
-    expect(line?.full).toBe("Эти переключатели не касаются категорий со своими ракурсами: «Домашнее у кровати» — три четверти, со спины; «Йога дома» — профиль; «Ночной город» — со спины.");
     expect(line?.title).toBe("Свои ракурсы — Домашнее у кровати: три четверти, со спины; Йога дома: профиль; Ночной город: со спины");
-    expect(ownAnglesLine([{ name: "А", poses: ["back"] }, { name: "Б", poses: ["back"] }])?.moreLabel).toBe(nb("ещё 1 категории"));
+    expect(ownAnglesLine([{ name: "А", poses: ["back"] }, { name: "Б", poses: ["back"] }])?.moreLabel).toBe("ещё 1");
   });
 });

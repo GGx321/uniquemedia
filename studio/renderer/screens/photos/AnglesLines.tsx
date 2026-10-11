@@ -2,9 +2,9 @@ import { useId, useState } from "react";
 import { Icon } from "../../ui/Icon";
 import type { OwnAnglesLine } from "./categoryText";
 
-// CS.8b: the two lines that say who does not follow a «Ракурсы» row — under the generate card's toggles (CatChipsAngles; README «Copy», «Card line») and in
-// the scene set's strip («у «{имя}» и ещё N — свои», ReviewAngles). «ещё N» opens every such category with its angles under the line, so the names a screen
-// reader hears and a mouse finds in the title are within a keyboard's reach too (README «Keyboard and focus»: a disclosure, the focus staying on it).
+// CS.8b, S5.7c: the lines that name the categories keeping angles of their own — under the angle note of the generate card and of «Автопилот» (mockup 27:
+// «У «{имя}» свои ракурсы: …»), and in the scene set's strip («у «{имя}» и ещё N — свои»). «ещё N» opens every such category with its angles under the
+// line, so the names a mouse finds in the title are within a keyboard's reach too (README «Keyboard and focus»: a disclosure, the focus staying on it).
 
 /** «{имя} — {список}» per line, under the line that opened it. */
 export function OwnersList({ id, open, rows }: { id: string; open: boolean; rows: readonly { readonly name: string; readonly list: string }[] }) {
@@ -32,35 +32,27 @@ export function MoreButton({ label, open, controls, onToggle }: { label: string;
 }
 
 /**
- * The line under the card's «Ракурсы» when a category of the run has angles of its own: one line, the message first, the name capped, the list cut by an
- * ellipsis when it does not fit. The visible words are hidden from a screen reader, which hears `describedId` instead — every category with its angles, named
- * by the «Ракурсы» group's `aria-describedby` — while «ещё N категорий» stays a button it can reach.
+ * S5.7c (mockup 27): the line under «Ракурс берётся из сцены…» when a category of the run keeps angles of its own — «У «{имя}» свои ракурсы: {список}.», or with
+ * several «У «{имя}» и [ещё N] — свои ракурсы.», the button opening the list.
  */
-export function CardAnglesLine({ line, describedId }: { line: OwnAnglesLine; describedId: string }) {
+export function OwnAnglesNote({ line, className }: { line: OwnAnglesLine; className?: string }) {
   const listId = useId();
   const [open, setOpen] = useState(false);
   return (
-    <div className="photos-angles-own" title={line.title}>
-      <p className="photos-angles-own-line">
+    <div className={className === undefined ? "gen-angle-owners" : `gen-angle-owners ${className}`} title={line.title}>
+      <p className="gen-angle-own">
         <Icon name="info" size={12} strokeWidth={2.2} />
         {line.list !== null ? (
-          <span className="photos-angles-own-text" aria-hidden="true">
-            Эти переключатели не касаются «<span className="angles-owner-name photos-angles-own-name">{line.name}</span>» — у неё свои ракурсы:{" "}
-            <span className="angles-owner-name">{line.list}</span>.
+          <span>
+            У «<span className="angles-owner-name">{line.name}</span>» свои ракурсы: <span className="angles-owner-name">{line.list}</span>.
           </span>
         ) : (
-          <span className="photos-angles-own-text">
-            <span aria-hidden="true">
-              Эти переключатели не касаются «<span className="angles-owner-name photos-angles-own-name">{line.name}</span>» и{" "}
-            </span>
-            <MoreButton label={line.moreLabel} open={open} controls={listId} onToggle={() => setOpen((o) => !o)} />
-            <span aria-hidden="true"> — у них свои ракурсы.</span>
+          <span>
+            У «<span className="angles-owner-name">{line.name}</span>» и <MoreButton label={line.moreLabel} open={open} controls={listId} onToggle={() => setOpen((o) => !o)} /> —
+            свои ракурсы.
           </span>
         )}
       </p>
-      <span id={describedId} className="sr-only">
-        {line.full}
-      </span>
       {line.more > 0 && <OwnersList id={listId} open={open} rows={line.rows} />}
     </div>
   );
@@ -72,4 +64,3 @@ export function useOwnersDisclosure(): { readonly open: boolean; readonly listId
   const [open, setOpen] = useState(false);
   return { open, listId, toggle: () => setOpen((o) => !o) };
 }
-

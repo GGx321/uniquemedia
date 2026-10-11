@@ -88,7 +88,7 @@ describe("compose", () => {
     await flush();
     const sent = callsOf(engine, "scenes.compose");
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: 2 * ATTEMPT });
+    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: [LLM_ONLY_REF], acceptedWorstMicros: 2 * ATTEMPT });
     await flush();
     expect(card().getAttribute("aria-label")).toBe("Генерация фото · набор сцен");
     expect(goButton().textContent).toBe("Составляем… · до $0.075");
@@ -113,7 +113,7 @@ describe("compose", () => {
     await flush();
     const sent = callsOf(engine, "scenes.compose");
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false }, acceptedWorstMicros: 0 });
+    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], acceptedWorstMicros: 0 });
     runAll(scheduler);
     await flush();
     await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));

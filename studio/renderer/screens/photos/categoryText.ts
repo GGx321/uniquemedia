@@ -347,44 +347,40 @@ export interface AngleOwner {
   readonly poses: readonly ScenePose[];
 }
 
-/** The line under the card's «Ракурсы»: which of the run's categories its toggles do not govern. */
+/** The line under the angle note (the card, «Автопилот»): which of the run's categories keep angles of their own. */
 export interface OwnAnglesLine {
   /** The first such category's name. */
   readonly name: string;
   /** Its angles, when it is the only one; with others the line names none. */
   readonly list: string | null;
-  /** How many others, behind the «ещё N категорий» button. */
+  /** How many others, behind the «ещё N» button. */
   readonly more: number;
   readonly moreLabel: string;
   /** What the line says on screen, the button's words included. */
   readonly visible: string;
   /** Each category with its angles: the list the button opens. */
   readonly rows: readonly { readonly name: string; readonly list: string }[];
-  /** What a screen reader hears instead of the visible line, every category named. */
-  readonly full: string;
   readonly title: string;
 }
 
 /**
- * README «Copy», «Card line»: one category — «… «{имя}» — у неё свои ракурсы: {список}.»; several — «… «{имя}» и [ещё N категорий] — у них свои ракурсы.»,
- * the button opening every category with its angles. The message comes first, so an ellipsis never cuts the point; a screen reader hears every name.
+ * S5.7c (mockup 27): one category — «У «{имя}» свои ракурсы: {список}.»; several — «У «{имя}» и [ещё N] — свои ракурсы.», the button opening every category
+ * with its angles, so the names a mouse finds in the title are within a keyboard's reach too.
  */
 export function ownAnglesLine(owners: readonly AngleOwner[]): OwnAnglesLine | null {
   const [first] = owners;
   if (first === undefined) return null;
   const rows = owners.map((owner) => ({ name: owner.name, list: posesText(owner.poses) }));
   const more = owners.length - 1;
-  const moreLabel = more === 0 ? "" : `ещё ${countOf(more, ["категории", "категорий", "категорий"])}`;
-  const lead = `Эти переключатели не касаются «${first.name}»`;
+  const moreLabel = more === 0 ? "" : `ещё ${more}`;
   const list = more === 0 ? posesText(first.poses) : null;
   return {
     name: first.name,
     list,
     more,
     moreLabel,
-    visible: list !== null ? `${lead} — у неё свои ракурсы: ${list}.` : `${lead} и ${moreLabel} — у них свои ракурсы.`,
+    visible: list !== null ? `У «${first.name}» свои ракурсы: ${list}.` : `У «${first.name}» и ${moreLabel} — свои ракурсы.`,
     rows,
-    full: `Эти переключатели не касаются категорий со своими ракурсами: ${rows.map((row) => `«${row.name}» — ${row.list}`).join("; ")}.`,
     title: `Свои ракурсы — ${rows.map((row) => `${row.name}: ${row.list}`).join("; ")}`,
   };
 }

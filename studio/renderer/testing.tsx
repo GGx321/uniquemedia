@@ -4,6 +4,7 @@ import type { CommandMessage, CommandType } from "../shared/engine";
 import { App } from "./App";
 import { MockEngine, type MockEngineOptions, mockEngineClient } from "./engine/mockEngine";
 import { ManualScheduler } from "./engine/scheduler";
+import { LEVEL_KEY_PREFIX } from "./screens/photos/level";
 import { SCENE_REVIEW_KEY } from "./screens/photos/sceneReview";
 
 /**
@@ -14,14 +15,20 @@ export interface SetupOptions extends MockEngineOptions {
   sceneReview?: "on" | "off";
   /** A manual clock for the photo lists' re-read wait (returned as `pagesScheduler`); without it the wait runs on real timers. */
   pagesScheduler?: ManualScheduler;
+  /** S5.7c: keep each avatar's remembered «Подача» (a second window of the same machine); without it every setup starts from «Обычная». */
+  keepLevels?: boolean;
 }
 
-export function setup({ sceneReview, pagesScheduler, ...options }: SetupOptions = {}) {
+export function setup({ sceneReview, pagesScheduler, keepLevels = false, ...options }: SetupOptions = {}) {
   try {
     if (sceneReview === undefined) localStorage.removeItem(SCENE_REVIEW_KEY);
     else localStorage.setItem(SCENE_REVIEW_KEY, sceneReview);
+    if (!keepLevels) {
+      const levels = Array.from({ length: localStorage.length }, (_, i) => localStorage.key(i)).filter((key): key is string => key?.startsWith(LEVEL_KEY_PREFIX) === true);
+      for (const key of levels) localStorage.removeItem(key);
+    }
   } catch {
-    // No storage in this environment: the switch reads ON.
+    // No storage in this environment: the switch reads ON, and «Подача» «Обычная».
   }
   const scheduler = new ManualScheduler();
   const engine = new MockEngine({ scheduler, latencyMs: 0, ...options });
