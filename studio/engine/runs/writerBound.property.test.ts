@@ -9,6 +9,8 @@ import { poolOf } from "../scenes/poolGen";
 import { sceneCategory } from "./plan";
 import { chunkSlots } from "../scenes/writer";
 import { LLM_ONLY_CATEGORY_POOL, LLM_ONLY_REF, llmOnlySnapshot } from "../scenes/testing/llmOnlyFixture";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // 5a.2 (S5.6c2, plan s5a2 §5.6, I5.30): «estimates are never below spend», checked against the REAL planner and the REAL template seam. For random plans over built-in,
 // covered-custom and uncovered-custom categories: (1) a covered category never yields a slot the template cannot write (the soundness of `covers`, which is the money side:

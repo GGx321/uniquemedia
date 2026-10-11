@@ -4,6 +4,8 @@ import { covers } from "../../shared/scenes/custom";
 import { coversOfStored } from "./coverage";
 import { poolOf } from "./poolGen";
 import { PoolSchema } from "./pools";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 import { LLM_ONLY_CATEGORY_POOL, LLM_ONLY_POOL, LLM_ONLY_REF } from "./testing/llmOnlyFixture";
 
 /** A pool whose every activity reads after «she is» and whose shots are a friend's: the template writes all of it. */
