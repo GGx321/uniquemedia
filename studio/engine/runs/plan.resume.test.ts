@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { chatBody, fakeFetch, makeClient, setupMoney, asLibraryReference, JPEG, type FetchCall, type Money, type Reply } from "../openrouter/testing/fakes";
-import { assembleRun, POOLS, roomPlaceOf, type PlanSlot } from "../scenes";
+import { assembleRun, hairLinesOf, POOLS, roomPlaceOf, slotLookOf, type PlanSlot } from "../scenes";
+import { redrawSlot } from "../scenes/redraw";
+import { PlanSlotSchema } from "../scenes/schema";
 import { captureOfShot } from "../../shared/scenes/captures";
 import { captureLineOf, slotKeyOf } from "../scenes/phoneLook";
 import { plannedSlots, runWriterConfig, RunPlanSchema } from "./plan";
@@ -67,6 +69,44 @@ describe("a resume of the plan.json written by main 3a9cd498, on the Stage 5 cod
 
   test("still parses to the same document, so a resume re-journals prompts and nothing else about the plan moves", () => {
     expect<unknown>(RUN).toEqual(RAW);
+  });
+});
+
+// 5a.2 (S5.6b, I5.27): the slots of this plan were stored before captures, legwear, the lamp mood and the hair line. A resume reads each one's capture from its stored shot,
+// finds no moment tags at the places the banks renamed, and still assembles, redraws and parses. The file itself is never re-pinned.
+describe("a resume of the same plan.json with the 5a.2 look wired in", () => {
+  const hair = hairLinesOf(SLOTS, "shoulder", RUN.runId);
+  const assembleFull = (): ReturnType<typeof assembleRun> =>
+    assembleRun(DESCRIPTOR, RUN.scenes, SENTENCES, MASTER, { runId: RUN.runId, roomPlaceOf, lookOf: slotLookOf, hairStyleOf: (slot) => hair.get(slot.slotIndex) ?? null, cameraRealism: true });
+
+  test("its slots carry no capture and no legwear, so each reads its capture from its shot", () => {
+    expect(SLOTS.every((slot) => slot.capture === undefined && slot.legwear === undefined)).toBe(true);
+  });
+
+  test("assembles all 30 slots without throwing, with a hair line each, the lamp mood and the back-to-the-mirror line applying only where an old slot still names a banked place and moment", () => {
+    const prompts = assembleFull();
+    expect(prompts).toHaveLength(30);
+    for (const prompt of prompts) expect(prompt.prompt).toContain("Today her hair is");
+    for (const slot of SLOTS) {
+      const prompt = prompts.find((p) => p.slotIndex === slot.slotIndex)?.prompt ?? "";
+      expect(prompt.includes("Only her reflection is in the picture")).toBe(false);
+      const lamp = slot.category === "home" && POOLS.home.locations.find((l) => l.name === slot.location)?.lamp === true && (slot.timeOfDay === "evening" || slot.timeOfDay === "night");
+      expect(prompt.includes("bedside lamp, the room in soft shadow")).toBe(lamp);
+    }
+  });
+
+  test("assembles the same prompts on a second resume (the hair styles are a pure function of the run id)", () => {
+    expect(assembleFull()).toEqual(assembleFull());
+  });
+
+  test("every old slot can be redrawn by «Другая сцена» on today's pools and comes back a valid plan slot", () => {
+    for (const slot of SLOTS) {
+      const pool = POOLS[slot.category as keyof typeof POOLS];
+      for (const k of [1, 2, 3]) {
+        const drawn = redrawSlot({ seed: 77, k, slot, pool, avoid: { locations: new Set(), outfits: new Set() }, poses: { profile: true, back: true } });
+        expect(PlanSlotSchema.safeParse(drawn).success).toBe(true);
+      }
+    }
   });
 });
 
