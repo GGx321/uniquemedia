@@ -1,23 +1,35 @@
+import type { PoolShot } from "../../../shared/engine";
 import { BANKS } from "../../../shared/scenes/banks";
+import { BANK_CATEGORIES, type BankCategory } from "../../../shared/scenes/banks/types";
+import { templateSentence } from "../../../shared/scenes/template";
 import type { PlanSlot } from "../../scenes";
 import type { SceneRecord } from "../sceneSets";
 
 // 5a.2 (S5.6c1): a planned slot the code template renders. The planner's own draw from the banks is S5.6b's, so tests name a bank place, moment and
-// outfit by hand: a glamour place whose moment a friend's shot takes, in the first outfit no moment has to pin. No test-runner import, like sampleData.ts.
+// outfit by hand: the first one the template itself accepts. No test-runner import, like sampleData.ts.
 
-/** The glamour place, moment and outfit a friend's front-facing shot renders from. */
-export function bankDraw(): { location: string; activity: string; outfit: string } {
-  for (const place of BANKS.glamour.places) {
-    const moment = place.moments.find((m) => m.captures.includes("friend") && !m.twoHanded && m.angle === undefined && m.level === undefined && m.outfits === undefined && m.legs === undefined);
-    const outfit = BANKS.glamour.outfits.find((o) => o.pinOnly !== true);
-    if (moment !== undefined && outfit !== undefined) return { location: place.name, activity: moment.text, outfit: outfit.text };
+const SHOTS: readonly PoolShot[] = ["friend", "candid", "selfie", "mirror"];
+
+/** The place, moment, outfit and shot of the first draw in the category the template renders, facing the camera. */
+export function bankDraw(category: BankCategory = "home"): { location: string; activity: string; outfit: string; shot: PoolShot } {
+  const bank = BANKS[category];
+  for (const shot of SHOTS) {
+    for (const place of bank.places) {
+      for (const moment of place.moments) {
+        const outfit = moment.outfits?.[0] ?? bank.outfits.find((o) => o.pinOnly !== true)?.text;
+        if (outfit === undefined) continue;
+        const draw = { location: place.name, activity: moment.text, outfit, shot };
+        if (templateSentence({ category, pose: "front", ...draw }, { key: "probe" }) !== null) return draw;
+      }
+    }
   }
-  throw new Error("no glamour draw for a friend's shot");
+  throw new Error(`no ${category} draw the template renders`);
 }
 
-/** The slot, moved onto the banks: it keeps its index, attempt id base and time, and renders from the template. */
+/** The slot, moved onto the banks of its own category (a custom one onto glamour): it keeps its index, attempt id base and time. */
 export function onTheBanks(slot: PlanSlot): PlanSlot {
-  return { ...slot, category: "glamour", shot: "friend", pose: "front", ...bankDraw() };
+  const category = BANK_CATEGORIES.find((c) => c === slot.category) ?? "glamour";
+  return { ...slot, category, pose: "front", ...bankDraw(category) };
 }
 
 /** The set with the scenes whose ids are in `sceneIds` moved onto the banks. */

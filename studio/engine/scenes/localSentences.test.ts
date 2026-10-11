@@ -79,4 +79,13 @@ describe("localSentences", () => {
     const head = localSentences({ slots: slots.slice(0, 3), keyOf });
     expect(slots.slice(0, 3).map(head)).toEqual(slots.slice(0, 3).map(all));
   });
+
+  test("redraws a slot whose sentence is one the set already holds", () => {
+    const slot = bankSlot(1, {}, "glamour", true);
+    const alone = localSentences({ slots: [slot], keyOf })(slot);
+    const against = localSentences({ slots: [slot], keyOf, seen: [alone ?? ""] })(slot);
+    expect(alone).not.toBeNull();
+    expect(against).not.toBeNull();
+    expect(against).not.toBe(alone);
+  });
 });
