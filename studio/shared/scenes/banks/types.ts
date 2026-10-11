@@ -47,6 +47,8 @@ export interface Moment {
   angle?: Angle;
   gaze?: MomentGaze;
   hair?: MomentHair;
+  /** The moment shows her expression itself (laughs, smiles): no cue is added, so none contradicts it. */
+  expression?: true;
   /** Outdoors in daylight: the only moments a cap may go to. */
   outdoor?: true;
   /** Posing by an object (a lamppost, a shop window): a moment, not a capture kind (r1.2). */

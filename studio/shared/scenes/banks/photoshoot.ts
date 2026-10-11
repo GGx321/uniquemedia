@@ -27,7 +27,7 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "sits at the table, legs crossed", motion: "she swings her crossed foot slowly", captures: ["timer", "friend"], twoHanded: false },
         { text: "rests her chin on her hand", motion: "she tilts her head a little", captures: ["friend", "selfie", "timer"], twoHanded: false },
         { text: "stirs her coffee", motion: "she stirs slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "focus" },
-        { text: "laughs, looking down the street", motion: "she laughs a little and looks away", captures: ["candid", "friend"], twoHanded: false, gaze: "own" },
+        { text: "laughs, looking down the street", motion: "she laughs a little and looks away", captures: ["candid", "friend"], twoHanded: false, gaze: "own", expression: true },
         { text: "sips her coffee", motion: "she lowers the cup a little", captures: ["selfie", "friend", "candid"], twoHanded: false },
       ],
     },

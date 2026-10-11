@@ -49,7 +49,7 @@ function builtInSentence(category: BankCategory, slot: TemplateSlot, ctx: Templa
     if (!(bank.legwear?.items.includes(slot.legwear) ?? false) || !legwearFits(moment, outfit)) return null;
     wearing = `${outfit.text} with ${slot.legwear}`;
   }
-  const parts: SentenceParts = { at: place.at, doing: moment.text, wearing, gaze: moment.gaze, details: place.room === true ? [] : place.details };
+  const parts: SentenceParts = { at: place.at, doing: moment.text, wearing, gaze: moment.gaze, expression: moment.expression === true, details: place.room === true ? [] : place.details };
   return renderSentence(parts, { capture, pose: slot.pose, framing: slot.framing }, ctx);
 }
 

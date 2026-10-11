@@ -6,6 +6,7 @@ import {
   CAMERA_WORDS,
   COLOUR_WORDS,
   CUE_BANNED_WORDS,
+  EXPRESSION_WORDS,
   DENIM_SHORTS_WORDS,
   FEET_UP_WORDS,
   GAZE_VERBS,
@@ -45,6 +46,7 @@ export const BANK_RULE = {
   momentHair: "moment-hair",
   momentViewer: "moment-viewer",
   momentGaze: "moment-gaze",
+  momentExpression: "moment-expression",
   backViewer: "back-viewer",
   noLegwear: "no-legwear",
   captures: "captures",
@@ -144,6 +146,7 @@ function checkMoment(add: Add, where: string, moment: Moment, place: { room?: tr
   if ((moment.hair === "own") !== HAIR_WORDS.test(text)) add(BANK_RULE.momentHair, where, "carries the own-hair tag exactly when it names her hair");
   if ((moment.gaze === "viewer") !== (VIEWER.test(text) || VIEWER_GAZE.test(text))) add(BANK_RULE.momentViewer, where, "carries the viewer gaze exactly when it looks at the viewer");
   if (GAZE_VERBS.test(text) && moment.gaze !== "own" && moment.gaze !== "viewer") add(BANK_RULE.momentGaze, where, "a moment that opens on a look carries its own gaze");
+  if ((moment.expression === true) !== EXPRESSION_WORDS.test(text)) add(BANK_RULE.momentExpression, where, "carries the expression tag exactly when it shows her expression (it then takes no cue)");
   if (moment.angle === "back" && moment.gaze === "viewer") add(BANK_RULE.backViewer, where, "a moment seen from behind cannot look at the viewer");
   if (moment.messyOk === true && place.room !== true) add(BANK_RULE.messyOk, where, "only a room's moment may be messy");
   if (FEET_UP_WORDS.test(text) && moment.noLegwear !== true) add(BANK_RULE.noLegwear, where, "a moment with her feet or legs up is tagged noLegwear (Grok refused legs up in tights)");
@@ -174,6 +177,7 @@ const MomentSchema = z.strictObject({
   angle: z.enum(["three-quarter", "profile", "back"]).optional(),
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
   hair: z.enum(["tied", "loose", "own"]).optional(),
+  expression: z.literal(true).optional(),
   outdoor: z.literal(true).optional(),
   object: z.literal(true).optional(),
   outfits: z.array(z.string()).optional(),

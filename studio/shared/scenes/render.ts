@@ -96,8 +96,10 @@ export interface SentenceParts {
   doing: string;
   /** The outfit, with « with {legwear}» when the slot has legwear. */
   wearing: string;
-  /** The moment's gaze tag (custom: `viewer` when the activity looks at the camera, `own` when it names her phone). */
+  /** The moment's gaze tag (custom: `viewer` when the activity looks at the camera, `own` when its eyes are already busy). */
   gaze?: MomentGaze | undefined;
+  /** The moment shows her expression itself: no cue. */
+  expression?: boolean | undefined;
   /** The place's details for `with {detail}`; none for a room or a custom place. */
   details: readonly string[];
 }
@@ -137,7 +139,7 @@ function draw(parts: SentenceParts, frame: Frame, key: string): string {
   if (faceVisibleOf(frame) !== "no") {
     const gazes = gazeOptions(frame.capture, frame.pose, parts.gaze, frame.level, frame.framing);
     if (gazes.length > 0) clauses.push(pick(gazes, key, "gaze").text);
-    const cues = cueOptions(frame.capture, frame.level);
+    const cues = parts.expression === true ? [] : cueOptions(frame.capture, frame.level);
     if (cues.length > 0) clauses.push(pick(cues, key, "cue").text);
   }
   if (parts.details.length > 0) clauses.push(`with ${pick(parts.details, key, "detail")}`);

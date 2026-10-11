@@ -13,7 +13,7 @@ export const GLAMOUR: CategoryBank = {
       moments: [
         { text: "leans on the bar counter", motion: "she leans in a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
         { text: "holds a cocktail glass", motion: "she turns her glass slowly", captures: ["friend", "selfie", "candid"], twoHanded: false },
-        { text: "laughs at something nearby", motion: "she laughs a little and looks away", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
+        { text: "laughs at something nearby", motion: "she laughs a little and looks away", captures: ["friend", "candid"], twoHanded: false, gaze: "own", expression: true },
         { text: "sips her drink through a straw", motion: "she sips slowly", captures: ["friend", "selfie"], twoHanded: false },
         { text: "sits on a high bar stool", motion: "she swings one foot a little", captures: ["friend", "candid"], twoHanded: false },
       ],
@@ -26,7 +26,7 @@ export const GLAMOUR: CategoryBank = {
       moments: [
         { text: "reaches for her glass", motion: "she lifts her glass a little", captures: ["friend", "candid"], twoHanded: false },
         { text: "rests her chin on her hand", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
-        { text: "smiles across the table", motion: "she laughs a little", captures: ["friend", "candid"], twoHanded: false, gaze: "own" },
+        { text: "smiles across the table", motion: "she laughs a little", captures: ["friend", "candid"], twoHanded: false, gaze: "own", expression: true },
         { text: "lifts her glass for a toast", motion: "she raises her glass a bit higher", captures: ["friend", "selfie"], twoHanded: false },
         { text: "twirls pasta onto her fork", motion: "she twirls the fork slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "focus" },
       ],
@@ -53,7 +53,7 @@ export const GLAMOUR: CategoryBank = {
         { text: "walks with a small clutch", motion: "she keeps walking slowly", captures: ["friend", "candid"], twoHanded: false },
         { text: "waits by the door", motion: "she shifts her weight a little", captures: ["friend", "selfie", "candid"], twoHanded: false },
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
-        { text: "laughs on her way inside", motion: "she laughs a little and turns away", captures: ["friend", "candid"], twoHanded: false },
+        { text: "laughs on her way inside", motion: "she laughs a little and turns away", captures: ["friend", "candid"], twoHanded: false, expression: true },
         { text: "stops under a street lamp", motion: "she tilts her head a little", captures: ["friend", "selfie"], twoHanded: false },
       ],
     },

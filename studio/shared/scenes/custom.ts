@@ -1,7 +1,7 @@
 import type { PoolShot, ScenePose } from "../engine";
 import { captureOfShot, isHandCapture, posesFor, type Capture } from "./captures";
 import { captureOfSlot, momentAllowed, renderSentence, type MomentTags, type SentenceParts, type TemplateContext, type TemplateSlot } from "./render";
-import { HAIR_WORDS, OWN_GAZE_WORDS, PHONE_WORDS, SELFIE_WORDS, VIEWER_GAZE } from "./words";
+import { EXPRESSION_WORDS, HAIR_WORDS, OWN_GAZE_WORDS, PHONE_WORDS, SELFIE_WORDS, VIEWER_GAZE } from "./words";
 
 // 5a.2 (S5.6a, plan s5a2 §5.2 step 2, K-7): the custom-category adapter. Today's custom pools store short activity phrases, mostly gerunds («holding a
 // mug», «on her stomach, scrolling»), so a custom slot renders «{At}, she is {activity}, wearing {outfit}, {gaze}, {cue}.»: no detail and no room
@@ -73,7 +73,7 @@ export function locativeOf(name: string): string {
  * custom gaze regex) is a viewer moment (no gaze clause, never on a candid, a profile or a back); one that names her phone or whose eyes are already
  * busy (watching, looking, reading…) carries its own gaze; one that names her hair carries its own hair.
  */
-export function customMomentOf(activity: CustomActivity): MomentTags & { text: string; hair?: "own" } {
+export function customMomentOf(activity: CustomActivity): MomentTags & { text: string; hair?: "own"; expression?: true } {
   const viewer = VIEWER_GAZE.test(activity.text);
   const phone = PHONE_WORDS.test(activity.text);
   const ownGaze = phone || OWN_GAZE_WORDS.test(activity.text);
@@ -83,6 +83,7 @@ export function customMomentOf(activity: CustomActivity): MomentTags & { text: s
     ...(phone ? { phone: true as const } : {}),
     ...(viewer ? { gaze: "viewer" as const } : ownGaze ? { gaze: "own" as const } : {}),
     ...(HAIR_WORDS.test(activity.text) ? { hair: "own" as const } : {}),
+    ...(EXPRESSION_WORDS.test(activity.text) ? { expression: true as const } : {}),
   };
 }
 
@@ -103,7 +104,8 @@ export function customSentence(slot: TemplateSlot, ctx: TemplateContext): string
   if (!rendersActivity(activity)) return null;
   // The slot carries no `twoHanded` (a snapshot has no pool): the planner keeps two-handed activities off hand-held captures; the words are checked here.
   if (!customActivityAllowed({ text: activity, twoHanded: false }, capture, slot.pose)) return null;
-  const parts: SentenceParts = { at: locativeOf(field(slot.location)), doing: `is ${activity}`, wearing: field(slot.outfit), gaze: customMomentOf({ text: activity, twoHanded: false }).gaze, details: [] };
+  const tags = customMomentOf({ text: activity, twoHanded: false });
+  const parts: SentenceParts = { at: locativeOf(field(slot.location)), doing: `is ${activity}`, wearing: field(slot.outfit), gaze: tags.gaze, expression: tags.expression === true, details: [] };
   return renderSentence(parts, { capture, pose: slot.pose, framing: slot.framing }, ctx);
 }
 

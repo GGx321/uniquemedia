@@ -9,7 +9,7 @@ import type { BankPlace, CategoryBank, Cue, Gaze, Hairstyle, Moment } from "./ty
 const MOMENTS: readonly Moment[] = [
   { text: "waits for the kettle", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
   { text: "slices fruit on a cutting board", motion: "she slices slowly", captures: ["friend"], twoHanded: true, gaze: "focus" },
-  { text: "laughs at something on her phone", motion: "she laughs a little at her phone", captures: ["friend"], twoHanded: false, phone: true, gaze: "own" },
+  { text: "laughs at something on her phone", motion: "she laughs a little at her phone", captures: ["friend"], twoHanded: false, phone: true, gaze: "own", expression: true },
   { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["timer"], twoHanded: false, angle: "three-quarter", gaze: "own" },
   { text: "brushes her hair", motion: "she brushes slowly", captures: ["mirror"], twoHanded: false, hair: "own", messyOk: true },
 ];
@@ -105,6 +105,9 @@ describe("a category bank", () => {
     ["a timer moment that sips a drink", { ...plain, text: "sips her coffee" }, BANK_RULE.timerHands],
     ["a timer moment with her keys", { ...plain, text: "waits by the door with her keys" }, BANK_RULE.timerHands],
     ["a close selfie from above while she sits (its line: «as she lies there»)", { ...plain, text: "sits cross-legged on the bed", captures: ["above"] }, BANK_RULE.aboveLying],
+    ["a moment that laughs without the expression tag (a cue would contradict it)", { ...plain, text: "laughs on her way inside" }, BANK_RULE.momentExpression],
+    ["a moment that smiles without the expression tag", { ...plain, text: "smiles across the table", gaze: "own" }, BANK_RULE.momentExpression],
+    ["an expression tag on a moment that shows none", { ...plain, expression: true }, BANK_RULE.momentExpression],
     ["a feet-up moment without the no-legwear tag (plan r1.4: Grok refused legs up in tights)", { ...plain, text: "lies on her stomach, feet raised" }, BANK_RULE.noLegwear],
     ["feet on a railing without the no-legwear tag", { ...plain, text: "sits with her feet on the railing" }, BANK_RULE.noLegwear],
   ];

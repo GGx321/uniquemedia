@@ -79,11 +79,21 @@ describe("the shape", () => {
   });
 
   test("a moment that carries its own gaze gets no gaze clause, and keeps its cue", () => {
-    const { place, moment } = find("glamour", () => true, (m) => m.captures.includes("friend") && m.gaze === "own" && m.angle === undefined && m.phone !== true);
+    const { place, moment } = find("glamour", () => true, (m) => m.captures.includes("friend") && m.gaze === "own" && m.angle === undefined && m.phone !== true && m.expression === undefined);
     for (const key of KEYS) {
       const sentence = templateSentence(slotOf("glamour", place, moment, "friend", "front"), { key }) ?? "";
       expect(clauses(sentence).gaze).toBeNull();
       expect(clauses(sentence).cue).not.toBeNull();
+    }
+  });
+
+  // Review M3: a moment that carries its own expression (laughs, smiles) takes no cue, so «a calm, neutral face» never contradicts it.
+  test("a moment with its own expression gets no cue, and keeps its detail", () => {
+    const { place, moment } = find("glamour", nonRoom, (m) => m.expression === true && m.captures.includes("friend") && m.angle === undefined);
+    for (const key of KEYS) {
+      const sentence = templateSentence(slotOf("glamour", place, moment, "friend", "front"), { key }) ?? "";
+      expect(clauses(sentence).cue).toBeNull();
+      expect(sentence).toMatch(new RegExp(`, with ${anyOf(place.details)}\\.$`));
     }
   });
 

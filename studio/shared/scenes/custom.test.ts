@@ -119,8 +119,8 @@ describe("a custom slot's sentence", () => {
   });
 
   test("an activity that looks at the camera keeps its own gaze: no gaze clause", () => {
-    const sentence = templateSentence({ ...slot, activity: "smiling at the camera" }, ctx) ?? "";
-    expect(sentence.startsWith("In a quiet bookshop, she is smiling at the camera, wearing a cozy cardigan, ")).toBe(true);
+    const sentence = templateSentence({ ...slot, activity: "looking at the camera" }, ctx) ?? "";
+    expect(sentence.startsWith("In a quiet bookshop, she is looking at the camera, wearing a cozy cardigan, ")).toBe(true);
     for (const gaze of GAZE) expect(sentence).not.toContain(gaze.text);
   });
 
@@ -129,6 +129,13 @@ describe("a custom slot's sentence", () => {
       const sentence = templateSentence({ ...slot, activity: "watching a tablet" }, { ...ctx, key: `run-${i}:slot-2` }) ?? "";
       expect(sentence.startsWith("In a quiet bookshop, she is watching a tablet, wearing a cozy cardigan, ")).toBe(true);
       for (const gaze of GAZE) expect(sentence).not.toContain(gaze.text);
+    }
+  });
+
+  test("an activity with its own expression («smiling at the camera») gets no cue", () => {
+    for (let i = 0; i < 20; i++) {
+      const sentence = templateSentence({ ...slot, activity: "smiling at the camera" }, { ...ctx, key: `run-${i}:slot-4` }) ?? "";
+      expect(sentence).toBe("In a quiet bookshop, she is smiling at the camera, wearing a cozy cardigan.");
     }
   });
 

@@ -43,6 +43,9 @@ export const VIEWER_GAZE = /\b(look|gaz|glanc|star|smil)\w*\s+(at|toward|into)\s
 export const OWN_GAZE_WORDS =
   /\b(?:look(?:s|ing|ed)?|gaz(?:e|es|ing|ed)|watch(?:es|ing|ed)?|star(?:e|es|ing|ed)|glanc(?:e|es|ing|ed)|peek(?:s|ing|ed)?|peer(?:s|ing|ed)?|read(?:s|ing)?)\b/i;
 
+/** A moment that shows her expression itself (laughs, smiles) carries it: the template adds no cue (review M3). */
+export const EXPRESSION_WORDS = /\b(?:laugh\w*|smil\w*|grin\w*|pout\w*|frown\w*|smirk\w*|giggl\w*)\b/i;
+
 /** A moment that opens on a look carries its own gaze. */
 export const GAZE_VERBS = /^(looks|glances|gazes|stares|peers|watches|smiles)\b/i;
 
