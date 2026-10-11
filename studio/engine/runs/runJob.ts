@@ -11,6 +11,8 @@ import { timeoutSignal, untilAborted, type TimeoutSignal } from "../money/timeou
 import { truncate } from "../openrouter/transport";
 import type { ImageOk, ImageResult, OpenRouterClient, OpenRouterFetch } from "../openrouter/types";
 import { assembleRun, isOwnSlot, photoCategoryOf, roomPlaceOf } from "../scenes";
+import { localSentences } from "../scenes/localSentences";
+import { slotKeyOf } from "../scenes/phoneLook";
 import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
@@ -365,6 +367,7 @@ function samePrompts(journaled: ReadonlyMap<number, string> | null, assembled: R
 async function promptsOf(ctx: Context, state: RunState, master: LibraryReference): Promise<{ ok: true; prompts: ReadonlyMap<number, string> } | { ok: false; end: RunJobEnd }> {
   const { deps, job, plan } = ctx;
   const ledger: LedgerView = { reserveOf: (id) => deps.budget.ledger.reserveOf(id), closeOf: (id) => deps.budget.ledger.closeOf(id) };
+  const slots = plannedSlots(plan);
   const written = await runWriterPhase(
     {
       chat: deps.chat,
@@ -380,7 +383,9 @@ async function promptsOf(ctx: Context, state: RunState, master: LibraryReference
       signal: job.signal,
       ...(job.softStop === undefined ? {} : { stop: job.softStop }),
       // The writer only ever describes the planner's own slots; an own scene's sentence is already in the plan (and its plan has no chunks).
-      slots: plannedSlots(plan),
+      slots,
+      // 5a.2: the code template writes every slot whose place and moment the banks find by name; the rest go to the model at the chunk's reserved ids.
+      local: localSentences({ slots, keyOf: (slot) => slotKeyOf(plan.runId, slot.attemptIdBase), snapshots: plan.categories }),
       chunks: plan.writerChunks,
       sentences: state.sentences,
       writerDone: state.writerDone,
