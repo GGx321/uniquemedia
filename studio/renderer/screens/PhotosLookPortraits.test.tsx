@@ -290,6 +290,28 @@ describe("16e · some slots failed at a cost", () => {
   });
 });
 
+describe("16e · with the age check on (review M2)", () => {
+  test("a slot whose check the budget refused after its image was paid is said as paid, never «ничего не стоили»", async () => {
+    const { engine, scheduler } = await openLook(NINI, { imageAgeCheck: "on" });
+    engine.scriptNextPortraits({
+      slots: [
+        { kind: "pass", likeness: 0.76 },
+        { kind: "pass", likeness: 0.72 },
+        { kind: "pass", likeness: 0.61 },
+        { kind: "failed", error: { code: "BUDGET_EXCEEDED" }, settle: "paid" },
+        { kind: "failed", error: { code: "RATE_LIMITED" }, settle: "paid" },
+      ],
+    });
+    await start();
+    runAll(scheduler);
+    await flush();
+    expect(goneTiles()).toEqual([["Не получилось · стоимость учтена"], ["Не получилось · стоимость учтена"]]);
+    expect(text(panel())).toContain("2 варианта не удалось получить: причины разные — подробности в журнале. Стоимость попытки учтена.");
+    expect(text(panel())).not.toContain("ничего не стоили");
+    expect(text(panel())).not.toContain("бесплатно");
+  });
+});
+
 describe("16f · the reset asks first", () => {
   test("in place: «Отмена» takes the focus and gives it back; «Удалить» deletes the waiting portraits, and the card is back (20)", async () => {
     const { engine, scheduler } = await openLook(NINI);

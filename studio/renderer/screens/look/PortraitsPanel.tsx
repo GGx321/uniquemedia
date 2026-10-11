@@ -211,14 +211,17 @@ export function PortraitsPanel({ portraits: p, blockedReason }: { portraits: Por
   const { job, pending, running } = p;
   const result = job !== null && job.status === "done" && job.result?.kind === "avatar.portraits" ? job.result : null;
   const failedSlots = result?.failedSlots ?? [];
+  // Review M2: what a failed slot cost depends on the age check (its check comes after a paid image). The settings' mode now, or «on» when the batch
+  // itself shows a slot the check dropped.
+  const ageCheck = p.ageCheck === "on" || failedSlots.some((f) => f.reason === "age-rejected") ? "on" : "off";
   const noneCame = result !== null && result.candidates.length === 0 && pending.length === 0;
 
   const lines: ReactNode[] = [];
   const age = ageRejectedLine(failedSlots.filter((f) => f.reason === "age-rejected").length);
   if (age !== null) lines.push(<Notice key="age" tone="info">{age}</Notice>);
-  const paid = paidFailureLine(failedSlots);
+  const paid = paidFailureLine(ageCheck, failedSlots);
   if (paid !== null) lines.push(<Notice key="paid" tone="warn">{paid}</Notice>);
-  const free = freeFailureLine(failedSlots);
+  const free = freeFailureLine(ageCheck, failedSlots);
   if (free !== null) lines.push(<Notice key="free" tone="info">{free}</Notice>);
   if (noneCame) lines.push(<Notice key="none" tone="warn">{NONE_PASSED}</Notice>);
   if (p.pickPhase.kind === "refused" && p.pickPhase.error.code !== "IN_FLIGHT") lines.push(<ErrorNotice key="pick" error={p.pickPhase.error} />);
@@ -240,7 +243,7 @@ export function PortraitsPanel({ portraits: p, blockedReason }: { portraits: Por
       slots={PORTRAITS_PER_BATCH}
       portrait={{
         best: p.best,
-        gone: result === null ? [] : goneTiles(failedSlots),
+        gone: result === null ? [] : goneTiles(ageCheck, failedSlots),
         meta,
         notices: lines.length > 0 ? <>{lines}</> : null,
         keptOnCancel: pending.length > 0,
