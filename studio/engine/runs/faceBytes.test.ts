@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { NoFaceInReferenceError } from "../face/noFaceError";
 import { asLibraryReference } from "../openrouter/testing/fakes";
 import { embedFaceReference, masterOriginalFor, withReferenceRetry } from "./faceBytes";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
+useNativeGlobals();
 
 // The bytes a face embedding is computed from (shared by the photo runs' QA gate and the reference portrait batch). The WASM decoder reads JPEG and PNG only, and a CMYK JPEG fails
 // it too, so the original file is used when it is a JPEG or PNG, and the <= 1024 px JPEG reference stands in for anything else, or after a decode failure.
