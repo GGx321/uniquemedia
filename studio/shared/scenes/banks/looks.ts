@@ -11,7 +11,7 @@ export const GAZE: readonly Gaze[] = [
   { text: "glancing at the viewer", kind: "viewer" },
   { text: "looking at the viewer for a second", kind: "viewer" },
   { text: "her eyes on the viewer", kind: "viewer" },
-  { text: "looking back at the viewer", kind: "viewer" },
+  { text: "her eyes meeting the viewer's", kind: "viewer" },
   { text: "looking off to the side", kind: "away" },
   { text: "glancing off to one side", kind: "away" },
   { text: "looking at something nearby", kind: "away" },
