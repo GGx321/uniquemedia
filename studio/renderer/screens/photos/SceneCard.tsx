@@ -33,6 +33,8 @@ interface SceneCardProps {
   onCancelEdit: () => void;
   /** The ⟳ popover, drawn beside the card when open. */
   popover: ReactNode;
+  /** The ⟳ price is known and the app's template writes the new scene (nothing to pay): the title says so. Absent: not known yet, or paid. */
+  redoFree?: boolean;
 }
 
 interface Flag {
@@ -52,7 +54,7 @@ function flagOf(scene: SceneView, writing: SceneWriting, fresh: boolean): Flag |
   return null;
 }
 
-export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh, popoverOpen, editing, onEdit, onRedo, onRemove, onRestore, onSave, onCancelEdit, popover }: SceneCardProps) {
+export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh, popoverOpen, editing, onEdit, onRedo, onRemove, onRestore, onSave, onCancelEdit, popover, redoFree }: SceneCardProps) {
   const n = sceneNumber(number);
   const own = scene.origin === "own";
   const flag = readOnly ? null : flagOf(scene, writing, fresh);
@@ -100,7 +102,7 @@ export function SceneCard({ scene, number, readOnly, actionsOff, writing, fresh,
                 type="button"
                 className={actionsOff ? "ibtn ibtn-s ibtn-off" : "ibtn ibtn-s"}
                 aria-label={own ? `Переписать свою сцену ${n}` : `Другая сцена вместо ${n}`}
-                title={own ? "Переписать — платно, цена перед отправкой" : "Другая сцена — цена перед отправкой"}
+                title={own ? "Переписать — платно, цена перед отправкой" : redoFree === true ? "Другая сцена — бесплатно" : "Другая сцена — цена перед отправкой"}
                 aria-haspopup="dialog"
                 aria-expanded={popoverOpen}
                 aria-disabled={actionsOff}

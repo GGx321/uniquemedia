@@ -79,6 +79,8 @@ export function SceneSetPanel({
   const mounted = useMounted();
   const [editing, setEditing] = useState<Edit | null>(null);
   const [popover, setPopover] = useState<number | null>(null);
+  /** The scenes whose ⟳ price said the app's template writes the new one (ScenePopover `onPriced`): their title says «бесплатно». */
+  const [freeRedo, setFreeRedo] = useState<ReadonlySet<number>>(new Set());
   const [editError, setEditError] = useState<EngineError | "changed" | null>(null);
   const [jobFailure, setJobFailure] = useState<{ jobId: string; error: EngineError; sceneIds: readonly number[] } | null>(null);
   const [cancelBusy, setCancelBusy] = useState(false);
@@ -374,6 +376,7 @@ export function SceneSetPanel({
                 writing={writing}
                 fresh={fresh?.has(scene.sceneId) === true}
                 popoverOpen={popover === scene.sceneId}
+                redoFree={freeRedo.has(scene.sceneId)}
                 editing={editing !== null && editing.sceneId === scene.sceneId ? editing : null}
                 onEdit={() => {
                   setPopover(null);
@@ -398,6 +401,15 @@ export function SceneSetPanel({
                       view={view}
                       blocked={blocked}
                       onPaidInFlightChange={onPaidInFlightChange}
+                      onPriced={(free) =>
+                        setFreeRedo((current) => {
+                          if (current.has(scene.sceneId) === free) return current;
+                          const next = new Set(current);
+                          if (free) next.add(scene.sceneId);
+                          else next.delete(scene.sceneId);
+                          return next;
+                        })
+                      }
                       onClose={() => {
                         setPopover(null);
                         focusLater(sceneButton(scene.origin === "own" ? `Переписать свою сцену ${n}` : `Другая сцена вместо ${n}`));

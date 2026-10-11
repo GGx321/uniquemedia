@@ -27,6 +27,8 @@ interface ScenePopoverProps {
   onClose: () => void;
   /** A write started: its job runs; the column puts the focus on the job's «Отменить». */
   onStarted: () => void;
+  /** The price of the replacement is known: whether the app's template writes the new scene (nothing to pay). The card's ⟳ title says so. */
+  onPriced?: (free: boolean) => void;
 }
 
 /**
@@ -40,7 +42,7 @@ function anglesNow(scene: SceneView, set: SceneSetView, list: CategoryLibraryVie
   return set.categories.find((c) => c.ref === ref)?.poses;
 }
 
-export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, onClose, onStarted }: ScenePopoverProps) {
+export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, onClose, onStarted, onPriced }: ScenePopoverProps) {
   const { client, store, sceneSets } = useEngine();
   const { view: categories } = useCategoryLibrary();
   const navigate = useNavigate();
@@ -67,6 +69,12 @@ export function ScenePopover({ set, scene, view, blocked, onPaidInFlightChange, 
     },
     onPaidInFlightChange,
   });
+  // The app's template writes the new scene: the engine prices it at nothing (the popover says «бесплатно», and so does the card's ⟳ title once it is told).
+  const priced = replace.estimate !== null;
+  const pricedFree = priced && replace.estimate?.worstMicros === 0;
+  useEffect(() => {
+    if (priced) onPriced?.(pricedFree);
+  }, [priced, pricedFree, onPriced]);
   const resume = usePaidAction({
     key: marker === undefined ? null : `resume|${marker.write}|${key}`,
     price: () => client.request("scenes.estimateWrite", { sceneSetId: set.sceneSetId, target: { kind: "resume", write: marker?.write ?? 1 } }),
