@@ -338,7 +338,8 @@ describe("05 · an import whose photo showed no body (S5.R2: the real path — n
     const { engine } = setup();
     await importZoe();
     expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(1);
-    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
+    // S5.3d re-pin: the import started its five reference portraits, still drawing here.
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Рисуем варианты мастер-портрета.");
     expect(bodyCard().className).toContain("look-body-edit");
     expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("Тело с фото не прочитано — выберите сами или оставьте «не задано»");
     expect(text(bodyCard().querySelector(".body-build .src-guess") ?? bodyCard())).toBe("угадано по лицу");
@@ -366,7 +367,8 @@ describe("05 · an import whose photo showed no body (S5.R2: the real path — n
     expect(zoe?.body).toEqual({ height: "short", bottomShape: "heart" });
     expect(bodyCard().className).not.toContain("look-body-edit");
     expect(summary()[5]).toEqual(["Попа", "Сердечком"]);
-    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним.");
+    // S5.3d re-pin: the import started its five reference portraits, still drawing here.
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним. Рисуем варианты мастер-портрета.");
   });
 
   test("«Позже» closes the fields with nothing sent; «Задать тело» opens them again as the import left them", async () => {
@@ -377,7 +379,8 @@ describe("05 · an import whose photo showed no body (S5.R2: the real path — n
     expect(bodyCard().className).not.toContain("look-body-edit");
     expect(focusedLabel()).toBe(describeElement(inBody().getByRole("button", { name: "Задать тело" })));
     expect(callsOf(engine, "avatars.setBody").length + callsOf(engine, "avatars.dismissBodyProposal").length).toBe(0);
-    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
+    // S5.3d re-pin: the import started its five reference portraits, still drawing here.
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Рисуем варианты мастер-портрета.");
     fireEvent.click(inBody().getByRole("button", { name: "Задать тело" }));
     await flush();
     expect(text(bodyCard().querySelector(".look-body-hint") ?? bodyCard())).toBe("Тело с фото не прочитано — выберите сами или оставьте «не задано»");
@@ -479,7 +482,8 @@ describe("06 · an import's proposal, photo to the waist", () => {
     const { engine } = setup();
     engine.queueImportBodyProposal(WAIST);
     await importZoe();
-    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.");
+    // S5.3d re-pin: the import started its five reference portraits, still drawing here.
+    expect(landingLine()).toBe("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Рисуем варианты мастер-портрета.");
     expect(bodyCard().className).toContain("look-body-edit");
     expect(isChecked(radio(/^Фигура/, "Песочные часы"))).toBe(true);
     expect(inBody().getAllByRole("button").map(text)).toEqual(["Сохранить тело", "Позже", "Не нужно"]);

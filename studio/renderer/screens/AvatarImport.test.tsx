@@ -132,7 +132,8 @@ test("happy path: pick, name it, import — lands on the new avatar's «Внеш
   expect(imported?.payload).not.toHaveProperty("confirmedAiPersona");
   expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
   // S5.R2 re-pin: the photo gave no body (the mock stores no proposal by default), so the body is left to choose.
-  expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.").tagName).toBe("DIV");
+  // S5.3d re-pin: and the click started the five reference portraits, still drawing here.
+  expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Рисуем варианты мастер-портрета.").tagName).toBe("DIV");
 });
 
 // T6c review round 3, L4: the old code guessed "consumed or not" from the
@@ -271,7 +272,8 @@ test("04: «Что прочитает Studio» and «По фото лица те
   const hint = screen.getByText("По фото лица тело не определить").closest(".notice");
   expect(hint?.className).toContain("notice-info");
   expect(hint?.textContent).toContain("Если на фото только лицо и плечи, рост, грудь, фигуру, ноги и попу после импорта выберете сами — или оставите «не задано».");
-  expect(screen.getByText("Дальше — страница аватара: тело и итог сверки.").className).toBe("field-hint");
+  // S5.3d re-pin (mockup 14): the page it lands on starts with the master portrait.
+  expect(screen.getByText("Дальше — страница аватара: мастер-портрет, тело и итог сверки.").className).toBe("field-hint");
   expect(callsOf(engine, "avatars.importAvatar")).toHaveLength(0);
 });
 
@@ -280,5 +282,5 @@ test("04: a blocked import shows its reason in place of where it lands", async (
   await openImport();
   await pickPhoto();
   expect(screen.getByText("Нужен рабочий ключ OpenRouter — добавьте его в Настройках.").className).toBe("field-hint");
-  expect(screen.queryByText("Дальше — страница аватара: тело и итог сверки.") === null).toBe(true);
+  expect(screen.queryByText("Дальше — страница аватара: мастер-портрет, тело и итог сверки.") === null).toBe(true);
 });
