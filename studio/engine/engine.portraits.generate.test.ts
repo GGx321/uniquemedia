@@ -458,6 +458,16 @@ describe("avatars.generatePortraits: checked before anything is spent", () => {
     expect(used?.embedded).toHaveLength(1);
   });
 
+  // A broken embedding would make every similarity NaN: all five images would be paid and ranked out. It is found for free instead.
+  for (const [name, vector] of [["not finite", Float32Array.of(1, Number.NaN, 3)], ["infinite", Float32Array.of(1, Number.POSITIVE_INFINITY, 3)], ["all zero", Float32Array.of(0, 0, 0)], ["empty", new Float32Array(0)]] as const) {
+    test(`a source embedding that is ${name} is MASTER_FACE_UNUSABLE, free, with no image request`, async () => {
+      const rig = fakeGate({ embed: async () => vector });
+      const { refused } = await refusedWith("MASTER_FACE_UNUSABLE", imported, { gate: rig });
+
+      expect(refused.error.detail).toContain("embedding");
+    });
+  }
+
   test("the source's embedding is computed from the original, and a decoder failure retries once on the JPEG reference", async () => {
     const { avatarId } = await seedImportedAvatar(dir());
     const rig = fakeGate({ embed: async (_bytes, call) => (call === 1 ? Promise.reject(new Error("unsupported colour space")) : Float32Array.of(1, 2, 3)) });

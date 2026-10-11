@@ -4675,9 +4675,9 @@ export class Engine {
     }
     if (reference === null || original === null) throw new EngineFailure({ code: "INTERNAL", detail: `the source photo of avatar ${avatarId} could not be found on disk` });
     const bound = timeoutSignal(EMBEDDING_COMPUTE_TIMEOUT_MS);
+    let embedding: Float32Array;
     try {
-      const embedding = await untilAborted(embedFaceReference({ embed: (bytes, signal) => gate.embed(bytes, signal), original, reference, signal: bound.signal }), bound.signal);
-      return { reference, embedding };
+      embedding = await untilAborted(embedFaceReference({ embed: (bytes, signal) => gate.embed(bytes, signal), original, reference, signal: bound.signal }), bound.signal);
     } catch (error) {
       if (error instanceof NoFaceInReferenceError) throw new EngineFailure({ code: "MASTER_FACE_UNUSABLE", detail: detailOf(error.message) });
       const why = bound.signal.aborted ? `it took longer than ${EMBEDDING_COMPUTE_TIMEOUT_MS} ms` : messageOf(error, "unknown error");
@@ -4685,6 +4685,11 @@ export class Engine {
     } finally {
       bound.clear();
     }
+    // A broken embedding (not finite, or all zero) would make every similarity NaN: all five images would be paid and ranked out. It is the same «no usable face» to the owner, found for free.
+    if (embedding.length === 0 || !embedding.every(Number.isFinite) || embedding.every((v) => v === 0)) {
+      throw new EngineFailure({ code: "MASTER_FACE_UNUSABLE", detail: `the face embedding of the source photo of avatar ${avatarId} is not usable` });
+    }
+    return { reference, embedding };
   }
 
   /**
