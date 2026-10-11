@@ -28,6 +28,7 @@ describe("one photo landing in a gallery of 1 050", () => {
     await flush();
     await waitFor(() => expect(tiles()).toHaveLength(1051));
     await flush();
+    expect(spy.mock.calls.length).toBeGreaterThan(0); // the spy still sees the tiles drawn, or the bound below proves nothing
     expect(spy.mock.calls.length).toBeLessThanOrEqual(1051 + 10);
   });
 });
