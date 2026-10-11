@@ -17,6 +17,8 @@ import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { plannedSlots, RunPlanSchema, type RunPlan } from "./runs/plan";
 import { plan as planScenes } from "./scenes";
+import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
+import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { faceModelPaths } from "../scripts/faceModelCache";
 import { createAgeGate } from "./runs/ageGate";
 import { createFaceQaGate } from "./runs/faceGate";
@@ -50,6 +52,8 @@ const ON_ARTEFACT = "Ordinary phone photo straight from her camera roll";
 const TWENTY_ON = { expectedMicros: 1_042_350, worstMicros: 3_390_000, prices: "fallback", pricesAsOf: "2026-09-24" } as const;
 /** 4 photos, image age check off: 4 × 3 × $0.05 + one writer chunk × 2 × $0.0375 (T5c: 14K prompt tokens). */
 const FOUR_WORST = 4 * 3 * 50_000 + 75_000;
+/** 5a.2 (S5.6c2): 4 built-in photos, image age check off: the code template writes them, so there is no writer term (4 × 3 × $0.05). */
+const BUILT_IN_FOUR_WORST = 4 * 3 * 50_000;
 /** 4 photos, image age check on: 4 × 3 × ($0.05 + $0.00525) + one writer chunk × 2 × $0.0375. */
 const FOUR_ON_WORST = 4 * 3 * 55_250 + 75_000;
 
@@ -106,6 +110,7 @@ async function seedAvatar(opts: { status?: "active" | "draft" | "archived" } = {
   if (opts.status === "draft") return avatar.id;
   const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: opts.status ?? "active", masterPhotoId: master.id });
+  await seedLlmOnlyCategory(join(dir(), "library"));
   return avatar.id;
 }
 
@@ -137,7 +142,8 @@ async function seedCustomCategory(opts: { name?: string; label?: string; style?:
 }
 
 function request(avatarId: string, count = 4) {
-  return { avatarId, count, categories: ["home"], poses: { profile: false, back: false } };
+  // 5a.2 (S5.6c2, m11): the writer-money tests of this file run on `cat-llm-only-fixture`; a built-in run is written by the template (see «a built-in run» below).
+  return { avatarId, count, categories: [LLM_ONLY_REF], poses: { profile: false, back: false } };
 }
 
 function estimate(avatarId: string, count = 4): unknown {
@@ -393,7 +399,8 @@ describe("a custom category in a run request that the library does not hold", ()
   test("a built-in run's plan.json is the document main wrote: no categories key", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(runNetwork());
-    const { runId, jobId } = started(await engine.handle(startRun(avatarId)));
+    // «Дом» (m11: a built-in run): 4 photos, no writer, so the cap the owner accepts is the images alone.
+    const { runId, jobId } = started(await engine.handle(command("runs.start", { ...request(avatarId), categories: ["home"], acceptedWorstMicros: BUILT_IN_FOUR_WORST })));
     await jobEnd(events, jobId);
     const raw: Record<string, unknown> = JSON.parse(readFileSync(join(dir(), "library", "runs", runId, "plan.json"), "utf8"));
     expect("categories" in raw).toBe(false);
@@ -437,10 +444,36 @@ describe("a custom category in a run request that the library holds", () => {
     const id = await seedCustomCategory();
     const { engine } = await engineOver(runNetwork());
 
-    const builtIn = ok(await engine.handle(estimate(avatarId, 4)));
-    const custom = ok(await engine.handle(command("runs.estimate", { ...request(avatarId, 4), categories: ["home", id] })));
+    // Both are uncovered custom categories (the template cannot write either), so every slot may go to the model in both runs: the same price.
+    const alone = ok(await engine.handle(estimate(avatarId, 4)));
+    const custom = ok(await engine.handle(command("runs.estimate", { ...request(avatarId, 4), categories: [LLM_ONLY_REF, id] })));
 
-    expect(custom.result).toEqual(builtIn.result);
+    expect(custom.result).toEqual(alone.result);
+  });
+
+  // 5a.2 (S5.6c2, I5.30): a built-in category is written by the code template, so its estimate has no writer term; the true worst of a mix is the model's
+  // chunks only, and the cap the start sets is that estimate.
+  test("runs.estimate of a built-in category has no writer term, and a mix with an uncovered custom category adds only its chunks", async () => {
+    const avatarId = await seedAvatar();
+    const id = await seedCustomCategory();
+    const { engine } = await engineOver(runNetwork());
+
+    const home = ok(await engine.handle(command("runs.estimate", { ...request(avatarId, 100), categories: ["home"] })));
+    const mixed = ok(await engine.handle(command("runs.estimate", { ...request(avatarId, 100), categories: ["home", id] })));
+
+    if (home.type !== "runs.estimate" || mixed.type !== "runs.estimate") throw new Error("expected estimates");
+    expect(home.result.estimate.worstMicros).toBe(100 * 3 * 50_000);
+    // Home 50 plus the uncovered custom 50: 3 chunks × 2 attempts × $0.0375 = $0.225 above the images.
+    expect(mixed.result.estimate.worstMicros).toBe(100 * 3 * 50_000 + 3 * 2 * 37_500);
+  });
+
+  test("runs.start of Home 50 plus an uncovered custom 50 caps the run at that estimate, and a start accepted one micro under is PRICE_CHANGED", async () => {
+    const avatarId = await seedAvatar();
+    const id = await seedCustomCategory();
+    const { engine } = await engineOver(runNetwork());
+    const worst = 100 * 3 * 50_000 + 3 * 2 * 37_500;
+
+    expect(failed(await engine.handle(command("runs.start", { ...request(avatarId, 100), categories: ["home", id], acceptedWorstMicros: worst - 1 }))).error.code).toBe("PRICE_CHANGED");
   });
 
   test("runs.start plans its slots from the category's own pool and writes a snapshot of it next to the request", async () => {
@@ -979,14 +1012,16 @@ describe("runs.resume", () => {
     expect(second.net.imageCalls().length).toBeGreaterThan(0);
   });
 
-  // A chunk out of writer attempts with its slots still open (a crash mid-writer): the writer can never answer, and the
-  // resume only closes the slots. It costs nothing, so it is priced at nothing and no month budget can refuse it.
-  test("a writer chunk out of attempts: the resume is free (estimate 0), even with no room left in the month, and closes every open slot with 0 POST and 0 new reserves", async () => {
-    await freeCloseWithMonthlyBudget(37_500);
+  // A chunk out of writer attempts with its slots still open (a crash mid-writer). 5a.2 (S5.6c2, plan s5a2 §5.6, I5.30) changes how that resume is PRICED: the
+  // chunk no longer blocks, so its slots' image worst stays counted (S5.6d will give those slots a plain code sentence and render them). Until then the job
+  // still closes the slots without a request, so what is spent stays 0; the estimate is the safe side. These two tests said «the resume is free (estimate 0)
+  // and no month budget can refuse it»; the plan reverses the first half, so they now say what the plan says.
+  test("a writer chunk out of attempts: the resume is priced at its open slots' images, not at 0, and still closes every open slot with 0 POST and 0 new reserves", async () => {
+    await freeCloseWithMonthlyBudget(10_000_000);
   });
 
-  test("a writer chunk out of attempts: the free resume is not refused BUDGET_EXCEEDED when the month is already OVER its budget", async () => {
-    await freeCloseWithMonthlyBudget(10_000);
+  test("a writer chunk out of attempts: the resume is refused BUDGET_EXCEEDED when the month has no room for those images, before anything is sent", async () => {
+    await freeCloseWithMonthlyBudget(37_500);
   });
 
   /** The month's budget is `monthlyBudgetMicros`; the abandoned writer reserve alone commits 37_500 of it. */
@@ -1013,8 +1048,16 @@ describe("runs.resume", () => {
     const reserves = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
     const before = reserves();
 
-    expect(await remainingWorst(second.engine, runId)).toMatchObject({ worstMicros: 0, expectedMicros: 0 });
-    const { jobId: resumeJob } = started(await second.engine.handle(command("runs.resume", { runId, acceptedWorstMicros: 0 })));
+    // Two open slots, three attempts each at the dearest image; the exhausted chunk adds no writer term.
+    const images = 2 * 3 * 50_000;
+    expect(await remainingWorst(second.engine, runId)).toMatchObject({ worstMicros: images, expectedMicros: 2 * 50_000 });
+    if (monthlyBudgetMicros < images) {
+      expect(failed(await second.engine.handle(command("runs.resume", { runId, acceptedWorstMicros: images }))).error.code).toBe("BUDGET_EXCEEDED");
+      expect(net2.calls.filter((c) => c.method === "POST")).toHaveLength(0);
+      expect(reserves()).toBe(before);
+      return;
+    }
+    const { jobId: resumeJob } = started(await second.engine.handle(command("runs.resume", { runId, acceptedWorstMicros: images })));
     await jobEnd(second.events, resumeJob);
 
     expect(net2.calls.filter((c) => c.method === "POST")).toHaveLength(0);
