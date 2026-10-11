@@ -247,4 +247,20 @@ describe("the picks (MEDIUM-2)", () => {
     expect(montage()).toBe("Монтаж из выбранных · 1");
     expect(screen.getByRole("button", { name: "Выбрать для монтажа: фото 501, Дом" }).getAttribute("aria-pressed")).toBe("true");
   });
+
+  test("a pick whose photo goes while the screen stays open goes at the next re-read that reaches the end of the gallery (LOW-C)", async () => {
+    const { engine, client, pagesScheduler } = await openOnManualClock(library(3));
+    fireEvent.click(screen.getByRole("button", { name: "Выбрать для монтажа: фото 2, Дом" }));
+    fireEvent.click(screen.getByRole("button", { name: "Выбрать для монтажа: фото 3, Дом" }));
+    const montage = (): string => screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent ?? "";
+    expect(montage()).toBe("Монтаж из выбранных · 2");
+
+    engine.setPhotoSidecarReadable("photo-mia-0001", false); // photo 3 of the gallery goes; nothing is announced
+    await reject(client, 3 - 1); // another window's mark on photo 2 makes the screen read again
+    await waitFor(() => {
+      elapse(pagesScheduler);
+      expect(tiles()).toHaveLength(2);
+    });
+    expect(montage()).toBe("Монтаж из выбранных · 1");
+  });
 });

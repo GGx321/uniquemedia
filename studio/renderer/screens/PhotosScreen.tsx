@@ -194,9 +194,13 @@ function AvatarPhotos({
       // photos it lists: one picked on a later page is kept until its own page comes in with «Показать ещё», and checked then. Once
       // the last page is in, a pick on none of them is of a photo gone meanwhile, and goes (review MEDIUM-2).
       if (added !== null) setPicked((current) => (list.nextCursor === null ? listedPicks(usablePicks(current, added, true), list.photos) : usablePicks(current, added, true)));
-      else if (!picksChecked.current) {
-        picksChecked.current = true;
-        setPicked((current) => usablePicks(current, list.photos, list.nextCursor !== null));
+      else {
+        if (!picksChecked.current) {
+          picksChecked.current = true;
+          setPicked((current) => usablePicks(current, list.photos, list.nextCursor !== null));
+        }
+        // A re-read that reaches the end of the gallery lists every photo there is: a pick on none of them is of a photo gone meanwhile (LOW-C).
+        if (list.nextCursor === null) setPicked((current) => listedPicks(current, list.photos));
       }
     },
   });
