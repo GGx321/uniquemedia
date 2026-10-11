@@ -128,11 +128,15 @@ export const PhotoQaSchema = z.object({
 });
 export type PhotoQa = z.infer<typeof PhotoQaSchema>;
 
-/** One line of `avatars/<avatarId>/history.jsonl`: a scene's location and outfit. */
+/**
+ * One line of `avatars/<avatarId>/history.jsonl`: a scene's location and outfit, and (5a.2) the moment it was, so the planner steers away from the avatar's recent
+ * (place, moment) pairs. `activity` is additive: a line written before it reads as it did.
+ */
 export const HistoryEntrySchema = z.object({
   location: NonEmpty,
   outfit: NonEmpty,
   at: IsoTimestamp,
+  activity: NonEmpty.optional(),
 });
 export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
 

@@ -468,6 +468,14 @@ describe("a run from the start", () => {
     const recent = await library.recentPairs(avatarId, 10);
     expect(recent.map((e) => [e.location, e.outfit]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.outfit]).sort());
   });
+
+  // 5a.2 (S5.6b): the history line also names the moment, so the next run steers away from the (place, moment) pairs the avatar used lately.
+  test("records each stored photo's moment too", async () => {
+    const run = await newRun(2);
+    await start(run).end;
+    const recent = await library.recentPairs(avatarId, 10);
+    expect(recent.map((e) => [e.location, e.activity]).sort()).toEqual(plannedSlots(run).map((s) => [s.location, s.activity]).sort());
+  });
 });
 
 // ---------- the provider route ----------

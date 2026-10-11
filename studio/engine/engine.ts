@@ -3065,7 +3065,7 @@ export class Engine {
         seed: seedOf(runId),
         count,
         categories: categories.map(sceneCategory),
-        excludePairs: recent.map(({ location, outfit }) => ({ location, outfit })),
+        excludePairs: recent.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
         // Profile and back only when the run allows them (T5c, owner decision); selfie and mirror stay front or three-quarter.
         poses,
       },

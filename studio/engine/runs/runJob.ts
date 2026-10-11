@@ -696,8 +696,8 @@ async function keepImage(ctx: Context, slot: SlotState, attemptId: string, model
     await endSlot(ctx, slot, { status: "done", photoId: photo.id });
     // The planner's hint for the next run (recentPairs); a failure here must not undo a stored photo. An own scene has no (location, outfit) pair to remember.
     if (!isOwnSlot(slot.slot)) {
-      const { location, outfit } = slot.slot;
-      await deps.library.appendHistory(plan.avatarId, { location, outfit, at: at(ctx) }).catch((error: unknown) => {
+      const { location, outfit, activity } = slot.slot;
+      await deps.library.appendHistory(plan.avatarId, { location, outfit, activity, at: at(ctx) }).catch((error: unknown) => {
         deps.warn?.(`studio engine: run ${plan.runId} could not record slot ${slot.slot.slotIndex}'s scene in the avatar's history (${messageOf(error)})`);
       });
     }
