@@ -4,7 +4,7 @@ import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { truncate } from "../openrouter/transport";
 import type { ChatMessage, ChatResult, OpenRouterClient } from "../openrouter/types";
-import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type Pose, type ReadableSlot, type Shot, type WriterRefusal } from "../scenes";
+import { emptyAnswerRefusal, readWriterAnswer, writerRefusalText, WRITER_JSON_SCHEMA, type PlanSlot, type Pose, type ReadableSlot, type Shot, type SlotRepair, type WriterRefusal } from "../scenes";
 import { classifyFailure } from "./failures";
 import { attemptPaid, type LedgerView } from "./journal";
 import type { Release } from "./pools";
@@ -73,6 +73,18 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
    * slots. Absent: every slot goes to the model, as before.
    */
   local?: (slot: S) => string | null;
+  /**
+   * 5a.2 (S5.6d, plan s5a2 §5.5 «After the last attempt»): the sentence a PLANNED slot takes when the model could not write it in the chunk's answered attempts
+   * (each refused, or none left to ask). It is built from the slot's own texts, never throws and costs nothing, so a refused or exhausted chunk still ends with a
+   * sentence for every slot. Absent (an own scene has no texts to build one from): the slot stays unwritten and the chunk is exhausted, as before. A moderation
+   * refusal of the writer's prompt and a failure that is no answer (a 401, a 429) are not an exhausted chunk: they end or stop the phase as before.
+   */
+  plain?: (slot: S) => string;
+  /**
+   * 5a.2 (S5.6d): an idea write keeps the scenes it accepted. When the last attempt leaves some slots unwritten the phase still succeeds with the accepted ones,
+   * naming the others in `unwritten`; with nothing accepted it is exhausted as before. Ignored for a slot that has a `plain` sentence.
+   */
+  keepAccepted?: boolean;
   /** The run job's cancel. */
   signal: AbortSignal;
   /**
@@ -103,7 +115,13 @@ export interface WriterPhase<S extends ReadableSlot = PlanSlot> {
  *   open by the client's own settle rule.
  */
 export type WriterPhaseResult =
-  | { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> }
+  | {
+      ok: true;
+      sentences: Map<number, string>;
+      angles?: Map<number, PhaseAngle>;
+      /** S5.6d: the slots a `keepAccepted` phase left without a sentence (the last attempt refused them). Absent when every slot has one. */
+      unwritten?: number[];
+    }
   | { ok: false; stop: "cancelled" | "soft-stopped" | "stopped" | "exhausted"; error: EngineError };
 
 /** The shot and the pose a reader settled on for one scene (an idea write's, CS.8a). */
@@ -112,8 +130,16 @@ export interface PhaseAngle {
   pose: Pose;
 }
 
-/** What a phase's reader answers: the writer's own answer, or (an idea write) that with the angle of each scene. */
-export type PhaseRead = { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } | ({ ok: false } & WriterRefusal);
+/** What a refusal that belongs to some slots leaves for the next attempt (writer.ts `SlotRepair`); an idea write's also carries the angle of each kept scene. */
+export interface PhaseRepair extends SlotRepair {
+  angles?: Map<number, PhaseAngle>;
+}
+
+/**
+ * What a phase's reader answers: the writer's own answer, or (an idea write) that with the angle of each scene. A refusal that belongs to some slots carries a
+ * `repair` (the next attempt asks only the marked slots and keeps the accepted ones); one without is a refusal of the whole answer.
+ */
+export type PhaseRead = { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } | ({ ok: false } & WriterRefusal & { repair?: PhaseRepair });
 
 function cancelled(): Extract<WriterPhaseResult, { ok: false }> {
   return { ok: false, stop: "cancelled", error: { code: "INTERNAL", detail: "the run was cancelled while its scenes were being written" } };
@@ -165,21 +191,31 @@ async function ask<S extends ReadableSlot>(deps: WriterPhaseDeps, phase: WriterP
  * chunk has used its answered attempts; an attempt that got no answer, or
  * anything else that is not an answer, stops the phase. A chunk with no
  * unused id, or no answered attempt left, fails without sending anything.
+ *
+ * 5a.2 (S5.6d, plan s5a2 §5.5): the second attempt repairs, it does not start over. An answer refused for some slots (`repair`) keeps the sentences that
+ * passed, and the next attempt asks only the marked slots, told today's reason; a refusal of the whole answer keeps nothing, and the next attempt asks every
+ * slot still open. When the answered attempts are used up (or there is none left to ask) a planned slot takes the plain sentence (`phase.plain`); with no
+ * `plain`, an idea write (`keepAccepted`) keeps what it accepted and names the rest `unwritten`, and anything else is exhausted as before.
  */
 async function writeChunk<S extends ReadableSlot>(
   deps: WriterPhaseDeps,
   phase: WriterPhase<S>,
   chunk: WriterPhase<S>["chunks"][number],
   slots: readonly S[],
-): Promise<{ ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } | Extract<WriterPhaseResult, { ok: false }>> {
+): Promise<{ ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle>; unwritten?: number[] } | Extract<WriterPhaseResult, { ok: false }>> {
   let feedback: WriterRefusal | undefined;
+  /** What earlier attempts of this job accepted, and the slots still open. */
+  const kept = new Map<number, string>();
+  const keptAngles = new Map<number, PhaseAngle>();
+  let open: readonly S[] = slots;
+  const done = (): { ok: true; sentences: Map<number, string>; angles?: Map<number, PhaseAngle> } => ({ ok: true, sentences: kept, ...(keptAngles.size === 0 ? {} : { angles: keptAngles }) });
   let answered = chunk.attemptIds.filter((id) => attemptPaid(phase.ledger, id)).length;
   for (const attemptId of chunk.attemptIds) {
     if (answered >= phase.call.maxAttempts) break;
     if (phase.ledger.reserveOf(attemptId) !== undefined) continue;
     if (phase.signal.aborted) return cancelled();
     if (phase.stop?.aborted === true) return softStopped();
-    const result = await ask(deps, phase, attemptId, slots, feedback);
+    const result = await ask(deps, phase, attemptId, open, feedback);
     if (result === "soft-stopped") return softStopped();
     if (result === null) return cancelled();
     // An abort with no hard cancel behind it is the soft stop releasing a reserve before the send.
@@ -187,9 +223,19 @@ async function writeChunk<S extends ReadableSlot>(
     if (result.status === "ok" && !result.aboveWorst) {
       answered++;
       const reader: (content: string, slots: readonly S[]) => PhaseRead = phase.read ?? readWriterAnswer;
-      const read = reader(result.content, slots);
-      if (read.ok) return { ok: true, sentences: read.sentences, ...(read.angles === undefined ? {} : { angles: read.angles }) };
+      const read = reader(result.content, open);
+      if (read.ok) {
+        for (const [slotIndex, sentence] of read.sentences) kept.set(slotIndex, sentence);
+        for (const [slotIndex, angle] of read.angles ?? []) keptAngles.set(slotIndex, angle);
+        return done();
+      }
       feedback = read;
+      if (read.repair !== undefined) {
+        for (const [slotIndex, sentence] of read.repair.accepted) kept.set(slotIndex, sentence);
+        for (const [slotIndex, angle] of read.repair.angles ?? []) keptAngles.set(slotIndex, angle);
+        const marked = new Set(read.repair.marked);
+        open = open.filter((slot) => marked.has(slot.slotIndex));
+      }
       continue;
     }
     if (result.status === "error" && result.kind === "EMPTY_CONTENT") {
@@ -205,6 +251,12 @@ async function writeChunk<S extends ReadableSlot>(
     const detail = feedback === undefined ? error.detail : `${error.detail ?? error.code} (after an answer rejected for: ${writerRefusalText(feedback)})`;
     return { ok: false, stop: refused ? "exhausted" : "stopped", error: { ...error, ...(detail === undefined ? {} : { detail: truncate(detail) }) } };
   }
+  // No attempt is left for this chunk. A planned slot still open takes the plain sentence: a refusal of the writer never ends a planned run.
+  if (phase.plain !== undefined) {
+    for (const slot of open) kept.set(slot.slotIndex, phase.plain(slot));
+    return done();
+  }
+  if (phase.keepAccepted === true && kept.size > 0) return { ...done(), unwritten: open.map((slot) => slot.slotIndex) };
   const why =
     answered >= phase.call.maxAttempts
       ? `the scene writer's answer for chunk ${chunk.chunk} was rejected on every one of its ${phase.call.maxAttempts} attempts; the last one for: ${feedback === undefined ? "an earlier job's answer" : writerRefusalText(feedback)}`
@@ -220,6 +272,7 @@ async function writeChunk<S extends ReadableSlot>(
 export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: WriterPhaseDeps, phase: WriterPhase<S>): Promise<WriterPhaseResult> {
   const sentences = new Map(phase.sentences);
   const angles = new Map<number, PhaseAngle>();
+  const unwritten: number[] = [];
   const bySlot = new Map(phase.slots.map((slot) => [slot.slotIndex, slot]));
   const todo = phase.chunks
     .filter((chunk) => !phase.writerDone.has(chunk.chunk))
@@ -247,6 +300,7 @@ export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: Wr
       if (!asked.ok) return asked;
       written = asked.sentences;
       for (const [slotIndex, angle] of asked.angles ?? []) angles.set(slotIndex, angle);
+      unwritten.push(...(asked.unwritten ?? []));
     }
     // Journal order within a chunk is slot order, whoever wrote the sentence.
     const whole = new Map<number, string>();
@@ -257,5 +311,5 @@ export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: Wr
     await deps.onChunk(chunk.chunk, whole);
     for (const [slotIndex, sentence] of whole) sentences.set(slotIndex, sentence);
   }
-  return { ok: true, sentences, ...(angles.size === 0 ? {} : { angles }) };
+  return { ok: true, sentences, ...(angles.size === 0 ? {} : { angles }), ...(unwritten.length === 0 ? {} : { unwritten }) };
 }

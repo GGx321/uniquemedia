@@ -33,6 +33,7 @@ export {
   readWriterAnswer,
   revealingWordsIn,
   type ReadableSlot,
+  type SlotRepair,
   writerMessages,
   writerRefusalText,
   writerRunPrice,
@@ -45,4 +46,5 @@ export {
   type WriterRefusal,
   type WriterScene,
 } from "./writer";
+export { plainSentence } from "./plainSentence";
 export { assembleRun, assembleSlot, AssemblerRefusalError, sentenceProblems, type AssembledScene, type AssembleOptions, type SentenceProblem } from "./assembler";
