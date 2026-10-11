@@ -38,7 +38,10 @@ export interface Portraits {
   readonly masterKind: MasterKind;
   /** The portrait master's likeness to the imported photo; null for the imported photo itself, or when it is not known. */
   readonly masterLikeness: number | null;
-  /** The master is a portrait whose file is gone (S5.3c): only the way back is offered. */
+  /**
+   * The master is a portrait whose file is gone (S5.3c): the way back to the imported photo is the primary action, and a new batch is still offered
+   * after it (it draws from the imported photo, which is alive).
+   */
   readonly masterMissing: boolean;
   /** The waiting portraits, best first. */
   readonly pending: readonly PortraitCandidate[];

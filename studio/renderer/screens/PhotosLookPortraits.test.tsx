@@ -526,8 +526,13 @@ describe("a portrait master whose file is gone (S5.3c `masterMissing`)", () => {
     await flush();
 
     expect(pill()).toBe("мастер-портрет");
-    expect(text(masterCard())).toContain("Файл мастер-портрета не найден. Верните исходное фото мастером — новые варианты можно сделать и потом.");
-    expect(isDisabled(within(masterCard()).getByRole("button", { name: "Сделать мастером снова" }))).toBe(false);
+    expect(text(masterCard())).toContain("Файл мастер-портрета не найден. Верните исходное фото мастером или получите новые варианты.");
+    // Review L3: the way back is the primary action; a new batch is still offered, second.
+    const back = within(masterCard()).getByRole("button", { name: "Сделать мастером снова" });
+    expect(isDisabled(back)).toBe(false);
+    expect(back.className).toContain("btn-p");
+    expect(startButton().className).not.toContain("btn-p");
+    expect(isDisabled(startButton())).toBe(false);
   });
 });
 

@@ -124,7 +124,15 @@ function SourceTile({ avatarId, portraits: p }: { avatarId: string; portraits: P
         {ask.open ? (
           <InlineAskBox ask={ask} question={PORTRAIT_TEXT.revertAsk} confirm="Вернуть" busyLabel="Возвращаем…" busy={saving} onConfirm={() => p.revert()} />
         ) : (
-          <button ref={ask.trigger} type="button" className="btn btn-s" disabled={p.held} aria-describedby={held ? heldId : undefined} onClick={() => ask.ask()}>
+          <button
+            ref={ask.trigger}
+            type="button"
+            // Review L3: with the master's file gone, the way back is the primary action.
+            className={p.masterMissing ? "btn btn-s btn-p" : "btn btn-s"}
+            disabled={p.held}
+            aria-describedby={held ? heldId : undefined}
+            onClick={() => ask.ask()}
+          >
             {PORTRAIT_TEXT.revert}
           </button>
         )}
