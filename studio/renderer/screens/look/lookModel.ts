@@ -1,5 +1,5 @@
 import { CHECK_ASPECTS, type CheckAspect, type DescriptorCheck } from "../../../shared/engine";
-import { isActiveJob, type EngineView } from "../../engine/store";
+import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
 import type { LookLanding } from "../../navigation";
 
 // S5.0d: what the «Внешность» tab says, apart from the components that draw it — the check's verdict and its aspects, the proposal as an edit (struck
@@ -128,14 +128,17 @@ export function landingText(landing: LookLanding, name: string, bodyWaits: boole
 /** S5.2d: `avatars.setBody` (or «Не нужно») refused IN_FLIGHT, or waiting for this window's own check: the same claim as an edit. */
 export const BODY_HELD_REASON = "Тело можно сохранить, когда закончится сверка или другая задача этого аватара";
 
+/** The jobs that hold an avatar while they run: a photo run, a candidates batch and (S5.3d) a reference-portrait batch, which claims her like a run. */
+const HOLDING_KINDS: ReadonlySet<JobView["kind"]> = new Set(["run", "avatar.candidates", "avatar.portraits"]);
+
 /**
- * Whether this window knows of work that holds the avatar, so the paid check would be refused IN_FLIGHT: a photo run or a candidates batch of hers that
- * is queued or running, or a paid start of hers on its way. A launch holds her through its own runs, which are run jobs. What the window cannot see (a
- * check from another window, a launch between its steps) still comes back as IN_FLIGHT, and the card says the same thing then.
+ * Whether this window knows of work that holds the avatar, so the paid check would be refused IN_FLIGHT: a photo run, a candidates batch or a portrait
+ * batch of hers that is queued or running, or a paid start of hers on its way. A launch holds her through its own runs, which are run jobs. What the
+ * window cannot see (a check from another window, a launch between its steps) still comes back as IN_FLIGHT, and the card says the same thing then.
  */
 export function avatarHeld(view: Pick<EngineView, "jobs" | "paidInFlightAvatars">, avatarId: string): boolean {
   if (view.paidInFlightAvatars.has(avatarId)) return true;
-  return view.jobs.some((job) => job.avatarId === avatarId && (job.kind === "run" || job.kind === "avatar.candidates") && isActiveJob(job));
+  return view.jobs.some((job) => job.avatarId === avatarId && HOLDING_KINDS.has(job.kind) && isActiveJob(job));
 }
 
 /** Whether a photo run of hers is drawing now: an edit is allowed, and that run finishes with the text it started with. */

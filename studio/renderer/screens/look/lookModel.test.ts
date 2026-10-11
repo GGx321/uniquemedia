@@ -179,6 +179,16 @@ describe("whether the avatar is held", () => {
     expect(avatarHeld(view([], ["a1"]), "a1")).toBe(true);
   });
 
+  test("S5.3d: a reference-portrait batch of hers holds her too, while it runs and only then", () => {
+    const view = (jobs: JobView[]) => ({ jobs, paidInFlightAvatars: new Set<string>() });
+    expect(avatarHeld(view([job({ kind: "avatar.portraits", runId: null })]), "a1")).toBe(true);
+    expect(avatarHeld(view([job({ kind: "avatar.portraits", runId: null, status: "queued" })]), "a1")).toBe(true);
+    expect(avatarHeld(view([job({ kind: "avatar.portraits", runId: null, status: "cancelled" })]), "a1")).toBe(false);
+    expect(avatarHeld(view([job({ kind: "avatar.portraits", runId: null, avatarId: "a2" })]), "a1")).toBe(false);
+    // The description and the body stay editable during the batch: it is not a photo run «drawing» either.
+    expect(runDrawing({ jobs: [job({ kind: "avatar.portraits", runId: null })] }, "a1")).toBe(false);
+  });
+
   test("a photo run drawing now is told apart (an edit is allowed during it)", () => {
     expect(runDrawing({ jobs: [job({})] }, "a1")).toBe(true);
     expect(runDrawing({ jobs: [job({ kind: "avatar.candidates" })] }, "a1")).toBe(false);
