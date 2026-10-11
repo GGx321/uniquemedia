@@ -11,6 +11,7 @@ import { Icon, Spin } from "../../ui/Icon";
 import { useModalDialog } from "../../ui/useModalDialog";
 import { busyElsewhere, categoryPrice, PoolPreview, priceRange, priceSource, useSeconds, worstOf } from "./categoryParts";
 import { callFailure, createdLine, createdTime, DESCRIPTION_HINT, descriptionProblem, nameProblem } from "./categoryText";
+import { RevealingLine } from "./RevealingLine";
 import { paidBlockedReason } from "./runForm";
 
 // CS.3: «Новая категория» (CatCreate, CatCreateBusy, CatCreateDone, CatCreateRejected, CatCreatePrice; the CategoryStates sheet's checks,
@@ -233,6 +234,7 @@ export function CategoryCreateDialog({
                       {descError}
                     </p>
                   )}
+                  <RevealingLine description={shownDescription} />
                   <p id={hintId} className="field-hint">
                     {DESCRIPTION_HINT}
                   </p>

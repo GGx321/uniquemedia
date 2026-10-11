@@ -3,6 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { CATEGORY_REASONS_RU } from "../../shared/engine";
 import { callsOf, describeElement, flush, inAct, openSection, runAll, withText } from "../testing";
 import { category, chipsGroup, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
+import { REVEALING_NOTE } from "./photos/revealingNote";
 
 // CS.3 (phase 1 of custom categories): the category row of the generate card and the «Новая категория» dialog, against the mock engine.
 // The artboards are CatChips, CatCreate, CatCreateBusy, CatCreateDone, CatCreateRejected, CatCreatePrice and the CategoryStates sheet
@@ -145,6 +146,28 @@ describe("the category row", () => {
     fireEvent.click(addChip());
     await flush();
     expect(screen.queryByRole("dialog", { name: "Новая категория" }) === null).toBe(true);
+  });
+});
+
+// S5.5: the pool generator draws no lingerie, swimwear or nudity yet; the dialog says so while the owner types, before he pays, and says nothing otherwise.
+describe("«Новая категория»: the note on what is not drawn", () => {
+  test("a description that asks for lingerie shows the note before «Создать», and an ordinary one does not; the note goes when the words do", async () => {
+    await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    expect(within(dialog()).queryByText(REVEALING_NOTE) === null).toBe(true);
+    await fill("Реклама", "В нижнем брендовом белье на кровати для рекламы");
+    expect(within(dialog()).getByText(REVEALING_NOTE)).toBeDefined();
+    fireEvent.change(field(/^Описание/), { target: { value: "В белом платье в кофейне, бельгийский шоколад" } });
+    await flush();
+    expect(within(dialog()).queryByText(REVEALING_NOTE) === null).toBe(true);
+  });
+
+  test("the note does not block the button: the category is still created, in everyday clothes", async () => {
+    await openPhotos({ categories: [PARIS] });
+    await openCreate();
+    await fill("Реклама", "В нижнем белье на кровати");
+    expect(within(dialog()).getByText(REVEALING_NOTE)).toBeDefined();
+    expect(isDisabled(createButton())).toBe(false);
   });
 });
 
