@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { CATEGORY_REASONS_RU, ERROR_MESSAGES_RU } from "../../shared/engine";
 import { callsOf, describeElement, flush, inAct, runAll, withText } from "../testing";
 import { BED_POOL, category, chipsGroup, interruptedCreate, interruptedRegenerate, MIA, MONO, openPhotos, PARIS, WINTER } from "./photos/categoryScreenKit";
-import { REVEALING_NOTE } from "./photos/revealingNote";
+import { REVEALING_NOTE, REVEALING_NOTE_DONE } from "./photos/revealingNote";
 import { card, goButton, nb, openReview } from "./photos/sceneScreenKit";
 
 // CS.3: «Мои категории» (CatSheet, CatSheetRename, CatSheetRegen, CatSheetRegenBusy, CatSheetRegenFailed, CatSheetRegenDone,
@@ -98,10 +98,11 @@ describe("the note on what is not drawn", () => {
     expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
     fireEvent.click(row("Реклама белья"));
     await flush();
-    expect(within(sheet()).getByText(REVEALING_NOTE)).toBeDefined();
+    expect(within(sheet()).getByText(REVEALING_NOTE_DONE)).toBeDefined();
+    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
     fireEvent.click(row("Кофейни Парижа"));
     await flush();
-    expect(within(sheet()).queryByText(REVEALING_NOTE) === null).toBe(true);
+    expect(within(sheet()).queryByText(REVEALING_NOTE_DONE) === null).toBe(true);
   });
 
   test("the regenerate box shows it for the text being typed, before the paid click", async () => {

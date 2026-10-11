@@ -655,7 +655,7 @@ function CategoryDetail({
           )}
         </div>
         {!regenOpen && <p className="muted cat-desc">{category.description}</p>}
-        {!regenOpen && <RevealingLine description={category.description} />}
+        {!regenOpen && <RevealingLine description={category.description} created />}
         {regenDone !== null && !regenOpen && (
           <div className="notice notice-ok cat-regen-done" role="status">
             <span className="notice-icon">
