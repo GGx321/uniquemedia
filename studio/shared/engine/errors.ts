@@ -622,6 +622,9 @@ export const RENDER_NO_SPACE_DETAIL_PREFIX = "not enough free space for the rend
 
 export const NO_ANSWER_DETAIL_PREFIX = "the engine did not answer within ";
 
+/** The detail main gives a command that was waiting for an answer when the engine process exited: like a missing answer, the command may have been carried out. */
+export const ENGINE_EXITED_DETAIL = "the engine exited before answering";
+
 /** `RENDER_QUEUE_FULL`'s detail: it names the limit, which `renderQueueLimitOf` reads back for the window's text. */
 export function renderQueueFullDetail(limit: number): string {
   return `the render queue is full: ${limit} renders are already queued or running`;

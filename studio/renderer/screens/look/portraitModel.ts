@@ -1,5 +1,6 @@
 import {
   ERROR_MESSAGES_RU,
+  ENGINE_EXITED_DETAIL,
   NO_ANSWER_DETAIL_PREFIX,
   PORTRAIT_CANDIDATES_MAX,
   PORTRAIT_MIN_LIKENESS,
@@ -195,11 +196,11 @@ export function variantLabel(letter: string, likeness: number | undefined, best:
 }
 
 /**
- * An answer that never came (main's deadline, `main/engineHost.ts`): no refusal at all — the engine may have started the batch, as
+ * An answer that never came (main's deadline, or an engine that exited while the command waited; `main/engineHost.ts`): no refusal at all — the engine may have started the batch, as
  * `renderJobs.ts` `classifyAnswer` reads the same answer of a render. Its job, if there is one, shows up by its own events.
  */
 export function answerLost(error: EngineError): boolean {
-  return error.code === "INTERNAL" && error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true;
+  return error.code === "INTERNAL" && (error.detail?.startsWith(NO_ANSWER_DETAIL_PREFIX) === true || error.detail === ENGINE_EXITED_DETAIL);
 }
 
 /**

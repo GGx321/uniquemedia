@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, NO_ANSWER_DETAIL_PREFIX, type ErrorCode, type FailedPortraitSlot, type PortraitSlotCharge } from "../../../shared/engine";
+import { ENGINE_EXITED_DETAIL, ERROR_MESSAGES_RU, NO_ANSWER_DETAIL_PREFIX, type ErrorCode, type FailedPortraitSlot, type PortraitSlotCharge } from "../../../shared/engine";
 import { errorText } from "../../lib/errors";
 import {
   ageRejectedLine,
@@ -174,6 +174,13 @@ describe("words around the numbers", () => {
   test("a refusal adds that nothing was started, unless its own text already says nothing was spent", () => {
     expect(startRefusalText({ code: "BUDGET_EXCEEDED" })).toBe(`${ERROR_MESSAGES_RU.BUDGET_EXCEEDED} Варианты не запускались — ничего не потрачено.`);
     expect(startRefusalText({ code: "FACE_GATE_UNAVAILABLE" })).toBe(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE);
+  });
+
+  test("an engine that exited before answering is a lost answer too: the batch may have started, so nothing is said of what was spent", () => {
+    const exited = { code: "INTERNAL" as const, detail: ENGINE_EXITED_DETAIL };
+    expect(answerLost(exited)).toBe(true);
+    expect(startRefusalText(exited)).toBe(errorText(exited));
+    expect(startRefusalText(exited)).not.toContain("ничего не потрачено");
   });
 
   test("an answer that never came is no refusal: the batch may be drawing, so nothing is said of what was spent (M1)", () => {

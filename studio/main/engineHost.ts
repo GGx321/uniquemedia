@@ -2,6 +2,7 @@ import {
   ENGINE_GONE_DETAIL,
   errorResponseFor,
   EventMessage,
+  ENGINE_EXITED_DETAIL,
   NO_ANSWER_DETAIL_PREFIX,
   PROTOCOL_VERSION,
   ResponseMessage,
@@ -404,7 +405,7 @@ export class EngineHost<Transfer> {
     this.#child = null;
     this.#port?.close();
     this.#port = null;
-    this.#failPending("the engine exited before answering");
+    this.#failPending(ENGINE_EXITED_DETAIL);
     this.#crashed(`the engine exited unexpectedly (code ${code})`);
   }
 
