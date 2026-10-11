@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../testing/nativeGlobals";
 import { ideaWriteProblems, templateComposeProblems } from "./templateSmoke";
+useNativeGlobals();
 
 // 5a.2 (S5.6e, plan s5a2 §5.7): the packaged-app smoke holds that the code template writes a built-in category's scenes with no writer request and no money, and that an idea write still reaches the
 // writer. These are the rules its checks apply to the facts it reads off the mock OpenRouter and the ledger; the app itself is only run in CI.

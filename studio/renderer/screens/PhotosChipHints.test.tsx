@@ -58,7 +58,7 @@ describe("the chip hint line", () => {
   test("shows no hint at rest once Glamour is off", async () => {
     await openPhotos();
     fireEvent.click(chip(/^Гламур/));
-    expect(document.querySelector(".photos-cats-note")).toBeNull();
+    expect(document.querySelector(".photos-cats-note") === null).toBe(true);
   });
 });
 
