@@ -234,6 +234,12 @@ describe("readPoolAnswer: salvage drops the items that break the pool rules and 
     expect(okOf(answer({ locations: [...(answer().locations as Json[]), bad] })).pool.locations.map((l) => l.name)).toEqual(PLACES);
   });
 
+  // C1: the word «selfie» draws a phone, so an activity that says it (or «front camera») is no free-hand activity for a selfie slot either.
+  test.each(["taking a selfie", "posing for selfies", "looking into the front-facing camera"])("a free-hand activity that says «%s» does not count as free-hand", (text) => {
+    const bad = place("a sixth place", { activities: [{ text, twoHanded: false }, { text: "kneading dough", twoHanded: true }] });
+    expect(okOf(answer({ locations: [...(answer().locations as Json[]), bad] })).pool.locations.map((l) => l.name)).toEqual(PLACES);
+  });
+
   test("a place with a phone activity and a free-hand one that does not use it stays, both activities kept", () => {
     const mixed = place("a sixth place", { activities: [{ text: "scrolling her phone", twoHanded: false }, { text: "sipping a cup of tea", twoHanded: false }] });
     const result = okOf(answer({ locations: [...(answer().locations as Json[]), mixed] }));

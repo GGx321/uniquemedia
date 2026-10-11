@@ -39,7 +39,7 @@ describe("ideaMessages", () => {
     const parsed = JSON.parse(user.slice(user.indexOf("["), user.lastIndexOf("]") + 1));
     expect(parsed).toEqual([
       { slotIndex: 7, idea: "кофе на балконе утром", shot: "a phone snap a friend took", pose: "a three-quarter view, turned slightly from the viewer" },
-      { slotIndex: 8, idea: "кофе на балконе утром", shot: "her own front-camera selfie", pose: "facing the viewer" },
+      { slotIndex: 8, idea: "кофе на балконе утром", shot: "her own arm's-length photo", pose: "facing the viewer" },
     ]);
   });
 

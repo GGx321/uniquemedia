@@ -73,7 +73,7 @@ describe("writerMessages", () => {
     const body = JSON.parse(user?.content.match(/\[[\s\S]*\]/)?.[0] ?? "[]");
     expect(body).toEqual([
       { slotIndex: 1, category: "Home", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "a phone snap a friend took", pose: "facing the viewer", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
-      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "her own front-camera selfie", pose: "a three-quarter view, turned slightly from the viewer", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
+      { slotIndex: 2, category: "Fitness", location: "a bright kitchen", timeOfDay: "morning daylight", shot: "her own arm's-length photo", pose: "a three-quarter view, turned slightly from the viewer", outfit: "a plain white t-shirt and cotton shorts", activity: "holding a ceramic coffee mug" },
     ]);
   });
 
@@ -172,6 +172,25 @@ describe("readWriterAnswer", () => {
         expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: false, problems: ["phone-in-selfie"], phoneSlots: [1] });
       },
     );
+
+    test.each(["She looks into the front-facing camera, one hand in her hair.", "A front facing camera look, her free hand on the railing."])("a selfie sentence saying %j is refused", (sentence) => {
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: false, problems: ["phone-in-selfie"], phoneSlots: [1] });
+    });
+
+    test("«camera» without «front» is fine in a selfie sentence", () => {
+      const sentence = "She stands by a camera shop window, her free hand in her hair, a camera strap on the door.";
+      expect(readWriterAnswer(output([{ slotIndex: 1, sentence }, { slotIndex: 2, sentence: GOOD_FRIEND }]), SLOTS)).toMatchObject({ ok: true });
+    });
+
+    test("the shot label the writer is sent for a selfie never says selfie or front camera, in the first request and in the repair", () => {
+      expect(SHOT_LABEL.selfie).toBe("her own arm's-length photo");
+      const refusal: WriterRefusal = { problems: ["phone-in-selfie"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], phoneSlots: [1] };
+      for (const messages of [writerMessages([slot({ shot: "selfie" })]), writerMessages([slot({ shot: "selfie" })], refusal)]) {
+        expect(messages[1]?.content).toContain("her own arm's-length photo");
+        expect(messages[1]?.content).not.toMatch(/front[ -]camera/i);
+        expect(messages[1]?.content).not.toMatch(/"shot":"[^"]*selfie/i);
+      }
+    });
 
     test("a mirror slot may say selfie: it is a mirror selfie, and the phone is in the mirror", () => {
       const slots = [slot({ slotIndex: 1, shot: "mirror" }), slot({ slotIndex: 2, shot: "friend" })];
@@ -733,7 +752,7 @@ describe("S5.1b: the writer is told to write what an ordinary phone photo shows,
   test("SHOT_LABEL names who took the phone photo and carries no camera or photographer", () => {
     expect(SHOT_LABEL).toEqual({
       friend: "a phone snap a friend took",
-      selfie: "her own front-camera selfie",
+      selfie: "her own arm's-length photo",
       mirror: "her mirror selfie",
       candid: "a friend's snap while she is busy",
       photographer: "a phone snap a friend took",

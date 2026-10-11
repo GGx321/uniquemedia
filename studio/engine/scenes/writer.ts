@@ -5,7 +5,7 @@ import type { PriceBook } from "../money/prices";
 import type { ChatMessage } from "../openrouter/types";
 import { categoryLabelOf, type CategoryLabelOf } from "./categories";
 import { lightOf } from "./phoneLook";
-import { PHONE_WORDS } from "./pools";
+import { PHONE_WORDS, SELFIE_WORDS } from "./pools";
 import type { Shot } from "./types";
 import type { PlanSlot, Pose } from "./schema";
 import { revealingWordsIn } from "./words";
@@ -86,7 +86,7 @@ export const WRITER_JSON_SCHEMA: { name: string; schema: Record<string, unknown>
 
 export const SHOT_LABEL: Record<Shot, string> = {
   friend: "a phone snap a friend took",
-  selfie: "her own front-camera selfie",
+  selfie: "her own arm's-length photo",
   mirror: "her mirror selfie",
   candid: "a friend's snap while she is busy",
   photographer: "a phone snap a friend took",
@@ -334,9 +334,6 @@ export type ReadableSlot = Pick<PlanSlot, "slotIndex" | "shot" | "pose">;
 function phoneInHand(slot: ReadableSlot): boolean {
   return slot.shot === "selfie" || slot.shot === "mirror";
 }
-
-// C1 (owner canary, 2026-10-11): the image model draws a phone for the word «selfie» or «front camera» even with a clean master photo.
-const SELFIE_WORDS = /\bselfies?\b|\bfront[ -]camera\b/i;
 
 /**
  * M3: a selfie's sentence names a phone. The phone is the camera, so a phone in the sentence is the second one, whatever the slot's activity. C1: the same

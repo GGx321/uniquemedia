@@ -20,7 +20,7 @@ import {
   type CategoryStyle,
 } from "../../shared/engine";
 import type { ChatMessage } from "../openrouter/types";
-import { isPhoneActivity, PoolSchema, type Pool } from "./pools";
+import { isCleanActivity, PoolSchema, type Pool } from "./pools";
 import { isTwoHanded } from "./writer";
 import { revealingWordsIn } from "./words";
 
@@ -344,7 +344,7 @@ function readPlace(raw: unknown, collector: Collector): { place: ReadPlace; drop
     activities: distinct(goodActivities, (a) => a.text).slice(0, PLACE_ACTIVITIES_MAX),
     mirror: raw.mirror === true,
   };
-  if (!nameOk || place.times.length === 0 || place.activities.length < 2 || !place.activities.some((a) => !a.twoHanded && !isPhoneActivity(a))) return null;
+  if (!nameOk || place.times.length === 0 || place.activities.length < 2 || !place.activities.some(isCleanActivity)) return null;
   return { place, dropped: inner.dropped };
 }
 

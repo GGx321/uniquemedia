@@ -60,18 +60,27 @@ export interface Place {
 // A stored custom pool is built from the shared `PoolActivity {text, twoHanded}`, which carries no phone flag, so its phone activities are found by their words.
 export const PHONE_WORDS = /\b(phones?|smartphones?|iphones?|cellphones?|texting|facetime)\b/i;
 
+// C1 (owner canary, 2026-10-11): the image model draws a phone for the word «selfie» or «front camera» (also «front-facing camera»), even with a clean master
+// photo. A selfie slot's text may not say it: the writer refuses such a sentence (writer.ts, phone-in-selfie), so a custom pool's activity or place that says it
+// must never reach a phone-in-hand slot, or the run fails after two paid attempts (the S5.R1 M3 scenario, now for this word).
+export const SELFIE_WORDS = /\bselfies?\b|\bfront[ -](?:facing[ -])?camera\b/i;
+
 /** The phone is in her hand or in use: the flag for a built-in activity, the word-bounded text for a stored custom one (the built-ins' flags are pinned to agree with the words). */
 export function isPhoneActivity(activity: { text: string; phone?: true | undefined }): boolean {
   return activity.phone === true || PHONE_WORDS.test(activity.text);
 }
 
 /** A free-hand activity that does not use her phone: what a selfie or a mirror shot may draw (the phone in her hand is the camera or the mirror prop). */
-function isCleanActivity(activity: Activity): boolean {
-  return !activity.twoHanded && !isPhoneActivity(activity);
+export function isCleanActivity(activity: Activity): boolean {
+  return !activity.twoHanded && !isPhoneActivity(activity) && !SELFIE_WORDS.test(activity.text);
 }
 
-/** Whether a selfie or mirror shot can be placed at `place`: it has an activity for one free hand that is not on the phone. Every built-in place has one (pinned). */
-export function hasCleanActivity(place: { activities: readonly Activity[] }): boolean {
+/**
+ * Whether a selfie or mirror shot can be placed at `place`: it has an activity for one free hand that is not on the phone, and neither its name nor its locative
+ * phrase says selfie (C1). Every built-in place has one (pinned).
+ */
+export function hasCleanActivity(place: { name?: string; at?: string; activities: readonly Activity[] }): boolean {
+  if (SELFIE_WORDS.test(place.name ?? "") || SELFIE_WORDS.test(place.at ?? "")) return false;
   return place.activities.some(isCleanActivity);
 }
 
