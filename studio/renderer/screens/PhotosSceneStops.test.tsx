@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { callsOf, describeElement, flush, runAll, withText } from "../testing";
 import { MIA } from "./photos/categoryScreenKit";
-import { ATTEMPT, card, column, fieldValue, goButton, isDisabled, nb, openReview, priceRow, sceneCard } from "./photos/sceneScreenKit";
+import { ATTEMPT, card, column, fieldValue, goButton, isDisabled, LLM_ONLY_REF, nb, openReview, priceRow, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.6: a set stopped or cut short, against the mock engine: a compose a closed Studio cut off, before the reconcile and after it (ReviewStopped,
 // ReviewStoppedReconciled), a compose that gave up on a request (ReviewGaveUp), a rewrite cut off (ReviewRewriteInterrupted) — its ⟳ offering both
@@ -14,7 +14,7 @@ const SET = "set-cut-0001";
 /** Mia with 60 planned scenes, the first request written, the second cut off by a closed Studio (its reserve open), the third fresh. */
 function cutOff() {
   return openReview({
-    sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: ["home", "travel", "shoot", "glam", "fit"] }],
+    sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: [LLM_ONLY_REF] }],
   });
 }
 
@@ -148,6 +148,7 @@ describe("a rewrite cut off", () => {
           count: 6,
           written: 6,
           writes: 1,
+          categories: [LLM_ONLY_REF],
           reviewWrites: [{ kind: "rewrite", k: 2, sceneIds: [2], redraw: true, cutOff: true }],
         },
       ],
@@ -211,7 +212,7 @@ describe("an idea write cut off", () => {
   test("«Свои сцены не написаны»: «Повторить», «Открыть идею» (the form with the idea), «Не нужно» (free; the focus goes to «+ Своя сцена»)", async () => {
     const { engine } = await openReview({
       sceneSets: [
-        { avatarId: MIA.avatarId, sceneSetId: "set-idea-0001", count: 3, written: 3, writes: 1, reviewWrites: [{ kind: "idea", k: 2, idea: "Утренний кофе на балконе", count: 2, shot: null, sceneIds: [4, 5], cutOff: true }] },
+        { avatarId: MIA.avatarId, sceneSetId: "set-idea-0001", count: 3, written: 3, categories: [LLM_ONLY_REF], writes: 1, reviewWrites: [{ kind: "idea", k: 2, idea: "Утренний кофе на балконе", count: 2, shot: null, sceneIds: [4, 5], cutOff: true }] },
       ],
     });
     const notice = await within(column()).findByRole("alert");

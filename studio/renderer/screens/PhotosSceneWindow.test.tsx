@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { callsOf, flush, tick } from "../testing";
 import { MIA } from "./photos/categoryScreenKit";
-import { column, goButton, isDisabled, nb, openGated } from "./photos/sceneScreenKit";
+import { column, goButton, isDisabled, LLM_ONLY_REF, nb, openGated } from "./photos/sceneScreenKit";
 
 // CS.6: «Дописать» and compose are shut from the moment their write is answered, not only once the set says it writes (`scenes.changed`, or the read
 // compose asks for): the tracked scenes job holds the button in that window, where it would carry the same price twice.
@@ -14,7 +14,7 @@ describe("between the write's answer and `scenes.changed`", () => {
 
   async function reconciled() {
     const harness = await openGated({
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET_CUT, count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: ["home", "travel", "shoot", "glam", "fit"] }],
+      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET_CUT, count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: [LLM_ONLY_REF] }],
     });
     await waitFor(() => expect(goButton().textContent).toBe(nb("Дописать 35 сцен · до $0.12")));
     await act(async () => {

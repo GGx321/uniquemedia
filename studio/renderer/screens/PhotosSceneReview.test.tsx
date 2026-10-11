@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import { callsOf, describeElement, flush, inAct, openSection, runAll, setup } from "../testing";
 import { MIA } from "./photos/categoryScreenKit";
 import { SCENE_REVIEW_KEY } from "./photos/sceneReview";
-import { ATTEMPT, card, column, describedText, goButton, isDisabled, nb, openReview, priceRow, reviewSwitch, sceneCard } from "./photos/sceneScreenKit";
+import { ATTEMPT, card, column, describedText, goButton, isDisabled, LLM_ONLY_REF, nb, openReview, priceRow, reviewSwitch, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.6: «Сцены на проверку» — the switch, the card's compose mode and its strip, approval, a used set, «Пересоставить…», against the mock engine. The
 // artboards are ReviewOff, ReviewCompose, ReviewComposing, ReviewReady (the card), ReviewUsed, ReviewRecompose and the ReviewStates sheet (A: the card's
@@ -88,7 +88,7 @@ describe("compose", () => {
     await flush();
     const sent = callsOf(engine, "scenes.compose");
     expect(sent).toHaveLength(1);
-    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false }, acceptedWorstMicros: 2 * ATTEMPT });
+    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: 2 * ATTEMPT });
     await flush();
     expect(card().getAttribute("aria-label")).toBe("Генерация фото · набор сцен");
     expect(goButton().textContent).toBe("Составляем… · до $0.075");
@@ -102,6 +102,22 @@ describe("compose", () => {
     const queue = screen.getByRole("region", { name: "Очередь" });
     expect(within(queue).getByText("Сцены")).toBeDefined();
     expect(queue.textContent).toContain("0 / 20");
+  });
+
+  test("with the five built-ins on the app writes the scenes: the price row says «бесплатно» and the compose is accepted at $0 (twin of the model's price above)", async () => {
+    // 5a.2 (S5.6e, m11): the built-ins' scenes come from the code template, so no writer request is made and nothing is reserved.
+    const { engine, scheduler } = await openReview({ builtIns: true });
+    await waitFor(() => expect(priceRow("Сцены")).toContain("бесплатно"));
+    expect(within(card()).getByText("их пишет приложение")).toBeDefined();
+    fireEvent.click(goButton());
+    await flush();
+    const sent = callsOf(engine, "scenes.compose");
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.payload).toEqual({ avatarId: MIA.avatarId, count: 20, categories: ["home", "travel", "shoot", "glam", "fit"], poses: { profile: false, back: false }, acceptedWorstMicros: 0 });
+    runAll(scheduler);
+    await flush();
+    await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
+    expect(within(card()).getByRole("list", { name: "Категории набора" }).textContent).toContain("Дом");
   });
 
   test("two clicks before the screen draws again (one batch) still send one compose", async () => {
@@ -164,7 +180,7 @@ describe("a ready set: the strip and «Отрисовать»", () => {
     const set = callsOf(engine, "runs.estimateFromScenes").at(-1)?.payload;
     expect(set?.revision).toBeGreaterThan(1);
     expect(card().textContent).toContain("Набор сцен");
-    expect(within(card()).getByRole("list", { name: "Категории набора" }).textContent).toContain("Дом");
+    expect(within(card()).getByRole("list", { name: "Категории набора" }).textContent).toContain("Только модель");
     expect(card().textContent).toContain("Ракурсы: анфас, три четверти.");
     expect(card().textContent).toContain("текст grok-4.3");
     // The models line says which of it is today's Settings and which is the set's own (CS.7).
@@ -257,7 +273,7 @@ describe("«Пересоставить…»", () => {
 
 describe("review off with a set open", () => {
   test("the set is kept and hidden; the column says how to come back; on again, the strip is back (ReviewOff)", async () => {
-    const { engine } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 20, written: 20, categories: ["home", "travel"] }] });
+    const { engine } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 20, written: 20, categories: [LLM_ONLY_REF] }] });
     await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 20 фото · до $3.00")));
     fireEvent.click(reviewSwitch());
     await flush();

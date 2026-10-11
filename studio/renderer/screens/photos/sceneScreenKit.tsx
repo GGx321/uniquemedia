@@ -1,9 +1,10 @@
-import { act, render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { App } from "../../App";
+import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../../engine/scenes/testing/llmOnlyFixture";
 import { MockEngine, type MockEngineOptions, mockEngineClient } from "../../engine/mockEngine";
 import { ManualScheduler } from "../../engine/scheduler";
 import { flush, openSection, setup, type SetupOptions } from "../../testing";
-import { MIA } from "./categoryScreenKit";
+import { chipsGroup, MIA } from "./categoryScreenKit";
 import { SCENE_REVIEW_KEY } from "./sceneReview";
 
 // CS.6 screen tests' kit: Mia's Photos screen with «Сцены на проверку» as the owner's default leaves it (ON), and the parts the review artboards draw.
@@ -14,13 +15,42 @@ export const ATTEMPT = 37_500;
 /** A count stays on one line with its word (the app's countOf binds them with a no-break space): «Составить 20 сцен», as the screen names it. */
 export const nb = (text: string): string => text.replace(/(\d) (?=\p{L})/gu, "$1 ");
 
-/** Opens Mia's Photos screen with review on (the default) and waits for the card's first price. */
-export async function openReview(options: SetupOptions = {}) {
-  const harness = setup({ avatars: [MIA], ...options });
+export { LLM_ONLY_REF };
+
+/**
+ * The category whose scenes only the model writes (5a.2, S5.6e): the mock lists it as a custom category the owner made. It is seeded AFTER the test's own
+ * categories and is the oldest of them, so the library lists it last and a screen that opens the first category still opens the test's own.
+ */
+export const FIXTURE = { ...LLM_ONLY_CATEGORY_RECORD, createdAt: "2026-08-01T10:00:00.000Z", updatedAt: "2026-08-01T10:00:00.000Z" };
+
+/** Leaves the fixture's chip as the only one on. A card that holds a set shows its strip instead of the chips: nothing to choose there, and nothing is done. */
+async function chooseOnlyTheFixture(): Promise<void> {
+  if (screen.queryByRole("group", { name: "Категории · фото в каждой" }) === null) return;
+  const chip = await within(chipsGroup()).findByRole("button", { name: "Только модель" });
+  if (chip.getAttribute("aria-pressed") !== "true") fireEvent.click(chip);
+  await flush();
+  for (const other of within(chipsGroup()).getAllByRole("button")) {
+    if (other !== chip && other.getAttribute("aria-pressed") === "true") fireEvent.click(other);
+  }
+  await flush();
+}
+
+export interface OpenReviewOptions extends SetupOptions {
+  /** Keep the five built-ins on (the app writes their scenes, free). By default the run is planned from the fixture alone, so the model writes every scene. */
+  builtIns?: boolean;
+}
+
+/**
+ * Opens Mia's Photos screen with review on (the default) and waits for the card's first price. Unless `builtIns` is asked, the fixture's chip is the only
+ * one on: 20 photos in ONE category the code template cannot write, so the model is asked and the card shows its price.
+ */
+export async function openReview({ builtIns = false, ...options }: OpenReviewOptions = {}) {
+  const harness = setup({ avatars: [MIA], ...options, categories: [...(options.categories ?? []), FIXTURE] });
   await screen.findByRole("heading", { level: 2, name: "Mia" });
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });
   await flush();
+  if (!builtIns) await chooseOnlyTheFixture();
   return harness;
 }
 
@@ -113,19 +143,20 @@ export class GatedEngine extends MockEngine {
 }
 
 /** `openReview` on a `GatedEngine`. */
-export async function openGated(options: MockEngineOptions = {}) {
+export async function openGated({ builtIns = false, ...options }: MockEngineOptions & { builtIns?: boolean } = {}) {
   try {
     localStorage.removeItem(SCENE_REVIEW_KEY);
   } catch {
     // No storage in this environment: the switch reads ON.
   }
   const scheduler = new ManualScheduler();
-  const engine = new GatedEngine({ scheduler, latencyMs: 0, avatars: [MIA], ...options });
+  const engine = new GatedEngine({ scheduler, latencyMs: 0, avatars: [MIA], ...options, categories: [...(options.categories ?? []), FIXTURE] });
   const client = mockEngineClient(engine);
   render(<App client={client} />);
   await screen.findByRole("heading", { level: 2, name: "Mia" });
   await openSection("Фото");
   await screen.findByRole("heading", { level: 1, name: "Mia" });
   await flush();
+  if (!builtIns) await chooseOnlyTheFixture();
   return { engine, scheduler, client };
 }

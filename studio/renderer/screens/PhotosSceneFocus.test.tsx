@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { describeElement, flush, runAll } from "../testing";
 import { MIA, PARIS } from "./photos/categoryScreenKit";
-import { card, column, goButton, isDisabled, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
+import { card, column, goButton, isDisabled, LLM_ONLY_REF, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.7 M4: where the focus lands after the review's paid clicks and when their jobs end (README «Keyboard and focus»). A click that starts a job hands the
 // focus to that job's «Отменить» — «Составить» like «Дописать», «Отрисовать» to the run's; when the job ends with the focus on its «Отменить» (gone now) or
@@ -54,7 +54,7 @@ describe("a compose", () => {
 
 describe("⟳ and «Дописать»", () => {
   test("⟳: once the other scene is written the focus goes to that scene's card", async () => {
-    const { scheduler } = await openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 4, written: 4, categories: ["home", "travel"] }] });
+    const { scheduler } = await openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 4, written: 4, categories: [LLM_ONLY_REF] }] });
     await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
     fireEvent.click(within(sceneCard(3)).getByRole("button", { name: "Другая сцена вместо 03" }));
     await flush();
@@ -69,7 +69,7 @@ describe("⟳ and «Дописать»", () => {
 
   test("«Дописать»: once the waiting scenes are written the focus goes to the first of them", async () => {
     const { client, scheduler } = await openReview({
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: ["home", "travel"] }],
+      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: [LLM_ONLY_REF] }],
     });
     await waitFor(() => expect(goButton().textContent).toBe(nb("Дописать 35 сцен · до $0.12")));
     await act(async () => {
@@ -90,7 +90,7 @@ describe("⟳ and «Дописать»", () => {
 
 describe("«Отрисовать»", () => {
   test("hands the focus to the run's «Отменить»; the run's end to the column title, over its outcome", async () => {
-    const { scheduler } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 5, written: 5, categories: ["home"] }] });
+    const { scheduler } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 5, written: 5, categories: [LLM_ONLY_REF] }] });
     await waitFor(() => expect(goButton().textContent).toBe(nb("Отрисовать 5 фото · до $0.75")));
     fireEvent.click(goButton());
     await flush();

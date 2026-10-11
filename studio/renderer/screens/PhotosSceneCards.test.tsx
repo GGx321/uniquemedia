@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { callsOf, describeElement, flush, inAct, runAll } from "../testing";
 import { category, MIA, PARIS } from "./photos/categoryScreenKit";
-import { ATTEMPT, card, column, fieldValue, goButton, isDisabled, nb, openReview, priceRow, querySceneCard, sceneCard } from "./photos/sceneScreenKit";
+import { ATTEMPT, card, column, fieldValue, goButton, isDisabled, LLM_ONLY_REF, nb, openReview, priceRow, querySceneCard, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.6: the «Сцены» column with a set open: the scene cards (remove and restore, the pencil's edit with its problem and Cyrillic hint, «не составлена»), ⟳
 // with its price popover (a redraw for a planned scene, a rewrite from the idea for an own one, a deleted category, paid calls stopped), a rewrite running,
@@ -13,7 +13,7 @@ import { ATTEMPT, card, column, fieldValue, goButton, isDisabled, nb, openReview
 const SET = "set-seed-0001";
 
 /** Mia with a written set of `count` planned scenes in `categories`. */
-function ready(count = 6, categories: readonly string[] = ["home", "travel"]) {
+function ready(count = 6, categories: readonly string[] = [LLM_ONLY_REF]) {
   return openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count, written: count, categories: categories as never }] });
 }
 
@@ -179,13 +179,29 @@ describe("⟳ and its price popover", () => {
     expect(pop.getAttribute("aria-modal")).toBe("true");
     expect(describeElement(document.activeElement)).toBe(describeElement(within(pop).getByRole("button", { name: "Отмена" })));
     await waitFor(() => expect(within(pop).getByRole("button", { name: "Заменить · до $0.075" })).toBeDefined());
-    expect(pop.textContent).toContain("Новое место, наряд, действие и время дня из «Дом» и новый текст. Сцена 02 заменится, когда новая будет готова");
+    expect(pop.textContent).toContain("Новое место, наряд, действие и время дня из «Только модель» и новый текст. Сцена 02 заменится, когда новая будет готова");
     expect(pop.textContent).toContain("до $0.075 — предел одного запроса к модели (2 попытки)");
     expect(redo.getAttribute("aria-expanded")).toBe("true");
     fireEvent.keyDown(within(pop).getByRole("button", { name: "Отмена" }), { key: "Escape" });
     await flush();
     expect(within(sceneCard(2)).queryByRole("dialog") === null).toBe(true);
     expect(describeElement(document.activeElement)).toBe(describeElement(redo));
+  });
+
+  test("a planned scene of a built-in category: «Другая сцена» is free, written by the app (twin of the model's price above)", async () => {
+    // 5a.2 (S5.6e, m11): «Дом» is written from the code template, so replacing its scene asks no model and costs nothing.
+    const { engine } = await ready(4, ["home", "travel"]);
+    await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
+    fireEvent.click(within(sceneCard(2)).getByRole("button", { name: "Другая сцена вместо 02" }));
+    await flush();
+    const pop = within(sceneCard(2)).getByRole("dialog", { name: "Другая сцена" });
+    expect(pop.textContent).toContain("из «Дом» и новый текст");
+    expect(pop.textContent).not.toContain("до $");
+    const replace = within(pop).getByRole("button", { name: /^Заменить.*бесплатно$/ });
+    expect(isDisabled(replace)).toBe(false);
+    fireEvent.click(replace);
+    await flush();
+    expect(callsOf(engine, "scenes.write").at(-1)?.payload).toEqual({ sceneSetId: SET, revision: 1, target: { kind: "rewrite", sceneIds: [2], redraw: true }, acceptedWorstMicros: 0 });
   });
 
   test("«Заменить» sends a redraw for that scene with the revision and the price shown; while it writes the set waits, then the scene is «новая» (ReviewRewriting)", async () => {
@@ -221,6 +237,7 @@ describe("⟳ and its price popover", () => {
           avatarId: MIA.avatarId,
           sceneSetId: SET,
           count: 2,
+          categories: [LLM_ONLY_REF],
           scenes: [
             { category: "home", shot: "friend", pose: "front", place: { location: "a sunny kitchen", timeOfDay: "morning", activity: "pouring coffee", outfit: "a linen shirt" }, text: "Kitchen." },
             { idea: "Утренний кофе на балконе с видом на море", shot: "friend", pose: "front", text: "Morning coffee on a seaside balcony." },

@@ -3,7 +3,7 @@ import { act, fireEvent, screen, waitFor, within } from "@testing-library/react"
 import type { EngineError } from "../../shared/engine";
 import { callsOf, describeElement, flush, runAll } from "../testing";
 import { MIA, PARIS } from "./photos/categoryScreenKit";
-import { card, column, describedText, goButton, isDisabled, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
+import { card, column, describedText, goButton, isDisabled, LLM_ONLY_REF, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.7 M2: a free price that could not be had leaves no paid button dead and silent (README decision 16: paid but unavailable — the reason is always
 // shown). Each paid button of the review — «Составить», «Дописать», ⟳ «Заменить», «Написать N сцен», «Повторить», «Другие сцены для N» — says why under
@@ -50,7 +50,7 @@ describe("a failed free price on a review paid button", () => {
 
   test("«Дописать»: refused after the reconcile, it says why; «Повторить» brings its price", async () => {
     const { engine, client } = await openReview({
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: ["home", "travel"] }],
+      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-cut-0001", count: 60, written: 25, stopped: "closed", cutOff: { chunk: 2 }, categories: [LLM_ONLY_REF] }],
     });
     await waitFor(() => expect(goButton().textContent).toBe(nb("Дописать 35 сцен · до $0.12")));
     engine.failNext("scenes.estimateWrite", REFUSED);
@@ -64,7 +64,7 @@ describe("a failed free price on a review paid button", () => {
   });
 
   test("⟳: the popover says why «Заменить» cannot go and offers «Повторить»", async () => {
-    const { engine } = await openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 4, written: 4, categories: ["home", "travel"] }] });
+    const { engine } = await openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 4, written: 4, categories: [LLM_ONLY_REF] }] });
     await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
     engine.failNext("scenes.estimateWrite", REFUSED);
     fireEvent.click(within(sceneCard(2)).getByRole("button", { name: "Другая сцена вместо 02" }));
@@ -80,7 +80,7 @@ describe("a failed free price on a review paid button", () => {
   });
 
   test("«Написать N сцен»: the idea form says why and offers «Повторить»", async () => {
-    const { engine } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3, categories: ["home"] }] });
+    const { engine } = await openReview({ sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3, categories: [LLM_ONLY_REF] }] });
     await waitFor(() => expect(goButton().textContent).toContain("Отрисовать"));
     engine.failNext("scenes.estimateWrite", REFUSED);
     fireEvent.click(within(column()).getByRole("button", { name: "Своя сцена" }));
@@ -99,7 +99,7 @@ describe("a failed free price on a review paid button", () => {
 
   test("«Повторить» of a cut-off rewrite: the notice says why its price is missing and asks again", async () => {
     const { engine, client } = await openReview({
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-rw-0001", count: 6, written: 6, writes: 1, reviewWrites: [{ kind: "rewrite", k: 2, sceneIds: [2], redraw: true, cutOff: true }] }],
+      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-rw-0001", count: 6, written: 6, categories: [LLM_ONLY_REF], writes: 1, reviewWrites: [{ kind: "rewrite", k: 2, sceneIds: [2], redraw: true, cutOff: true }] }],
     });
     await within(column()).findByRole("button", { name: "Повторить · до $0.038" });
     engine.failNext("scenes.estimateWrite", REFUSED);

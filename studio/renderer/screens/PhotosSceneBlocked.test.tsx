@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { callsOf, describeElement, flush, inAct, runAll, tick } from "../testing";
 import { PARIS, MIA } from "./photos/categoryScreenKit";
-import { card, column, fieldValue, goButton, isDisabled, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
+import { card, column, fieldValue, goButton, isDisabled, LLM_ONLY_REF, nb, openReview, sceneCard } from "./photos/sceneScreenKit";
 
 // CS.6: every paid button of the review is shut — and sends nothing — while the account's paid calls are stopped (`paidBlockedReason`: a reconcile is
 // due) or another paid action of the avatar is in flight, not only looks shut. One test per button and per reason: «Отрисовать N фото», «Написать N сцен»,
@@ -13,7 +13,7 @@ const SET = "set-seed-0001";
 const HELD_MS = 50;
 
 function ready(count = 6) {
-  return openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count, written: count, categories: ["home", "travel"] }] });
+  return openReview({ categories: [PARIS], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: SET, count, written: count, categories: [LLM_ONLY_REF] }] });
 }
 
 async function readyWithPrice(count = 6) {
@@ -154,7 +154,7 @@ describe("«Другие сцены для N»", () => {
 describe("«Повторить» in the ⟳ popover", () => {
   function rewriteCut() {
     return openReview({
-      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-rw-0001", count: 6, written: 6, writes: 1, reviewWrites: [{ kind: "rewrite", k: 2, sceneIds: [2], redraw: true, cutOff: true }] }],
+      sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-rw-0001", count: 6, written: 6, categories: [LLM_ONLY_REF], writes: 1, reviewWrites: [{ kind: "rewrite", k: 2, sceneIds: [2], redraw: true, cutOff: true }] }],
     });
   }
 
