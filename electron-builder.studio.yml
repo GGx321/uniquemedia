@@ -107,9 +107,11 @@ mac:
   # Stay ad-hoc (scripts/sign-adhoc.cjs) rather than picking up whatever Apple
   # Development certificate happens to be in the local keychain.
   identity: null
+  icon: build/icons/studio/AppIcon.icon
 win:
   target:
     - nsis
+  icon: build/icons/studio/icon.ico
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
