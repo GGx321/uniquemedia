@@ -100,7 +100,7 @@ export interface FaceQaGateDeps {
 export const EMBEDDING_COMPUTE_TIMEOUT_MS = 30_000;
 
 /** L7: the photo schema caps faceCos at [-1, 1] (schemas.ts); a rounding-step overflow past either edge would otherwise throw in Library.addPhoto and stop the run. */
-function clampCosine(similarity: number): number {
+export function clampCosine(similarity: number): number {
   return Math.min(1, Math.max(-1, similarity));
 }
 

@@ -1,21 +1,25 @@
 import { createHash } from "node:crypto";
 import { FfmpegError } from "../../node/runFfmpeg";
 import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
-import type { AvatarDescriptor, EngineError, FailedCandidateSlot, ImageAgeCheck, ImageQuality } from "../../shared/engine";
-import type { CandidatesJobEnd } from "../jobs";
-import type { NewPhotoMeta } from "../library";
+import { PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type AvatarDescriptor, type EngineError, type FailedCandidateSlot, type ImageAgeCheck, type ImageQuality } from "../../shared/engine";
+import type { FaceVerdict } from "../face/verdict";
+import type { CandidatesJobEnd, FailedPortraitSlot, PortraitsJobEnd } from "../jobs";
+import type { LibraryReference, NewPhotoMeta } from "../library";
 import { imageSize, isAnimatedImage } from "../library/media";
 import type { Budget } from "../money/budget";
-import { AGE_CHECK_CALL } from "../money/estimate";
+import { AGE_CHECK_CALL, type ImageChoice } from "../money/estimate";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { chatAttemptWorstMicros, type ChatPriceShape } from "../openrouter/chat";
 import { toEngineError } from "../openrouter/engineError";
 import { truncate } from "../openrouter/transport";
-import type { ChatResult, ImageOk, ImageResult, OpenRouterClient } from "../openrouter/types";
+import type { AspectRatio, ChatResult, ImageOk, ImageResult, OpenRouterClient } from "../openrouter/types";
 import { ageCheckMessages, ageJsonSchema, readAgeAnswer, type AgeRejection } from "./ageCheck";
-import { CANDIDATE_ASPECT_RATIO, CANDIDATES_PER_BATCH, candidateImage } from "./plan";
-import { candidatePrompt, PromptSubjectError } from "./prompts";
+import { PHOTO_ASPECT_RATIO } from "../money/prices";
+import { clampCosine } from "../runs/faceGate";
+import { QA_GATE_TIMEOUT_MS } from "../runs/qa";
+import { CANDIDATE_ASPECT_RATIO, CANDIDATES_PER_BATCH, candidateImage, portraitImage } from "./plan";
+import { candidatePrompt, PromptSubjectError, referencePortraitPrompt } from "./prompts";
 
 // One batch of candidate portraits for a draft (T6a part 2b). Each of the
 // CANDIDATES_PER_BATCH slots sends exactly the calls the next-batch estimate
@@ -29,6 +33,10 @@ import { candidatePrompt, PromptSubjectError } from "./prompts";
 // library right after its image checks, with no qa.age verdict at all. The
 // free text-level 21+ safeguards (ageText.ts, promptSubject, youth-word-free
 // prompts) apply either way and are never affected by this toggle.
+
+// Stage 5, S5.3b: the same money path also runs the reference portrait batch (an imported avatar's master portrait, drawn from the imported photo). What differs is
+// data, carried by a `BatchSpec`: the slots and their ids, the aspect ratio, the references sent, the prompt and an optional free `rank` step. Candidates build exactly
+// the spec they always had (4 slots, `candidate-N`, 3:4, no reference, no rank), so their requests and attempt ids are byte-identical to before.
 
 export interface CandidateJobDeps {
   generateImage: OpenRouterClient["generateImage"];
@@ -70,17 +78,54 @@ export interface CandidateJob {
    * (or, worse, silently charging for) the wrong mode.
    */
   imageAgeCheck: ImageAgeCheck;
+  /** Portraits only: PORTRAIT_RANK_TIMEOUT_MS unless a test says otherwise. */
+  rankTimeoutMs?: number;
 }
 
 /**
+ * The free ranking of one paid image (the face gate's check against the source photo's embedding). The slot is passed so a scripted gate answers by slot, not by call
+ * order under concurrency. It may be slow or hang: the job bounds it and stops it on a cancel.
+ */
+export type RankSlot = (slot: number, bytes: Uint8Array, signal: AbortSignal) => Promise<FaceVerdict>;
+
+/** Everything a batch of paid images differs by (see the header). */
+export interface BatchSpec {
+  /** The slots, in order; a worker pool takes them one by one. */
+  slots: readonly number[];
+  /** The slot as the stored photo names it (`PhotoSource.slot`); both attempt ids of the slot are made from it (`imageAttemptId`, `ageAttemptId`). */
+  slotName: (slot: number) => string;
+  aspectRatio: AspectRatio;
+  /** The images sent with every request. `image.refs` is NOT trusted: the hold and the reserve both count these, through `imageChoiceOf`. */
+  references: readonly LibraryReference[];
+  image: ImageChoice;
+  prompt: string;
+  /** After the image and before the paid age check; absent for candidates. */
+  rank?: RankSlot;
+}
+
+/** What `runPortraitJob` adds to the job: the imported photo as the one reference, and the ranking against it. */
+export interface PortraitBatch {
+  /** Exactly one: the estimate prices `refs: 1`, and the holds count what is sent. */
+  references: readonly [LibraryReference];
+  rank: RankSlot;
+}
+
+/** The ranking's bound, the run gate's own (a hung worker must not hold the holds, the claim and the paid-command count). */
+export const PORTRAIT_RANK_TIMEOUT_MS = QA_GATE_TIMEOUT_MS;
+
+/**
  * - passed: stored on the draft as `photoId`.
+ * - passed.likeness: a ranked batch only, the image's likeness to the source photo (clamped to the cosine range).
+ * - ranked-out: the ranking said the image is not the source photo's face (or has no face, or several); it is dropped, never stored, and pays no age check.
  * - rejected: the age check did not say a clear yes (or refused to answer); the image is dropped.
  * - failed: the slot could not finish; `fatal` stops the job from starting more slots;
  *   `reserveLeftOpen`: a request of it may have been billed (timeout, network), so its reserve waits for a reconcile.
  * - aborted: a cancel stopped it. skipped: it never started (a cancel or a fatal error came first).
  */
 export type SlotOutcome =
-  | { slot: number; kind: "passed"; photoId: string }
+  | { slot: number; kind: "passed"; photoId: string; likeness?: number }
+  | { slot: number; kind: "ranked-out"; why: "unlike"; likeness: number }
+  | { slot: number; kind: "ranked-out"; why: "no-face" | "multiple-faces" }
   | { slot: number; kind: "rejected"; why: AgeRejection | "age-check-refused" | "empty-answer" }
   | { slot: number; kind: "failed"; error: EngineError; fatal: boolean; reserveLeftOpen: boolean }
   | { slot: number; kind: "aborted" }
@@ -110,13 +155,49 @@ function ageCheckShape(): ChatPriceShape {
   };
 }
 
-/** The attempt id of a slot's image; its age check's is `<jobId>:candidate-<n>:age#1`. */
-export function candidateAttemptId(jobId: string, slot: number): string {
-  return `${jobId}:candidate-${slot}#1`;
+/** The attempt id of a slot's image, `<jobId>:<slotName>#1` (`<jobId>:candidate-<n>#1`, `<jobId>:portrait-<n>#1`); its age check's is `<jobId>:<slotName>:age#1`. */
+export function imageAttemptId(jobId: string, slotName: string): string {
+  return `${jobId}:${slotName}#1`;
 }
 
-function ageAttemptId(jobId: string, slot: number): string {
-  return `${jobId}:candidate-${slot}:age#1`;
+function ageAttemptId(jobId: string, slotName: string): string {
+  return `${jobId}:${slotName}:age#1`;
+}
+
+const CANDIDATE_SLOTS: readonly number[] = Array.from({ length: CANDIDATES_PER_BATCH }, (_, i) => i + 1);
+const PORTRAIT_SLOTS: readonly number[] = Array.from({ length: PORTRAITS_PER_BATCH }, (_, i) => i + 1);
+
+/** Today's candidate batch. Throws `PromptSubjectError` for a descriptor today's rules refuse. */
+export function candidateBatchSpec(job: CandidateJob): BatchSpec {
+  return {
+    slots: CANDIDATE_SLOTS,
+    slotName: (slot) => `candidate-${slot}`,
+    aspectRatio: CANDIDATE_ASPECT_RATIO,
+    references: [],
+    image: candidateImage(job.imageModel, job.imageQuality),
+    prompt: candidatePrompt(job.descriptor),
+  };
+}
+
+/** The reference portrait batch: five 9:16 images drawn from the one reference, ranked against it. Throws `PromptSubjectError` as the candidates' does. */
+export function portraitBatchSpec(job: CandidateJob, batch: PortraitBatch): BatchSpec {
+  return {
+    slots: PORTRAIT_SLOTS,
+    slotName: (slot) => `portrait-${slot}`,
+    aspectRatio: PHOTO_ASPECT_RATIO,
+    references: batch.references,
+    image: portraitImage(job.imageModel, job.imageQuality),
+    prompt: referencePortraitPrompt(job.descriptor),
+    rank: batch.rank,
+  };
+}
+
+/**
+ * The image a batch prices and sends. The ONE place `refs` is decided: it is the number of references actually sent, so a slot's hold and the client's reserve (which
+ * counts `params.references`) cannot disagree.
+ */
+function imageChoiceOf(spec: BatchSpec): ImageChoice {
+  return { ...spec.image, refs: spec.references.length };
 }
 
 function failed(slot: number, error: EngineError, fatal: boolean, reserveLeftOpen = false): SlotOutcome {
@@ -160,37 +241,50 @@ function isSpawnFailure(error: unknown): boolean {
 }
 
 /**
- * Runs the batch through the network pool and answers every slot's outcome,
- * in slot order. Never throws: a slot that throws fails fatally. A descriptor
+ * Runs the candidate batch through the network pool and answers every slot's outcome, in slot order. Never throws: a slot that throws fails fatally. A descriptor
  * that today's rules refuse fails every slot before anything is sent.
  */
-export async function runCandidateJob(deps: CandidateJobDeps, job: CandidateJob): Promise<SlotOutcome[]> {
-  const slots = Array.from({ length: CANDIDATES_PER_BATCH }, (_, i) => i + 1);
-  let prompt: string;
+export function runCandidateJob(deps: CandidateJobDeps, job: CandidateJob): Promise<SlotOutcome[]> {
+  return runSpecified(deps, job, CANDIDATE_SLOTS, () => candidateBatchSpec(job));
+}
+
+/** The same for the reference portrait batch (Stage 5, S5.3b). */
+export function runPortraitJob(deps: CandidateJobDeps, job: CandidateJob, batch: PortraitBatch): Promise<SlotOutcome[]> {
+  return runSpecified(deps, job, PORTRAIT_SLOTS, () => portraitBatchSpec(job, batch));
+}
+
+async function runSpecified(deps: CandidateJobDeps, job: CandidateJob, slots: readonly number[], build: () => BatchSpec): Promise<SlotOutcome[]> {
+  let spec: BatchSpec;
   try {
-    prompt = candidatePrompt(job.descriptor);
+    spec = build();
   } catch (error) {
     if (!(error instanceof PromptSubjectError)) throw error;
     return slots.map((slot) => failed(slot, { code: "DESCRIPTOR_INVALID", detail: error.message }, true));
   }
+  return runBatch(deps, job, spec);
+}
 
+/** Runs a batch spec through the network pool; the outcomes in slot order. Never throws. */
+export async function runBatch(deps: CandidateJobDeps, job: CandidateJob, spec: BatchSpec): Promise<SlotOutcome[]> {
+  const { slots } = spec;
   const outcomes: SlotOutcome[] = slots.map((slot) => ({ slot, kind: "skipped" }));
   let fatal = false;
   let next = 0;
   const worker = async (): Promise<void> => {
     for (;;) {
       if (job.signal.aborted || fatal) return;
-      const slot = slots[next++];
+      const index = next++;
+      const slot = slots[index];
       if (slot === undefined) return;
       let outcome: SlotOutcome;
       try {
-        outcome = await runSlot(deps, job, prompt, slot, () => fatal);
+        outcome = await runSlot(deps, job, spec, slot, () => fatal);
       } catch (error) {
         outcome = failed(slot, deps.errorOf(error), true);
       }
-      outcomes[slot - 1] = outcome;
+      outcomes[index] = outcome;
       if (outcome.kind === "failed" && outcome.fatal) fatal = true;
-      if (outcome.kind === "passed" || outcome.kind === "rejected" || outcome.kind === "failed") deps.onSlot?.(outcome);
+      if (outcome.kind === "passed" || outcome.kind === "ranked-out" || outcome.kind === "rejected" || outcome.kind === "failed") deps.onSlot?.(outcome);
     }
   };
   const workers = Math.max(1, Math.min(job.concurrency, slots.length));
@@ -204,10 +298,10 @@ export async function runCandidateJob(deps: CandidateJobDeps, job: CandidateJob)
  * paid for when its check could not be (m3 of the part 1 review). Each
  * request is still reserved on disk, and checked again, when it is sent.
  */
-async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, isFatal: () => boolean): Promise<SlotOutcome> {
-  const choice = candidateImage(job.imageModel, job.imageQuality);
-  const attemptId = candidateAttemptId(job.jobId, slot);
-  const ageId = ageAttemptId(job.jobId, slot);
+async function runSlot(deps: CandidateJobDeps, job: CandidateJob, spec: BatchSpec, slot: number, isFatal: () => boolean): Promise<SlotOutcome> {
+  const choice = imageChoiceOf(spec);
+  const attemptId = imageAttemptId(job.jobId, spec.slotName(slot));
+  const ageId = ageAttemptId(job.jobId, spec.slotName(slot));
   const imageAgeCheck = job.imageAgeCheck;
   const ageShape = imageAgeCheck === "on" ? ageCheckShape() : null;
   const holds = [{ attemptId, scope: job.scope, worstMicros: deps.priceBook.imageWorstCase({ model: choice.model, quality: choice.quality, refs: choice.refs }) }];
@@ -224,7 +318,7 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
     // Re-checked here, right before the request would actually be sent, so
     // no image is bought after the job is already known to be fatal.
     if (isFatal()) return { slot, kind: "skipped" };
-    return await sendPair(deps, job, prompt, slot, ageShape);
+    return await sendPair(deps, job, spec, slot, ageShape);
   } finally {
     // Whatever was not reserved will not be sent. releaseHold on an id never
     // held (the age id, with the check off) is a harmless no-op.
@@ -233,9 +327,10 @@ async function runSlot(deps: CandidateJobDeps, job: CandidateJob, prompt: string
   }
 }
 
-async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: string, slot: number, ageShape: ChatPriceShape | null): Promise<SlotOutcome> {
-  const choice = candidateImage(job.imageModel, job.imageQuality);
-  const attemptId = candidateAttemptId(job.jobId, slot);
+async function sendPair(deps: CandidateJobDeps, job: CandidateJob, spec: BatchSpec, slot: number, ageShape: ChatPriceShape | null): Promise<SlotOutcome> {
+  const choice = imageChoiceOf(spec);
+  const { prompt } = spec;
+  const attemptId = imageAttemptId(job.jobId, spec.slotName(slot));
   const image = await deps.generateImage({
     attemptId,
     jobId: job.jobId,
@@ -245,9 +340,9 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
     priceBook: deps.priceBook,
     signal: job.signal,
     prompt,
-    aspectRatio: CANDIDATE_ASPECT_RATIO,
+    aspectRatio: spec.aspectRatio,
     quality: choice.quality,
-    references: [],
+    references: spec.references,
   });
   if (image.status === "aborted") return { slot, kind: "aborted" };
   // A refusal is free and never retried; a bill above the worst case halts every later reserve.
@@ -262,10 +357,18 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
     return internal(slot, `the ${image.mediaType} image is animated; ${reason}`);
   }
   if (job.signal.aborted) return { slot, kind: "aborted" };
+  // A ranked batch (portraits): the free face check comes before anything else is paid for. An image that is not the source's face is dropped here, never stored
+  // and never age-checked.
+  let ranked: Rank | undefined;
+  if (spec.rank !== undefined) {
+    const result = await rankImage(job, spec.rank, slot, image.bytes);
+    if (result.kind !== "ranked") return result.outcome;
+    ranked = result.rank;
+  }
   // The image age check is off: no downscale (its only use is the age
   // check's own JPEG), no age check, nothing more to prepare — the candidate
   // is stored right away, with no qa.age verdict.
-  if (ageShape === null) return storeCandidate(deps, job, slot, { attemptId, prompt, image, size });
+  if (ageShape === null) return storeCandidate(deps, job, spec, slot, { attemptId, prompt, image, size, ...(ranked === undefined ? {} : { rank: ranked }) });
   // The downscale is told to stop on a cancel or the timeout, and is not waited for past either.
   const timeoutMs = job.prepareTimeoutMs ?? PREPARE_TIMEOUT_MS;
   // timeoutSignal(), not AbortSignal.timeout(): the latter's own timer is
@@ -297,7 +400,13 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, prompt: strin
   } finally {
     timeout.clear();
   }
-  return ageGate(deps, job, slot, ageShape, { attemptId, prompt, image, size, jpeg });
+  return ageGate(deps, job, spec, slot, ageShape, { attemptId, prompt, image, size, jpeg, ...(ranked === undefined ? {} : { rank: ranked }) });
+}
+
+/** What the ranking said of an image that is the source's face: its likeness (clamped to the cosine range, which the photo schema caps) and its head ratio. */
+interface Rank {
+  likeness: number;
+  headRatio: number;
 }
 
 interface Checked {
@@ -305,6 +414,44 @@ interface Checked {
   prompt: string;
   image: ImageOk;
   size: { width: number; height: number };
+  rank?: Rank;
+}
+
+type Ranked = { kind: "ranked"; rank: Rank } | { kind: "ended"; outcome: SlotOutcome };
+
+/**
+ * The free ranking of one paid image, bounded by the run gate's 60 s (a hung worker must not hold the holds, the claim and the paid-command count) and stopped by a
+ * cancel. A rank that throws is systemic (a dead worker, an undecodable image), so it fails the job, as the run gate does; but a cancel that stopped it is a cancel.
+ */
+async function rankImage(job: CandidateJob, rank: RankSlot, slot: number, bytes: Uint8Array): Promise<Ranked> {
+  const timeoutMs = job.rankTimeoutMs ?? PORTRAIT_RANK_TIMEOUT_MS;
+  const timeout = timeoutSignal(timeoutMs);
+  const signal = AbortSignal.any([job.signal, timeout.signal]);
+  let verdict: FaceVerdict;
+  try {
+    verdict = await untilAborted(rank(slot, bytes, signal), signal);
+  } catch (error) {
+    if (job.signal.aborted) return { kind: "ended", outcome: { slot, kind: "aborted" } };
+    if (signal.aborted) return { kind: "ended", outcome: failed(slot, { code: "INTERNAL", detail: `ranking the image timed out after ${timeoutMs} ms` }, true) };
+    return { kind: "ended", outcome: failed(slot, { code: "INTERNAL", detail: `the image could not be ranked: ${messageOf(error)}` }, true) };
+  } finally {
+    timeout.clear();
+  }
+  switch (verdict.kind) {
+    case "match":
+    case "mismatch": {
+      // Decided here by the likeness against the contract's floor, not by the gate's own configured threshold: a stored or reported likeness must always fit the contract.
+      const likeness = clampCosine(verdict.similarity);
+      if (likeness < PORTRAIT_MIN_LIKENESS) return { kind: "ended", outcome: { slot, kind: "ranked-out", why: "unlike", likeness } };
+      return { kind: "ranked", rank: { likeness, headRatio: verdict.headRatio } };
+    }
+    case "no-face":
+    case "multiple-faces":
+      return { kind: "ended", outcome: { slot, kind: "ranked-out", why: verdict.kind } };
+    default:
+      // A pose rule or an unexpected face: not an answer the ranking asks for. This slot's own problem, not the job's.
+      return { kind: "ended", outcome: internal(slot, `the face check gave no usable answer (${verdict.kind})`) };
+  }
 }
 
 interface CheckedForAge extends Checked {
@@ -312,8 +459,10 @@ interface CheckedForAge extends Checked {
 }
 
 /** `NewPhotoMeta` for a paid, checked image: `age` only when the image age check ran and gave a verdict (invariant 8's `qa.age`). */
-function buildMeta(job: CandidateJob, slot: number, checked: Checked, age?: { adult: true; confidence: number }): NewPhotoMeta {
-  const { image, size, prompt, attemptId } = checked;
+function buildMeta(job: CandidateJob, spec: BatchSpec, slot: number, checked: Checked, age?: { adult: true; confidence: number }): NewPhotoMeta {
+  const { image, size, prompt, attemptId, rank } = checked;
+  // The ranking's fields (a ranked batch) and the age verdict (the check on); a candidate with neither has no qa at all.
+  const qa = { ...(rank === undefined ? {} : { faceCos: rank.likeness, headRatio: rank.headRatio }), ...(age === undefined ? {} : { age }) };
   return {
     mediaType: image.mediaType,
     width: size.width,
@@ -326,18 +475,18 @@ function buildMeta(job: CandidateJob, slot: number, checked: Checked, age?: { ad
       attemptId,
       promptSha: createHash("sha256").update(prompt).digest("hex"),
       prompt,
-      slot: `candidate-${slot}`,
+      slot: spec.slotName(slot),
       costMicros: image.costMicros,
     },
-    ...(age === undefined ? {} : { qa: { age } }),
+    ...(Object.keys(qa).length === 0 ? {} : { qa }),
   };
 }
 
 /** Stores a candidate that is going into the library, whether or not it carries an age verdict. */
-async function storeCandidate(deps: CandidateJobDeps, job: CandidateJob, slot: number, checked: Checked, age?: { adult: true; confidence: number }): Promise<SlotOutcome> {
+async function storeCandidate(deps: CandidateJobDeps, job: CandidateJob, spec: BatchSpec, slot: number, checked: Checked, age?: { adult: true; confidence: number }): Promise<SlotOutcome> {
   try {
-    const photo = await deps.store(checked.image.bytes, buildMeta(job, slot, checked, age));
-    return { slot, kind: "passed", photoId: photo.id };
+    const photo = await deps.store(checked.image.bytes, buildMeta(job, spec, slot, checked, age));
+    return { slot, kind: "passed", photoId: photo.id, ...(checked.rank === undefined ? {} : { likeness: checked.rank.likeness }) };
   } catch (error) {
     const why = age === undefined ? "" : "passed the age check but ";
     return internal(slot, `the candidate ${why}could not be stored: ${messageOf(error)}`);
@@ -345,9 +494,9 @@ async function storeCandidate(deps: CandidateJobDeps, job: CandidateJob, slot: n
 }
 
 /** The age check of one paid image; only a clear yes stores it (invariant 8). */
-async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, ageShape: ChatPriceShape, checked: CheckedForAge): Promise<SlotOutcome> {
+async function ageGate(deps: CandidateJobDeps, job: CandidateJob, spec: BatchSpec, slot: number, ageShape: ChatPriceShape, checked: CheckedForAge): Promise<SlotOutcome> {
   const age = await deps.chat({
-    attemptId: ageAttemptId(job.jobId, slot),
+    attemptId: ageAttemptId(job.jobId, spec.slotName(slot)),
     jobId: job.jobId,
     scope: job.scope,
     budget: deps.budget,
@@ -370,7 +519,7 @@ async function ageGate(deps: CandidateJobDeps, job: CandidateJob, slot: number, 
   const verdict = readAgeAnswer(age.content);
   if (!verdict.pass) return { slot, kind: "rejected", why: verdict.why };
 
-  return storeCandidate(deps, job, slot, checked, { adult: true, confidence: verdict.confidence });
+  return storeCandidate(deps, job, spec, slot, checked, { adult: true, confidence: verdict.confidence });
 }
 
 /**
@@ -397,4 +546,32 @@ export function candidateJobEnd(outcomes: readonly SlotOutcome[], cancelRequeste
     return { status: "failed", error: failures[0]?.error ?? { code: "INTERNAL", detail: "no candidate slot ran" } };
   }
   return { status: "done", photoIds, failedSlots };
+}
+
+/**
+ * How a reference portrait batch ended (Stage 5, S5.3b). A cancel that stopped a slot is a cancel; a fatal error fails it, even with portraits stored (they are in the
+ * library already). Otherwise it is done when any slot gave a candidate or reached a verdict on a paid image (ranked out, or judged by the age check): that includes no
+ * candidate at all, the «none passed» end the window explains. When every slot ended before any verdict (e.g. five refusals) it failed with the first slot's error.
+ * Candidates come best first, ties by photo id.
+ */
+export function portraitJobEnd(outcomes: readonly SlotOutcome[], cancelRequested: boolean): PortraitsJobEnd {
+  if (cancelRequested && outcomes.some((o) => o.kind === "aborted" || o.kind === "skipped")) return { status: "cancelled" };
+  const failures = outcomes.flatMap((o) => (o.kind === "failed" ? [o] : []));
+  const fatal = failures.find((o) => o.fatal);
+  if (fatal !== undefined) return { status: "failed", error: fatal.error };
+  const candidates = outcomes
+    .flatMap((o) => (o.kind === "passed" && o.likeness !== undefined ? [{ photoId: o.photoId, likeness: o.likeness }] : []))
+    .sort((a, b) => b.likeness - a.likeness || (a.photoId < b.photoId ? -1 : a.photoId > b.photoId ? 1 : 0));
+  const failedSlots = [...outcomes]
+    .sort((a, b) => a.slot - b.slot)
+    .flatMap((o): FailedPortraitSlot[] => {
+      if (o.kind === "rejected") return [{ slot: o.slot, reason: "age-rejected" }];
+      if (o.kind === "ranked-out") return [o.why === "unlike" ? { slot: o.slot, reason: "unlike", likeness: o.likeness } : { slot: o.slot, reason: o.why }];
+      if (o.kind === "failed") return [{ slot: o.slot, reason: "failed", error: o.error, reserveLeftOpen: o.reserveLeftOpen }];
+      return [];
+    });
+  if (candidates.length === 0 && failedSlots.every((f) => f.reason === "failed")) {
+    return { status: "failed", error: failures[0]?.error ?? { code: "INTERNAL", detail: "no portrait slot ran" } };
+  }
+  return { status: "done", candidates, failedSlots };
 }
