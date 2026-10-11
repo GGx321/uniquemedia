@@ -151,7 +151,8 @@ export function CandidatesCard({ candidates, job, picked, onPick, onCancel, canc
     }
   } else {
     for (const f of failedOther) {
-      extra.push({ key: `failed-${f.slot}`, node: wizardSlot("failed", "стоимость попытки учтена") });
+      // A moderation refusal can only come from the image request and settles at 0; any other failure keeps the conservative «учтена».
+      extra.push({ key: `failed-${f.slot}`, node: wizardSlot("failed", f.error.code === "MODERATION_REFUSED" ? "бесплатно" : "стоимость попытки учтена") });
     }
     for (let i = 0; i < rejected; i++) {
       extra.push({ key: `rejected-${i}`, node: wizardSlot("hidden", "не прошёл проверку возраста") });
@@ -324,7 +325,7 @@ export function CandidatesCard({ candidates, job, picked, onPick, onCancel, canc
       )}
       {failedOther.length > 0 && (
         <Notice tone={allFailed ? "danger" : "warn"}>
-          {failedSummary(failedOther)} Стоимость попытки учтена.
+          {failedSummary(failedOther)} {failedOther.every((f) => f.error.code === "MODERATION_REFUSED") ? "Эти попытки ничего не стоили." : "Стоимость попытки учтена."}
         </Notice>
       )}
 
