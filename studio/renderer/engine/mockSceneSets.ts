@@ -28,7 +28,7 @@ import {
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { covers } from "../../shared/scenes/custom";
 import { llmPossibleSlots, writerChunksWorst, type CoversOf, type SplitEntry } from "../../shared/scenes/writerBound";
-import { bankDraw, localTexts, type LocalScene } from "./mockBankScenes";
+import { bankDraw, localTexts, plainTextOf, type LocalScene } from "./mockBankScenes";
 import { mockAnglesOf } from "./mockCategories";
 import type { Scheduler } from "./scheduler";
 
@@ -51,8 +51,12 @@ const REJECTED_COST = 2_000;
 const IDS_PER_CHUNK = SCENE_CHUNK_ATTEMPTS + 2;
 const CANCEL_CONFIRM_MS = 50;
 
-/** What the next request of a writer job comes back as (`failNextSceneAttempt`); an unscripted one is a good answer, and `ok` scripts one explicitly. */
-export type MockSceneAttempt = "ok" | "rejected" | "refused" | "rate-limited" | "provider-error" | "network" | "timeout";
+/**
+ * What the next request of a writer job comes back as (`failNextSceneAttempt`); an unscripted one is a good answer, and `ok` scripts one explicitly. `partial` (S5.6d) is an
+ * answer the engine's reader marks for one scene only: the first scene it was asked about is wrong, every other scene is accepted and kept, and the next attempt asks about
+ * that one alone. `rejected` is wrong for the whole answer.
+ */
+export type MockSceneAttempt = "ok" | "partial" | "rejected" | "refused" | "rate-limited" | "provider-error" | "network" | "timeout";
 
 /** A set seeded as a compose would have left it. */
 export interface MockSceneSetSeed {
@@ -1180,12 +1184,17 @@ export class MockSceneSets {
    * Counted off the very state the write would leave, with the write's own key, so the price and the job agree on which scenes the template writes.
    */
   #modelScenes(set: MockSet, k: number, sceneIds: readonly number[], draws: ReadonlyMap<number, Draw>): number {
+    return this.#modelSceneIds(set, k, sceneIds, draws).length;
+  }
+
+  /** The ids behind `#modelScenes`, in the write's order: the scenes the request carries. */
+  #modelSceneIds(set: MockSet, k: number, sceneIds: readonly number[], draws: ReadonlyMap<number, Draw>): number[] {
     const applied = set.scenes.map((scene) => {
       const drawn = draws.get(scene.sceneId);
       return drawn === undefined ? scene : { ...scene, place: drawn.place, shot: drawn.shot, pose: drawn.pose, ...(drawn.capture === undefined ? {} : { capture: drawn.capture }) };
     });
     const local = this.#local(set, k, applied);
-    return sceneIds.filter((id) => local(id) === null).length;
+    return sceneIds.filter((id) => local(id) === null);
   }
 
   /**
@@ -1231,10 +1240,16 @@ export class MockSceneSets {
     return job.jobId;
   }
 
-  /** The write's one request, asked again under the next id while it is rejected and attempts are left; an attempt that got no answer stops the job. */
+  /**
+   * The write's one request, asked again under the next id while it is rejected and attempts are left; an attempt that got no answer stops the job.
+   * 5a.2 (S5.6d): the second attempt repairs. An answer wrong for some scenes (`partial`) keeps the rest, and the next attempt asks only about the scenes left; when no attempt
+   * is left a planned scene takes the plain sentence, while an idea write (and a rewrite of own scenes, which have no place to build one from) keeps what it accepted and
+   * ends done with the rest unwritten, or failed when it accepted nothing.
+   */
   #runReview(job: Job, set: MockSet, review: Review): void {
     if (job.status !== "running") return;
-    const modelScenes = review.kind === "idea" ? review.own.length : this.#modelScenes(set, review.k, review.sceneIds, review.draws);
+    const modelIds = review.kind === "idea" ? review.own.map((o) => o.sceneId) : this.#modelSceneIds(set, review.k, review.sceneIds, review.draws);
+    const modelScenes = modelIds.length;
     // 5a.2: every scene of the write is one the code template renders: written at once, with no request, no attempt and no cost.
     if (modelScenes === 0) {
       this.#accept(set, review);
@@ -1246,10 +1261,29 @@ export class MockSceneSets {
       this.#end(job, set, { status: "done" });
       return;
     }
+    // A planned rewrite always ends written (the plain sentence is its last word); an idea write and an own scene's rewrite keep only what an attempt accepted.
+    const keeps = review.kind === "idea" || set.scenes.filter((s) => review.sceneIds.includes(s.sceneId)).every((s) => s.place === null);
+    /** The scenes an earlier `partial` attempt of this job accepted: kept in memory only, as the engine keeps them, and stored with the answer. */
+    const kept = new Set<number>();
+    const finish = (plain: ReadonlySet<number>): void => {
+      this.#accept(set, review, { plain, ...(keeps ? { only: kept } : {}) });
+      const written = keeps ? kept.size : job.total;
+      job.done += written;
+      job.written += written;
+      set.revision += 1;
+      this.#announce(set);
+      this.#progress(job);
+      this.#end(job, set, { status: "done" });
+    };
     for (;;) {
+      const open = modelIds.filter((id) => !kept.has(id));
       if (reviewLeft(review) === 0) {
-        review.closed = true;
-        this.#end(job, set, { status: "failed", error: { code: "INTERNAL", detail: `the scene writer's answer for write ${review.k} was rejected on every attempt` }, stoppedBy: "failed" });
+        if (!keeps) finish(new Set(open));
+        else if (kept.size > 0) finish(new Set());
+        else {
+          review.closed = true;
+          this.#end(job, set, { status: "failed", error: { code: "INTERNAL", detail: `the scene writer's answer for write ${review.k} was rejected on every attempt` }, stoppedBy: "failed" });
+        }
         return;
       }
       const attempt: Attempt = { key: `${set.sceneSetId}:write-${review.k}#${review.attempts.length + 1}`, paid: false, cost: 0, open: false };
@@ -1258,16 +1292,18 @@ export class MockSceneSets {
       switch (outcome) {
         case "ok": {
           attempt.paid = true;
-          attempt.cost = Math.round(modelScenes * TYPICAL_PER_SCENE);
+          attempt.cost = Math.round(open.length * TYPICAL_PER_SCENE);
           this.#deps.spend(attempt.cost);
-          this.#accept(set, review);
-          job.done += job.total;
-          job.written += job.total;
-          set.revision += 1;
-          this.#announce(set);
-          this.#progress(job);
-          this.#end(job, set, { status: "done" });
+          for (const id of open) kept.add(id);
+          finish(new Set());
           return;
+        }
+        case "partial": {
+          attempt.paid = true;
+          attempt.cost = Math.round(open.length * TYPICAL_PER_SCENE);
+          this.#deps.spend(attempt.cost);
+          for (const id of open.slice(1)) kept.add(id);
+          continue;
         }
         case "rejected":
           attempt.paid = true;
@@ -1296,10 +1332,14 @@ export class MockSceneSets {
     }
   }
 
-  /** The accepted answer goes into the set, all of it: a rewrite's targets get their sentences (a redraw, its new place), an idea write's scenes join the set. */
-  #accept(set: MockSet, review: Review): void {
+  /**
+   * The accepted answer goes into the set: a rewrite's targets get their sentences (a redraw, its new place), an idea write's scenes join the set. `plain` names the planned
+   * targets the model could not write (S5.6d): they take the plain sentence. `only` (S5.6d) limits an idea write or an own rewrite to the scenes it accepted; absent, all of them.
+   */
+  #accept(set: MockSet, review: Review, opts: { plain?: ReadonlySet<number>; only?: ReadonlySet<number> } = {}): void {
     if (review.kind === "idea") {
       for (const own of review.own) {
+        if (opts.only !== undefined && !opts.only.has(own.sceneId)) continue;
         const scene: Scene = { sceneId: own.sceneId, category: "own", shot: own.shot, pose: own.pose, place: null, idea: review.idea ?? null, text: null, edited: false, removed: false };
         scene.text = sentenceOf(scene, review.k);
         set.scenes.push(scene);
@@ -1315,12 +1355,13 @@ export class MockSceneSets {
         if (drawn.capture === undefined) delete scene.capture;
         else scene.capture = drawn.capture;
       }
-      // 5a.2: the template writes the scenes it renders (on the write's own key, after the draws); the model's answer is the rest.
+      // 5a.2: the template writes the scenes it renders (on the write's own key, after the draws); the model's answer is the rest, and a scene it could not write takes the plain sentence.
       const local = this.#local(set, review.k);
       for (const sceneId of review.sceneIds) {
         const scene = set.scenes.find((s) => s.sceneId === sceneId);
         if (scene === undefined) continue;
-        scene.text = local(sceneId) ?? sentenceOf(scene, review.k);
+        if (opts.only !== undefined && !opts.only.has(sceneId)) continue;
+        scene.text = local(sceneId) ?? (opts.plain?.has(sceneId) === true ? plainTextOf(scene) : null) ?? sentenceOf(scene, review.k);
         scene.edited = false;
       }
     }
@@ -1408,14 +1449,29 @@ export class MockSceneSets {
           this.#progress(job);
           return;
         }
+        case "partial": {
+          attempt.paid = true;
+          attempt.cost = Math.round(ids.length * TYPICAL_PER_SCENE);
+          this.#deps.spend(attempt.cost);
+          const [wrong, ...right] = ids;
+          for (const scene of set.scenes) if (right.includes(scene.sceneId) && scene.text === null) scene.text = sentenceOf(scene);
+          job.done += right.length;
+          job.written += right.length;
+          set.revision += 1;
+          this.#announce(set);
+          this.#progress(job);
+          // The last attempt: the scene still wrong takes the plain sentence (S5.6d), as the engine's chunk does.
+          if (wrong !== undefined && this.#answered(chunk) >= SCENE_CHUNK_ATTEMPTS) this.#writePlain(set, job, [wrong]);
+          if (this.#answered(chunk) >= SCENE_CHUNK_ATTEMPTS) return;
+          continue;
+        }
         case "rejected":
           attempt.paid = true;
           attempt.cost = REJECTED_COST;
           this.#deps.spend(REJECTED_COST);
+          // S5.6d (I5.31): the chunk's last attempt, rejected, no longer gives its scenes up; they take the plain sentence.
           if (this.#answered(chunk) >= SCENE_CHUNK_ATTEMPTS) {
-            chunk.gaveUp = "rejected";
-            set.revision += 1;
-            this.#announce(set);
+            this.#writePlain(set, job, ids);
             return;
           }
           continue;
@@ -1441,6 +1497,21 @@ export class MockSceneSets {
           return;
       }
     }
+  }
+
+  /** The planned scenes `ids` that still have no text take the plain sentence (5a.2, S5.6d): written, counted and announced like any other sentence. */
+  #writePlain(set: MockSet, job: Job, ids: readonly number[]): void {
+    let written = 0;
+    for (const scene of set.scenes) {
+      if (!ids.includes(scene.sceneId) || scene.text !== null) continue;
+      scene.text = plainTextOf(scene) ?? sentenceOf(scene);
+      written += 1;
+    }
+    job.done += written;
+    job.written += written;
+    set.revision += 1;
+    this.#announce(set);
+    this.#progress(job);
   }
 
   /** The job's end: money, the set's last state (scenes.changed), then the job's own event: always in that order. */

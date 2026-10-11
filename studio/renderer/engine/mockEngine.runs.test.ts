@@ -272,6 +272,25 @@ test("failed slots end without a photo and are counted in the run's result", asy
   expect(run).toMatchObject({ done: 2, failed: 3, open: 0, resumable: false });
 });
 
+// 5a.2 (S5.6d): a slot whose sentence breaks today's word rules ends alone, free, with the scene reason `slot-text-problem`. The slot's error is not on the wire (a run reports the
+// failed slots as a count), so the mock keeps it for the test that wants to see which kind of end it was.
+test("a slot that ends as a slot-text-problem is a failed slot with no photo and no spend, and the run goes on", async () => {
+  const { scheduler, client, events, engine } = makeMock();
+  const error = { code: "VALIDATION", sceneReason: "slot-text-problem", detail: "the sentence for slot 5 still carries a revealing word: bikini" } as const;
+  engine.failNextRunSlots(1, error);
+  const { runId } = await unwrap(client.request("runs.start", { ...REQUEST, count: 5, acceptedWorstMicros: 5 * 3 * 50_000 + 75_000 }));
+  scheduler.runAll();
+
+  const done = events.find((e) => e.type === "job.done");
+  if (done?.type !== "job.done" || done.payload.result.kind !== "run") throw new Error("expected a run's job.done");
+  expect(done.payload.result).toMatchObject({ failedSlots: 1 });
+  expect(done.payload.result.photoIds).toHaveLength(4);
+  expect(engine.runSlotError(runId, 5)).toEqual(error);
+  expect(engine.runSlotError(runId, 1)).toBeNull();
+  const [run] = (await unwrap(client.request("runs.list", {}))).runs;
+  expect(run).toMatchObject({ done: 4, failed: 1, open: 0, resumable: false });
+});
+
 test("photos.list is NOT_FOUND only for an unknown avatar, and carries the unreadable count", async () => {
   const { client } = makeMock({ skippedPhotos: { [MIA.avatarId]: 2 } });
   expect(await unwrap(client.request("photos.list", { avatarId: MIA.avatarId }))).toEqual({ photos: [], skippedTotal: 2, nextCursor: null, remainingTotal: 0 });

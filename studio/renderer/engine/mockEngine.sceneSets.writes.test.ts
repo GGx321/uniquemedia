@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EventMessage, SceneSetView } from "../../shared/engine";
 import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
+import { plainSentence } from "../../shared/scenes/plain";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -199,7 +200,9 @@ describe("scenes.write: a rewrite", () => {
     expect(after.scenes[0]).toMatchObject({ category: created.category.categoryId, categoryName: "Кофейни Парижа" });
   });
 
-  test("a write that fails leaves the scene exactly as it was: two rejected answers, two attempts paid, no marker, nothing to resume", async () => {
+  // 5a.2 (S5.6d): this test used to say «a write that fails leaves the scene exactly as it was: two rejected answers». A planned rewrite the model rejects twice takes the
+  // plain sentence of the place it drew, as the engine's does, and the write is done; an idea write (below) still leaves no trace.
+  test("two rejected answers: a planned scene takes the plain sentence, both attempts are paid, no marker, nothing to resume", async () => {
     const m = makeMock();
     const view = await readySet(m);
     m.engine.failNextSceneAttempt("rejected");
@@ -207,13 +210,29 @@ describe("scenes.write: a rewrite", () => {
     await unwrap(write(m, view, rewrite([2], true)));
     m.scheduler.runAll();
 
-    expect(m.events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { kind: "scenes" } });
+    expect(m.events.findLast((e) => e.type === "job.done")).toMatchObject({ payload: { result: { kind: "scenes", written: 1, unwritten: 0 } } });
     const after = await setOf(m);
-    expect(after.scenes).toEqual(view.scenes);
+    const scene = after.scenes[1];
+    if (scene === undefined || scene.place === null) throw new Error("scene 2 is missing");
+    expect(scene.text).toBe(plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
+    expect(after.scenes.filter((s) => s.sceneId !== 2)).toEqual(view.scenes.filter((s) => s.sceneId !== 2));
     expect(after).toMatchObject({ status: "ready" });
     expect((after.spentMicros ?? 0) - (view.spentMicros ?? 0)).toBe(4_000);
     expect(after.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
     expect(await codeOf(m.client.request("scenes.estimateWrite", { sceneSetId: after.sceneSetId, target: { kind: "resume", write: 2 } } as never))).toBe("VALIDATION");
+  });
+
+  test("a write that fails leaves the scene exactly as it was: the provider refuses the prompt, one attempt, no marker, nothing to resume", async () => {
+    const m = makeMock();
+    const view = await readySet(m);
+    m.engine.failNextSceneAttempt("refused");
+    await unwrap(write(m, view, rewrite([2], true)));
+    m.scheduler.runAll();
+
+    expect(m.events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { kind: "scenes" } });
+    const after = await setOf(m);
+    expect(after.scenes).toEqual(view.scenes);
+    expect(after.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
   });
 
   test("a provider's refusal is final: MODERATION_REFUSED, one attempt, nothing changed", async () => {
@@ -304,6 +323,10 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     const after = await writeAndRun(m, reconciled, { kind: "resume", write: 2 }, ATTEMPT);
 
     expect(after.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
+    // 5a.2 (S5.6d): the write's last attempt, rejected, ends it with the plain sentence rather than leaving the old text behind.
+    const scene = after.scenes[1];
+    if (scene === undefined || scene.place === null) throw new Error("scene 2 is missing");
+    expect(scene.text).toBe(plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
     expect(await codeOf(write(m, after, { kind: "resume", write: 2 }, ATTEMPT))).toBe("VALIDATION");
     expect(stopped.scenes[1]?.rewriteInterrupted).toBeDefined();
   });
@@ -402,6 +425,47 @@ describe("scenes.write: an idea", () => {
     const after = await writeAndRun(m, view, idea("кофе", 2));
     expect(after.scenes).toHaveLength(4);
     expect(after.interruptedIdeas).toBeUndefined();
+    expect(m.events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { kind: "scenes" } });
+  });
+
+  // 5a.2 (S5.6d, plan s5a2 §5.5): an idea has no place or moment to build a plain sentence from, so a scene the last attempt refused stays unwritten; the scenes the
+  // write accepted are kept, and the write is done with `unwritten` counting the rest.
+  test("an idea write keeps the scenes the model got right: the scene it got wrong on both attempts is not added", async () => {
+    const m = makeMock();
+    const view = await readySet(m);
+    m.engine.failNextSceneAttempt("partial");
+    m.engine.failNextSceneAttempt("partial");
+    const after = await writeAndRun(m, view, idea("кофе", 2));
+
+    expect(m.events.findLast((e) => e.type === "job.done")).toMatchObject({ payload: { result: { kind: "scenes", written: 1, unwritten: 1 } } });
+    expect(after.scenes.filter((s) => s.origin === "own").map((s) => s.sceneId)).toEqual([6]);
+    expect(after.interruptedIdeas).toBeUndefined();
+    expect(await codeOf(m.client.request("scenes.estimateWrite", { sceneSetId: after.sceneSetId, target: { kind: "resume", write: 2 } } as never))).toBe("VALIDATION");
+  });
+
+  test("an idea write whose second attempt fixes the scene it got wrong adds both", async () => {
+    const m = makeMock();
+    const view = await readySet(m);
+    m.engine.failNextSceneAttempt("partial");
+    m.engine.failNextSceneAttempt("ok");
+    const after = await writeAndRun(m, view, idea("кофе", 2));
+
+    expect(m.events.findLast((e) => e.type === "job.done")).toMatchObject({ payload: { result: { kind: "scenes", written: 2, unwritten: 0 } } });
+    expect(after.scenes.filter((s) => s.origin === "own").map((s) => s.sceneId)).toEqual([5, 6]);
+  });
+
+  test("a rewrite of two own scenes keeps the one the model got right and leaves the other with the text it had", async () => {
+    const m = makeMock();
+    const view = await readySet(m);
+    const withOwn = await writeAndRun(m, view, idea("кофе", 2));
+    const [first, second] = withOwn.scenes.filter((s) => s.origin === "own");
+    if (first === undefined || second === undefined) throw new Error("the idea write added no scenes");
+    m.engine.failNextSceneAttempt("partial");
+    m.engine.failNextSceneAttempt("partial");
+    const after = await writeAndRun(m, withOwn, rewrite([first.sceneId, second.sceneId]));
+
+    expect(after.scenes.find((s) => s.sceneId === first.sceneId)?.text).toBe(first.text);
+    expect(after.scenes.find((s) => s.sceneId === second.sceneId)?.text).not.toBe(second.text);
   });
 
   test("an interrupted idea write is listed on the set; a resume adds its scenes under the ids it reserved; «Не нужно» drops it", async () => {

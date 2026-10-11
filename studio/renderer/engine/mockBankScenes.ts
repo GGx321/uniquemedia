@@ -3,6 +3,7 @@ import { isCustomCategory } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
 import type { BankCategory } from "../../shared/scenes/banks/types";
 import { captureOfShot, isHandCapture, posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
+import { plainSentence } from "../../shared/scenes/plain";
 import { momentAllowed, templateSentence, type TemplateSlot } from "../../shared/scenes/template";
 
 // 5a.2 (S5.6e, plan s5a2 §5.7): the mock's side of the code template. A built-in scene is a PAIR of its category's bank (a place by name, a moment of that place,
@@ -101,6 +102,12 @@ export function slotOf(scene: Pick<LocalScene, "category" | "shot" | "capture" |
     pose: scene.pose,
     ...(scene.capture !== undefined && shotOf(scene.capture) === shotOf(captureOfShot(scene.shot)) ? { capture: scene.capture } : {}),
   };
+}
+
+/** The plain sentence of a planned scene (5a.2, S5.6d): what the model's last attempt leaves a scene with, built by the very function the engine uses. Null for an own scene. */
+export function plainTextOf(scene: Pick<LocalScene, "category" | "shot" | "capture" | "pose" | "place">): string | null {
+  const slot = slotOf(scene);
+  return slot === null || slot.location === undefined || slot.activity === undefined || slot.outfit === undefined ? null : plainSentence({ category: slot.category, location: slot.location, activity: slot.activity, outfit: slot.outfit });
 }
 
 /**

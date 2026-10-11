@@ -368,6 +368,8 @@ interface MockRunSlot {
   /** The plan's category, or `"own"` for an own scene of a scene set (the photo then carries `"own"`, as the engine's `photoCategoryOf` makes it). */
   category: RunCategory | "own";
   end: "done" | "failed" | null;
+  /** Why a failed slot ended, when the test said (`failNextRunSlots`): the engine journals it per slot; a run reports only the count. */
+  error?: EngineError;
 }
 
 /**
@@ -816,6 +818,7 @@ export class MockEngine implements EngineBridge {
   private runImageOverride: number | null = null;
   /** The next run job's trailing `count` open slots end without a photo. */
   private failedRunSlotsNext = 0;
+  private failedRunSlotsError: EngineError | null = null;
   /** seedRun's own id counter, apart from nextId's, so a seed never shifts the ids handed out later. */
   private seedCounter = 0;
   /** Test controls for the refusals a run start or resume can meet before it spends anything: see `setLibraryAvailable`, `setFaceGateAvailable`, `setAgeGateAvailable`, `removeMaster`. */
@@ -1744,9 +1747,18 @@ export class MockEngine implements EngineBridge {
     return model?.prices.find((p) => p.quality === this.settings.imageQuality)?.micros ?? MOCK_RUN_IMAGE;
   }
 
-  /** The next run job's trailing `count` open slots end without a photo (their attempts all failed). */
-  failNextRunSlots(count: number): void {
+  /**
+   * The next run job's trailing `count` open slots end without a photo (their attempts all failed). `error` says why they ended, for a test that wants to see the kind of end:
+   * a slot whose sentence broke the word rules ends `{ VALIDATION, sceneReason: "slot-text-problem" }` (S5.6d), free like any slot that ends without a request.
+   */
+  failNextRunSlots(count: number, error?: EngineError): void {
     this.failedRunSlotsNext = Math.max(0, count);
+    this.failedRunSlotsError = error ?? null;
+  }
+
+  /** Why a slot of a run ended failed, when `failNextRunSlots` was told; null for every other slot. */
+  runSlotError(runId: string, slotNumber: number): EngineError | null {
+    return this.runs.find((r) => r.runId === runId)?.slots[slotNumber - 1]?.error ?? null;
   }
 
   /**
@@ -4443,7 +4455,9 @@ export class MockEngine implements EngineBridge {
   private startRunJob(run: MockRun): string {
     const openIndexes = run.slots.flatMap((s, i) => (s.end === null ? [i] : []));
     const failing = Math.min(this.failedRunSlotsNext, openIndexes.length);
+    const failedRunError = this.failedRunSlotsError;
     this.failedRunSlotsNext = 0;
+    this.failedRunSlotsError = null;
     // Fixed at job start, like the real reserve: a later setRunImagePrice must not change what a slot already owes.
     const slot = this.slotPrice(run);
     const job: MockRunJob = {
@@ -4493,6 +4507,7 @@ export class MockEngine implements EngineBridge {
           if (step >= openIndexes.length - failing) {
             // Every attempt was refused or failed: a definite non-2xx each time, settled at zero.
             planned.end = "failed";
+            if (failedRunError !== null) planned.error = failedRunError;
             this.emitMoney();
           } else {
             planned.end = "done";

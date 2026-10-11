@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarSummary, EventMessage, SceneSetView } from "../../shared/engine";
 import { LLM_ONLY_CATEGORY_RECORD, LLM_ONLY_REF } from "../../engine/scenes/testing/llmOnlyFixture";
+import { plainSentence } from "../../shared/scenes/plain";
 import { DEFAULT_TRAITS } from "../lib/traits";
 import { MockEngine, mockDescriptor, mockEngineClient } from "./mockEngine";
 import { ManualScheduler } from "./scheduler";
@@ -67,6 +68,12 @@ async function setOf(m: Mock): Promise<SceneSetView> {
   if (sceneSet === null) throw new Error("no set");
   return sceneSet;
 }
+
+/** The plain sentence of a planned scene, built from the texts the view shows: the very function the engine writes with (shared/scenes/plain.ts). */
+const plainOf = (scene: SceneSetView["scenes"][number]): string => {
+  if (scene.place === null) throw new Error("an own scene has no plain sentence");
+  return plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit });
+};
 
 const edit = (m: Mock, sceneSetId: string, revision: number, op: unknown) => m.client.request("scenes.edit", { sceneSetId, revision, op } as never);
 const write = (m: Mock, sceneSetId: string, revision: number, acceptedWorstMicros: number) => m.client.request("scenes.write", { sceneSetId, revision, target: { kind: "unwritten" }, acceptedWorstMicros });
@@ -213,8 +220,8 @@ describe("what the view claims stays true (fix round 1)", () => {
 
   test("the compose outcome is the one the job ended with: removing scenes afterwards does not change it", async () => {
     const m = makeMock();
-    m.engine.failNextSceneAttempt("rejected");
-    m.engine.failNextSceneAttempt("rejected");
+    // A chunk given up on: the provider's refusal (S5.6d: two rejected answers no longer give a chunk up, they take the plain sentence).
+    m.engine.failNextSceneAttempt("refused");
     const { sceneSetId } = await composed(m, 30);
     m.scheduler.runAll();
     const ended = await setOf(m);
@@ -267,25 +274,56 @@ describe("a write that stops, and what stays", () => {
     await unwrap(write(m, view.sceneSetId, view.revision, ATTEMPT));
     m.scheduler.runAll();
 
+    // 5a.2 (S5.6d): the chunk's last attempt, rejected, used to give its scenes up («rejected»); they now take the plain sentence, as the engine's do.
     const after = await setOf(m);
     expect(after.status).toBe("ready");
-    expect(after.scenes.every((s) => s.unwritten === "gave-up" && s.gaveUpBy === "rejected")).toBe(true);
-    expect(after.chunks[0]).toMatchObject({ attemptsLeft: 0, gaveUpBy: "rejected" });
+    expect(after.scenes.every((s) => s.text !== null && s.unwritten === null && s.gaveUpBy === null)).toBe(true);
+    expect(after.chunks[0]).toMatchObject({ attemptsLeft: 0, gaveUpBy: null });
   });
 
-  test("a chunk rejected twice is given up and the job goes on with the next one", async () => {
+  // 5a.2 (S5.6d, plan s5a2 I5.31): this test used to say «a chunk rejected twice is given up (written 5, unwritten 25)». A planned scene the model could not write takes
+  // the plain sentence, so the whole set is written and nothing is given up.
+  test("a chunk rejected twice takes the plain sentence for its scenes and the job goes on with the next one", async () => {
     const m = makeMock();
     m.engine.failNextSceneAttempt("rejected");
     m.engine.failNextSceneAttempt("rejected");
     const { jobId } = await composed(m, 30);
     m.scheduler.runAll();
 
-    expect(m.events.find((e) => e.type === "job.done")).toMatchObject({ payload: { jobId, result: { written: 5, unwritten: 25 } } });
+    expect(m.events.find((e) => e.type === "job.done")).toMatchObject({ payload: { jobId, result: { written: 30, unwritten: 0 } } });
     const view = await setOf(m);
-    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual(["rejected", null]);
-    expect(view.scenes.slice(0, 25).every((s) => s.gaveUpBy === "rejected")).toBe(true);
-    expect(view.scenes.slice(25).every((s) => s.text !== null)).toBe(true);
-    expect(view.lastCompose).toEqual({ total: 30, written: 5, gaveUp: 25 });
+    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual([null, null]);
+    expect(view.scenes.every((s) => s.text !== null && s.gaveUpBy === null)).toBe(true);
+    for (const scene of view.scenes.slice(0, 25)) expect(scene.text).toBe(plainOf(scene));
+    expect(view.scenes.slice(25).every((s) => s.text !== plainOf(s))).toBe(true);
+    expect(view.lastCompose).toEqual({ total: 30, written: 30, gaveUp: 0 });
+  });
+
+  // The model's answer can be wrong for one scene of a chunk and right for the rest (the engine's reader marks the slot): the accepted scenes are kept and the second attempt asks for the one left.
+  test("a partial answer keeps its accepted scenes; the second attempt writes the scene left, and is priced for that one scene", async () => {
+    const m = makeMock();
+    m.engine.failNextSceneAttempt("partial");
+    m.engine.failNextSceneAttempt("ok");
+    await composed(m, 3);
+    m.scheduler.runAll();
+
+    const view = await setOf(m);
+    expect(view.scenes.every((s) => s.text !== null && s.gaveUpBy === null)).toBe(true);
+    expect(view.scenes.map((s) => s.text === plainOf(s))).toEqual([false, false, false]);
+    expect(view.spentMicros).toBe(Math.round(3 * 457.5) + Math.round(1 * 457.5));
+  });
+
+  test("a scene the model gets wrong on both attempts takes the plain sentence while the rest keep the model's", async () => {
+    const m = makeMock();
+    m.engine.failNextSceneAttempt("partial");
+    m.engine.failNextSceneAttempt("partial");
+    const { jobId } = await composed(m, 3);
+    m.scheduler.runAll();
+
+    expect(m.events.find((e) => e.type === "job.done")).toMatchObject({ payload: { jobId, result: { written: 3, unwritten: 0 } } });
+    const view = await setOf(m);
+    expect(view.scenes.map((s) => s.text === plainOf(s))).toEqual([true, false, false]);
+    expect(view.chunks[0]).toMatchObject({ gaveUpBy: null });
   });
 
   test("a provider's refusal ends its chunk at once and the next chunk is written", async () => {
