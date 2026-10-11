@@ -150,6 +150,7 @@ import { preflightMaster, reportingTo, runPhotoRun, type RunJobEnd } from "./run
 import { hairLengthOf, planWithPools, POOLS } from "./scenes";
 import { runCategoryJob } from "./scenes/categoryJob";
 import { categoryEstimate, categoryPriceModels } from "./scenes/categoryPlan";
+import { coversOfStored } from "./scenes/coverage";
 import { poolOf } from "./scenes/poolGen";
 import { SceneSetService, type LaunchComposeOptions } from "./sceneSets/service";
 import { approveLaunchSet, drawLaunchSlice, type DrawSliceResult, type SliceStatus, type UnlinkPhase } from "./sceneSets/launchDraw";
@@ -1630,7 +1631,7 @@ export class Engine {
   // ---------- S4.6b1: what the launch's paid steps need beyond the S4.5a seam (engine-internal; there is no command for any of these) ----------
 
   /** What composing `count` scenes could cost now: the `scenes.estimateCompose` figure, free. */
-  composeEstimate(request: { avatarId: string; count: number; categories: readonly CategoryRef[] }): Promise<Estimate> {
+  composeEstimate(request: { avatarId: string; count: number; categories: readonly CategoryRef[]; split?: readonly { ref: CategoryRef; count: number }[] }): Promise<Estimate> {
     return this.#sceneSets.estimateCompose(request);
   }
 
@@ -2387,10 +2388,10 @@ export class Engine {
         // Free: NOT_FOUND for an avatar that cannot get photos, DESCRIPTOR_INVALID before any price is fetched for it.
         this.#runnableAvatar(this.library, command.payload.avatarId);
         // NOT_FOUND for a custom category the library does not hold (never one the owner deleted), before any price is fetched.
-        await this.#customCategories(this.library, command.payload.categories);
+        const custom = await this.#customCategories(this.library, command.payload.categories);
         const models = this.#avatarModels();
         const imageAgeCheck = this.#settings.imageAgeCheck;
-        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, command.payload, imageAgeCheck);
+        const estimate = runEstimate(await this.#prices.get(runPriceModels(models, imageAgeCheck)), models, command.payload, imageAgeCheck, coversOfStored(custom));
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: { estimate } };
       }
       case "runs.start": {
@@ -3039,7 +3040,8 @@ export class Engine {
     this.#assertFaceGate();
     const models = this.#avatarModels();
     const priced = await this.#prices.get(runPriceModels(models, imageAgeCheck));
-    const estimate = runEstimate(priced, models, payload, imageAgeCheck);
+    // 5a.2 (S5.6c2): priced from the same read of the custom categories the planner draws from, so the cap is the writer's true worst for THESE pools.
+    const estimate = runEstimate(priced, models, payload, imageAgeCheck, coversOfStored(custom));
     Engine.#checkAccepted(estimate.worstMicros, payload.acceptedWorstMicros);
     Engine.#checkMonthlyRoom(budget, estimate.worstMicros);
 

@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, SceneId, type CategoryRef, type Estimate } from "../../shared/engine";
+import { AttemptId, CategorySnapshot, Id, ImageAgeCheck, ImageQuality, isCustomCategory, Micros, ModelId, RunRequest, SceneId, splitCount, type CategoryRef, type Estimate } from "../../shared/engine";
+import { llmPossibleSlots, writerChunksWorst, type CoversOf } from "../../shared/scenes/writerBound";
 import { AGE_CHECK_CALL, estimateRun, MAX_ATTEMPTS_PER_SLOT, WRITER_CALL, type ImageChoice } from "../money/estimate";
 import type { PricedBook, PriceModels } from "../money/priceCache";
 import { categoryLabelOf, categoryRefOf, OwnPlanSlotSchema, plannerCategoryOf, PlanSlotSchema, writerMessages, type PlannerCategory, type PlanSlot, type ScenePlan } from "../scenes";
@@ -125,12 +126,16 @@ export function sceneRunPriceModels(models: RunModels, imageAgeCheck: ImageAgeCh
  * cap. The age checks are priced now, with the toggle, so the cap the owner
  * accepts already covers T7a's age gate when it is wired.
  */
-export function runEstimate(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count">, imageAgeCheck: ImageAgeCheck): Estimate {
+export function runEstimate(priced: PricedBook, models: RunModels, request: Pick<RunRequest, "count" | "categories">, imageAgeCheck: ImageAgeCheck, covers: CoversOf): Estimate {
+  // 5a.2 (S5.6c2, I5.30): the code template writes every slot of a built-in category and of a covered custom one, so the writer is priced for the
+  // uncovered custom categories' slots alone (`writerChunksWorst`); the cap is this very figure.
+  const split = splitCount(request.count, request.categories);
   const estimate = estimateRun(priced.book, {
     photos: request.count,
     attemptsPerSlot: RUN_ATTEMPTS_PER_SLOT,
     route: runRoute(models.imageModel, models.imageQuality),
     writer: writerCall(models.textModel),
+    writerLoad: { chunks: writerChunksWorst(split, covers), scenes: llmPossibleSlots(split, covers) },
     ageChecks: imageAgeCheck === "on" ? AGE_CHECK_CALL : null,
   });
   return { expectedMicros: estimate.expectedMicros, worstMicros: estimate.worstMicros, prices: estimate.priceSource, pricesAsOf: priced.asOf };

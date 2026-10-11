@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { AGE_CHECK_CALL, estimateRun, WRITER_CALL } from "../money/estimate";
 import { PriceBook } from "../money/prices";
+import type { CoversOf } from "../../shared/scenes/writerBound";
+import { LLM_ONLY_REF } from "../scenes/testing/llmOnlyFixture";
 import { runEstimate, runEstimateFromScenes, runPriceModels, runRoute, sceneRunPriceModels } from "./plan";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -13,6 +15,8 @@ const PRICED = { book: PriceBook.fallback(), asOf: "2026-10-07" };
 const MODELS = { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" };
 const IMAGE_WORST = 50_000;
 const WRITER_WORST = 37_500;
+// 5a.2 (S5.6c2, m11): the whole run's writer term is the model path's figure on `cat-llm-only-fixture` (the template writes a built-in category for nothing).
+const NOTHING_COVERED: CoversOf = () => false;
 
 describe("estimateRun with no writer", () => {
   test("a null writer takes the writer term out of both figures", () => {
@@ -33,9 +37,16 @@ describe("runEstimateFromScenes", () => {
 
   test("is exactly the whole run's estimate less its writer", () => {
     for (const count of [1, 5, 25, 26, 100]) {
-      const whole = runEstimate(PRICED, MODELS, { count }, "off");
+      const whole = runEstimate(PRICED, MODELS, { count, categories: [LLM_ONLY_REF] }, "off", NOTHING_COVERED);
       const scenes = runEstimateFromScenes(PRICED, MODELS, { count }, "off");
       expect(whole.worstMicros - scenes.worstMicros).toBe(Math.ceil(count / 25) * 2 * WRITER_WORST);
+    }
+  });
+
+  test("twin on a built-in run: its whole estimate has no writer term, so it equals the scenes' run", () => {
+    for (const count of [1, 5, 25, 26, 100]) {
+      const builtIn = runEstimate(PRICED, MODELS, { count, categories: ["home"] }, "off", NOTHING_COVERED);
+      expect(builtIn.worstMicros).toBe(runEstimateFromScenes(PRICED, MODELS, { count }, "off").worstMicros);
     }
   });
 
@@ -69,7 +80,7 @@ describe("runEstimateFromScenes", () => {
 });
 
 function whole(count: number, age: "on" | "off"): number {
-  return runEstimate(PRICED, MODELS, { count }, age).worstMicros;
+  return runEstimate(PRICED, MODELS, { count, categories: [LLM_ONLY_REF] }, age, NOTHING_COVERED).worstMicros;
 }
 
 describe("sceneRunPriceModels", () => {

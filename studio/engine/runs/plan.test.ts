@@ -3,6 +3,8 @@ import { SceneCategory, type RunRequest } from "../../shared/engine";
 import { MAX_ATTEMPTS_PER_SLOT, WRITER_CALL } from "../money/estimate";
 import { PriceBook } from "../money/prices";
 import { CATEGORIES, plan } from "../scenes";
+import { LLM_ONLY_REF } from "../scenes/testing/llmOnlyFixture";
+import type { CoversOf } from "../../shared/scenes/writerBound";
 import {
   buildRunPlan,
   contractCategory,
@@ -91,28 +93,78 @@ describe("runEstimate (the plan's money model, at the dated fallback prices)", (
   // Seedream 1K $0.045 + one reference $0.003 = 48_000 µ$: the primary is the dearest attempt.
   // Writer on grok-4.3: 14K in, 8K out at the ceiling = 37_500 µ$ per attempt, 2 attempts per chunk of 25 slots (T5c).
 
-  test("20 photos with the image age check off: cap ≈ $3.075 (20 × 3 × $0.05 + 1 chunk × 2 × $0.0375)", () => {
-    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20 }, "off");
+  // 5a.2 (S5.6c2, m11): a built-in category and a covered custom one are written by the code template, so the writer term is 0 for them; the figures of the
+  // model path (a writer chunk at 2 attempts) are kept on `cat-llm-only-fixture`, whose activities the template cannot write (the twin of each test).
+  const BUILT_IN = ["home"] as const;
+  const FIXTURE = [LLM_ONLY_REF] as const;
+  const NOTHING_COVERED: CoversOf = () => false;
+  const ALL_COVERED: CoversOf = () => true;
+
+  test("20 built-in photos with the image age check off: cap $3.00 (20 × 3 × $0.05), no writer", () => {
+    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, categories: [...BUILT_IN] }, "off", NOTHING_COVERED);
+    expect(estimate).toEqual({ expectedMicros: 1_000_000, worstMicros: 3_000_000, prices: "fallback", pricesAsOf: "2026-09-24" });
+  });
+
+  test("twin on the fixture: 20 photos with the image age check off: cap ≈ $3.075 (20 × 3 × $0.05 + 1 chunk × 2 × $0.0375)", () => {
+    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, categories: [...FIXTURE] }, "off", NOTHING_COVERED);
     expect(estimate).toEqual({ expectedMicros: 1_009_150, worstMicros: 3_075_000, prices: "fallback", pricesAsOf: "2026-09-24" });
   });
 
-  test("20 photos with the image age check on: cap ≈ $3.39 (every attempt carries its age check)", () => {
-    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20 }, "on");
+  test("20 built-in photos with the image age check on: cap $3.315 (every attempt carries its age check), no writer", () => {
+    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, categories: [...BUILT_IN] }, "on", NOTHING_COVERED);
+    expect(estimate).toMatchObject({ expectedMicros: 1_033_200, worstMicros: 3_315_000 });
+  });
+
+  test("twin on the fixture: 20 photos with the image age check on: cap ≈ $3.39", () => {
+    const estimate = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, categories: [...FIXTURE] }, "on", NOTHING_COVERED);
     expect(estimate).toMatchObject({ expectedMicros: 1_042_350, worstMicros: 3_390_000 });
   });
 
-  test("100 photos (four writer chunks): ≈ $15.30 off, ≈ $16.875 on", () => {
-    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100 }, "off").worstMicros).toBe(15_300_000);
-    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100 }, "on").worstMicros).toBe(16_875_000);
+  test("100 built-in photos: $15.00 off, $16.575 on, no writer", () => {
+    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: [...BUILT_IN] }, "off", NOTHING_COVERED).worstMicros).toBe(15_000_000);
+    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: [...BUILT_IN] }, "on", NOTHING_COVERED).worstMicros).toBe(16_575_000);
   });
 
-  test("the chosen quality prices every attempt: medium at $0.06 + $0.01 reference makes 20 photos a $4.275 cap", () => {
-    expect(runEstimate(FALLBACK_PRICES, { ...MODELS, imageQuality: "medium" }, { count: 20 }, "off").worstMicros).toBe(4_275_000);
-    expect(runEstimate(FALLBACK_PRICES, { ...MODELS, imageQuality: "low" }, { count: 20 }, "off").worstMicros).toBe(3_075_000);
+  test("twin on the fixture: 100 photos (four writer chunks): ≈ $15.30 off, ≈ $16.875 on", () => {
+    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: [...FIXTURE] }, "off", NOTHING_COVERED).worstMicros).toBe(15_300_000);
+    expect(runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: [...FIXTURE] }, "on", NOTHING_COVERED).worstMicros).toBe(16_875_000);
   });
 
-  test("a model with no quality knob is priced without one: Seedream alone, 20 photos, is a $2.955 cap", () => {
-    expect(runEstimate(FALLBACK_PRICES, { imageModel: FALLBACK_IMAGE_MODEL, textModel: "x-ai/grok-4.3", imageQuality: null }, { count: 20 }, "off").worstMicros).toBe(2_955_000);
+  test("a custom category the template covers is priced like a built-in one", () => {
+    const covered = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, categories: [...FIXTURE] }, "off", ALL_COVERED);
+    const builtIn = runEstimate(FALLBACK_PRICES, MODELS, { count: 20, categories: [...BUILT_IN] }, "off", NOTHING_COVERED);
+    expect(covered).toEqual(builtIn);
+  });
+
+  test("Home 50 plus an uncovered custom 50 (the true worst): 3 writer chunks, $0.225 above the images", () => {
+    const mixed = runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: ["home", LLM_ONLY_REF] }, "off", NOTHING_COVERED);
+    expect(mixed.worstMicros).toBe(15_000_000 + 225_000);
+    expect(mixed.worstMicros).toBeLessThan(15_300_000);
+  });
+
+  test("a mixed run's expected writer cost follows the model's scenes only (the uncovered category's half)", () => {
+    const mixed = runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: ["home", LLM_ONLY_REF] }, "off", NOTHING_COVERED);
+    const builtIn = runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: [...BUILT_IN] }, "off", NOTHING_COVERED);
+    const fixture = runEstimate(FALLBACK_PRICES, MODELS, { count: 100, categories: [...FIXTURE] }, "off", NOTHING_COVERED);
+    expect(mixed.expectedMicros).toBeGreaterThan(builtIn.expectedMicros);
+    expect(mixed.expectedMicros).toBeLessThan(fixture.expectedMicros);
+  });
+
+  test("the chosen quality prices every attempt: medium at $0.06 + $0.01 reference makes 20 photos a $4.275 cap (fixture)", () => {
+    const request = { count: 20, categories: [...FIXTURE] };
+    expect(runEstimate(FALLBACK_PRICES, { ...MODELS, imageQuality: "medium" }, request, "off", NOTHING_COVERED).worstMicros).toBe(4_275_000);
+    expect(runEstimate(FALLBACK_PRICES, { ...MODELS, imageQuality: "low" }, request, "off", NOTHING_COVERED).worstMicros).toBe(3_075_000);
+  });
+
+  test("the chosen quality prices every attempt: medium at $0.06 + $0.01 reference makes 20 built-in photos a $4.20 cap", () => {
+    const request = { count: 20, categories: [...BUILT_IN] };
+    expect(runEstimate(FALLBACK_PRICES, { ...MODELS, imageQuality: "medium" }, request, "off", NOTHING_COVERED).worstMicros).toBe(4_200_000);
+  });
+
+  test("a model with no quality knob is priced without one: Seedream alone, 20 photos, is a $2.955 cap (fixture)", () => {
+    const models = { imageModel: FALLBACK_IMAGE_MODEL, textModel: "x-ai/grok-4.3", imageQuality: null };
+    expect(runEstimate(FALLBACK_PRICES, models, { count: 20, categories: [...FIXTURE] }, "off", NOTHING_COVERED).worstMicros).toBe(2_955_000);
+    expect(runEstimate(FALLBACK_PRICES, models, { count: 20, categories: [...BUILT_IN] }, "off", NOTHING_COVERED).worstMicros).toBe(2_880_000);
   });
 
   test("attempts per slot are the invariant's maximum", () => {

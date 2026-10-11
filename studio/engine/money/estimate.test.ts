@@ -174,3 +174,44 @@ test("descriptor attempts must be a positive integer", () => {
   expect(() => estimateAvatarJob(BOOK, job(0))).toThrow(RangeError);
   expect(() => estimateAvatarJob(BOOK, job(1.5))).toThrow(RangeError);
 });
+
+// 5a.2 (S5.6c2, plan s5a2 §5.6): the writer term follows the slots the model can be asked about, not every photo. `writerLoad` is that share: the writer's
+// requests at worst (`writerChunksWorst`) and the scenes they can carry (`llmPossibleSlots`). Without it every photo is a model scene, as before.
+test("a run whose slots all render in code prices no writer at all", () => {
+  const withWriter = estimateRun(BOOK, plan({ photos: 20, writerLoad: { chunks: 0, scenes: 0 } }));
+
+  expect(withWriter.worstMicros).toBe(20 * 3 * (50_000 + 5_250));
+  expect(withWriter.expectedMicros).toBe(20 * (50_000 + AGE_TYPICAL));
+});
+
+test("Home 50 plus an uncovered custom 50: 3 writer chunks at 2 attempts, $0.225 of writer in the worst case", () => {
+  const free = estimateRun(BOOK, plan({ photos: 100, ageChecks: null, writerLoad: { chunks: 0, scenes: 0 } }));
+  const mixed = estimateRun(BOOK, plan({ photos: 100, ageChecks: null, writerLoad: { chunks: 3, scenes: 50 } }));
+
+  expect(mixed.worstMicros - free.worstMicros).toBe(225_000);
+  expect(mixed.worstMicros).toBe(100 * 3 * 50_000 + 225_000);
+});
+
+test("the typical writer cost follows the model's scenes, not the photos", () => {
+  const free = estimateRun(BOOK, plan({ photos: 100, ageChecks: null, writerLoad: { chunks: 0, scenes: 0 } }));
+  const mixed = estimateRun(BOOK, plan({ photos: 100, ageChecks: null, writerLoad: { chunks: 3, scenes: 20 } }));
+
+  expect(mixed.expectedMicros - free.expectedMicros).toBe(WRITER_TYPICAL_20);
+});
+
+test("a plan with no writer load is the old one: every photo is a model scene", () => {
+  expect(estimateRun(BOOK, plan()).worstMicros).toBe(3_390_000);
+  expect(estimateRun(BOOK, plan({ photos: 100, ageChecks: null })).worstMicros).toBe(100 * 3 * 50_000 + 4 * 2 * 37_500);
+});
+
+test("a plan whose model share is zero never prices the writer's model", () => {
+  const noWriterPrice = { ...WRITER_CALL, model: "vendor/unlisted-model" };
+
+  expect(estimateRun(BOOK, plan({ writer: noWriterPrice, writerLoad: { chunks: 0, scenes: 0 } })).worstMicros).toBe(20 * 3 * (50_000 + 5_250));
+});
+
+test("a writer load is whole numbers, and its scenes fit its chunks", () => {
+  expect(() => estimateRun(BOOK, plan({ writerLoad: { chunks: 1.5, scenes: 10 } }))).toThrow(TypeError);
+  expect(() => estimateRun(BOOK, plan({ writerLoad: { chunks: 1, scenes: -1 } }))).toThrow(TypeError);
+  expect(() => estimateRun(BOOK, plan({ writerLoad: { chunks: 1, scenes: 26 } }))).toThrow(RangeError);
+});

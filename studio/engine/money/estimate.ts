@@ -134,6 +134,8 @@ export interface RunPlanInput {
   route: readonly [ImageChoice, ...ImageChoice[]];
   /** The scene writer; null for a run whose sentences already exist (CS.5, a run from a scene set): no writer term in either figure. */
   writer: WriterCall | null;
+  /** 5a.2: the model's share of the slots; absent, every photo can go to the writer (a plan with no template in it). */
+  writerLoad?: WriterLoad;
   /** The age check run on every returned image; null when age checks are off. */
   ageChecks: ChatCall | null;
 }
@@ -192,8 +194,29 @@ function ceilingMicros(book: PriceBook, call: Omit<ChatCall, "typical"> | null):
  * (writer.test.ts's own drift-guard test pins that they agree).
  */
 export function writerWorstMicros(book: PriceBook, writer: WriterCall, slotCount: number): number {
-  const chunkCount = Math.ceil(slotCount / writer.slotsPerCall);
-  return chunkCount * writer.maxAttempts * ceilingMicros(book, writer);
+  return writerChunksMicros(book, writer, Math.ceil(slotCount / writer.slotsPerCall));
+}
+
+/**
+ * 5a.2 (S5.6c2): the writer's worst case for `chunkCount` requests, each retried up to `maxAttempts` times at the ceiling. `writerWorstMicros` is this for
+ * a plan whose every slot can go to the model; a plan whose built-in and covered slots render in code asks `writerChunksWorst` (shared/scenes) for the
+ * count. No request prices nothing, so the writer's model needs no price then.
+ */
+export function writerChunksMicros(book: PriceBook, writer: WriterCall, chunkCount: number): number {
+  assertCount("writer chunks", chunkCount);
+  return chunkCount === 0 ? 0 : chunkCount * writer.maxAttempts * ceilingMicros(book, writer);
+}
+
+/** The model's share of a run's slots: the requests it can need at worst, and the scenes those requests can carry (shared/scenes' `writerChunksWorst` and `llmPossibleSlots`). */
+export interface WriterLoad {
+  chunks: number;
+  scenes: number;
+}
+
+function checkWriterLoad(writer: WriterCall, load: WriterLoad): void {
+  assertCount("writer chunks", load.chunks);
+  assertCount("writer scenes", load.scenes);
+  if (load.scenes > load.chunks * writer.slotsPerCall) throw new RangeError(`${load.chunks} writer chunks cannot carry ${load.scenes} scenes`);
 }
 
 /**
@@ -217,19 +240,22 @@ export function estimateRun(book: PriceBook, plan: RunPlanInput): Estimate {
 
   const dearestAttempt = Math.max(...plan.route.map((choice) => imageMicros(book, choice)));
   const { writer } = plan;
+  // 5a.2: without a load every photo is a model scene (the old figure); with one, only the model's share is priced.
+  const load: WriterLoad | null = writer === null ? null : (plan.writerLoad ?? { chunks: Math.ceil(plan.photos / writer.slotsPerCall), scenes: plan.photos });
+  if (writer !== null && load !== null) checkWriterLoad(writer, load);
   const writerTypical =
-    writer === null
+    writer === null || load === null || load.scenes === 0
       ? 0
       : book.chatCost({
           model: writer.model,
           images: writer.images,
-          inputTokens: writer.typicalPerScene.inputTokens * plan.photos,
-          outputTokens: writer.typicalPerScene.outputTokens * plan.photos,
+          inputTokens: writer.typicalPerScene.inputTokens * load.scenes,
+          outputTokens: writer.typicalPerScene.outputTokens * load.scenes,
         });
   return {
     expectedMicros: safe(plan.photos * (imageMicros(book, primary) + typicalMicros(book, plan.ageChecks)) + writerTypical),
     worstMicros: safe(
-      plan.photos * plan.attemptsPerSlot * (dearestAttempt + ceilingMicros(book, plan.ageChecks)) + (writer === null ? 0 : writerWorstMicros(book, writer, plan.photos)),
+      plan.photos * plan.attemptsPerSlot * (dearestAttempt + ceilingMicros(book, plan.ageChecks)) + (writer === null || load === null ? 0 : writerChunksMicros(book, writer, load.chunks)),
     ),
     priceSource: book.source,
   };
