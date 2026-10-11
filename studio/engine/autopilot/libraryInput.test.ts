@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { z } from "zod";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { openLibrary, type Library, type LibraryDeps } from "../library/library";
 import { PNG_1X1, SAMPLE_AVATAR, SAMPLE_IMPORTED_SOURCE, SAMPLE_SOURCE, samplePhotoMeta, sequentialIds, steppingClock, useTempDir } from "../library/testing/helpers";
@@ -143,5 +146,72 @@ describe("planAvatarInput", () => {
     expect(photos.find((p) => p.id === imported.id)?.eligible).toBe(false);
     expect(freeOf(library, avatar.id)).toBe(1);
     expect(freeOf(library, avatar.id)).toBe(library.eligibleUnusedPhotos(avatar.id).length);
+  });
+});
+
+// S5.7a review, S5.7b: a photo stored before the face gate wrote `qa.faceMarked` (v0.7.1) is indistinguishable by its number alone: a face-hidden or back frame kept a likeness the
+// gate never judged, and 0.8 reads as a verified match. The mark is restored from the slot's capture in the run's plan.json, so the planner still ranks it as unverified.
+describe("planAvatarInput restores the mark of an old photo from its run's plan", () => {
+  const AnyPlan = z.object({}).passthrough();
+  const RUN = "run-00000007";
+  const slot = (index: number, extra: Record<string, unknown>) => ({ slotIndex: index, category: "home", location: "her bed", timeOfDay: "night", activity: "x", outfit: "y", shot: "selfie", pose: "front", attemptIdBase: `slot-${index}`, repeatedPair: false, ...extra });
+  const oldPhoto = (slotName: string, category = "home") => samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category, attemptId: `${RUN}:${slotName}#1`, slot: slotName }, qa: { pdq: PDQ_A, faceCos: 0.82 } });
+
+  async function withPlan(slots: Record<string, unknown>[]) {
+    const f = await fixture();
+    await f.library.createRun(RUN, { scenes: { version: 1, seed: 1, slots } }, AnyPlan);
+    return f;
+  }
+
+  test("a face-hidden mirror frame of an old run comes through marked, whatever its likeness says", async () => {
+    const { library, avatar } = await withPlan([slot(1, { shot: "mirror", capture: "mirror-hidden" })]);
+    await library.addPhoto(avatar.id, PNG_1X1, oldPhoto("slot-1"));
+    expect(planAvatarInput(library, avatar.id, false, true).photos[0]).toMatchObject({ faceCos: 0.82, faceMarked: true });
+  });
+
+  test("a frame seen from behind comes through marked, though the old plan stores no capture for it", async () => {
+    const { library, avatar } = await withPlan([slot(1, { shot: "friend", pose: "back" })]);
+    await library.addPhoto(avatar.id, PNG_1X1, oldPhoto("slot-1"));
+    expect(planAvatarInput(library, avatar.id, false, true).photos[0]?.faceMarked).toBe(true);
+  });
+
+  test("a frame whose face shows is not marked: its likeness was judged", async () => {
+    const { library, avatar } = await withPlan([slot(1, { shot: "friend" })]);
+    await library.addPhoto(avatar.id, PNG_1X1, oldPhoto("slot-1"));
+    expect("faceMarked" in (planAvatarInput(library, avatar.id, false, true).photos[0] ?? {})).toBe(false);
+  });
+
+  test("only the photo's own slot decides: the neighbour with a hidden face does not mark it", async () => {
+    const { library, avatar } = await withPlan([slot(1, { shot: "mirror", capture: "mirror-hidden" }), slot(2, { shot: "friend" })]);
+    await library.addPhoto(avatar.id, PNG_1X1, oldPhoto("slot-2"));
+    expect("faceMarked" in (planAvatarInput(library, avatar.id, false, true).photos[0] ?? {})).toBe(false);
+  });
+
+  test("a photo with no readable plan, an unknown slot or no slot at all stays as it was, and nothing throws", async () => {
+    const { library, avatar } = await withPlan([slot(1, { shot: "mirror", capture: "mirror-hidden" })]);
+    await library.addPhoto(avatar.id, PNG_1X1, oldPhoto("slot-9"));
+    await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category: "home", attemptId: "run-00000099:slot-1#1", slot: "slot-1" }, qa: { pdq: PDQ_B, faceCos: 0.82 } }));
+    await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category: "home" }, qa: { faceCos: 0.82 } }));
+    const photos = planAvatarInput(library, avatar.id, false, true).photos;
+    expect(photos).toHaveLength(3);
+    expect(photos.some((p) => p.faceMarked === true)).toBe(false);
+  });
+
+  test("a plan.json that is not JSON is skipped without a throw", async () => {
+    const { library, avatar } = await fixture();
+    await mkdir(join(library.root, "runs", RUN), { recursive: true });
+    await writeFile(join(library.root, "runs", RUN, "plan.json"), "{");
+    await library.addPhoto(avatar.id, PNG_1X1, oldPhoto("slot-1"));
+    expect(planAvatarInput(library, avatar.id, false, true).photos[0]?.faceMarked).toBeUndefined();
+  });
+
+  test("the planner then ranks it as unverified: a single takes a judged photo over the old marked one with the higher number", async () => {
+    const { library, avatar } = await withPlan([slot(1, { shot: "mirror", capture: "mirror-hidden" }), slot(2, { shot: "friend" })]);
+    const hidden = await library.addPhoto(avatar.id, PNG_1X1, oldPhoto("slot-1"));
+    const judged = await library.addPhoto(avatar.id, PNG_1X1, samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category: "home", attemptId: `${RUN}:slot-2#1`, slot: "slot-2" }, qa: { pdq: PDQ_B, faceCos: 0.6 } }));
+    const input = planAvatarInput(library, avatar.id, false, true);
+    const plan = planLaunch({ draft: draft({ avatarIds: [avatar.id], videosPerAvatar: 1, mix: { single: 100, collage: 0, slides: 0 }, generate: false }), avatars: [input], draftHeldPhotoIds: new Set(), customPoses: new Map() });
+    expect(plan.avatars[0]?.videos[0]?.photoIds).toEqual([judged.id]);
+    expect(hidden.id).not.toBe(judged.id);
   });
 });

@@ -1,12 +1,15 @@
 import type { AvatarUsage } from "../../shared/engine/state";
 import type { PhotoState } from "../library/eligibility";
 import type { PhotoSidecar } from "../library/schemas";
+import { legacyMarksOf } from "./legacyMarks";
 import type { PlanAvatarInput, PlanPhoto } from "./planner";
 
 // Reads one avatar out of the library into the planner's plain input. The narrow `LibraryReads` is what the planner needs of `Library`, so a test can
 // stand in for it and the real class satisfies it structurally.
 
 export interface LibraryReads {
+  /** Where the library lives; the real class says. A stand-in may leave it out (then no mark is restored from a plan). */
+  readonly root?: string;
   photosByAvatar(avatarId: string): PhotoSidecar[];
   photoStates(avatarId: string): Map<string, PhotoState>;
   /** Empty exactly when the avatar's usage can be trusted (`Library.usageReasons`). */
@@ -19,7 +22,10 @@ export function planAvatarInput(library: LibraryReads, avatarId: string, hasOpen
   const reasons = library.usageReasons(avatarId);
   const usage: AvatarUsage = reasons.length === 0 ? { state: "ok" } : { state: "unknown", reasons };
   const states = library.photoStates(avatarId);
-  const photos: PlanPhoto[] = library.photosByAvatar(avatarId).map((sidecar) => {
+  const sidecars = library.photosByAvatar(avatarId);
+  // S5.7b: a photo from before the gate wrote its mark is marked again from the slot it was made for.
+  const restored = legacyMarksOf(library, avatarId, sidecars);
+  const photos: PlanPhoto[] = sidecars.map((sidecar) => {
     const state = states.get(sidecar.id);
     return {
       id: sidecar.id,
@@ -27,7 +33,7 @@ export function planAvatarInput(library: LibraryReads, avatarId: string, hasOpen
       category: sidecar.source.kind === "generated" ? sidecar.source.category : undefined,
       pdq: sidecar.qa.pdq,
       faceCos: sidecar.qa.faceCos,
-      ...(sidecar.qa.faceMarked === true ? { faceMarked: true as const } : {}),
+      ...(sidecar.qa.faceMarked === true || restored.has(sidecar.id) ? { faceMarked: true as const } : {}),
       // A photo the library has no verdict on is not eligible: fail closed.
       eligible: state?.eligible ?? false,
       rejected: state?.rejected ?? true,
