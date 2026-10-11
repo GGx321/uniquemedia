@@ -129,10 +129,21 @@ function writerSystemPrompt(): string {
   ].join("\n");
 }
 
+// C1: a custom category's label is LLM-written and sent as every slot's category, and the writer is told to use it. A selfie slot's sentence may not name a
+// phone or say selfie (phone-in-selfie), so those words never reach it through the label; bytes only shrink.
+const SELFIE_LABEL_WORDS = new RegExp(`${PHONE_WORDS.source}|${SELFIE_WORDS.source}`, "gi");
+
+/** The category label as a selfie slot is told it: without the phone and selfie words, «everyday» when nothing is left. */
+function labelForSelfie(label: string): string {
+  const cleaned = label.replace(SELFIE_LABEL_WORDS, " ").replace(/\s+/g, " ").trim();
+  return cleaned === "" ? "everyday" : cleaned;
+}
+
 function slotForWriter(slot: PlanSlot, labelOf: CategoryLabelOf): Record<string, unknown> {
+  const label = labelOf(slot.category);
   return {
     slotIndex: slot.slotIndex,
-    category: labelOf(slot.category),
+    category: slot.shot === "selfie" ? labelForSelfie(label) : label,
     location: slot.location,
     timeOfDay: lightOf(slot.timeOfDay),
     shot: SHOT_LABEL[slot.shot],

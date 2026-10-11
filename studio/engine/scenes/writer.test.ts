@@ -728,6 +728,42 @@ describe("S5.1b: the writer is told to write what an ordinary phone photo shows,
     expect(system()).not.toContain("glance toward the camera");
   });
 
+  // C1: a custom category's label is LLM-written and is sent as every slot's category; «Gym selfies» would push a selfie sentence toward the forbidden word.
+  describe("the category label a selfie slot is sent under", () => {
+    const sentLabel = (shot: PlanSlot["shot"], label: string): unknown => {
+      const content = writerMessages([slot({ shot })], undefined, () => label)[1]?.content ?? "";
+      return JSON.parse(content.match(/\[[\s\S]*\]/)?.[0] ?? "[]")[0]?.category;
+    };
+
+    test.each([
+      ["Gym selfies", "Gym"],
+      ["Selfie spots", "spots"],
+      ["Front camera days", "days"],
+      ["Phone  photos", "photos"],
+      ["Mirror selfie", "Mirror"],
+    ])("a selfie slot sends %j as %j", (label, expected) => {
+      expect(sentLabel("selfie", label)).toBe(expected);
+    });
+
+    test("a label that is only such a word is sent as «everyday»", () => {
+      expect(sentLabel("selfie", "Selfies")).toBe("everyday");
+      expect(sentLabel("selfie", "Phone")).toBe("everyday");
+    });
+
+    test.each(["mirror", "friend", "candid", "photographer"] as const)("a %s slot keeps the label as it is", (shot) => {
+      expect(sentLabel(shot, "Gym selfies")).toBe("Gym selfies");
+    });
+
+    test("a selfie slot's label without such a word is sent unchanged", () => {
+      expect(sentLabel("selfie", "Paris cafes")).toBe("Paris cafes");
+    });
+
+    test("the repair request cleans it too", () => {
+      const refusal: WriterRefusal = { problems: ["phone-in-selfie"], missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], phoneSlots: [1] };
+      expect(writerMessages([slot({ shot: "selfie" })], refusal, () => "Gym selfies")[1]?.content).not.toMatch(/Gym selfies/);
+    });
+  });
+
   test("C1: the one-hand rule names the selfie slot the way its shot label does, and does not say front-camera", () => {
     expect(SHOT_LABEL.selfie).toContain("arm's-length photo");
     expect(system()).toContain("In an arm's-length photo or a mirror selfie, only one hand is free");
