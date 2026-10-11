@@ -20,25 +20,44 @@ test("frame off: the recipe carries no frame", () => {
   expect(sampleRecipe(base, 1, 1).frame).toBeUndefined();
 });
 
-test("frame on: the video is 72-90 percent of the canvas, whatever the seed or intensity", () => {
+test("frame on: the video is 90-95 percent of the canvas, whatever the seed or intensity", () => {
   const { w: W, h: H } = EXPORT_DIMS.reels;
   for (const intensity of [1, 2, 3]) {
     for (let seed = 0; seed < 300; seed++) {
       const f = sampleRecipe(on, seed, intensity).frame!;
-      expect(f.w).toBeGreaterThanOrEqual(Math.floor(W * 0.72) - 2);
-      expect(f.w).toBeLessThanOrEqual(Math.ceil(W * 0.9) + 2);
-      expect(f.h).toBeGreaterThanOrEqual(Math.floor(H * 0.72) - 2);
-      expect(f.h).toBeLessThanOrEqual(Math.ceil(H * 0.9) + 2);
+      expect(f.w).toBeGreaterThanOrEqual(Math.floor(W * 0.9) - 2);
+      expect(f.w).toBeLessThanOrEqual(Math.ceil(W * 0.95) + 2);
+      expect(f.h).toBeGreaterThanOrEqual(Math.floor(H * 0.9) - 2);
+      expect(f.h).toBeLessThanOrEqual(Math.ceil(H * 0.95) + 2);
     }
   }
 });
 
-test("frame on: the video always sits fully inside the canvas, on even coordinates", () => {
+test("frame on: the video never touches an edge, and every gap is at least a quarter of the free space", () => {
+  const { w: W, h: H } = EXPORT_DIMS.reels;
+  for (const intensity of [1, 2]) {
+    for (let seed = 0; seed < 1000; seed++) {
+      const f = sampleRecipe(on, seed, intensity).frame!;
+      const freeX = W - f.w;
+      const freeY = H - f.h;
+      const gaps = [
+        [f.x, freeX],
+        [W - (f.x + f.w), freeX],
+        [f.y, freeY],
+        [H - (f.y + f.h), freeY],
+      ];
+      for (const [gap, free] of gaps) {
+        expect(gap).toBeGreaterThan(0);
+        expect(gap).toBeGreaterThanOrEqual(free / 4);
+      }
+    }
+  }
+});
+
+test("frame on: the video sits inside the canvas, on even coordinates", () => {
   const { w: W, h: H } = EXPORT_DIMS.reels;
   for (let seed = 0; seed < 500; seed++) {
     const f = sampleRecipe(on, seed, 1).frame!;
-    expect(f.x).toBeGreaterThanOrEqual(0);
-    expect(f.y).toBeGreaterThanOrEqual(0);
     expect(f.x + f.w).toBeLessThanOrEqual(W);
     expect(f.y + f.h).toBeLessThanOrEqual(H);
     for (const v of [f.w, f.h, f.x, f.y]) expect(v % 2).toBe(0);

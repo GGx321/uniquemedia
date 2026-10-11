@@ -67,14 +67,25 @@ function firstFrameOf(opts: ResolvedCopyOptions, seed: number, intensity: number
 
 /** Frame mode's own stream, so enabling it moves no other draw. */
 const FRAME_RNG_SALT = 0x46524d45;
-const FRAME_MIN_SCALE = 0.72;
-const FRAME_MAX_SCALE = 0.9;
+const FRAME_MIN_SCALE = 0.9;
+const FRAME_MAX_SCALE = 0.95;
 
 const evenRound = (v: number): number => 2 * Math.round(v / 2);
 
 /**
- * Where the video sits in a frame: 72-90% of the canvas, at a random offset
- * that keeps it fully inside, over a background picked from the pack. The
+ * An even offset on one axis, drawn from the middle half of the free space so
+ * the gap on both sides is at least a quarter of it: the video never touches
+ * an edge or a corner.
+ */
+function middleHalfOffset(rng: Rng, free: number): number {
+  const lo = 2 * Math.ceil(Math.ceil(free / 4) / 2);
+  const hi = 2 * Math.floor(Math.floor((3 * free) / 4) / 2);
+  return lo + 2 * Math.floor(rng() * ((hi - lo) / 2 + 1));
+}
+
+/**
+ * Where the video sits in a frame: 90-95% of the canvas, at a random offset
+ * from the middle half of the free space, over a background picked from the pack. The
  * canvas is the export format's size, and `original` has none, so it becomes
  * reels (9:16).
  */
@@ -93,8 +104,8 @@ function drawFrame(
   const scale = FRAME_MIN_SCALE + rng() * (FRAME_MAX_SCALE - FRAME_MIN_SCALE);
   const w = evenRound(W * scale);
   const h = evenRound(H * scale);
-  const x = 2 * Math.floor(rng() * ((W - w) / 2 + 1));
-  const y = 2 * Math.floor(rng() * ((H - h) / 2 + 1));
+  const x = middleHalfOffset(rng, W - w);
+  const y = middleHalfOffset(rng, H - h);
   return { background: pick(rng, backgrounds), w, h, x, y };
 }
 
