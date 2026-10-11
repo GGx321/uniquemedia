@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useRef, useState } from "react";
 import type { AvatarSummary, EngineError, PhotoSummary } from "../../../shared/engine";
 import { countOf, groupNumber, NBSP, plural } from "../../lib/format";
 import { Icon, Spin } from "../../ui/Icon";
@@ -33,18 +33,23 @@ interface PhotoTileProps {
   picked: boolean;
   refused: boolean;
   onToggle: (photoId: string) => void;
-  mark: MarkControl;
+  /** This photo's mark is being set now. */
+  marking: boolean;
+  /** Why no mark can be set right now, or null (see `MarkControl.blocked`). */
+  blocked: string | null;
+  onMark: MarkControl["onMark"];
   /** Open the photo in the viewer. */
   onOpen: (photoId: string) => void;
 }
 
-function PhotoTile({ photo, position, picked, refused, onToggle, mark, onOpen }: PhotoTileProps) {
+// Memoized: a tile is handed only values that are equal from one render to the next unless its own data moved, so a photo landing
+// draws the new tile and the ones that changed, not every tile on screen.
+const PhotoTile = memo(function PhotoTile({ photo, position, picked, refused, onToggle, marking, blocked, onMark, onOpen }: PhotoTileProps) {
   const label = photoCategoryLabel(photo);
   // A photo picked before it became unusable can still be unpicked.
   const why = montagePickRefusal(photo);
   // One photo, one video (Q1): a photo a video or a render holds is dimmed with how it is held, as in the editor's bin.
   const held = heldLabel(photo);
-  const marking = mark.marking.has(photo.photoId);
   const classes = [
     "ph",
     "photo-tile",
@@ -85,15 +90,15 @@ function PhotoTile({ photo, position, picked, refused, onToggle, mark, onOpen }:
         type="button"
         className={photo.rejected ? "photo-mark photo-mark-on" : "photo-mark"}
         aria-label={`Фото ${position}: ${photo.rejected ? "вернуть из отклонённых" : "отклонить — в видео не брать"}`}
-        title={mark.blocked ?? (photo.rejected ? "Вернуть: фото снова можно брать в видео" : "Отклонить: это фото не пойдёт в видео")}
-        disabled={marking || mark.blocked !== null}
-        onClick={() => mark.onMark(photo, !photo.rejected)}
+        title={blocked ?? (photo.rejected ? "Вернуть: фото снова можно брать в видео" : "Отклонить: это фото не пойдёт в видео")}
+        disabled={marking || blocked !== null}
+        onClick={() => onMark(photo, !photo.rejected)}
       >
         {marking ? <Spin /> : <Icon name={photo.rejected ? "reload" : "close"} size={13} strokeWidth={2.4} />}
       </button>
     </div>
   );
-}
+});
 
 /** A slot of the running job: drawing now (at most the network's concurrency), or waiting its turn — the rest summed up in one tile. */
 function PendingTiles({ pending }: { pending: PendingSlots }) {
@@ -285,7 +290,9 @@ export function Gallery({ gallery, error, more, pending, picked, refused, onTogg
                 picked={picked.has(photo.photoId)}
                 refused={refused?.has(photo.photoId) ?? false}
                 onToggle={onToggle}
-                mark={mark}
+                marking={mark.marking.has(photo.photoId)}
+                blocked={mark.blocked}
+                onMark={mark.onMark}
                 onOpen={setViewing}
               />
             ))}

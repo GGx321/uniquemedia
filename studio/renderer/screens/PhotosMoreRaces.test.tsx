@@ -5,7 +5,8 @@ import type { EngineClient } from "../engine/client";
 import { MIA } from "../engine/mockEngine.testkit";
 import { asAnotherWindow } from "./montage/screenKit";
 import { library, meterPhotosList, moreButton, openGallery, press, tileOf, tiles } from "./photos/moreScreenKit";
-import { describeElement, flush, focusedLabel, openSection, tick } from "../testing";
+import { ManualScheduler } from "../engine/scheduler";
+import { describeElement, flush, focusedLabel, openSection, runAll, tick } from "../testing";
 
 // S4.P2 fix round: the gallery's reads under load and in each other's way. One read of photos.list at a time; a reason to read again
 // that comes meanwhile is kept and read once after it (MEDIUM-1); a run's new photos read only the top (MEDIUM-1 c); «Показать ещё»
@@ -15,11 +16,23 @@ import { describeElement, flush, focusedLabel, openSection, tick } from "../test
 const reject = (client: EngineClient, n: number) =>
   asAnotherWindow(() => client.request("photos.setRejected", { avatarId: MIA.avatarId, photoId: `photo-mia-${String(n).padStart(4, "0")}`, rejected: true }));
 
+/**
+ * The gallery on a manual clock for the re-read wait too (LOW-D): no test here waits in real time for the 400 ms the hook leaves after a
+ * read. `elapse` lets that wait pass; it is called from inside a `waitFor`, so the wait passes exactly when a read has ended and set it.
+ */
+async function openOnManualClock(photos: Parameters<typeof openGallery>[0]) {
+  const pagesScheduler = new ManualScheduler();
+  const harness = await openGallery(photos, { pagesScheduler });
+  return { ...harness, pagesScheduler };
+}
+
+const elapse = (pagesScheduler: ManualScheduler): void => runAll(pagesScheduler);
+
 const isRejected = (n: number): boolean => tileOf(`photo-mia-${String(n).padStart(4, "0")}`)?.closest(".photo-tile")?.classList.contains("photo-tile-rejected") === true;
 
 describe("under load (MEDIUM-1)", () => {
   test("a run of 25 photos landing one by one with 3 pages open: one read at a time, each reads only the top, none goes deep", async () => {
-    const { engine, scheduler } = await openGallery(library(1050));
+    const { engine, scheduler, pagesScheduler } = await openOnManualClock(library(1050));
     await press(moreButton());
     await waitFor(() => expect(tiles()).toHaveLength(1000));
     await press(moreButton());
@@ -32,9 +45,14 @@ describe("under load (MEDIUM-1)", () => {
     for (let step = 0; step < 80 && screen.queryByText("Запуск завершён") === null; step++) {
       tick(scheduler, 1); // a slot lands: its photo, job.progress and avatar.changed
       await flush();
+      elapse(pagesScheduler); // the wait after the read in flight (if one is) passes: the worst case, a read for every photo
+      await flush();
     }
     await screen.findByText("Запуск завершён");
-    await waitFor(() => expect(tiles()).toHaveLength(1075), { timeout: 3000 });
+    await waitFor(() => {
+      elapse(pagesScheduler);
+      expect(tiles()).toHaveLength(1075);
+    });
 
     expect(meter.maxInFlight).toBe(1);
     // Every read went from the top and stopped at the first photo held: no cursor, so not one page past the first was read again.
@@ -44,10 +62,27 @@ describe("under load (MEDIUM-1)", () => {
     expect(tiles().slice(25)).toEqual(library(1050).map((p) => p.photoId).reverse());
     expect(new Set(tiles()).size).toBe(1075);
     expect(screen.getByText("Конец галереи · 1 075 фото")).toBeDefined();
-  }, 30_000);
+  }, 90_000); // 1 075 tiles drawn on each of 25 landings; the macOS CI runner is ~4x slower than local and timed out at 30 s on 2026-10-11
+
+  test("a mark that comes while a read is in flight is read only once the wait after it has passed on the clock", async () => {
+    const { engine, client, scheduler, pagesScheduler } = await openOnManualClock(library(10));
+    const meter = meterPhotosList(engine);
+    engine.delayNext("photos.list", 500);
+    await reject(client, 10); // re-read 1 starts, held back
+    await reject(client, 9); // kept for after it
+    tick(scheduler, 1);
+    await flush();
+    await waitFor(() => expect(pagesScheduler.pending).toBe(1)); // the read ended and set the wait
+    expect(meter.cursors).toHaveLength(1);
+
+    elapse(pagesScheduler);
+    await waitFor(() => expect(meter.cursors).toHaveLength(2));
+    await waitFor(() => expect(isRejected(9)).toBe(true));
+    expect(pagesScheduler.pending).toBe(0);
+  });
 
   test("marks set elsewhere while a re-read is on its way: one more re-read after it, not one per mark", async () => {
-    const { engine, client, scheduler } = await openGallery(library(1001));
+    const { engine, client, scheduler, pagesScheduler } = await openOnManualClock(library(1001));
     await press(moreButton());
     await waitFor(() => expect(tiles()).toHaveLength(1000));
     const meter = meterPhotosList(engine);
@@ -60,11 +95,20 @@ describe("under load (MEDIUM-1)", () => {
 
     tick(scheduler, 1);
     await flush();
-    await waitFor(() => expect([1001, 1000, 999, 998].every(isRejected)).toBe(true), { timeout: 2000 });
+    await waitFor(() => {
+      elapse(pagesScheduler);
+      expect([1001, 1000, 999, 998].every(isRejected)).toBe(true);
+    });
     // Two re-reads from page 1 down to page 2 (the owner's depth), each of two pages: the held-back one, and — once, after a short
     // wait — the one the three later marks asked for.
-    await waitFor(() => expect(meter.cursors).toHaveLength(4), { timeout: 2000 });
-    await new Promise((resolve) => setTimeout(resolve, 600)); // nothing more comes after it
+    await waitFor(() => {
+      elapse(pagesScheduler);
+      expect(meter.cursors).toHaveLength(4);
+    });
+    // Nothing more comes after it: no wait is left to pass, and letting any pass reads nothing.
+    elapse(pagesScheduler);
+    await flush();
+    expect(pagesScheduler.pending).toBe(0);
     expect(meter.cursors.map((cursor) => (cursor === undefined ? "page 1" : "next"))).toEqual(["page 1", "next", "page 1", "next"]);
     expect(meter.maxInFlight).toBe(1);
     expect(tiles()).toHaveLength(1000);
@@ -92,7 +136,7 @@ describe("«Показать ещё» and a re-read never cross (MEDIUM-3)", () 
   });
 
   test("a re-read asked while «Показать ещё» is on its way waits for it, then reads from page 1 down to the new page", async () => {
-    const { engine, client, scheduler } = await openGallery(library(1001));
+    const { engine, client, scheduler, pagesScheduler } = await openOnManualClock(library(1001));
     const meter = meterPhotosList(engine);
     engine.delayNext("photos.list", 500);
     await press(moreButton());
@@ -104,7 +148,10 @@ describe("«Показать ещё» and a re-read never cross (MEDIUM-3)", () 
     await waitFor(() => expect(tiles()).toHaveLength(1000));
     expect(focusedLabel()).toBe(describeElement(tileOf("photo-mia-0501")));
     // Then, once, from page 1 with fresh cursors down to photo 2: the mark shows on the page just appended.
-    await waitFor(() => expect(isRejected(2)).toBe(true), { timeout: 2000 });
+    await waitFor(() => {
+      elapse(pagesScheduler);
+      expect(isRejected(2)).toBe(true);
+    });
     expect(meter.cursors.slice(1, 2)).toEqual([undefined]);
     expect(meter.cursors.slice(2).every((cursor) => cursor !== undefined)).toBe(true);
     expect(meter.maxInFlight).toBe(1);
@@ -199,5 +246,21 @@ describe("the picks (MEDIUM-2)", () => {
     // The whole gallery is read now and photo 1 is on no page: its pick goes, photo 2's stays.
     expect(montage()).toBe("Монтаж из выбранных · 1");
     expect(screen.getByRole("button", { name: "Выбрать для монтажа: фото 501, Дом" }).getAttribute("aria-pressed")).toBe("true");
+  });
+
+  test("a pick whose photo goes while the screen stays open goes at the next re-read that reaches the end of the gallery (LOW-C)", async () => {
+    const { engine, client, pagesScheduler } = await openOnManualClock(library(3));
+    fireEvent.click(screen.getByRole("button", { name: "Выбрать для монтажа: фото 2, Дом" }));
+    fireEvent.click(screen.getByRole("button", { name: "Выбрать для монтажа: фото 3, Дом" }));
+    const montage = (): string => screen.getByRole("button", { name: /Монтаж из выбранных/ }).textContent ?? "";
+    expect(montage()).toBe("Монтаж из выбранных · 2");
+
+    engine.setPhotoSidecarReadable("photo-mia-0001", false); // photo 3 of the gallery goes; nothing is announced
+    await reject(client, 3 - 1); // another window's mark on photo 2 makes the screen read again
+    await waitFor(() => {
+      elapse(pagesScheduler);
+      expect(tiles()).toHaveLength(2);
+    });
+    expect(montage()).toBe("Монтаж из выбранных · 1");
   });
 });

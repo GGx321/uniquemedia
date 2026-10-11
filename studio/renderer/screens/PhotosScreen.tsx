@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { bodyPhrase, MAX_CLIPS, type AvatarSummary, type EngineError, type Estimate, type PhotoSummary, type RunSummary } from "../../shared/engine";
 import { useEngine, useEngineView, useSceneSet } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
@@ -198,9 +198,13 @@ function AvatarPhotos({
       // photos it lists: one picked on a later page is kept until its own page comes in with «Показать ещё», and checked then. Once
       // the last page is in, a pick on none of them is of a photo gone meanwhile, and goes (review MEDIUM-2).
       if (added !== null) setPicked((current) => (list.nextCursor === null ? listedPicks(usablePicks(current, added, true), list.photos) : usablePicks(current, added, true)));
-      else if (!picksChecked.current) {
-        picksChecked.current = true;
-        setPicked((current) => usablePicks(current, list.photos, list.nextCursor !== null));
+      else {
+        if (!picksChecked.current) {
+          picksChecked.current = true;
+          setPicked((current) => usablePicks(current, list.photos, list.nextCursor !== null));
+        }
+        // A re-read that reaches the end of the gallery lists every photo there is: a pick on none of them is of a photo gone meanwhile (LOW-C).
+        if (list.nextCursor === null) setPicked((current) => listedPicks(current, list.photos));
       }
     },
   });
@@ -318,11 +322,17 @@ function AvatarPhotos({
     }
   }
 
+  // The gallery's tiles are drawn once and again only when their own data moves, so what they are handed must not change with every
+  // render of this screen: these two answer with whatever the functions above are now.
+  const latest = useRef({ togglePick, markPhoto });
+  latest.current = { togglePick, markPhoto };
+  const onTogglePick = useCallback((photoId: string): void => latest.current.togglePick(photoId), []);
+  const onMark = useCallback((photo: PhotoSummary, rejected: boolean): void => void latest.current.markPhoto(photo, rejected), []);
   const mark: MarkControl = {
     marking,
     blocked: avatar.usage.state === "unknown" && avatar.usage.reasons.includes("rejects-unreadable") ? "Журнал отметок повреждён: сначала восстановите отметки" : null,
     failure: markError,
-    onMark: (photo, rejected) => void markPhoto(photo, rejected),
+    onMark,
   };
 
   const tabIds: Record<PhotosTab, string> = { photos: photosTabId, videos: videosTabId, look: lookTabId };
@@ -527,7 +537,7 @@ function AvatarPhotos({
                   pending={pending}
                   picked={picked}
                   refused={refused}
-                  onToggle={togglePick}
+                  onToggle={onTogglePick}
                   onRetry={() => setGalleryRetry((n) => n + 1)}
                   filter={filter}
                   onFilter={setFilter}
