@@ -68,7 +68,26 @@ export function videoInfoFromProbe(probe: ProbeResult, input: string): MediaInfo
   };
 }
 
-let filterNames: Promise<Set<string>> | null = null;
+/**
+ * Filter names off `ffmpeg -filters` output, asked through `list`, remembered
+ * once an answer comes. A failed listing reports none for that call and is
+ * forgotten, so one failed spawn does not leave the process believing the
+ * filters are missing. Separate from the binary so this can be tested without
+ * one.
+ */
+export function cachedFilters(list: () => Promise<Buffer>): () => Promise<Set<string>> {
+  let names: Promise<Set<string>> | null = null;
+  return () => {
+    names ??= list().then(
+      (out) => new Set(out.toString().split("\n").map((line) => line.trim().split(/\s+/)[1] ?? "")),
+      () => {
+        names = null;
+        return new Set<string>();
+      }
+    );
+    return names;
+  };
+}
 
 /**
  * The filters the running ffmpeg has, asked once per process. Both bundled
@@ -77,13 +96,7 @@ let filterNames: Promise<Set<string>> | null = null;
  * failing on an unknown filter name. A binary that cannot even list its
  * filters reports none, and its render fails on its own.
  */
-export function ffmpegFilters(): Promise<Set<string>> {
-  filterNames ??= run(FFMPEG, ["-hide_banner", "-filters"]).then(
-    (out) => new Set(out.toString().split("\n").map((line) => line.trim().split(/\s+/)[1] ?? "")),
-    () => new Set<string>()
-  );
-  return filterNames;
-}
+export const ffmpegFilters = cachedFilters(() => run(FFMPEG, ["-hide_banner", "-filters"]));
 
 const hasZscale = async (): Promise<boolean> => (await ffmpegFilters()).has("zscale");
 
