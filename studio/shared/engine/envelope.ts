@@ -107,6 +107,13 @@ import { z } from "zod";
 //    An `avatar.portraits` job stores a slot's portrait BEFORE it emits the `job.progress` that counts it, so a window that re-reads `avatars.portraits` on every progress sees it.
 //  - S5.3R (additive): a `failed` slot of `PortraitsResult.failedSlots` carries `charge` (`free`, `paid` or `worst-until-reconcile`): what the slot cost as the ledger settled its image and its age check
 //    for the mode the batch was started in. The window shows it and no longer guesses it from the age-check setting.
+// Stage 5, S5.7a (additive, no bump): «Подача» and the angle from the scene.
+//  - `RunRequest.level`, `COMPOSE_REQUEST_FIELDS.level` and `LaunchSettings.level` (`SceneLevel`, `ordinary` | `flirty`; absent = ordinary; `bold` is refused); `RunRequest.poses`,
+//    `COMPOSE_REQUEST_FIELDS.poses` and `LaunchSettings.poses` become optional and are accepted and ignored for the angle (a window of an older build still sends them).
+//  - `SceneView.level` (only `flirty`) and `SceneView.capture` (only when it is not the shot's own); `SceneSetView.poses` is echoed only when the set stored them and `SceneSetView.level`
+//    only when it is flirty; `PhotoQaSummary.faceMarked`; `RunResult.failedReasons` (the scene reasons of the slots that ended with one).
+//  - Rollback: an older build cannot read a plan.json, a scene-set file or a launch file that carries `level` or lacks `poses` (its schemas are strict), so a library used by this build
+//    is not opened again by an older one once S5.7c ships the window that stops sending `poses`.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 
