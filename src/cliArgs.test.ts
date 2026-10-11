@@ -186,3 +186,20 @@ test("--first-frame rejects a mode it does not know, naming the valid ones", () 
   expect(message).toContain("cover");
   for (const mode of ["off", "black", "photo"]) expect(message).toContain(mode);
 });
+
+test("--frame is off unless asked for", () => {
+  expect(parseStartOptions(line("--count", "1"), route).frame).toBe(false);
+});
+
+test("--frame on turns the frame on, and off turns it off", () => {
+  expect(parseStartOptions(line("--frame", "on"), route).frame).toBe(true);
+  expect(parseStartOptions(line("--frame", "off"), route).frame).toBe(false);
+});
+
+test("--frame with another value is refused with the choices named", () => {
+  expect(() => parseStartOptions(line("--frame", "yes"), route)).toThrow(/on, off/);
+});
+
+test("--frame with no value after it is refused", () => {
+  expect(() => parseStartOptions(line("--count", "1", "--frame"), route)).toThrow(/--frame/);
+});

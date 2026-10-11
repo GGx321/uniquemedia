@@ -19,6 +19,22 @@ export function makeTestClip(path: string, durationSec = 2): void {
   ]);
 }
 
+/**
+ * A 1080x1920 clip of animated test pattern plus temporal noise: near-white-noise
+ * entropy that no codec can predict, so an uncapped CRF encode of it runs well
+ * past 12 Mbit/s. Used to prove a bitrate ceiling binds. Kept low-fps and short
+ * so generating and rendering it stays cheap.
+ */
+export function makeHighEntropyClip(path: string, durationSec = 10): void {
+  ffmpeg("makeHighEntropyClip", [
+    "-y",
+    "-f", "lavfi", "-i", `testsrc2=duration=${durationSec}:size=1080x1920:rate=15,noise=alls=100:allf=t`,
+    "-f", "lavfi", "-i", `sine=frequency=440:duration=${durationSec}`,
+    "-c:v", "libx264", "-crf", "10", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+    path,
+  ]);
+}
+
 /** Same clip with no audio track — the case where "has an audio stream" cannot
  *  be what tells video apart from a still. */
 export function makeSilentTestClip(path: string): void {
@@ -68,8 +84,7 @@ export const STORY_EDGE_MARKS: ReadonlyArray<{ x: number; y: number }> = [
  * This is the shape the crop recipe was measured to damage — a 1080x1920 story
  * whose graphics sit at the edges, where a 4% off-centre crop window takes a
  * whole glyph off one side. The four marks sit inside that band, at the middle
- * of each side rather than in a corner so the vignette cannot dim them below a
- * threshold, and far enough from the centre block that a search around them
+ * of each side rather than in a corner so the geometry cannot push them off the frame, and far enough from the centre block that a search around them
  * cannot mistake it for one of them.
  *
  * PNG rather than JPEG, in RGB: the background has to be exactly 0, which is

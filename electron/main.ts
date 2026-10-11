@@ -11,6 +11,8 @@ import {
   type StartRequest,
 } from "./handlers";
 import { CH } from "./ipc";
+import { extractFramePack } from "./framePack";
+import { detectMediaKind } from "../src/node/detectKind";
 
 const backends = createBackends();
 let abortController: AbortController | null = null;
@@ -73,9 +75,36 @@ ipcMain.handle(CH.openFile, (_e, path: string) => shell.openPath(path));
 ipcMain.handle(CH.reveal, (_e, path: string) => shell.showItemInFolder(path));
 ipcMain.handle(CH.cancel, () => { abortController?.abort(); activeRoute?.executor.cancel(); });
 
+/**
+ * Where frame mode reads its backgrounds. Unpackaged, the repo's own pack
+ * (undefined = the default). Packaged, the pack travels inside the archive as
+ * part of the renderer build and is extracted once to a real folder.
+ */
+async function framePackDir(): Promise<string | undefined> {
+  if (!app.isPackaged) return undefined;
+  return extractFramePack(
+    join(app.getAppPath(), "out", "renderer", "frame-backgrounds"),
+    join(app.getPath("userData"), "frame-backgrounds")
+  );
+}
+
 ipcMain.handle(CH.start, async (_e, req: StartRequest) => {
+  let packDir: string | undefined;
+  // Only a video with the frame on needs the pack; a photo batch never waits on
+  // it and cannot be stopped by it. A file the kind of which cannot be read
+  // falls through: the batch reports that itself.
+  const kind = req.opts.frame ? await detectMediaKind(req.input).catch(() => null) : null;
+  if (kind === "video") {
+    try {
+      packDir = await framePackDir();
+    } catch (err) {
+      send(CH.evtError, { message: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+  }
   abortController = new AbortController();
   await runBatchForHost(req, {
+    framePackDir: packDir,
     backends,
     send,
     signal: abortController.signal,

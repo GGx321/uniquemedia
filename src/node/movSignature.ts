@@ -206,3 +206,64 @@ export async function scrubMovSignature(path: string): Promise<MovSignaturePatch
   }
   return patches;
 }
+
+/** Seconds between the MOV epoch (1904-01-01 UTC) and the Unix epoch. */
+const MAC_EPOCH_OFFSET = 2_082_844_800;
+
+/**
+ * Writes `when` (default: now, UTC) as the creation and modification time of
+ * the movie header and of every track and media header. Under `bitexact` the
+ * muxer writes zeros there — a 1904 date no camera ever writes — so a clean
+ * file gets the one honest value it has: the time it was exported. Nothing else
+ * is invented. Version 0 headers hold 32-bit times, version 1 hold 64-bit ones.
+ * Like the signature scrub, the walker refuses a file the muxer did not lay out.
+ */
+export async function stampMovCreationTimes(path: string, when: Date = new Date()): Promise<void> {
+  const bytes = await readFile(path);
+  const top = [...boxesIn(bytes, 0, bytes.length)];
+  if (!top[0] || top[0].type !== "ftyp") {
+    throw new Error("MOV does not start with a ftyp box; refusing to patch it");
+  }
+  const moov = top.find((b) => b.type === "moov");
+  if (!moov) throw new Error("MOV has no moov box; refusing to patch it");
+
+  const headers: Box[] = [];
+  const mvhd = childrenOf(bytes, moov, "mvhd")[0];
+  if (mvhd) headers.push(mvhd);
+  for (const trak of childrenOf(bytes, moov, "trak")) {
+    const tkhd = childrenOf(bytes, trak, "tkhd")[0];
+    if (tkhd) headers.push(tkhd);
+    const mdhd = descend(bytes, trak, ["mdia", "mdhd"]);
+    if (mdhd) headers.push(mdhd);
+  }
+
+  const seconds = BigInt(Math.floor(when.getTime() / 1000) + MAC_EPOCH_OFFSET);
+  // Every header is checked and its write planned BEFORE any byte is written,
+  // so a refusal never leaves a half-stamped file.
+  const writes = headers.map((h) => {
+    const version = bytes[h.body];
+    if (version !== 0 && version !== 1) {
+      throw new Error(`MOV '${h.type}' at byte ${h.start} has unknown version ${version}; refusing to patch it`);
+    }
+    const width = version === 1 ? 8 : 4;
+    if (h.body + 4 + 2 * width > h.end) {
+      throw new Error(`MOV '${h.type}' at byte ${h.start} is too short to hold its times`);
+    }
+    const times = Buffer.alloc(2 * width);
+    if (width === 8) {
+      times.writeBigUInt64BE(seconds, 0);
+      times.writeBigUInt64BE(seconds, 8);
+    } else {
+      times.writeUInt32BE(Number(seconds), 0);
+      times.writeUInt32BE(Number(seconds), 4);
+    }
+    return { at: h.body + 4, times };
+  });
+
+  const handle = await open(path, "r+");
+  try {
+    for (const w of writes) await handle.write(w.times, 0, w.times.length, w.at);
+  } finally {
+    await handle.close();
+  }
+}

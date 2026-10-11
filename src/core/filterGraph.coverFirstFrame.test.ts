@@ -33,11 +33,9 @@ const coverRecipe: PhotoRecipe = {
   exportFormat: "original",
   ops: [
     { id: "eq", params: { contrast: 1.02, saturation: 0.99, gamma: 0.98 } },
-    { id: "hue", params: { h: -2 } },
     { id: "pancrop", params: { windowPct: 0.96, panX: 0.5, panY: -0.5 } },
     { id: "rotate", params: { deg: 0.1 } },
     { id: "lenscorrection", params: { k1: 0.008 } },
-    { id: "vignette", params: { angle: 0.5, x0: 0.4, y0: 0.6 } },
     { id: "noise", params: { strength: 4, temporal: false } },
   ],
   encode: { quality: 5, subsampling: "420" },
@@ -76,7 +74,7 @@ const OVERLAY = "overlay=x=(W-w)/2:y=(H-h)/2:eof_action=repeat:enable='eq(n,0)'"
  *  concat and `[outv]`, and the cover lines that feed it. */
 const photoBranch = (fps: number): string =>
   `concat=n=2:v=1:a=0,fps=${fps}[vc];` +
-  `[1:v]${photoChain(coverRecipe, coverInfo)}[c0];` +
+  `[1:v]${photoChain(coverRecipe, coverInfo)},scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[c0];` +
   `[c0][vc]${FIT}[cover][vref];` +
   `[vref][cover]${OVERLAY}[outv]`;
 
@@ -93,7 +91,7 @@ test("with mode photo the cover is a second input, named before the graph", () =
 
 test("the cover goes through the photo chain on [1:v], at the cover's own size", () => {
   const fc = complexOf(buildArgs(photo, info));
-  expect(fc).toContain(`[1:v]${photoChain(coverRecipe, coverInfo)}[c0]`);
+  expect(fc).toContain(`[1:v]${photoChain(coverRecipe, coverInfo)},scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[c0]`);
   // The cover's own dimensions, not the video's: 1200x900 * 0.96 -> 1152x864.
   expect(fc).toContain("crop=1152:864:36:9,scale=1200:900");
 });

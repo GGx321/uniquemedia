@@ -20,6 +20,7 @@ const state: SettingsState = {
     edgeMode: "fit",
     firstFrame: "black",
     cover: null,
+    frame: true,
   },
 };
 
@@ -60,6 +61,7 @@ test("settingsToOptions maps every CopyOptions field", () => {
     edgeMode: "fit",
     firstFrame: "black",
     coverPath: null,
+    frame: true,
   });
 });
 

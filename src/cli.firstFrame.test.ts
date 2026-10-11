@@ -28,6 +28,11 @@ const SIDE = 64;
  *  rendered standalone through the SAME recipe is a re-encode apart. */
 const SAME_PICTURE_MAX = 16;
 
+/** The video is BT.709 limited range, the JPEGs are BT.601 full range. Frame 0
+ *  is taken to true colours with the stream's own matrix first, so the gray
+ *  that follows is the picture's luma and not the stream's numbers misread. */
+const AS_BT709 = "scale=in_range=tv:in_color_matrix=bt709:out_range=pc,format=rgb24,";
+
 let dir: string;
 let clip: string;
 let still: string;
@@ -100,7 +105,7 @@ test("--first-frame photo --cover reaches the render: the copy opens on the cove
   const standalone = join(dir, "standalone.jpg");
   await stills.render(cover, await stills.probe(cover), coverRecipe, standalone);
 
-  const frame0 = gray(join(out, "copy_1.mp4"), "");
+  const frame0 = gray(join(out, "copy_1.mp4"), AS_BT709);
   const toRecipe = distance(frame0, gray(standalone, ""));
   const toCoverFile = distance(frame0, gray(cover, ""));
   const toFootage = distance(frame0, gray(clip, ""));

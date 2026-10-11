@@ -11,7 +11,8 @@ function spatialChain(recipe: Recipe, info: MediaInfo): string {
     const frag = FRAGMENTS[op.id]?.(op.params, info);
     if (frag) parts.push(frag);
   }
-  if (recipe.exportFormat !== "original") {
+  // Frame mode over `original` fits the footage into its box later instead.
+  if (recipe.exportFormat !== "original" && !recipe.frame?.fit) {
     const { w, h } = EXPORT_DIMS[recipe.exportFormat];
     parts.push(`scale=${w}:${h}:force_original_aspect_ratio=increase`);
     parts.push(`crop=${w}:${h}`);
@@ -95,7 +96,7 @@ function coverFirstFrame(
   return {
     tail: `,fps=${fps}[vc]`,
     lines: [
-      `[1:v]${photoChain(cover.recipe, cover.info)}[c0]`,
+      `[1:v]${photoChain(cover.recipe, cover.info)},scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[c0]`,
       `[c0][vc]${COVER_FIT}[cover][vref]`,
       `[vref][cover]${COVER_OVERLAY}[outv]`,
     ],
@@ -117,7 +118,36 @@ function videoComplex(recipe: Recipe, info: MediaInfo, fps: number): string {
   });
   const ff = recipe.firstFrame;
   const concat = `${splitLabels("s", n)}concat=n=${n}:v=1:a=0`;
-  if (ff.mode === "photo") {
+  const fr = recipe.frame;
+  if (fr) {
+    // The finished video is scaled down and laid over the background; the
+    // first-frame branch then works on the composed picture. The background
+    // input follows the cover's, if there is one.
+    const { w: W, h: H } = EXPORT_DIMS[recipe.exportFormat === "original" ? "reels" : recipe.exportFormat];
+    const bg = ff.mode === "photo" ? 2 : 1;
+    const composed = ff.mode === "off" ? "outv" : ff.mode === "black" ? "vfr" : "vc";
+    // Fitted footage is smaller than its box on one axis; centre it in the box
+    // on even coordinates (the overlay's own w/h are the scaled footage's).
+    const scaleTo = fr.fit
+      ? `scale=${fr.w}:${fr.h}:force_original_aspect_ratio=decrease:force_divisible_by=2`
+      : `scale=${fr.w}:${fr.h}`;
+    const at = fr.fit
+      ? `x=${fr.x}+floor((${fr.w}-w)/4)*2:y=${fr.y}+floor((${fr.h}-h)/4)*2`
+      : `x=${fr.x}:y=${fr.y}`;
+    lines.push(
+      `${concat},fps=${fps},${scaleTo},setsar=1[vsm]`,
+      // The background is a JPEG (full-range BT.601); the video is BT.709
+      // limited range, and the overlay would read the JPEG's numbers as
+      // BT.709 and come out darker. It is scaled, converted and cached as ONE
+      // frame (`loop` replays it) so the still is not decoded and scaled again
+      // for every frame of the clip.
+      `[${bg}:v]scale=${W}:${H}:force_original_aspect_ratio=increase:in_range=pc:in_color_matrix=bt601:out_range=tv:out_color_matrix=bt709,` +
+        `crop=${W}:${H},setsar=1,format=yuv420p,loop=loop=-1:size=1,setpts=N/(${fps}*TB),fps=${fps}[bg]`,
+      `[bg][vsm]overlay=${at}:shortest=1[${composed}]`
+    );
+    if (ff.mode === "black") lines.push(`[vfr]${blackFirstFrame(fps).slice(1)}[outv]`);
+    if (ff.mode === "photo") lines.push(...coverFirstFrame(ff, fps).lines);
+  } else if (ff.mode === "photo") {
     const { tail, lines: cover } = coverFirstFrame(ff, fps);
     lines.push(`${concat}${tail}`, ...cover);
   } else {
@@ -149,12 +179,16 @@ function audioComplex(recipe: Recipe, info: MediaInfo): string {
 const MAX_FILE_MB = 50;
 
 /**
- * Instagram re-encodes every upload to roughly 2–3.5 Mbit/s, so bits spent
- * above that band are thrown away on ingest. The encode stops at its top:
- * constrained CRF, so a static scene still gets only what it needs, and the
- * ceiling catches motion.
+ * Instagram re-encodes every upload, so feeding it an already heavily
+ * compressed file compounds artefacts. The copy is therefore delivered at a
+ * normal upload bitrate for 1080p, with larger files accepted. Constrained
+ * CRF: a static scene still gets only what it needs, and the ceiling catches
+ * motion. Long clips are held lower by the 50 MB file cap below.
  */
-const MAX_VIDEO_KBPS = 3500;
+const MAX_VIDEO_KBPS = 12000;
+
+/** Audio bitrate used when the recipe carries none: normal stereo AAC. */
+const DEFAULT_AUDIO_KBPS = 192;
 
 /** VBV window in seconds: `-bufsize` is `-maxrate` times this. */
 const VBV_WINDOW_SEC = 2;
@@ -166,14 +200,16 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
   const fps = Number(enc.fps ?? 30);
   const gop = Number(enc.gop ?? 60);
   const keyintMin = Number(enc.keyintMin ?? 30);
-  const aBitrate = Number(enc.audioKbps ?? 128);
+  const aBitrate = Number(enc.audioKbps ?? DEFAULT_AUDIO_KBPS);
 
   // Two ceilings, the lower one wins. The 50 MB bound: total bits for ~46 MB
   // (8% safety margin) minus the audio track, per second — it only binds on a
-  // clip long enough for 3500k to overflow the file cap (from roughly 105 s).
+  // clip long enough for 12000k to overflow the file cap (from roughly 30 s).
   const audioKbps = info.hasAudio ? aBitrate : 0;
+  // No floor: the cap wins for any duration, or a very long clip would
+  // overflow 50 MB (1 kbit/s only keeps the flag valid when audio eats it all).
   const fileCapKbps = Math.max(
-    600,
+    1,
     Math.floor((MAX_FILE_MB * 1024 * 8 * 0.92) / Math.max(1, info.durationSec)) - audioKbps
   );
   const capKbps = Math.min(MAX_VIDEO_KBPS, fileCapKbps);
@@ -183,7 +219,12 @@ export function buildArgs(recipe: Recipe, info: MediaInfo): string[] {
     : videoComplex(recipe, info, fps);
   // The cover is the graph's second input, named here so the executor's
   // `-i <source>` is followed by `-i <cover>` and `[1:v]` means the still.
-  const inputs = recipe.firstFrame.mode === "photo" ? ["-i", recipe.firstFrame.path] : [];
+  // Frame mode's background is the next input after it, a single frame the
+  // graph loops itself.
+  const inputs = [
+    ...(recipe.firstFrame.mode === "photo" ? ["-i", recipe.firstFrame.path] : []),
+    ...(recipe.frame ? ["-i", recipe.frame.background] : []),
+  ];
   const args: string[] = [...inputs, "-filter_complex", complex, "-map", "[outv]"];
 
   if (info.hasAudio) {

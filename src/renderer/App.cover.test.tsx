@@ -127,3 +127,22 @@ test("with the first frame off, the start payload says so and sends no cover", a
   expect(started[0].opts.firstFrame).toBe("off");
   expect(started[0].opts.coverPath).toBeNull();
 });
+
+test("the start payload sends the frame off by default", async () => {
+  started.length = 0;
+  render(<App />);
+  await loadClip();
+  fireEvent.click(runButton());
+  await waitFor(() => expect(started.length).toBe(1));
+  expect(started[0].opts.frame).toBe(false);
+});
+
+test("switching «В рамке» on puts frame: true in the start payload", async () => {
+  started.length = 0;
+  render(<App />);
+  await loadClip();
+  fireEvent.click(screen.getByLabelText("В рамке"));
+  fireEvent.click(runButton());
+  await waitFor(() => expect(started.length).toBe(1));
+  expect(started[0].opts.frame).toBe(true);
+});

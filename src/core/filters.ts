@@ -6,9 +6,6 @@ type Fragment = (p: Params, info: MediaInfo) => string | null;
 
 const n = (v: unknown) => Number(v);
 
-/** Round down to the chroma grid — subsampled formats need even geometry. */
-const even = (v: number) => Math.floor(v / 2) * 2;
-
 interface PanWindow {
   w: number;
   h: number;
@@ -37,6 +34,19 @@ function panWindow(pct: number, panX: number, panY: number, info: MediaInfo): Pa
   return { w, h, x: place(marginX, panX), y: place(marginY, panY) };
 }
 
+/**
+ * How far luma-only uniform noise of strength `s` lifts pure black, measured as
+ * the peak of the gray plane of a black 1080x1920 yuv420p frame (the plane the
+ * JPEG's luma is made from): 0 up to strength 2, then 1, 1, 2, 2, 3, 3, 5, 5, 6,
+ * 6 for 3..12. Above 12 (past the sampler's ceiling) it is half the strength,
+ * rounded up. Noise on the chroma planes lifted an RGB channel about three
+ * times as far and speckled colour onto the picture, hence luma only.
+ */
+const NOISE_BLACK_LIFT = [0, 0, 0, 1, 1, 2, 2, 3, 3, 5, 5, 6, 6] as const;
+function noiseBlackLift(s: number): number {
+  return s < NOISE_BLACK_LIFT.length ? NOISE_BLACK_LIFT[s] : Math.ceil(s / 2);
+}
+
 export const FRAGMENTS: Record<string, Fragment> = {
   /** Each term is emitted only when the recipe drew one, in the order the video
    *  path has always written them — its chains are pinned byte-for-byte.
@@ -56,8 +66,6 @@ export const FRAGMENTS: Record<string, Fragment> = {
     }
     return terms.length > 0 ? `eq=${terms.join(":")}` : null;
   },
-
-  hue: (p) => `hue=h=${n(p.h)}`,
 
   zoomcrop: (p, info) => {
     const f = round(1 + n(p.zoomPct) / 100, 4);
@@ -130,42 +138,18 @@ export const FRAGMENTS: Record<string, Fragment> = {
     const s = Math.round(n(p.strength));
     if (s <= 0) return null;
     // `t` is temporal — meaningless for a still, so photos pass temporal=false.
-    const flags = p.temporal === false ? "u" : "t+u";
-    return `noise=alls=${s}:allf=${flags}`;
-  },
-
-  /** `{ on }` alone keeps the video path's bare `vignette`, unchanged.
-   *
-   *  `angle`/`x0`/`y0` produce an off-centre vignette, with `x0`/`y0` given as
-   *  fractions of the frame. ffmpeg's vignette hard-blacks every pixel further
-   *  than hypot(w/2, h/2) from its centre (`dnorm > 1` returns 0), so moving the
-   *  centre by as little as 3% puts a pure-black wedge in the far corner —
-   *  measured. Padding the canvas first pushes that cutoff outside the visible
-   *  area; the pad is cropped back off immediately after. */
-  vignette: (p, info) => {
-    if (p.on === false) return null;
-    if (p.angle === undefined || p.x0 === undefined || p.y0 === undefined) {
-      return p.on ? "vignette" : null;
-    }
-    const { width: w, height: h } = info;
-    const dx = (n(p.x0) - 0.5) * w;
-    const dy = (n(p.y0) - 0.5) * h;
-    // Farthest visible corner from the vignette centre, plus 2% headroom for
-    // integer rounding; the pad must reach at least that far.
-    const reach = Math.hypot(w / 2 + Math.abs(dx), h / 2 + Math.abs(dy)) * 1.02;
-    const factor = reach / Math.hypot(w / 2, h / 2);
-    const padW = even(Math.max(w + 2, Math.ceil(w * factor)));
-    const padH = even(Math.max(h + 2, Math.ceil(h * factor)));
-    // Same offset for pad and crop, so the frame comes back pixel-identical.
-    const padX = even(Math.floor((padW - w) / 2));
-    const padY = even(Math.floor((padH - h) / 2));
-    const x0 = Math.round(padX + w / 2 + dx);
-    const y0 = Math.round(padY + h / 2 + dy);
-    return (
-      `pad=${padW}:${padH}:${padX}:${padY},` +
-      `vignette=angle=${n(p.angle)}:x0=${x0}:y0=${y0},` +
-      `crop=${w}:${h}:${padX}:${padY}`
-    );
+    if (p.temporal !== false) return `noise=alls=${s}:allf=t+u`;
+    // A still: uniform noise lifts pure black, which glows on an AMOLED
+    // screen, so the lift comes back out. Only the lifted floor is touched: the
+    // knee maps [black + b, black + 2b) back down to [black, black + 2b) and
+    // leaves everything from black + 2b up alone, so no shadow, gradient or
+    // midtone gets darker. It works on the luma plane in place (`lutyuv`),
+    // relative to that plane's own `minval` (16 limited, 0 full range), so there
+    // is no round trip through RGB and no assumption about the range.
+    const b = noiseBlackLift(s);
+    if (b === 0) return `noise=c0s=${s}:c0f=u`;
+    const y = `if(lt(val,minval+${2 * b}),max(minval,minval+2*(val-minval-${b})),val)`;
+    return `noise=c0s=${s}:c0f=u,lutyuv=y='${y}'`;
   },
 
   hflip: (p) => (p.on ? "hflip" : null),

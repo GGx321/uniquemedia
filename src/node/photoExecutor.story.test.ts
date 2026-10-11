@@ -38,7 +38,7 @@ const NOW = 1_780_000_000_000;
 const MARK_SLACK = 0.09;
 
 /** A mark is white on black; anything this bright in its box is the mark and
- *  not the vignette, the noise or the JPEG. */
+ *  not the noise or the JPEG. */
 const MARK_BRIGHT = 128;
 
 /** A block of pure background: clear of all four marks, clear of the centre
@@ -81,9 +81,8 @@ function markCount(g: Uint8Array, mx: number, my: number): number {
 }
 
 /** Mean and peak of the background block — the statistics the defect was found
- *  with. A frame-wide minimum proves nothing here: the vignette darkens the
- *  corners and the centre block has black in it, so a lifted background would
- *  still read 0. */
+ *  with. A frame-wide minimum proves nothing here: the centre block has black
+ *  in it, so a lifted background would still read 0. */
 function background(g: Uint8Array): { mean: number; max: number } {
   const { x, y, w, h } = BACKGROUND_BOX;
   let sum = 0;
@@ -257,7 +256,7 @@ test("cropping still passes the hash check while doing it", () => {
  * Each safe bound holds by arithmetic, not by measurement: (0 - 0.5)*c + 0.5
  * is <= 0 for every c >= 1. So this is a functional confirmation that the
  * arithmetic reaches the rendered file intact — through the geometry, the
- * vignette, the spatial noise and the JPEG — and the guard against a lever
+ * spatial noise and the JPEG — and the guard against a lever
  * wandering back across its neutral point lives in the sampler test, where it
  * cannot be satisfied by a lucky batch of seeds.
  */

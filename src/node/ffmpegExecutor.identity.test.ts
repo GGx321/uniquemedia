@@ -227,6 +227,24 @@ test("clean: the video sample entry has a zero vendor and a blank compressor nam
   expect(video).not.toHaveProperty("encoder");
 });
 
+test("clean: the container carries the real export time as its creation time", () => {
+  // Rendered a moment ago in beforeAll; mvhd, tkhd and mdhd all say so, UTC.
+  const { format, video, audio } = probeTags(fileOf("clean").output);
+  for (const tags of [format, video, audio]) {
+    const created = Date.parse(tags.creation_time ?? "");
+    expect(Number.isFinite(created)).toBe(true);
+    expect(Math.abs(Date.now() - created)).toBeLessThan(120_000);
+    expect(tags.creation_time).toMatch(/Z$/);
+  }
+});
+
+test("clean: invents no make, model, location or software", () => {
+  const { bytes, output } = fileOf("clean");
+  const keys = Object.keys(probeTags(output).format);
+  for (const k of keys) expect(k).not.toMatch(/make|model|location|software|gps/i);
+  expect(bytes.includes("com.apple")).toBe(false);
+});
+
 test("clean: no encoder tag on the container and no exiftool signature", () => {
   const { bytes, output } = fileOf("clean");
   expect(probeTags(output).format).not.toHaveProperty("encoder");

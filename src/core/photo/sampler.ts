@@ -40,21 +40,18 @@ export function samplePhotoRecipe(
 
   const ops: Operation[] = [
     {
-      // Shaped so that nothing here can lift pure black, which is what a story
-      // is built on. No `brightness` at all — `eq`'s is additive and shifts the
-      // whole scale including zero. `contrast` only upward and `gamma` only
-      // downward — `eq` is multiplicative about mid-grey, so the other half of
-      // each range raises the floor (measured 24/255 at contrast 0.8, 13/255 at
-      // gamma 1.25). `saturation` keeps both halves: it scales chroma and
-      // leaves a grey of any level where it was. See PHOTO_PARAMS.
+      // Shaped so that nothing here can lift pure black, tint the picture or
+      // darken it. No `brightness` (additive, shifts the whole scale), no
+      // `gamma` (only its darkening half keeps black at zero), no `hue` (a
+      // colour cast) and, below, no vignette. `contrast` and `saturation` only
+      // go up: contrast about mid-grey keeps black at zero from 1 upward, and a
+      // more saturated copy is never duller than its source. See PHOTO_PARAMS.
       id: "eq",
       params: {
         contrast: drawOneSided("contrast", 1, LIM.minContrast, LIM.maxContrast),
-        saturation: draw("saturation", LIM.minSaturation, LIM.maxSaturation),
-        gamma: drawOneSided("gamma", -1, LIM.minGamma, LIM.maxGamma),
+        saturation: drawOneSided("saturation", 1, LIM.minSaturation, LIM.maxSaturation),
       },
     },
-    { id: "hue", params: { h: draw("hueDeg", -LIM.maxHueDeg, LIM.maxHueDeg) } },
   ];
 
   // Primary lever, drawn once and applied in whichever direction the edge mode
@@ -87,17 +84,6 @@ export function samplePhotoRecipe(
     { id: "rotate", params: { deg: preserveEdges ? 0 : rotateDeg } },
     { id: "lenscorrection", params: { k1: preserveEdges ? 0 : lensK1 } }
   );
-
-  // Primary lever: the vignette centre is drawn per copy. A fixed one would
-  // separate copies from the original but leave them sharing a signature.
-  ops.push({
-    id: "vignette",
-    params: {
-      angle: draw("vignetteAngle", LIM.minVignetteAngle, LIM.maxVignetteAngle),
-      x0: draw("vignetteCentre", LIM.minVignetteCentre, LIM.maxVignetteCentre),
-      y0: draw("vignetteCentre", LIM.minVignetteCentre, LIM.maxVignetteCentre),
-    },
-  });
 
   // Secondary: spatial-only noise. `temporal: false` drops ffmpeg's `t` flag,
   // which is meaningless for a single frame.

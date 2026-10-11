@@ -31,10 +31,31 @@ test("higher intensity widens eq deviations on average", () => {
   for (let s = 0; s < 40; s++) {
     const low = sampleRecipe(opts, s, 1).video.find((o) => o.id === "eq")!;
     const high = sampleRecipe(opts, s, 2).video.find((o) => o.id === "eq")!;
-    lowSum += Math.abs(Number(low.params.brightness));
-    highSum += Math.abs(Number(high.params.brightness));
+    lowSum += Math.abs(Number(low.params.contrast) - 1);
+    highSum += Math.abs(Number(high.params.contrast) - 1);
   }
   expect(highSum).toBeGreaterThan(lowSum);
+});
+
+test("no copy is tinted or darkened: no hue, no vignette, no brightness or gamma", () => {
+  for (const intensity of [1, 2, 3]) {
+    for (let seed = 0; seed < 300; seed++) {
+      const video = sampleRecipe(opts, seed, intensity).video;
+      expect(video.some((o) => o.id === "hue")).toBe(false);
+      expect(video.some((o) => o.id === "vignette")).toBe(false);
+      const eq = video.find((o) => o.id === "eq")!;
+      expect(eq.params.brightness).toBeUndefined();
+      expect(eq.params.gamma).toBeUndefined();
+    }
+  }
+});
+
+test("contrast and saturation only ever go up, never down", () => {
+  for (let seed = 0; seed < 300; seed++) {
+    const eq = sampleRecipe(opts, seed, 2).video.find((o) => o.id === "eq")!;
+    expect(Number(eq.params.contrast)).toBeGreaterThanOrEqual(1);
+    expect(Number(eq.params.saturation)).toBeGreaterThanOrEqual(1);
+  }
 });
 
 test("keepTrendAudio yields no audio ops", () => {
@@ -61,23 +82,23 @@ test("crf varies around neutral and is not pinned to the clamp ceiling", () => {
   for (let seed = 0; seed < 60; seed++) {
     const recipe = sampleRecipe(opts, seed, 1);
     const crf = Number(recipe.video.find((o) => o.id === "encode")!.params.crf);
-    expect(crf).toBeGreaterThanOrEqual(18);
-    expect(crf).toBeLessThanOrEqual(22);
+    expect(crf).toBeGreaterThanOrEqual(17);
+    expect(crf).toBeLessThanOrEqual(20);
     values.add(crf);
   }
-  // must not be a single pinned value, and the average should sit near 20, not 22
+  // must not be a single pinned value, and the average should sit near 18.5, not 20
   expect(values.size).toBeGreaterThan(1);
 });
 
-test("never draws a crf outside 18–22, whatever the seed or intensity", () => {
+test("never draws a crf outside 17–20, whatever the seed or intensity", () => {
   // Auto-strengthen raises intensity on a failed PDQ attempt, which widens every
   // draw; the crf band has to hold there too, or the escalated copy is the one
   // that ships at a quality the band was chosen to rule out.
   for (const intensity of [1, 1.5, 2, 3]) {
     for (let seed = 0; seed < 300; seed++) {
       const crf = Number(sampleRecipe(opts, seed, intensity).video.find((o) => o.id === "encode")!.params.crf);
-      expect(crf).toBeGreaterThanOrEqual(18);
-      expect(crf).toBeLessThanOrEqual(22);
+      expect(crf).toBeGreaterThanOrEqual(17);
+      expect(crf).toBeLessThanOrEqual(20);
     }
   }
 });
@@ -100,7 +121,7 @@ test("encode op carries randomized fps/gop/preset/audio params in range", () => 
   expect(typeof enc.audioKbps).toBe("number");
   expect([24, 25, 30]).toContain(Number(enc.fps));
   expect(["medium", "slow"]).toContain(String(enc.preset));
-  expect([96, 112, 128, 160]).toContain(Number(enc.audioKbps));
+  expect([160, 192, 224]).toContain(Number(enc.audioKbps));
   expect(enc.keyintMin).toBe(enc.fps);
   const mult = Number(enc.gop) / Number(enc.fps);
   expect([2, 3, 4]).toContain(mult);

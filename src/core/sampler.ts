@@ -2,7 +2,15 @@ import { makeRng, type Rng } from "./rng";
 import { PARAMS } from "./presets";
 import { round, clamp } from "./util";
 import { samplePhotoRecipe } from "./photo/sampler";
-import type { FirstFrame, Operation, Recipe, ResolvedCopyOptions } from "./types";
+import {
+  EXPORT_DIMS,
+  type ExportFormat,
+  type FirstFrame,
+  type FrameSpec,
+  type Operation,
+  type Recipe,
+  type ResolvedCopyOptions,
+} from "./types";
 
 function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = false): number {
   const spec = PARAMS[key];
@@ -12,11 +20,10 @@ function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = fals
 
 const FPS_CHOICES = [24, 25, 30] as const;
 const GOP_SECONDS = [2, 3, 4] as const;
-// Slower presets compress better at equal quality, which is what fits a 15-30 s
-// clip inside the 3500k ceiling without lowering crf; the random pick stays
+// Slower presets compress better at equal quality; the random pick stays
 // because the preset is part of the encoder fingerprint.
 const PRESET_CHOICES = ["medium", "slow"] as const;
-const AUDIO_KBPS_CHOICES = [96, 112, 128, 160] as const;
+const AUDIO_KBPS_CHOICES = [160, 192, 224] as const;
 const SEGMENT_COUNTS = [3, 4, 5] as const;
 
 function pick<T>(rng: Rng, arr: readonly T[]): T {
@@ -58,21 +65,65 @@ function firstFrameOf(opts: ResolvedCopyOptions, seed: number, intensity: number
   return { mode: "photo", path, info, recipe };
 }
 
+/** Frame mode's own stream, so enabling it moves no other draw. */
+const FRAME_RNG_SALT = 0x46524d45;
+const FRAME_MIN_SCALE = 0.9;
+const FRAME_MAX_SCALE = 0.95;
+
+const evenRound = (v: number): number => 2 * Math.round(v / 2);
+
+/**
+ * An even offset on one axis, drawn from the middle half of the free space so
+ * the gap on both sides is at least a quarter of it: the video never touches
+ * an edge or a corner.
+ */
+function middleHalfOffset(rng: Rng, free: number): number {
+  const lo = 2 * Math.ceil(Math.ceil(free / 4) / 2);
+  const hi = 2 * Math.floor(Math.floor((3 * free) / 4) / 2);
+  return lo + 2 * Math.floor(rng() * ((hi - lo) / 2 + 1));
+}
+
+/**
+ * Where the video sits in a frame: 90-95% of the canvas, at a random offset
+ * from the middle half of the free space, over a background picked from the pack. The
+ * canvas is the export format's size, and `original` has none, so it becomes
+ * reels (9:16).
+ */
+function drawFrame(
+  opts: ResolvedCopyOptions,
+  canvasFormat: Exclude<ExportFormat, "original">,
+  seed: number
+): FrameSpec | undefined {
+  if (!opts.frame) return undefined;
+  const { backgrounds } = opts.frame;
+  if (backgrounds.length === 0) {
+    throw new Error("Для режима «В рамке» нет ни одного фона: набор пуст.");
+  }
+  const rng = makeRng((seed ^ FRAME_RNG_SALT) >>> 0);
+  const { w: W, h: H } = EXPORT_DIMS[canvasFormat];
+  const scale = FRAME_MIN_SCALE + rng() * (FRAME_MAX_SCALE - FRAME_MIN_SCALE);
+  const w = evenRound(W * scale);
+  const h = evenRound(H * scale);
+  const x = middleHalfOffset(rng, W - w);
+  const y = middleHalfOffset(rng, H - h);
+  return { background: pick(rng, backgrounds), w, h, x, y, fit: opts.exportFormat === "original" };
+}
+
 export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity = 1): Recipe {
   const rng = makeRng(seed);
   const s = opts.strength * intensity;
 
+  // No hue shift, no brightness or gamma, no vignette: those read as a colour
+  // cast or a darker picture. Contrast and saturation are drawn one-sided (up
+  // only), so no copy comes out flatter or duller than its source.
   const video: Operation[] = [
     {
       id: "eq",
       params: {
-        brightness: round(dev(rng, "brightness", s)),
-        contrast: round(dev(rng, "contrast", s)),
-        saturation: round(dev(rng, "saturation", s)),
-        gamma: round(clamp(dev(rng, "gamma", s), 0.5, 2)),
+        contrast: round(dev(rng, "contrast", s, true)),
+        saturation: round(dev(rng, "saturation", s, true)),
       },
     },
-    { id: "hue", params: { h: round(dev(rng, "hueDeg", s)) } },
   ];
 
   // Always apply a small zoom-crop (~3%) — visually a thin edge crop but shifts
@@ -85,7 +136,6 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
     { id: "perspective", params: { off: round(dev(rng, "perspective", s, true)) } },
     { id: "lenscorrection", params: { k1: round(dev(rng, "lens", s)) } },
     { id: "noise", params: { strength: Math.round(dev(rng, "noise", s, true)) } },
-    { id: "vignette", params: { on: rng() < 0.6 * Math.min(1, s) } },
   );
 
   // Determinism invariant: same seed + same opts => same recipe. The mirror draw
@@ -105,7 +155,7 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
     fraction: w / weightSum,
     speed: round(clamp(dev(rng, "speed", s), 0.9, 1.1)),
   }));
-  const crf = Math.round(clamp(dev(rng, "crf", s), 18, 22));
+  const crf = Math.round(clamp(dev(rng, "crf", s), 17, 20));
 
   // Container/bitstream signature spread. Drawn here (before the conditional
   // audio draw) so they stay independent of `keepTrendAudio`, and they ignore
@@ -120,13 +170,18 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
     ? []
     : [{ id: "aeq", params: { gain: round(dev(rng, "eqGain", s)) } }];
 
+  const exportFormat: ExportFormat =
+    opts.frame && opts.exportFormat === "original" ? "reels" : opts.exportFormat;
+  const frame = drawFrame(opts, exportFormat === "original" ? "reels" : exportFormat, seed);
+
   return {
     seed,
     intensity,
-    exportFormat: opts.exportFormat,
+    exportFormat,
     keepTrendAudio: opts.keepTrendAudio,
     identity: opts.identity,
     firstFrame: firstFrameOf(opts, seed, intensity),
+    ...(frame ? { frame } : {}),
     segments,
     video: [...video, { id: "encode", params: { crf, fps, gop, keyintMin, preset, audioKbps } }],
     audio,

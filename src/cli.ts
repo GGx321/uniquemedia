@@ -10,7 +10,7 @@ async function main() {
     console.error("usage: uniquify <input.mp4|input.jpg> --count N [--strength 1.0] " +
       "[--format original|reels|feed|square] [--edges crop|fit|auto] [--out DIR] " +
       "[--target 45] [--seed 1] [--identity engine|iphone|clean] " +
-      "[--first-frame off|black|photo] [--cover <image>]\n" +
+      "[--first-frame off|black|photo] [--cover <image>] [--frame on|off]\n" +
       "  --format defaults to reels for video and original for photo, so a still keeps its framing.\n" +
       "  --edges says how a still carries its shift at the frame edge: crop cuts an off-centre\n" +
       "  window out, fit shrinks the picture and pads it back so nothing is lost, auto decides\n" +
@@ -21,6 +21,9 @@ async function main() {
       "  --first-frame says what every video copy opens on: off (the default) leaves the footage,\n" +
       "  black paints one pure black frame, photo puts the --cover image there — run through the\n" +
       "  photo recipe with each copy's own seed, then fitted to the video. Ignored for a still.\n" +
+      "  --frame on puts every video copy in a frame: scaled to 90-95% of the canvas (the\n" +
+      "  --format size, 9:16 for original), kept off the edges, at a random offset, over a\n" +
+      "  random nature background from the bundled pack. Off by default.\n" +
       "  --black-first-frame is the old spelling of --first-frame black and still works.");
     process.exit(1);
   }

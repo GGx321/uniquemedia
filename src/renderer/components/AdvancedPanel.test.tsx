@@ -13,6 +13,7 @@ const base: AdvancedValue = {
   edgeMode: "auto",
   firstFrame: "off",
   cover: null,
+  frame: false,
 };
 
 /** The panel with the pick callback wired, for the tests that click it. */
@@ -314,4 +315,24 @@ test("the info glyph does not steal the choice: clicking it changes nothing", ()
   render(<AdvancedPanel kind="video" value={v} onChange={(x) => (v = x)} onPickCover={() => {}} />);
   fireEvent.click(screen.getByRole("button", { name: /режим/i }));
   expect(v).toEqual(before);
+});
+
+const FRAME_LABEL = "В рамке";
+
+test("a video offers the «В рамке» switch, off by default", () => {
+  render(<AdvancedPanel kind="video" value={{ ...base }} onChange={() => {}} onPickCover={() => {}} />);
+  const sw = screen.getByLabelText(FRAME_LABEL);
+  expect(sw instanceof HTMLInputElement && sw.checked).toBe(false);
+});
+
+test("switching «В рамке» on puts the frame in the settings", () => {
+  let v: AdvancedValue = { ...base };
+  render(<AdvancedPanel kind="video" value={v} onChange={(x) => (v = x)} onPickCover={() => {}} />);
+  fireEvent.click(screen.getByLabelText(FRAME_LABEL));
+  expect(v.frame).toBe(true);
+});
+
+test("a photo has no «В рамке» switch, the frame being a video mode", () => {
+  render(<AdvancedPanel kind="photo" value={{ ...base }} onChange={() => {}} onPickCover={() => {}} />);
+  expect(screen.queryByLabelText(FRAME_LABEL)).toBeNull();
 });

@@ -54,6 +54,15 @@ function parseFirstFrame(argv: readonly string[]): { firstFrame: FirstFrameMode;
   return { firstFrame, coverPath: null };
 }
 
+/** `--frame on|off`: every video copy goes in a frame over a nature background. Off by default. */
+function parseFrame(argv: readonly string[]): boolean {
+  if (!flag(argv, "frame")) return false;
+  const value = arg(argv, "frame");
+  if (value === "on") return true;
+  if (value === "off") return false;
+  throw new Error(`--frame takes one of: on, off (got ${value === undefined ? "nothing" : value}).`);
+}
+
 /** The options a batch starts with, as the command line states them. The route
  *  is needed for one of them: the export format defaults differently per medium. */
 export function parseStartOptions(argv: readonly string[], route: MediaRoute): StartOptions {
@@ -70,5 +79,6 @@ export function parseStartOptions(argv: readonly string[], route: MediaRoute): S
     identity: resolveIdentityMode(arg(argv, "identity"), flag(argv, "no-spoof") ? "engine" : "iphone"),
     edgeMode: resolveEdgeMode(arg(argv, "edges"), "auto"),
     ...parseFirstFrame(argv),
+    frame: parseFrame(argv),
   };
 }
