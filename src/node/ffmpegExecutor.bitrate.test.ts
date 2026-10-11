@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import ffprobeStatic from "ffprobe-static";
 import { FfmpegExecutor } from "./ffmpegExecutor";
-import { makeTestClip } from "./testClip";
+import { makeHighEntropyClip, makeTestClip } from "./testClip";
 import { sampleRecipe } from "../core/sampler";
 import type { ResolvedCopyOptions } from "../core/types";
 
@@ -28,18 +28,27 @@ import type { ResolvedCopyOptions } from "../core/types";
 const CEILING_KBPS = 12000;
 /** The previous ceiling; a render above it proves the squeeze is gone. */
 const OLD_CEILING_KBPS = 3500;
-const VBV_ALLOWANCE_KBPS = 100;
+/**
+ * x264 may spend one VBV buffer (`-bufsize` = 2 s of ceiling) above the ceiling
+ * over a clip, so the average overshoots by at most buffer / duration. It was
+ * ~100 kbit/s at the old 3500 ceiling over 30 s; it scales with the ceiling.
+ */
+const VBV_ALLOWANCE_KBPS = (CEILING_KBPS * 2) / 30;
 const CLIP_SEC = 30;
+const NOISY_SEC = 30;
 
 let dir: string;
 let input: string;
+let noisyInput: string;
 const exec = new FfmpegExecutor();
 
 beforeAll(() => {
   dir = mkdtempSync(join(tmpdir(), "uniq-bitrate-"));
   input = join(dir, "in.mp4");
   makeTestClip(input, CLIP_SEC);
-});
+  noisyInput = join(dir, "noisy.mp4");
+  makeHighEntropyClip(noisyInput, NOISY_SEC);
+}, 120_000);
 afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
 /** Average bitrate of the first video stream, in kbit/s, as ffprobe reports it. */
@@ -70,3 +79,19 @@ test("rendered reel stays within the 12 Mbit/s ceiling and is no longer squeezed
   // 3500 kbit/s squeeze, or the bitrate was never actually normalised.
   expect(kbps).toBeGreaterThan(OLD_CEILING_KBPS * 1.2);
 }, 60_000);
+
+test("the 12 Mbit/s ceiling binds on a source that would exceed it", async () => {
+  const info = await exec.probe(noisyInput);
+  const opts: ResolvedCopyOptions = {
+    strength: 1, exportFormat: "reels", keepTrendAudio: false, allowMirror: false,
+    targetDistance: 60, identity: "engine", edgeMode: "auto", firstFrame: { mode: "off" },
+  };
+  const out = join(dir, "noisy-out.mp4");
+  await exec.render(noisyInput, info, sampleRecipe(opts, 42, 1), out);
+
+  const kbps = videoBitrateKbps(out);
+  console.log(`[bitrate] noisy video=${Math.round(kbps)} kbit/s over ${NOISY_SEC}s`);
+  expect(kbps).toBeLessThanOrEqual(CEILING_KBPS + VBV_ALLOWANCE_KBPS);
+  // The ceiling has to be what limited this encode.
+  expect(kbps).toBeGreaterThan(CEILING_KBPS * 0.85);
+}, 120_000);
