@@ -182,7 +182,8 @@ export function SceneStrip({
   } else if (action.kind === "continue") {
     // Between the write's answer and the set saying it writes, the tracked job holds the button as the write itself will.
     const blocked = common ?? (live || scenesJob !== null ? "Дождитесь, пока модель допишет сцену." : null);
-    const state = paidButtonState(more, continueTitle(action.scenes), blocked !== null);
+    // Where the app's template writes every waiting scene the engine prices the write at nothing: «бесплатно», not «до $0.000».
+    const state = paidButtonState(more, continueTitle(action.scenes), blocked !== null, more.estimate !== null && more.estimate.worstMicros === 0);
     button = state;
     onClick = more.click;
     reason = blocked;
