@@ -79,8 +79,8 @@ export const LYING_START = /^(lies|rests her (?:cheek|head))\b/;
  * not a denim skirt.
  */
 const DENIM = String.raw`\b(?:denim|jeans?)(?:-[a-z]+)?`;
-const BOTTOM_AFTER = String.raw`(?:shorts|skirts?|skorts?|mini(?:-?skirts?)?|minis|midis?|maxis?|hot\s+pants)\b`;
-const BOTTOM_FIRST = String.raw`\b(?:shorts|skirts?|skorts?|mini(?:-?skirts?)?|minis|midis?|maxis?|hot\s+pants)`;
+const BOTTOM_AFTER = String.raw`(?:shorts|skirts?|skorts?|mini(?:-?skirts?)?|minis|midis?|maxis?|hot\s+pants|bermudas?)\b`;
+const BOTTOM_FIRST = String.raw`\b(?:shorts|skirts?|skorts?|mini(?:-?skirts?)?|minis|midis?|maxis?|hot\s+pants|bermudas?)`;
 /** A word of an outfit: letters and digits, joined by a hyphen or an apostrophe («light-wash», «A-line»). */
 const WORD = String.raw`[a-z0-9]+(?:[-'][a-z0-9]+)*`;
 /** What ends the phrase: a word that joins two garments, or another garment's noun. */
@@ -90,7 +90,7 @@ const JOINS_OR_OTHER_GARMENT =
 const between = (articles: boolean): string =>
   String.raw`(?:\s+(?!(?:${JOINS_OR_OTHER_GARMENT}${articles ? "" : "|a|an|the|her"})(?:\s|$))${WORD}){0,3}`;
 const DENIM_BOTTOM_WORDS = new RegExp(
-  String.raw`${DENIM}${between(false)}\s+${BOTTOM_AFTER}` +
+  String.raw`${DENIM}${between(false)}[\s-]+${BOTTOM_AFTER}` +
     String.raw`|${BOTTOM_FIRST}\s+(?:made\s+)?(?:in|of|from)${between(true)}\s+(?:denim|jeans?)\b` +
     String.raw`|\bcut-?offs?\b|\bjorts\b`,
   "i",

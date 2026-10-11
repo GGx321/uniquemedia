@@ -60,6 +60,21 @@ describe("isOwnerBannedOutfit: the words between, and the garment first (S5.6R)"
     },
   );
 
+  // S5.6R (round D): a hyphen between the denim and the garment is a ban too, and «bermudas» is a garment of its own.
+  test.each([
+    "jean-shorts", "a jean-skirt", "a denim-skirt", "denim-shorts", "a tee and jean-shorts", "a crop top with a denim-skirt", "a jeans-skirt", "denim-skort", "denim-hot pants",
+    "denim bermudas", "a denim bermuda", "jean bermudas", "denim-bermudas", "light denim bermudas", "bermudas in denim", "bermudas made of light denim", "a tee and jean-bermudas",
+  ])("refuses the hyphenated and bermuda form «%s»", (outfit) => {
+    expect(isOwnerBannedOutfit(outfit)).toBe(true);
+  });
+
+  test.each(["a denim-jacket over a linen skirt", "a denim-jacket and bermudas", "bermudas in linen", "linen bermudas and a denim jacket", "a jean-jacket with bermudas"])(
+    "allows «%s» (round D)",
+    (outfit) => {
+      expect(isOwnerBannedOutfit(outfit)).toBe(false);
+    },
+  );
+
   test.each([
     "a denim jacket with a linen skirt",
     "a denim jacket and a mini skirt",
