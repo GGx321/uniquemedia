@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CategoryPoses, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
 import { isPhoneInHandShot, type Pose } from "./schema";
 import { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
+import { PHONE_WORDS, SELFIE_WORDS } from "../../shared/scenes/words";
 import { REVEALING_WORDS } from "./words";
 
 // The scene pools: everyday locations, outfits and shot decks per category.
@@ -57,13 +58,10 @@ export interface Place {
   at?: string;
 }
 
-// A stored custom pool is built from the shared `PoolActivity {text, twoHanded}`, which carries no phone flag, so its phone activities are found by their words.
-export const PHONE_WORDS = /\b(phones?|smartphones?|iphones?|cellphones?|texting|facetime)\b/i;
-
-// C1 (owner canary, 2026-10-11): the image model draws a phone for the word «selfie» or «front camera» (also «front-facing camera»), even with a clean master
-// photo. A selfie slot's text may not say it: the writer refuses such a sentence (writer.ts, phone-in-selfie), so a custom pool's activity or place that says it
-// must never reach a phone-in-hand slot, or the run fails after two paid attempts (the S5.R1 M3 scenario, now for this word).
-export const SELFIE_WORDS = /\bselfies?\b|\bfront[ -](?:facing[ -])?camera\b/i;
+// 5a.2 (S5.6b): the two word lists are the shared scene banks' own (shared/scenes/words.ts), so the banks, the template and the engine can never disagree.
+// A stored custom pool carries no phone flag, so its phone activities are found by their words; the image model draws a phone for «selfie» or «front camera»
+// (owner canary C1), so a hand-held slot's text may not say either.
+export { PHONE_WORDS, SELFIE_WORDS };
 
 /** The phone is in her hand or in use: the flag for a built-in activity, the word-bounded text for a stored custom one (the built-ins' flags are pinned to agree with the words). */
 export function isPhoneActivity(activity: { text: string; phone?: true | undefined }): boolean {
