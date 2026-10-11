@@ -220,8 +220,8 @@ describe("what the view claims stays true (fix round 1)", () => {
 
   test("the compose outcome is the one the job ended with: removing scenes afterwards does not change it", async () => {
     const m = makeMock();
-    // A chunk given up on: the provider's refusal (S5.6d: two rejected answers no longer give a chunk up, they take the plain sentence).
-    m.engine.failNextSceneAttempt("refused");
+    // A chunk given up on (S5.6d: no job reaches this state any more; the outcome stays what an older version left).
+    m.engine.failNextSceneAttempt("gave-up");
     const { sceneSetId } = await composed(m, 30);
     m.scheduler.runAll();
     const ended = await setOf(m);
@@ -326,12 +326,27 @@ describe("a write that stops, and what stays", () => {
     expect(view.chunks[0]).toMatchObject({ gaveUpBy: null });
   });
 
-  test("a provider's refusal ends its chunk at once and the next chunk is written", async () => {
+  // Round-1 review of S5.6d (I5.31): final for the request (one attempt, free), never for the scenes: they take the plain sentence at once.
+  test("a provider's refusal writes its chunk plain at once, gives nothing up, and the next chunk is written", async () => {
     const m = makeMock();
     m.engine.failNextSceneAttempt("refused");
     await composed(m, 30);
     m.scheduler.runAll();
-    expect((await setOf(m)).chunks.map((c) => c.gaveUpBy)).toEqual(["refused", null]);
+    const view = await setOf(m);
+    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual([null, null]);
+    for (const scene of view.scenes.slice(0, 25)) expect(scene.text).toBe(plainOf(scene));
+    expect(view.scenes.slice(25).every((s) => s.text !== plainOf(s))).toBe(true);
+    expect(view.spentMicros).toBe(Math.round(5 * 457.5));
+  });
+
+  test("the scenes a partial answer got right stay written when the next attempt gets no answer", async () => {
+    const m = makeMock();
+    m.engine.failNextSceneAttempt("partial");
+    m.engine.failNextSceneAttempt("rate-limited");
+    await composed(m, 3);
+    m.scheduler.runAll();
+    const view = await setOf(m);
+    expect(view.scenes.map((s) => s.text !== null)).toEqual([false, true, true]);
   });
 
   test("scenes.cancel stops the job: cancelled after scenes.changed, the chunks written stay", async () => {

@@ -222,27 +222,34 @@ describe("scenes.write: a rewrite", () => {
     expect(await codeOf(m.client.request("scenes.estimateWrite", { sceneSetId: after.sceneSetId, target: { kind: "resume", write: 2 } } as never))).toBe("VALIDATION");
   });
 
-  test("a write that fails leaves the scene exactly as it was: the provider refuses the prompt, one attempt, no marker, nothing to resume", async () => {
+  // Round-1 review of S5.6d: the provider's refusal ends no planned scene: a planned rewrite takes the plain sentence at once (one attempt, free). An idea has no place
+  // to build one from, so its refusal is final and leaves the set as it was.
+  test("a provider's refusal of a planned rewrite takes the plain sentence at once: one attempt, free, the write is done", async () => {
     const m = makeMock();
     const view = await readySet(m);
     m.engine.failNextSceneAttempt("refused");
     await unwrap(write(m, view, rewrite([2], true)));
     m.scheduler.runAll();
 
-    expect(m.events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { kind: "scenes" } });
+    expect(m.events.findLast((e) => e.type === "job.done")).toMatchObject({ payload: { result: { kind: "scenes", written: 1, unwritten: 0 } } });
     const after = await setOf(m);
-    expect(after.scenes).toEqual(view.scenes);
-    expect(after.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
+    const scene = after.scenes[1];
+    if (scene === undefined || scene.place === null) throw new Error("scene 2 is missing");
+    expect(scene.text).toBe(plainSentence({ category: scene.category, location: scene.place.location, activity: scene.place.activity, outfit: scene.place.outfit }));
+    expect(after.spentMicros).toBe(view.spentMicros);
   });
 
-  test("a provider's refusal is final: MODERATION_REFUSED, one attempt, nothing changed", async () => {
+  test("a write that fails leaves the set exactly as it was: the provider refuses an idea, one attempt, no marker, nothing to resume", async () => {
     const m = makeMock();
     const view = await readySet(m);
     m.engine.failNextSceneAttempt("refused");
-    await unwrap(write(m, view, rewrite([2])));
+    await unwrap(write(m, view, idea("кофе", 1)));
     m.scheduler.runAll();
+
     expect(m.events.find((e) => e.type === "job.failed")).toMatchObject({ payload: { error: { code: "MODERATION_REFUSED" } } });
-    expect((await setOf(m)).scenes).toEqual(view.scenes);
+    const after = await setOf(m);
+    expect(after.scenes).toEqual(view.scenes);
+    expect(after.scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
   });
 });
 

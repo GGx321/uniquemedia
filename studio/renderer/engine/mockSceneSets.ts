@@ -56,7 +56,7 @@ const CANCEL_CONFIRM_MS = 50;
  * answer the engine's reader marks for one scene only: the first scene it was asked about is wrong, every other scene is accepted and kept, and the next attempt asks about
  * that one alone. `rejected` is wrong for the whole answer.
  */
-export type MockSceneAttempt = "ok" | "partial" | "rejected" | "refused" | "rate-limited" | "provider-error" | "network" | "timeout";
+export type MockSceneAttempt = "ok" | "partial" | "gave-up" | "rejected" | "refused" | "rate-limited" | "provider-error" | "network" | "timeout";
 
 /** A set seeded as a compose would have left it. */
 export interface MockSceneSetSeed {
@@ -1311,6 +1311,11 @@ export class MockSceneSets {
           this.#deps.spend(REJECTED_COST);
           continue;
         case "refused":
+          // S5.6d (I5.31): the provider's refusal is final for the request, but a planned scene is never ended by it: it takes the plain sentence at once.
+          if (!keeps) {
+            finish(new Set(open));
+            return;
+          }
           review.closed = true;
           this.#end(job, set, { status: "failed", error: { code: "MODERATION_REFUSED" }, stoppedBy: "failed" });
           return;
@@ -1476,7 +1481,21 @@ export class MockSceneSets {
           }
           continue;
         case "refused":
-          chunk.gaveUp = "refused";
+          // S5.6d (I5.31): final for the request, never for the scenes: they take the plain sentence at once, as the engine's chunk does.
+          this.#writePlain(set, job, ids);
+          return;
+        case "gave-up":
+          // A state a version before S5.6d left (the engine can no longer reach it): two rejected answers paid, the chunk given up as rejected. For the screens that show it.
+          for (let i = 0; i < SCENE_CHUNK_ATTEMPTS; i++) {
+            if (i > 0) chunk.attempts.push({ key: `${set.sceneSetId}:writer-${chunk.chunk}#${chunk.attempts.length + 1}`, paid: false, cost: 0, open: false });
+            const spent = chunk.attempts.at(-1);
+            if (spent !== undefined) {
+              spent.paid = true;
+              spent.cost = REJECTED_COST;
+            }
+            this.#deps.spend(REJECTED_COST);
+          }
+          chunk.gaveUp = "rejected";
           set.revision += 1;
           this.#announce(set);
           return;

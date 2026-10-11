@@ -112,14 +112,14 @@ describe("a scripted good answer", () => {
   test("lets the first chunk through so the second is the one given up on", async () => {
     const m = makeMock();
     m.engine.failNextSceneAttempt("ok");
-    // 5a.2 (S5.6d): two rejected answers no longer give a chunk up (its scenes take the plain sentence); the provider's refusal does.
-    m.engine.failNextSceneAttempt("refused");
+    // 5a.2 (S5.6d): no job gives a chunk up any more (its scenes take the plain sentence); `gave-up` is the state an older version left, for the screens that show it.
+    m.engine.failNextSceneAttempt("gave-up");
     const reply = await m.client.request("scenes.compose", { avatarId: MIA.avatarId, count: 60, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: 6 * ATTEMPT });
     expect(reply.ok).toBe(true);
     m.scheduler.runAll();
     const set = await setOf(m);
     expect(set.status).toBe("ready");
-    expect(set.chunks.map((c) => c.gaveUpBy)).toEqual([null, "refused", null]);
+    expect(set.chunks.map((c) => c.gaveUpBy)).toEqual([null, "rejected", null]);
     expect(set.lastCompose).toEqual({ total: 60, written: 35, gaveUp: 25 });
   });
 });

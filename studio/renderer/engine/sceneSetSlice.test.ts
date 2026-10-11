@@ -222,7 +222,7 @@ describe("what only this window knows", () => {
     const h = await started({ categories: [FIXTURE], sceneSets: [{ avatarId: MIA.avatarId, sceneSetId: "set-seed-0001", count: 3, written: 3, categories: [LLM_ONLY_REF] }] });
     h.slice.retain(MIA.avatarId);
     await settle();
-    h.engine.failNextSceneAttempt("refused");
+    h.engine.failNextSceneAttempt("rate-limited");
     const reply = await h.client.request("scenes.write", { sceneSetId: "set-seed-0001", revision: 1, target: { kind: "rewrite", sceneIds: [2], redraw: true }, acceptedWorstMicros: 2 * ATTEMPT });
     if (!reply.ok) throw new Error(reply.error.code);
     h.slice.trackJob(reply.result.jobId, { sceneSetId: "set-seed-0001", kind: "rewrite", price: null, sceneIds: [2], idea: null });

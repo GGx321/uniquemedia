@@ -145,13 +145,13 @@ describe("the pencil keeps the revision it was opened on", () => {
 describe("a scene given up on", () => {
   test("its own text, the header's counter and the reason under «Отрисовать» link to it (ReviewEdit, ReviewGaveUp)", async () => {
     const { engine, scheduler } = await openReview();
-    engine.failNextSceneAttempt("refused"); // S5.6d: two rejected answers no longer give a chunk up (plain sentence); the provider's refusal does
+    engine.failNextSceneAttempt("gave-up"); // a chunk given up on (S5.6d: no job reaches this state any more; the screen still shows what an older version left)
     fireEvent.click(await screen.findByRole("button", { name: nb("Составить 20 сцен · до $0.075") }));
     await flush();
     runAll(scheduler);
     await flush();
     expect(within(sceneCard(1)).getByText("не составлена")).toBeDefined();
-    expect(within(sceneCard(1)).getByText(/^Модель отказалась писать эту сцену \(отказ провайдера\)/)).toBeDefined();
+    expect(within(sceneCard(1)).getByText(/^Отброшена при проверке: модель дважды вернула неподходящий текст\./)).toBeDefined();
     expect(isDisabled(goButton())).toBe(true);
     expect(goButton().textContent).toBe(nb("Отрисовать 0 фото · до …"));
     const reason = within(card()).getByRole("button", { name: "Сцена 01" });
