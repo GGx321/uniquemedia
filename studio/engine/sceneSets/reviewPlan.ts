@@ -6,6 +6,7 @@ import type { LedgerView } from "../runs/journal";
 import { POOLS, type PlanSlot, type PlannerCategory, type Pool } from "../scenes";
 import { poolOf } from "../scenes/poolGen";
 import { drawOwnScenes, redrawSlot } from "../scenes/redraw";
+import { templateSentence } from "../../shared/scenes/template";
 import { seedOfSet } from "./compose";
 import { beginIdea, beginRewrite, resumeReviewWrite } from "./reviewMutations";
 import { sceneRefusal } from "./refusal";
@@ -40,6 +41,17 @@ function targetsOf(set: StoredSceneSet, sceneIds: readonly number[]): StoredScen
   });
 }
 
+/**
+ * 5a.2 (m1): a rewrite WITHOUT a redraw of built-in planned scenes the code template writes is a redraw: the scene is drawn anew and the template writes it, at
+ * $0, so the owner gets a new scene, not the same place in new words. A scene of a custom category keeps the plain rewrite (the template re-words it
+ * at $0 on the write's own key), because a redraw needs the category's pool and a deleted category would refuse it.
+ */
+function redrawsOf(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>): boolean {
+  if (target.redraw) return true;
+  const scenes = targetsOf(set, target.sceneIds);
+  return scenes.every((scene) => scene.origin === "planned" && !isCustomCategory(scene.slot.category) && templateSentence(scene.slot, { key: `${set.sceneSetId}:${scene.sceneId}:probe` }) !== null);
+}
+
 function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: "rewrite" }>, pools: PoolsOf): ReviewPlan {
   const scenes = targetsOf(set, target.sceneIds);
   const planned = scenes.flatMap((s) => (s.origin === "planned" ? [s] : []));
@@ -47,7 +59,8 @@ function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: 
   const k = set.writes + 1;
   const draws: PlanSlot[] = [];
   const snapshots: CategorySnapshot[] = [];
-  if (target.redraw) {
+  const redraw = redrawsOf(set, target);
+  if (redraw) {
     if (planned.length !== scenes.length) throw sceneRefusal("only a planned scene has a place to redraw; an own scene is written again from its idea", "own-redraw");
     const avoid = {
       locations: new Set(set.scenes.flatMap((s) => (s.origin === "planned" && !s.removed ? [s.slot.location] : []))),
@@ -69,7 +82,7 @@ function planRewrite(set: StoredSceneSet, target: Extract<ReviewTarget, { kind: 
     count: scenes.length,
     sceneIds: [...target.sceneIds],
     attemptsLeft: 2,
-    begin: (current, jobId) => beginRewrite(current, { jobId, sceneIds: target.sceneIds, redraw: target.redraw, slots: draws, snapshots }),
+    begin: (current, jobId) => beginRewrite(current, { jobId, sceneIds: target.sceneIds, redraw, slots: draws, snapshots }),
   };
 }
 
