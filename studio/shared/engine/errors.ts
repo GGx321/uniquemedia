@@ -305,6 +305,19 @@ export const DESCRIPTOR_REASONS = ["empty", "hidden-chars", "too-long", "too-lon
 export const DescriptorReason = z.enum(DESCRIPTOR_REASONS);
 export type DescriptorReason = z.infer<typeof DescriptorReason>;
 
+/**
+ * Why a portrait command was refused with VALIDATION (`EngineError.portraitReason`, Stage 5, S5.3a, additive in v5). The window's text depends on it, so it is a closed code.
+ *
+ * - not-imported: the avatar has no imported source photo (a wizard avatar), so there is nothing to draw a portrait from.
+ * - too-many-candidates: the avatar already holds 15 unpicked portraits; a new batch of 5 would pass the limit.
+ * - not-a-candidate: the photo named is not the avatar's source photo or one of its pending portraits that the pick gate accepts.
+ * - source-unavailable (S5.3c): the one reason that is NOT a VALIDATION but an INTERNAL: the avatar's master is a portrait and its imported source photo is missing, quarantined or unreadable,
+ *   so a batch (or a descriptor check, which compares with the source) cannot be made. Free. The owner's way out is the library folder.
+ */
+export const PORTRAIT_REASONS = ["not-imported", "too-many-candidates", "not-a-candidate", "source-unavailable"] as const;
+export const PortraitReason = z.enum(PORTRAIT_REASONS);
+export type PortraitReason = z.infer<typeof PortraitReason>;
+
 /** A scene's number in its set (the same bounds as `SceneId` in scenes.ts, which imports this file). */
 const SceneIdNumber = z.number().int().min(1).max(10_000);
 
@@ -420,6 +433,8 @@ export const EngineError = z
      * The window's text is `DESCRIPTOR_REASONS_RU` (`descriptorReasonRu`).
      */
     descriptorReason: DescriptorReason.optional(),
+    /** Additive (Stage 5, S5.3a): which rule a portrait command broke (`PORTRAIT_REASONS`); only on VALIDATION (INTERNAL for `source-unavailable`), never beside another reason. The window's text is `PORTRAIT_REASONS_RU`. */
+    portraitReason: PortraitReason.optional(),
     /** Additive (Stage 5, S5.0a): the owner's own offending words, only with the reason `youth-word` (at most a handful, each short). */
     descriptorWords: z.array(z.string().min(1).max(60)).max(10).optional(),
     /**
@@ -471,6 +486,19 @@ export const EngineError = z
     message: "a refusal has one reason: a descriptorReason, a launchReason, a sceneReason or a categoryReason",
     path: ["descriptorReason"],
   })
+  .refine((e) => e.portraitReason === undefined || e.code === (e.portraitReason === "source-unavailable" ? "INTERNAL" : "VALIDATION"), {
+    message: "portraitReason may only be present on VALIDATION, except source-unavailable, which belongs to INTERNAL",
+    path: ["portraitReason"],
+  })
+  .refine(
+    (e) =>
+      e.portraitReason === undefined ||
+      (e.descriptorReason === undefined && e.sceneReason === undefined && e.categoryReason === undefined && e.launchReason === undefined),
+    {
+      message: "a refusal has one reason: a portraitReason, a descriptorReason, a launchReason, a sceneReason or a categoryReason",
+      path: ["portraitReason"],
+    },
+  )
   .refine((e) => e.descriptorWords === undefined || e.descriptorReason === "youth-word", {
     message: "descriptorWords may only accompany the descriptorReason youth-word",
     path: ["descriptorWords"],

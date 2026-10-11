@@ -54,6 +54,13 @@ export function AvatarImport() {
   const [preview, setPreview] = useState<{ width: number; height: number } | null>(null);
   const [estimate, setEstimate] = useState<Estimate | null>(null);
   const [previousWorst, setPreviousWorst] = useState<number | null>(null);
+  /**
+   * S5.3d (mockups 14, 14b, 14c): the reference portraits' own price (`avatars.estimatePortraits`, free, avatar-independent), said under the button as a
+   * second line: the click accepts it too, and the new avatar's «Внешность» starts the batch at exactly this worst case. Never added to the import's.
+   * `failed`: it could not be had (14b) — the import still works, and the portraits are started in «Внешность».
+   */
+  const [portraits, setPortraits] = useState<{ kind: "priced"; estimate: Estimate } | { kind: "failed" } | null>(null);
+  const portraitsLineId = useId();
   const [name, setName] = useState("");
   const [showNameIssue, setShowNameIssue] = useState(false);
   const [busy, setBusy] = useState<Busy>(null);
@@ -91,10 +98,16 @@ export function AvatarImport() {
     setPreview({ width: picked.result.width, height: picked.result.height });
     setEstimate(null);
     setPreviousWorst(null);
+    setPortraits(null);
 
-    const priced = await client.request("avatars.estimateImport", { stagingId: picked.result.stagingId });
+    // Both prices before the button can be pressed: a click must never accept a portraits price it did not show.
+    const [priced, portraitsPrice] = await Promise.all([
+      client.request("avatars.estimateImport", { stagingId: picked.result.stagingId }),
+      client.request("avatars.estimatePortraits", {}),
+    ]);
     if (!mounted.current) return;
     setBusy(null);
+    setPortraits(portraitsPrice.ok ? { kind: "priced", estimate: portraitsPrice.result } : { kind: "failed" });
     if (priced.ok) setEstimate(priced.result);
     else setError(priced.error);
   }
@@ -104,6 +117,8 @@ export function AvatarImport() {
     if (stagingId === null || estimate === null || nameIssue(name) !== null) return;
     setBusy("import");
     setError(null);
+    // The portraits' worst case on the screen when the click came: the one it accepts, whatever a later answer says.
+    const portraitsWorstMicros = portraits?.kind === "priced" ? portraits.estimate.worstMicros : null;
     const reply = await client.request("avatars.importAvatar", {
       stagingId,
       name: name.trim(),
@@ -114,18 +129,21 @@ export function AvatarImport() {
       setBusy(null);
       store.saveAvatar(reply.result.avatar);
       // S5.0d (owner's decision): the import ends on the new avatar's «Внешность», with the check the import ran itself (null: none came back).
+      // S5.3d: and with the portraits' accepted worst case, at which «Внешность» starts the batch once.
       navigate({
         name: "photos",
         avatarId: reply.result.avatar.avatarId,
         tab: "look",
-        landing: { kind: "imported", check: reply.result.descriptorCheck ?? null },
+        landing: { kind: "imported", check: reply.result.descriptorCheck ?? null, portraitsWorstMicros },
       });
       return;
     }
     if (reply.error.code === "PRICE_CHANGED") {
-      const fresh = await client.request("avatars.estimateImport", { stagingId });
+      // 14c: the import's price is asked again, and the portraits' beside it, so the second line the new click accepts is current too.
+      const [fresh, portraitsPrice] = await Promise.all([client.request("avatars.estimateImport", { stagingId }), client.request("avatars.estimatePortraits", {})]);
       if (!mounted.current) return;
       setBusy(null);
+      setPortraits(portraitsPrice.ok ? { kind: "priced", estimate: portraitsPrice.result } : { kind: "failed" });
       if (fresh.ok) {
         setEstimate(fresh.result);
         setPreviousWorst(estimate.worstMicros);
@@ -295,6 +313,7 @@ export function AvatarImport() {
                     className="btn btn-p"
                     disabled={busy !== null || blockedReason !== null}
                     aria-busy={busy === "import"}
+                    aria-describedby={blockedReason === null && portraits !== null ? portraitsLineId : undefined}
                     onClick={() => void confirmImport()}
                   >
                     {busy === "import" ? (
@@ -306,7 +325,28 @@ export function AvatarImport() {
                         ? `Подтвердить новую цену · до ${formatUsdTiered(estimate.worstMicros, "up")}`
                         : `Импортировать · до ${formatUsdTiered(estimate.worstMicros, "up")}`}
                   </button>
-                  {blockedReason ? <p className="field-hint">{blockedReason}</p> : <p className="field-hint">Дальше — страница аватара: тело и итог сверки.</p>}
+                  {blockedReason ? (
+                    <p className="field-hint">{blockedReason}</p>
+                  ) : (
+                    <>
+                      {portraits?.kind === "priced" && (
+                        // Review M2: the second engine price the same click accepts, said beside the import's and never added to it.
+                        <p id={portraitsLineId} className="field-hint portrait-then">
+                          Эта кнопка сразу запустит и{" "}
+                          <span className="save-check">
+                            5 вариантов мастер-портрета · до <span className="mono">{formatUsdTiered(portraits.estimate.worstMicros, "up")}</span>
+                          </span>
+                        </p>
+                      )}
+                      {portraits?.kind === "failed" && (
+                        <p id={portraitsLineId} className="field-hint portrait-then portrait-then-off">
+                          <Icon name="info" size={14} strokeWidth={2} />
+                          <span>Варианты мастер-портрета: цена недоступна — сделаете их во «Внешности»</span>
+                        </p>
+                      )}
+                      <p className="field-hint">Дальше — страница аватара: мастер-портрет, тело и итог сверки.</p>
+                    </>
+                  )}
                 </div>
               </div>
             </section>

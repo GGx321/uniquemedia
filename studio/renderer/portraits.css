@@ -1,0 +1,314 @@
+/* ── S5.3d · «мастер-портрет» (.omc/stage5/design 14–23, build.ts NEW_CSS_S53): the import's second price line, the «Мастер-портрет» card, the check's
+   «Описание ↔ исходное фото» and the «Варианты мастер-портрета» panel. App tokens only; `.save-check` and `.chk-held` are look.css's, `.btn-d`
+   montage.css's, `.avatar-confirm` ui.css's. ── */
+
+/* The import: the portraits line the click also accepts. */
+.portrait-then {
+  margin: 0;
+  text-align: right;
+}
+
+.portrait-then-off {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  color: var(--muted);
+  text-align: left;
+}
+
+.portrait-then-off svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+  color: var(--info);
+}
+
+/* The avatars list's import tile: its two prices break between, never inside. */
+.nw {
+  white-space: nowrap;
+}
+
+/* «Мастер-портрет»: the master flush on top, what can be done with it under it. */
+.master-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* 300 × 300 (the bare frame is 300 × 330): the card's own lines still let 20–22 fit 900 px; the 3:4 crop keeps the hair whole. */
+.master-card .look-master {
+  flex-shrink: 0;
+  height: 300px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.master-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 14px;
+}
+
+/* A hint or a reason belongs to the button above it: a little closer to it than to the next line. */
+.master-body .btn-stack + .field-hint,
+.master-body .btn-stack + .chk-held {
+  margin-top: -2px;
+}
+
+.master-body .field-hint {
+  margin: 0;
+}
+
+.master-why {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.master-card .btn-stack {
+  width: 100%;
+}
+
+.master-card .notice {
+  padding: 10px 12px;
+}
+
+.master-card .chk-settings {
+  align-self: flex-start;
+}
+
+.source-tile {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  padding: 6px 10px 6px 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--inset);
+}
+
+.source-thumb {
+  width: 48px;
+  height: 64px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+}
+
+.source-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-width: 0;
+}
+
+.source-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.source-text .btn-s {
+  height: 30px;
+  padding: 0 11px;
+}
+
+/* «Сверка с фото» names what it compares with: the imported photo, whatever the master is (I5.20). */
+.chk-pair {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.chk-pair-thumb {
+  width: 21px;
+  height: 28px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.chk-pair-arrow {
+  margin: 0 2px;
+  color: var(--faint);
+  font-weight: 400;
+}
+
+/* «Варианты мастер-портрета»: CandidatesCard with 5 slots, its actions in a rail beside the grid; the accent border only while the batch runs (L7). */
+.portraits-panel {
+  max-width: var(--page-max);
+}
+
+.portraits-panel-running {
+  border-color: var(--accent-35);
+}
+
+.cand-still {
+  cursor: default;
+}
+
+.rail-reset {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.rail-reset > .field-hint {
+  margin: 0 2px;
+}
+
+.portraits-ref {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
+.portraits-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 236px;
+  gap: 14px 24px;
+  align-items: start;
+}
+
+.portraits-main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.portraits-panel .cand-grid.portrait-grid {
+  grid-template-columns: repeat(5, minmax(0, 168px));
+}
+
+.portraits-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.portraits-rail .btn {
+  width: 100%;
+}
+
+.portraits-rail > .field-hint {
+  margin: -2px 2px 0;
+}
+
+.portraits-rail-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--line);
+}
+
+.portraits-note {
+  display: flex;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.portraits-note svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+  color: var(--info);
+}
+
+.portraits-panel .job-progress {
+  padding: 10px 12px 12px 14px;
+}
+
+/* Narrower than 1000 px (a window of 1200): the rail goes under the grid as a row. */
+@container candidates (width < 1000px) {
+  .portraits-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .portraits-rail {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .portraits-rail .btn {
+    width: auto;
+  }
+
+  .portraits-rail > .field-hint {
+    order: 9;
+    flex-basis: 100%;
+    margin: 0 2px;
+  }
+
+  .portraits-rail .chk-held {
+    order: 10;
+    flex-basis: 100%;
+  }
+
+  .rail-reset {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .rail-reset > .field-hint {
+    margin: 0 0 0 2px;
+  }
+
+  .rail-reset .revert-confirm {
+    flex-basis: 100%;
+  }
+
+  .portraits-rail-sep {
+    display: none;
+  }
+}
+
+@container candidates (width < 640px) {
+  .portraits-panel .cand-grid.portrait-grid {
+    grid-template-columns: repeat(3, minmax(0, 168px));
+  }
+}
+
+/* The slots: the likeness under each face, «лучший» above it (design decision 2); a 9:16 portrait takes a centred cover crop (decision 3). */
+.portrait-badges {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.portrait-best {
+  color: var(--accent-text);
+  box-shadow: inset 0 0 0 1px var(--accent-45);
+}
+
+.portrait-grid .cand .portrait-img {
+  object-position: 50% 50%;
+}
+
+.portrait-grid .cand-slot-title {
+  line-height: 1.3;
+}
+
+.portraits-panel[aria-busy="true"] .cand {
+  cursor: progress;
+}
+
+/* 21b, 16f: the app's inline confirm (.avatar-confirm), flush in its column. */
+.revert-confirm {
+  margin-top: 0;
+}

@@ -5,6 +5,8 @@ import { AVATAR_DELETE_PREPARE_DEADLINE_MS, EXPORT_CHECK_TIMEOUT_MS, LIST_BUDGET
 import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
+import { PREFLIGHT_TIMEOUT_MS } from "./engine";
+import { EMBEDDING_COMPUTE_TIMEOUT_MS } from "./runs/faceGate";
 import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { POOL_MAX_ATTEMPTS } from "./scenes/poolGen";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -305,5 +307,37 @@ describe("COMMAND_DEADLINE_MS['avatars.deletePreview']", () => {
   test("outwaits the engine's own bounded look at the export folder and the record files", () => {
     expect(COMMAND_DEADLINE_MS["avatars.deletePreview"]).toBe(AVATAR_DELETE_PREPARE_DEADLINE_MS);
     expect(AVATAR_DELETE_PREPARE_DEADLINE_MS).toBeGreaterThan(LIST_BUDGET_MS + EXPORT_CHECK_TIMEOUT_MS);
+  });
+});
+
+// Stage 5, S5.3c: `avatars.generatePortraits` answers only after everything it awaits: the price load, the library's identity check, the source photo's load (REFERENCE_TIMEOUT_MS) and its
+// face embedding (EMBEDDING_COMPUTE_TIMEOUT_MS, both the original and its JPEG retry under the one bound). Main's default 30 s would answer INTERNAL while the engine goes on to start a paid
+// batch of five images the window never tracks, and the owner would click again and pay twice.
+describe("COMMAND_DEADLINE_MS for the reference portrait commands (S5.3c)", () => {
+  test("avatars.generatePortraits waits for a price load, the library's identity check, the source's load, its embedding, and the fixed slack", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.generatePortraits"]).toBe(
+      PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + EMBEDDING_COMPUTE_TIMEOUT_MS + 30_000,
+    );
+  });
+
+  test("the sum is pinned at 110 s, so a changed part is noticed here", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.generatePortraits"]).toBe(110_000);
+  });
+
+  test("it is above the real worst path, with the slack left over", () => {
+    // The age check's downscale preflight (PREFLIGHT_TIMEOUT_MS) is awaited too, before the prices; the slack must still cover it.
+    const worstPath = PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + PREFLIGHT_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + EMBEDDING_COMPUTE_TIMEOUT_MS;
+    expect(COMMAND_DEADLINE_MS["avatars.generatePortraits"]).toBeGreaterThan(worstPath);
+    expect(COMMAND_DEADLINE_MS["avatars.generatePortraits"] ?? 0).toBeGreaterThanOrEqual(worstPath + 20_000);
+  });
+
+  test("avatars.estimatePortraits waits for a price load that times out, so the fallback estimate still arrives", () => {
+    expect(COMMAND_DEADLINE_MS["avatars.estimatePortraits"]).toBe(PRICE_FETCH_TIMEOUT_MS + 30_000);
+  });
+
+  test("the free reads and writes keep main's default: they never wait on the network", () => {
+    for (const type of ["avatars.portraits", "avatars.pickPortrait", "avatars.discardPortraits"] as const) {
+      expect(COMMAND_DEADLINE_MS[type]).toBeUndefined();
+    }
   });
 });

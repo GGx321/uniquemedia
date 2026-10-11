@@ -5,6 +5,7 @@ import { formatUsdTiered } from "../../lib/money";
 import { useNavigate } from "../../navigation";
 import { Icon, Spin } from "../../ui/Icon";
 import { Notice } from "../../ui/Notice";
+import { Portrait } from "../../ui/Portrait";
 import { useAnnouncer } from "../../ui/useAnnouncer";
 import { aspectRows, CHECK_HELD_REASON, lastLine, mismatchTitle, textMismatch, whenLabel, type AspectRow } from "./lookModel";
 import type { LookCheck } from "./useLookCheck";
@@ -131,6 +132,7 @@ export function CheckCard({
   blockedReason,
   keyMissing,
   held,
+  source = null,
 }: {
   look: LookCheck;
   /** The description as stored now: a verdict about an older text says so. */
@@ -145,6 +147,8 @@ export function CheckCard({
   keyMissing: boolean;
   /** A photo run or another job of hers is under way: the check would be refused IN_FLIGHT. */
   held: boolean;
+  /** S5.3d: an imported avatar's imported photo, which the check compares with (null: a wizard avatar's, compared with its master). */
+  source?: { readonly avatarId: string; readonly photoId: string } | null;
 }) {
   const navigate = useNavigate();
   const whyId = useId();
@@ -218,10 +222,27 @@ export function CheckCard({
     ) : null;
 
   const head = (
-    <div className="card-head">
-      <h2 className="card-title">Сверка с фото</h2>
-      {model !== null && <span className="mono faint">{model}</span>}
-    </div>
+    <>
+      <div className="card-head">
+        <h2 className="card-title">Сверка с фото</h2>
+        {model !== null && <span className="mono faint">{model}</span>}
+      </div>
+      {/* S5.3d (I5.20, design decision 7): an imported avatar's check always compares with the imported photo, whatever the master is now. */}
+      {source !== null && (
+        <p className="chk-pair">
+          <span className="ph chk-pair-thumb" aria-hidden="true">
+            <Portrait avatarId={source.avatarId} photoId={source.photoId} label="Исходное фото" />
+          </span>
+          <span>
+            Описание{" "}
+            <span className="chk-pair-arrow" aria-hidden="true">
+              ↔
+            </span>
+            <span className="sr-only"> сверяется с: </span>исходное фото
+          </span>
+        </p>
+      )}
+    </>
   );
   const live = (
     <p className="sr-only" role="status">
@@ -341,14 +362,17 @@ export function CheckCard({
           Аватар сохранён, описание прочитано с фото. Сверить его с фото можно здесь.
         </Notice>
       ) : (
-        blockedReason === null && <p className="chk-text">Сравнивает описание с мастер-портретом: волосы, глаза, приметы и тело, если оно в кадре. Сама ничего не меняет.</p>
+        // S5.3d: «Описание ↔ исходное фото» above says what is compared for an imported avatar; the words about the master would be untrue after a switch.
+        blockedReason === null &&
+        source === null && <p className="chk-text">Сравнивает описание с мастер-портретом: волосы, глаза, приметы и тело, если оно в кадре. Сама ничего не меняет.</p>
       )}
       <p className="mono faint chk-last">{lastLine(look.last)}</p>
       {button}
       {why ??
         (estimate !== null && (
           <p className="field-hint">
-            ожидаемая ≈ <span className="mono">{formatUsdTiered(estimate.expectedMicros, "nearest")}</span> · один запрос с мастер-портретом
+            ожидаемая ≈ <span className="mono">{formatUsdTiered(estimate.expectedMicros, "nearest")}</span> · один запрос с{" "}
+            {source === null ? "мастер-портретом" : "исходным фото"}
           </p>
         ))}
       {priceTrouble}

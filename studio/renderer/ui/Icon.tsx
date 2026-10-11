@@ -169,6 +169,15 @@ const PATHS = {
       <path d="M10 9v6M14 9v6" />
     </>
   ),
+  /** S5.3d: «Несколько лиц», a portrait slot the face check dropped (.omc/stage5/design 17). */
+  people: (
+    <>
+      <circle cx="9" cy="8" r="3.2" />
+      <path d="M3 19c0-3.2 2.7-5 6-5s6 1.8 6 5" />
+      <circle cx="17" cy="9" r="2.6" />
+      <path d="M15.6 14.2c3 .2 5.4 1.9 5.4 4.8" />
+    </>
+  ),
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;

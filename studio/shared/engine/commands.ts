@@ -16,6 +16,7 @@ import { OwnStickerBytes, OwnStickerBytesPayload, StickerBytes, StickerBytesPayl
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
   ApiKeyStatus,
+  AvatarPortraits,
   AvatarSummary,
   Draft,
   EngineNotice,
@@ -364,6 +365,28 @@ const ENGINE_SPECS = [
   // the avatar; checked first of all). A master photo that is missing on disk or cannot be read is INTERNAL and free (an active avatar always has one in its manifest).
   defineCommand("avatars.estimateCheckDescriptor", z.strictObject({ avatarId: Id }), Estimate),
   defineCommand("avatars.checkDescriptor", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ check: DescriptorCheck })),
+  // Stage 5, S5.3a (additive): the reference portrait of an IMPORTED avatar. An imported photo that shows a phone, a mirror or a room leaks all three into every scene, so five clean
+  // head-and-shoulders portraits are drawn FROM it, ranked by the face gate against it, and the owner picks one as the avatar's master (the imported photo stays on disk).
+  //  - `estimatePortraits` is free and avatar-independent (the import screen prices it before the avatar exists): 5 × (image + one reference) and, with the age check on, 5 age checks.
+  //    PRICE_UNAVAILABLE when the model lists no price for an input image.
+  //  - `generatePortraits` is paid, accepted like `generateCandidates`, and answers the `avatar.portraits` job that runs on (job.progress, then job.done/failed/cancelled).
+  //    Refused free, in this order: IN_FLIGHT (a run, a check, another batch or a delete holds the avatar), the usual key, ledger and library refusals, NOT_FOUND (a draft, an
+  //    archived avatar or an unknown id: only an active avatar has portraits), DESCRIPTOR_INVALID, VALIDATION with `portraitReason` `not-imported` (no source photo) or
+  //    `too-many-candidates` (15 unpicked portraits already), FACE_GATE_UNAVAILABLE, PRICE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED, INTERNAL (the source photo is
+  //    unavailable: the master is a portrait and its source is missing; the batch never falls back to the portrait), MASTER_FACE_UNUSABLE (no face in the source).
+  //  - `portraits` is a free read: the master's id, the source photo's id (null for a wizard avatar), the master's likeness when the master is a portrait (null when it is the source
+  //    photo, or there is no source), and the pending portraits the pick accepts, best first. NOT_FOUND for a draft or an unknown id, LIBRARY_UNAVAILABLE without a library.
+  //  - `pickPortrait` is free: the named photo (a pending portrait, or the source photo to go back to it) becomes the master, `avatar.changed` follows, and the other portraits go.
+  //    The current master is answered as it is. Refused, in this order: LIBRARY_UNAVAILABLE, NOT_FOUND (a draft, an archived avatar or an unknown id: asked first, so it never
+  //    shows as `not-a-candidate`), IN_FLIGHT (a run, a launch's run, the portraits job or a check holds the avatar, or a delete or a library switch is under way), VALIDATION with
+  //    `portraitReason` `not-imported` (a wizard avatar) or `not-a-candidate` (any other photo).
+  //  - `discardPortraits` is free («Оставить как есть»): removes every pending portrait and says how many; the master and the imported photo stay. The same refusals as the pick
+  //    except the VALIDATION ones.
+  defineCommand("avatars.estimatePortraits", Empty, Estimate),
+  defineCommand("avatars.generatePortraits", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ jobId: Id })),
+  defineCommand("avatars.portraits", z.strictObject({ avatarId: Id }), AvatarPortraits),
+  defineCommand("avatars.pickPortrait", z.strictObject({ avatarId: Id, photoId: Id }), z.strictObject({ avatar: AvatarSummary })),
+  defineCommand("avatars.discardPortraits", z.strictObject({ avatarId: Id }), z.strictObject({ avatarId: Id, removed: Count })),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.

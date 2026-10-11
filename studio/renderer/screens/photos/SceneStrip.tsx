@@ -7,6 +7,7 @@ import { countOf } from "../../lib/format";
 import { Icon } from "../../ui/Icon";
 import { ErrorNotice, Notice } from "../../ui/Notice";
 import { MoreButton, OwnersList, useOwnersDisclosure } from "./AnglesLines";
+import { PORTRAITS_DRAWING_REASON, portraitsDrawing } from "../look/lookModel";
 import { modelName, paidBlockedReason } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, setPriceKey, StackButton, useImagesPrice, Why } from "./scenePaid";
 import { setAction, setCategoryTags, tallyScenes } from "./sceneReview";
@@ -158,7 +159,15 @@ export function SceneStrip({
   const lockedByOther = paidInFlight && !approve.sending && !more.sending;
   const common =
     paidBlockedReason(view) ??
-    (avatar.status !== "active" ? "Аватар в архиве — новые фото для него не создаются." : runActive ? "Дождитесь конца текущего запуска." : lockedByOther ? "Дождитесь окончания другого платного действия." : null);
+    (avatar.status !== "active"
+      ? "Аватар в архиве — новые фото для него не создаются."
+      : runActive
+        ? "Дождитесь конца текущего запуска."
+        : portraitsDrawing(view, avatar.avatarId)
+          ? PORTRAITS_DRAWING_REASON
+          : lockedByOther
+            ? "Дождитесь окончания другого платного действия."
+            : null);
 
   // ---------- the button ----------
 

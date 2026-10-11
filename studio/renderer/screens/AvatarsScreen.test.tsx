@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { act, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import { ENGINE_GONE_DETAIL, ERROR_MESSAGES_RU, IMPORT_FALLBACK_PRICE, type AvatarSummary, type Draft } from "../../shared/engine";
 import { formatUsd } from "../lib/money";
 import { DESCRIPTOR, MOCK_AGE_CHECK_PER_SLOT, MOCK_ESTIMATE, mockDescriptor } from "../engine/mockEngine";
@@ -500,6 +500,34 @@ test("the import tile's price text is derived from IMPORT_FALLBACK_PRICE, not a 
   setup({ preset: "demo" });
   const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
   expect(within(tile).getByText("1 фото · ≈ $0.007–0.063")).toBeDefined();
+});
+
+// S5.3d (mockup 14a): the import also starts five reference portraits, so the tile says their own engine price beside the import's — never the sum.
+test("the import tile says the portraits' own engine price beside the import's, never their sum", async () => {
+  const { engine } = setup({ preset: "demo" });
+  const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
+  await waitFor(() => expect(tile.textContent).toBe("Импортировать аватара1 фото · ≈ $0.007–0.063 · портреты до $0.30"));
+  expect(callsOf(engine, "avatars.estimatePortraits").map((c) => c.payload)).toEqual([{}]);
+});
+
+test("without a portraits price the import tile says only the import's", async () => {
+  const { engine } = setup({ preset: "demo" });
+  engine.failNext("avatars.estimatePortraits", { code: "PRICE_UNAVAILABLE" });
+  const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
+  await flush();
+  expect(callsOf(engine, "avatars.estimatePortraits")).toHaveLength(1);
+  expect(tile.textContent).toBe("Импортировать аватара1 фото · ≈ $0.007–0.063");
+});
+
+test("the portraits price is asked again when the age check moves it", async () => {
+  const { engine, client } = setup({ preset: "demo" });
+  const tile = await screen.findByRole("button", { name: /Импортировать аватара/ });
+  await waitFor(() => expect(tile.textContent).toContain("портреты до $0.30"));
+  await act(async () => {
+    await client.request("settings.setImageAgeCheck", { imageAgeCheck: "on" });
+  });
+  await waitFor(() => expect(tile.textContent).toContain("портреты до $0.33"));
+  expect(callsOf(engine, "avatars.estimatePortraits")).toHaveLength(2);
 });
 
 test("the new-avatar tile's «до $X» is the engine's own free estimate, never a spend", async () => {

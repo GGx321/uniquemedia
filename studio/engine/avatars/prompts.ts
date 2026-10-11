@@ -31,3 +31,17 @@ export function candidatePrompt(descriptor: AvatarDescriptor): string {
     "Soft natural daylight, plain light grey background. Natural skin texture, minimal makeup, smartphone photo, no retouching, no beauty filter."
   );
 }
+
+/**
+ * Stage 5, S5.3b: the reference portrait, drawn FROM the imported photo (sent as the one reference): the spike's wording (canary C1's follow-up), plus «She is an
+ * adult woman.» (I5.13). One line, single spaces. It names no look term in the negative (I5.10) and, like `candidatePrompt`, takes the descriptor's text alone: a
+ * head-and-shoulders portrait shows no body.
+ */
+export function referencePortraitPrompt(descriptor: AvatarDescriptor): string {
+  return (
+    "The same woman as in the reference photo, with her exact face, facial proportions, exact hair colour and exact haircut. " +
+    `Head-and-shoulders portrait photo of a ${promptSubject({ age: descriptor.age, text: descriptor.text })}, looking straight at the camera with a relaxed, slight smile. ` +
+    "Soft natural daylight, plain light grey background, nothing else in the picture, her hands out of the frame. " +
+    "Natural skin texture, minimal makeup, ordinary phone photo. She is an adult woman."
+  );
+}

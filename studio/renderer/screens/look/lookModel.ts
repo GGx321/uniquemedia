@@ -1,6 +1,7 @@
 import { CHECK_ASPECTS, type CheckAspect, type DescriptorCheck } from "../../../shared/engine";
-import { isActiveJob, type EngineView } from "../../engine/store";
-import type { LookLanding } from "../../navigation";
+import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
+import { paidStop } from "../../lib/paidStop";
+import type { LookLanding, SettingsFocus } from "../../navigation";
 
 // S5.0d: what the «Внешность» tab says, apart from the components that draw it — the check's verdict and its aspects, the proposal as an edit (struck
 // out and inserted), the «последняя: …» line, and whether the avatar is held by work the check must wait for. No money is computed here: every figure
@@ -113,12 +114,22 @@ export const CHECK_HELD_REASON = "Сверка доступна, когда за
 export const EDIT_HELD_REASON = "Описание можно изменить, когда закончится сверка или другая задача этого аватара";
 
 /**
- * The line over the tab right after the avatar was made, as the mockup's 05, 06 and 11 say it. `bodyWaits` (S5.2d): an import's body proposal is still
- * open, so the line says the body is left to do.
+ * Where the import's reference portraits stand, for the landing line (S5.3d, design decision 8): `drawing` while the batch the import started runs (15),
+ * `ready` once it ended with portraits to choose from (16, 16b, 16e, 16f, 19a); null otherwise (none started, or none came: 17, 18, 18b, 23).
  */
-export function landingText(landing: LookLanding, name: string, bodyWaits: boolean): string {
+export type LandingPortraits = "drawing" | "ready" | null;
+
+/**
+ * The line over the tab right after the avatar was made, as the mockup's 05, 06 and 11 say it. `bodyWaits` (S5.2d): an import's body proposal is still
+ * open, so the line says the body is left to do. `portraits` (S5.3d): an import's reference portraits, said after it.
+ */
+export function landingText(landing: LookLanding, name: string, bodyWaits: boolean, portraits: LandingPortraits = null): string {
   if (landing.kind === "created") return `Аватар «${name}» сохранён. Мастер-портрет готов для фото.`;
-  const { check } = landing;
+  const tail = portraits === "drawing" ? " Рисуем варианты мастер-портрета." : portraits === "ready" ? " Варианты готовы — выберите мастер-портрет." : "";
+  return `${importedText(landing.check, name, bodyWaits)}${tail}`;
+}
+
+function importedText(check: DescriptorCheck | null, name: string, bodyWaits: boolean): string {
   const head = `Аватар «${name}» импортирован.`;
   if (check === null) return bodyWaits ? `${head} Описание прочитано с фото — осталось тело.` : `${head} Описание прочитано с фото.`;
   if (check.matches) return bodyWaits ? `${head} Описание прочитано с фото и сверено с ним — осталось тело.` : `${head} Описание прочитано с фото и сверено с ним.`;
@@ -128,14 +139,36 @@ export function landingText(landing: LookLanding, name: string, bodyWaits: boole
 /** S5.2d: `avatars.setBody` (or «Не нужно») refused IN_FLIGHT, or waiting for this window's own check: the same claim as an edit. */
 export const BODY_HELD_REASON = "Тело можно сохранить, когда закончится сверка или другая задача этого аватара";
 
+/** The jobs that hold an avatar while they run: a photo run, a candidates batch and (S5.3d) a reference-portrait batch, which claims her like a run. */
+const HOLDING_KINDS: ReadonlySet<JobView["kind"]> = new Set(["run", "avatar.candidates", "avatar.portraits"]);
+
 /**
- * Whether this window knows of work that holds the avatar, so the paid check would be refused IN_FLIGHT: a photo run or a candidates batch of hers that
- * is queued or running, or a paid start of hers on its way. A launch holds her through its own runs, which are run jobs. What the window cannot see (a
- * check from another window, a launch between its steps) still comes back as IN_FLIGHT, and the card says the same thing then.
+ * Whether this window knows of work that holds the avatar, so the paid check would be refused IN_FLIGHT: a photo run, a candidates batch or a portrait
+ * batch of hers that is queued or running, or a paid start of hers on its way. A launch holds her through its own runs, which are run jobs. What the
+ * window cannot see (a check from another window, a launch between its steps) still comes back as IN_FLIGHT, and the card says the same thing then.
  */
 export function avatarHeld(view: Pick<EngineView, "jobs" | "paidInFlightAvatars">, avatarId: string): boolean {
   if (view.paidInFlightAvatars.has(avatarId)) return true;
-  return view.jobs.some((job) => job.avatarId === avatarId && (job.kind === "run" || job.kind === "avatar.candidates") && isActiveJob(job));
+  return view.jobs.some((job) => job.avatarId === avatarId && HOLDING_KINDS.has(job.kind) && isActiveJob(job));
+}
+
+/**
+ * S5.3d: where in Settings the paid stop is fixed, when it is the key (an engine away is said first, `paidBlockedReason`'s order) or a reconcile: the
+ * button beside the reason the card gives. Null for any other stop and for none.
+ */
+export function paidSettingsFocus(view: Pick<EngineView, "phase" | "money" | "engineError" | "settings">): SettingsFocus | null {
+  const stop = paidStop(view);
+  const key = view.settings?.apiKey;
+  if (stop?.kind !== "offline" && (key === undefined || !key.stored || key.rejected)) return "key";
+  return stop?.kind === "reconcile" ? "money" : null;
+}
+
+/** S5.3d review M3: why «Фото» does not offer a run, a compose or a draw while her reference portraits draw (the engine would refuse IN_FLIGHT). */
+export const PORTRAITS_DRAWING_REASON = "Дождитесь, пока дорисуются варианты мастер-портрета.";
+
+/** Whether a reference-portrait batch of hers is queued or running: it claims her like a photo run, so her paid photo work waits for it. */
+export function portraitsDrawing(view: Pick<EngineView, "jobs">, avatarId: string): boolean {
+  return view.jobs.some((job) => job.avatarId === avatarId && job.kind === "avatar.portraits" && isActiveJob(job));
 }
 
 /** Whether a photo run of hers is drawing now: an edit is allowed, and that run finishes with the text it started with. */

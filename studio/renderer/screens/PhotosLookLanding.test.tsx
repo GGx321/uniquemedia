@@ -6,7 +6,8 @@ import { App } from "../App";
 import { MOCK_ESTIMATE, MockEngine, mockDescriptor, mockEngineClient } from "../engine/mockEngine";
 import { ManualScheduler } from "../engine/scheduler";
 import { DEFAULT_TRAITS } from "../lib/traits";
-import { callsOf, estimateText, flush, inAct, setup, withText } from "../testing";
+import { callsOf, estimateText, flush, inAct, runAll, setup, withText } from "../testing";
+import { CHECK_HELD_REASON } from "./look/lookModel";
 
 // S5.0d: the wizard and the import end on the new avatar's «Внешность» (the owner's decision; mockup 11 after «Сохранить», 05–06 after
 // «Импортировать»). After «Сохранить» the check the wizard priced under the button runs there, at exactly that worst case; the import brings the
@@ -189,7 +190,8 @@ describe("after «Импортировать» (05–06)", () => {
 
     expect(screen.getByRole("tab", { name: "Внешность" }).getAttribute("aria-selected")).toBe("true");
     // S5.R2 re-pin: the mock's photo gives no body (no proposal is stored), so the line says the body is left.
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело.").tagName).toBe("DIV");
+    // S5.3d re-pin: and the import started its five reference portraits, still drawing here.
+    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото и сверено с ним — осталось тело. Рисуем варианты мастер-портрета.").tagName).toBe("DIV");
     expect(text(checkCard())).toContain("Описание совпадает с фото");
     expect(text(checkCard())).toContain("при импорте");
     expect(within(descCard()).getByText(IMPORT_TEXT).tagName).toBe("P");
@@ -219,8 +221,8 @@ describe("after «Импортировать» (05–06)", () => {
     engine.setNextDescriptorCheck(mismatch(IMPORT_TEXT, "brown eyes", "green eyes"));
     await importZoe();
 
-    // S5.R2 re-pin: no body read from the photo either.
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — проверьте тело и сверку.").tagName).toBe("DIV");
+    // S5.R2 re-pin: no body read from the photo either. S5.3d re-pin: the portraits it started are still drawing.
+    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — проверьте тело и сверку. Рисуем варианты мастер-портрета.").tagName).toBe("DIV");
     expect(text(checkCard())).toContain("Не совпадает: глаза");
     expect(text(checkCard())).toContain("В описании: карие");
     expect(text(checkCard())).toContain("На фото: зелёные");
@@ -238,17 +240,22 @@ describe("after «Импортировать» (05–06)", () => {
   });
 
   test("an import whose check came back empty keeps the avatar and offers the check here", async () => {
-    const { engine } = setup();
+    const { engine, scheduler } = setup();
     engine.setNextDescriptorCheck({ code: "TIMEOUT" });
     await importZoe();
 
-    // S5.R2 re-pin: no body read from the photo either.
-    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — осталось тело.").tagName).toBe("DIV");
+    // S5.R2 re-pin: no body read from the photo either. S5.3d re-pin: the portraits it started are still drawing.
+    expect(screen.getByText("Аватар «Zoe» импортирован. Описание прочитано с фото — осталось тело. Рисуем варианты мастер-портрета.").tagName).toBe("DIV");
     expect(text(checkCard())).toContain("Сверка при импорте не прошла");
     const button = within(checkCard()).getByRole("button", { name: /^Проверить описание/ });
     expect(button.textContent).toBe("Проверить описание · до $0.025");
+    // S5.3d re-pin: the portrait batch holds her like a run does, so the check waits for it (mockup 15).
+    expect(button.hasAttribute("disabled")).toBe(true);
+    expect(text(checkCard())).toContain(CHECK_HELD_REASON);
+    runAll(scheduler);
+    await flush();
 
-    fireEvent.click(button);
+    fireEvent.click(within(checkCard()).getByRole("button", { name: /^Проверить описание/ }));
     await flush();
     expect(callsOf(engine, "avatars.checkDescriptor").map((c) => c.payload.acceptedWorstMicros)).toEqual([25_000]);
     expect(text(checkCard())).toContain("Описание совпадает с фото");

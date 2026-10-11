@@ -221,7 +221,7 @@ function SidebarStatus() {
   const view = useEngineView();
   if (view.phase !== "ready") return null;
   // A photo job just tracked from its command answer has no total yet (store.ts's emptyJob): `sidebarCounts`
-  // counts its 4 slots, as AvatarsScreen's draftState and CandidatesCard do, so the queue never reads "0 / 0".
+  // counts its 4 slots (a portrait batch's 5, S5.3d), as AvatarsScreen's draftState and CandidatesCard do, so the queue never reads "0 / 0".
   const counts = sidebarCounts(view.jobs, view.renderBatch);
   const money = view.money?.ledger === "open" ? view.money : null;
   return (

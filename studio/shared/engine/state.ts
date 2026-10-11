@@ -452,7 +452,7 @@ export const UnreadableAvatar = z.strictObject({
 
 // ---------- jobs ----------
 
-export const JobKind = z.enum(["avatar.candidates", "run", "render", "import", "scenes"]);
+export const JobKind = z.enum(["avatar.candidates", "run", "render", "import", "scenes", "avatar.portraits"]);
 export const JobStatus = z.enum(["queued", "running", "done", "failed", "cancelled"]);
 
 const doneWithinTotal = {
@@ -468,6 +468,8 @@ const doneWithinTotal = {
  * from other jobs, a local avatarId or `runs.list`.
  */
 const candidatesJobRef = { kind: z.literal("avatar.candidates"), jobId: Id, avatarId: Id };
+/** A reference-portrait batch (Stage 5, S5.3a): `done / total` count its SLOTS, `total` is 5. */
+const portraitsJobRef = { kind: z.literal("avatar.portraits"), jobId: Id, avatarId: Id };
 const runJobRef = { kind: z.literal("run"), jobId: Id, runId: Id, avatarId: Id };
 /**
  * A scene set's writer job (CS.4a): a compose or a «Дописать». `done / total` count SCENES: the scenes this job has written out of the scenes it
@@ -528,6 +530,7 @@ const renderQueued = { queued: z.boolean().optional() };
 export const JobProgress = z
   .discriminatedUnion("kind", [
     z.strictObject({ ...candidatesJobRef, ...progressCounts }),
+    z.strictObject({ ...portraitsJobRef, ...progressCounts }),
     z.strictObject({ ...runJobRef, ...progressCounts }),
     z.strictObject({ ...scenesJobRef, ...progressCounts }),
     z.strictObject({ ...renderJobRef, ...progressCounts, ...renderSaving, ...renderQueued }),
@@ -555,6 +558,7 @@ export const JobProgress = z
 /** `job.failed`'s payload: the job's identity (see `JobProgress`) and why it failed. */
 export const JobFailed = z.discriminatedUnion("kind", [
   z.strictObject({ ...candidatesJobRef, error: EngineError }),
+  z.strictObject({ ...portraitsJobRef, error: EngineError }),
   z.strictObject({ ...runJobRef, error: EngineError }),
   z.strictObject({ ...scenesJobRef, error: EngineError }),
   z.strictObject({ ...renderJobRef, error: EngineError }),
@@ -562,7 +566,7 @@ export const JobFailed = z.discriminatedUnion("kind", [
 ]);
 
 /** `job.cancelled`'s payload: the job's identity (see `JobProgress`). */
-export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(runJobRef), z.strictObject(scenesJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef)]);
+export const JobCancelled = z.discriminatedUnion("kind", [z.strictObject(candidatesJobRef), z.strictObject(portraitsJobRef), z.strictObject(runJobRef), z.strictObject(scenesJobRef), z.strictObject(renderJobRef), z.strictObject(importJobRef)]);
 
 /** A batch's slot, 1 to 4. */
 const CandidateSlot = z.number().int().min(1).max(4);
@@ -603,6 +607,100 @@ export const CandidatesResult = z
     path: ["rejectedByAgeCheck"],
   });
 
+// ---------- reference portraits (Stage 5, S5.3a) ----------
+
+/** Candidates in one portrait batch. */
+export const PORTRAITS_PER_BATCH = 5;
+/** Unpicked portraits an avatar may hold (three batches). */
+export const PORTRAIT_CANDIDATES_MAX = 15;
+/** The face gate's fixed identity threshold (`defaultFaceGateConfig`, pinned by a library test): a portrait below it is never stored, listed or picked. */
+export const PORTRAIT_MIN_LIKENESS = 0.55;
+
+/** A portrait batch's slot, 1 to 5. */
+export const PortraitSlot = z.number().int().min(1).max(PORTRAITS_PER_BATCH);
+
+/**
+ * A portrait the owner may pick: the photo and its likeness to the imported source photo (the face gate's cosine, from `PORTRAIT_MIN_LIKENESS` to 1). It carries its avatar
+ * like `Candidate` does, so a result or a list can be checked to be the job's own.
+ */
+export const PortraitCandidate = z.strictObject({
+  avatarId: Id,
+  photoId: Id,
+  likeness: z.number().min(PORTRAIT_MIN_LIKENESS).max(1),
+});
+
+/**
+ * A slot of a finished portrait batch that gave no candidate:
+ * - `age-rejected`: the age check did not say a clear yes; the image was dropped.
+ * - `unlike`: the face is not the source photo's (likeness under the gate); the image was dropped and never stored.
+ * - `no-face` / `multiple-faces`: the image has no face, or more than one; dropped and never stored.
+ * - `failed`: the slot could not finish; `error` says why. `reserveLeftOpen` as in `FailedCandidateSlot`.
+ */
+export const FailedPortraitSlot = z.discriminatedUnion("reason", [
+  z.strictObject({ slot: PortraitSlot, reason: z.literal("age-rejected") }),
+  z.strictObject({ slot: PortraitSlot, reason: z.literal("unlike"), likeness: z.number().min(-1).lt(PORTRAIT_MIN_LIKENESS) }),
+  z.strictObject({ slot: PortraitSlot, reason: z.literal("no-face") }),
+  z.strictObject({ slot: PortraitSlot, reason: z.literal("multiple-faces") }),
+  z.strictObject({ slot: PortraitSlot, reason: z.literal("failed"), error: EngineError, reserveLeftOpen: z.boolean() }),
+]);
+
+export const PortraitsResult = z
+  .strictObject({
+    kind: z.literal("avatar.portraits"),
+    avatarId: Id,
+    candidates: z.array(PortraitCandidate).max(PORTRAITS_PER_BATCH),
+    /** Every slot that gave no candidate, so a batch of fewer than five explains itself. */
+    failedSlots: z.array(FailedPortraitSlot).max(PORTRAITS_PER_BATCH),
+  })
+  .refine((r) => r.candidates.every((c) => c.avatarId === r.avatarId), {
+    message: "every candidate must belong to the job's avatar",
+    path: ["candidates"],
+  })
+  .refine((r) => r.candidates.length + r.failedSlots.length <= PORTRAITS_PER_BATCH, {
+    message: "candidates and failed slots are at most the five slots of a batch",
+    path: ["failedSlots"],
+  })
+  .refine((r) => unique(r.failedSlots.map((f) => f.slot)), { message: "a slot must not repeat", path: ["failedSlots"] })
+  .refine((r) => unique(r.candidates.map((c) => c.photoId)), { message: "a photo must not repeat", path: ["candidates"] });
+
+/**
+ * `avatars.portraits`: where the avatar's reference portrait stands. `sourcePhotoId` is the imported photo (null for a wizard avatar, which has none and gets no action),
+ * `masterLikeness` the master's likeness to it when the master is a portrait (null when the master is the source or a wizard candidate), `candidates` the pending
+ * portraits the owner may pick, best first.
+ */
+export const AvatarPortraits = z
+  .strictObject({
+    avatarId: Id,
+    /** The avatar's master now: the source photo, or a portrait. Never among `candidates`. */
+    masterPhotoId: Id,
+    sourcePhotoId: Id.nullable(),
+    masterLikeness: z.number().min(-1).max(1).nullable(),
+    /** S5.3c, OMITTED unless true: the master is a portrait whose photo is missing or unreadable while the source is alive. The only way out is to make the source the master again. */
+    masterMissing: z.literal(true).optional(),
+    candidates: z.array(PortraitCandidate).max(PORTRAIT_CANDIDATES_MAX),
+  })
+  .refine((r) => r.candidates.every((c) => c.avatarId === r.avatarId), {
+    message: "every candidate must belong to the avatar",
+    path: ["candidates"],
+  })
+  .refine((r) => unique(r.candidates.map((c) => c.photoId)), { message: "a photo must not repeat", path: ["candidates"] })
+  .refine((r) => r.candidates.every((c) => c.photoId !== r.sourcePhotoId && c.photoId !== r.masterPhotoId), {
+    message: "the source photo and the master are not candidates",
+    path: ["candidates"],
+  })
+  .refine((r) => r.sourcePhotoId !== null || r.candidates.length === 0, {
+    message: "an avatar with no source photo has no portrait candidates",
+    path: ["candidates"],
+  })
+  .refine((r) => r.masterMissing === undefined || (r.sourcePhotoId !== null && r.masterPhotoId !== r.sourcePhotoId), {
+    message: "only a master other than the source photo, of an avatar that has one, can be missing",
+    path: ["masterMissing"],
+  })
+  .refine((r) => (r.masterLikeness === null) === (r.sourcePhotoId === null || r.masterPhotoId === r.sourcePhotoId || r.masterMissing === true), {
+    message: "the master's likeness is null exactly when the master is the source photo, is missing, or the avatar has no source photo",
+    path: ["masterLikeness"],
+  });
+
 /**
  * A photo run's outcome (T6). `photoIds`: every photo the run stored, across
  * all of its jobs (a resume continues the same run). `failedSlots`: the
@@ -622,7 +720,7 @@ export const ImportResult = z
   .strictObject({ kind: z.literal("import"), mediaId: Id, media: MediaSummary })
   .refine((r) => r.media.mediaId === r.mediaId, { message: "the media must be the one the result names", path: ["media"] });
 
-export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, RunResult, ScenesResult, RenderResult, ImportResult]);
+export const JobResult = z.discriminatedUnion("kind", [CandidatesResult, PortraitsResult, RunResult, ScenesResult, RenderResult, ImportResult]);
 
 const jobCommon = {
   jobId: Id,
@@ -640,6 +738,12 @@ export const JobState = z
       avatarId: Id,
       ...jobCommon,
       result: CandidatesResult.optional(),
+    }),
+    z.strictObject({
+      kind: z.literal("avatar.portraits"),
+      avatarId: Id,
+      ...jobCommon,
+      result: PortraitsResult.optional(),
     }),
     z.strictObject({
       kind: z.literal("run"),
@@ -697,6 +801,7 @@ export const JobState = z
     (j) => {
       if (j.result === undefined) return true;
       if (j.kind === "avatar.candidates") return j.result.kind === "avatar.candidates" && j.result.avatarId === j.avatarId;
+      if (j.kind === "avatar.portraits") return j.result.kind === "avatar.portraits" && j.result.avatarId === j.avatarId;
       if (j.kind === "run") return j.result.kind === "run" && j.result.runId === j.runId && j.result.avatarId === j.avatarId;
       if (j.kind === "scenes") return j.result.kind === "scenes" && j.result.sceneSetId === j.sceneSetId && j.result.avatarId === j.avatarId;
       if (j.kind === "import") return j.result.kind === "import" && j.result.mediaId === j.mediaId;
@@ -978,6 +1083,9 @@ export type JobResult = z.infer<typeof JobResult>;
 export type ImportResult = z.infer<typeof ImportResult>;
 export type JobProgress = z.infer<typeof JobProgress>;
 export type FailedCandidateSlot = z.infer<typeof FailedCandidateSlot>;
+export type FailedPortraitSlot = z.infer<typeof FailedPortraitSlot>;
+export type PortraitCandidate = z.infer<typeof PortraitCandidate>;
+export type AvatarPortraits = z.infer<typeof AvatarPortraits>;
 export type RunRequest = z.infer<typeof RunRequest>;
 export type RunSummary = z.infer<typeof RunSummary>;
 export type PhotoQaSummary = z.infer<typeof PhotoQaSummary>;

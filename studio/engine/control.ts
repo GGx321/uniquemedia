@@ -5,7 +5,7 @@ import { POOL_MAX_ATTEMPTS } from "./scenes/poolCall";
 import { DESCRIPTOR_CHECK_MAX_ATTEMPT_MS, DESCRIPTOR_CHECK_MAX_ATTEMPTS, IMPORT_DESCRIBE_MAX_ATTEMPTS } from "./avatars/plan";
 import { PRICE_FETCH_TIMEOUT_MS } from "./money/prices";
 import { MAX_ATTEMPT_MS } from "./openrouter/transport";
-import { REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
+import { EMBEDDING_COMPUTE_TIMEOUT_MS, REFERENCE_TIMEOUT_MS } from "./runs/timeouts";
 import { AVATAR_DELETE_PREPARE_DEADLINE_MS, LIVE_LIBRARY_IDENTITY_TIMEOUT_MS, VIDEOS_DELETE_DEADLINE_MS } from "./videos/timeouts";
 
 // Messages between main and the engine that are not part of the
@@ -314,6 +314,11 @@ export const COMMAND_DEADLINE_MS: Partial<Record<EngineCommandMessage["type"], n
   // Stage 5, S5.0c: the check's price (a price load that times out still gives the fallback estimate), and the paid check itself: a price load, a load of the master, then every check attempt.
   "avatars.estimateCheckDescriptor": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.checkDescriptor": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + DESCRIPTOR_CHECK_MAX_ATTEMPTS * DESCRIPTOR_CHECK_MAX_ATTEMPT_MS + COMMAND_SLACK_MS,
+  // Stage 5, S5.3c: the portrait batch answers with its job id once everything before the first paid image is done: a price load, the library's identity check, the source photo's load
+  // (REFERENCE_TIMEOUT_MS) and its face embedding (EMBEDDING_COMPUTE_TIMEOUT_MS; the JPEG retry shares the one bound). Main's default 30 s would answer INTERNAL while a paid batch of five
+  // images starts that the window never tracks. The estimate waits for a price load that times out, so the fallback estimate still arrives.
+  "avatars.estimatePortraits": PRICE_FETCH_TIMEOUT_MS + COMMAND_SLACK_MS,
+  "avatars.generatePortraits": PRICE_FETCH_TIMEOUT_MS + LIVE_LIBRARY_IDENTITY_TIMEOUT_MS + REFERENCE_TIMEOUT_MS + EMBEDDING_COMPUTE_TIMEOUT_MS + COMMAND_SLACK_MS,
   // Answers with the job id once its checks and a price load are done; the job runs on and reports by events.
   "avatars.generateCandidates": PRICE_FETCH_TIMEOUT_MS + 15_000,
   "avatars.createDraft": PRICE_FETCH_TIMEOUT_MS + DESCRIPTOR_MAX_ATTEMPTS * MAX_ATTEMPT_MS + COMMAND_SLACK_MS,

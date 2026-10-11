@@ -3,7 +3,7 @@ import { IMPORT_FALLBACK_PRICE, MAX_LAUNCH_AVATARS, type AvatarDeleteResult, typ
 import { useEngine, useEngineView } from "../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../engine/store";
 import { countOf, groupNumber, NBSP, plural, yearsOld } from "../lib/format";
-import { formatUsd, formatUsdRange } from "../lib/money";
+import { formatUsd, formatUsdRange, formatUsdTiered } from "../lib/money";
 import { paidStop, restartStopText } from "../lib/paidStop";
 import { DEFAULT_TRAITS, ETHNICITIES } from "../lib/traits";
 import { useNavigate } from "../navigation";
@@ -474,8 +474,11 @@ function NewAvatarTile({ estimate }: { estimate: Estimate | null }) {
 // price in the app is (lib/money.ts).
 const IMPORT_TILE_PRICE = `≈ ${formatUsdRange(IMPORT_FALLBACK_PRICE.whole.expectedMicros, IMPORT_FALLBACK_PRICE.whole.worstMicros, 3)}`;
 
-/** T6c: one photo the owner already has, instead of generating one from a prompt. */
-function ImportAvatarTile() {
+/**
+ * T6c: one photo the owner already has, instead of generating one from a prompt. S5.3d (mockup 14a): the import also starts five reference portraits,
+ * so the tile says their own engine price beside the import's — two figures side by side, never their sum; only the import's while it has none.
+ */
+function ImportAvatarTile({ portraits }: { portraits: Estimate | null }) {
   const navigate = useNavigate();
   return (
     <button type="button" className="new-tile" onClick={() => navigate({ name: "avatarImport" })}>
@@ -483,7 +486,10 @@ function ImportAvatarTile() {
         <Icon name="upload" size={22} strokeWidth={2.2} />
       </span>
       <span className="new-tile-title">Импортировать аватара</span>
-      <span className="mono">1 фото · {IMPORT_TILE_PRICE}</span>
+      <span className="mono">
+        1 фото · {IMPORT_TILE_PRICE}
+        {portraits !== null && <span className="nw"> · портреты до {formatUsdTiered(portraits.worstMicros, "up")}</span>}
+      </span>
     </button>
   );
 }
@@ -590,6 +596,22 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
       alive = false;
     };
   }, [showTiles, priceIsCurrent, imageAgeCheck, client]);
+
+  // S5.3d: the import tile's «портреты до $X», `avatars.estimatePortraits` (free, avatar-independent), asked the same way: once, and again when the age
+  // check moves it.
+  const [portraitsPrice, setPortraitsPrice] = useState<{ estimate: Estimate; imageAgeCheck: string | undefined } | null>(null);
+  const portraitsPriceIsCurrent = portraitsPrice !== null && portraitsPrice.imageAgeCheck === imageAgeCheck;
+  useEffect(() => {
+    if (!showTiles || portraitsPriceIsCurrent) return;
+    let alive = true;
+    setPortraitsPrice(null);
+    void client.request("avatars.estimatePortraits", {}).then((reply) => {
+      if (alive) setPortraitsPrice(reply.ok ? { estimate: reply.result, imageAgeCheck } : null);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [showTiles, portraitsPriceIsCurrent, imageAgeCheck, client]);
 
   const query = search.trim().toLocaleLowerCase("ru-RU");
   const shownAvatars = (filter === "all" ? view.avatars : filter === "active" ? active : archived).filter((a) => matches(a.name, query));
@@ -764,7 +786,7 @@ export function AvatarsScreen({ saved }: { saved?: string }) {
             {showTiles && (
               <>
                 <NewAvatarTile estimate={priceIsCurrent ? newAvatarPrice.estimate : null} />
-                <ImportAvatarTile />
+                <ImportAvatarTile portraits={portraitsPriceIsCurrent ? portraitsPrice.estimate : null} />
               </>
             )}
           </div>

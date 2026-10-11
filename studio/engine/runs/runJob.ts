@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
 import { NoFaceInReferenceError } from "../face/noFaceError";
 import type { Library, NewPhotoMeta, PhotoQa } from "../library";
-import { imageSize, isAnimatedImage, sniffImageMediaType, type LibraryReference } from "../library/media";
+import { imageSize, isAnimatedImage, type LibraryReference } from "../library/media";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
@@ -15,6 +15,7 @@ import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
+import { withReferenceRetry } from "./faceBytes";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
 
@@ -295,26 +296,6 @@ async function loadMaster(target: MasterTarget): Promise<{ ok: true; master: Lib
  * own reference size).
  */
 /**
- * Re-review, N1 (HIGH): the decoder only handles JPEG/PNG
- * (decode/wasmDecode.ts's own allow-list — never WebP, by design). An
- * imported master may be WebP (`importStaging.ts`'s own 16 MP cap accepts
- * it), so using `loadMasterOriginal()`'s raw bytes unconditionally made
- * every WebP-imported avatar's runs fail MASTER_FACE_UNUSABLE forever — the
- * master is perfectly fine, only unreadable by this ONE decoder. Use the
- * original file when it is JPEG/PNG (M1/N1's own fix stays: never the
- * OpenRouter-bound downscale for a JPEG/PNG original); otherwise fall back
- * to `reference` — `loadMaster()`'s own <=1024px reference, already loaded
- * for this exact avatar's OpenRouter calls, always JPEG
- * (`downscaleToJpeg`'s own output format, `QaInput.master`'s own doc
- * comment) — so the identity check still runs, just at a smaller size, on
- * every format the app can import.
- */
-function masterOriginalFor(original: Uint8Array, reference: LibraryReference): Uint8Array {
-  const mediaType = sniffImageMediaType(original);
-  return mediaType === "image/jpeg" || mediaType === "image/png" ? original : reference;
-}
-
-/**
  * Runs every gate's `prepare()` once, against `masterOriginal`. Sets
  * `ctx.masterSha256` first (N10 — before any gate's own prepare() runs, so a
  * concurrent/stale check() in this engine process reads the right sha).
@@ -351,30 +332,9 @@ async function prepareGates(target: MasterTarget, reference: LibraryReference): 
     if (original === null) {
       return { ok: false, end: { status: "failed", error: { code: "NOT_FOUND", detail: `avatar ${avatarId} has no usable master photo` } } };
     }
-    const masterOriginal = masterOriginalFor(original, reference);
-    try {
-      await runPrepare(target, masterOriginal, signal);
-    } catch (error) {
-      // M1: masterOriginalFor() only sniffs the FORMAT (JPEG/PNG vs. not) —
-      // a JPEG/PNG original can still fail to DECODE (e.g. a CMYK color
-      // space; ffmpeg/import tolerate it, the WASM decoder does not,
-      // decode/realBackend.ts). A genuine "no face" is not retried (the
-      // reference is the same photo, just smaller — it would not have a
-      // different face); nor is anything already run against the reference
-      // (nothing left to fall back to). Any other failure gets exactly one
-      // retry against loadMaster()'s own <=1024px reference, already
-      // downscaled to a format (JPEG) the decoder is known to read — under
-      // the SAME signal/timeout, so the retry never doubles the deadline
-      // budget. 2b whole-slice review blocker: never once `signal` has
-      // already aborted (the run's own cancel, or this function's own
-      // timeout) — a gate's own prepare() starts a real embedding
-      // computation the caller's signal does not actually stop (T7b's
-      // H2/N11: the shared computation runs on its own internal
-      // AbortController), so retrying here after a stop would start real,
-      // wasted work that outlives the job instead of just rethrowing.
-      if (masterOriginal === reference || error instanceof NoFaceInReferenceError || signal.aborted) throw error;
-      await runPrepare(target, reference, signal);
-    }
+    // M1: a JPEG/PNG original can still fail to DECODE (a CMYK colour space) and a WebP is not read at all: the one retry rule of runs/faceBytes.ts (a genuine «no face» is final, nothing is
+    // retried once the signal has aborted, and the retry shares this signal and timeout, so it never doubles the deadline).
+    await withReferenceRetry((bytes) => runPrepare(target, bytes, signal), { original, reference, signal });
     return { ok: true };
   } catch (error) {
     if (target.signal.aborted) return { ok: false, end: { status: "cancelled" } };

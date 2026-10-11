@@ -235,3 +235,103 @@ describe("JobRegistry: photo run jobs", () => {
     expect(jobs.states().map((j) => j.status)).toEqual(["running", "running"]);
   });
 });
+
+// Stage 5, S5.3b: the reference portrait batch is a job of its own kind, five slots, with a likeness on every candidate.
+describe("JobRegistry: reference portrait jobs", () => {
+  const AVATAR = "avatar-00000001";
+
+  test("a started portraits job is listed as running with its five slots", () => {
+    const jobs = new JobRegistry();
+    jobs.startPortraits("job-00000001", AVATAR, 5);
+
+    expect(jobs.states()).toEqual([{ kind: "avatar.portraits", jobId: "job-00000001", avatarId: AVATAR, status: "running", done: 0, total: 5 }]);
+    valid(jobs.states());
+  });
+
+  test("progress gives the portraits payload and never exceeds the five slots", () => {
+    const jobs = new JobRegistry();
+    jobs.startPortraits("job-00000001", AVATAR, 5);
+
+    expect(jobs.progress("job-00000001", 2)).toEqual({ kind: "avatar.portraits", jobId: "job-00000001", avatarId: AVATAR, done: 2, total: 5 });
+    expect(jobs.progress("job-00000001", 9)).toMatchObject({ done: 5, total: 5 });
+  });
+
+  test("a done job carries its candidates with their likeness and its avatar, and the slots that gave none", () => {
+    const jobs = new JobRegistry();
+    jobs.startPortraits("job-00000001", AVATAR, 5);
+    jobs.progress("job-00000001", 5);
+
+    const state = jobs.finishPortraits("job-00000001", {
+      status: "done",
+      candidates: [
+        { photoId: "photo-00000001", likeness: 0.76 },
+        { photoId: "photo-00000002", likeness: 0.72 },
+      ],
+      failedSlots: [
+        { slot: 3, reason: "unlike", likeness: 0.48 },
+        { slot: 4, reason: "no-face" },
+        { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+      ],
+    });
+
+    expect(state).toEqual({
+      kind: "avatar.portraits",
+      jobId: "job-00000001",
+      avatarId: AVATAR,
+      status: "done",
+      done: 5,
+      total: 5,
+      result: {
+        kind: "avatar.portraits",
+        avatarId: AVATAR,
+        candidates: [
+          { avatarId: AVATAR, photoId: "photo-00000001", likeness: 0.76 },
+          { avatarId: AVATAR, photoId: "photo-00000002", likeness: 0.72 },
+        ],
+        failedSlots: [
+          { slot: 3, reason: "unlike", likeness: 0.48 },
+          { slot: 4, reason: "no-face" },
+          { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+        ],
+      },
+    });
+    valid(jobs.states());
+  });
+
+  test("a failed job carries its error, a cancelled one only its status", () => {
+    const jobs = new JobRegistry();
+    jobs.startPortraits("job-00000001", AVATAR, 5);
+    jobs.startPortraits("job-00000002", AVATAR, 5);
+    jobs.progress("job-00000002", 1);
+
+    jobs.finishPortraits("job-00000001", { status: "failed", error: { code: "NETWORK", detail: "fetch failed" } });
+    jobs.finishPortraits("job-00000002", { status: "cancelled" });
+
+    expect(jobs.states()).toEqual([
+      { kind: "avatar.portraits", jobId: "job-00000001", avatarId: AVATAR, status: "failed", done: 0, total: 5, error: { code: "NETWORK", detail: "fetch failed" } },
+      { kind: "avatar.portraits", jobId: "job-00000002", avatarId: AVATAR, status: "cancelled", done: 1, total: 5 },
+    ]);
+    valid(jobs.states());
+  });
+
+  test("each end function ends only its own kind: a candidates job is not a portraits job", () => {
+    const jobs = new JobRegistry();
+    jobs.startCandidates("job-00000001", DRAFT, 4);
+    jobs.startPortraits("job-00000002", AVATAR, 5);
+
+    expect(jobs.finishPortraits("job-00000001", { status: "cancelled" })).toBeNull();
+    expect(jobs.finish("job-00000002", { status: "cancelled" })).toBeNull();
+    expect(jobs.states().map((j) => j.status)).toEqual(["running", "running"]);
+  });
+
+  test("a running portraits job holds its avatar and cancel aborts its signal", () => {
+    const jobs = new JobRegistry();
+    const signal = jobs.startPortraits("job-00000001", AVATAR, 5);
+
+    expect(jobs.hasLiveJobFor(AVATAR)).toBe(true);
+    expect(jobs.cancel("job-00000001")).toBe(true);
+    expect(signal.aborted).toBe(true);
+    jobs.finishPortraits("job-00000001", { status: "cancelled" });
+    expect(jobs.hasLiveJobFor(AVATAR)).toBe(false);
+  });
+});

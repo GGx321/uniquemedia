@@ -13,6 +13,7 @@ import {
   LAUNCH_REASONS_RU,
   SCENE_REASONS_RU,
   PHOTO_UNAVAILABLE_REASONS_RU,
+  PORTRAIT_REASONS_RU,
   RENDER_NO_SPACE_DETAIL_PREFIX,
   RENDER_TIMEOUT_DETAIL_PREFIX,
   RENDER_NOT_QUEUED_DETAIL,
@@ -46,6 +47,13 @@ const NO_ANSWER_RU = "Движок не ответил вовремя. Кома�
 const RENDER_TIMEOUT_RU = "Рендер не уложился во время: диск с библиотекой или ffmpeg не ответили. Ничего не потрачено — повторите; если библиотека на внешнем диске, проверьте его.";
 const RENDER_NO_SPACE_RU = "Для рендера не хватает места на системном диске (там лежат его временные файлы). Освободите место и повторите. Готовый файл не создан, ничего не потрачено.";
 const RENDER_FORMS = ["рендер", "рендера", "рендеров"] as const;
+
+/**
+ * S5.3d review L4: the engine counts every waiting portrait, the ones today's age threshold hides from the list too (`engine.ts` `#generatePortraits`),
+ * so the window may meet the limit before it can see 15; the reset that clears them all is «Удалить варианты» there.
+ */
+const TOO_MANY_PORTRAITS_RU =
+  "Невыбранных вариантов слишком много: ещё 5 превысят предел в 15 (считаются и скрытые проверкой возраста). Выберите один или нажмите «Удалить варианты», потом повторите. Ничего не потрачено.";
 
 /**
  * The refusals that point at one scene (`sceneId`) say which, as the artboards number it, instead of «одной из сцен». Without the number (the contract allows
@@ -91,6 +99,10 @@ function baseText(error: EngineError): string {
   if (error.code === "VALIDATION" && error.launchReason !== undefined) return LAUNCH_REASONS_RU[error.launchReason];
   // A scene-set command the engine refused says which rule it broke; the window names the scene itself from `sceneId`.
   if (error.code === "VALIDATION" && error.sceneReason !== undefined) return namedScene(error.sceneReason, error.sceneId) ?? SCENE_REASONS_RU[error.sceneReason];
+  // S5.3d: a reference-portrait command says which rule it broke (VALIDATION), or that the imported photo is gone (the one INTERNAL with a reason).
+  // The limit names the window's own button: the contract's text names «Оставить как есть», which this window does not have (review L4).
+  if (error.code === "VALIDATION" && error.portraitReason === "too-many-candidates") return TOO_MANY_PORTRAITS_RU;
+  if ((error.code === "VALIDATION" || error.code === "INTERNAL") && error.portraitReason !== undefined) return PORTRAIT_REASONS_RU[error.portraitReason];
   if (error.code === "INTERNAL" && error.detail === DRAFT_TOO_NEW_DETAIL) return DRAFT_TOO_NEW_RU;
   if (error.code === "INTERNAL" && error.detail === DRAFT_CHANGING_DETAIL) return DRAFT_CHANGING_RU;
   if (error.code === "INTERNAL" && error.detail === HOST_ASLEEP_DETAIL) return HOST_ASLEEP_RU;

@@ -41,7 +41,11 @@ export type PhotosTab = "photos" | "videos" | "look";
  */
 export type LookLanding =
   | { readonly kind: "created"; readonly checkWorstMicros: number | null }
-  | { readonly kind: "imported"; readonly check: DescriptorCheck | null };
+  /**
+   * S5.3d: `portraitsWorstMicros` is the reference-portrait batch's worst case the import screen showed under its button, which the same click accepted
+   * (null when no price was shown, and then nothing is started: the owner starts it in «Внешность»).
+   */
+  | { readonly kind: "imported"; readonly check: DescriptorCheck | null; readonly portraitsWorstMicros: number | null };
 
 export interface NavigateOptions {
   /** Skips the leave guard: the owner chose to leave without saving. */

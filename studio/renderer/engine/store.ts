@@ -13,6 +13,7 @@ import {
   type MoneyStatus,
   type MusicKeyStatus,
   type MusicStatus,
+  PORTRAITS_PER_BATCH,
   type Settings,
   type Snapshot,
   type UnreadableAvatar,
@@ -209,6 +210,7 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
 /** The identity every job event carries: enough to create the job's view when it is the first this window hears of it. */
 type JobRef = { readonly jobId: string; readonly avatarId: string } & (
   | { readonly kind: "avatar.candidates" }
+  | { readonly kind: "avatar.portraits" }
   | { readonly kind: "run"; readonly runId: string }
   | { readonly kind: "scenes"; readonly sceneSetId: string }
   | { readonly kind: "render"; readonly montageId: string | null; readonly videoId: string | null }
@@ -358,6 +360,8 @@ export class EngineStore {
    * and a snapshot or a tab opened later must still read it as the owner's own cancel. Taken back when the engine refuses. Insertion-ordered, capped.
    */
   private readonly cancelAsked = new Set<string>();
+  /** What `claimOnce` has handed out, by purpose (S5.3d review L5). */
+  private readonly claimed = new Map<string, WeakSet<object>>();
   private held: EventMessage[] = [];
   private syncing = false;
   private queuedSnapshot = false;
@@ -549,6 +553,26 @@ export class EngineStore {
   /** Records a job this window just started; merges with any events that beat the reply. */
   trackCandidatesJob(jobId: string, avatarId: string): void {
     this.patchJob({ kind: "avatar.candidates", jobId, avatarId }, (job) => job);
+  }
+
+  /**
+   * True the first time `key` (an object the window keeps, a route's landing say) is claimed for `purpose`, false ever after in this window. Kept by the
+   * store, not by a module of a screen: a hot reload of that module (or a screen mounted again) must not act on the same landing twice (S5.3d review L5).
+   */
+  claimOnce(purpose: string, key: object): boolean {
+    const claimed = this.claimed.get(purpose) ?? new WeakSet<object>();
+    this.claimed.set(purpose, claimed);
+    if (claimed.has(key)) return false;
+    claimed.add(key);
+    return true;
+  }
+
+  /**
+   * S5.3d: records a reference-portrait batch this window just started, with its five slots as the total until the first job.progress says otherwise
+   * (so «Генерация 0 / 5» and the panel's «0 из 5», never a candidates batch's 4); merges with any events that beat the reply.
+   */
+  trackPortraitsJob(jobId: string, avatarId: string): void {
+    this.patchJob({ kind: "avatar.portraits", jobId, avatarId }, (job) => ({ ...job, total: job.total || PORTRAITS_PER_BATCH }));
   }
 
   /**
@@ -1043,7 +1067,8 @@ export class EngineStore {
               : result.kind === "render"
               ? // The result names no draft: a render first heard of here keeps none (one already known keeps its own).
                 { kind: "render", jobId, avatarId: result.avatarId, montageId: null, videoId: result.videoId }
-              : { kind: "avatar.candidates", jobId, avatarId: result.avatarId };
+              : // S5.3d: a portrait batch first heard of at its end is a portrait batch, never labelled a candidates batch.
+                { kind: result.kind, jobId, avatarId: result.avatarId };
         this.patchJob(
           ref,
           (job) => {
