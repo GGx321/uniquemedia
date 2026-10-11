@@ -472,13 +472,18 @@ describe("a run from the start", () => {
   });
 
   // 5a.2 (S5.6b, I5.25): the run reads the avatar's hair length and gives every prompt a hair line: the style varies, the colour is always the reference photo's.
-  test("with a hair length, every journalled prompt carries a hair line; without one, none does", async () => {
+  test("with a hair length, every journalled prompt carries a hair line except where the moment names her hair itself", async () => {
     const run = await newRun(8);
     await start(run, { hairLengthOf: () => "shoulder" }).end;
     const event = (await journal()).find((e) => e.type === "prompts");
-    const prompts = event?.type === "prompts" ? event.prompts.map((p) => p.prompt) : [];
-    expect(prompts).toHaveLength(8);
-    for (const prompt of prompts) expect(prompt).toMatch(/Today her hair is [^:]+: the same hair colour as in the reference photo, only styled differently\./);
+    const byIndex = new Map(event?.type === "prompts" ? event.prompts.map((p) => [p.slotIndex, p.prompt]) : []);
+    expect(byIndex.size).toBe(8);
+    for (const slot of plannedSlots(run)) {
+      const own = POOLS.home.locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity)?.hair === "own";
+      const prompt = byIndex.get(slot.slotIndex) ?? "";
+      if (own) expect(prompt).not.toContain("Today her hair");
+      else expect(prompt).toMatch(/Today her hair is [^:]+: the same hair colour as in the reference photo, only styled differently\./);
+    }
   });
 
   test("an avatar whose hair length is unknown gets no hair line", async () => {
