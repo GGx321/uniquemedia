@@ -1,5 +1,5 @@
-import { BANKS } from "../../shared/scenes/banks";
-import { BANK_CATEGORIES } from "../../shared/scenes/banks/types";
+import { BANKS } from "./banks";
+import { BANK_CATEGORIES } from "./banks/types";
 
 // 5a.2 (S5.6d, plan s5a2 §5.5 «After the last attempt»): the sentence a planned slot takes when the model could not write it in the two answered attempts a chunk
 // has: «{at or "At " + location}, she is {activity}, wearing {outfit}.» It is built from the slot's own stored texts and nothing else (no legwear, no gaze, no

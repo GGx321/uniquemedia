@@ -46,5 +46,5 @@ export {
   type WriterRefusal,
   type WriterScene,
 } from "./writer";
-export { plainSentence } from "./plainSentence";
+export { plainSentence } from "../../shared/scenes/plain";
 export { assembledScenes, assembleRun, assembleSlot, AssemblerRefusalError, sentenceProblems, type AssembledScene, type AssembledSlot, type AssembleOptions, type SentenceProblem } from "./assembler";

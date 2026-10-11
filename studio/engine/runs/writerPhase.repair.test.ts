@@ -3,7 +3,7 @@ import type { Scope } from "../money/ledger";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { plan, type ReadableSlot } from "../scenes";
 import { ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAsk } from "../scenes/ideaWriter";
-import { plainSentence } from "../scenes/plainSentence";
+import { plainSentence } from "../scenes";
 import { buildRunPlan, plannedSlots, runWriterConfig } from "./plan";
 import { NetworkPool } from "./pools";
 import { runWriterPhase, type WriterPhase } from "./writerPhase";
