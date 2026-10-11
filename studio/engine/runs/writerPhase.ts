@@ -239,6 +239,7 @@ export async function runWriterPhase<S extends ReadableSlot = PlanSlot>(deps: Wr
       return { chunk, local, open };
     });
   for (const { chunk, local, open } of [...todo.filter((t) => t.open.length === 0), ...todo.filter((t) => t.open.length > 0)]) {
+    if (phase.signal.aborted) return cancelled();
     if (phase.stop?.aborted === true) return softStopped();
     let written: Map<number, string> = new Map();
     if (open.length > 0) {

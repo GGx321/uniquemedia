@@ -168,6 +168,15 @@ describe("runWriterPhase: the local seam", () => {
     expect(answer.ok && answer.sentences.get(26)).toBe("kept");
   });
 
+  test("a cancel journals no template chunk and says it was cancelled", async () => {
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled"));
+    const { chunks, result } = start([], phaseOf(30, (slot) => localText(slot.slotIndex), { signal: controller.signal }));
+
+    expect(await result).toMatchObject({ ok: false, stop: "cancelled" });
+    expect(chunks).toEqual([]);
+  });
+
   test("a seam that is absent leaves every chunk to the model, as before", async () => {
     const { net, chunks, result } = start([good, good], phaseOf(30, undefined));
     await result;
