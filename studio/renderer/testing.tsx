@@ -12,9 +12,11 @@ import { SCENE_REVIEW_KEY } from "./screens/photos/sceneReview";
  */
 export interface SetupOptions extends MockEngineOptions {
   sceneReview?: "on" | "off";
+  /** A manual clock for the photo lists' re-read wait (returned as `pagesScheduler`); without it the wait runs on real timers. */
+  pagesScheduler?: ManualScheduler;
 }
 
-export function setup({ sceneReview, ...options }: SetupOptions = {}) {
+export function setup({ sceneReview, pagesScheduler, ...options }: SetupOptions = {}) {
   try {
     if (sceneReview === undefined) localStorage.removeItem(SCENE_REVIEW_KEY);
     else localStorage.setItem(SCENE_REVIEW_KEY, sceneReview);
@@ -24,8 +26,8 @@ export function setup({ sceneReview, ...options }: SetupOptions = {}) {
   const scheduler = new ManualScheduler();
   const engine = new MockEngine({ scheduler, latencyMs: 0, ...options });
   const client = mockEngineClient(engine);
-  const utils = render(<App client={client} />);
-  return { engine, scheduler, client, ...utils };
+  const utils = render(<App client={client} pagesScheduler={pagesScheduler} />);
+  return { engine, scheduler, pagesScheduler, client, ...utils };
 }
 
 export function callsOf<T extends CommandType>(engine: MockEngine, type: T): Extract<CommandMessage, { type: T }>[] {

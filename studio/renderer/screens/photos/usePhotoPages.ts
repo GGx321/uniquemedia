@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AvatarSummary, EngineError, PhotoSummary } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
 import { addedPhotos, advances, appendPage, CURSOR_STUCK, type PhotoPages, readThrough, readTop, type ReadPage, replacePhoto } from "./photoPages";
+import { usePagesScheduler } from "./pagesScheduler";
 import { useMounted } from "./shared";
 
 // S4.P2: an avatar's photos as a screen shows them (the «Фото» gallery, the editor's bin): read again whenever they may have changed,
@@ -70,8 +71,9 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
   const busy = useRef(false);
   /** A re-read asked and not started yet (the deeper kind wins). */
   const pending = useRef<Reread>("none");
-  /** The wait before a pending re-read, once a read ended. */
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Cancels the wait before a pending re-read, once a read ended; null while there is no wait. */
+  const timer = useRef<(() => void) | null>(null);
+  const scheduler = usePagesScheduler();
   /** «Показать ещё» asked and not done yet. */
   const moreWanted = useRef(false);
   const mounted = useMounted();
@@ -97,12 +99,12 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
       return;
     }
     if (pending.current !== "none" && timer.current === null) {
-      timer.current = setTimeout(() => {
+      timer.current = scheduler.schedule(REREAD_DEBOUNCE_MS, () => {
         timer.current = null;
         next.current();
-      }, REREAD_DEBOUNCE_MS);
+      });
     }
-  }, []);
+  }, [scheduler]);
 
   const fetchMore = useCallback(async (): Promise<void> => {
     const list = held.current;
@@ -169,7 +171,7 @@ export function usePhotoPages(client: EngineClient, avatarId: string, { enabled,
 
   useEffect(
     () => () => {
-      if (timer.current !== null) clearTimeout(timer.current);
+      timer.current?.();
       timer.current = null;
     },
     [],

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { EngineClient } from "./engine/client";
+import { realScheduler, type Scheduler } from "./engine/scheduler";
+import { PagesSchedulerProvider } from "./screens/photos/pagesScheduler";
 import { EngineProvider, useEngineView } from "./engine/react";
 import { sidebarCounts } from "./engine/renderJobs";
 import { readStudioVersion } from "./engine/windowStudio";
@@ -283,7 +285,8 @@ function SidebarStatus() {
   );
 }
 
-export function App({ client }: { client: EngineClient }) {
+/** `pagesScheduler`: the clock of the photo lists' re-read wait; real timers unless a test brings its own. */
+export function App({ client, pagesScheduler = realScheduler }: { client: EngineClient; pagesScheduler?: Scheduler }) {
   const [route, setRoute] = useState<Route>({ name: "avatars" });
   // Every way to another screen, the sidebar included, goes through the leave guard of the screen on show (3d.2
   // review: the montage editor's unsaved edit). Settings entered from a draft remembers it (`arriving`, slice review 5-M2).
@@ -372,7 +375,9 @@ export function App({ client }: { client: EngineClient }) {
                   <MontagePicksProvider value={montagePicks}>
                     <RunFormsProvider value={runForms}>
                       <LaunchFormsProvider value={launchForms}>
-                        <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                        <PagesSchedulerProvider value={pagesScheduler}>
+                          <Screen key={screenKey(route)} route={route} lastPhotos={lastPhotos.current} />
+                        </PagesSchedulerProvider>
                       </LaunchFormsProvider>
                     </RunFormsProvider>
                   </MontagePicksProvider>
