@@ -107,8 +107,7 @@ describe("«Другие сцены для N»", () => {
       await flush();
     }
     harness.engine.failNextSceneAttempt("ok");
-    harness.engine.failNextSceneAttempt("rejected");
-    harness.engine.failNextSceneAttempt("rejected");
+    harness.engine.failNextSceneAttempt("refused"); // S5.6d: two rejected answers no longer give a chunk up (plain sentence); the provider's refusal does
     fireEvent.click(await screen.findByRole("button", { name: nb("Составить 60 сцен · до $0.23") }));
     await flush();
     runAll(harness.scheduler);

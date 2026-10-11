@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { BANKS } from "../../shared/scenes/banks";
 import { sentenceProblems } from "./assembler";
 import { plainSentence } from "../../shared/scenes/plain";
 import { plan } from "./planner";
+useNativeGlobals();
 
 // 5a.2 (S5.6d, plan s5a2 §5.5 «After the last attempt»): a planned slot the model could not write in its two answered attempts takes the plain sentence
 // «{at or "At " + location}, she is {activity}, wearing {outfit}.», built from the slot's own texts alone.

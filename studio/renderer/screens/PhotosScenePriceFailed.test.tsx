@@ -122,8 +122,7 @@ describe("a failed free price on a review paid button", () => {
       await flush();
     }
     engine.failNextSceneAttempt("ok");
-    engine.failNextSceneAttempt("rejected");
-    engine.failNextSceneAttempt("rejected");
+    engine.failNextSceneAttempt("refused"); // S5.6d: two rejected answers no longer give a chunk up (plain sentence); the provider's refusal does
     fireEvent.click(await screen.findByRole("button", { name: nb("Составить 60 сцен · до $0.23") }));
     await flush();
     engine.failNext("scenes.estimateWrite", REFUSED);

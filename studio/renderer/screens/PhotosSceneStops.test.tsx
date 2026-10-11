@@ -113,15 +113,14 @@ describe("a compose that gave up on a request", () => {
       await flush();
     }
     engine.failNextSceneAttempt("ok");
-    engine.failNextSceneAttempt("rejected");
-    engine.failNextSceneAttempt("rejected");
+    engine.failNextSceneAttempt("refused"); // S5.6d: two rejected answers no longer give a chunk up (plain sentence); the provider's refusal does
     fireEvent.click(await screen.findByRole("button", { name: nb("Составить 60 сцен · до $0.23") }));
     await flush();
     runAll(scheduler);
     await flush();
     const notice = within(column()).getByRole("status");
     expect(notice.textContent).toContain("Готово 35 из 60 · 25 не составлены");
-    expect(notice.textContent).toContain("Отброшены при проверке: модель дважды вернула для них неподходящий текст.");
+    expect(notice.textContent).toContain("Модель отказалась писать их — отказ провайдера, тот же запрос откажут снова.");
     expect(within(notice).getByRole("button", { name: nb("Убрать 25 пустых") })).toBeDefined();
     const others = await within(notice).findByRole("button", { name: "Другие сцены для 5 · до $0.075" });
     expect(within(column()).getByRole("button", { name: nb("25 сцен не составлены — перейти к первой, сцене 26") })).toBeDefined();

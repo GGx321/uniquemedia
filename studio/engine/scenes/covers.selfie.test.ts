@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { useNativeGlobals } from "../../testing/nativeGlobals";
 import { CUES, GAZE } from "../../shared/scenes/banks";
 import { CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
 import { covers, customSentence, type CustomPool } from "../../shared/scenes/custom";
 import { gazeKindsFor } from "../../shared/scenes/render";
 import { PHONE_WORDS, SELFIE_WORDS } from "../../shared/scenes/words";
 import { LLM_ONLY_POOL } from "./testing/llmOnlyFixture";
+useNativeGlobals();
 
 // 5a.2 (S5.6d, the open question left by the S5.6c2 money review): `covers(pool)` renders every combination of a custom pool with the ONE key "covers", while the
 // refusal of a self-shot sentence that names a phone (render.ts `renderSentence`, C1) is decided on the sentence a slot's own key draws. If that draw could differ
