@@ -34,14 +34,39 @@ const SDR_TRANSFERS = new Set([
 /** Transfers that are BT.709's curve under another name: no conversion needed. */
 const SAME_AS_709 = new Set(["bt709", "smpte170m", "bt2020-10", "bt2020-12"]);
 
+/*
+ * No transfer function is ever handed a float that can be negative. zimg's
+ * approximate gamma is not defined there, and on one CI runner's CPU it made
+ * garbage of an out-of-gamut patch (47 codes off, measured in Studio) where
+ * other CPUs clipped at zero. Two things make a negative, and each is clipped
+ * by a step into 16-bit integers, which saturate the same way on every CPU
+ * (the pattern of studio/engine/media/video/videoPlan.ts):
+ *  - YUV outside the RGB cube is a negative R'G'B': a bare `zscale` into
+ *    gbrp16le converts the matrix alone and clips to the cube BEFORE the
+ *    source's transfer is undone;
+ *  - a colour outside BT.709's gamut is negative light after the primaries
+ *    conversion: linear light into gbrp16le clips it to 0..1 BEFORE the
+ *    BT.709 gamma.
+ */
+const TO_RGB16 = "zscale,format=gbrp16le";
+const BT709_FROM_LINEAR =
+  "zscale=t=linear:p=bt709:m=bt709:r=pc,format=gbrp16le,zscale=t=bt709:m=bt709:r=tv:dither=ordered,format=yuv420p";
+
 /** Reference white sits at 203 nits (ITU-R BT.2408) and HDR's nominal peak at
  *  1000, so the tone curve compresses 1000/203 of it into SDR. The same peak
  *  serves HLG, whose system is defined at 1000 nits, and PQ as phones and most
  *  HDR10 masters write it; measured on white, skin and green the round trip is
  *  within dE00 0.8 for both. */
-const TONEMAP =
-  "format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=mobius:param=0.8:peak=4.926:desat=0," +
-  "zscale=t=bt709:m=bt709:r=tv:dither=ordered,format=yuv420p";
+const HDR_TO_BT709 =
+  `${TO_RGB16},zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,` +
+  `tonemap=tonemap=mobius:param=0.8:peak=4.926:desat=0,${BT709_FROM_LINEAR}`;
+
+/** Another gamut or another curve: through linear light, clipped both ways. */
+const SDR_TO_BT709_VIA_LINEAR = `${TO_RGB16},${BT709_FROM_LINEAR}`;
+
+/** BT.709's primaries and curve already: matrix, range and depth only, with no
+ *  linear light and so no negative light to clip. */
+const SDR_TO_BT709 = "zscale=m=709:t=709:p=709:r=tv:dither=ordered,format=yuv420p";
 
 /** Bit depth from the pixel format's name: `yuv420p10le` is 10; a name with
  *  no depth suffix (`yuv420p`, `nv12`, `yuvj420p`) is 8. */
@@ -97,22 +122,27 @@ export function sourceToBt709(info: MediaInfo, zscale: boolean): string | null {
   // are not told from the frame, and a first zscale told its input primaries
   // but not its output ones read the output from an untagged frame and failed
   // ("no path between colorspaces").
-  const tags = `setparams=colorspace=${r.matrix}:color_primaries=${r.primaries}:color_trc=${r.transfer}:range=${r.range}`;
+  const tags = (transfer: string) =>
+    `setparams=colorspace=${r.matrix}:color_primaries=${r.primaries}:color_trc=${transfer}:range=${r.range}`;
 
   if (hdr) {
     if (!zscale) throw new Error(HDR_WITHOUT_ZSCALE);
-    return `${tags},zscale=t=linear:npl=203,${TONEMAP}`;
+    return `${tags(r.transfer)},${HDR_TO_BT709}`;
   }
 
+  const curve709 = SAME_AS_709.has(r.transfer);
   const already =
     r.matrix === "bt709" &&
     r.primaries === "bt709" &&
-    SAME_AS_709.has(r.transfer) &&
+    curve709 &&
     r.range === "tv" &&
     bitDepth(color.pixFmt) <= 8 &&
     !isRgb(color.pixFmt);
   if (already) return null;
 
-  if (!zscale) return `${tags},colorspace=all=bt709:range=tv:format=yuv420p`;
-  return `${tags},zscale=m=709:t=709:p=709:r=tv:dither=ordered,format=yuv420p`;
+  if (!zscale) return `${tags(r.transfer)},colorspace=all=bt709:range=tv:format=yuv420p`;
+  if (r.primaries !== "bt709" || !curve709) return `${tags(r.transfer)},${SDR_TO_BT709_VIA_LINEAR}`;
+  // BT.709's curve under whatever name the file gave it is stated as BT.709,
+  // so zscale does not go through linear light to swap a curve for itself.
+  return `${tags("bt709")},${SDR_TO_BT709}`;
 }

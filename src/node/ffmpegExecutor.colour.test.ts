@@ -40,12 +40,23 @@ const TRUTH = [
 const WHITE = 0;
 const GREEN = 2;
 
-/** The four bands as one gbrp picture, 1 s at 15 fps. */
-const BANDS =
-  TRUTH.map(
-    (rgb, i) =>
-      `color=c=0x${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}:s=${W}x${BAND}:d=1:r=15[b${i}]`
-  ).join(";") + `;${TRUTH.map((_, i) => `[b${i}]`).join("")}vstack=${TRUTH.length},format=gbrp`;
+/** Four bands of `colours` as one gbrp picture, 1 s at 15 fps. */
+const bandsOf4 = (colours: ReadonlyArray<readonly number[]>): string =>
+  colours
+    .map(
+      (rgb, i) =>
+        `color=c=0x${rgb.map((v) => v.toString(16).padStart(2, "0")).join("")}:s=${W}x${BAND}:d=1:r=15[b${i}]`
+    )
+    .join(";") + `;${colours.map((_, i) => `[b${i}]`).join("")}vstack=${colours.length},format=gbrp`;
+
+const BANDS = bandsOf4(TRUTH);
+
+/**
+ * White, a pure green, mid-grey and a pure red. Declared as BT.2020 or Display
+ * P3 numbers, the green and the red lie outside BT.709's gamut: converted to
+ * it, they are negative light on the other two channels.
+ */
+const GAMUT = [[240, 240, 240], [0, 255, 0], [128, 128, 128], [255, 0, 0]] as const;
 
 function ffmpeg(args: string[]): Buffer {
   const r = spawnSync(FFMPEG, ["-v", "error", "-y", ...args], { maxBuffer: 64 * 1024 * 1024 });
@@ -54,8 +65,14 @@ function ffmpeg(args: string[]): Buffer {
 }
 
 /** Encodes the bands as `vf` makes them, with `tags` on the stream, losslessly. */
-function makeClip(path: string, vf: string, tags: string[], codec = ["-c:v", "libx264", "-qp", "0", "-preset", "ultrafast"]): void {
-  ffmpeg(["-filter_complex", `${BANDS},${vf}`, ...codec, ...tags, path]);
+function makeClip(
+  path: string,
+  vf: string,
+  tags: string[],
+  codec = ["-c:v", "libx264", "-qp", "0", "-preset", "ultrafast"],
+  bands = BANDS
+): void {
+  ffmpeg(["-filter_complex", `${bands},${vf}`, ...codec, ...tags, path]);
 }
 
 const HDR_IN = (transfer: string) =>
@@ -275,6 +292,38 @@ test("an HLG source that states only its transfer is read as BT.2020 and rendere
   const copy = join(dir, "hlg_bare_out.mp4");
   await exec.render(bare, await exec.probe(bare), sampleRecipe(opts, 5, 1), copy);
   bandsOf(copy).forEach((rgb, k) => expect(deltaE2000(TRUTH[k], rgb)).toBeLessThan(2));
+});
+
+/**
+ * A colour outside BT.709's gamut is negative light after the primaries
+ * conversion, and zimg's approximate gamma is not defined on a negative float:
+ * on one CI runner's CPU it made garbage of such a patch (47 codes off, Studio
+ * measured) where other CPUs clipped at zero. The chain clips to 0..1 in
+ * 16-bit integers before any transfer function, so every CPU gives the
+ * clipped colour: the primary at full, the other two at zero, and the
+ * neutral bands beside it untouched.
+ */
+test.each([
+  ["HLG BT.2020", "zscale=rin=full:tin=709:pin=2020:t=arib-std-b67:p=2020:m=2020_ncl:r=tv:npl=203:dither=ordered,format=yuv420p10le", HDR_TAGS("arib-std-b67")],
+  ["SDR Display P3", "zscale=rin=full:tin=709:pin=smpte432:t=709:p=smpte432:m=709:r=tv:dither=ordered,format=yuv420p", [
+    "-color_trc", "bt709", "-colorspace", "bt709", "-color_primaries", "smpte432", "-color_range", "tv",
+  ]],
+] as const)("an %s patch outside BT.709's gamut is clipped to its primary", async (name, vf, tags) => {
+  const file = join(dir, `gamut_${name.replace(/\W/g, "")}.mp4`);
+  makeClip(file, vf, [...tags], undefined, bandsOf4(GAMUT));
+  const copy = join(dir, `gamut_${name.replace(/\W/g, "")}_out.mp4`);
+  await exec.render(file, await exec.probe(file), sampleRecipe(opts, 5, 1), copy);
+  const [white, green, grey, red] = bandsOf(copy);
+  expect(green[1]).toBeGreaterThanOrEqual(240);
+  expect(Math.max(green[0], green[2])).toBeLessThanOrEqual(4);
+  expect(red[0]).toBeGreaterThanOrEqual(240);
+  expect(Math.max(red[1], red[2])).toBeLessThanOrEqual(4);
+  for (const [r, g, b] of [white, grey]) {
+    expect(Math.abs(r - g)).toBeLessThanOrEqual(1);
+    expect(Math.abs(b - g)).toBeLessThanOrEqual(1);
+  }
+  expect(deltaE2000(GAMUT[0], white)).toBeLessThan(2);
+  expect(deltaE2000(GAMUT[2], grey)).toBeLessThan(2);
 });
 
 test.each(["hlg", "pq"])("an %s source's white is neutral, not grey-green", (name) => {

@@ -21,9 +21,15 @@ const SDR_OUT = "m=709:t=709:p=709:r=tv:dither=ordered,format=yuv420p";
 /** The reading as the chain states it, on the frames. */
 const tags = (matrix: string, primaries: string, transfer: string, range: string) =>
   `setparams=colorspace=${matrix}:color_primaries=${primaries}:color_trc=${transfer}:range=${range}`;
+/** Linear BT.709 light clipped to 0..1 in 16-bit integers, then the BT.709 gamma. */
+const FROM_LINEAR =
+  "zscale=t=linear:p=bt709:m=bt709:r=pc,format=gbrp16le,zscale=t=bt709:m=bt709:r=tv:dither=ordered,format=yuv420p";
+/** The matrix to RGB, clipped to the cube in 16-bit integers, before the source's curve is undone. */
+const TO_RGB16 = "zscale,format=gbrp16le";
+const VIA_LINEAR = `${TO_RGB16},${FROM_LINEAR}`;
 const TONEMAP =
-  "format=gbrpf32le,zscale=p=bt709,tonemap=tonemap=mobius:param=0.8:peak=4.926:desat=0," +
-  "zscale=t=bt709:m=bt709:r=tv:dither=ordered,format=yuv420p";
+  `${TO_RGB16},zscale=t=linear:npl=203,format=gbrpf32le,zscale=p=bt709,` +
+  `tonemap=tonemap=mobius:param=0.8:peak=4.926:desat=0,${FROM_LINEAR}`;
 
 test("a BT.709 limited-range 8-bit source gets no conversion at all", () => {
   expect(sourceToBt709(hd(SDR709), true)).toBeNull();
@@ -57,10 +63,42 @@ test("the 720-line boundary decides the untagged matrix", () => {
 test("a tagged BT.601 source converts from exactly what it states", () => {
   const tagged: VideoColor = { pixFmt: "yuv420p", space: "smpte170m", transfer: "smpte170m", primaries: "smpte170m", range: "tv" };
   expect(sourceToBt709(sd(tagged), true)).toBe(
-    `${tags("smpte170m", "smpte170m", "smpte170m", "tv")},zscale=${SDR_OUT}`
+    `${tags("smpte170m", "smpte170m", "smpte170m", "tv")},${VIA_LINEAR}`
   );
   // A tag beats the size rule: an HD file that says BT.601 is BT.601.
   expect(sourceToBt709(hd({ ...tagged, space: "bt470bg" }), true)).toContain("colorspace=bt470bg:");
+});
+
+test("BT.709's curve under BT.601's name stays out of linear light", () => {
+  // Same curve, so stating it as BT.709 changes no number, and zscale has no
+  // reason to linearise — where a negative from outside the RGB cube would
+  // meet a transfer function unclipped.
+  const named601: VideoColor = { pixFmt: "yuv420p", space: "smpte170m", transfer: "smpte170m", primaries: "", range: "tv" };
+  expect(sourceToBt709(sd(named601), true)).toBe(`${tags("smpte170m", "bt709", "bt709", "tv")},zscale=${SDR_OUT}`);
+});
+
+test("another curve goes through linear light, clipped both ways", () => {
+  const srgb: VideoColor = { ...SDR709, transfer: "iec61966-2-1" };
+  expect(sourceToBt709(hd(srgb), true)).toBe(`${tags("bt709", "bt709", "iec61966-2-1", "tv")},${VIA_LINEAR}`);
+});
+
+test("no transfer function is handed a float that can be negative", () => {
+  // The clip into 16-bit integers comes before the source's curve is undone
+  // and before the BT.709 gamma, in every chain that reaches linear light.
+  const chains = [
+    { pixFmt: "yuv420p10le", space: "bt2020nc", transfer: "arib-std-b67", primaries: "bt2020", range: "tv" },
+    { pixFmt: "yuv420p10le", space: "bt2020nc", transfer: "smpte2084", primaries: "bt2020", range: "tv" },
+    { ...SDR709, primaries: "smpte432" },
+    { ...SDR709, transfer: "iec61966-2-1" },
+  ].map((color) => sourceToBt709(hd(color), true) ?? "");
+  for (const chain of chains) {
+    const steps = chain.split(",");
+    const first = steps.findIndex((step) => step.startsWith("zscale"));
+    expect(steps.slice(first, first + 2)).toEqual(["zscale", "format=gbrp16le"]);
+    const gamma = steps.indexOf("zscale=t=bt709:m=bt709:r=tv:dither=ordered");
+    expect(steps[gamma - 1]).toBe("format=gbrp16le");
+    expect(steps[gamma - 2]).toBe("zscale=t=linear:p=bt709:m=bt709:r=pc");
+  }
 });
 
 test("a full-range source is brought to limited range", () => {
@@ -84,14 +122,14 @@ test("an RGB source is converted to BT.709 YUV rather than left to swscale's BT.
 test("HLG is tone-mapped to SDR from 203-nit reference white", () => {
   const hlg: VideoColor = { pixFmt: "yuv420p10le", space: "bt2020nc", transfer: "arib-std-b67", primaries: "bt2020", range: "tv" };
   expect(sourceToBt709(hd(hlg), true)).toBe(
-    `${tags("bt2020nc", "bt2020", "arib-std-b67", "tv")},zscale=t=linear:npl=203,${TONEMAP}`
+    `${tags("bt2020nc", "bt2020", "arib-std-b67", "tv")},${TONEMAP}`
   );
 });
 
 test("PQ is tone-mapped the same way", () => {
   const pq: VideoColor = { pixFmt: "yuv420p10le", space: "bt2020nc", transfer: "smpte2084", primaries: "bt2020", range: "tv" };
   expect(sourceToBt709(hd(pq), true)).toBe(
-    `${tags("bt2020nc", "bt2020", "smpte2084", "tv")},zscale=t=linear:npl=203,${TONEMAP}`
+    `${tags("bt2020nc", "bt2020", "smpte2084", "tv")},${TONEMAP}`
   );
 });
 
