@@ -1,4 +1,5 @@
-import type { EngineError, FailedCandidateSlot, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
+import type { z } from "zod";
+import type { EngineError, FailedCandidateSlot, FailedPortraitSlot as FailedPortraitSlotSchema, ImportPrepare, ImportResult, JobProgress, JobState, MediaFileName, MediaKind, RenderResult } from "../shared/engine";
 import type { RunJobEnd } from "./runs/runJob";
 
 // The engine's jobs as `Snapshot.jobs` lists them. In memory only: avatar
@@ -8,6 +9,15 @@ import type { RunJobEnd } from "./runs/runJob";
 
 export type CandidatesJobEnd =
   | { status: "done"; photoIds: string[]; failedSlots: FailedCandidateSlot[] }
+  | { status: "failed"; error: EngineError }
+  | { status: "cancelled" };
+
+/** A slot of a finished portrait batch that gave no candidate (the contract's `FailedPortraitSlot`; S5.3a exports the schema only). */
+export type FailedPortraitSlot = z.infer<typeof FailedPortraitSlotSchema>;
+
+/** How a reference-portrait job ends (Stage 5, S5.3b): the candidates are the images that passed the ranking, best first. */
+export type PortraitsJobEnd =
+  | { status: "done"; candidates: { photoId: string; likeness: number }[]; failedSlots: FailedPortraitSlot[] }
   | { status: "failed"; error: EngineError }
   | { status: "cancelled" };
 
@@ -66,6 +76,11 @@ export class JobRegistry {
   /** Registers a running candidates job; its signal fires on `cancel`. */
   startCandidates(jobId: string, avatarId: string, total: number): AbortSignal {
     return this.#start({ kind: "avatar.candidates", jobId, avatarId, status: "running", done: 0, total });
+  }
+
+  /** Registers a running reference-portrait job (Stage 5, S5.3b); `total` counts its slots, five. Its signal fires on `cancel`. */
+  startPortraits(jobId: string, avatarId: string, total: number): AbortSignal {
+    return this.#start({ kind: "avatar.portraits", jobId, avatarId, status: "running", done: 0, total });
   }
 
   /** Registers a running job of a photo run; `done` counts the slots its earlier jobs already finished. */
@@ -247,7 +262,6 @@ export class JobRegistry {
       case "avatar.candidates":
         return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
       case "avatar.portraits":
-        // Stage 5, S5.3a: compile-only. No code starts this kind yet (S5.3b adds `startPortraits`); the branch keeps the switch exhaustive.
         return { kind: "avatar.portraits", jobId, avatarId: entry.state.avatarId, done, total };
       case "scenes":
         return { kind: "scenes", jobId, sceneSetId: entry.state.sceneSetId, avatarId: entry.state.avatarId, done, total };
@@ -281,6 +295,31 @@ export class JobRegistry {
         entry.state = { ...common, status: "done", result: { kind, avatarId, candidates, rejectedByAgeCheck, failedSlots: end.failedSlots } };
         break;
       }
+      case "failed":
+        entry.state = { ...common, status: "failed", error: end.error };
+        break;
+      case "cancelled":
+        entry.state = { ...common, status: "cancelled" };
+        break;
+    }
+    this.#dropOldFinished(jobId);
+    return entry.state;
+  }
+
+  /** Ends a running reference-portrait job; its final state, or null for any other job. The result's candidates carry the job's avatar. */
+  finishPortraits(jobId: string, end: PortraitsJobEnd): JobState | null {
+    const entry = this.#jobs.get(jobId);
+    if (entry === undefined || entry.state.status !== "running" || entry.state.kind !== "avatar.portraits") return null;
+    const { kind, avatarId, done, total } = entry.state;
+    const common = { kind, jobId, avatarId, done, total };
+    switch (end.status) {
+      case "done":
+        entry.state = {
+          ...common,
+          status: "done",
+          result: { kind, avatarId, candidates: end.candidates.map((c) => ({ avatarId, photoId: c.photoId, likeness: c.likeness })), failedSlots: end.failedSlots },
+        };
+        break;
       case "failed":
         entry.state = { ...common, status: "failed", error: end.error };
         break;
