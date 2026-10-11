@@ -2,6 +2,9 @@ import { describe, expect, test } from "bun:test";
 import type { RunEvent } from "../engine/runs/journal";
 import type { PlanSlot } from "../engine/scenes";
 import { endedSlots, faceRetryProblems, faceScoreProblems, isFaceJudged, latestPrompts, pickMismatchTarget, slotIndexByPhoto } from "./runFaceSmoke";
+import { useNativeGlobals } from "../testing/nativeGlobals";
+
+useNativeGlobals();
 
 const BASE = {
   category: "home",
