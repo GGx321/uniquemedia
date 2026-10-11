@@ -31,10 +31,31 @@ test("higher intensity widens eq deviations on average", () => {
   for (let s = 0; s < 40; s++) {
     const low = sampleRecipe(opts, s, 1).video.find((o) => o.id === "eq")!;
     const high = sampleRecipe(opts, s, 2).video.find((o) => o.id === "eq")!;
-    lowSum += Math.abs(Number(low.params.brightness));
-    highSum += Math.abs(Number(high.params.brightness));
+    lowSum += Math.abs(Number(low.params.contrast) - 1);
+    highSum += Math.abs(Number(high.params.contrast) - 1);
   }
   expect(highSum).toBeGreaterThan(lowSum);
+});
+
+test("no copy is tinted or darkened: no hue, no vignette, no brightness or gamma", () => {
+  for (const intensity of [1, 2, 3]) {
+    for (let seed = 0; seed < 300; seed++) {
+      const video = sampleRecipe(opts, seed, intensity).video;
+      expect(video.some((o) => o.id === "hue")).toBe(false);
+      expect(video.some((o) => o.id === "vignette")).toBe(false);
+      const eq = video.find((o) => o.id === "eq")!;
+      expect(eq.params.brightness).toBeUndefined();
+      expect(eq.params.gamma).toBeUndefined();
+    }
+  }
+});
+
+test("contrast and saturation only ever go up, never down", () => {
+  for (let seed = 0; seed < 300; seed++) {
+    const eq = sampleRecipe(opts, seed, 2).video.find((o) => o.id === "eq")!;
+    expect(Number(eq.params.contrast)).toBeGreaterThanOrEqual(1);
+    expect(Number(eq.params.saturation)).toBeGreaterThanOrEqual(1);
+  }
 });
 
 test("keepTrendAudio yields no audio ops", () => {

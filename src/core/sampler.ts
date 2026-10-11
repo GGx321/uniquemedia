@@ -61,17 +61,17 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
   const rng = makeRng(seed);
   const s = opts.strength * intensity;
 
+  // No hue shift, no brightness or gamma, no vignette: those read as a colour
+  // cast or a darker picture. Contrast and saturation are drawn one-sided (up
+  // only), so no copy comes out flatter or duller than its source.
   const video: Operation[] = [
     {
       id: "eq",
       params: {
-        brightness: round(dev(rng, "brightness", s)),
-        contrast: round(dev(rng, "contrast", s)),
-        saturation: round(dev(rng, "saturation", s)),
-        gamma: round(clamp(dev(rng, "gamma", s), 0.5, 2)),
+        contrast: round(dev(rng, "contrast", s, true)),
+        saturation: round(dev(rng, "saturation", s, true)),
       },
     },
-    { id: "hue", params: { h: round(dev(rng, "hueDeg", s)) } },
   ];
 
   // Always apply a small zoom-crop (~3%) — visually a thin edge crop but shifts
@@ -84,7 +84,6 @@ export function sampleRecipe(opts: ResolvedCopyOptions, seed: number, intensity 
     { id: "perspective", params: { off: round(dev(rng, "perspective", s, true)) } },
     { id: "lenscorrection", params: { k1: round(dev(rng, "lens", s)) } },
     { id: "noise", params: { strength: Math.round(dev(rng, "noise", s, true)) } },
-    { id: "vignette", params: { on: rng() < 0.6 * Math.min(1, s) } },
   );
 
   // Determinism invariant: same seed + same opts => same recipe. The mirror draw
