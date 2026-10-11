@@ -1,4 +1,15 @@
-import { isCustomCategory, orderCategories, SceneCategory, splitCount, type CustomCategoryId, type PhotoSummary, type RunRequest, type SceneLevel } from "../../../shared/engine";
+import {
+  isCustomCategory,
+  orderCategories,
+  SceneCategory,
+  splitCount,
+  type CategorySummary,
+  type CustomCategoryId,
+  type PhotoSummary,
+  type RunRequest,
+  type SceneLevel,
+} from "../../../shared/engine";
+import { covers } from "../../../shared/scenes/custom";
 import type { EngineView } from "../../engine/store";
 import { paidStop, restartStopText } from "../../lib/paidStop";
 
@@ -62,6 +73,35 @@ export function photoCategoryLabel(photo: Pick<PhotoSummary, "category" | "categ
  */
 export function photosPerCategory(count: number, categories: readonly RunCategory[]): Map<RunCategory, number> {
   return new Map(splitCount(count, categories).map(({ ref, count: n }) => [ref, n]));
+}
+
+/** Who writes a run's scenes (S5.7c, mockup 26): the app's template for some of them, and the model for the named categories. */
+export interface SceneWriters {
+  readonly app: boolean;
+  /** The custom categories the template does not cover, by name, in the run's order. */
+  readonly model: readonly string[];
+}
+
+/**
+ * Who writes the scenes of `count` photos over `categories` (S5.7c, mockup 26): the app's template writes a built-in category and a custom one whose pool
+ * it covers (`covers`, the engine's own test, I5.30); the model writes the others. A category with no photo in the split writes nothing; one the library
+ * does not hold is nobody's (the run would not ask for it).
+ */
+export function sceneWriters(count: number, categories: readonly RunCategory[], customs: readonly CategorySummary[]): SceneWriters {
+  let app = false;
+  const model: string[] = [];
+  for (const [ref, n] of photosPerCategory(count, categories)) {
+    if (n === 0) continue;
+    if (!isCustomCategory(ref)) {
+      app = true;
+      continue;
+    }
+    const custom = customs.find((c) => c.categoryId === ref);
+    if (custom === undefined) continue;
+    if (covers(custom.pool)) app = true;
+    else model.push(custom.name);
+  }
+  return { app, model };
 }
 
 /**

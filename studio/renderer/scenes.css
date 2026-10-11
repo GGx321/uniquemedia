@@ -93,6 +93,18 @@
   text-align: right;
 }
 
+/* S5.6e, S5.7c (mockups 24, 26): who writes the scenes, said under their price — the app, or the model for a named category. */
+.gen-scenes-sub {
+  margin: -5px 0 0;
+  color: var(--faint);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.scene-step + .gen-scenes-sub {
+  padding-left: 26px;
+}
+
 .scene-switch {
   display: flex;
   align-items: center;

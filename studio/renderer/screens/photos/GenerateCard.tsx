@@ -32,6 +32,7 @@ import {
   type RunForm,
   runRequest,
   sameCategories,
+  sceneWriters,
   toggleCategory,
 } from "./runForm";
 import { about, ceiling, describedBy, paidButtonState, PriceChangedNotice, PriceFailed, StackButton, useImagesPrice, Why } from "./scenePaid";
@@ -338,6 +339,16 @@ export function GenerateCard({
   // S5.3d review M3: her reference-portrait batch claims her like a run: a run or a compose now would be refused IN_FLIGHT.
   const portraitsBusy = portraitsDrawing(view, avatar.avatarId);
   const perCategory = photosPerCategory(form.count, categories);
+  // S5.7c (mockup 26): who writes the scenes, under their price — the app, or the model for the categories its template does not cover.
+  const writers = sceneWriters(form.count, categories, customs ?? []);
+  const scenesSub =
+    form.count === 0 || compose.estimate === null
+      ? null
+      : writerFree
+        ? WRITTEN_BY_APP
+        : writers.model.length > 0
+          ? `для ${writers.model.map((name) => `«${name}»`).join(" и ")} текст пишет модель`
+          : "текст пишет модель";
   const blockedReason =
     paidBlockedReason(view) ??
     (avatar.status !== "active"
@@ -621,16 +632,17 @@ export function GenerateCard({
           {review && composeSteps.map((row, i) => (
             <Fragment key={row.n}>
               <Step row={row} />
-              {i === 0 && writerFree && <div className="mono faint scene-total-sub">{WRITTEN_BY_APP}</div>}
+              {i === 0 && scenesSub !== null && <p className="gen-scenes-sub">{scenesSub}</p>}
             </Fragment>
           ))}
-          {!review && writerFree && (
+          {/* S5.7c (mockup 26): with the review off too, what the scenes cost — nothing when the app writes them, the model's price when it writes some. */}
+          {!review && form.count > 0 && compose.estimate !== null && (
             <>
               <div className="mono photos-cost-row">
                 <span>Сцены</span>
-                <span>бесплатно</span>
+                <span>{writerFree ? "бесплатно" : `${about(compose.estimate.expectedMicros)} · ${ceiling(compose.estimate.worstMicros)}`}</span>
               </div>
-              <div className="mono faint scene-total-sub">{WRITTEN_BY_APP}</div>
+              {scenesSub !== null && <p className="gen-scenes-sub">{scenesSub}</p>}
             </>
           )}
           <div className="mono photos-cost-row">

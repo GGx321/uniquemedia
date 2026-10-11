@@ -321,6 +321,8 @@ interface ScenesColumnProps {
   scenesJob: JobView | null;
   /** The compose's price as the card shows it, for the «как это работает» box. */
   composePrice: Estimate | null;
+  /** S5.7c (mockup 26): the app's template writes some of the run's scenes (with a model price, the column then names both writers). */
+  appWrites: boolean;
   /** S4.9b: the set is an unfinished launch's: shown whatever «Сцены на проверку» says, without «+ Своя сцена», read only once the launch took it. */
   launchLink: LaunchLink | null;
   /** The gallery's photos as read so far: the end of a run counts the frames of the run that no face check judged. */
@@ -384,6 +386,7 @@ export function ScenesColumn({
   sliceView,
   scenesJob,
   composePrice,
+  appWrites,
   launchLink,
   photos,
 }: ScenesColumnProps) {
@@ -469,7 +472,7 @@ export function ScenesColumn({
           </h2>
           <span className="mono muted scene-col-model">
             {shownSet === null && `${count} · `}
-            {writerFree ? "пишет приложение" : textModel}
+            {writerFree ? "пишет приложение" : appWrites && composePrice !== null && shownSet === null && textModel !== null ? `пишет приложение и ${textModel}` : textModel}
           </span>
           {canAdd && (
             <button
