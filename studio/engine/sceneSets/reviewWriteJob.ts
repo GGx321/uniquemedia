@@ -100,7 +100,7 @@ function heldOf(set: StoredSceneSet): string[] {
 
 /** The template's side for a write's planned slots, on the write's own key: what the job hands the writer phase, and what the estimate counts. */
 function localOf(set: StoredSceneSet, record: ReviewWriteRecord, slots: readonly PlanSlot[]): (slot: PlanSlot) => string | null {
-  return localSentences({ slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: heldOf(set) });
+  return localSentences({ slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: heldOf(set), distinct: true });
 }
 
 /**

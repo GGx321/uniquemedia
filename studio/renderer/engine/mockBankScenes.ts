@@ -122,7 +122,7 @@ export function localTexts(input: { sceneSetId: string; k: number; scenes: reado
     if (scene.removed) continue;
     const slot = slotOf(scene);
     if (slot === null) continue;
-    const text = templateSentence(slot, { key: `${input.sceneSetId}:${scene.sceneId}:${input.k}`, snapshots: input.snapshots, seen });
+    const text = templateSentence(slot, { key: `${input.sceneSetId}:${scene.sceneId}:${input.k}`, snapshots: input.snapshots, seen, ...(input.k > 0 ? { distinct: true } : {}) });
     if (text === null) continue;
     rendered.set(scene.sceneId, text);
     seen.add(text);
