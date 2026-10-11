@@ -4,7 +4,7 @@ import { BANKS } from "../../shared/scenes/banks";
 import type { BankCategory } from "../../shared/scenes/banks/types";
 import { captureOfShot, isHandCapture, posesFor, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
-import { momentAllowed, templateSentence, type TemplateSlot } from "../../shared/scenes/template";
+import { GazeCueTally, momentAllowed, templateSentence, type TemplateSlot } from "../../shared/scenes/template";
 
 // 5a.2 (S5.6e, plan s5a2 §5.7): the mock's side of the code template. A built-in scene is a PAIR of its category's bank (a place by name, a moment of that place,
 // an outfit the bank allows) dealt a capture from the category's deck, so the shared template can write it, exactly as it writes the engine's. The mock keeps its
@@ -118,11 +118,13 @@ export function plainTextOf(scene: Pick<LocalScene, "category" | "shot" | "captu
 export function localTexts(input: { sceneSetId: string; k: number; scenes: readonly LocalScene[]; snapshots: readonly { ref: string }[]; seen?: Iterable<string> }): (sceneId: number) => string | null {
   const rendered = new Map<number, string>();
   const seen = new Set<string>(input.seen);
+  // S5.6R: a gaze or an expression at most twice in any 20 sentences in a row, kept over the same scenes in the same order as the engine's `localSentences`.
+  const tally = new GazeCueTally();
   for (const scene of input.scenes) {
     if (scene.removed) continue;
     const slot = slotOf(scene);
     if (slot === null) continue;
-    const text = templateSentence(slot, { key: `${input.sceneSetId}:${scene.sceneId}:${input.k}`, snapshots: input.snapshots, seen, ...(input.k > 0 ? { distinct: true } : {}) });
+    const text = templateSentence(slot, { key: `${input.sceneSetId}:${scene.sceneId}:${input.k}`, snapshots: input.snapshots, seen, tally, ...(input.k > 0 ? { distinct: true } : {}) });
     if (text === null) continue;
     rendered.set(scene.sceneId, text);
     seen.add(text);

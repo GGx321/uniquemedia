@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarDescriptor } from "../../shared/engine";
-import { BANKS } from "../../shared/scenes/banks";
+import { BANKS, CUES, GAZE } from "../../shared/scenes/banks";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
@@ -153,6 +153,39 @@ describe("«Дом»: a moment of going out wears going-out clothes", () => {
 
   test("no going-out frame wears pajamas, lounge shorts, leggings or an oversized tee or sweater", () => {
     expect(offenders(FRAMES.home, (f) => GOING_OUT.test(f.slot.activity) && SLEEP_OR_LOUNGE.test(f.slot.outfit))).toEqual(NONE);
+  });
+});
+
+// S5.6R (round C): over 500 twenty-photo runs as the app makes them (all five categories, «Ракурсы» off), the reviewer found one expression said 3 times or more
+// in 499 runs and one gaze in 464. Each is said at most twice in a run of 20, and in a 12-photo run of one category.
+describe("a gaze or an expression is said at most twice in a run of 20", () => {
+  const CUE_TEXTS = CUES.map((c) => c.text);
+  const GAZE_TEXTS = GAZE.map((g) => g.text);
+  const mostSaid = (sentences: readonly string[], voices: readonly string[]): number => Math.max(0, ...voices.map((voice) => sentences.filter((s) => s.includes(voice)).length));
+  const RUNS: string[][] = Array.from({ length: 500 }, (_, i) => {
+    const seed = (i + 1) * 104729;
+    const p = plan({ seed, count: 20, categories: [...CATEGORIES], poses: { profile: false, back: false } });
+    const runId = `run-mix-${seed}`;
+    const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
+    return p.slots.map((slot) => local(slot) ?? plainSentence(slot));
+  });
+  const PLANS_OF_ONE: string[][] = CATEGORIES.flatMap((c) => Array.from({ length: PLANS }, (_, i) => FRAMES[c].slice(i * COUNT, (i + 1) * COUNT).map((f) => f.sentence)));
+  const over = (runs: readonly string[][], voices: readonly string[]) => runs.filter((run) => mostSaid(run, voices) > 2).length;
+
+  test("the runs say gazes and expressions", () => {
+    expect(RUNS.every((run) => mostSaid(run, CUE_TEXTS) > 0 && mostSaid(run, GAZE_TEXTS) > 0)).toBe(true);
+  });
+
+  test("no 20-photo run says one expression three times", () => {
+    expect(over(RUNS, CUE_TEXTS)).toBe(0);
+  });
+
+  test("no 20-photo run says one gaze three times", () => {
+    expect(over(RUNS, GAZE_TEXTS)).toBe(0);
+  });
+
+  test("no 12-photo run of one category says one expression or one gaze three times", () => {
+    expect(over(PLANS_OF_ONE, [...CUE_TEXTS, ...GAZE_TEXTS])).toBe(0);
   });
 });
 

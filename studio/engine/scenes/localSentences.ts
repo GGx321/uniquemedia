@@ -1,4 +1,4 @@
-import { templateSentence, type TemplateSlot } from "../../shared/scenes/template";
+import { GazeCueTally, templateSentence, type TemplateSlot } from "../../shared/scenes/template";
 
 // 5a.2 (S5.6c1, plan s5a2 r1.5 §5.4): the seam between the code template and the LLM writer, as the three callers use it (a run, a scene set's compose
 // and «Дописать», a planned review write). `localSentences` renders every slot the caller hands it ONCE, in the order given, and answers `local(slot)`:
@@ -24,8 +24,10 @@ export interface LocalSentencesInput<S extends TemplateSlot & { slotIndex: numbe
 export function localSentences<S extends TemplateSlot & { slotIndex: number }>(input: LocalSentencesInput<S>): (slot: S) => string | null {
   const rendered = new Map<number, string>();
   const seen = new Set<string>(input.seen);
+  // S5.6R: a gaze or an expression at most twice in any 20 sentences in a row of the list (render.ts). The mock's `localTexts` keeps one the same way.
+  const tally = new GazeCueTally();
   for (const slot of input.slots) {
-    const text = templateSentence(slot, { key: input.keyOf(slot), snapshots: input.snapshots, seen, ...(input.distinct === true ? { distinct: true } : {}) });
+    const text = templateSentence(slot, { key: input.keyOf(slot), snapshots: input.snapshots, seen, tally, ...(input.distinct === true ? { distinct: true } : {}) });
     if (text === null) continue;
     rendered.set(slot.slotIndex, text);
     seen.add(text);

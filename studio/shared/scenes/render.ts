@@ -40,10 +40,40 @@ export interface TemplateContext {
    * is what a run's own dedup still does (the moment-repeat metric flags that).
    */
   distinct?: boolean | undefined;
+  /** The gazes and expressions the sentences before this one said (S5.6R): one said twice in the last 19 is not drawn again while another fits. Absent: no cap. */
+  tally?: GazeCueTally | undefined;
 }
 
 /** The redraws an equal sentence gets before the slot keeps it (I5.24). */
 export const DEDUP_TRIES = 8;
+
+/** S5.6R (round C): a gaze, and an expression (cue), is said at most this many times in any `GAZE_CUE_WINDOW` sentences in a row of a run. */
+export const GAZE_CUE_CAP = 2;
+export const GAZE_CUE_WINDOW = 20;
+
+/**
+ * The gazes and expressions a run's last sentences said (S5.6R, round C: one expression came back 3 times or more in 499 of 500 twenty-photo runs). The
+ * caller renders a list of slots in order and keeps one tally for it (`localSentences`, the mock's `localTexts`), so the draws stay a pure function of the
+ * list and a resume renders the same text. A sentence with no gaze or cue (her face hidden) still takes its place in the window.
+ */
+export class GazeCueTally {
+  private readonly recent: (readonly string[])[] = [];
+
+  /** The options that may be said once more; when every one is at the cap, the ones said least. In the given order, so an uncapped draw picks as before. */
+  open<T extends { text: string }>(options: readonly T[]): readonly T[] {
+    const counts = options.map((option) => this.recent.filter((said) => said.includes(option.text)).length);
+    const open = options.filter((_, i) => (counts[i] ?? 0) < GAZE_CUE_CAP);
+    if (open.length > 0) return open;
+    const least = Math.min(...counts);
+    return options.filter((_, i) => counts[i] === least);
+  }
+
+  /** Records what one rendered sentence said. */
+  add(said: readonly string[]): void {
+    this.recent.push(said);
+    if (this.recent.length > GAZE_CUE_WINDOW - 1) this.recent.shift();
+  }
+}
 
 /** The tags `momentAllowed` reads: a bank moment, or an old custom activity read through the adapter (which lists no captures: any fits). */
 export interface MomentTags {
@@ -148,33 +178,48 @@ interface Frame {
  */
 const OUTFIT_OPENINGS = ["wearing", "dressed in", "in", "clad in"] as const;
 
-function draw(parts: SentenceParts, frame: Frame, key: string, opening: number = 0): string {
+/** A drawn sentence and the gaze and cue it says. */
+interface Drawn {
+  text: string;
+  said: readonly string[];
+}
+
+function draw(parts: SentenceParts, frame: Frame, key: string, tally: GazeCueTally | undefined, opening: number = 0): Drawn {
   const clauses = [capitalise(parts.at), `she ${parts.doing}`, `${OUTFIT_OPENINGS[opening % OUTFIT_OPENINGS.length]} ${parts.wearing}`];
+  const said: string[] = [];
   if (faceVisibleOf(frame) !== "no") {
     const gazes = gazeOptions(frame.capture, frame.pose, parts.gaze, frame.level, frame.framing);
-    if (gazes.length > 0) clauses.push(pick(gazes, key, "gaze").text);
+    if (gazes.length > 0) said.push(pick(tally?.open(gazes) ?? gazes, key, "gaze").text);
     const cues = parts.expression === true ? [] : cueOptions(frame.capture, frame.level, parts.handAtFace === true);
-    if (cues.length > 0) clauses.push(pick(cues, key, "cue").text);
+    if (cues.length > 0) said.push(pick(tally?.open(cues) ?? cues, key, "cue").text);
   }
+  clauses.push(...said);
   if (parts.details.length > 0) clauses.push(`with ${pick(parts.details, key, "detail")}`);
-  return `${clauses.join(", ")}.`;
+  return { text: `${clauses.join(", ")}.`, said };
 }
 
 /**
  * The sentence for the parts, deduplicated against the run's sentences: an equal one is redrawn on `${key}:dedup:${i}`, i = 1..8, and if every
  * redraw is taken too the slot keeps its first text. With `ctx.distinct` (a rewrite), a redraw that comes out equal to the first (nothing in the frame varies) opens its outfit clause another way
  * («dressed in», «in», «clad in»), so a free redraw of such a slot is a different sentence. Null when a self-shot sentence (selfie, above, prone) would name a phone or say selfie (C1, S5.4).
+ * With `ctx.tally`, the gaze and the cue are drawn from those the run has not said twice in its last 19 sentences, and the kept sentence is added to it.
  */
 export function renderSentence(parts: SentenceParts, slot: { capture: Capture; pose: ScenePose; framing?: "legs" | undefined }, ctx: TemplateContext): string | null {
   const frame: Frame = { capture: slot.capture, pose: slot.pose, framing: slot.framing, level: ctx.level ?? "ordinary" };
-  const first = draw(parts, frame, ctx.key);
-  if (shotOf(slot.capture) === "selfie" && (PHONE_WORDS.test(first) || SELFIE_WORDS.test(first))) return null;
-  if (ctx.seen === undefined || !ctx.seen.has(first)) return first;
+  const first = draw(parts, frame, ctx.key, ctx.tally);
+  if (shotOf(slot.capture) === "selfie" && (PHONE_WORDS.test(first.text) || SELFIE_WORDS.test(first.text))) return null;
+  const kept = deduped(parts, frame, ctx, first);
+  ctx.tally?.add(kept.said);
+  return kept.text;
+}
+
+function deduped(parts: SentenceParts, frame: Frame, ctx: TemplateContext, first: Drawn): Drawn {
+  if (ctx.seen === undefined || !ctx.seen.has(first.text)) return first;
   for (let i = 1; i <= DEDUP_TRIES; i++) {
-    const redrawn = draw(parts, frame, `${ctx.key}:dedup:${i}`);
+    const redrawn = draw(parts, frame, `${ctx.key}:dedup:${i}`, ctx.tally);
     // Nothing else to vary: the same text again. Another opening of the outfit clause is the one change that keeps place, activity and outfit as they were.
-    const again = ctx.distinct === true && redrawn === first ? draw(parts, frame, `${ctx.key}:dedup:${i}`, i) : redrawn;
-    if (!ctx.seen.has(again)) return again;
+    const again = ctx.distinct === true && redrawn.text === first.text ? draw(parts, frame, `${ctx.key}:dedup:${i}`, ctx.tally, i) : redrawn;
+    if (!ctx.seen.has(again.text)) return again;
   }
   return first;
 }

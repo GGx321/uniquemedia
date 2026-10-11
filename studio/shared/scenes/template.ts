@@ -16,7 +16,7 @@ import { LEGWEAR_CLASH_WORDS } from "./words";
 // `gaze`, `cue` and `detail`; an equal sentence in the same run is redrawn on `${key}:dedup:${i}` (I5.24). Never a throw: whatever the banks cannot
 // render is null, and a null slot goes to the LLM writer (I5.22).
 
-export { DEDUP_TRIES, gazeKindsFor, momentAllowed, type MomentTags, type TemplateContext, type TemplateSlot } from "./render";
+export { DEDUP_TRIES, GazeCueTally, gazeKindsFor, momentAllowed, type MomentTags, type TemplateContext, type TemplateSlot } from "./render";
 
 /**
  * Whether a moment may wear the legwear slot with this outfit (I5.29, plan r1.4): the outfit shows her legs, and the moment neither names legwear or

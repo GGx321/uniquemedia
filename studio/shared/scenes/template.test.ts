@@ -4,7 +4,8 @@ import { join } from "node:path";
 import type { ScenePose } from "../engine";
 import { BANKS, CUES, GAZE } from "./banks";
 import type { BankCategory, BankPlace, GazeKind, Moment } from "./banks/types";
-import { shotOf, type Capture } from "./captures";
+import { CAPTURES, posesFor, shotOf, type Capture } from "./captures";
+import { GAZE_CUE_CAP, GAZE_CUE_WINDOW } from "./render";
 import { gazeKindsFor, legwearFits, momentAllowed, templateSentence, type TemplateSlot } from "./template";
 import { PHONE_WORDS, SELFIE_WORDS } from "./words";
 
@@ -395,5 +396,29 @@ describe("a hand at her face takes no hand cue", () => {
     const slot: TemplateSlot = { category: "home", location: place.name, activity: moment.text, outfit: "grey lounge shorts and a fitted tee", shot: "selfie", capture: "prone", pose: "front" };
     const all = Array.from({ length: 200 }, (_, i) => templateSentence(slot, { key: `run-${i}:slot-1` }) ?? "").join(" ");
     expect(HAND_CUES.some((cue) => all.includes(cue))).toBe(true);
+  });
+});
+
+// S5.6R (round C): a gaze, and an expression, at most twice in any 20 sentences in a row (render.ts GazeCueTally). The cap always holds on an ordinary run
+// when every frame that takes a gaze or a cue has at least 20 / 2 of them to draw from: the 19 sentences before it close at most 9.
+describe("an ordinary frame has enough gazes and expressions for the cap of two in twenty", () => {
+  const NEEDED = GAZE_CUE_WINDOW / GAZE_CUE_CAP;
+  const FRAMES = CAPTURES.flatMap((capture) => posesFor(capture).map((pose) => ({ capture, pose })));
+
+  test("every capture and pose that shows her face takes at least 10 ordinary gazes", () => {
+    const short = FRAMES.flatMap(({ capture, pose }) => {
+      const kinds = gazeKindsFor(capture, pose);
+      const gazes = GAZE.filter((g) => g.level === undefined && kinds.includes(g.kind)).length;
+      return kinds.length > 0 && gazes < NEEDED ? [`${capture} ${pose}: ${gazes}`] : [];
+    });
+    expect(short).toEqual([]);
+  });
+
+  test("every capture takes at least 10 ordinary expressions, with her hand at her face too", () => {
+    const short = CAPTURES.flatMap((capture) => {
+      const cues = CUES.filter((c) => c.level === undefined && c.hand !== true && (c.captures === undefined || c.captures.includes(capture))).length;
+      return cues < NEEDED ? [`${capture}: ${cues}`] : [];
+    });
+    expect(short).toEqual([]);
   });
 });

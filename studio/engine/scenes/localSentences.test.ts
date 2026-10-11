@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { BANKS } from "../../shared/scenes/banks";
+import { BANKS, CUES, GAZE } from "../../shared/scenes/banks";
 import type { BankCategory, Moment } from "../../shared/scenes/banks/types";
 import { shotOf, type Capture } from "../../shared/scenes/captures";
 import type { TemplateSlot } from "../../shared/scenes/template";
@@ -97,5 +97,38 @@ describe("localSentences", () => {
     expect(alone).not.toBeNull();
     expect(against).not.toBeNull();
     expect(against).not.toBe(alone);
+  });
+});
+
+// S5.6R (round C): the same expression came back 3 times or more in 499 of 500 twenty-photo runs, and the same gaze in 464. A gaze or an expression (cue) is
+// drawn at most twice in any 20 sentences in a row of a run; the draws stay hash picks of the slot's key, so a resume renders the same text.
+describe("localSentences: a gaze or an expression at most twice in 20 photos", () => {
+  const VOICES = [...GAZE, ...CUES].map((v) => v.text);
+  /** The most times one gaze or one expression is said in the sentences. */
+  const mostSaid = (texts: readonly (string | null)[]): number => Math.max(0, ...VOICES.map((voice) => texts.filter((t) => t?.includes(voice) === true).length));
+  // A friend's photo of an open place: a gaze and a cue in every sentence, from 10 gazes and 9 expressions.
+  const runOf = (n: number): Slot[] => Array.from({ length: n }, (_, i) => bankSlot(i + 1, {}, "glamour", true));
+
+  test("the run holds a gaze and an expression in every sentence", () => {
+    const slots = runOf(20);
+    const texts = slots.map(localSentences({ slots, keyOf }));
+    expect(texts.every((t) => GAZE.some((g) => t?.includes(g.text) === true) && CUES.some((c) => t?.includes(c.text) === true))).toBe(true);
+  });
+
+  test("a 20-photo run says no gaze and no expression three times", () => {
+    const slots = runOf(20);
+    expect(mostSaid(slots.map(localSentences({ slots, keyOf })))).toBeLessThanOrEqual(2);
+  });
+
+  test("a 60-photo run says none of them three times in any 20 photos in a row", () => {
+    const slots = runOf(60);
+    const texts = slots.map(localSentences({ slots, keyOf }));
+    const windows = Array.from({ length: texts.length - 19 }, (_, i) => mostSaid(texts.slice(i, i + 20)));
+    expect(Math.max(...windows)).toBeLessThanOrEqual(2);
+  });
+
+  test("a resume renders the same capped text", () => {
+    const slots = runOf(40);
+    expect(slots.map(localSentences({ slots, keyOf }))).toEqual(slots.map(localSentences({ slots, keyOf })));
   });
 });

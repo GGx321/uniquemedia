@@ -3,23 +3,32 @@ import type { Cue, Gaze, Hairstyle } from "./types";
 // The gaze, the cue and the hairstyle banks (plan s5a2 r1.2 §5.1-§5.3). Every text at most POOL_TEXT_MAX characters.
 //
 // K-2: a gaze never names a camera or a lens. A selfie gaze says «the viewer» (the words «selfie» and «front camera» draw a phone, C1); only a mirror
-// gaze names her phone, as her phone in the mirror. The flirty items (level «flirty», 5a.2b) are drawn only on a flirty slot.
+// gaze names her phone, as her phone in the mirror. The flirty items (level «flirty», 5a.2b) are drawn only on a flirty slot. S5.6R (round C): a run says
+// a gaze, and a cue, at most twice in 20 sentences (render.ts), which always holds when every frame has 10 ordinary ones to draw from: the mirror, the
+// selfie and the candid had 6 or 7 gazes and every frame 9 cues, so each kind and the cues gained a few.
 export const GAZE: readonly Gaze[] = [
   { text: "looking straight at the viewer", kind: "viewer" },
   { text: "glancing at the viewer", kind: "viewer" },
   { text: "looking at the viewer for a second", kind: "viewer" },
+  { text: "her eyes on the viewer", kind: "viewer" },
+  { text: "looking back at the viewer", kind: "viewer" },
   { text: "looking off to the side", kind: "away" },
   { text: "glancing off to one side", kind: "away" },
   { text: "looking at something nearby", kind: "away" },
   { text: "her eyes on something far off", kind: "away" },
+  { text: "looking away for a moment", kind: "away" },
   { text: "looking down for a moment", kind: "down" },
   { text: "glancing down", kind: "down" },
   { text: "her eyes lowered", kind: "down" },
+  { text: "her eyes cast down", kind: "down" },
+  { text: "looking down and away", kind: "down" },
   { text: "her eyes on what her hands do", kind: "hands" },
   { text: "eyes on her hands", kind: "hands" },
   { text: "her eyes on her phone in the mirror", kind: "mirror", phone: true },
   { text: "checking her reflection", kind: "mirror" },
   { text: "looking at her reflection", kind: "mirror" },
+  { text: "glancing at her reflection", kind: "mirror" },
+  { text: "her eyes on her reflection", kind: "mirror" },
   { text: "giving the viewer a playful look", kind: "viewer", level: "flirty" },
   { text: "looking up at the viewer", kind: "viewer", level: "flirty" },
 ];
@@ -36,6 +45,9 @@ export const CUES: readonly Cue[] = [
   { text: "a thoughtful face" },
   { text: "a wide, easy grin" },
   { text: "a quiet smile" },
+  { text: "a soft smile" },
+  { text: "a bright smile" },
+  { text: "a relaxed face" },
   { text: "a slight pout", captures: ["above", "prone"] },
   { text: "a finger near her lips", captures: ["above", "prone"], hand: true },
   { text: "her hand at her cheek", captures: ["above", "prone"], hand: true },
