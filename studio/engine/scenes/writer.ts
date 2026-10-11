@@ -159,6 +159,7 @@ export type WriterProblem =
   | "not-json"
   | "empty"
   | "missing-slots"
+  /** No longer raised by the reader (5a.2, S5.6d: an item for a slot nobody asked about is dropped). Kept so a refusal built by hand keeps its reason, and the floor pins still measure the longest text. */
   | "unknown-slot"
   | "duplicate-slot"
   | "two-handed"
@@ -413,9 +414,19 @@ function parseJson(content: string): unknown {
   }
 }
 
-export type WriterAnswer = { ok: true; sentences: Map<number, string> } | ({ ok: false } & WriterRefusal);
+/**
+ * 5a.2 (S5.6d, plan s5a2 §5.5): what a refusal that belongs to some slots leaves for the next attempt. The `marked` slots (in the slot list's order) are asked
+ * again with the refusal's reason; the `accepted` ones passed every rule and are kept. A refusal of the answer as a whole carries no repair: nothing is kept
+ * and the next attempt is the whole chunk.
+ */
+export interface SlotRepair {
+  accepted: Map<number, string>;
+  marked: number[];
+}
 
-function refused(problems: WriterProblem[], extra: Partial<WriterRefusal> = {}): WriterAnswer {
+export type WriterAnswer = { ok: true; sentences: Map<number, string> } | ({ ok: false } & WriterRefusal & { repair?: SlotRepair });
+
+function refused(problems: WriterProblem[], extra: Partial<WriterRefusal> & { repair?: SlotRepair } = {}): WriterAnswer {
   return { ok: false, problems, missingSlots: [], twoHandedSlots: [], wordSlots: [], words: [], poseSlots: [], ...extra };
 }
 
@@ -429,19 +440,23 @@ export function readWriterAnswer(content: string, slots: readonly ReadableSlot[]
 /**
  * The answer's scenes (already parsed) against the slots: the number rules, the words, the phone hand and the pose. Shared by `readWriterAnswer` and the idea
  * write's reader (ideaWriter.ts), which parses a wider scene (the shot and pose the model picked) and hands the sentences here with the angles it settled on.
+ *
+ * 5a.2 (S5.6d) classifies what it finds. An item for a slot nobody asked about is dropped (no problem). A youth word is a problem of the whole answer. Everything
+ * else belongs to a slot (a missing or repeated slot, a two-handed or phone-naming sentence, a pose contradiction, a revealing word): that slot is marked and the
+ * sentences of the other slots are kept (`repair`).
  */
 export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" | "sentence">[], slots: readonly ReadableSlot[]): WriterAnswer {
   const known = new Map(slots.map((s) => [s.slotIndex, s]));
   const bySlot = new Map<number, string>();
+  const repeated = new Set<number>();
   const problems = new Set<WriterProblem>();
 
   for (const scene of scenes) {
-    if (!known.has(scene.slotIndex)) {
-      problems.add("unknown-slot");
-      continue;
-    }
+    // An item for a slot nobody asked about is dropped: it costs the answer nothing.
+    if (!known.has(scene.slotIndex)) continue;
     if (bySlot.has(scene.slotIndex)) {
       problems.add("duplicate-slot");
+      repeated.add(scene.slotIndex);
       continue;
     }
     bySlot.set(scene.slotIndex, scene.sentence);
@@ -452,6 +467,7 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
 
   const twoHandedSlots: number[] = [];
   const wordSlots = new Set<number>();
+  const revealingSlots = new Set<number>();
   const words = new Set<string>();
   const poseSlots: number[] = [];
   const phoneSlots: number[] = [];
@@ -468,6 +484,7 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
     if (revealing.length > 0) {
       problems.add("revealing-word");
       wordSlots.add(s.slotIndex);
+      revealingSlots.add(s.slotIndex);
       revealing.forEach((w) => words.add(w));
     }
     if (phoneInHand(s) && isTwoHanded(sentence)) {
@@ -484,17 +501,25 @@ export function readWriterScenes(scenes: readonly Pick<WriterScene, "slotIndex" 
     }
   }
 
-  if (problems.size > 0) {
-    return refused([...problems], {
-      missingSlots,
-      twoHandedSlots,
-      wordSlots: [...wordSlots].sort((a, b) => a - b),
-      words: [...words],
-      poseSlots,
-      ...(phoneSlots.length > 0 ? { phoneSlots } : {}),
-    });
+  if (problems.size === 0) return { ok: true, sentences: bySlot };
+  const refusal: Partial<WriterRefusal> = {
+    missingSlots,
+    twoHandedSlots,
+    wordSlots: [...wordSlots].sort((a, b) => a - b),
+    words: [...words],
+    poseSlots,
+    ...(phoneSlots.length > 0 ? { phoneSlots } : {}),
+  };
+  // A youth word is the answer's, not a slot's: nothing is kept and the next attempt is the whole chunk.
+  if (problems.has("youth-word")) return refused([...problems], refusal);
+  const markedSet = new Set<number>([...missingSlots, ...repeated, ...twoHandedSlots, ...revealingSlots, ...poseSlots, ...phoneSlots]);
+  const marked = slots.map((s) => s.slotIndex).filter((slotIndex) => markedSet.has(slotIndex));
+  const accepted = new Map<number, string>();
+  for (const s of slots) {
+    const sentence = bySlot.get(s.slotIndex);
+    if (sentence !== undefined && !markedSet.has(s.slotIndex)) accepted.set(s.slotIndex, sentence);
   }
-  return { ok: true, sentences: bySlot };
+  return refused([...problems], { ...refusal, repair: { accepted, marked } });
 }
 
 // ---------- pricing (item 3: for T6's run estimate to add) ----------

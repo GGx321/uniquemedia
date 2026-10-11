@@ -130,20 +130,21 @@ describe("readWriterAnswer", () => {
     expect(answer).toMatchObject({ ok: false, problems: ["missing-slots"], missingSlots: [2] });
   });
 
-  test("an unknown slot index is refused", () => {
+  // 5a.2 (S5.6d, plan s5a2 §5.5): an extra item is dropped, not a reason to refuse an answer whose every asked slot is fine.
+  test("an unknown slot index is dropped: the answer is read as the sentences of the slots asked", () => {
     const answer = readWriterAnswer(
       output([{ slotIndex: 1, sentence: GOOD_SELFIE }, { slotIndex: 2, sentence: GOOD_FRIEND }, { slotIndex: 99, sentence: GOOD_FRIEND }]),
       SLOTS,
     );
-    expect(answer).toMatchObject({ ok: false, problems: ["unknown-slot"] });
+    expect(answer).toEqual({ ok: true, sentences: new Map([[1, GOOD_SELFIE], [2, GOOD_FRIEND]]) });
   });
 
-  test("a duplicated slot index is refused", () => {
+  test("a duplicated slot index is refused, and the slot it names is marked for the next attempt", () => {
     const answer = readWriterAnswer(
       output([{ slotIndex: 1, sentence: GOOD_SELFIE }, { slotIndex: 1, sentence: GOOD_SELFIE }, { slotIndex: 2, sentence: GOOD_FRIEND }]),
       SLOTS,
     );
-    expect(answer).toMatchObject({ ok: false, problems: ["duplicate-slot"] });
+    expect(answer).toMatchObject({ ok: false, problems: ["duplicate-slot"], repair: { marked: [1], accepted: new Map([[2, GOOD_FRIEND]]) } });
   });
 
   test("a two-handed action in a selfie slot is refused, naming the slot", () => {
@@ -382,6 +383,87 @@ describe("readWriterAnswer", () => {
       );
       expect(answer).toMatchObject({ ok: true });
     });
+  });
+});
+
+// 5a.2 (S5.6d, plan s5a2 §5.5): the reader's classification. A problem that belongs to one slot marks that slot for the next attempt and keeps the others; a
+// problem of the answer as a whole (`not-json`, `empty`, `youth-word`) keeps nothing.
+describe("readWriterAnswer: what is marked and what is kept (S5.6d)", () => {
+  const SLOTS = [slot({ slotIndex: 1, shot: "selfie" }), slot({ slotIndex: 2, shot: "friend" }), slot({ slotIndex: 3, shot: "friend", pose: "back" })];
+  const GOOD = (n: number): string => `Scene ${n}: she waters the plants on the sunny windowsill while a friend laughs behind the counter.`;
+  const goodScene = (slotIndex: number) => ({ slotIndex, sentence: GOOD(slotIndex) });
+  const repairOf = (answer: ReturnType<typeof readWriterAnswer>) => {
+    if (answer.ok) throw new Error("expected a refusal");
+    return answer.repair;
+  };
+
+  test("a missing slot is marked and the other two are kept", () => {
+    const repair = repairOf(readWriterAnswer(output([goodScene(1), goodScene(3)]), SLOTS));
+    expect(repair).toEqual({ marked: [2], accepted: new Map([[1, GOOD(1)], [3, GOOD(3)]]) });
+  });
+
+  test("a two-handed selfie slot is marked and the others are kept", () => {
+    const repair = repairOf(readWriterAnswer(output([{ slotIndex: 1, sentence: "She sips coffee with both hands, smiling." }, goodScene(2), goodScene(3)]), SLOTS));
+    expect(repair).toEqual({ marked: [1], accepted: new Map([[2, GOOD(2)], [3, GOOD(3)]]) });
+  });
+
+  test("a sentence that contradicts its pose is marked and the others are kept", () => {
+    const repair = repairOf(readWriterAnswer(output([goodScene(1), goodScene(2), { slotIndex: 3, sentence: "She walks away, looking at the camera over her shoulder." }]), SLOTS));
+    expect(repair).toEqual({ marked: [3], accepted: new Map([[1, GOOD(1)], [2, GOOD(2)]]) });
+  });
+
+  test("a selfie sentence naming a phone is marked and the others are kept", () => {
+    const repair = repairOf(readWriterAnswer(output([{ slotIndex: 1, sentence: "She holds her phone up and smiles, one hand free." }, goodScene(2), goodScene(3)]), SLOTS));
+    expect(repair).toEqual({ marked: [1], accepted: new Map([[2, GOOD(2)], [3, GOOD(3)]]) });
+  });
+
+  test("a revealing word marks its slot and the others are kept", () => {
+    const repair = repairOf(readWriterAnswer(output([goodScene(1), { slotIndex: 2, sentence: "She lounges by the pool in a bikini." }, goodScene(3)]), SLOTS));
+    expect(repair).toEqual({ marked: [2], accepted: new Map([[1, GOOD(1)], [3, GOOD(3)]]) });
+  });
+
+  test("problems in different slots mark every one of them, in slot order", () => {
+    const repair = repairOf(
+      readWriterAnswer(output([{ slotIndex: 3, sentence: "She walks off, glancing at the camera." }, { slotIndex: 1, sentence: "She sips coffee with both hands." }, goodScene(2)]), SLOTS),
+    );
+    expect(repair).toEqual({ marked: [1, 3], accepted: new Map([[2, GOOD(2)]]) });
+  });
+
+  test("a slot answered twice is marked even when both copies are fine, and neither is kept", () => {
+    const repair = repairOf(readWriterAnswer(output([goodScene(1), goodScene(1), goodScene(2), goodScene(3)]), SLOTS));
+    expect(repair).toEqual({ marked: [1], accepted: new Map([[2, GOOD(2)], [3, GOOD(3)]]) });
+  });
+
+  test("an unknown item beside a missing slot is dropped and only the missing slot is marked", () => {
+    const answer = readWriterAnswer(output([goodScene(1), goodScene(2), goodScene(99)]), SLOTS);
+    expect(answer).toMatchObject({ ok: false, problems: ["missing-slots"], repair: { marked: [3] } });
+  });
+
+  test("a youth word is a problem of the whole answer: nothing is kept and no slot is marked", () => {
+    const answer = readWriterAnswer(output([goodScene(1), { slotIndex: 2, sentence: "A young girl laughs in the kitchen." }, goodScene(3)]), SLOTS);
+    expect(answer).toMatchObject({ ok: false, problems: ["youth-word"], wordSlots: [2] });
+    expect(repairOf(answer)).toBeUndefined();
+  });
+
+  test("a youth word beside a slot problem still refuses the whole answer, and tells both", () => {
+    const answer = readWriterAnswer(output([{ slotIndex: 1, sentence: "She sips coffee with both hands." }, { slotIndex: 2, sentence: "A young girl laughs in the kitchen." }, goodScene(3)]), SLOTS);
+    expect(answer).toMatchObject({ ok: false, problems: expect.arrayContaining(["youth-word", "two-handed"]) });
+    expect(repairOf(answer)).toBeUndefined();
+  });
+
+  test("content that is not JSON is a problem of the whole answer", () => {
+    const answer = readWriterAnswer("nope", SLOTS);
+    expect(answer).toMatchObject({ ok: false, problems: ["not-json"] });
+    expect(repairOf(answer)).toBeUndefined();
+  });
+
+  test("an answer with no scenes marks every slot and keeps nothing", () => {
+    const repair = repairOf(readWriterAnswer(output([]), SLOTS));
+    expect(repair).toEqual({ marked: [1, 2, 3], accepted: new Map() });
+  });
+
+  test("the empty refusal a paid answer without content gets is a problem of the whole answer", () => {
+    expect("repair" in emptyAnswerRefusal()).toBe(false);
   });
 });
 

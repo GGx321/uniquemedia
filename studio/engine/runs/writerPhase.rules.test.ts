@@ -223,15 +223,19 @@ test("a missing slot fails the job after the retry", async () => {
   if (!outcome.ok) expect(outcome.error.detail).toContain(String(theSlots[0]?.slotIndex));
 });
 
-test("an extra, unknown slot index fails the job after the retry", async () => {
+// 5a.2 (S5.6d, plan s5a2 §5.5): the extra item is dropped; it no longer costs the answer a second paid attempt.
+test("an extra, unknown slot index is dropped: one attempt, the asked slots written", async () => {
   const theSlots = slots(2);
   const extra = JSON.stringify({
     scenes: [...theSlots.map((s) => ({ slotIndex: s.slotIndex, sentence: sentenceFor(s) })), { slotIndex: 999, sentence: GOOD_OTHER }],
   });
-  const { result } = run([reply(extra), reply(extra)], job({ slots: theSlots }));
+  const { net, result } = run([reply(extra)], job({ slots: theSlots }));
 
   const outcome = await result;
-  expect(outcome).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+  expect(net.calls).toHaveLength(1);
+  expect(outcome.ok).toBe(true);
+  if (!outcome.ok) throw new Error("expected success");
+  expect([...outcome.sentences.keys()]).toEqual(theSlots.map((s) => s.slotIndex));
 });
 
 test("a paid answer without content gets a second attempt", async () => {

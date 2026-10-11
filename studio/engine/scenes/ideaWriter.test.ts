@@ -389,9 +389,13 @@ describe("readWriterAnswer reads an idea's answer by the same rules", () => {
     expect(read.ok).toBe(true);
   });
 
-  test("refuses a missing scene, an unknown scene and a repeated scene", () => {
+  // 5a.2 (S5.6d): an unknown item is dropped; a missing or repeated scene is refused and marks its scene.
+  test("refuses a missing scene and a repeated scene, and drops an unknown scene", () => {
     expect(readWriterAnswer(answer({ slotIndex: 7, sentence: GOOD }), slots)).toMatchObject({ ok: false, problems: ["missing-slots"], missingSlots: [8] });
-    expect(readWriterAnswer(answer({ slotIndex: 7, sentence: GOOD }, { slotIndex: 8, sentence: GOOD }, { slotIndex: 9, sentence: GOOD }), slots)).toMatchObject({ ok: false, problems: ["unknown-slot"] });
+    expect(readWriterAnswer(answer({ slotIndex: 7, sentence: GOOD }, { slotIndex: 8, sentence: GOOD }, { slotIndex: 9, sentence: GOOD }), slots)).toEqual({
+      ok: true,
+      sentences: new Map([[7, GOOD], [8, GOOD]]),
+    });
     expect(readWriterAnswer(answer({ slotIndex: 7, sentence: GOOD }, { slotIndex: 7, sentence: GOOD }, { slotIndex: 8, sentence: GOOD }), slots)).toMatchObject({ ok: false, problems: ["duplicate-slot"] });
   });
 
