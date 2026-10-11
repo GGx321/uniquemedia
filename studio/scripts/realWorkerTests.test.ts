@@ -300,7 +300,7 @@ describe("running one shard of N", () => {
   });
 
   // The proof that no file is skipped or run twice: every job's selection, for the real ./studio tree, together is exactly the file list.
-  for (const count of [3, 4, 5]) {
+  for (const count of [3, 4, 5, 6, 8]) {
     test(`the ${count} jobs' shards of the real ./studio tree together run every test file exactly once`, async () => {
       const all = await listTestFiles(["./studio"], ROOT);
       const plan = await shardedTestArgs(["./studio", "--randomize"], count, ROOT);
