@@ -280,7 +280,7 @@ export function GenerateCard({
   // review-on card ever sends it.
   const canPriceScenes = ready && sceneSet !== undefined && openSet === null && avatar.status === "active" && (form.count === 0 || request.categories.length > 0);
   const compose = usePaidAction({
-    key: canPriceScenes ?`${requestKey(composeRequest)}|${settings?.textModel ?? ""}|${view.money?.reconcileNeeded === true ? "r" : ""}` : null,
+    key: canPriceScenes ? `${requestKey(composeRequest)}|${settings?.textModel ?? ""}|${view.money?.reconcileNeeded === true ? "r" : ""}` : null,
     price: () => client.request("scenes.estimateCompose", composeRequest),
     send: (acceptedWorstMicros) => client.request("scenes.compose", { ...composeRequest, acceptedWorstMicros }),
     onSent: (result, accepted) => {
