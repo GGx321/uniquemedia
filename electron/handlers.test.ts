@@ -411,6 +411,7 @@ test("a framed batch draws its backgrounds from the pack folder the host names",
   mkdirSync(pack, { recursive: true });
   writeFileSync(join(pack, "one.jpg"), "x");
   writeFileSync(join(pack, "two.jpg"), "x");
+  writeFileSync(join(pack, "CREDITS.json"), JSON.stringify([{ file: "one.jpg" }, { file: "two.jpg" }]));
 
   const { recipes } = await runFramedBatch(pack);
 

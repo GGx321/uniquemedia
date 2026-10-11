@@ -97,7 +97,7 @@ function drawFrame(
   if (!opts.frame) return undefined;
   const { backgrounds } = opts.frame;
   if (backgrounds.length === 0) {
-    throw new Error("Frame mode needs at least one background image, and the pack is empty.");
+    throw new Error("Для режима «В рамке» нет ни одного фона: набор пуст.");
   }
   const rng = makeRng((seed ^ FRAME_RNG_SALT) >>> 0);
   const { w: W, h: H } = EXPORT_DIMS[canvasFormat];

@@ -1,4 +1,4 @@
-import { readdir } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 /**
@@ -9,24 +9,44 @@ import { join, resolve } from "node:path";
  */
 export const DEFAULT_FRAME_PACK_DIR = resolve(import.meta.dirname, "../../public/frame-backgrounds");
 
+/** Credits name files by plain name only: no folder part, so a credit cannot point outside the pack. */
+const PACK_FILE_NAME = /^[A-Za-z0-9._-]+\.jpg$/i;
+
+/**
+ * The names of the pack's images, as `CREDITS.json` lists them. The credits are
+ * the one source of the rotation: an image that is in the folder but not in the
+ * credits is not licensed information and is never used. The texts are Russian
+ * because the app shows them as they are.
+ */
+export async function readFramePackNames(dir: string): Promise<string[]> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await readFile(join(dir, "CREDITS.json"), "utf8"));
+  } catch {
+    throw new Error(`Для режима «В рамке» нужен набор фонов с файлом CREDITS.json, а в папке ${dir} его нет.`);
+  }
+  const bad = `В файле CREDITS.json (папка ${dir}) должен быть список записей с полем file — именем .jpg без пути.`;
+  if (!Array.isArray(parsed)) throw new Error(bad);
+  const names = parsed.map((entry: unknown) => {
+    const file = typeof entry === "object" && entry !== null && "file" in entry ? entry.file : undefined;
+    if (typeof file !== "string" || !PACK_FILE_NAME.test(file)) throw new Error(bad);
+    return file;
+  });
+  if (names.length === 0) {
+    throw new Error(`Для режима «В рамке» нужен набор фонов, а в CREDITS.json (папка ${dir}) нет ни одного.`);
+  }
+  return [...new Set(names)].sort();
+}
+
 /**
  * The pack's images as absolute paths, in name order so a listing is the same
- * on every machine. Only `.jpg` files count: the folder also holds
- * `CREDITS.json`, and a folder named like an image is not one.
+ * on every machine. Exactly the credited ones, each of which has to be a file.
  */
 export async function listFrameBackgrounds(dir: string): Promise<string[]> {
-  let entries;
-  try {
-    entries = await readdir(dir, { withFileTypes: true });
-  } catch {
-    throw new Error(`Frame mode needs its background pack, and ${dir} cannot be read.`);
+  const names = await readFramePackNames(dir);
+  for (const name of names) {
+    const isFile = await stat(join(dir, name)).then((s) => s.isFile(), () => false);
+    if (!isFile) throw new Error(`Для режима «В рамке» не хватает фона ${name} в папке ${dir}.`);
   }
-  const files = entries
-    .filter((e) => e.isFile() && e.name.toLowerCase().endsWith(".jpg"))
-    .map((e) => e.name)
-    .sort();
-  if (files.length === 0) {
-    throw new Error(`Frame mode needs its background pack, and ${dir} holds no .jpg image.`);
-  }
-  return files.map((name) => join(dir, name));
+  return names.map((name) => join(dir, name));
 }

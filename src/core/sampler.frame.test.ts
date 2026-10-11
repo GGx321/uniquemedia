@@ -123,5 +123,5 @@ test("frame on with a fixed export format keeps that format's crop", () => {
 });
 
 test("frame on with an empty pack is refused rather than drawing from nothing", () => {
-  expect(() => sampleRecipe({ ...base, frame: { backgrounds: [] } }, 1, 1)).toThrow(/background/);
+  expect(() => sampleRecipe({ ...base, frame: { backgrounds: [] } }, 1, 1)).toThrow(/фон/);
 });

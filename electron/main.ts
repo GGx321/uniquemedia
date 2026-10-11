@@ -12,6 +12,7 @@ import {
 } from "./handlers";
 import { CH } from "./ipc";
 import { extractFramePack } from "./framePack";
+import { detectMediaKind } from "../src/node/detectKind";
 
 const backends = createBackends();
 let abortController: AbortController | null = null;
@@ -89,7 +90,11 @@ async function framePackDir(): Promise<string | undefined> {
 
 ipcMain.handle(CH.start, async (_e, req: StartRequest) => {
   let packDir: string | undefined;
-  if (req.opts.frame) {
+  // Only a video with the frame on needs the pack; a photo batch never waits on
+  // it and cannot be stopped by it. A file the kind of which cannot be read
+  // falls through: the batch reports that itself.
+  const kind = req.opts.frame ? await detectMediaKind(req.input).catch(() => null) : null;
+  if (kind === "video") {
     try {
       packDir = await framePackDir();
     } catch (err) {
