@@ -96,7 +96,7 @@ function coverFirstFrame(
   return {
     tail: `,fps=${fps}[vc]`,
     lines: [
-      `[1:v]${photoChain(cover.recipe, cover.info)},format=yuv420p[c0]`,
+      `[1:v]${photoChain(cover.recipe, cover.info)},scale=out_color_matrix=bt709:out_range=tv,format=yuv420p[c0]`,
       `[c0][vc]${COVER_FIT}[cover][vref]`,
       `[vref][cover]${COVER_OVERLAY}[outv]`,
     ],

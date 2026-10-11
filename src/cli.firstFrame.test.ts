@@ -24,9 +24,13 @@ const CLI = join(dirname(import.meta.dir), "src", "cli.ts");
 const FFMPEG = ffmpegPath as string;
 const SIDE = 64;
 
-/** Same bound as the executor's own cover test: frame 0 against the cover
- *  rendered standalone through the SAME recipe is a re-encode apart. */
-const SAME_PICTURE_MAX = 16;
+/** Frame 0 against the cover rendered standalone through the SAME recipe is a
+ *  re-encode and a colour-matrix apart: the cover is converted from JPEG
+ *  BT.601 to the stream's BT.709, while the gray this test reads both files
+ *  with weighs colours the BT.601 way. That moved the distance from 4 to 20 on
+ *  this fixture; the picture is still unmistakably the cover (84 to the cover
+ *  file as such, 130 to the footage). */
+const SAME_PICTURE_MAX = 24;
 
 let dir: string;
 let clip: string;
