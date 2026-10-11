@@ -752,8 +752,9 @@ describe("the state machine at every crash point", () => {
 
     expect(net.writerCalls()).toHaveLength(1);
     expect(ledgerReserves()).toEqual([attemptId(1, 1), attemptId(1, 2)]);
+    // 5a.2 (S5.6d): the chunk's last attempt, rejected, used to give its scenes up («rejected»); they now take the plain sentence, and the set is written.
     const after = await setOf(engine, avatarId);
-    expect(after.scenes.every((s) => s.unwritten === "gave-up" && s.gaveUpBy === "rejected")).toBe(true);
+    expect(after.scenes.every((s) => s.text !== null && s.unwritten === null && s.gaveUpBy === null)).toBe(true);
     expect(after).toMatchObject({ status: "ready" });
   });
 
@@ -854,7 +855,9 @@ describe("scenes.write: «Дописать»", () => {
     await jobEnd(events, jobId);
   });
 
-  test("a chunk a job gave up on is not retried, and the job goes on with the next chunk", async () => {
+  // 5a.2 (S5.6d, plan s5a2 I5.31): this test used to say «a chunk the model rejected twice is given up on (rejected), not retried, and 25 scenes stay unwritten».
+  // A planned scene the model could not write now takes the plain sentence, so nothing is given up: the whole set is written and nothing is waiting.
+  test("a chunk the model rejected twice takes the plain sentence, nothing is given up, and the job goes on with the next chunk", async () => {
     const avatarId = await seedAvatar();
     await seedSet(avatarId, { count: 35, write: compose });
     const net = sceneNetwork({ writer: (call, n) => (n <= 2 ? rejectedAnswer : goodAnswer(call, n)) });
@@ -862,10 +865,11 @@ describe("scenes.write: «Дописать»", () => {
     const first = jobOf(await engine.handle(writeCommand((await setOf(engine, avatarId)).revision, 4 * ATTEMPT)));
     const end = await jobEnd(events, first);
 
-    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 10, unwritten: 25 } } });
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 35, unwritten: 0 } } });
     const view = await setOf(engine, avatarId);
-    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual(["rejected", null]);
-    expect(view.scenes.filter((s) => s.gaveUpBy === "rejected")).toHaveLength(25);
+    expect(view.chunks.map((c) => c.gaveUpBy)).toEqual([null, null]);
+    expect(view.scenes.filter((s) => s.gaveUpBy !== null)).toHaveLength(0);
+    expect(view.scenes.every((s) => s.text !== null)).toBe(true);
     expect(view.status).toBe("ready");
     expect(code(await engine.handle(writeCommand(view.revision, 4 * ATTEMPT)))).toBe("VALIDATION");
   });
@@ -1567,7 +1571,8 @@ describe("what the view claims stays true (fix round 1)", () => {
 
   test("the compose outcome is the one the job ended with: removing scenes afterwards does not change it", async () => {
     const avatarId = await seedAvatar();
-    const net = sceneNetwork({ writer: (call, n) => (n === 1 ? goodAnswer(call, n) : rejectedAnswer) });
+    // The second chunk is refused by the provider (a chunk given up on): two rejected answers no longer give a chunk up (S5.6d), they take the plain sentence.
+    const net = sceneNetwork({ writer: (call, n) => (n === 1 ? goodAnswer(call, n) : refusal) });
     const { engine, events } = await engineOver(net);
     const { sceneSetId, jobId } = composed(await engine.handle(composeCommand(avatarId, { count: 30 })));
     await jobEnd(events, jobId ?? "none");

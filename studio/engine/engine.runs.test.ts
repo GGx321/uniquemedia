@@ -16,7 +16,7 @@ import { ffmpegPath } from "../node/ffmpegBinary";
 import { decodeGray64 } from "../node/pdqPixels";
 import { chatBody, imageBody, fakeFetch, readLedgerLines, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { plannedSlots, RunPlanSchema, type RunPlan } from "./runs/plan";
-import { plan as planScenes } from "./scenes";
+import { plainSentence, plan as planScenes } from "./scenes";
 import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
 import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { faceModelPaths } from "../scripts/faceModelCache";
@@ -1012,20 +1012,21 @@ describe("runs.resume", () => {
     expect(second.net.imageCalls().length).toBeGreaterThan(0);
   });
 
-  // A chunk out of writer attempts with its slots still open (a crash mid-writer). 5a.2 (S5.6c2, plan s5a2 §5.6, I5.30) changes how that resume is PRICED: the
-  // chunk no longer blocks, so its slots' image worst stays counted (S5.6d will give those slots a plain code sentence and render them). Until then the job
-  // still closes the slots without a request, so what is spent stays 0; the estimate is the safe side. These two tests said «the resume is free (estimate 0)
-  // and no month budget can refuse it»; the plan reverses the first half, so they now say what the plan says.
-  test("a writer chunk out of attempts: the resume is priced at its open slots' images, not at 0, and still closes every open slot with 0 POST and 0 new reserves", async () => {
-    await freeCloseWithMonthlyBudget(10_000_000);
+  // A chunk out of writer attempts with its slots still open (a crash mid-writer). History of this contract:
+  //  - before 5a.2 the resume was free: it closed the open slots failed, with no request, so its estimate was 0 and no month budget could refuse it;
+  //  - S5.6c2 (plan s5a2 §5.6, I5.30) priced it at its open slots' images (the chunk no longer blocks), while the job still closed the slots for nothing;
+  //  - S5.6d (I5.31) makes that price true: the open slots take the plain sentence and are DRAWN. The resume really spends the images' money, so a month with no room
+  //    for them refuses it BUDGET_EXCEEDED before anything is sent, and the estimate (the images' worst) is never below what the resume spends.
+  test("a writer chunk out of attempts: the resume is priced at its open slots' images, draws them from the plain sentence with no new writer reserve, and spends less than it was priced at", async () => {
+    await resumeWithMonthlyBudget(10_000_000);
   });
 
   test("a writer chunk out of attempts: the resume is refused BUDGET_EXCEEDED when the month has no room for those images, before anything is sent", async () => {
-    await freeCloseWithMonthlyBudget(37_500);
+    await resumeWithMonthlyBudget(37_500);
   });
 
   /** The month's budget is `monthlyBudgetMicros`; the abandoned writer reserve alone commits 37_500 of it. */
-  async function freeCloseWithMonthlyBudget(monthlyBudgetMicros: number): Promise<void> {
+  async function resumeWithMonthlyBudget(monthlyBudgetMicros: number): Promise<void> {
     const avatarId = await seedAvatar();
     const received: string[] = [];
     const net = runNetwork({ received, writer: () => ({ hang: true }) });
@@ -1045,8 +1046,8 @@ describe("runs.resume", () => {
     const second = await engineOver(net2, { bootId: "boot-0000-bbbb", clock: () => LATER, monotonic: () => mono, monthlyBudgetMicros });
     mono += 10 * 60_000;
     ok(await second.engine.handle(command("money.reconcile")));
-    const reserves = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).filter((l) => l.type === "reserve").length;
-    const before = reserves();
+    const reserveIdsNow = () => readLedgerLines(join(dir(), "userData", "ledger.jsonl")).flatMap((l) => (l.type === "reserve" && typeof l.attemptId === "string" ? [l.attemptId] : []));
+    const before = reserveIdsNow();
 
     // Two open slots, three attempts each at the dearest image; the exhausted chunk adds no writer term.
     const images = 2 * 3 * 50_000;
@@ -1054,16 +1055,26 @@ describe("runs.resume", () => {
     if (monthlyBudgetMicros < images) {
       expect(failed(await second.engine.handle(command("runs.resume", { runId, acceptedWorstMicros: images }))).error.code).toBe("BUDGET_EXCEEDED");
       expect(net2.calls.filter((c) => c.method === "POST")).toHaveLength(0);
-      expect(reserves()).toBe(before);
+      expect(reserveIdsNow()).toEqual(before);
       return;
     }
     const { jobId: resumeJob } = started(await second.engine.handle(command("runs.resume", { runId, acceptedWorstMicros: images })));
     await jobEnd(second.events, resumeJob);
 
-    expect(net2.calls.filter((c) => c.method === "POST")).toHaveLength(0);
-    expect(reserves()).toBe(before);
+    // One image request per open slot, drawn from the plain sentence; no writer request and no new writer reserve.
+    expect(net2.writerCalls()).toHaveLength(0);
+    expect(net2.imageCalls()).toHaveLength(2);
+    const newReserves = reserveIdsNow().slice(before.length);
+    expect(newReserves).toHaveLength(2);
+    expect(newReserves.every((id) => id.includes(":slot-"))).toBe(true);
+    const prompts = net2.imageCalls().map((call) => String(call.json().prompt));
+    for (const slot of plannedSlots(plan)) expect(prompts.some((prompt) => prompt.includes(plainSentence(slot)))).toBe(true);
     const list = ok(await second.engine.handle(command("runs.list")));
-    expect(list.type === "runs.list" ? list.result.runs.find((r) => r.runId === runId) : "not a list").toMatchObject({ open: 0, failed: 2, resumable: false, capExhausted: false });
+    expect(list.type === "runs.list" ? list.result.runs.find((r) => r.runId === runId) : "not a list").toMatchObject({ open: 0, failed: 0, resumable: false, capExhausted: false });
+    // The estimate the owner accepted is never below what the resume spent: its images' settled costs.
+    const spent = readLedgerLines(join(dir(), "userData", "ledger.jsonl")).reduce((sum, l) => (l.type === "settle" && typeof l.attemptId === "string" && newReserves.includes(l.attemptId) && typeof l.costMicros === "number" ? sum + l.costMicros : sum), 0);
+    expect(spent).toBeGreaterThan(0);
+    expect(spent).toBeLessThanOrEqual(images);
   }
 
   test("the resumed job counts the slots the run already finished, from its launch announcement on", async () => {

@@ -466,6 +466,26 @@ describe("scenes.write: a rewrite", () => {
     expect(JSON.stringify(net.writerCalls()[0]?.json())).toContain("Paris cafes (old)");
   });
 
+  // 5a.2 (S5.6d): a planned rewrite the model rejects twice no longer fails (it takes the plain sentence, below); an idea write, which has no place or moment to build
+  // one from, still does, and a write that fails leaves the set exactly as it was.
+  test("a rewrite the model rejects twice takes the plain sentence of the place it drew, and the write is done", async () => {
+    const avatarId = await seedAvatar();
+    await seedCategory();
+    await seedReview(avatarId, { custom: true });
+    const net = sceneNetwork({ writer: () => rejectedAnswer });
+    const { engine, events } = await engineOver(net);
+
+    const end = await writeAndWait(engine, events, avatarId, rewrite([1], true));
+
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { kind: "scenes", sceneSetId: SET, avatarId, written: 1, unwritten: 0 } } });
+    expect(net.writerCalls()).toHaveLength(2);
+    expect(ledgerReserves()).toEqual([writeId(1, 1), writeId(1, 2)]);
+    const scene = fileOf(avatarId).scenes.find((s) => s.sceneId === 1);
+    const slot = scene?.slot as { location: string; activity: string; outfit: string } | undefined;
+    expect(scene?.text).toBe(`At ${slot?.location}, she is ${slot?.activity}, wearing ${slot?.outfit}.`);
+    expect((await setOf(engine, avatarId)).scenes.some((s) => s.rewriteInterrupted !== undefined)).toBe(false);
+  });
+
   test("a write that fails leaves the scene exactly as it was, and says nothing is left to resume", async () => {
     const avatarId = await seedAvatar();
     await seedCategory();
@@ -474,7 +494,7 @@ describe("scenes.write: a rewrite", () => {
     const { engine, events } = await engineOver(net);
     const before = fileOf(avatarId);
 
-    const end = await writeAndWait(engine, events, avatarId, rewrite([1], true));
+    const end = await writeAndWait(engine, events, avatarId, idea("кофе", 1));
 
     expect(end).toMatchObject({ type: "job.failed", payload: { kind: "scenes", sceneSetId: SET, avatarId } });
     expect(net.writerCalls()).toHaveLength(2);
@@ -641,7 +661,8 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
     expect(net.writerCalls()).toHaveLength(0);
   });
 
-  test("after the reconcile's estimated settle the resume sends ONE attempt, never a fresh pair and never the reserved id; a rejected answer resolves the write", async () => {
+  // 5a.2 (S5.6d): the resume's one attempt, rejected, used to resolve the write as failed; the planned scene now takes the plain sentence and the write is done.
+  test("after the reconcile's estimated settle the resume sends ONE attempt, never a fresh pair and never the reserved id; a rejected answer ends the write with the plain sentence", async () => {
     const avatarId = await seedAvatar();
     await seedReview(avatarId, { writes: 1, records: [rewriteRecord({ k: 1, stoppedBy: "network" })] });
     await writeLedger(dir(), [reserve(writeId(1, 1)), settle(writeId(1, 1), ATTEMPT, true)]);
@@ -650,7 +671,7 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
 
     const end = await writeAndWait(engine, events, avatarId, { kind: "resume", write: 1 }, ATTEMPT);
 
-    expect(end).toMatchObject({ type: "job.failed" });
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 1, unwritten: 0 } } });
     expect(net.writerCalls()).toHaveLength(1);
     expect(ledgerReserves()).toEqual([writeId(1, 1), writeId(1, 2)]);
     const view = await setOf(engine, avatarId);
@@ -800,6 +821,32 @@ describe("an interrupted rewrite: a marker on its scene, the set stays ready", (
 // ---------- scenes.write: idea ----------
 
 describe("scenes.write: an idea", () => {
+  // 5a.2 (S5.6d): an idea write keeps the scenes the model got right when the last attempt still refused the others; the scene it did not get is not added.
+  test("a scene the model refuses on both attempts is left out; the one it wrote is added, and the write ends done with one unwritten", async () => {
+    const avatarId = await seedAvatar();
+    await seedReview(avatarId);
+    const net = sceneNetwork({
+      writer: (call) => ({
+        status: 200,
+        body: chatBody(
+          JSON.stringify({ scenes: listAsked(call).map((slot) => ({ slotIndex: slot.slotIndex, sentence: slot.slotIndex === 5 ? "She lounges by the pool in a bikini." : `${SENTENCE} (${slot.slotIndex})`, ...pickedAngle(slot) })) }),
+          { cost: 0.0112 },
+        ),
+      }),
+    });
+    const { engine, events } = await engineOver(net);
+
+    const end = await writeAndWait(engine, events, avatarId, idea("кофе на балконе утром", 2, "friend"));
+
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 1, unwritten: 1 } } });
+    expect(net.writerCalls()).toHaveLength(2);
+    expect(slotsAskedFor(net.writerCalls()[1] as FetchCall)).toEqual([5]);
+    const view = await setOf(engine, avatarId);
+    expect(view.scenes.slice(4).map((s) => [s.sceneId, s.text])).toEqual([[6, `${SENTENCE} (6)`]]);
+    expect(view.interruptedIdeas).toBeUndefined();
+    expect(fileOf(avatarId).reviewWrites?.[0]).toMatchObject({ kind: "idea", closed: true });
+  });
+
   test("adds k own scenes written from the idea, under ids after the set's highest, recorded with their draw BEFORE the call", async () => {
     const avatarId = await seedAvatar();
     await seedReview(avatarId);
@@ -1100,7 +1147,8 @@ describe("the money of a review write", () => {
     const { engine, events } = await engineOver(net);
     // One attempt is left (one answered, one burnt free): the estimate is one ceiling, the window "accepted" ten.
     const end = await writeAndWait(engine, events, avatarId, { kind: "resume", write: 1 }, 10 * ATTEMPT);
-    expect(end).toMatchObject({ type: "job.failed" });
+    // S5.6d: the write's last attempt, rejected, ends with the plain sentence (done), not a failure; no further attempt was ever reserved.
+    expect(end).toMatchObject({ type: "job.done", payload: { result: { written: 1, unwritten: 0 } } });
     expect(net.writerCalls()).toHaveLength(1);
     expect(ledgerReserves()).toEqual([writeId(1, 1), writeId(1, 2), writeId(1, 3)]);
   });

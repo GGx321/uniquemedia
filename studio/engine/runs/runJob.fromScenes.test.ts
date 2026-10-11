@@ -170,11 +170,22 @@ describe("a run job over a scene set's plan", () => {
     expect(String(net.imageCalls()[0]?.json().prompt)).toContain(long.slice(0, -1));
   });
 
-  test("a sentence that now fails the word rules ends the run before any image is sent", async () => {
+  // 5a.2 (S5.6d, plan s5a2 §5.5): this test used to say «ends the run before any image is sent» (status failed). A sentence the rules have tightened on since it
+  // was accepted ends ITS slot, free, with the scene reason `slot-text-problem`; the other scenes of the set are still drawn.
+  test("a sentence that now fails the word rules ends its slot before any image is sent, and the other scenes are drawn", async () => {
+    const run = await newRun([plannedScene(1, "She wears a bikini on the beach."), plannedScene(2)]);
+    const net = network();
+    const end = await start(run, net);
+    expect(end).toMatchObject({ status: "done", failedSlots: 1 });
+    expect(net.imageCalls()).toHaveLength(1);
+    expect((await journal()).find((e) => e.type === "slot" && e.slotIndex === 1)).toMatchObject({ status: "failed", error: { code: "VALIDATION", sceneReason: "slot-text-problem" } });
+  });
+
+  test("the only scene of a run failing the word rules is a finished run with one failed slot, and nothing is sent", async () => {
     const run = await newRun([plannedScene(1, "She wears a bikini on the beach.")]);
     const net = network();
     const end = await start(run, net);
-    expect(end.status).toBe("failed");
+    expect(end).toMatchObject({ status: "done", failedSlots: 1 });
     expect(net.imageCalls()).toHaveLength(0);
   });
 
