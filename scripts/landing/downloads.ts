@@ -77,29 +77,163 @@ export function checkDowngrade(next: string, current: string | null, force: bool
   }
 }
 
-/** Before uploading: drop every version except the one latest.json points to. */
-export function staleBeforeUpload(pathnames: string[], currentVersion: string | null): string[] {
-  const keepDir = currentVersion ? `${BLOB_PREFIX}${currentVersion}/` : null;
-  return pathnames.filter(
-    (p) => p.startsWith(BLOB_PREFIX) && p !== LATEST_PATHNAME && !(keepDir && p.startsWith(keepDir)),
-  );
+
+/**
+ * latest.json is put with a 60 s max-age. A copy can sit in the CDN for that long and then in a browser for
+ * another 60 s, so a file is deleted no earlier than twice that (plus a margin) after the last latest.json
+ * that referenced it was replaced.
+ */
+export const LATEST_CACHE_SECONDS = 60;
+export const CACHE_WAIT_SECONDS = 2 * LATEST_CACHE_SECONDS + 5;
+
+/** What latest.json points at, as store pathnames. */
+export interface Current {
+  version: string;
+  mac: string;
+  win: string;
 }
 
-/** Blobs that remain after the pre-upload cleanup plus the new files must fit. */
-export function checkSize(kept: { pathname: string; size: number }[], newVersion: string, newBytes: number): void {
-  const newDir = `${BLOB_PREFIX}${newVersion}/`; // overwritten by the upload, so not counted
-  const total = kept.filter((b) => !b.pathname.startsWith(newDir)).reduce((n, b) => n + b.size, 0) + newBytes;
-  if (total > SIZE_LIMIT_BYTES) {
-    throw new Error(
-      `Storage would reach ${(total / 1048576).toFixed(0)} MB, over the 950 MB limit; nothing was uploaded`,
+export type PlanStep =
+  | { kind: "delete"; pathnames: string[] }
+  | { kind: "upload"; platform: Platform; pathname: string; bytes: number }
+  | { kind: "publish"; version: string; mac: string; win: string }
+  | { kind: "wait"; seconds: number };
+
+export interface Plan {
+  mode: "all" | "rolling";
+  steps: PlanStep[];
+  /** Highest total store size at any point of the plan. */
+  peakBytes: number;
+}
+
+export interface PlanIo {
+  upload(step: Extract<PlanStep, { kind: "upload" }>): Promise<void>;
+  publish(step: Extract<PlanStep, { kind: "publish" }>): Promise<void>;
+  remove(pathnames: string[]): Promise<void>;
+  sleep(ms: number): Promise<void>;
+}
+
+function pathnameOf(url: unknown): string {
+  let pathname: string | null = null;
+  if (typeof url === "string") {
+    try {
+      pathname = decodeURIComponent(new URL(url).pathname.slice(1));
+    } catch {
+      pathname = null;
+    }
+  }
+  if (!pathname || !pathname.startsWith(BLOB_PREFIX) || pathname === LATEST_PATHNAME) {
+    throw new Error("Existing latest.json points outside uniquemedia/; refusing to guess what to keep");
+  }
+  return pathname;
+}
+
+/** The version and installer pathnames a parsed latest.json points to. Throws on anything unexpected. */
+export function currentRefsOf(latest: unknown): Current {
+  const version = currentVersionOf(latest);
+  const { mac, win } = latest as { mac?: unknown; win?: unknown };
+  return { version, mac: pathnameOf(mac), win: pathnameOf(win) };
+}
+
+function peakOf(start: Map<string, number>, steps: PlanStep[]): number {
+  const sizes = new Map(start);
+  const total = () => [...sizes.values()].reduce((n, v) => n + v, 0);
+  let peak = total();
+  for (const s of steps) {
+    if (s.kind === "upload") sizes.set(s.pathname, s.bytes);
+    if (s.kind === "delete") for (const p of s.pathnames) sizes.delete(p);
+    peak = Math.max(peak, total());
+  }
+  return peak;
+}
+
+/**
+ * Orders every store change so that latest.json never points at a missing file and a file is
+ * deleted only after the latest.json that referenced it has expired from caches. When the old
+ * and new version do not fit together it rolls one platform at a time. Pure: nothing is touched
+ * here, and it throws (so the caller touches nothing) if even the rolling peak is over the limit.
+ */
+export function planUpload(input: {
+  version: string;
+  current: Current | null;
+  blobs: { pathname: string; size: number }[];
+  files: { platform: Platform; name: string; size: number }[];
+  limitBytes?: number;
+}): Plan {
+  const { version, current } = input;
+  const limit = input.limitBytes ?? SIZE_LIMIT_BYTES;
+  const files = input.files.map((f) => ({ ...f, pathname: `${BLOB_PREFIX}${version}/${f.name}` }));
+  const newPaths = new Set(files.map((f) => f.pathname));
+  const refs = current ? [current.mac, current.win] : [];
+
+  const inStore = new Map(
+    input.blobs.filter((b) => b.pathname.startsWith(BLOB_PREFIX) && b.pathname !== LATEST_PATHNAME).map((b) => [b.pathname, b.size]),
+  );
+  // Leftovers nothing references (and the upload will not overwrite) go first; they never count toward the peak.
+  const stale = [...inStore.keys()].filter((p) => !refs.includes(p) && !newPaths.has(p));
+  const start = new Map([...inStore].filter(([p]) => !stale.includes(p)));
+  // A latest.json cached from an earlier run may still point at them, so wait before deleting.
+  const head: PlanStep[] =
+    stale.length > 0 ? [{ kind: "wait", seconds: CACHE_WAIT_SECONDS }, { kind: "delete", pathnames: stale }] : [];
+  const kept = refs.filter((p) => !newPaths.has(p) && start.has(p)); // the old installers that outlive the uploads
+
+  // Nothing to send when the same path with the same size is already there (a re-run after a partial one).
+  const uploadOf = (platform: Platform): PlanStep[] => {
+    const f = files.find((x) => x.platform === platform) as (typeof files)[number];
+    return inStore.get(f.pathname) === f.size ? [] : [{ kind: "upload", platform, pathname: f.pathname, bytes: f.size }];
+  };
+  const newPath = (platform: Platform) => (files.find((f) => f.platform === platform) as (typeof files)[number]).pathname;
+  const tooBig = (peak: number, what: string) =>
+    new Error(`Storage would reach ${(peak / 1048576).toFixed(0)} MB${what}, over the ${(limit / 1048576).toFixed(0)} MB limit; nothing was changed`);
+
+  const allSteps: PlanStep[] = [
+    ...head,
+    ...uploadOf("mac"),
+    ...uploadOf("win"),
+    { kind: "publish", version, mac: newPath("mac"), win: newPath("win") },
+    ...(kept.length > 0 ? [{ kind: "wait", seconds: CACHE_WAIT_SECONDS } as const, { kind: "delete", pathnames: kept } as const] : []),
+  ];
+  const allPeak = peakOf(start, allSteps);
+  if (allPeak <= limit) return { mode: "all", steps: allSteps, peakBytes: allPeak };
+  if (!current) throw tooBig(allPeak, "");
+
+  for (const p of refs) {
+    if (!start.has(p)) throw new Error(`latest.json points at ${p}, which is not in the store; cannot roll safely`);
+  }
+  const rolling: PlanStep[] = [...head];
+  for (const platform of ["mac", "win"] as const) {
+    const old = current[platform];
+    rolling.push(...uploadOf(platform));
+    // The mixed step keeps the old version label: the other platform still serves the old installer.
+    rolling.push(
+      platform === "mac"
+        ? { kind: "publish", version: current.version, mac: newPath("mac"), win: current.win }
+        : { kind: "publish", version, mac: newPath("mac"), win: newPath("win") },
     );
+    if (!newPaths.has(old)) rolling.push({ kind: "wait", seconds: CACHE_WAIT_SECONDS }, { kind: "delete", pathnames: [old] });
+  }
+  const rollingPeak = peakOf(start, rolling);
+  if (rollingPeak > limit) throw tooBig(rollingPeak, " even rolling one platform at a time");
+  return { mode: "rolling", steps: rolling, peakBytes: rollingPeak };
+}
+
+export async function executePlan(plan: Plan, io: PlanIo): Promise<void> {
+  for (const step of plan.steps) {
+    if (step.kind === "upload") await io.upload(step);
+    else if (step.kind === "publish") await io.publish(step);
+    else if (step.kind === "delete") await io.remove(step.pathnames);
+    else await io.sleep(step.seconds * 1000);
   }
 }
 
-/** Pathnames to delete after publishing: everything under uniquemedia/ except the new version and latest.json. */
-export function blobsToDelete(pathnames: string[], keepVersion: string): string[] {
-  const keepDir = `${BLOB_PREFIX}${keepVersion}/`;
-  return pathnames.filter(
-    (p) => p.startsWith(BLOB_PREFIX) && p !== LATEST_PATHNAME && !p.startsWith(keepDir),
-  );
+/**
+ * The newest version latest.json involves: its label, or the version directory of either installer it points
+ * at (a half-rolled latest.json keeps the old label but already serves a new installer).
+ */
+export function effectiveVersion(current: Current | null): string | null {
+  if (!current) return null;
+  const found = [current.mac, current.win]
+    .map((p) => new RegExp(`^${BLOB_PREFIX}(\\d+\\.\\d+\\.\\d+)/`).exec(p)?.[1])
+    .filter((v): v is string => v !== undefined);
+  return [current.version, ...found].reduce((a, b) => (compareVersions(a, b) >= 0 ? a : b));
 }

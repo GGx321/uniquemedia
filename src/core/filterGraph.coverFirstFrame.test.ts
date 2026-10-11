@@ -32,7 +32,7 @@ const coverRecipe: PhotoRecipe = {
   intensity: 1,
   exportFormat: "original",
   ops: [
-    { id: "eq", params: { contrast: 1.02, saturation: 0.99, gamma: 0.98 } },
+    { id: "eq", params: { contrast: 1.02, saturation: 0.99 } },
     { id: "pancrop", params: { windowPct: 0.96, panX: 0.5, panY: -0.5 } },
     { id: "rotate", params: { deg: 0.1 } },
     { id: "lenscorrection", params: { k1: 0.008 } },
@@ -53,7 +53,7 @@ const off: Recipe = {
     { fraction: 0.5, speed: 0.97 },
   ],
   video: [
-    { id: "eq", params: { brightness: 0.01, contrast: 1.02, saturation: 0.99, gamma: 1 } },
+    { id: "eq", params: { contrast: 1.02, saturation: 0.99 } },
     { id: "encode", params: { crf: 21, fps: 30, gop: 60, keyintMin: 30, preset: "faster", audioKbps: 128 } },
   ],
   audio: [{ id: "aeq", params: { gain: 1.5 } }],

@@ -47,24 +47,37 @@ function noiseBlackLift(s: number): number {
   return s < NOISE_BLACK_LIFT.length ? NOISE_BLACK_LIFT[s] : Math.ceil(s / 2);
 }
 
+/** The middle of a plane's range, as `lutyuv` states it: 125.5 for limited
+ *  luma, 127.5 for a full-range (yuvj) still. */
+const MID = "(minval+maxval)/2";
+
 export const FRAGMENTS: Record<string, Fragment> = {
-  /** Each term is emitted only when the recipe drew one, in the order the video
-   *  path has always written them — its chains are pinned byte-for-byte.
+  /** The recipe's tone op: contrast, then saturation, each emitted only when
+   *  the recipe moved it off 1. Both samplers draw these two terms and nothing
+   *  else (brightness and gamma left the recipes because they lift black or
+   *  darken the picture), and both draw them up only.
    *
-   *  The term a still omits is `brightness`. ffmpeg's `eq` brightness is
-   *  ADDITIVE: it shifts the whole scale including zero, so pure black stops
-   *  being black (measured: `brightness=0.03` lifts it to 5/255, and a real
-   *  copy read 7.07 mean over an area the original had at 0.00). On the phone a
-   *  story is read on, a black pixel is an unlit pixel and 7/255 glows. The
-   *  other three terms are multiplicative and leave zero at zero — measured 0,
-   *  2 and 0 respectively — and they cost nothing to keep, because on real
-   *  content the whole `eq` block moves PDQ by 0 either way. */
+   *  Not ffmpeg's `eq`, although the op keeps the name. `eq` does both in
+   *  integer arithmetic that truncates: its saturation maps neutral chroma 128
+   *  to 127 on both planes, which pushes every pixel of every copy the same
+   *  small way towards green-yellow (a real clip's R-G fell from +8.21 to +5.67
+   *  at `saturation=1.005`), and its contrast takes a level off mid-grey and
+   *  pivots on 127.5 whatever the range, which put limited-range black at 10.
+   *
+   *  So contrast is a luma lookup that pivots on the middle of the plane's own
+   *  range, rounds, and clips to that range — black stays on the floor (16
+   *  limited, 0 full) and white on the ceiling for every contrast from 1 up —
+   *  and saturation is `hue`'s, which rounds about 128 and leaves a neutral
+   *  pixel neutral. The chroma planes are not touched by the lookup at all. */
   eq: (p) => {
-    const terms: string[] = [];
-    for (const key of ["brightness", "contrast", "saturation", "gamma"] as const) {
-      if (p[key] !== undefined) terms.push(`${key}=${n(p[key])}`);
+    const parts: string[] = [];
+    const contrast = n(p.contrast);
+    if (p.contrast !== undefined && contrast !== 1) {
+      parts.push(`lutyuv=y='clip(round((val-${MID})*${contrast}+${MID}),minval,maxval)'`);
     }
-    return terms.length > 0 ? `eq=${terms.join(":")}` : null;
+    const saturation = n(p.saturation);
+    if (p.saturation !== undefined && saturation !== 1) parts.push(`hue=s=${saturation}`);
+    return parts.length > 0 ? parts.join(",") : null;
   },
 
   zoomcrop: (p, info) => {
@@ -138,7 +151,11 @@ export const FRAGMENTS: Record<string, Fragment> = {
     const s = Math.round(n(p.strength));
     if (s <= 0) return null;
     // `t` is temporal — meaningless for a still, so photos pass temporal=false.
-    if (p.temporal !== false) return `noise=alls=${s}:allf=t+u`;
+    // Luma only, as a still's is: uniform noise of an even strength has a mean
+    // of -0.5, and on the chroma planes that moved every pixel of a clip
+    // towards green (R-G -1.05, B-G -1.2 at strength 8). PDQ reads luma alone,
+    // so the chroma grain bought no distance for it.
+    if (p.temporal !== false) return `noise=c0s=${s}:c0f=t+u`;
     // A still: uniform noise lifts pure black, which glows on an AMOLED
     // screen, so the lift comes back out. Only the lifted floor is touched: the
     // knee maps [black + b, black + 2b) back down to [black, black + 2b) and

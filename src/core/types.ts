@@ -8,6 +8,24 @@ export interface MediaInfo {
   width: number;
   height: number;
   hasAudio: boolean; // false for photos
+  /** How a video's numbers are to be read, as its stream states it. Set by
+   *  the video probe; absent on a still and on an info built by hand, which
+   *  the graph reads as BT.709, limited range, 8-bit — the form it ships. */
+  color?: VideoColor;
+}
+
+/**
+ * A video stream's colour description, in ffprobe's own names (`bt709`,
+ * `smpte170m`, `arib-std-b67`, `tv`, `yuv420p10le`, ...). Each field is ""
+ * when the stream does not state it, which is common: a file ffmpeg wrote
+ * itself often carries no colour tags at all.
+ */
+export interface VideoColor {
+  pixFmt: string;
+  space: string;
+  transfer: string;
+  primaries: string;
+  range: string;
 }
 
 /** The type is derived from the list rather than written beside it, so a format

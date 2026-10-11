@@ -5,6 +5,7 @@ import ffmpegPath from "ffmpeg-static";
 import ffprobeStatic from "ffprobe-static";
 import { exiftool } from "exiftool-vendored";
 import { buildArgs } from "../core/filterGraph";
+import { sourceToBt709 } from "../core/colour";
 import { parseFfprobeJson, type ProbeResult } from "./ffprobeJson";
 import type { RenderExecutor } from "../core/executor";
 import type { IdentityMode, MediaInfo, Recipe } from "../core/types";
@@ -57,8 +58,47 @@ export function videoInfoFromProbe(probe: ProbeResult, input: string): MediaInfo
     width: video.width,
     height: video.height,
     hasAudio: probe.streams.some((s) => s.codecType === "audio"),
+    color: {
+      pixFmt: video.pixFmt,
+      space: video.colorSpace,
+      transfer: video.colorTransfer,
+      primaries: video.colorPrimaries,
+      range: video.colorRange,
+    },
   };
 }
+
+/**
+ * Filter names off `ffmpeg -filters` output, asked through `list`, remembered
+ * once an answer comes. A failed listing reports none for that call and is
+ * forgotten, so one failed spawn does not leave the process believing the
+ * filters are missing. Separate from the binary so this can be tested without
+ * one.
+ */
+export function cachedFilters(list: () => Promise<Buffer>): () => Promise<Set<string>> {
+  let names: Promise<Set<string>> | null = null;
+  return () => {
+    names ??= list().then(
+      (out) => new Set(out.toString().split("\n").map((line) => line.trim().split(/\s+/)[1] ?? "")),
+      () => {
+        names = null;
+        return new Set<string>();
+      }
+    );
+    return names;
+  };
+}
+
+/**
+ * The filters the running ffmpeg has, asked once per process. Both bundled
+ * builds have zscale and tonemap (libzimg), and a test pins that; this is for
+ * the build that does not, so it degrades as `sourceToBt709` says instead of
+ * failing on an unknown filter name. A binary that cannot even list its
+ * filters reports none, and its render fails on its own.
+ */
+export const ffmpegFilters = cachedFilters(() => run(FFMPEG, ["-hide_banner", "-filters"]));
+
+const hasZscale = async (): Promise<boolean> => (await ffmpegFilters()).has("zscale");
 
 export class FfmpegExecutor implements RenderExecutor {
   private active = new Map<ReturnType<typeof spawn>, string>(); // child -> output path
@@ -94,17 +134,22 @@ export class FfmpegExecutor implements RenderExecutor {
     const raw = await run(FFPROBE, [
       "-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", input,
     ]);
-    return videoInfoFromProbe(parseFfprobeJson(raw.toString()), input);
+    const info = videoInfoFromProbe(parseFfprobeJson(raw.toString()), input);
+    // Here rather than at the first render: a source this ffmpeg cannot bring
+    // to BT.709 (HDR without zscale) stops the batch before any copy starts.
+    // It also settles the filter list before `render` reads it.
+    sourceToBt709(info, await hasZscale());
+    return info;
   }
 
-  render(
+  async render(
     input: string,
     info: MediaInfo,
     recipe: Recipe,
     output: string,
     onProgress?: (fraction: number) => void
   ): Promise<void> {
-    const args = ["-y", "-i", input, ...buildArgs(recipe, info)];
+    const args = ["-y", "-i", input, ...buildArgs(recipe, info, await hasZscale())];
     if (onProgress) args.push("-progress", "pipe:1", "-nostats");
     args.push(output);
 

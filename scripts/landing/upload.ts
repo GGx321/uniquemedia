@@ -1,21 +1,25 @@
 // Usage: bun upload.ts <tag> <dir-with-installers>   (FORCE=true allows a downgrade)
-// Frees space, uploads the .dmg/.exe to uniquemedia/<version>/, publishes
-// uniquemedia/latest.json, then deletes the previous version.
+// Uploads the .dmg/.exe to uniquemedia/<version>/ and publishes uniquemedia/latest.json.
+// The order of every upload, publish, wait and delete comes from planUpload (downloads.ts):
+// when the old and new version do not fit the store together it replaces one platform at a time.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { del, list, put, type ListBlobResultBlob } from "@vercel/blob";
 import {
   BLOB_PREFIX,
+  LATEST_CACHE_SECONDS,
   LATEST_PATHNAME,
-  blobsToDelete,
   buildLatest,
   checkDowngrade,
-  checkSize,
   classifyAssets,
-  currentVersionOf,
+  currentRefsOf,
+  effectiveVersion,
+  executePlan,
   parseVersion,
-  staleBeforeUpload,
+  planUpload,
+  type Current,
   type Platform,
+  type PlanIo,
 } from "./downloads";
 
 const CONTENT_TYPES: Record<Platform, string> = {
@@ -52,60 +56,69 @@ async function main(): Promise<void> {
     name: names[platform],
     file: Bun.file(join(dir, names[platform])),
   }));
-  const newBytes = files.reduce((n, f) => n + f.file.size, 0);
 
   const existing = await listAll(token);
   const latestBlob = existing.find((b) => b.pathname === LATEST_PATHNAME);
-  let current: string | null = null;
+  let current: Current | null = null;
   if (latestBlob) {
     const res = await fetch(`${latestBlob.url}?t=${Date.now()}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`Could not read the current latest.json (HTTP ${res.status})`);
-    current = currentVersionOf(await res.json());
+    current = currentRefsOf(await res.json());
   }
-  checkDowngrade(version, current, force);
+  checkDowngrade(version, effectiveVersion(current), force);
 
-  // Make room first: keep only the version latest.json points to.
-  const paths = existing.map((b) => b.pathname);
-  const before = new Set(staleBeforeUpload(paths, current));
-  const kept = existing.filter((b) => !before.has(b.pathname));
-  checkSize(kept, version, newBytes); // throws before anything is deleted or uploaded
-  if (before.size > 0) {
-    await del(existing.filter((b) => before.has(b.pathname)).map((b) => b.url), { token });
-    for (const p of before) console.log(`deleted ${p}`);
-  }
-
-  const urls: Partial<Record<Platform, string>> = {};
-  for (const f of files) {
-    const blob = await put(`${BLOB_PREFIX}${version}/${f.name}`, f.file, {
-      access: "public",
-      addRandomSuffix: false,
-      allowOverwrite: true,
-      multipart: true,
-      contentType: CONTENT_TYPES[f.platform],
-      token,
-    });
-    urls[f.platform] = blob.url;
-    console.log(`uploaded ${blob.pathname}`);
-  }
-
-  // latest.json goes last, so it never points at an installer that is not there yet.
-  const latest = buildLatest({ version, mac: urls.mac as string, win: urls.win as string, now: new Date() });
-  await put(LATEST_PATHNAME, JSON.stringify(latest), {
-    access: "public",
-    addRandomSuffix: false,
-    allowOverwrite: true,
-    contentType: "application/json",
-    cacheControlMaxAge: 60,
-    token,
+  // Throws before anything is deleted or uploaded when the plan cannot stay under the limit.
+  const plan = planUpload({
+    version,
+    current,
+    blobs: existing.map((b) => ({ pathname: b.pathname, size: b.size })),
+    files: files.map((f) => ({ platform: f.platform, name: f.name, size: f.file.size })),
   });
-  console.log(`published ${LATEST_PATHNAME} for ${version}`);
+  console.log(`plan: ${plan.mode}, peak ${(plan.peakBytes / 1048576).toFixed(0)} MB`);
 
-  // The previous version is no longer referenced: delete it.
-  const after = new Set(blobsToDelete(kept.map((b) => b.pathname), version));
-  if (after.size > 0) {
-    await del(kept.filter((b) => after.has(b.pathname)).map((b) => b.url), { token });
-    for (const p of after) console.log(`deleted ${p}`);
-  }
+  const urls = new Map(existing.map((b) => [b.pathname, b.url]));
+  const urlOf = (pathname: string): string => {
+    const url = urls.get(pathname);
+    if (!url) throw new Error(`No url known for ${pathname}`);
+    return url;
+  };
+  const io: PlanIo = {
+    upload: async (step) => {
+      const f = files.find((x) => x.platform === step.platform);
+      if (!f) throw new Error(`No file for ${step.platform}`);
+      const blob = await put(step.pathname, f.file, {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        multipart: true,
+        contentType: CONTENT_TYPES[f.platform],
+        token,
+      });
+      urls.set(blob.pathname, blob.url);
+      console.log(`uploaded ${blob.pathname}`);
+    },
+    publish: async (step) => {
+      const latest = buildLatest({ version: step.version, mac: urlOf(step.mac), win: urlOf(step.win), now: new Date() });
+      await put(LATEST_PATHNAME, JSON.stringify(latest), {
+        access: "public",
+        addRandomSuffix: false,
+        allowOverwrite: true,
+        contentType: "application/json",
+        cacheControlMaxAge: LATEST_CACHE_SECONDS,
+        token,
+      });
+      console.log(`published ${LATEST_PATHNAME} for ${step.version} (mac ${step.mac}, win ${step.win})`);
+    },
+    remove: async (pathnames) => {
+      await del(pathnames.map(urlOf), { token });
+      for (const p of pathnames) console.log(`deleted ${p}`);
+    },
+    sleep: async (ms) => {
+      console.log(`waiting ${ms / 1000} s for cached copies of latest.json to expire`);
+      await new Promise((resolve) => setTimeout(resolve, ms));
+    },
+  };
+  await executePlan(plan, io);
 }
 
 main().catch((err: unknown) => {
