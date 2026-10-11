@@ -56,7 +56,7 @@ export const HOME: CategoryBank = {
         { text: "lies on her stomach on the bed", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE },
-        { text: "sits cross-legged on the bed", motion: "she rocks a little side to side", captures: ["timer", "above"], twoHanded: false },
+        { text: "sits cross-legged on the bed", motion: "she rocks a little side to side", captures: ["timer"], twoHanded: false },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
         { text: "lies curled under the blanket", motion: "she pulls the blanket up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
         { text: "lies on her stomach, hips raised", motion: "she lifts her hips a little higher", captures: ["prone"], twoHanded: false, outfits: PRONE },
@@ -105,7 +105,7 @@ export const HOME: CategoryBank = {
         { text: "checks her outfit before going out", motion: "she turns a little to each side", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "grabs her keys from the hook", motion: "she jingles her keys a little", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "leans on the wall by the door", motion: "she shifts her shoulder slowly", captures: ["mirror", "timer"], twoHanded: false },
-        { text: "slips on her sneakers", motion: "she taps one sneaker a little", captures: ["timer"], twoHanded: true },
+        { text: "waits by the door, ready to go", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
       ],
     },
     {

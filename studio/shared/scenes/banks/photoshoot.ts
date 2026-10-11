@@ -38,7 +38,7 @@ export const PHOTOSHOOT: CategoryBank = {
       times: ["golden hour", "evening"],
       moments: [
         { text: "leans on the lamppost", motion: "she sways a little on the post", captures: ["friend", "timer", "candid", "selfie"], twoHanded: false, object: true },
-        { text: "holds the lamppost with one hand", motion: "she leans out a little and back", captures: ["friend", "timer", "selfie"], twoHanded: false, object: true },
+        { text: "holds the lamppost with one hand", motion: "she leans out a little and back", captures: ["friend", "selfie"], twoHanded: false, object: true },
         { text: "walks toward the viewer mid-step", motion: "she keeps walking slowly", captures: ["friend"], twoHanded: false, gaze: "viewer" },
         { text: "waits to cross the street", motion: "she shifts her weight a little", captures: ["candid", "friend", "selfie"], twoHanded: false },
         { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["friend"], twoHanded: false, angle: "three-quarter", gaze: "own" },
@@ -53,7 +53,7 @@ export const PHOTOSHOOT: CategoryBank = {
         { text: "sits on the railing", motion: "she swings one foot a little", captures: ["friend", "timer", "selfie", "candid"], twoHanded: false, outdoor: true },
         { text: "leans her arms on the railing", motion: "she rests her chin down slowly", captures: ["friend", "timer", "candid"], twoHanded: true, outdoor: true },
         { text: "looks out at the passing cars", motion: "she turns her head slowly", captures: ["candid", "friend"], twoHanded: false, gaze: "own", outdoor: true },
-        { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["selfie", "friend", "timer"], twoHanded: false, outdoor: true },
+        { text: "holds a takeaway coffee", motion: "she lifts the cup a little", captures: ["selfie", "friend"], twoHanded: false, outdoor: true },
       ],
     },
     {

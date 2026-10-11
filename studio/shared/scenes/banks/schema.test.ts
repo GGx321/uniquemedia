@@ -8,8 +8,8 @@ import type { BankPlace, CategoryBank, Cue, Gaze, Hairstyle, Moment } from "./ty
 
 const MOMENTS: readonly Moment[] = [
   { text: "waits for the kettle", motion: "she shifts her weight a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
-  { text: "slices fruit on a cutting board", motion: "she slices slowly", captures: ["timer"], twoHanded: true, gaze: "focus" },
-  { text: "laughs at something on her phone", motion: "she laughs a little at her phone", captures: ["timer"], twoHanded: false, phone: true, gaze: "own" },
+  { text: "slices fruit on a cutting board", motion: "she slices slowly", captures: ["friend"], twoHanded: true, gaze: "focus" },
+  { text: "laughs at something on her phone", motion: "she laughs a little at her phone", captures: ["friend"], twoHanded: false, phone: true, gaze: "own" },
   { text: "looks back over her shoulder", motion: "she turns her head a little more", captures: ["timer"], twoHanded: false, angle: "three-quarter", gaze: "own" },
   { text: "brushes her hair", motion: "she brushes slowly", captures: ["mirror"], twoHanded: false, hair: "own", messyOk: true },
 ];
@@ -45,7 +45,7 @@ const BANK: CategoryBank = {
   captureDeck: ["mirror-hidden", "mirror", "timer", "friend", "selfie", "candid"],
 };
 
-const plain: Moment = { text: "sips her coffee", motion: "she sips slowly", captures: ["timer", "friend"], twoHanded: false };
+const plain: Moment = { text: "waits by the window", motion: "she shifts her weight a little", captures: ["timer", "friend"], twoHanded: false };
 const withMoment = (moment: Moment): CategoryBank => ({ ...BANK, places: [{ ...ROOM, moments: [...MOMENTS, moment] }, STREET] });
 const withRoom = (place: Partial<BankPlace>): CategoryBank => ({ ...BANK, places: [{ ...ROOM, ...place }, STREET] });
 const withStreet = (place: Partial<BankPlace>): CategoryBank => ({ ...BANK, places: [ROOM, { ...STREET, ...place }] });
@@ -101,6 +101,10 @@ describe("a category bank", () => {
     ["a motion with a youth word", { ...plain, motion: "she sips like a girl, slowly" }, BANK_RULE.youth],
     ["a start pose over the pool text bound", { ...plain, startPose: "lying flat on her stomach with her hips down" }, BANK_RULE.text],
     ["a start pose with a youth prop", { ...plain, startPose: "holding a teddy bear" }, BANK_RULE.youthProp],
+    ["a timer moment that holds something (its line: «both of her hands are empty», I5.32)", { ...plain, text: "holds a takeaway coffee" }, BANK_RULE.timerHands],
+    ["a timer moment that sips a drink", { ...plain, text: "sips her coffee" }, BANK_RULE.timerHands],
+    ["a timer moment with her keys", { ...plain, text: "waits by the door with her keys" }, BANK_RULE.timerHands],
+    ["a close selfie from above while she sits (its line: «as she lies there»)", { ...plain, text: "sits cross-legged on the bed", captures: ["above"] }, BANK_RULE.aboveLying],
     ["a feet-up moment without the no-legwear tag (plan r1.4: Grok refused legs up in tights)", { ...plain, text: "lies on her stomach, feet raised" }, BANK_RULE.noLegwear],
     ["feet on a railing without the no-legwear tag", { ...plain, text: "sits with her feet on the railing" }, BANK_RULE.noLegwear],
   ];
@@ -115,7 +119,7 @@ describe("a category bank", () => {
   });
 
   test("a motion may name her phone when the moment uses it", () => {
-    const phone: Moment = { ...plain, text: "scrolls through her phone", phone: true, gaze: "own", motion: "she scrolls her phone slowly" };
+    const phone: Moment = { ...plain, text: "scrolls through her phone", phone: true, gaze: "own", motion: "she scrolls her phone slowly", captures: ["friend"] };
     expect(categoryBankProblems(withMoment(phone), "home")).toEqual([]);
   });
 
