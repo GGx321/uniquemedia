@@ -23,7 +23,7 @@ import {
   VIEWER_GAZE,
   YOUTH_PROPS,
 } from "../words";
-import type { BankCategory, Moment } from "./types";
+import { MOMENT_HAIRS, type BankCategory, type Moment } from "./types";
 
 // 5a.2 (S5.6a, I5.21, I5.35; plan s5a2 r1.2): the banks' zod schemas. The shape is zod; every rule the plan names runs in a superRefine and reports
 // `[rule] where: what`, so a test can name the rule a bad item breaks (banks/schema.test.ts) and a malformed bank fails loudly at load
@@ -218,7 +218,7 @@ const MomentSchema = z.strictObject({
   level: z.literal("flirty").optional(),
   angle: z.enum(["three-quarter", "profile", "back"]).optional(),
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
-  hair: z.enum(["tied", "sport", "loose", "own"]).optional(),
+  hair: z.enum(MOMENT_HAIRS).optional(),
   expression: z.literal(true).optional(),
   handAtFace: z.literal(true).optional(),
   outdoor: z.literal(true).optional(),

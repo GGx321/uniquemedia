@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { CategoryPoses, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
-import type { LegwearSlot, Moment, Outfit } from "../../shared/scenes/banks/types";
+import { MOMENT_HAIRS, type LegwearSlot, type Moment, type Outfit } from "../../shared/scenes/banks/types";
 import { CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
 import { PHONE_WORDS, SELFIE_WORDS, isOwnerBannedOutfit, withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { isPhoneInHandShot, type Pose } from "./schema";
@@ -256,7 +256,7 @@ const BuiltInActivitySchema = z.strictObject({
   level: z.literal("flirty").optional(),
   angle: z.enum(["three-quarter", "profile", "back"]).optional(),
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
-  hair: z.enum(["tied", "sport", "loose", "own"]).optional(),
+  hair: z.enum(MOMENT_HAIRS).optional(),
   expression: TRUE,
   handAtFace: TRUE,
   outdoor: TRUE,
