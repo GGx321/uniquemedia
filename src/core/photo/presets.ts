@@ -15,8 +15,6 @@ export const PHOTO_PARAMS = {
   pan: { neutral: 0, dev: 1.0 }, // window position inside the free margin, -1..1
   rotateDeg: { neutral: 0, dev: 0.15 },
   lensK1: { neutral: 0, dev: 0.01 },
-  vignetteAngle: { neutral: 0.45, dev: 0.15 },
-  vignetteCentre: { neutral: 0.5, dev: 0.12 }, // fraction of width/height
 
   // Secondary: ~0.6x the video deviations. They carry smooth content and keep
   // copies apart from each other; they are not relied on for the hash.
@@ -43,9 +41,7 @@ export const PHOTO_PARAMS = {
   // whole eq block moves PDQ by 0 on real content and by 2 at its strongest,
   // and on the smooth gradient where tone does work, half a range still works.
   contrast: { neutral: 1, dev: 0.036 }, // one-sided UP
-  saturation: { neutral: 1, dev: 0.048 }, // two-sided: chroma never touches a grey
-  gamma: { neutral: 1, dev: 0.036 }, // one-sided DOWN
-  hueDeg: { neutral: 0, dev: 3.6 },
+  saturation: { neutral: 1, dev: 0.048 }, // one-sided UP: never duller than the source
   noise: { neutral: 0, dev: 6 }, // one-sided
 } satisfies Record<string, ParamSpec>;
 
@@ -56,17 +52,6 @@ export const PHOTO_LIMITS = {
   minWindowPct: 0.88, // a 12% crop is the most that stays unremarkable
   maxPan: 1, // the window can touch an edge, never leave the frame
   maxRotateDeg: 0.6,
-  minVignetteAngle: 0.15, // ffmpeg needs angle >= 0; 0 would drop the lever entirely
-  // 0.8 measured at 64/255 corner luma on a white frame — plainly visible. The
-  // vignette is worth only ~4-10 bits of hash movement once it is artefact-free,
-  // so it is not worth that risk.
-  maxVignetteAngle: 0.6,
-  // An off-centre vignette renders on a padded canvas (see the `vignette`
-  // fragment); the pad grows with the offset, so ±0.12 keeps the intermediate
-  // frame at ~1.6x the source pixels. It is exactly the intensity-1 draw range,
-  // so the clamp only bites once auto-strengthen climbs.
-  minVignetteCentre: 0.38,
-  maxVignetteCentre: 0.62,
   maxNoise: 12,
   maxLensK1: 0.04,
   // The two floors that keep black at zero. They hold by arithmetic rather than
@@ -74,11 +59,8 @@ export const PHOTO_LIMITS = {
   // neutral value itself, not a soft limit.
   minContrast: 1,
   maxContrast: 1.25,
-  minSaturation: 0.7,
+  minSaturation: 1, // up only, like contrast
   maxSaturation: 1.3,
-  minGamma: 0.8,
-  maxGamma: 1,
-  maxHueDeg: 12,
 } as const;
 
 /** mjpeg `-q:v`: 3..7 is visually indistinguishable while the quantisation

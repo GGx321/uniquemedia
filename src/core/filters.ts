@@ -130,8 +130,12 @@ export const FRAGMENTS: Record<string, Fragment> = {
     const s = Math.round(n(p.strength));
     if (s <= 0) return null;
     // `t` is temporal — meaningless for a still, so photos pass temporal=false.
-    const flags = p.temporal === false ? "u" : "t+u";
-    return `noise=alls=${s}:allf=${flags}`;
+    if (p.temporal !== false) return `noise=alls=${s}:allf=t+u`;
+    // A still: uniform noise lifts pure black by up to half its strength, which
+    // glows on an AMOLED screen, so the black point it added comes back out.
+    const b = Math.ceil(s / 2);
+    const channel = `clip((val-${b})*255/${255 - b},0,255)`;
+    return `noise=alls=${s}:allf=u,lutrgb=r='${channel}':g='${channel}':b='${channel}'`;
   },
 
   /** `{ on }` alone keeps the video path's bare `vignette`, unchanged.

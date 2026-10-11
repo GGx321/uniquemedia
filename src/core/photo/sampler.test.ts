@@ -69,7 +69,6 @@ test("every recipe carries the primary geometric levers", () => {
   for (let seed = 0; seed < 25; seed++) {
     const ids = samplePhotoRecipe(opts, seed, 1).ops.map((o) => o.id);
     expect(ids).toContain("pancrop");
-    expect(ids).toContain("vignette");
     expect(ids).toContain("rotate");
     expect(ids).toContain("lenscorrection");
   }
@@ -98,22 +97,27 @@ test("pancrop tightens on average as intensity rises", () => {
   expect(hard).toBeLessThan(soft);
 });
 
-test("the vignette centre varies across seeds", () => {
-  const centres = new Set<string>();
-  for (let seed = 0; seed < 50; seed++) {
-    const r = samplePhotoRecipe(opts, seed, 1);
-    centres.add(`${num(r, "vignette", "x0")}/${num(r, "vignette", "y0")}`);
+test("no copy is tinted or darkened: no hue, no vignette, no gamma, whatever the seed or intensity", () => {
+  for (const intensity of INTENSITIES) {
+    for (let seed = 0; seed < 200; seed++) {
+      const r = samplePhotoRecipe({ ...opts, strength: 1.5 }, seed, intensity);
+      const ids = r.ops.map((o) => o.id);
+      expect(ids).not.toContain("hue");
+      expect(ids).not.toContain("vignette");
+      expect(opFor(r, "eq").params.gamma).toBeUndefined();
+      expect(opFor(r, "eq").params.brightness).toBeUndefined();
+    }
   }
-  expect(centres.size).toBeGreaterThan(40);
 });
 
-test("the vignette centre is off-centre for most copies", () => {
-  let offCentre = 0;
-  for (let seed = 0; seed < 50; seed++) {
-    const r = samplePhotoRecipe(opts, seed, 1);
-    if (Math.abs(num(r, "vignette", "x0") - 0.5) > 0.02) offCentre++;
+test("contrast and saturation only ever go up, never down", () => {
+  for (const intensity of INTENSITIES) {
+    for (let seed = 0; seed < 200; seed++) {
+      const r = samplePhotoRecipe({ ...opts, strength: 1.5 }, seed, intensity);
+      expect(num(r, "eq", "contrast")).toBeGreaterThanOrEqual(1);
+      expect(num(r, "eq", "saturation")).toBeGreaterThanOrEqual(1);
+    }
   }
-  expect(offCentre).toBeGreaterThan(40);
 });
 
 for (const intensity of INTENSITIES) {
@@ -129,10 +133,6 @@ for (const intensity of INTENSITIES) {
 
       expect(Math.abs(num(r, "rotate", "deg"))).toBeLessThanOrEqual(0.6);
 
-      const angle = num(r, "vignette", "angle");
-      expect(angle).toBeGreaterThan(0);
-      expect(angle).toBeLessThanOrEqual(0.6);
-
       const strength = num(r, "noise", "strength");
       expect(strength).toBeGreaterThanOrEqual(0);
       expect(strength).toBeLessThanOrEqual(12);
@@ -146,21 +146,9 @@ for (const intensity of INTENSITIES) {
       // contrast and gamma are one-sided, so their neutral value IS a bound.
       expect(num(r, "eq", "contrast")).toBeGreaterThanOrEqual(1);
       expect(num(r, "eq", "contrast")).toBeLessThanOrEqual(1.25);
-      expect(num(r, "eq", "saturation")).toBeGreaterThanOrEqual(0.7);
+      expect(num(r, "eq", "saturation")).toBeGreaterThanOrEqual(1);
       expect(num(r, "eq", "saturation")).toBeLessThanOrEqual(1.3);
-      expect(num(r, "eq", "gamma")).toBeGreaterThanOrEqual(0.8);
-      expect(num(r, "eq", "gamma")).toBeLessThanOrEqual(1);
-      expect(Math.abs(num(r, "hue", "h"))).toBeLessThanOrEqual(12);
       expect(Math.abs(num(r, "lenscorrection", "k1"))).toBeLessThanOrEqual(0.04);
-
-      // The off-centre vignette is rendered on a padded canvas whose size grows
-      // with the offset, so the offset is capped to keep that canvas sane.
-      const x0 = num(r, "vignette", "x0");
-      const y0 = num(r, "vignette", "y0");
-      expect(x0).toBeGreaterThanOrEqual(0.38);
-      expect(x0).toBeLessThanOrEqual(0.62);
-      expect(y0).toBeGreaterThanOrEqual(0.38);
-      expect(y0).toBeLessThanOrEqual(0.62);
     }
   });
 }
@@ -171,9 +159,6 @@ test("the baseline is soft: at intensity 1 no ceiling is reached", () => {
     expect(num(r, "pancrop", "windowPct")).toBeGreaterThan(0.93);
     expect(Math.abs(num(r, "rotate", "deg"))).toBeLessThan(0.2);
     expect(num(r, "noise", "strength")).toBeLessThanOrEqual(6);
-    // The vignette is the one lever whose baseline tail now touches its ceiling
-    // exactly (0.45 + 0.15 = 0.6); everything else stays clear of its limit.
-    expect(num(r, "vignette", "angle")).toBeLessThanOrEqual(0.6);
   }
 });
 
@@ -241,7 +226,6 @@ test("the photo eq carries no brightness term at any intensity", () => {
       expect(opFor(r, "eq").params.brightness).toBeUndefined();
       expect(Object.keys(opFor(r, "eq").params).sort()).toEqual([
         "contrast",
-        "gamma",
         "saturation",
       ]);
     }
@@ -326,7 +310,7 @@ test("crop mode still uses rotation and lens distortion", () => {
 
 test("fit mode keeps every lever that costs no picture", () => {
   const got = ids(samplePhotoRecipe(fitOpts, 3, 1));
-  for (const id of ["eq", "hue", "vignette", "noise"]) expect(got).toContain(id);
+  for (const id of ["eq", "noise"]) expect(got).toContain(id);
 });
 
 test("a fit recipe is as reproducible as a crop one", () => {
@@ -359,15 +343,14 @@ test("the fit window tightens on average as intensity rises", () => {
  * "rendered it and saw zero" — a batch of seeds can draw the safe side by luck,
  * as the brightness case demonstrated.
  *
- * `saturation` stays two-sided: it scales chroma and leaves a grey of any level
- * exactly where it was.
+ * `saturation` is drawn one-sided up as well, so a copy is never duller than
+ * its source.
  */
-test("the photo eq never draws a contrast below 1 or a gamma above 1", () => {
+test("the photo eq never draws a contrast below 1", () => {
   for (const intensity of INTENSITIES) {
     for (let seed = 0; seed < 150; seed++) {
       const r = samplePhotoRecipe({ ...opts, strength: 1.5 }, seed, intensity);
       expect(num(r, "eq", "contrast")).toBeGreaterThanOrEqual(1);
-      expect(num(r, "eq", "gamma")).toBeLessThanOrEqual(1);
     }
   }
 });
@@ -378,29 +361,15 @@ test("one-sided halves each range rather than dropping the lever", () => {
   // one still reaches across its remaining half: the intensity-1 deviation is
   // 0.036, and a hundred seeds should get close to the far end of it.
   const contrasts: number[] = [];
-  const gammas: number[] = [];
+  const saturations: number[] = [];
   for (let seed = 0; seed < 100; seed++) {
     const r = samplePhotoRecipe(opts, seed, 1);
     contrasts.push(num(r, "eq", "contrast"));
-    gammas.push(num(r, "eq", "gamma"));
+    saturations.push(num(r, "eq", "saturation"));
   }
   expect(Math.max(...contrasts)).toBeGreaterThan(1.03);
-  expect(Math.min(...gammas)).toBeLessThan(0.97);
-  // And spread across it, not clustered at one value. Not ~100 distinct: the
-  // values are rounded to 4 digits over a range only 0.036 wide, so collisions
-  // are expected and are not the lever standing still.
+  expect(Math.max(...saturations)).toBeGreaterThan(1.04);
+  // And spread across it, not clustered at one value.
   expect(new Set(contrasts).size).toBeGreaterThan(60);
-  expect(new Set(gammas).size).toBeGreaterThan(60);
-});
-
-test("saturation stays two-sided, because it cannot lift black", () => {
-  let below = 0;
-  let above = 0;
-  for (let seed = 0; seed < 100; seed++) {
-    const sat = num(samplePhotoRecipe(opts, seed, 1), "eq", "saturation");
-    if (sat < 1) below++;
-    if (sat > 1) above++;
-  }
-  expect(below).toBeGreaterThan(25);
-  expect(above).toBeGreaterThan(25);
+  expect(new Set(saturations).size).toBeGreaterThan(60);
 });

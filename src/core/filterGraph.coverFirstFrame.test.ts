@@ -76,7 +76,7 @@ const OVERLAY = "overlay=x=(W-w)/2:y=(H-h)/2:eof_action=repeat:enable='eq(n,0)'"
  *  concat and `[outv]`, and the cover lines that feed it. */
 const photoBranch = (fps: number): string =>
   `concat=n=2:v=1:a=0,fps=${fps}[vc];` +
-  `[1:v]${photoChain(coverRecipe, coverInfo)}[c0];` +
+  `[1:v]${photoChain(coverRecipe, coverInfo)},format=yuv420p[c0];` +
   `[c0][vc]${FIT}[cover][vref];` +
   `[vref][cover]${OVERLAY}[outv]`;
 
@@ -93,7 +93,7 @@ test("with mode photo the cover is a second input, named before the graph", () =
 
 test("the cover goes through the photo chain on [1:v], at the cover's own size", () => {
   const fc = complexOf(buildArgs(photo, info));
-  expect(fc).toContain(`[1:v]${photoChain(coverRecipe, coverInfo)}[c0]`);
+  expect(fc).toContain(`[1:v]${photoChain(coverRecipe, coverInfo)},format=yuv420p[c0]`);
   // The cover's own dimensions, not the video's: 1200x900 * 0.96 -> 1152x864.
   expect(fc).toContain("crop=1152:864:36:9,scale=1200:900");
 });
