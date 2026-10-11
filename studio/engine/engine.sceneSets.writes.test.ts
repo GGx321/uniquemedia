@@ -50,11 +50,11 @@ async function seedAvatar(vibe?: string): Promise<string> {
   return avatar.id;
 }
 
-const CAFE = { category: CAT, location: "a corner cafe", activity: "reading a menu", outfit: "a beige trench coat and jeans", timeOfDay: "morning" };
+const CAFE = { category: CAT, location: "a corner cafe", activity: "takes a long look at the menu", outfit: "a beige trench coat and jeans", timeOfDay: "morning" };
 
 const CAT_ACTIVITIES = [
-  { text: "reading a menu", twoHanded: false },
-  { text: "stirring a cappuccino", twoHanded: true },
+  { text: "takes a long look at the menu", twoHanded: false },
+  { text: "takes a cappuccino in both hands", twoHanded: true },
 ];
 const CAT_POOL = {
   locations: ["a corner cafe", "a flower stall", "a bookshop", "a riverside bench", "a bakery counter"].map((name, i) => ({ name, times: ["morning", "midday"] as ("morning" | "midday")[], activities: CAT_ACTIVITIES, mirror: i === 2 })),

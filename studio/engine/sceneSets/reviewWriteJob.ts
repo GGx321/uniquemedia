@@ -4,6 +4,7 @@ import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
 import { runWriterConfig } from "../runs/plan";
+import { localSentences } from "../scenes/localSentences";
 import { runWriterPhase, type WriterPhase, type WriterPhaseDeps, type WriterPhaseResult } from "../runs/writerPhase";
 import type { PlanSlot } from "../scenes";
 import { ideaAsksOf, ideaJsonSchema, ideaMessages, readIdeaAnswer, toIdeaSlot, type IdeaAngle, type IdeaAsk } from "../scenes/ideaWriter";
@@ -126,7 +127,12 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
   const { call } = runWriterConfig(undefined);
   let result: WriterPhaseResult;
   if (asked.kind === "slots") {
-    const phase: WriterPhase<PlanSlot> = { ...base, call, slots: asked.slots, messages: (slots, feedback) => writerMessages(slots, feedback, asked.labelOf) };
+    // 5a.2: the code template writes every scene it can, at $0; the model is asked only about the rest. The draw key is the write's own (`…:k`), and a
+    // sentence another scene of the set already holds is redrawn.
+    // A target's own old text counts too: a rewrite never hands back the sentence the scene already has.
+    const held = set.scenes.flatMap((scene) => (!scene.removed && scene.text !== null ? [scene.text] : []));
+    const local = localSentences({ slots: asked.slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: held });
+    const phase: WriterPhase<PlanSlot> = { ...base, call, slots: asked.slots, local, messages: (slots, feedback) => writerMessages(slots, feedback, asked.labelOf) };
     result = await runWriterPhase(phaseDeps, phase);
   } else {
     const phase: WriterPhase<IdeaAsk> = {

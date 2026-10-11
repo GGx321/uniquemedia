@@ -15,6 +15,7 @@ import { PriceBook } from "../money/prices";
 import { chatBody, fakeFetch, imageBody, JPEG, makeClient, readLedgerLines, type FetchCall, type Reply } from "../openrouter/testing/fakes";
 import type { ImageResult, OpenRouterClientOptions, OpenRouterFetch } from "../openrouter/types";
 import { plan as planScenes, planWithPools, POOLS, type PlanSlot } from "../scenes";
+import { BANKS } from "../../shared/scenes/banks";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { attemptPaid, RunEventSchema, type RunEvent } from "./journal";
 import { buildRunPlan, FALLBACK_IMAGE_MODEL, plannedSlots, RunPlanSchema, runEstimate, type RunPlan } from "./plan";
@@ -626,7 +627,7 @@ describe("back frames through the real face gate (S5.6f)", () => {
 // writer is told the snapshot's label, the assembler finishes the prompt by the
 // snapshot's style, and each photo's sidecar keeps the owner's name for it.
 describe("a run with a custom category", () => {
-  async function newCustomRun(count: number, style: "phone" | "editorial", categories: readonly ("home" | typeof CUSTOM_REF)[] = [CUSTOM_REF]): Promise<RunPlan> {
+  async function newCustomRun(count: number, style: "phone" | "editorial", categories: readonly ("home" | typeof CUSTOM_REF)[] = [CUSTOM_REF], llmOnly = false): Promise<RunPlan> {
     const request = { avatarId, count, categories: [...categories], poses: { profile: false, back: false } };
     const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
     const run = buildRunPlan({
@@ -639,7 +640,10 @@ describe("a run with a custom category", () => {
       models: { imageModel: PRIMARY, textModel: TEXT },
       capMicros: estimated,
       plannedWorstMicros: estimated,
-      scenes: planWithPools({ seed: 5, count, categories: [...categories] }, { ...POOLS, [CUSTOM_REF]: CUSTOM_POOL }),
+      // `llmOnly`: activities that do not read after «she is» (no «-ing» form), so the template cannot write the slot and the model does (5a.2, S5.6c1).
+      scenes: ((drawn) => (llmOnly ? { ...drawn, slots: drawn.slots.map((slot) => (slot.category === CUSTOM_REF ? { ...slot, activity: "takes a short break" } : slot)) } : drawn))(
+        planWithPools({ seed: 5, count, categories: [...categories] }, { ...POOLS, [CUSTOM_REF]: CUSTOM_POOL }),
+      ),
     });
     await library.createRun(RUN_ID, run, RunPlanSchema);
     caps.set(scopeKey(SCOPE), estimated);
@@ -661,7 +665,7 @@ describe("a run with a custom category", () => {
   });
 
   test("the writer is told the snapshot's English label, never the id or the owner's name", async () => {
-    const run = await newCustomRun(3, "phone");
+    const run = await newCustomRun(3, "phone", [CUSTOM_REF], true);
     const net = network();
     await start(run, { net }).end;
 
@@ -684,6 +688,16 @@ describe("a run with a custom category", () => {
       expect(prompt).not.toMatch(/editorial/i);
       expect(prompt).not.toContain(CUSTOM_REF);
     }
+  });
+
+  test("a custom category whose activities read after «she is» is written by the template: no writer request is sent", async () => {
+    const run = await newCustomRun(3, "phone");
+    const net = network();
+    const result = await start(run, { net }).end;
+
+    expect(result.status).toBe("done");
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(reservedIds().some((id) => id.includes("writer"))).toBe(false);
   });
 
   test("a custom slot is written to the avatar's scene history like any other", async () => {
@@ -2457,5 +2471,79 @@ describe("a passed gate's claim is always released once its attempt is decided",
 
     expect(await end).toMatchObject({ status: "done", failedSlots: 1 });
     expect(released).toEqual([{ avatarId, attemptId: `${RUN_ID}:slot-1#1` }]);
+  });
+});
+
+// S5.6c1 (plan s5a2 r1.5 §5.4-5.5): the writer seam in a run. A slot whose place and moment the banks find by name is written by the template, with no
+// request; a slot they do not find goes to the model at its chunk's reserved ids. The planner's own draw from the banks is S5.6b's: these runs name the
+// bank's places and moments by hand.
+describe("runPhotoRun: the writer seam", () => {
+  /** A glamour place, moment and outfit the template renders for a friend's shot. */
+  function bankDraw(): Pick<PlanSlot, "location" | "activity" | "outfit"> {
+    for (const place of BANKS.glamour.places) {
+      const moment = place.moments.find((m) => m.captures.includes("friend") && !m.twoHanded && m.angle === undefined && m.level === undefined && m.outfits === undefined && m.legs === undefined);
+      const outfit = BANKS.glamour.outfits.find((o) => o.pinOnly !== true);
+      if (moment !== undefined && outfit !== undefined) return { location: place.name, activity: moment.text, outfit: outfit.text };
+    }
+    throw new Error("no glamour draw for a friend's shot");
+  }
+
+  /** `count` slots, the first `bankSlots` of them drawn from the banks, the rest from the old pools. */
+  async function seamRun(count: number, bankSlots: number): Promise<RunPlan> {
+    const request = { avatarId, count, categories: ["glam" as const], poses: { profile: false, back: false } };
+    const drawn = planScenes({ seed: 5, count, categories: ["glamour"] });
+    const slots = drawn.slots.map((slot, i) => (i < bankSlots ? { ...slot, category: "glamour" as const, shot: "friend" as const, pose: "front" as const, ...bankDraw() } : slot));
+    const estimated = runEstimate({ book: PriceBook.fallback(), asOf: "2026-09-24" }, { imageModel: PRIMARY, textModel: TEXT }, request, "off").worstMicros;
+    const run = buildRunPlan({
+      runId: RUN_ID,
+      avatarId,
+      createdAt: new Date(NOW).toISOString(),
+      request,
+      imageAgeCheck: "off",
+      models: { imageModel: PRIMARY, textModel: TEXT },
+      capMicros: estimated,
+      plannedWorstMicros: estimated,
+      scenes: { ...drawn, slots },
+    });
+    await library.createRun(RUN_ID, run, RunPlanSchema);
+    caps.set(scopeKey(SCOPE), estimated);
+    return run;
+  }
+
+  test("a built-in run whose slots the banks render sends no writer request and reserves no writer id", async () => {
+    const run = await seamRun(3, 3);
+    const { end, net } = start(run);
+
+    expect(await end).toMatchObject({ status: "done" });
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(reservedIds().some((id) => id.includes("writer"))).toBe(false);
+  });
+
+  test("the template's sentences are what the run journals as its writer chunk", async () => {
+    const run = await seamRun(2, 2);
+    await start(run).end;
+
+    const writer = (await journal()).find((e) => e.type === "writer");
+    expect(writer?.type === "writer" ? writer.sentences.map((s) => s.slotIndex) : []).toEqual([1, 2]);
+    expect(writer?.type === "writer" ? writer.sentences[0]?.sentence : "").toContain(bankDraw().activity);
+  });
+
+  test("a chunk with one slot the banks cannot name asks the model about that slot only, at the chunk's first id", async () => {
+    const run = await seamRun(3, 2);
+    const { end, net } = start(run);
+
+    expect(await end).toMatchObject({ status: "done" });
+    expect(net.writerCalls()).toHaveLength(1);
+    expect(slotsAskedFor(net.writerCalls()[0] as FetchCall)).toEqual([3]);
+    expect(reservedIds().filter((id) => id.includes("writer"))).toEqual([`${RUN_ID}:writer-1#1`]);
+  });
+
+  test("a slot of the old pools (a place renamed since the plan was made) goes to the model at its reserved ids", async () => {
+    const run = await seamRun(2, 0);
+    const { end, net } = start(run);
+
+    expect(await end).toMatchObject({ status: "done" });
+    expect(slotsAskedFor(net.writerCalls()[0] as FetchCall)).toEqual([1, 2]);
+    expect(reservedIds().filter((id) => id.includes("writer"))).toEqual([`${RUN_ID}:writer-1#1`]);
   });
 });

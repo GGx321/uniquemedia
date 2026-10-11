@@ -8,6 +8,8 @@ import { plan, planWithPools, POOLS, type PlanSlot } from "../scenes";
 import { CUSTOM_POOL, CUSTOM_REF, customSnapshot } from "../scenes/testing/customPool";
 import { buildRunPlan, plannedSlots, runWriterConfig } from "./plan";
 import { NetworkPool } from "./pools";
+import { localSentences } from "../scenes/localSentences";
+import { slotKeyOf } from "../scenes/phoneLook";
 import { runWriterPhase, type WriterPhase } from "./writerPhase";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -245,6 +247,54 @@ describe("runWriterPhase: a built-in run's requests are pinned to the S5.1b phon
     expect(net.calls.map((c) => sha(c.json()))).toEqual(fixture.bodies);
     const reserved = money.lines().flatMap((l) => (l.type === "reserve" ? [{ attemptId: l.attemptId, worstMicros: l.worstMicros, model: l.model }] : []));
     expect(reserved).toEqual(fixture.reserves);
+  });
+});
+
+// S5.6c1 (plan s5a2 r1.5 §9.2): with the seam on, a slot the template cannot write is asked exactly as before. A 30-slot custom-category run whose
+// activities do not read after «she is» (so none renders) sends the same request bodies and reserves the same ids and worst cases with
+// `local` wired to the template as with no `local` at all. The built-in pin above is the phase without the seam; a built-in run's template side is
+// pinned in runJob.test.ts («a built-in run … sends no writer request»).
+describe("runWriterPhase: a custom run the template cannot write is asked as before, with the seam on", () => {
+  function customRun() {
+    const drawn = planWithPools({ seed: 3, count: 30, categories: [CUSTOM_REF] }, { ...POOLS, [CUSTOM_REF]: CUSTOM_POOL });
+    const scenes = { ...drawn, slots: drawn.slots.map((slot) => ({ ...slot, activity: "takes a short break" })) };
+    return buildRunPlan({
+      runId: RUN_ID,
+      avatarId: "avatar-0001",
+      createdAt: "2026-09-24T12:00:00.000Z",
+      request: { avatarId: "avatar-0001", count: 30, categories: [CUSTOM_REF], poses: { profile: false, back: false } },
+      categories: [customSnapshot()],
+      imageAgeCheck: "off",
+      models: { imageModel: "x-ai/grok-imagine-image-2.0", textModel: "x-ai/grok-4.3" },
+      capMicros: 10_000_000,
+      plannedWorstMicros: 10_000_000,
+      scenes,
+    });
+  }
+
+  async function bodiesAndReserves(withSeam: boolean): Promise<{ bodies: unknown[]; reserves: unknown[] }> {
+    await money.cleanup();
+    money = await setupMoney();
+    const run = customRun();
+    const slots = plannedSlots(run);
+    const local = withSeam ? { local: localSentences({ slots, keyOf: (slot: PlanSlot) => slotKeyOf(RUN_ID, slot.attemptIdBase), snapshots: run.categories }) } : {};
+    const { net, result } = start([refusedAnswer, good, good], { ...phaseOf(30), slots, chunks: run.writerChunks, ...runWriterConfig(run.categories), ...local });
+    expect((await result).ok).toBe(true);
+    const reserves = money.lines().flatMap((l) => (l.type === "reserve" ? [{ attemptId: l.attemptId, worstMicros: l.worstMicros, model: l.model }] : []));
+    return { bodies: net.calls.map((c) => c.json()), reserves };
+  }
+
+  test("every request body is the same with the seam wired as without it", async () => {
+    const without = await bodiesAndReserves(false);
+    const withSeam = await bodiesAndReserves(true);
+    expect(withSeam.bodies).toHaveLength(3);
+    expect(withSeam.bodies).toEqual(without.bodies);
+  });
+
+  test("every attempt id and reserve is the same with the seam wired as without it", async () => {
+    const without = await bodiesAndReserves(false);
+    const withSeam = await bodiesAndReserves(true);
+    expect(withSeam.reserves).toEqual(without.reserves);
   });
 });
 

@@ -1,12 +1,14 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { CategorySnapshot } from "../../shared/engine";
 import { SceneSetStore, type ReviewWriteRecord, type StoredSceneSet } from "../library/sceneSets";
+import { bankDraw, onTheBanks, sceneSetOnTheBanks } from "../library/testing/bankScenes";
 import { ownScene, sampleSet } from "../library/testing/sceneSetSample";
 import { useTempDir } from "../library/testing/helpers";
 import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
 import type { PlanSlot } from "../scenes";
+import { localSentences } from "../scenes/localSentences";
 import { SHOT_LABEL, writerMessages } from "../scenes/writer";
 import { ideaSystemPrompt } from "../scenes/ideaWriter";
 import { beginIdea, beginRewrite, withReviewWriteAccepted, withReviewWriteClosed } from "./reviewMutations";
@@ -43,7 +45,8 @@ const FRESH_SNAPSHOT: CategorySnapshot = { ref: CAT, name: "Paris", label: "Pari
 /** Four written planned scenes (one of them in a custom category), an own scene 5 written from an idea, and write 1 behind it. */
 async function seed(change: (set: StoredSceneSet) => StoredSceneSet = (s) => s): Promise<void> {
   const base = sampleSet({ count: 4, written: 4 });
-  const cafe = { category: CAT, location: "a corner cafe in Paris", activity: "reading a menu", outfit: "a beige trench coat", timeOfDay: "morning" };
+  // The activity does not read after «she is» (no «-ing» form): the code template cannot write it, so these tests keep exercising the model (5a.2, S5.6c1).
+  const cafe = { category: CAT, location: "a corner cafe in Paris", activity: "takes a short break", outfit: "a beige trench coat", timeOfDay: "morning" };
   const planned = base.scenes.map((s) => ({ ...s, text: OLD, ...(s.sceneId === 3 ? { slot: { ...s.slot, ...cafe } } : {}) }));
   const custom = [...planned, ownScene(5, { idea: "кофе на балконе утром", text: "Typed by hand, not the idea.", edited: true, shot: "selfie", pose: "front" })];
   const made = await store.create({ ...base, scenes: custom, categories: [OLD_SNAPSHOT], request: { ...base.request, categories: ["home", CAT] }, writes: 1 } as never);
@@ -177,7 +180,7 @@ describe("a rewrite of planned scenes", () => {
   test("a redraw is asked with the NEW place and the category's fresh label, and the scene takes them only with the accepted sentence", async () => {
     await seed();
     const before = await setNow();
-    const slot: PlanSlot = { ...slotOf(before, 3), location: "a rooftop garden", outfit: "a red coat", activity: "watering a plant", timeOfDay: "dusk" };
+    const slot: PlanSlot = { ...slotOf(before, 3), location: "a rooftop garden", outfit: "a red coat", activity: "takes a short break", timeOfDay: "dusk" };
     await recordRewrite([3], { slots: [slot], snapshots: [FRESH_SNAPSHOT] });
     const { net, end } = run([good]);
 
@@ -733,5 +736,76 @@ describe("the type of Reply", () => {
     expect(reply.status).toBe(200);
     const end: ReviewWriteEnd = { status: "cancelled" };
     expect(end.status).toBe("cancelled");
+  });
+});
+
+// S5.6c1 (plan s5a2 r1.5 §5.5, m1): the seam in a planned review write. A scene the code template can write is written at once, free; the others go to
+// the model at the write's reserved ids, and only they are sent.
+describe("a rewrite of planned scenes: the writer seam", () => {
+  const onBanks = (set: StoredSceneSet): StoredSceneSet => sceneSetOnTheBanks(set, [2, 4]);
+
+  test("a rewrite of scenes the banks render sends no request, reserves nothing and gives them new sentences", async () => {
+    await seed(onBanks);
+    await recordRewrite([2, 4]);
+    const { net, end, progress } = run([]);
+
+    expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
+    expect(net.calls).toHaveLength(0);
+    expect(reserveIds()).toEqual([]);
+    expect(progress).toEqual([2]);
+    const texts = (await setNow()).scenes.map((s) => s.text);
+    expect(texts[1]).toContain(bankDraw().activity);
+    expect(texts[1]).not.toBe(OLD);
+    expect(texts[3]).toContain(bankDraw().activity);
+    expect(texts[0]).toBe(OLD);
+  });
+
+  test("a rewrite of one scene the banks render and one they cannot name asks the model about the second only, at the write's first id", async () => {
+    await seed((set) => sceneSetOnTheBanks(set, [2]));
+    await recordRewrite([2, 4]);
+    const { net, end } = run([good]);
+
+    expect(await end).toEqual({ status: "done", written: 2, unwritten: 0 });
+    expect(slotsAskedFor(net.calls[0] as FetchCall)).toEqual([4]);
+    expect(reserveIds()).toEqual([id(2, 1)]);
+    const texts = (await setNow()).scenes.map((s) => s.text);
+    expect(texts[1]).toContain(bankDraw().activity);
+    expect(texts[3]).toBe(`${NEW} (4)`);
+  });
+
+  test("a redraw onto the banks is written by the template from the NEW place and moment", async () => {
+    await seed();
+    const before = await setNow();
+    const slot = onTheBanks(slotOf(before, 2));
+    await recordRewrite([2], { slots: [slot] });
+    const { net, end } = run([]);
+
+    expect(await end).toMatchObject({ status: "done", written: 1 });
+    expect(net.calls).toHaveLength(0);
+    expect((await setNow()).scenes[1]?.text).toContain(slot.activity);
+  });
+
+  test("a rewrite of a custom scene the template writes never returns the text the scene already has", async () => {
+    const gerund = { activity: "reading a menu" };
+    await seed((set) => ({ ...set, scenes: set.scenes.map((sc) => (sc.origin === "planned" && sc.sceneId === 3 ? { ...sc, slot: { ...sc.slot, ...gerund } } : sc)) }));
+    const slot = { ...slotOf(await setNow(), 3) };
+    const same = localSentences({ slots: [slot], keyOf: () => `${SET}:3:2`, snapshots: [OLD_SNAPSHOT] })(slot);
+    expect(same).not.toBeNull();
+    await store.update(AVATAR, SET, (s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.sceneId === 3 ? { ...sc, text: same } : sc)) }) as StoredSceneSet);
+    await recordRewrite([3]);
+    await run([]).end;
+
+    const text = (await setNow()).scenes[2]?.text;
+    expect(text).toContain("reading a menu");
+    expect(text).not.toBe(same);
+  });
+
+  test("an idea write is never written by the template: it asks the model", async () => {
+    await seed(onBanks);
+    await recordIdea("кофе на балконе утром", 2);
+    const { net, end } = run([goodIdea], { k: 2 });
+
+    expect(await end).toMatchObject({ status: "done", written: 2 });
+    expect(net.calls).toHaveLength(1);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PlannedSceneRecord, SceneRecord, StoredSceneSet } from "../library/sceneSets";
+import { sceneSetOnTheBanks } from "../library/testing/bankScenes";
 import { sampleSet } from "../library/testing/sceneSetSample";
 import { chunkState, pendingChunks, requestSceneIds } from "./chunks";
 import { fakeLedger } from "./testing/fakeLedger";
@@ -148,5 +149,49 @@ describe("pendingChunks", () => {
     const second = pendingChunks(set, fakeLedger({})).find((p) => p.chunk.chunk === 2);
     expect(second?.sceneIds).toEqual([27, 28, 29, 30, 31, 32, 33, 34, 35]);
     expect(second?.state.attemptsLeft).toBe(2);
+  });
+});
+
+// 5a.2 (S5.6c1, plan s5a2 r1.5 §5.5): a chunk whose every scene the code template can write is offered again, whatever its attempts and verdict, and it
+// is free; a chunk counts for money only when it holds a scene the template cannot write.
+describe("pendingChunks: the code template", () => {
+  const onBanks = (set: StoredSceneSet, from: number, to: number): StoredSceneSet => sceneSetOnTheBanks(set, Array.from({ length: to - from + 1 }, (_, i) => from + i));
+  const gaveUp = (set: StoredSceneSet, chunk: number): StoredSceneSet => ({ ...set, chunks: set.chunks.map((c) => (c.chunk === chunk ? { ...c, gaveUp: "rejected" as const } : c)) });
+
+  test("a chunk given up on whose scenes the banks now render is offered again, free", () => {
+    const set = gaveUp(onBanks(stored(), 1, 25), 1);
+    const first = pendingChunks(set, fakeLedger({})).find((p) => p.chunk.chunk === 1);
+    expect(first).toMatchObject({ free: true, sceneIds: Array.from({ length: 25 }, (_, i) => i + 1) });
+  });
+
+  test("a chunk out of attempts whose scenes the banks render is offered again", () => {
+    const set = onBanks(stored(), 1, 25);
+    const ledger = fakeLedger({ [id(1, 1)]: {}, [id(1, 2)]: { close: { type: "settle", costMicros: 11_000 } } });
+    expect(pendingChunks(set, ledger).map((p) => [p.chunk.chunk, p.free])).toEqual([
+      [1, true],
+      [2, false],
+    ]);
+  });
+
+  test("a chunk given up on with one scene the banks cannot name stays given up", () => {
+    const set = gaveUp(onBanks(stored(), 1, 24), 1);
+    expect(pendingChunks(set, fakeLedger({})).map((p) => p.chunk.chunk)).toEqual([2]);
+  });
+
+  test("a chunk with a scene the banks cannot name is not free, even with attempts left", () => {
+    const set = onBanks(stored(), 1, 24);
+    expect(pendingChunks(set, fakeLedger({})).map((p) => [p.chunk.chunk, p.free])).toEqual([
+      [1, false],
+      [2, false],
+    ]);
+  });
+
+  test("a scene that already has its sentence is not asked about: the rest of the chunk may be free", () => {
+    const set = withScenes(onBanks(stored(), 2, 25), (n) => (n === 1 ? { text: "Typed." } : {}));
+    expect(pendingChunks(set, fakeLedger({})).find((p) => p.chunk.chunk === 1)?.free).toBe(true);
+  });
+
+  test("a chunk of old-pool scenes is never free", () => {
+    expect(pendingChunks(stored(), fakeLedger({})).map((p) => p.free)).toEqual([false, false]);
   });
 });
