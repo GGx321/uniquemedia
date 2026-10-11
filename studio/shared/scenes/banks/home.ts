@@ -123,7 +123,8 @@ export const HOME: CategoryBank = {
       times: ["evening", "night"],
       moments: [
         { text: "sits with one leg crossed", motion: "she wiggles her crossed foot a bit", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
-        { text: "sits sideways, knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false },
+        // S5.6R: faces the mirror (it was «sits sideways», which a plain mirror selfie drew with her face clear: side to the mirror is reflection-only).
+        { text: "sits with her knees together", motion: "she rocks a little in place", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "pulls one knee up to her chest", motion: "she rests her cheek a little lower", captures: ["mirror-hidden", "timer"], twoHanded: false },
         { text: "sits back with her arms crossed", motion: "she taps her fingers a little", captures: ["timer"], twoHanded: true },
       ],

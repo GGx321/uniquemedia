@@ -61,10 +61,14 @@ describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
     expect(rug.map((m) => m.text)).toEqual(["lies on the rug facing the mirror"]);
   });
 
-  test("a moment that stands or sits sideways to the mirror is a mirrorBack phone-over-face frame", () => {
-    for (const place of BANKS.home.places) {
-      for (const moment of place.moments) {
-        if (/sideways to the mirror|counter by the mirror/.test(moment.text)) expect({ text: moment.text, back: moment.mirrorBack, captures: moment.captures }).toEqual({ text: moment.text, back: true, captures: ["mirror-hidden"] });
+  // S5.6R (MEDIUM 3): «sits sideways, knees together» named no mirror, so it slipped past this rule and landed on a plain mirror selfie that says her face is
+  // clearly visible. Any moment that turns her side or back on, at a mirror place, is now held to it.
+  test("a moment that stands or sits sideways (or side or back to the mirror) at a mirror place is a mirrorBack phone-over-face frame", () => {
+    for (const category of BANK_CATEGORIES) {
+      for (const place of BANKS[category].places.filter((p) => p.mirror === true)) {
+        for (const moment of place.moments) {
+          if (/\bsideways\b|side to the mirror|back to the mirror|counter by the mirror/.test(moment.text)) expect({ text: moment.text, back: moment.mirrorBack, captures: moment.captures }).toEqual({ text: moment.text, back: true, captures: ["mirror-hidden"] });
+        }
       }
     }
   });

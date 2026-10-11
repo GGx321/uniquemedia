@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AvatarDescriptor } from "../../shared/engine";
 import { BANKS } from "../../shared/scenes/banks";
-import { captureOfShot, type Capture } from "../../shared/scenes/captures";
+import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
 import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot } from "./assembler";
@@ -51,6 +51,7 @@ function framesOf(category: Category, seed: number): Frame[] {
 const FRAMES: Record<Category, Frame[]> = Object.fromEntries(
   CATEGORIES.map((category) => [category, Array.from({ length: PLANS }, (_, i) => framesOf(category, i + 1)).flat()]),
 ) as Record<Category, Frame[]>;
+const ALL: Frame[] = CATEGORIES.flatMap((c) => FRAMES[c]);
 
 /** What a failing sweep shows: how many frames broke the rule, and a few of them. */
 function offenders(frames: readonly Frame[], broken: (frame: Frame) => boolean): { count: number; sample: string[] } {
@@ -84,6 +85,19 @@ describe("«Фитнес» at home is self-shot: on a timer, at arm's length or 
     const asked = FRAMES.fitness.filter((f) => f.capture === "friend" || f.capture === "candid");
     expect(asked.length).toBeGreaterThan(0);
     expect(asked.every((f) => !home.has(f.slot.location))).toBe(true);
+  });
+});
+
+
+describe("side or back to the mirror, only her reflection is in the picture", () => {
+  const SIDE_TO_MIRROR = /\bsideways\b|\bside to the mirror\b|\bback to the mirror\b/;
+
+  test("a sideways moment is never a plain mirror selfie that claims her face is clearly visible", () => {
+    expect(offenders(ALL, (f) => SIDE_TO_MIRROR.test(f.slot.activity) && shotOf(f.capture) === "mirror" && /face clearly visible/.test(f.prompt()))).toEqual(NONE);
+  });
+
+  test("a sideways mirror frame carries the reflection-only line", () => {
+    expect(offenders(ALL, (f) => SIDE_TO_MIRROR.test(f.slot.activity) && shotOf(f.capture) === "mirror" && !f.prompt().includes("Only her reflection is in the picture"))).toEqual(NONE);
   });
 });
 
