@@ -55,6 +55,8 @@ import {
   OWN_MUSIC_NOT_FOUND_DETAIL,
   MAX_LISTED_PHOTOS,
   MAX_LISTED_RUNS,
+  PORTRAIT_CANDIDATES_MAX,
+  type AvatarPortraits,
 } from "../shared/engine";
 import { downscaleToJpeg, MAX_SOURCE_PIXELS, preflightDownscale } from "../node/downscale";
 import { windowPeaks } from "../shared/music/trackShape";
@@ -77,6 +79,8 @@ import {
   descriptorJobCap,
   importJobEstimate,
   importPriceModels,
+  portraitsEstimate,
+  portraitsPriceModels,
   type AvatarModels,
 } from "./avatars/plan";
 import { promptSubject, PromptSubjectError } from "./avatars/prompts";
@@ -91,6 +95,7 @@ import { folderIdentity, NODE_FOLDER_FS, type FolderFs } from "./folderIdentity"
 import { EngineReply, HostCall, HostControl, isControlMessage, MEDIA_IMPORT_ENGINE_DEADLINE_MS, type AvatarDeletePlan, type EngineInit, type EngineSettings } from "./control";
 import { CategoryError, LIBRARY_FILE, LibraryError, LibraryFileSchema, openLibrary, snapshotOf, summaryOf, type AvatarManifest, type DetachedAvatar, type Library, type LibraryDeps, type LogIssue, type StoredCategory } from "./library";
 import type { ImageMediaType } from "./library/media";
+import { isPickablePortrait, isPortraitPhoto } from "./library/portraits";
 import { looksLikeRunPhoto, pagePhotoList, photoSummaryFrom, type PhotoPage } from "./library/photoRecords";
 import { STUDIO_E2E } from "./buildFlags";
 import { budgetHoldDetail, type BudgetHoldDetail, type MonthRoom } from "../shared/autopilot/money";
@@ -151,6 +156,7 @@ import { RenderQueue } from "./renderQueue/queue";
 import { renderPoolSize } from "./renderQueue/pool";
 import { maskHome } from "./renderQueue/scrubber";
 import { createFocusResolver, type FocusFaceGate, type FocusResolver } from "./focus/focusResolver";
+import type { WorkerFaceGate } from "./face/worker/workerGate";
 import { CommitTracker } from "./videos/live";
 import { FileStateChecker } from "./videos/fileState";
 import { listVideoRecordIds } from "./videos/listing";
@@ -341,6 +347,12 @@ export interface EngineDeps {
    * or null: every cell takes the stand-in point, and the render goes on (a focus never blocks a render).
    */
   faceGate?: FocusFaceGate | null;
+  /**
+   * The face worker's gate as the reference portrait batch uses it (Stage 5, S5.3c): `embed` the imported photo before anything is paid, `check` each image against it (free), and
+   * `isBroken` so a dead worker refuses the batch for free. The same worker gate as `faceGate`, with more of its surface. Absent or null: `avatars.generatePortraits` answers
+   * FACE_GATE_UNAVAILABLE.
+   */
+  portraitFaceGate?: PortraitFaceGate | null;
   /** Test seams of the video pipeline: the focus resolver, ffmpeg and the commit's steps, recovery, the stale-index retry. */
   videos?: Partial<Pick<VideoServiceDeps, "fs" | "focus" | "renderOverrides" | "recover" | "staleRetryDelaysMs">> & {
     /** How long `videos.render` may spend on the focus of its photos; `RENDER_FOCUS_BUDGET_MS` unless a test says otherwise. */
@@ -570,6 +582,9 @@ export { EXPORT_CHECK_TIMEOUT_MS };
  * REQUEST_TIMEOUT_MS (30 s, engineHost.ts) for this same control call.
  */
 export const IMPORT_DOWNSCALE_TIMEOUT_MS = 10_000;
+
+/** What the reference portrait batch needs of the face worker's gate (see `EngineDeps.portraitFaceGate`). */
+export type PortraitFaceGate = Pick<WorkerFaceGate, "embed" | "check" | "isBroken">;
 
 /** A candidate job while it runs: what it was started with, and how many slots are done. */
 interface RunningCandidates {
@@ -2641,6 +2656,18 @@ export class Engine {
         await this.#liveLibrary();
         return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#launchCommand(() => this.#orchestrator.continueAfterReview({ launchId, avatarId, sceneSetId, revision })) };
       }
+      case "avatars.estimatePortraits":
+        // Free and avatar-independent: no key, no library, no avatar. PRICE_UNAVAILABLE when the model lists no input_image price.
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#estimatePortraits() };
+      case "avatars.portraits": {
+        const library = this.library;
+        if (library === null) throw new EngineFailure({ code: "LIBRARY_UNAVAILABLE", detail: "no library is open: its folder is missing or unreadable; choose one in Settings" });
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: this.#portraitsOf(library, command.payload.avatarId) };
+      }
+      case "avatars.pickPortrait":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#pickPortrait(command.payload) };
+      case "avatars.discardPortraits":
+        return { v, id: command.id, kind: "response", type: command.type, ok: true, result: await this.#discardPortraits(command.payload) };
       default:
         return errorResponseFor(command, { code: "INTERNAL", detail: `${command.type} is not implemented yet` });
     }
@@ -4513,6 +4540,112 @@ export class Engine {
     }
   }
 
+  // ---------- reference portraits (Stage 5, S5.3c) ----------
+  //
+  // An imported avatar's photo that shows a phone, a mirror or a room leaks all three into every scene. Five clean head-and-shoulders portraits are drawn FROM the imported photo
+  // (the avatar's «source»), each ranked by the face gate against it for free, and the owner picks one as the avatar's master (`Library.switchMaster`: the manifest commits first,
+  // the cleanup follows, I5.18). The imported photo is never removed. `avatars.estimatePortraits`, `avatars.portraits`, `avatars.pickPortrait` and `avatars.discardPortraits` are
+  // free; `avatars.generatePortraits` is the paid one.
+
+  /** A portrait the pick replaced could not be removed (`Library.switchMaster`'s best-effort cleanup). Logged by the error's code only, never a path or a name; the leftover is a pending candidate. */
+  #logPortraitCleanupFailure(code: string): void {
+    console.warn(`studio engine: a portrait that a pick replaced could not be removed (${code}); it stays a pending candidate until the portraits are discarded`);
+  }
+
+  /** `avatars.estimatePortraits`: the batch's price, avatar-independent (the import screen asks before the avatar exists). PRICE_UNAVAILABLE when the model lists no input_image price. */
+  async #estimatePortraits(): Promise<Estimate> {
+    const models = this.#avatarModels();
+    const imageAgeCheck = this.#settings.imageAgeCheck;
+    return portraitsEstimate(await this.#prices.get(portraitsPriceModels(models, imageAgeCheck)), models, imageAgeCheck);
+  }
+
+  /**
+   * `avatars.portraits` (free): the master, the source photo, the master's likeness when the master is a portrait, and the pending portraits the pick accepts, best first. A candidate
+   * the pick would refuse (its stored age verdict no longer passes today's threshold) is not listed. NOT_FOUND for a draft or an unknown id. An avatar with no source photo (a wizard
+   * avatar, or an imported one whose source is gone) lists none.
+   */
+  #portraitsOf(library: Library, avatarId: string): AvatarPortraits {
+    const manifest = library.getAvatar(avatarId);
+    if (manifest === undefined || manifest.status === "draft" || manifest.masterPhotoId === null) throw new EngineFailure({ code: "NOT_FOUND", detail: `no saved avatar ${avatarId} in the open library` });
+    const source = library.sourcePhoto(avatarId);
+    let masterLikeness: number | null = null;
+    if (source !== null && source.id !== manifest.masterPhotoId) {
+      masterLikeness = library.getPhoto(manifest.masterPhotoId)?.qa.faceCos ?? null;
+      if (masterLikeness === null) throw new EngineFailure({ code: "INTERNAL", detail: `the master of avatar ${avatarId} is neither its source photo nor a scored portrait` });
+    }
+    const candidates =
+      source === null
+        ? []
+        : library
+            .portraitCandidates(avatarId)
+            .filter(isPickablePortrait)
+            .slice(0, PORTRAIT_CANDIDATES_MAX)
+            .flatMap((photo) => (photo.qa.faceCos === undefined ? [] : [{ avatarId, photoId: photo.id, likeness: photo.qa.faceCos }]));
+    return { avatarId, masterPhotoId: manifest.masterPhotoId, sourcePhotoId: source?.id ?? null, masterLikeness, candidates };
+  }
+
+  /**
+   * Runs a small write of an ACTIVE avatar's portraits (pick, discard): counted as a small write before its first await (a library switch and a delete's prepare wait for it), the
+   * avatar looked up (NOT_FOUND for a draft, an archived or an unknown one: asked before the claim, so the answer does not depend on what else runs), then claimed like an edit so a
+   * run, a launch's run, the portraits job or a check holding the avatar refuses it with IN_FLIGHT.
+   */
+  async #portraitWrite<T>(avatarId: string, what: string, work: (library: Library, manifest: AvatarManifest) => Promise<T>): Promise<T> {
+    this.#librarySmallWrites++;
+    let claimed = false;
+    try {
+      const library = await this.#liveLibrary();
+      const manifest = library.getAvatar(avatarId);
+      if (manifest === undefined || manifest.status !== "active") throw new EngineFailure({ code: "NOT_FOUND", detail: `no active avatar ${avatarId} in the open library` });
+      this.#claimAvatarForEdit(avatarId, `a job or command is already changing this avatar; ${what} when it ends`);
+      claimed = true;
+      return await work(library, manifest);
+    } finally {
+      if (claimed) this.#releaseAvatarEdit(avatarId);
+      this.#librarySmallWrites--;
+    }
+  }
+
+  /**
+   * `avatars.pickPortrait`: the named photo, a pending portrait or the source photo, becomes the master. VALIDATION `not-imported` for an avatar with no source photo,
+   * `not-a-candidate` for any other photo. The current master is answered as it is, with nothing written and nothing announced. `avatar.changed` follows a change.
+   */
+  async #pickPortrait(payload: CommandPayload<"avatars.pickPortrait">): Promise<{ avatar: AvatarSummary }> {
+    const { avatarId, photoId } = payload;
+    return this.#portraitWrite(avatarId, "pick a portrait", async (library, manifest) => {
+      const master = manifest.masterPhotoId === null ? undefined : library.getPhoto(manifest.masterPhotoId);
+      if (library.sourcePhoto(avatarId) === null && (master === undefined || !isPortraitPhoto(master))) {
+        throw new EngineFailure({ code: "VALIDATION", detail: `avatar ${avatarId} has no imported photo to draw a portrait from`, portraitReason: "not-imported" });
+      }
+      let switched: AvatarManifest;
+      try {
+        switched = await library.switchMaster(avatarId, photoId);
+      } catch (error) {
+        if (error instanceof LibraryError && error.code === "not-a-candidate") {
+          throw new EngineFailure({ code: "VALIDATION", detail: `photo ${photoId} is not a portrait of avatar ${avatarId} that can become its master`, portraitReason: "not-a-candidate" });
+        }
+        if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        throw error;
+      }
+      if (switched.masterPhotoId !== manifest.masterPhotoId) return { avatar: this.#announceAvatar(library, avatarId) };
+      const avatar = avatarSummaryFrom(switched, avatarCounts(library, avatarId));
+      if (avatar === null) throw new Error(`the saved avatar ${avatarId} does not fit the contract`);
+      return { avatar };
+    });
+  }
+
+  /** `avatars.discardPortraits` («Оставить как есть»): removes every pending portrait of an active avatar and says how many. The master and the imported photo stay. */
+  async #discardPortraits(payload: CommandPayload<"avatars.discardPortraits">): Promise<{ avatarId: string; removed: number }> {
+    const { avatarId } = payload;
+    return this.#portraitWrite(avatarId, "discard its portraits", async (library) => {
+      try {
+        return { avatarId, removed: await library.discardPortraitCandidates(avatarId) };
+      } catch (error) {
+        if (error instanceof LibraryError && error.code === "avatar-not-found") throw new EngineFailure({ code: "NOT_FOUND", detail: `no avatar ${avatarId} in the open library` });
+        throw error;
+      }
+    });
+  }
+
   /** A saved avatar archived; one already archived is answered as it is. Refused while a job runs for it. */
   async #archive(payload: CommandPayload<"avatars.archive">): Promise<{ avatar: AvatarSummary }> {
     const { avatarId } = payload;
@@ -5237,7 +5370,7 @@ export class Engine {
       return { library: opened.library, identity, unreadable: opened.unreadable };
     }
     const reservedPhotos = this.#deps.reservedPhotos ?? ((avatarId: string) => this.#renders.reservedPhotos(avatarId));
-    const opening = openLibrary(path, { reservedPhotos, ...(this.#deps.library ?? {}) }).then(async (opened) => {
+    const opening = openLibrary(path, { reservedPhotos, onPortraitCleanupFailure: (code) => this.#logPortraitCleanupFailure(code), ...(this.#deps.library ?? {}) }).then(async (opened) => {
       // Fail-closed records and logs: said once per open, by avatar, relative file and reason class only (no absolute path, no content).
       for (const line of logIssueLines(opened.report.logIssues)) console.warn(line);
       // S4.5a: the launches its sets name, read now so that making it the live one is synchronous and no paid command can meet a half-built registry.

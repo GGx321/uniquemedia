@@ -370,12 +370,18 @@ const ENGINE_SPECS = [
   //  - `estimatePortraits` is free and avatar-independent (the import screen prices it before the avatar exists): 5 × (image + one reference) and, with the age check on, 5 age checks.
   //    PRICE_UNAVAILABLE when the model lists no price for an input image.
   //  - `generatePortraits` is paid, accepted like `generateCandidates`, and answers the `avatar.portraits` job that runs on (job.progress, then job.done/failed/cancelled).
-  //    Refused free, with VALIDATION and `portraitReason` `not-imported` (no source photo) or `too-many-candidates` (15 unpicked portraits already), NOT_FOUND, IN_FLIGHT,
-  //    MASTER_FACE_UNUSABLE (no face in the source), FACE_GATE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED, RECONCILE_REQUIRED and the usual key and library refusals.
-  //  - `portraits` is a free read: the master's id, the source photo's id (null for a wizard avatar), the master's likeness when the master is a portrait, and the pending portraits the pick accepts, best first.
+  //    Refused free, in this order: IN_FLIGHT (a run, a check, another batch or a delete holds the avatar), the usual key, ledger and library refusals, NOT_FOUND (a draft, an
+  //    archived avatar or an unknown id: only an active avatar has portraits), DESCRIPTOR_INVALID, VALIDATION with `portraitReason` `not-imported` (no source photo) or
+  //    `too-many-candidates` (15 unpicked portraits already), FACE_GATE_UNAVAILABLE, PRICE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED, INTERNAL (the source photo is
+  //    unavailable: the master is a portrait and its source is missing; the batch never falls back to the portrait), MASTER_FACE_UNUSABLE (no face in the source).
+  //  - `portraits` is a free read: the master's id, the source photo's id (null for a wizard avatar), the master's likeness when the master is a portrait (null when it is the source
+  //    photo, or there is no source), and the pending portraits the pick accepts, best first. NOT_FOUND for a draft or an unknown id, LIBRARY_UNAVAILABLE without a library.
   //  - `pickPortrait` is free: the named photo (a pending portrait, or the source photo to go back to it) becomes the master, `avatar.changed` follows, and the other portraits go.
-  //    The current master is answered as it is. VALIDATION with `portraitReason` `not-a-candidate` for any other photo, `not-imported` for a wizard avatar.
-  //  - `discardPortraits` is free («Оставить как есть»): removes every pending portrait and says how many.
+  //    The current master is answered as it is. Refused, in this order: LIBRARY_UNAVAILABLE, NOT_FOUND (a draft, an archived avatar or an unknown id: asked first, so it never
+  //    shows as `not-a-candidate`), IN_FLIGHT (a run, a launch's run, the portraits job or a check holds the avatar, or a delete or a library switch is under way), VALIDATION with
+  //    `portraitReason` `not-imported` (a wizard avatar) or `not-a-candidate` (any other photo).
+  //  - `discardPortraits` is free («Оставить как есть»): removes every pending portrait and says how many; the master and the imported photo stay. The same refusals as the pick
+  //    except the VALIDATION ones.
   defineCommand("avatars.estimatePortraits", Empty, Estimate),
   defineCommand("avatars.generatePortraits", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ jobId: Id })),
   defineCommand("avatars.portraits", z.strictObject({ avatarId: Id }), AvatarPortraits),
