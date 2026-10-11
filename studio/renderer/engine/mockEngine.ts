@@ -2223,7 +2223,7 @@ export class MockEngine implements EngineBridge {
       // 5a.2: the photo of the launch's `firstNo + k`th scene carries the likeness the face gate would store for that scene (a hidden face is marked, never judged).
       const marks = this.launchFaceMarks;
       const scene = marks === undefined || from === undefined ? undefined : this.sceneSets.drawnScene(from.sceneSetId, from.firstNo + k);
-      const qa = marks === undefined || scene === undefined ? {} : { qa: { faceCos: faceVisibleOf(scene) === "yes" ? marks.match : marks.marked } };
+      const qa = marks === undefined || scene === undefined ? {} : { qa: faceVisibleOf(scene) === "yes" ? { faceCos: marks.match } : { faceCos: marks.marked, faceMarked: true as const } };
       const photo: PhotoSummary = { ...template, ...(marks === undefined ? {} : { qa: undefined }), photoId: this.nextId("photo-launch"), runId: runId ?? template.runId, category, createdAt: this.nowIso(), used: false, usedIn: [], rejected: false, reserved: false, eligible: true, ...qa };
       this.photos.push(photo);
       ids.push(photo.photoId);

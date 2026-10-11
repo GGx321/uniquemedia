@@ -27,6 +27,7 @@ export function planAvatarInput(library: LibraryReads, avatarId: string, hasOpen
       category: sidecar.source.kind === "generated" ? sidecar.source.category : undefined,
       pdq: sidecar.qa.pdq,
       faceCos: sidecar.qa.faceCos,
+      ...(sidecar.qa.faceMarked === true ? { faceMarked: true as const } : {}),
       // A photo the library has no verdict on is not eligible: fail closed.
       eligible: state?.eligible ?? false,
       rejected: state?.rejected ?? true,

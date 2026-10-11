@@ -19,6 +19,7 @@ import type { PhotoQa, PhotoSidecar } from "./schemas";
 function qaSummaryOf(qa: PhotoQa): PhotoQaSummary | undefined {
   const summary: PhotoQaSummary = {};
   if (qa.faceCos !== undefined) summary.faceCos = qa.faceCos;
+  if (qa.faceMarked === true) summary.faceMarked = true;
   if (qa.age !== undefined) summary.age = qa.age;
   return Object.keys(summary).length > 0 ? summary : undefined;
 }

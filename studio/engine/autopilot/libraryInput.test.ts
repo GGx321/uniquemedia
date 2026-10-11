@@ -17,7 +17,7 @@ const PDQ_B = "5".repeat(64);
 async function fixture(extra: LibraryDeps = {}) {
   const { library } = await openLibrary(root(), { now: steppingClock(), newId: sequentialIds(), ...extra });
   const avatar = await library.createAvatar(SAMPLE_AVATAR);
-  const generated = (category: string, qa: { pdq?: string; faceCos?: number } = {}) => samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category }, qa });
+  const generated = (category: string, qa: { pdq?: string; faceCos?: number; faceMarked?: true } = {}) => samplePhotoMeta({ source: { ...SAMPLE_SOURCE, category }, qa });
   return { library, avatar, generated };
 }
 
@@ -28,6 +28,18 @@ describe("planAvatarInput", () => {
     const out = planAvatarInput(library, avatar.id, false, true);
     expect(out.photos).toEqual([{ id: photo.id, avatarId: avatar.id, category: "home", pdq: PDQ_A, faceCos: 0.82, eligible: true, rejected: false, reserved: false, usedIn: [] }]);
     expect(out.usage).toEqual({ state: "ok" });
+  });
+
+  test("a photo the face gate marked comes through marked, so the planner can tell its likeness was never judged", async () => {
+    const { library, avatar, generated } = await fixture();
+    await library.addPhoto(avatar.id, PNG_1X1, generated("home", { pdq: PDQ_A, faceCos: 0.4, faceMarked: true }));
+    expect(planAvatarInput(library, avatar.id, false, true).photos[0]).toMatchObject({ faceCos: 0.4, faceMarked: true });
+  });
+
+  test("a photo the gate judged is not marked", async () => {
+    const { library, avatar, generated } = await fixture();
+    await library.addPhoto(avatar.id, PNG_1X1, generated("home", { pdq: PDQ_A, faceCos: 0.82 }));
+    expect("faceMarked" in (planAvatarInput(library, avatar.id, false, true).photos[0] ?? {})).toBe(false);
   });
 
   test("an imported photo has no category, so it can never match a chosen one", async () => {

@@ -129,6 +129,16 @@ describe("photoSummaryFrom", () => {
     expect(photoSummaryFrom(withQa, FRESH)?.qa).toEqual({ faceCos: 0.81, age: { adult: true, confidence: 0.95 } });
   });
 
+  test("carries the face gate's mark with the likeness it kept", () => {
+    const marked = runPhotoSidecar({ qa: { faceCos: 0.4, faceMarked: true } });
+    expect(photoSummaryFrom(marked, FRESH)?.qa).toEqual({ faceCos: 0.4, faceMarked: true });
+  });
+
+  test("a photo the gate judged carries no mark in its summary", () => {
+    const judged = runPhotoSidecar({ qa: { faceCos: 0.81 } });
+    expect(photoSummaryFrom(judged, FRESH)?.qa).toEqual({ faceCos: 0.81 });
+  });
+
   test("leaves qa unset when the sidecar carries none of the badge fields", () => {
     const withOtherQa = runPhotoSidecar({ qa: { pdq: "c".repeat(64), headRatio: 0.3 } });
     expect(photoSummaryFrom(withOtherQa, FRESH)?.qa).toBeUndefined();

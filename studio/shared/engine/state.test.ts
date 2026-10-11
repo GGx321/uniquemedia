@@ -1220,6 +1220,17 @@ describe("PhotoSummary (T8b: the Photos screen's gallery)", () => {
     expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 0.81, age: { adult: true, confidence: 0.95 } } }).success).toBe(true);
   });
 
+  // S5.7a: the gate's `marked` verdict (a face-hidden or back frame, its likeness kept and never judged) is visible on the photo.
+  test("accepts qa marked by the face gate, with or without a likeness", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 0.4, faceMarked: true } }).success).toBe(true);
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceMarked: true } }).success).toBe(true);
+  });
+
+  test("rejects a mark that is not true: a frame is marked or it carries no mark", () => {
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 0.4, faceMarked: false } }).success).toBe(false);
+    expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 0.4, faceMarked: "yes" } }).success).toBe(false);
+  });
+
   test("rejects a faceCos outside -1..1", () => {
     expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: 1.5 } }).success).toBe(false);
     expect(PhotoSummary.safeParse({ ...photo, qa: { faceCos: -1.5 } }).success).toBe(false);

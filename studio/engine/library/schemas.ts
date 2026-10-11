@@ -124,6 +124,8 @@ export const PhotoQaSchema = z.object({
   /** 256-bit PDQ hash as lowercase hex. */
   pdq: Sha256Hex.optional(),
   faceCos: z.number().min(-1).max(1).optional(),
+  /** S5.7a: the face gate marked this frame (a face-hidden or back frame): `faceCos` is its likeness, kept and never judged. Absent on a judged frame and on every photo stored before it. */
+  faceMarked: z.literal(true).optional(),
   headRatio: z.number().positive().optional(),
 });
 export type PhotoQa = z.infer<typeof PhotoQaSchema>;

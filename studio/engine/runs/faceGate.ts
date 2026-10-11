@@ -112,7 +112,8 @@ export function clampCosine(similarity: number): number {
 }
 
 function qaOf(verdict: { kind: "match" | "mismatch" | "marked"; similarity: number; headRatio: number }): PhotoQa {
-  return { faceCos: clampCosine(verdict.similarity), headRatio: verdict.headRatio };
+  // S5.7a: a marked frame says so, so the window and the autopilot need not guess it from the number.
+  return { faceCos: clampCosine(verdict.similarity), headRatio: verdict.headRatio, ...(verdict.kind === "marked" ? { faceMarked: true as const } : {}) };
 }
 
 /**

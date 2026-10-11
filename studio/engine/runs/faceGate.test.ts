@@ -416,7 +416,16 @@ describe("face-hidden and body frames (S5.6f)", () => {
     const gate = createFaceQaGate({ faceGate: fakeFaceGate({ check: async () => ({ kind: "marked", similarity: 0.42, faces: 1, headRatio: 0.12 }) }) });
     await gate.prepare?.(prepareInput());
 
-    expect(await gate.check(input({}, m))).toEqual({ verdict: "pass", qa: { faceCos: 0.42, headRatio: 0.12 } });
+    expect(await gate.check(input({}, m))).toEqual({ verdict: "pass", qa: { faceCos: 0.42, headRatio: 0.12, faceMarked: true } });
+  });
+
+  test("a match verdict carries no mark: its likeness was judged", async () => {
+    const m = await money();
+    const gate = createFaceQaGate({ faceGate: fakeFaceGate({ check: async () => ({ kind: "match", similarity: 0.81, faces: 1, headRatio: 0.12 }) }) });
+    await gate.prepare?.(prepareInput());
+
+    const result = await gate.check(input({}, m));
+    expect(result).toEqual({ verdict: "pass", qa: { faceCos: 0.81, headRatio: 0.12 } });
   });
 
   test("a marked verdict far below the identity threshold still passes, never a retry", async () => {
@@ -424,7 +433,7 @@ describe("face-hidden and body frames (S5.6f)", () => {
     const gate = createFaceQaGate({ faceGate: fakeFaceGate({ check: async () => ({ kind: "marked", similarity: -0.3, faces: 1, headRatio: 0.12 }) }) });
     await gate.prepare?.(prepareInput());
 
-    expect(await gate.check(input({}, m))).toEqual({ verdict: "pass", qa: { faceCos: -0.3, headRatio: 0.12 } });
+    expect(await gate.check(input({}, m))).toEqual({ verdict: "pass", qa: { faceCos: -0.3, headRatio: 0.12, faceMarked: true } });
   });
 
   test("a marked likeness a rounding step past 1 is clamped into the photo schema's range", async () => {

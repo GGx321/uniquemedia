@@ -903,6 +903,8 @@ export const RunSummary = z
  */
 export const PhotoQaSummary = z.strictObject({
   faceCos: z.number().min(-1).max(1).optional(),
+  /** S5.7a: the face gate marked this frame (a face-hidden or back frame): `faceCos` is its likeness, never judged. Absent on a judged frame and on a photo stored before the mark. */
+  faceMarked: z.literal(true).optional(),
   age: z.strictObject({ adult: z.boolean(), confidence: z.number().min(0).max(1) }).optional(),
 });
 

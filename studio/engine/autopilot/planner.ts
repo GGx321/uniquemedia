@@ -19,6 +19,8 @@ export interface PlanPhoto {
   pdq: string | undefined;
   /** Stored by the face gate; undefined for profile, back and photos whose gate was skipped. */
   faceCos: number | undefined;
+  /** S5.7a: the face gate marked the frame, so `faceCos` was kept and never judged: it ranks as unverified. */
+  faceMarked?: true;
   eligible: boolean;
   rejected: boolean;
   reserved: boolean;
@@ -171,7 +173,7 @@ function nearDuplicates(a: PlanPhoto, b: PlanPhoto): boolean {
   return hammingDistance(x, y) <= NEAR_DUPLICATE_DISTANCE;
 }
 
-const faceKey = (photo: PlanPhoto): number => photo.faceCos ?? Number.NEGATIVE_INFINITY;
+const faceKey = (photo: PlanPhoto): number => (photo.faceMarked === true ? undefined : photo.faceCos) ?? Number.NEGATIVE_INFINITY;
 
 /** For collages and slides: photos without a stored face match first, then the lowest, so the verified faces stay for the singles (§5.3.3). Stable. */
 const forGroups = (photos: readonly PlanPhoto[]): PlanPhoto[] => [...photos].sort((a, b) => faceKey(a) - faceKey(b));

@@ -324,6 +324,30 @@ describe("planLaunch: faces for singles", () => {
     expect(mia.videos[0]?.photoIds).toEqual([verified.id]);
   });
 
+  // S5.7a: a frame the face gate marked (face hidden, or seen from behind) keeps a likeness it never judged, so it ranks as unverified, whatever the number.
+  test("a single prefers a judged likeness over a marked one with a higher number", () => {
+    const marked = photo({ faceCos: 0.97, faceMarked: true });
+    const judged = photo({ faceCos: 0.6 });
+    const mia = only(planLaunch(input({ avatars: [avatar([marked, judged])], draft: { videosPerAvatar: 1, mix: { single: 100, collage: 0, slides: 0 } } })));
+    expect(mia.videos[0]?.photoIds).toEqual([judged.id]);
+  });
+
+  test("a single takes a marked frame over nothing at all, as it takes any unverified one last", () => {
+    const marked = photo({ faceCos: 0.97, faceMarked: true });
+    const mia = only(planLaunch(input({ avatars: [avatar([marked])], draft: { videosPerAvatar: 1, mix: { single: 100, collage: 0, slides: 0 } } })));
+    expect(mia.videos[0]?.photoIds).toEqual([marked.id]);
+  });
+
+  test("a collage takes the marked frames before the judged ones, as it takes the unverified ones", () => {
+    const marked = [photo({ faceCos: 0.97, faceMarked: true, pdq: randomPdq(rng(1)) }), photo({ faceCos: 0.96, faceMarked: true, pdq: randomPdq(rng(2)) })];
+    const judged = [0.9, 0.8, 0.7].map((faceCos, i) => photo({ faceCos, pdq: randomPdq(rng(10 + i)) }));
+    for (let seed = 1; seed <= 20; seed++) {
+      const mia = only(planLaunch(input({ avatars: [avatar([...judged, ...marked])], draft: { videosPerAvatar: 1, mix: { single: 0, collage: 100, slides: 0 }, planSeed: seed } })));
+      const ids = mia.videos[0]?.photoIds ?? [];
+      for (const m of marked) expect(ids).toContain(m.id);
+    }
+  });
+
   test("a collage takes the photos without a stored face match before the verified ones", () => {
     const unverified = [photo({ pdq: randomPdq(rng(1)) }), photo({ pdq: randomPdq(rng(2)) })];
     const verified = [0.9, 0.8, 0.7].map((faceCos, i) => photo({ faceCos, pdq: randomPdq(rng(10 + i)) }));

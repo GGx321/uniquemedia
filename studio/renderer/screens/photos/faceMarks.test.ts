@@ -5,14 +5,14 @@ import { faceMarksText, framesWithoutFaceCheck } from "./faceMarks";
 // S5.6e (mockup 32): a face-hidden or back frame is marked, never retried. The photo carries no verdict of the gate, only its likeness when one face was
 // found, so a frame «without a face check» is one with no likeness at all, or one whose likeness sits under the gate's line (it was marked, not retried).
 
-function photo(id: string, faceCos?: number): PhotoSummary {
+function photo(id: string, faceCos?: number, faceMarked?: true): PhotoSummary {
   return {
     photoId: id,
     avatarId: "avatar-mia-0001",
     runId: "run-00000001",
     category: "home",
     createdAt: "2026-10-11T10:00:00.000Z",
-    ...(faceCos === undefined ? {} : { qa: { faceCos } }),
+    ...(faceCos === undefined && faceMarked === undefined ? {} : { qa: { ...(faceCos === undefined ? {} : { faceCos }), ...(faceMarked === undefined ? {} : { faceMarked }) } }),
     used: false,
     usedIn: [],
     rejected: false,
@@ -20,6 +20,25 @@ function photo(id: string, faceCos?: number): PhotoSummary {
     eligible: true,
   };
 }
+
+// S5.7a: the contract carries the gate's own mark, so a marked frame counts whatever its likeness; the line below 0.55 stays for photos stored before the mark.
+describe("framesWithoutFaceCheck and the gate's mark", () => {
+  test("counts a marked frame whose likeness is above the line", () => {
+    expect(framesWithoutFaceCheck([photo("p1", 0.81, true)], ["p1"])).toBe(1);
+  });
+
+  test("counts a marked frame with no likeness once", () => {
+    expect(framesWithoutFaceCheck([photo("p1", undefined, true)], ["p1"])).toBe(1);
+  });
+
+  test("does not count a judged frame above the line", () => {
+    expect(framesWithoutFaceCheck([photo("p1", 0.81)], ["p1"])).toBe(0);
+  });
+
+  test("still counts a frame stored before the mark whose likeness is under the line", () => {
+    expect(framesWithoutFaceCheck([photo("p1", 0.48)], ["p1"])).toBe(1);
+  });
+});
 
 describe("framesWithoutFaceCheck", () => {
   test("counts a frame with no likeness", () => {
