@@ -1,0 +1,304 @@
+{
+  "fill-specializations" : [
+    {
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.63922,0.59216,1.00000,1.00000",
+          "srgb:0.33725,0.27451,0.86275,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.15,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.85,
+            "y" : 1
+          }
+        }
+      }
+    },
+    {
+      "appearance" : "dark",
+      "value" : {
+        "linear-gradient" : [
+          "srgb:0.05098,0.04706,0.07843,1.00000",
+          "srgb:0.02745,0.02745,0.04314,1.00000"
+        ],
+        "orientation" : {
+          "start" : {
+            "x" : 0.5,
+            "y" : 0
+          },
+          "stop" : {
+            "x" : 0.5,
+            "y" : 1
+          }
+        }
+      }
+    }
+  ],
+  "groups" : [
+    {
+      "blur-material" : null,
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.07451,0.05490,0.18824,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "srgb:0.94510,0.93333,1.00000,1.00000",
+                  "srgb:0.60392,0.55294,1.00000,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.4876,
+                    "y" : 0.4776
+                  },
+                  "stop" : {
+                    "x" : 0.5572,
+                    "y" : 0.5473
+                  }
+                }
+              }
+            }
+          ],
+          "glass" : true,
+          "image-name" : "pupil.svg",
+          "name" : "pupil",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.07451,0.05490,0.18824,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "srgb:0.66275,0.61961,1.00000,1.00000",
+                  "srgb:0.35294,0.28627,0.87843,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.2238,
+                    "y" : 0.2139
+                  },
+                  "stop" : {
+                    "x" : 0.8209,
+                    "y" : 0.811
+                  }
+                }
+              }
+            }
+          ],
+          "glass" : true,
+          "image-name" : "lens.svg",
+          "name" : "lens",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.07451,0.05490,0.18824,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "linear-gradient" : [
+                  "srgb:0.66275,0.61961,1.00000,1.00000",
+                  "srgb:0.35294,0.28627,0.87843,1.00000"
+                ],
+                "orientation" : {
+                  "start" : {
+                    "x" : 0.2238,
+                    "y" : 0.2139
+                  },
+                  "stop" : {
+                    "x" : 0.8209,
+                    "y" : 0.811
+                  }
+                }
+              }
+            }
+          ],
+          "glass" : true,
+          "image-name" : "frame.svg",
+          "name" : "frame",
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "name" : "Mark",
+      "shadow-specializations" : [
+        {
+          "value" : {
+            "kind" : "neutral",
+            "opacity" : 0.5
+          }
+        },
+        {
+          "appearance" : "dark",
+          "value" : {
+            "kind" : "layer-color",
+            "opacity" : 0.8
+          }
+        }
+      ],
+      "specular" : true,
+      "translucency-specializations" : [
+        {
+          "value" : {
+            "enabled" : false,
+            "value" : 0.2
+          }
+        },
+        {
+          "appearance" : "dark",
+          "value" : {
+            "enabled" : true,
+            "value" : 0.3
+          }
+        }
+      ]
+    },
+    {
+      "blur-material" : null,
+      "layers" : [
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.07451,0.05490,0.18824,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:0.54510,0.49020,1.00000,1.00000"
+              }
+            }
+          ],
+          "glass" : false,
+          "image-name" : "ghost-mid.svg",
+          "name" : "ghost-mid",
+          "opacity-specializations" : [
+            {
+              "value" : 0.48
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.66
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "fill-specializations" : [
+            {
+              "value" : {
+                "solid" : "srgb:0.07451,0.05490,0.18824,1.00000"
+              }
+            },
+            {
+              "appearance" : "dark",
+              "value" : {
+                "solid" : "srgb:0.54510,0.49020,1.00000,1.00000"
+              }
+            }
+          ],
+          "glass" : false,
+          "image-name" : "ghost-back.svg",
+          "name" : "ghost-back",
+          "opacity-specializations" : [
+            {
+              "value" : 0.26
+            },
+            {
+              "appearance" : "dark",
+              "value" : 0.36
+            }
+          ],
+          "position" : {
+            "scale" : 1,
+            "translation-in-points" : [
+              0,
+              0
+            ]
+          }
+        }
+      ],
+      "name" : "Ghosts",
+      "shadow-specializations" : [
+        {
+          "value" : {
+            "kind" : "none",
+            "opacity" : 0.5
+          }
+        },
+        {
+          "appearance" : "dark",
+          "value" : {
+            "kind" : "layer-color",
+            "opacity" : 0.4
+          }
+        }
+      ],
+      "specular" : false,
+      "translucency-specializations" : [
+        {
+          "value" : {
+            "enabled" : false,
+            "value" : 0.4
+          }
+        },
+        {
+          "appearance" : "dark",
+          "value" : {
+            "enabled" : true,
+            "value" : 0.4
+          }
+        }
+      ]
+    }
+  ],
+  "supported-platforms" : {
+    "squares" : [
+      "macOS"
+    ]
+  }
+}
