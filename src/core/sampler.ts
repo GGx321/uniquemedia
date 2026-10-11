@@ -12,11 +12,10 @@ function dev(rng: Rng, key: keyof typeof PARAMS, scalar: number, oneSided = fals
 
 const FPS_CHOICES = [24, 25, 30] as const;
 const GOP_SECONDS = [2, 3, 4] as const;
-// Slower presets compress better at equal quality, which is what fits a 15-30 s
-// clip inside the 3500k ceiling without lowering crf; the random pick stays
+// Slower presets compress better at equal quality; the random pick stays
 // because the preset is part of the encoder fingerprint.
 const PRESET_CHOICES = ["medium", "slow"] as const;
-const AUDIO_KBPS_CHOICES = [96, 112, 128, 160] as const;
+const AUDIO_KBPS_CHOICES = [160, 192, 224] as const;
 const SEGMENT_COUNTS = [3, 4, 5] as const;
 
 function pick<T>(rng: Rng, arr: readonly T[]): T {

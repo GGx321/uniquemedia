@@ -100,7 +100,7 @@ test("encode op carries randomized fps/gop/preset/audio params in range", () => 
   expect(typeof enc.audioKbps).toBe("number");
   expect([24, 25, 30]).toContain(Number(enc.fps));
   expect(["medium", "slow"]).toContain(String(enc.preset));
-  expect([96, 112, 128, 160]).toContain(Number(enc.audioKbps));
+  expect([160, 192, 224]).toContain(Number(enc.audioKbps));
   expect(enc.keyintMin).toBe(enc.fps);
   const mult = Number(enc.gop) / Number(enc.fps);
   expect([2, 3, 4]).toContain(mult);

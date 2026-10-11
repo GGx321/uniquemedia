@@ -154,16 +154,36 @@ test("caps the bitrate so a long video stays under the 50MB ceiling", () => {
   expect((kbps * 120) / 8 / 1024).toBeLessThanOrEqual(50);
 });
 
-test("a 30 s clip gets the 3500k Instagram ceiling with a 2 s VBV window", () => {
-  const args = buildArgs(recipe, { ...info, durationSec: 30 });
-  expect(args[args.indexOf("-maxrate") + 1]).toBe("3500k");
-  expect(args[args.indexOf("-bufsize") + 1]).toBe("7000k");
+test("a 20 s clip gets the 12000k upload ceiling with a 2 s VBV window", () => {
+  const args = buildArgs(recipe, { ...info, durationSec: 20 });
+  expect(args[args.indexOf("-maxrate") + 1]).toBe("12000k");
+  expect(args[args.indexOf("-bufsize") + 1]).toBe("24000k");
 });
 
-test("a 10-minute clip gets the lower 50 MB-derived cap instead of 3500k", () => {
+for (const sec of [60, 90]) {
+  test(`a ${sec} s clip is held under the 50 MB file cap, below the 12000k ceiling`, () => {
+    const args = buildArgs(recipe, { ...info, durationSec: sec });
+    const kbps = parseInt(args[args.indexOf("-maxrate") + 1], 10);
+    expect(kbps).toBeLessThan(12000);
+    // Video at the cap plus the audio track must fit 50 MB.
+    const totalKbps = kbps + 128;
+    expect((totalKbps * sec) / 8 / 1024).toBeLessThanOrEqual(50);
+    expect(args[args.indexOf("-bufsize") + 1]).toBe(`${kbps * 2}k`);
+  });
+}
+
+test("a 10-minute clip gets the lower 50 MB-derived cap instead of 12000k", () => {
   const args = buildArgs(recipe, { ...info, durationSec: 600 });
   const kbps = parseInt(args[args.indexOf("-maxrate") + 1], 10);
-  expect(kbps).toBeLessThan(3500);
+  expect(kbps).toBeLessThan(12000);
   expect((kbps * 600) / 8 / 1024).toBeLessThanOrEqual(50);
   expect(args[args.indexOf("-bufsize") + 1]).toBe(`${kbps * 2}k`);
+});
+
+test("falls back to 192k AAC when the recipe carries no audio bitrate", () => {
+  const bare = {
+    ...recipe,
+    video: recipe.video.map((o) => (o.id === "encode" ? { ...o, params: { crf: 21 } } : o)),
+  };
+  expect(buildArgs(bare, info)[buildArgs(bare, info).indexOf("-b:a") + 1]).toBe("192k");
 });
