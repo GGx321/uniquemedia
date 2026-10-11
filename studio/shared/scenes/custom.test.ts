@@ -57,6 +57,18 @@ describe("customMomentOf: the tags an old activity is read with", () => {
     expect(customMomentOf({ text: "looking into the lens", twoHanded: false }).gaze).toBe("viewer");
   });
 
+  // Review M2: an activity whose eyes are already busy (watching a tablet, looking out of the window) owns its gaze, so no gaze clause contradicts it.
+  test.each(["watching a tablet", "looking out of the window", "gazing at the sea", "staring at the rain", "glancing at her watch", "peeking through the curtains", "reading a menu"])(
+    "«%s» carries its own gaze",
+    (text) => {
+      expect(customMomentOf({ text, twoHanded: false }).gaze).toBe("own");
+    },
+  );
+
+  test("an activity without a look keeps no gaze tag («starting a run» is not «staring»)", () => {
+    expect(customMomentOf({ text: "starting a run", twoHanded: false }).gaze).toBeUndefined();
+  });
+
   test("an activity that names her phone carries its own gaze and the phone flag", () => {
     expect(customMomentOf({ text: "scrolling her phone", twoHanded: false })).toMatchObject({ phone: true, gaze: "own" });
   });
@@ -110,6 +122,14 @@ describe("a custom slot's sentence", () => {
     const sentence = templateSentence({ ...slot, activity: "smiling at the camera" }, ctx) ?? "";
     expect(sentence.startsWith("In a quiet bookshop, she is smiling at the camera, wearing a cozy cardigan, ")).toBe(true);
     for (const gaze of GAZE) expect(sentence).not.toContain(gaze.text);
+  });
+
+  test("«watching a tablet» never gets «looking at the viewer» (no gaze clause at all)", () => {
+    for (let i = 0; i < 40; i++) {
+      const sentence = templateSentence({ ...slot, activity: "watching a tablet" }, { ...ctx, key: `run-${i}:slot-2` }) ?? "";
+      expect(sentence.startsWith("In a quiet bookshop, she is watching a tablet, wearing a cozy cardigan, ")).toBe(true);
+      for (const gaze of GAZE) expect(sentence).not.toContain(gaze.text);
+    }
   });
 
   test("a stored text's trailing full stop is dropped, so the template's separators are the only ones", () => {

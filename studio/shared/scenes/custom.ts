@@ -1,7 +1,7 @@
 import type { PoolShot, ScenePose } from "../engine";
 import { captureOfShot, isHandCapture, posesFor, type Capture } from "./captures";
 import { captureOfSlot, momentAllowed, renderSentence, type MomentTags, type SentenceParts, type TemplateContext, type TemplateSlot } from "./render";
-import { HAIR_WORDS, PHONE_WORDS, SELFIE_WORDS, VIEWER_GAZE } from "./words";
+import { HAIR_WORDS, OWN_GAZE_WORDS, PHONE_WORDS, SELFIE_WORDS, VIEWER_GAZE } from "./words";
 
 // 5a.2 (S5.6a, plan s5a2 §5.2 step 2, K-7): the custom-category adapter. Today's custom pools store short activity phrases, mostly gerunds («holding a
 // mug», «on her stomach, scrolling»), so a custom slot renders «{At}, she is {activity}, wearing {outfit}, {gaze}, {cue}.»: no detail and no room
@@ -70,17 +70,18 @@ export function locativeOf(name: string): string {
 
 /**
  * The tags an old custom activity is read with (plan s5a2 §5.2 step 2, I5.23): one that looks at the camera, the viewer, the lens or the phone (the
- * custom gaze regex) is a viewer moment (no gaze clause, never on a candid, a profile or a back); one that names her phone carries its own gaze; one
- * that names her hair carries its own hair.
+ * custom gaze regex) is a viewer moment (no gaze clause, never on a candid, a profile or a back); one that names her phone or whose eyes are already
+ * busy (watching, looking, reading…) carries its own gaze; one that names her hair carries its own hair.
  */
 export function customMomentOf(activity: CustomActivity): MomentTags & { text: string; hair?: "own" } {
   const viewer = VIEWER_GAZE.test(activity.text);
   const phone = PHONE_WORDS.test(activity.text);
+  const ownGaze = phone || OWN_GAZE_WORDS.test(activity.text);
   return {
     text: activity.text,
     twoHanded: activity.twoHanded,
     ...(phone ? { phone: true as const } : {}),
-    ...(viewer ? { gaze: "viewer" as const } : phone ? { gaze: "own" as const } : {}),
+    ...(viewer ? { gaze: "viewer" as const } : ownGaze ? { gaze: "own" as const } : {}),
     ...(HAIR_WORDS.test(activity.text) ? { hair: "own" as const } : {}),
   };
 }

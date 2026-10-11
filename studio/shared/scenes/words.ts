@@ -39,6 +39,10 @@ export const CAMERA_WORDS = /\b(cameras?|lens(?:es)?)\b/i;
 /** I5.23: a look at the camera, the viewer, the lens or the phone (the custom activities' gaze test, plan s5a2 §4). */
 export const VIEWER_GAZE = /\b(look|gaz|glanc|star|smil)\w*\s+(at|toward|into)\s+(the\s+)?(camera|viewer|lens|phone)\b/i;
 
+/** An old custom activity whose eyes are already busy («watching a tablet», «reading a menu») carries its own gaze (review M2). */
+export const OWN_GAZE_WORDS =
+  /\b(?:look(?:s|ing|ed)?|gaz(?:e|es|ing|ed)|watch(?:es|ing|ed)?|star(?:e|es|ing|ed)|glanc(?:e|es|ing|ed)|peek(?:s|ing|ed)?|peer(?:s|ing|ed)?|read(?:s|ing)?)\b/i;
+
 /** A moment that opens on a look carries its own gaze. */
 export const GAZE_VERBS = /^(looks|glances|gazes|stares|peers|watches|smiles)\b/i;
 
