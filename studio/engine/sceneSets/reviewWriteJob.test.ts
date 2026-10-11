@@ -8,6 +8,7 @@ import { until } from "../testing/engineHarness";
 import { chatBody, fakeFetch, makeClient, setupMoney, type FetchCall, type Money, type Reply, type Step } from "../openrouter/testing/fakes";
 import { NetworkPool } from "../runs/pools";
 import type { PlanSlot } from "../scenes";
+import { localSentences } from "../scenes/localSentences";
 import { SHOT_LABEL, writerMessages } from "../scenes/writer";
 import { ideaSystemPrompt } from "../scenes/ideaWriter";
 import { beginIdea, beginRewrite, withReviewWriteAccepted, withReviewWriteClosed } from "./reviewMutations";
@@ -782,6 +783,21 @@ describe("a rewrite of planned scenes: the writer seam", () => {
     expect(await end).toMatchObject({ status: "done", written: 1 });
     expect(net.calls).toHaveLength(0);
     expect((await setNow()).scenes[1]?.text).toContain(slot.activity);
+  });
+
+  test("a rewrite of a custom scene the template writes never returns the text the scene already has", async () => {
+    const gerund = { activity: "reading a menu" };
+    await seed((set) => ({ ...set, scenes: set.scenes.map((sc) => (sc.origin === "planned" && sc.sceneId === 3 ? { ...sc, slot: { ...sc.slot, ...gerund } } : sc)) }));
+    const slot = { ...slotOf(await setNow(), 3) };
+    const same = localSentences({ slots: [slot], keyOf: () => `${SET}:3:2`, snapshots: [OLD_SNAPSHOT] })(slot);
+    expect(same).not.toBeNull();
+    await store.update(AVATAR, SET, (s) => ({ ...s, scenes: s.scenes.map((sc) => (sc.sceneId === 3 ? { ...sc, text: same } : sc)) }) as StoredSceneSet);
+    await recordRewrite([3]);
+    await run([]).end;
+
+    const text = (await setNow()).scenes[2]?.text;
+    expect(text).toContain("reading a menu");
+    expect(text).not.toBe(same);
   });
 
   test("an idea write is never written by the template: it asks the model", async () => {

@@ -129,8 +129,8 @@ export async function runReviewWrite(deps: ReviewWriteDeps, request: ReviewWrite
   if (asked.kind === "slots") {
     // 5a.2: the code template writes every scene it can, at $0; the model is asked only about the rest. The draw key is the write's own (`…:k`), and a
     // sentence another scene of the set already holds is redrawn.
-    const targets = new Set(asked.slots.map((slot) => slot.slotIndex));
-    const held = set.scenes.flatMap((scene) => (!targets.has(scene.sceneId) && !scene.removed && scene.text !== null ? [scene.text] : []));
+    // A target's own old text counts too: a rewrite never hands back the sentence the scene already has.
+    const held = set.scenes.flatMap((scene) => (!scene.removed && scene.text !== null ? [scene.text] : []));
     const local = localSentences({ slots: asked.slots, keyOf: (slot) => `${set.sceneSetId}:${slot.slotIndex}:${record.k}`, snapshots: snapshotsFor(set, record), seen: held });
     const phase: WriterPhase<PlanSlot> = { ...base, call, slots: asked.slots, local, messages: (slots, feedback) => writerMessages(slots, feedback, asked.labelOf) };
     result = await runWriterPhase(phaseDeps, phase);
