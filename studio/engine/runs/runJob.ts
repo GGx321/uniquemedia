@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import type { AvatarDescriptor, EngineError } from "../../shared/engine";
 import { NoFaceInReferenceError } from "../face/noFaceError";
 import type { Library, NewPhotoMeta, PhotoQa } from "../library";
-import { imageSize, isAnimatedImage, sniffImageMediaType, type LibraryReference } from "../library/media";
+import { imageSize, isAnimatedImage, type LibraryReference } from "../library/media";
 import type { Budget } from "../money/budget";
 import type { Scope } from "../money/ledger";
 import type { PriceBook } from "../money/prices";
@@ -15,6 +15,7 @@ import { classifyFailure } from "./failures";
 import { foldRun, nextAttemptId, paidAttempts, RunEventSchema, type AttemptOutcome, type LedgerView, type RunEvent, type RunState, type SlotEnd, type SlotState } from "./journal";
 import { RUN_ASPECT_RATIO, RUN_ATTEMPTS_PER_SLOT, plannedSlots, planRoute, runWriterConfig, type RunPlan } from "./plan";
 import type { CpuPool, NetworkPool, Release } from "./pools";
+import { masterOriginalFor } from "./faceBytes";
 import { GateFailure, QA_GATE_TIMEOUT_MS, type QaGate, type QaInput, type QaPrepareInput, type QaVerdict } from "./qa";
 import { runWriterPhase } from "./writerPhase";
 
@@ -294,26 +295,6 @@ async function loadMaster(target: MasterTarget): Promise<{ ok: true; master: Lib
  * fed bytes chosen for a completely different purpose (fitting OpenRouter's
  * own reference size).
  */
-/**
- * Re-review, N1 (HIGH): the decoder only handles JPEG/PNG
- * (decode/wasmDecode.ts's own allow-list — never WebP, by design). An
- * imported master may be WebP (`importStaging.ts`'s own 16 MP cap accepts
- * it), so using `loadMasterOriginal()`'s raw bytes unconditionally made
- * every WebP-imported avatar's runs fail MASTER_FACE_UNUSABLE forever — the
- * master is perfectly fine, only unreadable by this ONE decoder. Use the
- * original file when it is JPEG/PNG (M1/N1's own fix stays: never the
- * OpenRouter-bound downscale for a JPEG/PNG original); otherwise fall back
- * to `reference` — `loadMaster()`'s own <=1024px reference, already loaded
- * for this exact avatar's OpenRouter calls, always JPEG
- * (`downscaleToJpeg`'s own output format, `QaInput.master`'s own doc
- * comment) — so the identity check still runs, just at a smaller size, on
- * every format the app can import.
- */
-function masterOriginalFor(original: Uint8Array, reference: LibraryReference): Uint8Array {
-  const mediaType = sniffImageMediaType(original);
-  return mediaType === "image/jpeg" || mediaType === "image/png" ? original : reference;
-}
-
 /**
  * Runs every gate's `prepare()` once, against `masterOriginal`. Sets
  * `ctx.masterSha256` first (N10 — before any gate's own prepare() runs, so a
