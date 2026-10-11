@@ -11,7 +11,7 @@ export const PHONE_WORDS = /\b(phones?|smartphones?|iphones?|cellphones?|texting
 export const SELFIE_WORDS = /\bselfies?\b|\bfront[ -](?:facing[ -])?camera\b/i;
 
 /** Her hair named by a moment: the moment then carries its own hair, and the slot gets no hair line. */
-export const HAIR_WORDS = /\b(hair|ponytails?|buns?|braids?|plaits?|curls|fringe|bangs)\b/i;
+export const HAIR_WORDS = /\b(hair|ponytails?|buns?|braids?|plaits?|fringe|bangs)\b/i;
 
 /** I5.25: no bank text names a hair colour or a dye: the colour is the reference photo's, always. */
 export const HAIR_COLOUR_WORDS =
