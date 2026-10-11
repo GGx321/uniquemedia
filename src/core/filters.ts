@@ -151,7 +151,11 @@ export const FRAGMENTS: Record<string, Fragment> = {
     const s = Math.round(n(p.strength));
     if (s <= 0) return null;
     // `t` is temporal — meaningless for a still, so photos pass temporal=false.
-    if (p.temporal !== false) return `noise=alls=${s}:allf=t+u`;
+    // Luma only, as a still's is: uniform noise of an even strength has a mean
+    // of -0.5, and on the chroma planes that moved every pixel of a clip
+    // towards green (R-G -1.05, B-G -1.2 at strength 8). PDQ reads luma alone,
+    // so the chroma grain bought no distance for it.
+    if (p.temporal !== false) return `noise=c0s=${s}:c0f=t+u`;
     // A still: uniform noise lifts pure black, which glows on an AMOLED
     // screen, so the lift comes back out. Only the lifted floor is touched: the
     // knee maps [black + b, black + 2b) back down to [black, black + 2b) and

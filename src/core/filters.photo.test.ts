@@ -69,8 +69,8 @@ test("pancrop is a no-op when the window covers the whole frame", () => {
 });
 
 test("noise keeps the temporal flag when `temporal` is not specified (video path)", () => {
-  expect(FRAGMENTS.noise({ strength: 7 }, info)).toBe("noise=alls=7:allf=t+u");
-  expect(FRAGMENTS.noise({ strength: 7, temporal: true }, info)).toBe("noise=alls=7:allf=t+u");
+  expect(FRAGMENTS.noise({ strength: 7 }, info)).toBe("noise=c0s=7:c0f=t+u");
+  expect(FRAGMENTS.noise({ strength: 7, temporal: true }, info)).toBe("noise=c0s=7:c0f=t+u");
 });
 
 test("noise drops the temporal flag when `temporal` is false", () => {

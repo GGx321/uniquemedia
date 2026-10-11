@@ -62,7 +62,7 @@ test("pancrop renders as an off-centre crop scaled back to the source size", () 
 test("photo noise carries no temporal component", () => {
   const vf = vfOf(buildPhotoArgs(recipe, info));
   expect(vf).toContain("noise=c0s=4:c0f=u");
-  expect(vf).not.toContain("allf=t");
+  expect(vf).not.toContain("c0f=t");
 });
 
 test("no-op fragments are skipped", () => {
