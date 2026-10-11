@@ -29,12 +29,11 @@ function credits(): Credit[] {
   return parsed.map((c: unknown) => {
     if (typeof c !== "object" || c === null) throw new Error("credit entry is not an object");
     const r = c as Record<string, unknown>;
-    return {
-      file: String(r.file),
-      source: String(r.source),
-      author: String(r.author),
-      licence: String(r.licence),
-    };
+    // A missing field is a failure here, not the string "undefined".
+    for (const key of ["file", "source", "author", "licence"] as const) {
+      if (typeof r[key] !== "string") throw new Error(`credit for ${String(r.file)} has no ${key}`);
+    }
+    return { file: r.file as string, source: r.source as string, author: r.author as string, licence: r.licence as string };
   });
 }
 
@@ -71,7 +70,8 @@ test("every background has a credit, and every credit a background", async () =>
 test("every credit is CC0 or public domain, with an author and a Commons source page", () => {
   for (const c of credits()) {
     expect(c.licence).toMatch(FREE_LICENCE);
-    expect(c.author.length).toBeGreaterThan(0);
+    expect(c.author.trim().length).toBeGreaterThan(0);
+    expect(c.author).not.toBe("undefined");
     expect(c.source).toMatch(/^https:\/\/commons\.wikimedia\.org\/wiki\/File:/);
   }
 });
