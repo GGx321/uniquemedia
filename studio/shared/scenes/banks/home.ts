@@ -7,7 +7,7 @@ import type { CategoryBank } from "./types";
 // in tights and boots, and bikinis were refused by Grok and wait for «Смелая» (5a.3).
 
 /** The prone selfie's outfits: Grok drew it in grey lounge shorts and in grey leggings and refused it in cotton shorts (the probes), so every
- *  moment that lies on her stomach pins these. */
+ *  moment that lies on her stomach pins these. S5.6R: and wears no legwear (`noLegwear`): the approved prone frames had bare legs. */
 const PRONE_OUTFIT = "grey lounge shorts and a fitted tee";
 const LEGGINGS = "grey leggings and a cropped tee";
 const PRONE = [PRONE_OUTFIT, LEGGINGS];
@@ -55,12 +55,13 @@ export const HOME: CategoryBank = {
           captures: ["prone"],
           twoHanded: false,
           outfits: PRONE,
+          noLegwear: true,
         },
         { text: "lies on her stomach, feet raised", motion: "her raised feet swing slowly", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
         { text: "lies on her stomach, legs bent up", motion: "she kicks her feet slowly", captures: ["timer"], twoHanded: false, angle: "back", outfits: PRONE, noLegwear: true },
-        { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
-        { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
-        { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE, handAtFace: true },
+        { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE, noLegwear: true },
+        { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE, noLegwear: true },
+        { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE, handAtFace: true, noLegwear: true },
         // S5.6R: the pinned outfit already names the platform sneakers, so the moment names her feet, never the sneakers a second time.
         { text: "lies prone, feet raised behind", motion: "her raised feet swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
         { text: "lies prone, ankles crossed behind", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
@@ -68,8 +69,8 @@ export const HOME: CategoryBank = {
         { text: "sits cross-legged", motion: "she rocks a little side to side", captures: ["timer"], twoHanded: false },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
         { text: "lies curled under the blanket", motion: "she pulls the blanket up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
-        { text: "lies prone, hips behind to one side", motion: "she shifts her hips a little", captures: ["prone"], twoHanded: false, outfits: PRONE },
-        { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: PRONE },
+        { text: "lies prone, hips behind to one side", motion: "she shifts her hips a little", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
+        { text: "lies on her stomach, head tilted", motion: "she tilts her head a little", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
       ],
     },
     {

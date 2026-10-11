@@ -162,4 +162,10 @@ describe("the text reads naturally (S5.6R, LOW)", () => {
     expect(feet.length).toBeGreaterThan(0);
     expect(offenders(feet, (f) => f.prompt().includes("from her knees up"))).toEqual(NONE);
   });
+
+  test("the prone selfies wear no legwear: the approved prone frames had bare legs", () => {
+    const prone = FRAMES.home.filter((f) => /\bstomach\b|\bprone\b/.test(f.slot.activity));
+    expect(prone.length).toBeGreaterThan(0);
+    expect(offenders(prone, (f) => f.slot.legwear !== undefined)).toEqual(NONE);
+  });
 });
