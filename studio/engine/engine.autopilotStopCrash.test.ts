@@ -7,7 +7,7 @@ import type { EngineDeps } from "./engine";
 import { within } from "./testing/within";
 import { failed, ledgerLines, ok, until, useEngineDir } from "./testing/engineHarness";
 import { crashKit, fakeRender, ledgerSpentOf, type Started } from "./testing/crashKit";
-import { draftOf, network, type WiringNetwork } from "./testing/wiringKit";
+import { draftOf, generatingDraftOf, network, type WiringNetwork } from "./testing/wiringKit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -59,7 +59,7 @@ interface Scene {
 
 /** An engine at `phase`, with the test hooks that take the copy at `point` of the stop's unlink. `taken()` says whether the copy was made. */
 async function atPhase(phase: Phase, point: Point, review: boolean, videos = 1) {
-  const avatarId = await kit.seedAvatar(0);
+  const avatarId = await kit.seedGeneratingAvatar();
   let open: () => void = () => undefined;
   const writerGate = phase === "composing" ? new Promise<void>((resolve) => (open = resolve)) : undefined;
   const net = network(writerGate === undefined ? {} : { writerGate });
@@ -102,7 +102,7 @@ async function atPhase(phase: Phase, point: Point, review: boolean, videos = 1) 
   };
   const first = await kit.boot(net, deps);
   holder.engine = first.engine;
-  const launch = await kit.startLaunch(first, draftOf([avatarId], { sceneReview: review, videosPerAvatar: videos }));
+  const launch = await kit.startLaunch(first, generatingDraftOf([avatarId], { sceneReview: review, videosPerAvatar: videos }));
   state.launchId = launch.launchId;
   const generation = kit.fileOf(launch.launchId).avatars[0]?.generation;
   if (generation === null || generation === undefined) throw new Error("the avatar does not generate");
@@ -231,7 +231,7 @@ describe("a kill after the sets are released: the figure written at the end is t
 
   /** A launch of 6 videos that runs to its end on the default steps; the copy is taken right before the `done` write. */
   async function finishingLaunch() {
-    const avatarId = await kit.seedAvatar(0);
+    const avatarId = await kit.seedGeneratingAvatar();
     const net = network();
     const state = { taken: false, launchId: "" };
     const launches = new LaunchStores({
@@ -244,7 +244,7 @@ describe("a kill after the sets are released: the figure written at the end is t
       },
     });
     const first = await kit.boot(net, { ...fakeRender(), launches });
-    const launch = await kit.startLaunch(first, draftOf([avatarId], { videosPerAvatar: 6 }));
+    const launch = await kit.startLaunch(first, generatingDraftOf([avatarId], { videosPerAvatar: 6 }));
     state.launchId = launch.launchId;
     const sceneSetId = kit.fileOf(launch.launchId).avatars[0]?.generation?.sceneSetId ?? "";
     await until(() => state.taken, "the copy right before the «done» write", 150_000);
@@ -269,7 +269,7 @@ describe("a kill after the sets are released: the figure written at the end is t
 // «Продолжить · до $R» for nothing; it now ends it, the way it ends a stop it finds under way.
 describe("a finish killed before the «done» write comes back done (S4.10 LOW-1)", () => {
   test("the restart completes the launch: done, nothing to continue, nothing sent", async () => {
-    const avatarId = await kit.seedAvatar(0);
+    const avatarId = await kit.seedGeneratingAvatar();
     const net = network();
     const state = { taken: false, launchId: "" };
     const launches = new LaunchStores({
@@ -282,7 +282,7 @@ describe("a finish killed before the «done» write comes back done (S4.10 LOW-1
       },
     });
     const first = await kit.boot(net, { ...fakeRender(), launches });
-    const launch = await kit.startLaunch(first, draftOf([avatarId], { videosPerAvatar: 2 }));
+    const launch = await kit.startLaunch(first, generatingDraftOf([avatarId], { videosPerAvatar: 2 }));
     state.launchId = launch.launchId;
     await until(() => state.taken, "the copy right before the «done» write", 150_000);
     await kit.kill(first);

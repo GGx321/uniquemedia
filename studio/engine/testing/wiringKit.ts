@@ -11,7 +11,9 @@ import { samplePhotoMeta, sequentialIds, steppingClock } from "../library/testin
 import { excerptOf, fakeCdn, JPEG_1X1, listTracks } from "../music/testing/storeKit";
 import { TrackStore } from "../music/trackStore";
 import { chatBody, fakeFetch, imageBody, type FetchCall, type Reply } from "../openrouter/testing/fakes";
+import { LLM_ONLY_REF } from "../scenes/testing/llmOnlyFixture";
 import { command, engineSettings, GOOD, NOW, OFFLINE, ok, portraitPng, startEngine, TRAITS } from "./engineHarness";
+import { seedLlmOnlyCategory } from "./llmOnlyCategory";
 import { within } from "./within";
 
 // Test-only (S4.6w): what the engine-level tests of the DEFAULT autopilot wiring share. A real engine over a temp folder with nothing injected into `launchSteps`, a fake OpenRouter that
@@ -102,6 +104,12 @@ export const draftOf = (avatarIds: string[], over: Partial<LaunchDraftInput> = {
 });
 
 
+/**
+ * 5a.2 (S5.6c2, m11): a launch that GENERATES, planned from `cat-llm-only-fixture`. A built-in category is composed by the code template with no writer request,
+ * so a test that needs the compose's writer (its request in flight, its reserve, a kill during it) names the category whose activities the template cannot write.
+ */
+export const generatingDraftOf = (avatarIds: string[], over: Partial<LaunchDraftInput> = {}): LaunchDraftInput => draftOf(avatarIds, { categories: [LLM_ONLY_REF], ...over });
+
 export function wiringKit(dir: () => string) {
   const libraryDir = () => join(dir(), "library");
   const exportDir = () => join(dir(), "export");
@@ -125,6 +133,13 @@ export function wiringKit(dir: () => string) {
       );
     }
     return avatar.id;
+  }
+
+  /** An avatar with no library photo that generates its photos: `cat-llm-only-fixture` is in the library for its launch to name (see `generatingDraftOf`). */
+  async function seedGeneratingAvatar(prefix = "wire", name = "Mia"): Promise<string> {
+    const avatarId = await seedAvatar(0, prefix, name);
+    await seedLlmOnlyCategory(libraryDir());
+    return avatarId;
   }
 
   /** A track store holding the four 3c.1 excerpts as saved trends: what the free steps choose a track from. */
@@ -201,5 +216,5 @@ export function wiringKit(dir: () => string) {
     }
   }
 
-  return { libraryDir, exportDir, musicDir, seedAvatar, trackStore, boot, call, startLaunch, getLaunch, waitFor, videosOf, expectVideosOnDisk };
+  return { libraryDir, exportDir, musicDir, seedAvatar, seedGeneratingAvatar, trackStore, boot, call, startLaunch, getLaunch, waitFor, videosOf, expectVideosOnDisk };
 }

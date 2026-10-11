@@ -13,6 +13,8 @@ import { openLibrary } from "./library";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
 import { chatBody, fakeFetch, imageBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { command, engineSettings, GOOD, ledgerLines, MODERATION, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir } from "./testing/engineHarness";
+import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
+import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { within } from "./testing/within";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -40,6 +42,7 @@ async function seedAvatar(name = "Mia"): Promise<string> {
   const avatar = await library.createAvatar({ name, age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  await seedLlmOnlyCategory(libraryDir());
   return avatar.id;
 }
 
@@ -94,7 +97,8 @@ const draftOf = (avatarIds: string[], over: Partial<LaunchDraftInput> = {}): Lau
   avatarIds,
   videosPerAvatar: 3,
   mix: { single: 100, collage: 0, slides: 0 },
-  categories: ["home"],
+  // 5a.2 (S5.6c2, m11): these holds are about the compose's writer request, so the launch plans from `cat-llm-only-fixture`, which only the model writes.
+  categories: [LLM_ONLY_REF],
   poses: { profile: false, back: false },
   library: false,
   generate: true,

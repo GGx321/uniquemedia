@@ -11,6 +11,8 @@ import type { EngineDeps } from "./engine";
 import { openLibrary } from "./library";
 import type { StoredSceneSet } from "./library/sceneSets";
 import { samplePhotoMeta, sequentialIds, steppingClock } from "./library/testing/helpers";
+import { LLM_ONLY_REF } from "./scenes/testing/llmOnlyFixture";
+import { seedLlmOnlyCategory } from "./testing/llmOnlyCategory";
 import { chatBody, fakeFetch, imageBody, type FetchCall, type Reply } from "./openrouter/testing/fakes";
 import { command, engineSettings, failed, GOOD, ledgerLines, OFFLINE, ok, portraitPng, startEngine, TRAITS, until, useEngineDir, writeLedger, NOW } from "./testing/engineHarness";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -38,6 +40,7 @@ async function seedAvatar(name = "Mia"): Promise<string> {
   const avatar = await library.createAvatar({ name, age: 25, traits: manifestTraits(TRAITS), descriptor: GOOD });
   const master = await library.addPhoto(avatar.id, portraitPng(1), samplePhotoMeta({ width: 60, height: 80, qa: { age: { adult: true, confidence: 0.95 } } }));
   await library.updateAvatar(avatar.id, { status: "active", masterPhotoId: master.id });
+  await seedLlmOnlyCategory(libraryDir());
   return avatar.id;
 }
 
@@ -92,7 +95,8 @@ const draftOf = (avatarIds: string[], over: Partial<LaunchDraftInput> = {}): Lau
   avatarIds,
   videosPerAvatar: 3,
   mix: { single: 100, collage: 0, slides: 0 },
-  categories: ["home"],
+  // 5a.2 (S5.6c2, m11): the launch's model path plans from `cat-llm-only-fixture`; a built-in category is composed by the code template with no request.
+  categories: [LLM_ONLY_REF],
   poses: { profile: false, back: false },
   library: false,
   generate: true,
@@ -197,6 +201,21 @@ describe("review OFF: compose, approve at once, draw", () => {
     expect(fileOf(launch.launchId).avatars[0]?.photosDone).toBe(3);
     expect(new Set(reserves()).size).toBe(reserves().length);
     expect(reserves().filter((id) => id.startsWith(`${sceneSetId}:writer-`))).toEqual([`${sceneSetId}:writer-1#1`]);
+  });
+
+  // The twin on a built-in category: the code template composes it, so the launch's W′ is its draw alone and the compose sends nothing.
+  test("a launch over a built-in category composes with no writer request and no writer reserve, and W′ is its draw alone", async () => {
+    const avatarId = await seedAvatar();
+    const net = network();
+    const started = await boot(net);
+    const launch = await startLaunch(started, draftOf([avatarId], { categories: ["home"] }));
+    await reachPhase(launch.launchId, "montage");
+
+    expect(launch.plannedWorstMicros).toBe(3 * 3 * 50_000);
+    expect(fileOf(launch.launchId).avatars[0]?.allocation.composeMicros).toBe(0);
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(reserves().filter((id) => id.includes("writer"))).toEqual([]);
+    expect(net.imageCalls()).toHaveLength(3);
   });
 
   test("the whole launch stays within W′ through the real Budget group, and its writer attempts and slice run are in that group (A2)", async () => {
@@ -429,7 +448,7 @@ describe("a kill at each step boundary: after «Продолжить» there is 
     const generation = fileOf(launch.launchId).avatars[0]?.generation;
     // The compose ran to its end (the sentences are paid for and stored), and the process died before the approval.
     const composed = await first.engine.composeLaunchSet(
-      { avatarId, count: 3, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: fileOf(launch.launchId).avatars[0]?.allocation.composeMicros ?? 0 },
+      { avatarId, count: 3, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: fileOf(launch.launchId).avatars[0]?.allocation.composeMicros ?? 0 },
       { ids: { sceneSetId, runId: setRunId }, split: generation?.split ?? [], launchId: launch.launchId },
     );
     await first.engine.whenSceneSetIdle(sceneSetId);
@@ -521,6 +540,77 @@ describe("a kill at each step boundary: after «Продолжить» there is 
 
 // ---------- fix round 1 (S4.6b1 review): money ----------
 
+// 5a.2 (S5.6c2, plan s5a2 §5.6, I5.30): the price hold. A launch over a custom category the code template COVERS accepts a compose that costs nothing. If the
+// owner regenerates that category before the compose is sent and the new pool is not covered, the compose is priced at the writer again: it is refused against
+// the compose allocation the launch accepted (PRICE_CHANGED), nothing is sent or reserved, and the launch holds on the price. A cap is never raised to fit.
+describe("a covered custom category regenerated into an uncovered one between a launch's estimate and its compose", () => {
+  const COVERED = "cat-covered-fixture" as const;
+  const PLACES = ["a quiet bookshop", "a flower stall", "a corner cafe", "a bridge over the river", "a sunny terrace"];
+  const pool = (activities: { text: string; twoHanded: boolean }[]) => ({
+    locations: PLACES.map((name) => ({ name, times: ["midday" as const], activities, mirror: false })),
+    outfits: ["a cozy cardigan", "jeans and a tee", "a linen dress"],
+    shotDeck: ["friend" as const, "friend" as const, "friend" as const, "friend" as const, "friend" as const],
+  });
+  /** Every activity reads after «she is» and every shot is a friend's: the template writes all of it. */
+  const COVERED_POOL = pool([{ text: "holding a mug", twoHanded: false }, { text: "browsing the shelves", twoHanded: false }]);
+  /** The same category regenerated with activities that do not read after «she is»: the model has to write them. */
+  const UNCOVERED_POOL = pool([{ text: "a quiet coffee", twoHanded: false }, { text: "one hand on the menu", twoHanded: false }]);
+
+  async function seedCovered(): Promise<void> {
+    const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds(`cov${++seeded}`) });
+    await library.categories.create({ categoryId: COVERED, name: "Покрытая", description: "кофейни", label: "Covered cafes", style: "phone", pool: COVERED_POOL, model: "x-ai/grok-4.3", spentMicros: 5_000 });
+  }
+
+  async function regenerate(): Promise<void> {
+    const { library } = await openLibrary(libraryDir(), { now: steppingClock(), newId: sequentialIds(`regen${++seeded}`) });
+    await library.categories.replacePool(COVERED, { description: "кофейни и булочные", label: "Covered cafes", style: "phone", pool: UNCOVERED_POOL, model: "x-ai/grok-4.3", spentMicros: 5_000, jobId: "job-regen-0001" });
+  }
+
+  test("the covered launch accepts a compose that costs nothing: its whole worst case is its draw", async () => {
+    const avatarId = await seedAvatar();
+    await seedCovered();
+    const started = await boot(network(), { steps: false });
+    const launch = await startLaunch(started, draftOf([avatarId], { categories: [COVERED] }));
+
+    expect(fileOf(launch.launchId).avatars[0]?.allocation.composeMicros).toBe(0);
+    expect(launch.plannedWorstMicros).toBe(3 * 3 * 50_000);
+  });
+
+  test("regenerated before the compose: the compose is refused against the accepted $0, nothing is sent, and the launch holds on the price", async () => {
+    const avatarId = await seedAvatar();
+    await seedCovered();
+    const first = await boot(network(), { steps: false });
+    const launch = await startLaunch(first, draftOf([avatarId], { categories: [COVERED] }));
+    await kill(first);
+    await regenerate();
+
+    const net = network();
+    const second = await boot(net);
+    await resume(second, await viewOf(second, launch.launchId));
+    await until(() => fileOf(launch.launchId).paidHold?.reason === "price", "the price hold", 30_000);
+
+    const hold = fileOf(launch.launchId).paidHold;
+    expect(hold).toMatchObject({ reason: "price", detail: { stage: "compose", leftMicros: 0 } });
+    // The compose now costs the writer's chunk at two attempts: that is what the refusal says it needs.
+    expect(hold?.detail).toMatchObject({ needMicros: 2 * 37_500 });
+    expect(net.paidCalls()).toEqual([]);
+    expect(reserves()).toEqual([]);
+    expect(fileOf(launch.launchId).avatars[0]?.allocation.composeMicros).toBe(0);
+  });
+
+  test("the same launch with the category left covered composes at $0: no writer request, no reserve", async () => {
+    const avatarId = await seedAvatar();
+    await seedCovered();
+    const net = network();
+    const started = await boot(net);
+    const launch = await startLaunch(started, draftOf([avatarId], { categories: [COVERED] }));
+    await reachPhase(launch.launchId, "montage");
+
+    expect(net.writerCalls()).toHaveLength(0);
+    expect(reserves().filter((id) => id.includes("writer"))).toEqual([]);
+  });
+});
+
 describe("every slice run is in the launch's Budget group (HIGH)", () => {
   test("a launch of two slices: both runs map to the group, and «Потрачено» is the sum over every scope the launch spent in", async () => {
     const avatarId = await seedAvatar();
@@ -583,8 +673,8 @@ describe("the internal paid entry points need a launch that runs (MEDIUM)", () =
     await expect(started.engine.writeLaunchScenes({ sceneSetId, launchId: launch.launchId, revision: 1, acceptedWorstMicros: 1_000_000 })).rejects.toMatchObject({ error: { code: "VALIDATION", detail: expect.stringContaining("not payable") } });
     await expect(
       started.engine.composeLaunchSet(
-        { avatarId, count: 3, categories: ["home"], poses: { profile: false, back: false }, acceptedWorstMicros: 1_000_000 },
-        { ids: { sceneSetId: "set-other-0001", runId: "run-other-0001" }, split: [{ ref: "home", count: 3 }], launchId: launch.launchId },
+        { avatarId, count: 3, categories: [LLM_ONLY_REF], poses: { profile: false, back: false }, acceptedWorstMicros: 1_000_000 },
+        { ids: { sceneSetId: "set-other-0001", runId: "run-other-0001" }, split: [{ ref: LLM_ONLY_REF, count: 3 }], launchId: launch.launchId },
       ),
     ).rejects.toMatchObject({ error: { code: "VALIDATION", detail: expect.stringContaining("not payable") } });
     expect(ledgerLines(dir()).length).toBe(before);

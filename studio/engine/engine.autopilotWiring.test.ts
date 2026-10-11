@@ -1,6 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { ledgerLines, ok, useEngineDir } from "./testing/engineHarness";
-import { draftOf, LAUNCH_MS, network, wiringKit } from "./testing/wiringKit";
+import { draftOf, generatingDraftOf, LAUNCH_MS, network, wiringKit } from "./testing/wiringKit";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
 
@@ -42,9 +42,9 @@ describe("the autopilot's steps are the engine's default (S4.6w)", () => {
     "a generating launch with the review off composes, draws, renders and ends done with its videos on disk",
     async () => {
       const net = network();
-      const avatarId = await kit.seedAvatar(0);
+      const avatarId = await kit.seedGeneratingAvatar();
       const started = await kit.boot(net);
-      const launch = await kit.startLaunch(started, draftOf([avatarId]));
+      const launch = await kit.startLaunch(started, generatingDraftOf([avatarId]));
       const view = await kit.waitFor(started, launch.launchId, "the generating launch to be done", (v) => v.status === "done");
       expect(net.writerCalls().length).toBeGreaterThan(0);
       expect(net.imageCalls()).toHaveLength(10);
@@ -60,9 +60,9 @@ describe("the autopilot's steps are the engine's default (S4.6w)", () => {
     "with the review on the launch waits in awaiting-review and draws nothing until «Продолжить запуск», which brings it to done",
     async () => {
       const net = network();
-      const avatarId = await kit.seedAvatar(0);
+      const avatarId = await kit.seedGeneratingAvatar();
       const started = await kit.boot(net);
-      const launch = await kit.startLaunch(started, draftOf([avatarId], { sceneReview: true }));
+      const launch = await kit.startLaunch(started, generatingDraftOf([avatarId], { sceneReview: true }));
       const waiting = await kit.waitFor(started, launch.launchId, "the avatar to wait for the review", (v) => v.avatars[0]?.phase === "awaiting-review");
       expect(net.imageCalls()).toEqual([]);
       const row = waiting.avatars[0];

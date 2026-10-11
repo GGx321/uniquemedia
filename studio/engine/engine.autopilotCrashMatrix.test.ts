@@ -7,7 +7,7 @@ import type { EngineDeps } from "./engine";
 import { imageBody } from "./openrouter/testing/fakes";
 import { ledgerLines, ok, portraitPng, useEngineDir } from "./testing/engineHarness";
 import { crashKit, expectLaunchInvariants, fakeRender, realRender, type Started } from "./testing/crashKit";
-import { draftOf, network, type WiringNetwork } from "./testing/wiringKit";
+import { draftOf, generatingDraftOf, network, type WiringNetwork } from "./testing/wiringKit";
 import { within } from "./testing/within";
 import { readVideoRecordFiles } from "./videos/listing";
 import { useNativeGlobals } from "../testing/nativeGlobals";
@@ -63,11 +63,11 @@ async function readRecords(avatarId: string) {
 
 /** A launch of one avatar, `videos` slides of 5 photos each, nothing in the library. The first engine runs `deps`. */
 async function launchWith(run: Run, opts: { deps?: Partial<EngineDeps>; net?: WiringNetwork; videos?: number; afterBoot?: (first: Started) => void }): Promise<{ first: Started; net: WiringNetwork; launchId: string; avatarId: string }> {
-  const avatarId = await kit.seedAvatar(0);
+  const avatarId = await kit.seedGeneratingAvatar();
   const net = opts.net ?? network();
   const first = await kit.boot(net, { ...fakeRender(), ...opts.deps });
   opts.afterBoot?.(first);
-  const launch = await kit.startLaunch(first, draftOf([avatarId], { sceneReview: run.review, videosPerAvatar: opts.videos ?? 1 }));
+  const launch = await kit.startLaunch(first, generatingDraftOf([avatarId], { sceneReview: run.review, videosPerAvatar: opts.videos ?? 1 }));
   return { first, net, launchId: launch.launchId, avatarId };
 }
 
@@ -386,10 +386,10 @@ describe("the crash matrix: a kill at each step boundary of plan §3.6, then «�
 
 describe("the two ends of the matrix that need no table", () => {
   test("row 0, estimate: it persists nothing, so a kill after it leaves nothing to recover and a fresh launch runs to done", async () => {
-    const avatarId = await kit.seedAvatar(0);
+    const avatarId = await kit.seedGeneratingAvatar();
     const net1 = network();
     const first = await kit.boot(net1, fakeRender());
-    const draft = draftOf([avatarId], { videosPerAvatar: 1 });
+    const draft = generatingDraftOf([avatarId], { videosPerAvatar: 1 });
     ok(await kit.call(first, "autopilot.estimate", { draft }));
     expect(existsSync(join(kit.libraryDir(), "autopilot")) ? readdirSync(join(kit.libraryDir(), "autopilot")) : []).toEqual([]);
     expect(ledgerLines(dir())).toEqual([]);

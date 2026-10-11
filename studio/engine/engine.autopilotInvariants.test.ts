@@ -6,7 +6,7 @@ import { MAX_AUTOPILOT_RENDERS } from "./autopilot/freeSteps";
 import { MAX_UNFINISHED_RENDERS } from "./renderQueue/queue";
 import { failed, jobEnd, ledgerLines, ok, useEngineDir } from "./testing/engineHarness";
 import { crashKit, fakeRender, ledgerSpentOf } from "./testing/crashKit";
-import { draftOf, network } from "./testing/wiringKit";
+import { draftOf, generatingDraftOf, network } from "./testing/wiringKit";
 import { readVideoRecordFiles } from "./videos/listing";
 import { useNativeGlobals } from "../testing/nativeGlobals";
 useNativeGlobals();
@@ -31,10 +31,10 @@ const never = (): Promise<never> => new Promise<never>(() => undefined);
 
 describe("A3: a restart and «Продолжить» re-plan nothing and raise nothing", () => {
   test("the allocation, W′, what was accepted and the group's cap are the start's, before and after the resume", async () => {
-    const avatarId = await kit.seedAvatar(0);
+    const avatarId = await kit.seedGeneratingAvatar();
     const net1 = network();
     const first = await kit.boot(net1, { launchSteps: IDLE_STEPS, ...fakeRender() });
-    const draft = draftOf([avatarId], { videosPerAvatar: 1 });
+    const draft = generatingDraftOf([avatarId], { videosPerAvatar: 1 });
     const estimate = ok(await kit.call(first, "autopilot.estimate", { draft }));
     if (estimate.type !== "autopilot.estimate") throw new Error("wrong answer");
     // The owner accepts MORE than the worst case: the launch still spends at most W′, and nothing is raised to the click.
@@ -103,10 +103,10 @@ describe("A10: the owner's renders are never refused because of the autopilot wh
 
 describe("A14: the owner's paid review edits are the launch's own figure apart, never part of its spent sum or its limit", () => {
   test("a rewrite during the review is in reviewWritesMicros and not in spentMicros; the figure is frozen at the end and spent is the ledger's sum over the launch's scopes", async () => {
-    const avatarId = await kit.seedAvatar(0);
+    const avatarId = await kit.seedGeneratingAvatar();
     const net = network();
     const started = await kit.boot(net, fakeRender());
-    const launch = await kit.startLaunch(started, draftOf([avatarId], { sceneReview: true, videosPerAvatar: 1 }));
+    const launch = await kit.startLaunch(started, generatingDraftOf([avatarId], { sceneReview: true, videosPerAvatar: 1 }));
     await kit.waitView(started, launch.launchId, "the review wait", (v) => v.avatars[0]?.phase === "awaiting-review", 60_000);
     const before = (await kit.getLaunch(started, launch.launchId)).launch;
     expect(before.reviewWritesMicros).toBe(0);
@@ -141,9 +141,9 @@ describe("A14: the owner's paid review edits are the launch's own figure apart, 
 
 describe("A15: provenance on the autopilot's records, and the owner's mark never rewrites one", () => {
   test("every record of a launch names its origin, launch and video key; a mark of «Опубликовано» leaves the record file as it was", async () => {
-    const avatarId = await kit.seedAvatar(0);
+    const avatarId = await kit.seedGeneratingAvatar();
     const started = await kit.boot(network(), fakeRender());
-    const launch = await kit.startLaunch(started, draftOf([avatarId], { videosPerAvatar: 2 }));
+    const launch = await kit.startLaunch(started, generatingDraftOf([avatarId], { videosPerAvatar: 2 }));
     await kit.drive(started, launch.launchId, "the launch to be done", (v) => v.status === "done");
     const records = (await readVideoRecordFiles(kit.libraryDir(), avatarId)).records;
     expect(records).toHaveLength(2);
