@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { AvatarDescriptor } from "../../shared/engine";
+import { youthWords, type AvatarDescriptor } from "../../shared/engine";
 import { BANKS, CUES, GAZE, HAIRSTYLES } from "../../shared/scenes/banks";
 import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/captures";
 import { plainSentence } from "../../shared/scenes/plain";
@@ -7,10 +7,11 @@ import { asLibraryReference, JPEG } from "../openrouter/testing/fakes";
 import { assembleSlot } from "./assembler";
 import { hairLinesOf } from "./hairLines";
 import { localSentences } from "./localSentences";
-import { slotKeyOf } from "./phoneLook";
+import { CONSTRAINTS, slotKeyOf } from "./phoneLook";
 import { plan } from "./planner";
 import { roomPlaceOf, slotLookOf } from "./roomPlace";
 import type { PlanSlot } from "./schema";
+import { revealingWordsIn } from "./words";
 import { CATEGORIES, type Category } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -37,8 +38,8 @@ interface Frame {
 
 const LENGTHS = ["bob", "shoulder", "long"] as const;
 
-function framesOf(category: Category, seed: number): Frame[] {
-  const p = plan({ seed: seed * 7919 + COUNT, count: COUNT, categories: [category], poses: seed % 2 === 0 ? { profile: true, back: true } : { profile: false, back: false } });
+function framesOf(category: Category, seed: number, level: "ordinary" | "flirty" = "ordinary"): Frame[] {
+  const p = plan({ seed: seed * 7919 + COUNT, count: COUNT, categories: [category], ...(level === "flirty" ? { level } : {}) });
   const runId = `run-${category}-${seed}`;
   const local = localSentences({ slots: p.slots, keyOf: (s) => slotKeyOf(runId, s.attemptIdBase) });
   const hair = hairLinesOf(p.slots, LENGTHS[seed % LENGTHS.length] ?? "shoulder", runId);
@@ -58,6 +59,13 @@ const FRAMES: Record<Category, Frame[]> = Object.fromEntries(
   CATEGORIES.map((category) => [category, Array.from({ length: PLANS }, (_, i) => framesOf(category, i + 1)).flat()]),
 ) as Record<Category, Frame[]>;
 const ALL: Frame[] = CATEGORIES.flatMap((c) => FRAMES[c]);
+
+// S5.7b: the same sweep under «Кокетливая» (7 of 12 slots flirty), on plan ids apart from the ordinary ones.
+const FLIRTY_PLANS = 1000;
+const FLIRTY: Record<Category, Frame[]> = Object.fromEntries(
+  CATEGORIES.map((category) => [category, Array.from({ length: FLIRTY_PLANS }, (_, i) => framesOf(category, i + 50_001, "flirty")).flat()]),
+) as Record<Category, Frame[]>;
+const FLIRTY_ALL: Frame[] = CATEGORIES.flatMap((c) => FLIRTY[c]);
 
 /** What a failing sweep shows: how many frames broke the rule, and a few of them. */
 function offenders(frames: readonly Frame[], broken: (frame: Frame) => boolean): { count: number; sample: string[] } {
@@ -226,6 +234,86 @@ describe("a gaze or an expression is said at most twice in a run of 20", () => {
 
   test("no 12-photo run of one category says one expression or one gaze three times", () => {
     expect(over(PLANS_OF_ONE, [...CUE_TEXTS, ...GAZE_TEXTS])).toBe(0);
+  });
+});
+
+// S5.7b (I5.28): «Кокетливая» changes the moments, the gaze and the cue, never the owner's rules. The rules above that read a frame are asked again of the flirty plans.
+describe("«Кокетливая» plans keep the owner's rules (S5.7b)", () => {
+  const isFlirtyFrame = (f: Frame): boolean => f.slot.level === "flirty";
+  const FLIRTY_CUES = CUES.filter((c) => c.level === "flirty").map((c) => c.text);
+  const FLIRTY_GAZES = GAZE.filter((g) => g.level === "flirty").map((g) => g.text);
+  const FLIRTY_MOMENTS = new Set(CATEGORIES.flatMap((c) => BANKS[c].places.flatMap((p) => p.moments.filter((m) => m.level === "flirty").map((m) => `${c}\u0000${p.name}\u0000${m.text}`))));
+  const onFlirtyMoment = (f: Frame): boolean => FLIRTY_MOMENTS.has(`${f.slot.category}\u0000${f.slot.location}\u0000${f.slot.activity}`);
+  const momentOfFrame = (f: Frame) => BANKS[f.slot.category as Category].places.find((p) => p.name === f.slot.location)?.moments.find((m) => m.text === f.slot.activity);
+  const SAYS_FLIRTY = [...FLIRTY_CUES, ...FLIRTY_GAZES];
+
+  test("every 12-slot plan holds exactly 7 flirty slots", () => {
+    for (const category of CATEGORIES) {
+      for (let i = 0; i < FLIRTY_PLANS; i++) expect(FLIRTY[category].slice(i * COUNT, (i + 1) * COUNT).filter(isFlirtyFrame)).toHaveLength(7);
+    }
+  });
+
+  test("the sweep holds flirty moments in «Дом» and «Гламур», only on flirty slots, and never in an ordinary plan", () => {
+    const onMoment = FLIRTY_ALL.filter(onFlirtyMoment);
+    expect([...new Set(onMoment.map((f) => f.slot.category))].sort()).toEqual(["glamour", "home"]);
+    expect(onMoment.length).toBeGreaterThan(FLIRTY_PLANS);
+    expect(offenders(onMoment, (f) => !isFlirtyFrame(f))).toEqual(NONE);
+    expect(offenders(ALL, onFlirtyMoment)).toEqual(NONE);
+  });
+
+  test("a flirty slot where her face shows says a flirty gaze, a flirty cue or a flirty moment", () => {
+    const shows = FLIRTY_ALL.filter((f) => isFlirtyFrame(f) && f.capture !== "mirror-hidden" && f.slot.pose !== "back" && momentOfFrame(f)?.expression !== true);
+    expect(shows.length).toBeGreaterThan(FLIRTY_PLANS);
+    expect(offenders(shows, (f) => !onFlirtyMoment(f) && !SAYS_FLIRTY.some((voice) => f.sentence.includes(voice)))).toEqual(NONE);
+  });
+
+  test("an ordinary slot of a flirty plan says no flirty gaze and no flirty cue", () => {
+    expect(offenders(FLIRTY_ALL.filter((f) => !isFlirtyFrame(f)), (f) => SAYS_FLIRTY.some((voice) => f.sentence.includes(voice)))).toEqual(NONE);
+  });
+
+  test("no flirty sentence says sexy, seductive or sultry, a revealing word or a youth word", () => {
+    // Distinct sentences only: the youth check is the dear step, and an equal sentence has an equal verdict.
+    const distinct = [...new Map(FLIRTY_ALL.map((f) => [f.sentence, f] as const)).values()];
+    expect(distinct.length).toBeGreaterThan(1000);
+    expect(offenders(distinct, (f) => /\b(sexy|seductive|sultry)\b/i.test(f.sentence) || revealingWordsIn(f.sentence).length > 0 || youthWords(f.sentence, "descriptor").length > 0)).toEqual(NONE);
+    expect(offenders(FLIRTY_ALL, (f) => /\b(sexy|seductive|sultry)\b/i.test(f.sentence) || revealingWordsIn(f.sentence).length > 0)).toEqual(NONE);
+  });
+
+  test("a flirty frame's prompt still says she is an adult woman, and carries no sexy, seductive or sultry", () => {
+    const sample = FLIRTY_ALL.filter((f, i) => isFlirtyFrame(f) && i % 25 === 0);
+    expect(sample.length).toBeGreaterThan(300);
+    expect(offenders(sample, (f) => !f.prompt().includes(CONSTRAINTS) || /\b(sexy|seductive|sultry)\b/i.test(f.prompt()))).toEqual(NONE);
+  });
+
+  test("a flirty slot never lies on her stomach off her bed, and a flirty prone moment wears the prone outfits and no legwear", () => {
+    expect(offenders(FLIRTY.home, (f) => f.slot.location !== "her bed" && /^lies\b/.test(f.slot.activity) && shotOf(f.capture) === "mirror")).toEqual(NONE);
+    const prone = FLIRTY.home.filter((f) => onFlirtyMoment(f) && /\bstomach\b/.test(f.slot.activity));
+    expect(prone.length).toBeGreaterThan(FLIRTY_PLANS / 10);
+    expect(offenders(prone, (f) => f.slot.location !== "her bed" || f.slot.legwear !== undefined || !["grey lounge shorts and a fitted tee", "grey leggings and a cropped tee"].includes(f.slot.outfit))).toEqual(NONE);
+  });
+
+  test("at home she shoots herself: no flirty «Дом» frame is a friend's, nor a flirty home workout or getting-ready frame", () => {
+    expect(offenders(FLIRTY.home, (f) => !isSelfShot(f.capture))).toEqual(NONE);
+    const fitHome = roomsOf("fitness");
+    const glamHome = roomsOf("glamour");
+    expect(offenders(FLIRTY.fitness, (f) => fitHome.has(f.slot.location) && !isSelfShot(f.capture))).toEqual(NONE);
+    expect(offenders(FLIRTY.glamour, (f) => glamHome.has(f.slot.location) && !isSelfShot(f.capture))).toEqual(NONE);
+  });
+
+  test("side or back to the mirror stays reflection-only, and a going-out moment still wears going-out clothes", () => {
+    const SIDE = /\bsideways\b|\bside to the mirror\b|\bback to the mirror\b|\bturns to check\b/;
+    expect(offenders(FLIRTY_ALL, (f) => SIDE.test(f.slot.activity) && f.capture === "mirror")).toEqual(NONE);
+    expect(offenders(FLIRTY.home, (f) => /going out|ready to go|\bkeys\b/.test(f.slot.activity) && /pajama|lounge|leggings|oversized|off one shoulder/.test(f.slot.outfit))).toEqual(NONE);
+  });
+
+  test("the taxi and the elevator keep their no-distance rule, and the flirty bar moment is a friend's or an arm's-length photo at the bar", () => {
+    const FAR = /a few steps away|her whole body in the picture/;
+    const rooms = FLIRTY.glamour.filter((f) => f.slot.location === "the back seat of a taxi" || f.slot.location === "an elevator");
+    expect(rooms.length).toBeGreaterThan(0);
+    expect(offenders(rooms, (f) => FAR.test(f.prompt()))).toEqual(NONE);
+    const bar = FLIRTY.glamour.filter(onFlirtyMoment);
+    expect(bar.length).toBeGreaterThan(0);
+    expect(offenders(bar, (f) => f.slot.location !== "a cocktail bar" || !["friend", "selfie"].includes(f.capture))).toEqual(NONE);
   });
 });
 

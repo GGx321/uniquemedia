@@ -58,6 +58,9 @@ export const HOME: CategoryBank = {
           noLegwear: true,
         },
         { text: "lies on her stomach, feet raised", motion: "her raised feet swing slowly", captures: ["prone"], twoHanded: false, outfits: PRONE, noLegwear: true },
+        // S5.7b («Кокетливая», the owner: «кокетливо пойдёт»): on her bed only, in the prone selfie's outfits, her feet up; and a knees-hugged timer frame.
+        { text: "lies on her stomach, feet up", motion: "her raised feet swing slowly behind her", captures: ["prone"], twoHanded: false, level: "flirty", outfits: PRONE, noLegwear: true },
+        { text: "sits hugging her knees", motion: "she rocks a little and smiles", captures: ["timer"], twoHanded: true, level: "flirty" },
         { text: "lies on her stomach, legs bent up", motion: "she kicks her feet slowly", captures: ["timer"], twoHanded: false, angle: "back", outfits: PRONE, noLegwear: true },
         { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE, noLegwear: true },
         { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE, noLegwear: true },
