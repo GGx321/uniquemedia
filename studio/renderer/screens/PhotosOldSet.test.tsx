@@ -44,6 +44,23 @@ describe("«Другая сцена» on an old set", () => {
     expect(redo.getAttribute("title")).toBe("Другая сцена — цена перед отправкой");
   });
 
+  // Round-1 review of S5.6d (mockup 29): once the price is known, the ⟳ title says «бесплатно» where the app writes the scene, and keeps «цена перед отправкой» only where it is paid.
+  test("the ⟳ title says «бесплатно» once the price shows the app writes the scene", async () => {
+    await openWriterPriced(0, "on", OLD_SET);
+    const redo = await within(sceneCard(2)).findByRole("button", { name: "Другая сцена вместо 02" });
+    fireEvent.click(redo);
+    await within(sceneCard(2)).findByRole("button", { name: "Заменить · бесплатно" });
+    await waitFor(() => expect(redo.getAttribute("title")).toBe("Другая сцена — бесплатно"));
+  });
+
+  test("the ⟳ title keeps «цена перед отправкой» where the model writes the scene", async () => {
+    await openWriterPriced(75_000, "on", OLD_SET);
+    const redo = await within(sceneCard(2)).findByRole("button", { name: "Другая сцена вместо 02" });
+    fireEvent.click(redo);
+    await within(sceneCard(2)).findByRole("button", { name: "Заменить · до $0.075" });
+    expect(redo.getAttribute("title")).toBe("Другая сцена — цена перед отправкой");
+  });
+
   test("keeps its price where the model writes the new scene", async () => {
     await openWriterPriced(75_000, "on", OLD_SET);
     fireEvent.click(await within(sceneCard(2)).findByRole("button", { name: "Другая сцена вместо 02" }));
@@ -58,5 +75,19 @@ describe("the categories of an old set", () => {
     expect(within(sceneCard(7)).getByText("Виды")).toBeDefined();
     expect(column().textContent).not.toContain("Фотосессия");
     expect(column().textContent).not.toContain("Путешествия");
+  });
+});
+
+// Round-1 review of S5.6d (mockup 24a): before the first compose, the column's «как работает проверка» names who writes the scenes and what it costs.
+describe("the column's explainer before the first compose", () => {
+  test("says the app writes the scenes, for nothing, where the template writes them", async () => {
+    await openWriterPriced(0, "on");
+    await waitFor(() => expect(within(column()).getByText(/^Приложение пишет 20/).textContent).toContain("бесплатно"));
+    expect(column().textContent).not.toContain("Модель пишет 20");
+  });
+
+  test("keeps «Модель пишет» and its price where the model writes them", async () => {
+    await openWriterPriced(75_000, "on");
+    await waitFor(() => expect(within(column()).getByText(/^Модель пишет 20/).textContent).toContain("≈ $"));
   });
 });

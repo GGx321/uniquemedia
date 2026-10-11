@@ -588,11 +588,11 @@ export function ScenesColumn({
             <li>
               <span className="stepn stepn-current mono">1</span>
               <span>
-                <b>Составить.</b> Модель пишет {count > 0 ? countOf(count, ["сцену", "сцены", "сцен"]) : "сцены"} по настройкам карточки
+                <b>Составить.</b> {writerFree ? "Приложение" : "Модель"} пишет {count > 0 ? countOf(count, ["сцену", "сцены", "сцен"]) : "сцены"} по настройкам карточки
                 {composePrice !== null && count > 0 && (
                   <>
                     {" "}
-                    — <span className="mono">{about(composePrice.expectedMicros)}</span>
+                    — {writerFree ? <span>бесплатно</span> : <span className="mono">{about(composePrice.expectedMicros)}</span>}
                   </>
                 )}
                 , фото пока не рисуются.
