@@ -209,6 +209,7 @@ export function jobFromState(j: Exclude<JobState, { kind: "import" }>): JobView 
 /** The identity every job event carries: enough to create the job's view when it is the first this window hears of it. */
 type JobRef = { readonly jobId: string; readonly avatarId: string } & (
   | { readonly kind: "avatar.candidates" }
+  | { readonly kind: "avatar.portraits" }
   | { readonly kind: "run"; readonly runId: string }
   | { readonly kind: "scenes"; readonly sceneSetId: string }
   | { readonly kind: "render"; readonly montageId: string | null; readonly videoId: string | null }

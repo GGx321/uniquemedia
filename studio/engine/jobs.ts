@@ -246,6 +246,9 @@ export class JobRegistry {
         return { kind: "render", jobId, videoId: entry.state.videoId, avatarId: entry.state.avatarId, montageId: entry.state.montageId, done, total, ...(entry.state.saving === true ? { saving: true } : {}) };
       case "avatar.candidates":
         return { kind: "avatar.candidates", jobId, avatarId: entry.state.avatarId, done, total };
+      case "avatar.portraits":
+        // Stage 5, S5.3a: compile-only. No code starts this kind yet (S5.3b adds `startPortraits`); the branch keeps the switch exhaustive.
+        return { kind: "avatar.portraits", jobId, avatarId: entry.state.avatarId, done, total };
       case "scenes":
         return { kind: "scenes", jobId, sceneSetId: entry.state.sceneSetId, avatarId: entry.state.avatarId, done, total };
       case "import": {

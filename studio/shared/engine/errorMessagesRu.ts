@@ -1,4 +1,4 @@
-import type { CaptionIssue, CategoryReason, DescriptorReason, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, SceneReason } from "./errors";
+import type { CaptionIssue, CategoryReason, DescriptorReason, ErrorCode, ExportUnavailableReason, LaunchReason, MusicUnavailableReason, PhotoUnavailableReason, PortraitReason, SceneReason } from "./errors";
 import { MAX_PICKED_FILES, type MediaKind, type MediaUnsupportedReason } from "./media";
 import { MIN_CLIP_MS, type MontageIssueCode } from "./montage";
 import type { UsageUnknownReason } from "./state";
@@ -218,6 +218,13 @@ export function descriptorReasonRu(reason: DescriptorReason, words: readonly str
   if (reason === "no-anchor" && age !== undefined) return `${text}, например «${age}-year-old»`;
   return text;
 }
+
+/** Why a portrait command was refused, for VALIDATION's `portraitReason`: each text names the cause and the way out, and says when nothing was spent. */
+export const PORTRAIT_REASONS_RU = {
+  "not-imported": "Мастер-портрет делают из импортированного фото, а у этого аватара его нет. Ничего не потрачено.",
+  "too-many-candidates": "Невыбранных вариантов уже 15 — это предел. Выберите один или нажмите «Оставить как есть», потом повторите. Ничего не потрачено.",
+  "not-a-candidate": "Этого варианта уже нет среди доступных — возможно, его убрали. Обновите список.",
+} as const satisfies Record<PortraitReason, string>;
 
 /** Why a scene-set command was refused, for VALIDATION's `sceneReason`: each text names the cause and the way out; the window names the scene itself from `sceneId`. */
 export const SCENE_REASONS_RU = {

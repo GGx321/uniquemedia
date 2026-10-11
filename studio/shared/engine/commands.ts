@@ -16,6 +16,7 @@ import { OwnStickerBytes, OwnStickerBytesPayload, StickerBytes, StickerBytesPayl
 import { FileState, MAX_LISTED_VIDEOS, VideoSummary } from "./video";
 import {
   ApiKeyStatus,
+  AvatarPortraits,
   AvatarSummary,
   Draft,
   EngineNotice,
@@ -364,6 +365,22 @@ const ENGINE_SPECS = [
   // the avatar; checked first of all). A master photo that is missing on disk or cannot be read is INTERNAL and free (an active avatar always has one in its manifest).
   defineCommand("avatars.estimateCheckDescriptor", z.strictObject({ avatarId: Id }), Estimate),
   defineCommand("avatars.checkDescriptor", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ check: DescriptorCheck })),
+  // Stage 5, S5.3a (additive): the reference portrait of an IMPORTED avatar. An imported photo that shows a phone, a mirror or a room leaks all three into every scene, so five clean
+  // head-and-shoulders portraits are drawn FROM it, ranked by the face gate against it, and the owner picks one as the avatar's master (the imported photo stays on disk).
+  //  - `estimatePortraits` is free and avatar-independent (the import screen prices it before the avatar exists): 5 × (image + one reference) and, with the age check on, 5 age checks.
+  //    PRICE_UNAVAILABLE when the model lists no price for an input image.
+  //  - `generatePortraits` is paid, accepted like `generateCandidates`, and answers the `avatar.portraits` job that runs on (job.progress, then job.done/failed/cancelled).
+  //    Refused free, with VALIDATION and `portraitReason` `not-imported` (no source photo) or `too-many-candidates` (15 unpicked portraits already), NOT_FOUND, IN_FLIGHT,
+  //    MASTER_FACE_UNUSABLE (no face in the source), FACE_GATE_UNAVAILABLE, PRICE_CHANGED, BUDGET_EXCEEDED, RECONCILE_REQUIRED and the usual key and library refusals.
+  //  - `portraits` is a free read: the source photo's id (null for a wizard avatar), the master's likeness when the master is a portrait, and the pending portraits the pick accepts, best first.
+  //  - `pickPortrait` is free: the named photo (a pending portrait, or the source photo to go back to it) becomes the master, `avatar.changed` follows, and the other portraits go.
+  //    The current master is answered as it is. VALIDATION with `portraitReason` `not-a-candidate` for any other photo, `not-imported` for a wizard avatar.
+  //  - `discardPortraits` is free («Оставить как есть»): removes every pending portrait and says how many.
+  defineCommand("avatars.estimatePortraits", Empty, Estimate),
+  defineCommand("avatars.generatePortraits", z.strictObject({ avatarId: Id, ...AcceptedWorst }), z.strictObject({ jobId: Id })),
+  defineCommand("avatars.portraits", z.strictObject({ avatarId: Id }), AvatarPortraits),
+  defineCommand("avatars.pickPortrait", z.strictObject({ avatarId: Id, photoId: Id }), z.strictObject({ avatar: AvatarSummary })),
+  defineCommand("avatars.discardPortraits", z.strictObject({ avatarId: Id }), z.strictObject({ avatarId: Id, removed: Count })),
   // «Удалить аватар»: what the confirmation shows (counts of photos, candidates, drafts, videos and of the video files that would go to the Trash too).
   // Free and read-only. Refuses like the delete itself does while anything of the avatar runs (IN_FLIGHT), so the dialog says so instead of offering a
   // button that cannot work; NOT_FOUND for an avatar the library does not have, LIBRARY_UNAVAILABLE without a library.

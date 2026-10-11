@@ -96,6 +96,13 @@ import { z } from "zod";
 // Stage 5, S5.2a (additive, no bump; two new commands, optional fields, one new reason): `avatars.setBody { avatarId, body }` and `avatars.dismissBodyProposal { avatarId }` → `{ avatar }` (free);
 //   `AvatarBody` (the eight optional body traits, body.ts) whose keys are also keys of `AvatarTraits`; `AvatarDescriptor.body` (the code-written body phrase, never stored in the text);
 //   `AvatarSummary.body` and `AvatarSummary.bodyProposal` (OMITTED, never null, when unset); `DescriptorReason` `too-long-with-body`. No new ErrorCode.
+// Stage 5, S5.3a (additive, no bump; five new commands, a job kind, an error field; nothing that exists changes): the reference portrait of an imported avatar.
+//  - commands `avatars.estimatePortraits` (free, `{}` → `Estimate`), `avatars.generatePortraits { avatarId, acceptedWorstMicros }` → `{ jobId }` (paid), `avatars.portraits { avatarId }` →
+//    `AvatarPortraits` (free read), `avatars.pickPortrait { avatarId, photoId }` → `{ avatar }` and `avatars.discardPortraits { avatarId }` → `{ avatarId, removed }` (free).
+//  - the job kind `avatar.portraits` in the job events and `JobState` (`done / total` count its five slots) and its result `PortraitsResult`; `PortraitCandidate` (with its likeness, 0.55 to 1),
+//    `FailedPortraitSlot` (`age-rejected`, `unlike`, `no-face`, `multiple-faces`, `failed`) and `PortraitSlot` live in state.ts.
+//  - `EngineError.portraitReason` (`PORTRAIT_REASONS`, only on VALIDATION, never beside another reason; Russian texts `PORTRAIT_REASONS_RU`). No new ErrorCode.
+//  - `AvatarSummary` is unchanged: a portrait is an ordinary photo of the avatar and `masterPhotoId` moves to it.
 export const PROTOCOL_VERSION = 5;
 export const ProtocolVersion = z.literal(PROTOCOL_VERSION);
 

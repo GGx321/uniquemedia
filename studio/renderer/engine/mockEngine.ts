@@ -2563,6 +2563,13 @@ export class MockEngine implements EngineBridge {
         this.emit({ v: PROTOCOL_VERSION, id: this.nextId("evt"), kind: "event", type: "avatar.changed", payload: { avatar: rest } });
         return this.ok(c, { avatar: rest });
       }
+      // Stage 5, S5.3a: compile-only stub. The portrait commands are in the contract; their mock (S5.3c) refuses them like the engine's `default` does until then.
+      case "avatars.estimatePortraits":
+      case "avatars.generatePortraits":
+      case "avatars.portraits":
+      case "avatars.pickPortrait":
+      case "avatars.discardPortraits":
+        return this.fail(c, { code: "INTERNAL", detail: `${c.type} is not implemented yet` });
       case "avatars.estimateCheckDescriptor": {
         // The engine's order: the library, then the avatar (a draft is priced too: the wizard shows the price before «Сохранить»).
         const gone = this.libraryGate() ?? this.checkTargetRefusal(c.payload.avatarId, { draftsToo: true });

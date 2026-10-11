@@ -13,6 +13,7 @@ const HELD: CommandType[] = [
   "scenes.write",
   "avatars.createDraft",
   "avatars.generateCandidates",
+  "avatars.generatePortraits",
   "avatars.rewriteDescriptor",
   "avatars.checkDescriptor",
   "avatars.importAvatar",
