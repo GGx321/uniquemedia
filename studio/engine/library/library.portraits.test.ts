@@ -327,7 +327,7 @@ describe("switchMaster to the photo that is already the master", () => {
 
   test("a master that would not pass the pick gate is answered as it is, not refused", async () => {
     const { library, avatar } = await importedAvatar();
-    const weak = await library.addPhoto(avatar.id, PNG_1X1, portraitMeta(1, 0.9));
+    const weak = await library.addPhoto(avatar.id, PNG_1X1, portraitMeta(1, 0.4));
     await library.updateAvatar(avatar.id, { masterPhotoId: weak.id });
     expect((await library.switchMaster(avatar.id, weak.id)).masterPhotoId).toBe(weak.id);
   });
@@ -382,6 +382,22 @@ describe("switchMaster commits before it cleans up (I5.18)", () => {
     expect(reported[0]).toMatch(/^[A-Z_0-9]+$/);
     expect(reported[0]).not.toContain(avatar.id);
     expect(reported[0]).not.toContain(p2.id);
+  });
+
+  test("memory already names the new master when a failed cleanup is reported (it is updated at the commit, not after the cleanup)", async () => {
+    let masterSeen: string | undefined;
+    let libraryRef: Library | undefined;
+    const rig = await withPortraits({
+      onPortraitCleanupFailure: () => {
+        masterSeen = libraryRef?.getAvatar(rig.avatar.id)?.masterPhotoId;
+      },
+    });
+    libraryRef = rig.library;
+    await makeUnremovable(rig.avatar.id, rig.p2);
+
+    await rig.library.switchMaster(rig.avatar.id, rig.p1.id);
+
+    expect(masterSeen).toBe(rig.p1.id);
   });
 
   test("a leftover is removed by the next discard", async () => {
@@ -521,6 +537,31 @@ describe("loadReference and loadOriginal of the source (invariant 9 stays: the l
     await library.loadReference(mia.id, undefined, "source");
 
     expect(seen).toEqual([PNG_1X1]);
+  });
+
+  describe("a portrait master whose source photo is gone (I5.20: never a silent fallback to the portrait)", () => {
+    async function sourceLost() {
+      const rig = await withPortraitMaster();
+      await rm(join(photosDir(rig.avatar.id), `${rig.source.id}.json`));
+      const reopened = await openLibrary(root(), deps());
+      expect(reopened.library.sourcePhoto(rig.avatar.id)).toBeNull();
+      return { library: reopened.library, avatar: rig.avatar };
+    }
+
+    test("loadReference of the source refuses with source-unavailable", async () => {
+      const { library, avatar } = await sourceLost();
+      await expectLibraryError(library.loadReference(avatar.id, undefined, "source"), "source-unavailable");
+    });
+
+    test("loadOriginal of the source refuses with source-unavailable", async () => {
+      const { library, avatar } = await sourceLost();
+      await expectLibraryError(library.loadOriginal(avatar.id, "source"), "source-unavailable");
+    });
+
+    test("the master reads still work", async () => {
+      const { library, avatar } = await sourceLost();
+      expect(await library.loadOriginal(avatar.id, "master")).toEqual(PNG_1X1);
+    });
   });
 
   test("loadReference of the source is null while there is no usable master, like the master's", async () => {

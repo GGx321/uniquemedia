@@ -761,14 +761,20 @@ export class Library {
   /**
    * Stage 5, S5.3a: which of the avatar's photos a face reference is read from. `"master"` is `referencePhoto()`. `"source"` is the imported photo (`sourcePhoto()`), the one the
    * reference portrait is drawn FROM and compared with; for an avatar that has none (a wizard avatar) it is the master, so a caller that always asks for the source needs no branch.
-   * Null in exactly the cases `referencePhoto()` is. An imported avatar whose source photo is gone also answers the master, which may be a portrait: a caller that must not
-   * fall back (the batch, the descriptor check) asks `sourcePhoto()` first.
+   * Null in exactly the cases `referencePhoto()` is. When the master is a portrait and the source photo is missing or quarantined it throws
+   * `LibraryError("source-unavailable")` instead of answering the portrait; the engine maps that to INTERNAL «исходное фото недоступно» (S5.3c), free, for the batch and the check.
    */
   #referenceOf(avatarId: string, of: ReferenceOf): ReferencePhoto | null {
     const master = this.referencePhoto(avatarId);
     if (master === null || of === "master") return master;
     const source = this.sourcePhoto(avatarId);
-    return source === null ? master : { photo: source, path: join(this.#photosDir(avatarId), source.file) };
+    if (source === null) {
+      // A portrait master with no source is an imported avatar whose source photo is missing or quarantined. Falling back to the portrait would make the descriptor check
+      // circular (I5.20) and draw a portrait from a portrait, so it is refused; only a non-portrait master (a wizard avatar) stands in for the source.
+      if (isPortraitPhoto(master.photo)) throw new LibraryError("source-unavailable", `avatar ${avatarId} has a portrait master and no source photo`);
+      return master;
+    }
+    return { photo: source, path: join(this.#photosDir(avatarId), source.file) };
   }
 
   /** The photo's file bytes, checked against its own sidecar (size, then sha256), as `loadReference` and `loadOriginal` need them. */
