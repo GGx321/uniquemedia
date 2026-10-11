@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { act, renderHook, waitFor } from "@testing-library/react";
+import type { PhotoSummary } from "../../../shared/engine";
 import type { EngineClient } from "../../engine/client";
 import { makeMock, MIA, scenePhoto } from "../../engine/mockEngine.testkit";
 import { usePhotoPages } from "./usePhotoPages";
@@ -9,8 +10,8 @@ import { usePhotoPages } from "./usePhotoPages";
 const photos = Array.from({ length: 6 }, (_unused, i) => scenePhoto(i + 1));
 
 /** A client over the mock whose photos.list answers can be held back: the answer is taken when asked, and handed over on `release`. */
-function holdableClient(): { client: EngineClient; hold: () => void; release: () => void } {
-  const { client } = makeMock({ photos, avatars: [{ ...MIA, photoCount: photos.length, eligibleUnusedCount: photos.length }] });
+function holdableClient(library: PhotoSummary[] = photos): { client: EngineClient; hold: () => void; release: () => void } {
+  const { client } = makeMock({ photos: library, avatars: [{ ...MIA, photoCount: library.length, eligibleUnusedCount: library.length }] });
   let holding = false;
   const held: (() => void)[] = [];
   const request: EngineClient["request"] = async (type, payload) => {
@@ -70,5 +71,31 @@ describe("a mark set while a read is in flight (LOW-B)", () => {
       await new Promise((resolve) => setTimeout(resolve, 0));
     });
     expect(result.current.pages?.photos[0]?.rejected).toBe(false);
+  });
+
+  test("a mark set during one read does not outlive it: the next read's word on the photo stands", async () => {
+    const { client, hold, release } = holdableClient();
+    const { result, rerender } = renderHook(({ key }) => usePhotoPages(client, MIA.avatarId, { enabled: true, refresh: [key] }), { initialProps: { key: "a" } });
+    await waitFor(() => expect(result.current.pages?.photos).toHaveLength(6));
+    const target = result.current.pages?.photos[0];
+    if (target === undefined) throw new Error("no photo");
+    const pass = (): Promise<void> =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    hold();
+    rerender({ key: "b" }); // read A starts, its answer held back
+    await pass();
+    act(() => result.current.replace({ ...target, rejected: true })); // the mark, during A
+    await act(async () => {
+      release();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(result.current.pages?.photos[0]?.rejected).toBe(true); // A landed with the mark kept
+
+    rerender({ key: "c" }); // read B: the engine says the photo is not rejected (the mark was undone elsewhere)
+    await pass();
+    await waitFor(() => expect(result.current.pages?.photos[0]?.rejected).toBe(false));
   });
 });
