@@ -105,10 +105,15 @@ describe("planSceneSet", () => {
     expect(set.scenes).toEqual(planSceneSet(input({ count: 40 })).scenes);
   });
 
-  test("a flirty level is stored on the request and, until S5.7b, changes no scene", () => {
+  test("a flirty level is stored on the request and draws the planner's mix: round(0.6 × n) flirty scenes in each built-in category", () => {
     const flirty = planSceneSet(input({ count: 40, level: "flirty" }));
     expect(flirty.request.level).toBe("flirty");
-    expect(flirty.scenes).toEqual(planSceneSet(input({ count: 40 })).scenes);
+    for (const category of ["home", "travel"]) expect(flirty.scenes.filter((s) => s.slot.category === category && s.slot.level === "flirty")).toHaveLength(12);
+    expect(flirty.scenes.map((s) => s.slot)).toEqual(planWithPools({ seed: seedOfSet("set-aaaa-0001"), count: 40, categories: ["home", "travel"], level: "flirty" }, POOLS).slots);
+  });
+
+  test("an ordinary compose plans no flirty scene", () => {
+    expect(planSceneSet(input({ count: 40 })).scenes.some((s) => s.slot.level !== undefined)).toBe(false);
   });
 
   test("a request with no level stores none", () => {

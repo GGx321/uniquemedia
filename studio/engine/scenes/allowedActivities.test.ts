@@ -128,7 +128,6 @@ describe("the planner never plans a phone or two-handed activity on a selfie or 
 
 describe("«Другая сцена» (redrawSlot) never redraws a phone or two-handed activity onto a selfie or mirror slot", () => {
   const NO_AVOID = { locations: new Set<string>(), outfits: new Set<string>() };
-  const NONE = { profile: false, back: false };
   const baseSlot = (shot: Shot, category: string, pool: Pool): PlanSlot =>
     PlanSlotSchema.parse({
       slotIndex: 1,
@@ -149,7 +148,7 @@ describe("«Другая сцена» (redrawSlot) never redraws a phone or two-
       test(`${category} ${shot}: 1000 seeds`, () => {
         const slot = baseSlot(shot, category, pool);
         for (const seed of SEEDS) {
-          const out = redrawSlot({ seed, k: 1 + (seed % 5), slot, pool, avoid: NO_AVOID, poses: NONE });
+          const out = redrawSlot({ seed, k: 1 + (seed % 5), slot, pool, avoid: NO_AVOID });
           expectCleanActivity(pool, out);
         }
       });
@@ -158,7 +157,7 @@ describe("«Другая сцена» (redrawSlot) never redraws a phone or two-
 
   test("a friend slot may still redraw a phone activity (the filter is for selfie and mirror only)", () => {
     const pool: Pool = { locations: [placeOf([SCROLL], { name: "a bed" })], outfits: ["a hoodie", "a tee"], shotDeck: ["friend"] };
-    const out = redrawSlot({ seed: 3, k: 1, slot: baseSlot("friend", "home", pool), pool, avoid: NO_AVOID, poses: NONE });
+    const out = redrawSlot({ seed: 3, k: 1, slot: baseSlot("friend", "home", pool), pool, avoid: NO_AVOID });
     expect(out.activity).toBe(SCROLL.text);
   });
 });

@@ -2,7 +2,7 @@ import { captureOfShot, shotOf, type Capture } from "../../shared/scenes/capture
 import { legwearFits } from "../../shared/scenes/template";
 import { fittingMoments, generalOutfits, kindOfDeck, outfitInfoOf, pinnedOutfitsOf, poseForCapture, settleFit } from "./fit";
 import { allowedActivities, hasCleanActivity, usableOutfits, type Place, type Pool } from "./pools";
-import { drawFromPoses, drawPose, type PoseAllowance } from "./poses";
+import { drawFromPoses, drawPose, NO_EXTRA_POSES } from "./poses";
 import { makeRng, rngPick, subSeed } from "./rngUtil";
 import { isPhoneInHandShot, type PlanSlot, type Pose } from "./schema";
 import type { Shot } from "./types";
@@ -22,7 +22,6 @@ export interface RedrawInput {
   pool: Pool;
   /** The places and outfits the set already shows. */
   avoid: { locations: ReadonlySet<string>; outfits: ReadonlySet<string> };
-  poses: PoseAllowance;
 }
 
 /**
@@ -83,7 +82,7 @@ export function redrawSlot(input: RedrawInput): PlanSlot {
     activity: rngPick(rng, allowedActivities(place, shot)).text,
     outfit,
     shot,
-    pose: angled === null ? drawPose(poseRng, shot, input.poses) : angled.pose,
+    pose: angled === null ? drawPose(poseRng, shot, NO_EXTRA_POSES) : angled.pose,
     attemptIdBase: slot.attemptIdBase,
     repeatedPair: false,
   };
@@ -102,13 +101,17 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
   const stored = slot.capture ?? captureOfShot(slot.shot);
   const sameShot = deck.filter((capture) => shotOf(capture) === shotOf(stored));
   const capture = deck.includes(stored) ? stored : rngPick(rng, sameShot.length > 0 ? sameShot : deck);
-  const drawnPose = poseForCapture(capture, drawPose(poseRng, shotOf(capture), input.poses));
-  const settled = settleFit(pool, kindOfDeck(deck), capture, drawnPose);
+  const drawnPose = poseForCapture(capture, drawPose(poseRng, shotOf(capture), NO_EXTRA_POSES));
+  // «Подача» (S5.7b): the scene keeps its level; a flirty one may take the flirty moments and, among its choices, takes one.
+  const level = slot.level ?? "ordinary";
+  const settled = settleFit(pool, kindOfDeck(deck), capture, drawnPose, level);
   const stepped = settled.capture !== capture || settled.pose !== drawnPose;
   const place = rngPick(stepped ? fixRng : rng, preferred(settled.places, (p) => p.name, avoid.locations, slot.location));
-  const moments = fittingMoments(place, settled.capture, settled.pose);
+  const moments = fittingMoments(place, settled.capture, settled.pose, level);
   const others = moments.filter((m) => m.text !== slot.activity);
-  const moment = rngPick(rng, others.length > 0 ? others : moments);
+  const choices = others.length > 0 ? others : moments;
+  const flirtyChoices = level === "flirty" ? choices.filter((m) => m.level === "flirty") : [];
+  const moment = rngPick(rng, flirtyChoices.length > 0 ? flirtyChoices : choices);
   const pinned = pinnedOutfitsOf(moment);
   const outfit = rngPick(rng, preferred(pinned.length > 0 ? pinned : generalOutfits(pool), (o) => o, avoid.outfits, slot.outfit));
   const roll = rng();
@@ -128,6 +131,7 @@ function redrawBuiltIn(input: RedrawInput, deck: readonly Capture[]): PlanSlot {
     repeatedPair: false,
     ...(settled.capture === captureOfShot(shotOf(settled.capture)) ? {} : { capture: settled.capture }),
     ...(legwear === undefined ? {} : { legwear }),
+    ...(level === "flirty" ? { level } : {}),
   };
 }
 
@@ -140,11 +144,11 @@ export interface OwnDraw {
 const AUTO_SHOTS: readonly Shot[] = ["friend", "selfie", "candid", "friend"];
 
 /** The shot and the pose of each of an idea write's `count` own scenes. An explicit shot is kept as asked; «Авто» never draws the mirror. */
-export function drawOwnScenes(input: { seed: number; k: number; count: number; shot: Shot | null; poses: PoseAllowance }): OwnDraw[] {
+export function drawOwnScenes(input: { seed: number; k: number; count: number; shot: Shot | null }): OwnDraw[] {
   const rng = makeRng(subSeed(input.seed, `own:${input.k}`));
   const poseRng = makeRng(subSeed(input.seed, `own-pose:${input.k}`));
   return Array.from({ length: input.count }, () => {
     const shot = input.shot ?? rngPick(rng, AUTO_SHOTS);
-    return { shot, pose: drawPose(poseRng, shot, input.poses) };
+    return { shot, pose: drawPose(poseRng, shot, NO_EXTRA_POSES) };
   });
 }

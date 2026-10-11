@@ -633,7 +633,7 @@ describe("runs.start", () => {
     await jobEnd(events, jobId);
   });
 
-  test("the run's poses reach the planner: plan.json holds exactly the plan its seed and those poses draw", async () => {
+  test("the run's poses are accepted and ignored: plan.json holds exactly the plan its seed draws with no poses at all", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
     const poses = { profile: true, back: true };
@@ -643,15 +643,14 @@ describe("runs.start", () => {
     const stored = planOf(runId);
 
     expect(stored.request?.poses).toEqual(poses);
-    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"], poses }));
-    expect(stored.scenes.slots.some((s) => s.pose === "profile" || s.pose === "back")).toBe(true);
+    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"] }));
 
     ok(await engine.handle(command("runs.cancel", { runId })));
     await jobEnd(events, jobId);
   });
 
-  // S5.7a: «Подача» is on the contract, but the mix is S5.7b's. Until then a flirty request stores its level and draws exactly the plan an ordinary one does.
-  test("a run asked flirty without poses stores the level, keeps no poses, and draws the plan an ordinary request draws (S5.7b implements the mix)", async () => {
+  // S5.7a/b: «Подача» is on the contract and the planner draws its mix: round(0.6 × n) flirty slots in each built-in category.
+  test("a run asked flirty without poses stores the level, keeps no poses, and holds the planner's flirty mix", async () => {
     const avatarId = await seedAvatar();
     const { engine, events } = await engineOver(runNetwork({ image: () => ({ hang: true }) }));
     const twenty = 20 * 3 * 50_000 + 2 * 37_500;
@@ -661,7 +660,8 @@ describe("runs.start", () => {
 
     expect(stored.request?.level).toBe("flirty");
     expect(stored.request && "poses" in stored.request).toBe(false);
-    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"] }));
+    expect(stored.scenes).toEqual(planScenes({ seed: stored.scenes.seed, count: 20, categories: ["home", "travel"], level: "flirty" }));
+    expect(stored.scenes.slots.filter((s) => "level" in s)).toHaveLength(12);
 
     ok(await engine.handle(command("runs.cancel", { runId })));
     await jobEnd(events, jobId);

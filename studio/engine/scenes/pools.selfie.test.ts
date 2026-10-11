@@ -91,12 +91,11 @@ describe("a custom pool with selfie words never feeds a selfie slot", () => {
   });
 
   test("«Другая сцена» on a selfie slot never lands on a selfie-worded place or activity", () => {
-    const NONE = { profile: false, back: false };
     const avoid = { locations: new Set<string>(), outfits: new Set<string>() };
     const offenders: string[] = [];
     for (let seed = 1; seed <= 100; seed++) {
       const slot = PlanSlotSchema.parse({ slotIndex: 1, category: REF, location: "a bakery counter", timeOfDay: "morning", activity: "choosing a croissant", outfit: POOL.outfits[0], shot: "selfie", pose: "front", attemptIdBase: "slot-1", repeatedPair: false });
-      const out = redrawSlot({ seed: seed * 7919, k: 1 + (seed % 5), slot, pool: POOL, avoid, poses: NONE });
+      const out = redrawSlot({ seed: seed * 7919, k: 1 + (seed % 5), slot, pool: POOL, avoid });
       const place = POOL.locations.find((l) => l.name === out.location) as Place;
       if (PHONE_IN_HAND.has(out.shot) && (SELFIE_WORDS.test(out.activity) || SELFIE_WORDS.test(place.name) || SELFIE_WORDS.test(place.at ?? ""))) offenders.push(`${seed}: ${out.location} / ${out.activity}`);
     }

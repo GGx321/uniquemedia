@@ -19,7 +19,7 @@ export interface ComposeInput {
   categories: readonly CategoryRef[];
   /** Absent from a build with «Подача» (S5.7a): the planner then draws front and three-quarter only. */
   poses?: { profile: boolean; back: boolean };
-  /** «Подача» (S5.7a), stored on the request; the mix is S5.7b's, so it changes no scene yet. */
+  /** «Подача» (S5.7a), stored on the request; the planner draws its mix (S5.7b). */
   level?: SceneLevel;
   /** Every pool the categories name, by planner name or custom id. */
   pools: Record<string, Pool>;
@@ -50,7 +50,7 @@ export function planSceneSet(input: ComposeInput): PlannedNewSceneSet {
             count: input.count,
             categories: input.categories.map(plannerCategoryOf),
             excludePairs: input.recentPairs.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
-            ...(input.poses === undefined ? {} : { poses: input.poses }),
+            ...(input.level === undefined ? {} : { level: input.level }),
             ...(input.split === undefined ? {} : { split: input.split }),
           },
           input.pools,

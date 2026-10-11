@@ -96,7 +96,6 @@ const SWEPT: Swept[] = (() => {
 
 // The redraw sweep: «Другая сцена» on selfie and mirror slots, then assembled like any other (N1).
 const REDRAWN: Swept[] = (() => {
-  const NONE = { profile: false, back: false };
   const avoid = { locations: new Set<string>(), outfits: new Set<string>() };
   const all: Swept[] = [];
   const cases: Array<[string, Pool]> = [...CATEGORIES.map((c): [string, Pool] => [c, POOLS[c]]), [PHONEFUL_REF, PHONEFUL], [CUSTOM_REF, SWEEP_CUSTOM_POOL]];
@@ -105,7 +104,7 @@ const REDRAWN: Swept[] = (() => {
       const place = pool.locations[0] as Place;
       const slot = PlanSlotSchema.parse({ slotIndex: 1, category, location: place.name, timeOfDay: "morning", activity: "x", outfit: pool.outfits[0], shot, pose: "front", attemptIdBase: "slot-1", repeatedPair: false });
       for (let seed = 1; seed <= 25; seed++) {
-        const out = redrawSlot({ seed: seed * 7919, k: 1 + (seed % 5), slot, pool, avoid, poses: NONE });
+        const out = redrawSlot({ seed: seed * 7919, k: 1 + (seed % 5), slot, pool, avoid });
         all.push(...assembleAll([out], `run-r${category}-${shot}-${seed}`, true));
       }
     }

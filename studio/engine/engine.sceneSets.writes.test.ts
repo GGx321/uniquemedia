@@ -440,7 +440,6 @@ describe("scenes.write: a rewrite", () => {
       slot: scenes[0]?.slot as PlanSlot,
       pool: poolOf(CAT_POOL),
       avoid: { locations: new Set(scenes.map((s) => s.slot.location)), outfits: new Set(scenes.map((s) => s.slot.outfit)) },
-      poses: { profile: false, back: false },
     });
     expect((fileOf(avatarId).reviewWrites?.[0] as { slots: unknown[] }).slots).toEqual([expected]);
     gate.release();

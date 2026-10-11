@@ -18,8 +18,6 @@ const customLike = (pool: Pool): Pool => ({
 });
 const POOL: Pool = customLike(POOLS.glamour);
 const NO_AVOID = { locations: new Set<string>(), outfits: new Set<string>() };
-const NONE = { profile: false, back: false };
-const ALL = { profile: true, back: true };
 
 function slotOf(shot: PlanSlot["shot"], over: Partial<PlanSlot> = {}): PlanSlot {
   const slots = plan({ seed: 7, count: 20, categories: ["glamour"] }).slots;
@@ -28,7 +26,7 @@ function slotOf(shot: PlanSlot["shot"], over: Partial<PlanSlot> = {}): PlanSlot 
   return { ...base, shot, ...over };
 }
 
-const draw = (slot: PlanSlot, k: number, over: Partial<Parameters<typeof redrawSlot>[0]> = {}) => redrawSlot({ seed: 99, k, slot, pool: POOL, avoid: NO_AVOID, poses: NONE, ...over });
+const draw = (slot: PlanSlot, k: number, over: Partial<Parameters<typeof redrawSlot>[0]> = {}) => redrawSlot({ seed: 99, k, slot, pool: POOL, avoid: NO_AVOID, ...over });
 
 describe("redrawSlot", () => {
   test("draws the same slot for the same seed, scene and write number", () => {
@@ -114,22 +112,17 @@ describe("redrawSlot", () => {
 
   test("a selfie or mirror scene keeps to front or three-quarter even when every pose is allowed", () => {
     for (const shot of ["selfie", "mirror"] as const) {
-      for (let k = 1; k <= 60; k++) expect(["front", "three-quarter"]).toContain(draw(slotOf(shot), k, { poses: ALL }).pose);
+      for (let k = 1; k <= 60; k++) expect(["front", "three-quarter"]).toContain(draw(slotOf(shot), k).pose);
     }
   });
 
-  test("another shot draws profile or back only when the set allows them", () => {
+  test("a custom pool without poses redraws front or three-quarter only: the angle toggles are gone (S5.7b)", () => {
     const slot = slotOf("friend");
-    const seen = new Set<string>();
-    for (let k = 1; k <= 120; k++) {
-      expect(["front", "three-quarter"]).toContain(draw(slot, k, { poses: NONE }).pose);
-      seen.add(draw(slot, k, { poses: ALL }).pose);
-    }
-    expect([...seen].some((p) => p === "profile" || p === "back")).toBe(true);
+    for (let k = 1; k <= 120; k++) expect(["front", "three-quarter"]).toContain(draw(slot, k).pose);
   });
 
   test("the result is a valid plan slot", () => {
-    for (let k = 1; k <= 20; k++) expect(PlanSlotSchema.safeParse(draw(slotOf("friend"), k, { poses: ALL })).success).toBe(true);
+    for (let k = 1; k <= 20; k++) expect(PlanSlotSchema.safeParse(draw(slotOf("friend"), k)).success).toBe(true);
   });
 
   test("a mirror scene in a pool with no mirror place becomes a selfie rather than a mirror on a wall that is not there", () => {
@@ -140,8 +133,8 @@ describe("redrawSlot", () => {
   describe("a category with poses (CS.8a)", () => {
     const BACK: Pool = { ...POOL, poses: ["back"] };
 
-    test("draws the pose from the category's list, the run's toggles unasked", () => {
-      for (let k = 1; k <= 20; k++) for (const poses of [NONE, ALL]) expect(draw(slotOf("friend"), k, { pool: BACK, poses }).pose).toBe("back");
+    test("draws the pose from the category's list", () => {
+      for (let k = 1; k <= 20; k++) expect(draw(slotOf("friend"), k, { pool: BACK }).pose).toBe("back");
     });
 
     test("a selfie scene turned away takes a shot nobody holds a phone for, from the deck", () => {
@@ -184,7 +177,7 @@ describe("redrawSlot", () => {
 });
 
 describe("drawOwnScenes", () => {
-  const own = (over: Partial<Parameters<typeof drawOwnScenes>[0]> = {}) => drawOwnScenes({ seed: 5, k: 2, count: 5, shot: null, poses: NONE, ...over });
+  const own = (over: Partial<Parameters<typeof drawOwnScenes>[0]> = {}) => drawOwnScenes({ seed: 5, k: 2, count: 5, shot: null, ...over });
 
   test("draws one shot and pose per scene, the same for the same seed and write number", () => {
     expect(own()).toHaveLength(5);
@@ -198,29 +191,27 @@ describe("drawOwnScenes", () => {
 
   test("auto never draws the mirror, whatever the seed or write number", () => {
     for (let k = 1; k <= 200; k++) {
-      for (const d of drawOwnScenes({ seed: k * 7919, k, count: 5, shot: null, poses: ALL })) expect(d.shot).not.toBe("mirror");
+      for (const d of drawOwnScenes({ seed: k * 7919, k, count: 5, shot: null })) expect(d.shot).not.toBe("mirror");
     }
   });
 
   test("auto draws more than one kind of shot", () => {
-    const shots = new Set(Array.from({ length: 40 }, (_, k) => drawOwnScenes({ seed: 1, k: k + 1, count: 5, shot: null, poses: NONE })).flat().map((d) => d.shot));
+    const shots = new Set(Array.from({ length: 40 }, (_, k) => drawOwnScenes({ seed: 1, k: k + 1, count: 5, shot: null })).flat().map((d) => d.shot));
     expect(shots.size).toBeGreaterThan(1);
   });
 
   test("a selfie or mirror scene is front or three-quarter even when every pose is allowed", () => {
     for (const shot of ["selfie", "mirror"] as const) {
-      for (let k = 1; k <= 60; k++) for (const d of drawOwnScenes({ seed: 3, k, count: 5, shot, poses: ALL })) expect(["front", "three-quarter"]).toContain(d.pose);
+      for (let k = 1; k <= 60; k++) for (const d of drawOwnScenes({ seed: 3, k, count: 5, shot })) expect(["front", "three-quarter"]).toContain(d.pose);
     }
   });
 
-  test("poses follow the set's allowance: none beyond front and three-quarter unless allowed", () => {
-    for (let k = 1; k <= 60; k++) for (const d of drawOwnScenes({ seed: 3, k, count: 5, shot: "friend", poses: NONE })) expect(["front", "three-quarter"]).toContain(d.pose);
-    const allowed = new Set(Array.from({ length: 80 }, (_, k) => drawOwnScenes({ seed: 3, k: k + 1, count: 5, shot: "friend", poses: ALL })).flat().map((d) => d.pose));
-    expect([...allowed].some((p) => p === "profile" || p === "back")).toBe(true);
+  test("an own scene draws front or three-quarter: it falls back to NO_EXTRA_POSES, the idea picks its own angle (S5.7b)", () => {
+    for (let k = 1; k <= 80; k++) for (const d of drawOwnScenes({ seed: 3, k, count: 5, shot: "friend" })) expect(["front", "three-quarter"]).toContain(d.pose);
   });
 
   test("a different write number draws differently", () => {
-    const draws = new Set(Array.from({ length: 30 }, (_, k) => JSON.stringify(drawOwnScenes({ seed: 3, k: k + 1, count: 5, shot: null, poses: ALL }))));
+    const draws = new Set(Array.from({ length: 30 }, (_, k) => JSON.stringify(drawOwnScenes({ seed: 3, k: k + 1, count: 5, shot: null }))));
     expect(draws.size).toBeGreaterThan(5);
   });
 });

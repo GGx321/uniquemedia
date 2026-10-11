@@ -119,7 +119,6 @@ describe("built-in pools are untouched", () => {
 
 describe("«Другая сцена» follows the same rule", () => {
   const AVOID = { locations: new Set<string>(), outfits: new Set<string>() };
-  const NONE = { profile: false, back: false };
   const slotOf = (shot: PlanSlot["shot"], location: string): PlanSlot => ({
     slotIndex: 1,
     category: CUSTOM,
@@ -135,7 +134,7 @@ describe("«Другая сцена» follows the same rule", () => {
 
   test.each(["selfie", "mirror"] as const)("a %s redrawn on the owner-like pool never lands on a phone activity, over 1000 seeds", (shot) => {
     for (const seed of SEEDS) {
-      const out = redrawSlot({ seed, k: 1 + (seed % 5), slot: slotOf(shot, "a cozy bedroom"), pool: OWNER_LIKE_POOL, avoid: AVOID, poses: NONE });
+      const out = redrawSlot({ seed, k: 1 + (seed % 5), slot: slotOf(shot, "a cozy bedroom"), pool: OWNER_LIKE_POOL, avoid: AVOID });
       const activity = activityOf(OWNER_LIKE_POOL, out);
       expect(out.shot).toBe(shot);
       expect(activity !== undefined && isPhoneActivity(activity)).toBe(false);
@@ -146,7 +145,7 @@ describe("«Другая сцена» follows the same rule", () => {
   test("on a pool with no clean place a redrawn selfie or mirror becomes a friend's snap", () => {
     for (const shot of ["selfie", "mirror"] as const) {
       for (const seed of SEEDS.slice(0, 50)) {
-        expect(redrawSlot({ seed, k: 1, slot: slotOf(shot, "a wide bed"), pool: NO_CLEAN_POOL, avoid: AVOID, poses: NONE }).shot).toBe("friend");
+        expect(redrawSlot({ seed, k: 1, slot: slotOf(shot, "a wide bed"), pool: NO_CLEAN_POOL, avoid: AVOID }).shot).toBe("friend");
       }
     }
   });

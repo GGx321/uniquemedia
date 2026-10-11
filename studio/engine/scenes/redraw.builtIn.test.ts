@@ -17,7 +17,7 @@ useNativeGlobals();
 const NO_AVOID = { locations: new Set<string>(), outfits: new Set<string>() };
 const ALL = { profile: true, back: true };
 const captureOf = (slot: PlanSlot): Capture => slot.capture ?? captureOfShot(slot.shot);
-const draw = (slot: PlanSlot, k: number, pool: Pool, over: Partial<Parameters<typeof redrawSlot>[0]> = {}): PlanSlot => redrawSlot({ seed: 99, k, slot, pool, avoid: NO_AVOID, poses: ALL, ...over });
+const draw = (slot: PlanSlot, k: number, pool: Pool, over: Partial<Parameters<typeof redrawSlot>[0]> = {}): PlanSlot => redrawSlot({ seed: 99, k, slot, pool, avoid: NO_AVOID, ...over });
 const slotsOf = (category: Category): PlanSlot[] => plan({ seed: 5, count: 36, categories: [category], poses: ALL }).slots;
 const momentOf = (category: Category, slot: PlanSlot): Activity | undefined => POOLS[category].locations.find((l) => l.name === slot.location)?.activities.find((a) => a.text === slot.activity);
 

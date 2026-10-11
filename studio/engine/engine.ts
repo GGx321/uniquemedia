@@ -3068,8 +3068,8 @@ export class Engine {
         count,
         categories: categories.map(sceneCategory),
         excludePairs: recent.map(({ location, outfit, activity }) => ({ location, outfit, activity })),
-        // Profile and back only when the run allows them (T5c, owner decision); selfie and mirror stay front or three-quarter.
-        poses,
+        // «Подача» (S5.7b); the angle comes from the scene, so the request's `poses` (kept for an old window) is not asked.
+        ...(level === undefined ? {} : { level }),
       },
       { ...POOLS, ...Object.fromEntries(custom.map((c) => [c.categoryId, poolOf(c.pool)])) },
     );

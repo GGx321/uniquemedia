@@ -103,7 +103,7 @@ describe("a resume of the same plan.json with the 5a.2 look wired in", () => {
     for (const slot of SLOTS) {
       const pool = POOLS[slot.category as keyof typeof POOLS];
       for (const k of [1, 2, 3]) {
-        const drawn = redrawSlot({ seed: 77, k, slot, pool, avoid: { locations: new Set(), outfits: new Set() }, poses: { profile: true, back: true } });
+        const drawn = redrawSlot({ seed: 77, k, slot, pool, avoid: { locations: new Set(), outfits: new Set() } });
         expect(PlanSlotSchema.safeParse(drawn).success).toBe(true);
       }
     }
