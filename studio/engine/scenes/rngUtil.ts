@@ -3,19 +3,10 @@
 // allows importing (studio/engine/runtime.test.ts's ALLOWED_ROOTS): a second
 // implementation here would drift from it for no reason.
 import { makeRng, rngInt, rngPick, type Rng } from "../../../src/core/rng";
+// 5a.2 (S5.6a): FNV-1a lives with the shared scene banks, which draw with it and may not import src/core/rng. Re-exported, never copied.
+import { fnv1a } from "../../shared/scenes/hash";
 
-export { makeRng, rngPick, type Rng };
-
-/** FNV-1a over a string, 32-bit unsigned. Mixes a name into a seed (subSeed below) and keys
- *  the look module's per-slot draws — not a general-purpose hash. */
-export function fnv1a(text: string): number {
-  let hash = 0x811c9dc5;
-  for (let i = 0; i < text.length; i++) {
-    hash ^= text.charCodeAt(i);
-    hash = Math.imul(hash, 0x01000193);
-  }
-  return hash >>> 0;
-}
+export { fnv1a, makeRng, rngPick, type Rng };
 
 /**
  * A deterministic, independent rng seed from `seed` and a discriminator

@@ -105,4 +105,13 @@ describe("one home for the hash helpers", () => {
   test("redraw.ts takes subSeed from rngUtil, not from the planner", () => {
     expect(read("redraw.ts")).toMatch(/import\s*\{[^}]*\bsubSeed\b[^}]*\}\s*from\s*"\.\/rngUtil"/);
   });
+
+  // 5a.2 (S5.6a): fnv1a lives in shared/scenes/hash.ts, so the shared scene banks draw with it without importing src/core/rng. rngUtil keeps
+  // exporting it (the look module and subSeed read it there), as a re-export, never a second copy.
+  test("rngUtil.ts defines no fnv1a of its own and re-exports the shared one", () => {
+    const source = read("rngUtil.ts");
+    expect(source).not.toMatch(/function\s+fnv1a\b/);
+    expect(source).toMatch(/import\s*\{[^}]*\bfnv1a\b[^}]*\}\s*from\s*"\.\.\/\.\.\/shared\/scenes\/hash"/);
+    expect(source).toMatch(/export\s*\{[^}]*\bfnv1a\b[^}]*\}/);
+  });
 });

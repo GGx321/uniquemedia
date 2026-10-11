@@ -56,12 +56,12 @@ const ALLOWED_PACKAGES = new Set(["zod", "ffmpeg-static", "onnxruntime-web", "@j
 /**
  * Where engine code may live: its own tree, studio/node, the pure contract, the pure montage, sticker, text (the caption
  * rules, segmenter and layout), music (a track's highlights and waveform window) and autopilot (the launch's money arithmetic,
- * spec generator and track chooser) modules, which the dev mock shares,
+ * spec generator and track chooser) and scenes (the scene banks, their hash and the sentence template) modules, which the dev mock shares,
  * and the uniquifier's src/core and src/node, which Studio may import (never
  * edit) — held to the same rules below.
  */
 const ALLOWED_ROOTS = [
-  ...["engine", "node", join("shared", "engine"), join("shared", "montage"), join("shared", "stickers"), join("shared", "text"), join("shared", "music"), join("shared", "autopilot")].map((d) => join(STUDIO_DIR, d)),
+  ...["engine", "node", join("shared", "engine"), join("shared", "montage"), join("shared", "stickers"), join("shared", "text"), join("shared", "music"), join("shared", "autopilot"), join("shared", "scenes")].map((d) => join(STUDIO_DIR, d)),
   ...[join("src", "core"), join("src", "node")].map((d) => join(STUDIO_DIR, "..", d)),
 ];
 
@@ -259,6 +259,11 @@ test("the walk reaches the engine's dispatcher, the control schema, money and th
   expect(files).toContain(join("engine", "money", "budget.ts"));
   expect(files).toContain(join("engine", "library", "library.ts"));
   expect(files).toContain(join("shared", "engine", "index.ts"));
+});
+
+// 5a.2 (S5.6a): the scene banks' hash lives in shared/scenes (the engine's rngUtil re-exports it), so the engine reaches that pure folder.
+test("the walk reaches the shared scene hash", () => {
+  expect(walkFromEntry().files).toContain(join("shared", "scenes", "hash.ts"));
 });
 
 test("every module reachable from the engine entry uses only node:* APIs and never reads the environment", () => {
