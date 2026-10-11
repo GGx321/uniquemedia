@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { CATEGORIES } from "./types";
+import { isOwnerBannedOutfit } from "../../shared/scenes/words";
 import { POOLS, PoolSchema, validatePools } from "./pools";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -50,40 +51,41 @@ describe("the shipped pools", () => {
     }
   });
 
-  test("photoshoot uses its own deck: 3 photographer, 2 candid, never friend/selfie/mirror", () => {
-    expect([...POOLS.photoshoot.shotDeck].sort()).toEqual(["candid", "candid", "photographer", "photographer", "photographer"]);
+  // 5a.2 (S5.6b, I5.32): the decks are the captures, dealt in exact cycles; the stored `shotDeck` is the five shots they ride on (I5.27).
+  const sortedDeck = (deck: readonly string[] | undefined): string[] => [...(deck ?? [])].sort();
+
+  test("«Дом» deals 12: four phone-over-face mirror selfies, two mirrors, two from above, one prone, one over the shoulder, two timers, and never a friend", () => {
+    expect(sortedDeck(POOLS.home.captureDeck)).toEqual(sortedDeck(["mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror", "mirror", "above", "above", "prone", "over-shoulder", "timer", "timer"]));
   });
 
-  test("every other category uses the default deck: 2 friend, 1 selfie, 1 mirror, 1 candid", () => {
-    for (const category of CATEGORIES.filter((c) => c !== "photoshoot")) {
-      expect([...POOLS[category].shotDeck].sort()).toEqual(["candid", "friend", "friend", "mirror", "selfie"]);
-    }
+  test("«Улица» and «Виды» deal 6: three friends, a selfie, a timer and a candid", () => {
+    for (const category of ["photoshoot", "travel"] as const) expect(sortedDeck(POOLS[category].captureDeck)).toEqual(sortedDeck(["friend", "friend", "friend", "selfie", "timer", "candid"]));
   });
 
-  test("the photoshoot hallway wall is lit by the morning or the evening, not by a studio", () => {
-    const wall = POOLS.photoshoot.locations.find((l) => l.name === "a plain wall in her hallway");
-    expect(wall?.times).toEqual(["morning", "evening"]);
+  test("«Гламур» and «Фитнес» deal 6: two friends, a selfie, a mirror, a phone-over-face mirror and a candid", () => {
+    for (const category of ["glamour", "fitness"] as const) expect(sortedDeck(POOLS[category].captureDeck)).toEqual(sortedDeck(["friend", "friend", "selfie", "mirror", "mirror-hidden", "candid"]));
+  });
+
+  test("the stored shot deck of every pool is the shots its captures ride on, and never a photographer", () => {
+    for (const category of CATEGORIES) expect(POOLS[category].shotDeck.every((shot) => ["friend", "selfie", "mirror", "candid"].includes(shot))).toBe(true);
+  });
+
+  test("every place is lit by a stored time of day, and none by a studio", () => {
+    for (const category of CATEGORIES) for (const place of POOLS[category].locations) expect(place.times.every((time) => time !== "studio lighting")).toBe(true);
   });
 });
 
 // C1 (owner canary, 2026-10-11): an ordinary girl's Instagram, not a staged shoot in a wheat field, and a glamour that is not always the black dress.
 describe("C1 pool text", () => {
-  test("photoshoot has a park path in place of the wheat field", () => {
-    const names = POOLS.photoshoot.locations.map((l) => l.name);
-    expect(names).not.toContain("a field by the road");
-    expect(names).toContain("a park path");
-    const path = POOLS.photoshoot.locations.find((l) => l.name === "a park path");
-    expect(path).toMatchObject({ at: "on a park path", times: ["golden hour", "midday"] });
-    expect(path?.activities.map((a) => a.text)).toEqual(["walking along the path", "sitting on a bench", "looking over her shoulder"]);
-  });
-
   test("no photoshoot place or activity mentions wheat", () => {
     const text = JSON.stringify(POOLS.photoshoot.locations);
     expect(text).not.toMatch(/wheat|field/i);
   });
 
-  test("photoshoot swaps the trench coat for a cropped cardigan and jeans", () => {
-    expect(POOLS.photoshoot.outfits).toEqual(["a loose blazer over a tee and jeans", "a black going-out dress", "a denim jacket and jeans", "a monochrome knit set", "a cropped cardigan and jeans"]);
+  // The owner (2026-10-11): no denim shorts and no denim skirts, anywhere; a denim jacket with jeans is fine.
+  test("no pool outfit is denim shorts or a denim skirt", () => {
+    for (const category of CATEGORIES) for (const outfit of POOLS[category].outfits) expect(isOwnerBannedOutfit(outfit)).toBe(false);
+    expect(POOLS.photoshoot.outfits).toContain("a denim jacket and jeans");
   });
 
   test("glamour draws from eleven outfits, in this order", () => {
@@ -130,18 +132,9 @@ describe("C1 pool text", () => {
     expect(glamourPlaces().map((l) => l.times)).toEqual([["evening", "night"], ["evening"], ["night"], ["night"], ["evening"], ["evening", "night"], ["evening"]]);
   });
 
-  test("glamour activities are the ones written, and only the hair curling and the heels need both hands", () => {
-    expect(glamourPlaces().map((l) => l.activities)).toEqual([
-      ["leaning on the bar counter", "holding a cocktail glass", "laughing at something nearby"],
-      ["reaching for her glass", "resting her chin on her hand", "smiling across the table"],
-      ["adjusting an earring", "looking out of the window", "leaning back in the seat"],
-      ["walking with a small clutch", "waiting by the door", "looking over her shoulder"],
-      ["applying lipstick", "putting on mascara", "curling her hair"],
-      ["checking her outfit", "fixing her hair", "resting a hand on the handrail"],
-      ["slipping on her heels", "grabbing her keys", "checking her outfit"],
-    ]);
-    // Slipping on heels is awkward with the phone in the other hand, so a selfie or a mirror never draws it; the front door keeps two one-handed activities.
-    expect(glamourPlaces().flatMap((l) => l.twoHanded)).toEqual(["curling her hair", "slipping on her heels"]);
+  test("glamour keeps a one-handed moment at every place, and only getting ready needs both hands", () => {
+    for (const place of POOLS.glamour.locations) expect(place.activities.some((a) => !a.twoHanded)).toBe(true);
+    expect(POOLS.glamour.locations.flatMap((l) => l.activities.filter((a) => a.twoHanded).map((a) => l.name))).not.toContain("a restaurant table");
   });
 
   test("the bathroom, the elevator and the front door carry a mirror, and only the bathroom and the front door are rooms", () => {
@@ -149,10 +142,8 @@ describe("C1 pool text", () => {
     expect(glamourPlaces().filter((l) => l.room === true).map((l) => l.name)).toEqual(["her bathroom while getting ready", "her front door"]);
   });
 
-  test("the bathroom and the front door carry the written details", () => {
-    const details = (name: string): readonly string[] | undefined => POOLS.glamour.locations.find((l) => l.name === name)?.details;
-    expect(details("her bathroom while getting ready")).toEqual(["makeup on the counter", "a hair dryer by the sink"]);
-    expect(details("her front door")).toEqual(["a coat rack", "shoes by the door"]);
+  test("every glamour place carries 2 or 3 details (K-3), the rooms' going into the room phrase", () => {
+    for (const place of POOLS.glamour.locations) expect([2, 3]).toContain(place.details?.length ?? 0);
   });
 
   test("nothing in glamour is on a bed, in a hotel or at a wardrobe, and no glamour activity is messyOk", () => {

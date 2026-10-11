@@ -1,8 +1,11 @@
 import { z } from "zod";
 import { CategoryPoses, POOL_TEXT_MAX, youthWords } from "../../shared/engine";
+import { BANKS } from "../../shared/scenes/banks";
+import type { LegwearSlot, Moment, Outfit } from "../../shared/scenes/banks/types";
+import { CAPTURES, shotOf, type Capture } from "../../shared/scenes/captures";
+import { PHONE_WORDS, SELFIE_WORDS, isOwnerBannedOutfit, withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { isPhoneInHandShot, type Pose } from "./schema";
 import { CATEGORIES, SHOTS, type Category, type Shot } from "./types";
-import { PHONE_WORDS, SELFIE_WORDS } from "../../shared/scenes/words";
 import { REVEALING_WORDS } from "./words";
 
 // The scene pools: everyday locations, outfits and shot decks per category.
@@ -11,37 +14,23 @@ import { REVEALING_WORDS } from "./words";
 // with zod at load, so a malformed pool is a test failure, not a production
 // surprise. Kept in English throughout: this text feeds image prompts (T5b).
 //
+// 5a.2 (S5.6b, I5.21): the built-in pools are DERIVED from the shared scene banks (shared/scenes/banks/*, S5.6a), the one source of every phrase: a bank place
+// is a `Place`, a bank moment an `Activity` carrying the moment's tags, and a category's deck of captures rides on the pool (`captureDeck`) next to the stored
+// `shotDeck` of five shots (I5.27). The bank text is held to the engine's word lists here too (the revealing words, the paper, screens, staging and luxury
+// words, with «silk pajamas» exempt, K-22).
+//
 // Deviations from the spike, both required by the fixed decisions
 // (docs/studio/2026-09-24-stage-2-plan.md, "Revealing outfits"):
 // - No spice levels / outfitsByLevel: Stage 2 has no revealing-scene provider
-//   yet, so every category now has one flat outfit list. Glamour's list keeps
-//   only the three outfits the decision names as non-revealing (bodycon
-//   dress, mini skirt + cropped top, corset top + trousers); its other two
-//   tiers (bikini, lingerie, ...) are dropped entirely, not merely disabled.
-// - Travel's "one-piece swimsuit with a sarong" and fitness's "leggings and a
-//   sports bra" are dropped: swimwear and sports bras are explicitly on the
-//   disabled list even though they are not Glamour-category items.
+//   yet, so every category has one flat outfit list.
+// - Swimwear and sports bras are explicitly on the disabled list even though
+//   they are not Glamour-category items.
 
-/** One activity a location allows. Two-handed activities never pair with a
- *  selfie or mirror shot: one hand holds the phone. */
-export interface Activity {
-  text: string;
-  twoHanded: boolean;
-  /** The phone is in her hand or in use. Optional: a stored custom pool has no such flag (see `isPhoneActivity`). */
-  phone?: true;
-  /** The activity may happen in a messy room (the room draw's rare messy state, phoneLook.ts). */
-  messyOk?: true;
-}
-type ActivityFlag = "phone" | "messyOk";
-function activity(text: string, twoHanded: boolean, flags: readonly ActivityFlag[]): Activity {
-  return { text, twoHanded, ...(flags.includes("phone") ? { phone: true as const } : {}), ...(flags.includes("messyOk") ? { messyOk: true as const } : {}) };
-}
-function one(text: string, ...flags: ActivityFlag[]): Activity {
-  return activity(text, false, flags);
-}
-function two(text: string, ...flags: ActivityFlag[]): Activity {
-  return activity(text, true, flags);
-}
+/**
+ * One activity a location allows: a bank moment (5a.2), or a stored custom activity, which has only a text and the hands. Two-handed activities never pair
+ * with a selfie or mirror shot: one hand holds the phone. The tags are the moment's (shared/scenes/banks/types.ts); a custom activity has none.
+ */
+export type Activity = Omit<Moment, "captures" | "motion"> & { captures?: readonly Capture[]; motion?: string };
 
 /** A location with the times of day it is plausible at and the activities
  *  that fit it; `mirror` marks a location a mirror shot may land on. */
@@ -52,10 +41,12 @@ export interface Place {
   mirror?: true;
   /** A room of her home or hotel: the room draw adds a tidy, lived-in or messy phrase. Absent on a custom place. */
   room?: true;
-  /** 2-3 ordinary things in the room, only where `room` is set. */
+  /** 2-3 ordinary things in the place (every built-in place has them since 5a.2, K-3; a custom place has none). */
   details?: readonly string[];
   /** The place as a locative phrase, for 5a.2's sentence template. */
   at?: string;
+  /** «Дом»'s lamp mood at evening and night (I5.34). */
+  lamp?: true;
 }
 
 // 5a.2 (S5.6b): the two word lists are the shared scene banks' own (shared/scenes/words.ts), so the banks, the template and the engine can never disagree.
@@ -94,8 +85,7 @@ export function allowedActivities(place: { activities: readonly Activity[] }, sh
   return place.activities.filter(isCleanActivity);
 }
 
-/** One category's pools: its locations, its flat outfit list (no revealing
- *  items in Stage 2) and the shot deck the planner draws from. */
+/** One category's pools: its locations, its flat outfit list (no revealing items in Stage 2) and the shot deck the planner draws from. */
 export interface Pool {
   locations: readonly Place[];
   outfits: readonly string[];
@@ -105,288 +95,66 @@ export interface Pool {
    * (planner.ts). Absent on every built-in and on a custom category without a preference.
    */
   poses?: readonly Pose[];
+  /**
+   * 5a.2: who takes the photos, as the planner deals them (exact Bag cycles, I5.32). Present on a built-in pool only; its presence is what makes the planner
+   * draw capture, then pose, then a place with a fitting moment, then the moment (planner.ts). A custom pool keeps its stored `shotDeck`.
+   */
+  captureDeck?: readonly Capture[];
+  /** 5a.2: each outfit's marks (shows her legs; worn only by a moment that pins it), beside `outfits`. Built-in pools only. */
+  outfitInfo?: readonly Outfit[];
+  /** 5a.2: the legwear slot (I5.29, K-17), drawn on about `share` of the slots whose outfit shows her legs. Built-in pools only. */
+  legwear?: LegwearSlot;
 }
 
-/** Every category but Photoshoot: 2 friend, 1 selfie, 1 mirror, 1 candid. */
-const DEFAULT_SHOT_DECK: readonly Shot[] = ["friend", "selfie", "mirror", "candid", "friend"];
-/** Photoshoot's own deck (spike "Planner rules"): 3 photographer, 2 candid. */
-const PHOTOSHOOT_SHOT_DECK: readonly Shot[] = ["photographer", "photographer", "photographer", "candid", "candid"];
+/**
+ * The shared everyday outfits (5a.2, S5.6b): what a custom pool draws when the owner's denim rule leaves it none (a pool whose every outfit is denim shorts or a
+ * denim skirt). Each passes the same word lists as the banks' outfits.
+ */
+export const EVERYDAY_OUTFITS: readonly string[] = ["a white t-shirt and jeans", "a grey hoodie and leggings", "a cotton top and linen trousers", "an oversized knit sweater and jeans"];
 
-// planner.ts gives each category its own rng sub-stream (categorySeed), so
-// editing one category's pool here (adding/removing a location, outfit or
-// shot-deck entry) only ever changes THAT category's plans for a given seed
-// — never another category's, even though `plan()` draws every category
-// from what looks like "the same" seed. Order within a category's own arrays
-// still matters for existing seeds (the initial shuffle depends on it).
-// S5.1c (T11): ordinary places of her own life. No paper, no screens but her phone, no studio, no luxury (spike A: «все комнаты в хламе» was the tidiness draw
-// run too high, and the paper and the laptops were the staging). A `phone` activity has the phone in use; a `room` carries 2-3 ordinary details for the room
-// draw; `messyOk` marks an activity that fits a rarely messy room; `at` is the place as a locative phrase for 5a.2's sentence template.
+/**
+ * The outfits a pool may draw (the owner, 2026-10-11): no denim shorts and no denim skirts, anywhere. A custom pool stored before the rule may hold them, so the
+ * planner and «Другая сцена» draw through this; a pool left with none draws the shared everyday list. The order is kept, so a pool the rule leaves alone plans as it did.
+ */
+export function usableOutfits(outfits: readonly string[]): readonly string[] {
+  const kept = outfits.filter((outfit) => !isOwnerBannedOutfit(outfit));
+  return kept.length > 0 ? kept : EVERYDAY_OUTFITS;
+}
+
+function activityOf(moment: Moment): Activity {
+  return { ...moment };
+}
+
+/** A category's pool, from its bank (the planner's `shotDeck` is the five shots the captures ride on; I5.27). */
+function poolOfBank(category: Category): Pool {
+  const bank = BANKS[category];
+  return {
+    locations: bank.places.map((place) => ({
+      name: place.name,
+      at: place.at,
+      times: [...place.times],
+      activities: place.moments.map(activityOf),
+      details: [...place.details],
+      ...(place.mirror === true ? { mirror: true as const } : {}),
+      ...(place.room === true ? { room: true as const } : {}),
+      ...(place.lamp === true ? { lamp: true as const } : {}),
+    })),
+    outfits: bank.outfits.map((outfit) => outfit.text),
+    shotDeck: bank.captureDeck.map(shotOf),
+    captureDeck: [...bank.captureDeck],
+    outfitInfo: bank.outfits.map((outfit) => ({ ...outfit })),
+    ...(bank.legwear === undefined ? {} : { legwear: { items: [...bank.legwear.items], share: bank.legwear.share } }),
+  };
+}
+
+// planner.ts gives each category its own rng sub-stream (categorySeed), so editing one category's bank only ever changes THAT category's plans for a given seed
+// — never another category's. Order within a category's own arrays still matters for existing seeds (the shuffles depend on it).
 export const POOLS: Record<Category, Pool> = {
-  home: {
-    locations: [
-      {
-        name: "her small kitchen",
-        at: "in her small kitchen",
-        room: true,
-        details: ["a kettle on the counter", "a fruit bowl"],
-        times: ["morning", "midday"],
-        activities: [one("waiting for the kettle"), one("holding a ceramic coffee mug"), two("slicing fruit on a cutting board")],
-      },
-      {
-        name: "her bed in the morning",
-        at: "on her bed",
-        room: true,
-        details: ["a pillow", "a bedside lamp"],
-        times: ["morning"],
-        activities: [one("stretching after waking up", "messyOk"), one("scrolling her phone", "phone"), one("holding a ceramic coffee mug")],
-      },
-      {
-        name: "the couch under a blanket",
-        at: "on the couch under a blanket",
-        room: true,
-        details: ["a cushion in the corner", "a mug on the side table"],
-        times: ["midday", "evening"],
-        activities: [one("laughing at her phone", "phone"), one("holding a ceramic coffee mug"), two("pulling the blanket over her knees")],
-      },
-      {
-        name: "her bathroom",
-        at: "in her bathroom",
-        room: true,
-        details: ["a hair dryer by the sink", "a towel on the hook"],
-        times: ["morning", "evening"],
-        mirror: true,
-        activities: [one("brushing her hair"), one("applying lip balm"), two("tying her hair up")],
-      },
-      {
-        name: "a small balcony with potted plants",
-        at: "on a small balcony with potted plants",
-        times: ["morning", "golden hour"],
-        activities: [one("watering plants"), one("holding a ceramic coffee mug"), one("leaning on the railing")],
-      },
-      {
-        name: "a chair by her bedroom window",
-        at: "on a chair by her bedroom window",
-        room: true,
-        details: ["a plant on the windowsill", "a cardigan over the chair"],
-        times: ["midday", "golden hour"],
-        activities: [one("looking out of the window"), one("holding a cup of tea"), one("pulling her knees up")],
-      },
-    ],
-    outfits: ["an oversized cream knit sweater", "a tank top and pajama shorts", "a grey lounge set", "a white t-shirt and cotton shorts", "a cozy hoodie"],
-    shotDeck: DEFAULT_SHOT_DECK,
-  },
-  travel: {
-    locations: [
-      {
-        name: "a sandy beach at the waterline",
-        at: "on a sandy beach at the waterline",
-        times: ["midday", "golden hour"],
-        activities: [one("walking along the waterline"), one("holding her sandals"), one("sitting on a towel")],
-      },
-      {
-        name: "a narrow old-town street",
-        at: "on a narrow old-town street",
-        times: ["morning", "midday", "golden hour"],
-        activities: [one("holding a takeaway coffee"), two("checking directions on her phone", "phone"), one("eating gelato")],
-      },
-      {
-        name: "a small hotel balcony",
-        at: "on a small hotel balcony",
-        times: ["morning", "golden hour"],
-        activities: [one("leaning on the railing"), one("holding a cup of coffee"), one("looking out at the sea")],
-      },
-      {
-        name: "an airplane window seat",
-        at: "in an airplane window seat",
-        times: ["morning", "midday"],
-        activities: [one("looking out of the window"), one("holding a cup of coffee"), one("scrolling her phone", "phone")],
-      },
-      {
-        name: "a mountain viewpoint",
-        at: "at a mountain viewpoint",
-        times: ["morning", "midday", "golden hour"],
-        activities: [one("taking in the view"), two("adjusting her backpack straps"), one("holding a water bottle")],
-      },
-      {
-        name: "a ferry deck",
-        at: "on a ferry deck",
-        times: ["midday", "golden hour"],
-        activities: [one("holding the rail"), one("sitting on the edge of the deck"), one("letting the wind blow her hair")],
-      },
-      {
-        name: "an ordinary hotel room",
-        at: "in an ordinary hotel room",
-        room: true,
-        details: ["a suitcase open on the floor", "a key card on the nightstand"],
-        times: ["morning", "evening"],
-        mirror: true,
-        activities: [one("adjusting her outfit"), one("putting on earrings"), one("checking her look")],
-      },
-    ],
-    outfits: ["a cotton top and linen trousers", "a linen shirt and denim shorts", "a sundress and sneakers", "a white button-up shirt"],
-    shotDeck: DEFAULT_SHOT_DECK,
-  },
-  photoshoot: {
-    locations: [
-      {
-        name: "a plain wall in her hallway",
-        at: "against a plain wall in her hallway",
-        room: true,
-        details: ["a coat rack by the door", "shoes by the door"],
-        times: ["morning", "evening"],
-        activities: [one("tucking her hair behind her ear"), one("leaning a shoulder on the wall"), one("looking over her shoulder")],
-      },
-      {
-        name: "a city street at night",
-        at: "on a city street at night",
-        times: ["night"],
-        activities: [one("walking down the street"), one("leaning against a wall"), one("looking over her shoulder")],
-      },
-      {
-        name: "a park path",
-        at: "on a park path",
-        times: ["golden hour", "midday"],
-        activities: [one("walking along the path"), one("sitting on a bench"), one("looking over her shoulder")],
-      },
-      {
-        name: "the stairs outside her building",
-        at: "on the stairs outside her building",
-        times: ["golden hour", "evening"],
-        activities: [one("sitting on a step"), one("leaning against the railing"), one("walking down the stairs")],
-      },
-      {
-        name: "a corner cafe table",
-        at: "at a corner cafe table",
-        times: ["midday", "evening"],
-        activities: [one("sitting at a small table with a cup"), one("resting her chin on her hand"), one("looking out of the window")],
-      },
-    ],
-    outfits: ["a loose blazer over a tee and jeans", "a black going-out dress", "a denim jacket and jeans", "a monochrome knit set", "a cropped cardigan and jeans"],
-    shotDeck: PHOTOSHOOT_SHOT_DECK,
-  },
-  // S5.5 (owner canary C1', 2026-10-11): «glamour came out cringe» — all five places were at home or in a hotel with static moments, so a girl dressed for a night out sat on
-  // her bed for no reason. The owner chose «an evening out»: a bar, a restaurant, a taxi, a street at night, an elevator; at home ONLY getting ready (the bathroom sink,
-  // the front door). Nothing on a bed. A paid probe on the owner's quality model drew all seven with no refusal (7/7). Only the two rooms carry details (a place that is not a
-  // room carries none, schema above) and none is messyOk: she is getting ready, the room is tidy.
-  glamour: {
-    locations: [
-      {
-        name: "a cocktail bar",
-        at: "at a cocktail bar",
-        times: ["evening", "night"],
-        activities: [one("leaning on the bar counter"), one("holding a cocktail glass"), one("laughing at something nearby")],
-      },
-      {
-        name: "a restaurant table",
-        at: "at a restaurant table",
-        times: ["evening"],
-        activities: [one("reaching for her glass"), one("resting her chin on her hand"), one("smiling across the table")],
-      },
-      {
-        name: "the back seat of a taxi",
-        at: "in the back seat of a taxi",
-        times: ["night"],
-        activities: [one("adjusting an earring"), one("looking out of the window"), one("leaning back in the seat")],
-      },
-      {
-        name: "a street outside a bar",
-        at: "on a street outside a bar",
-        times: ["night"],
-        activities: [one("walking with a small clutch"), one("waiting by the door"), one("looking over her shoulder")],
-      },
-      {
-        name: "her bathroom while getting ready",
-        at: "at her bathroom sink",
-        room: true,
-        details: ["makeup on the counter", "a hair dryer by the sink"],
-        times: ["evening"],
-        mirror: true,
-        activities: [one("applying lipstick"), one("putting on mascara"), two("curling her hair")],
-      },
-      {
-        name: "an elevator",
-        at: "in an elevator",
-        times: ["evening", "night"],
-        mirror: true,
-        activities: [one("checking her outfit"), one("fixing her hair"), one("resting a hand on the handrail")],
-      },
-      {
-        name: "her front door",
-        at: "by her front door",
-        room: true,
-        details: ["a coat rack", "shoes by the door"],
-        times: ["evening"],
-        mirror: true,
-        activities: [two("slipping on her heels"), one("grabbing her keys"), one("checking her outfit")],
-      },
-    ],
-    // Non-revealing only (fixed decision, "Revealing outfits"): the mini
-    // skirt + cropped top and the corset top + trousers passed refusal
-    // checks on every model in the spike. The bodycon dress is untested
-    // there; per the same decision it relies on the one-attempt Seedream
-    // fallback if Grok refuses it. Bikinis, lingerie and slip dresses are
-    // dropped entirely, not merely gated. The 8 outfits after the first
-    // three (C1, owner canary: «glamour is always the black dress») passed
-    // a refusal probe on the owner's quality model on 2026-10-11, one draw
-    // each, in longer wordings of the same garments; the shortened names
-    // here fit POOL_TEXT_MAX.
-    outfits: [
-      "a fitted black bodycon dress",
-      "a mini skirt with a cropped top",
-      "a corset top and high-rise trousers",
-      "a long-sleeved red mini dress",
-      "a white top and leather mini skirt",
-      "a silver sequin top and trousers",
-      "an emerald blouse and leather skirt",
-      "a fitted beige knit midi dress",
-      "a halter top and a midi skirt",
-      "a navy wrap dress",
-      "an off-shoulder top and jeans",
-    ],
-    shotDeck: DEFAULT_SHOT_DECK,
-  },
-  fitness: {
-    locations: [
-      {
-        name: "a gym floor",
-        at: "on a gym floor",
-        times: ["morning", "evening"],
-        mirror: true,
-        activities: [one("resting between sets"), one("holding a water bottle"), one("adjusting her ponytail")],
-      },
-      {
-        name: "a yoga mat on her living-room floor",
-        at: "on a yoga mat on her living-room floor",
-        room: true,
-        details: ["a rolled-up towel", "a water bottle on the floor"],
-        times: ["morning"],
-        activities: [two("doing a yoga pose"), one("stretching"), one("sitting cross-legged")],
-      },
-      {
-        name: "a park running path",
-        at: "on a park running path",
-        times: ["morning"],
-        activities: [two("jogging"), one("stretching her legs"), one("holding a water bottle")],
-      },
-      {
-        name: "the gym locker room",
-        at: "in the gym locker room",
-        times: ["morning", "evening"],
-        mirror: true,
-        activities: [one("resting on the bench"), one("holding a water bottle"), one("adjusting her ponytail")],
-      },
-      {
-        name: "a home workout corner",
-        at: "in her home workout corner",
-        room: true,
-        details: ["a yoga mat against the wall", "a pair of dumbbells by the door"],
-        times: ["morning", "evening"],
-        activities: [one("stretching after a workout"), one("holding a water bottle"), two("tying her sneakers")],
-      },
-    ],
-    outfits: ["biker shorts and a crop top", "leggings and a fitted tank top", "a loose hoodie over leggings", "running shorts and a tank top"],
-    shotDeck: DEFAULT_SHOT_DECK,
-  },
+  home: poolOfBank("home"),
+  travel: poolOfBank("travel"),
+  photoshoot: poolOfBank("photoshoot"),
+  glamour: poolOfBank("glamour"),
+  fitness: poolOfBank("fitness"),
 };
 
 // ---------- validation ----------
@@ -460,7 +228,10 @@ export const PoolSchema = z
 const POOL_BANNED_WORDS =
   /\b(paper\w*|books?|magazines?|documents?|notebooks?|menus?|maps?|desks?|stud(?:y|ying|io)|laptops?|tablets?|screens?|newspapers?|television|tv|professional|photographer|photoshoot|editorial|fashion|models?|posing|captures?|candid|cinematic|bokeh|golden hour|softly lit|soft light|glow\w*|dramatic|moody|dreamy|elegant|luxurious|lavish|glamorous|chic|sophisticated|polished|pristine|marble|silk|satin|velvet|stunning|beautiful|perfect|flawless|gorgeous)\b/i;
 
-const BuiltInUnboundedText = PromptText.refine((text) => !POOL_BANNED_WORDS.test(text), { message: "pool text must be an ordinary place of her own life: no paper, screens, staging or luxury words" });
+// K-22: the owner's references wear «silk pajamas», so that phrase is exempt from the luxury words («satin» stays refused).
+const hasBannedWord = (text: string): boolean => POOL_BANNED_WORDS.test(withoutExemptLookPhrases(text));
+
+const BuiltInUnboundedText = PromptText.refine((text) => !hasBannedWord(text), { message: "pool text must be an ordinary place of her own life: no paper, screens, staging or luxury words" });
 
 // S5.R1: the built-in texts are held to the bound a custom pool is held to (POOL_TEXT_MAX), so the writer's floor pins for the worst custom chunk cover the
 // built-in ones too. The locative `at` is not sent to the writer and is not bound.
@@ -472,15 +243,37 @@ const NO_MIRROR_WORD = { message: "a place must not name a mirror: only the mirr
 const PlaceName = BuiltInText.refine((text) => !/mirror/i.test(text), NO_MIRROR_WORD);
 const PlaceAt = BuiltInUnboundedText.refine((text) => !/mirror/i.test(text), NO_MIRROR_WORD);
 
-const BuiltInActivitySchema = z.strictObject({ text: BuiltInText, twoHanded: z.boolean(), phone: z.literal(true).optional(), messyOk: z.literal(true).optional() });
+const TRUE = z.literal(true).optional();
+// A built-in activity is a bank moment: the tags are checked for their shape here and for their meaning where the bank loads (shared/scenes/banks/schema.ts).
+const BuiltInActivitySchema = z.strictObject({
+  text: BuiltInText,
+  twoHanded: z.boolean(),
+  phone: TRUE,
+  messyOk: TRUE,
+  motion: z.string().min(1).optional(),
+  startPose: z.string().min(1).optional(),
+  captures: z.array(z.enum(CAPTURES)).min(1).optional(),
+  level: z.literal("flirty").optional(),
+  angle: z.enum(["three-quarter", "profile", "back"]).optional(),
+  gaze: z.enum(["own", "viewer", "focus"]).optional(),
+  hair: z.enum(["tied", "loose", "own"]).optional(),
+  expression: TRUE,
+  outdoor: TRUE,
+  object: TRUE,
+  outfits: z.array(z.string().min(1)).min(1).optional(),
+  legs: z.strictObject({ framing: z.literal("legs").optional() }).optional(),
+  noLegwear: TRUE,
+  mirrorBack: TRUE,
+});
 
 const BuiltInPlaceSchema = z
   .strictObject({
     name: PlaceName,
     times: z.array(NonEmpty).min(1),
     activities: z.array(BuiltInActivitySchema).min(1),
-    mirror: z.literal(true).optional(),
-    room: z.literal(true).optional(),
+    mirror: TRUE,
+    room: TRUE,
+    lamp: TRUE,
     details: z.array(BuiltInText).optional(),
     at: PlaceAt,
   })
@@ -489,27 +282,25 @@ const BuiltInPlaceSchema = z
     // The shared PoolSchema only needs a free hand; a built-in place needs a free hand that is not on a phone, so a selfie or mirror always has an activity (M3).
     if (!place.activities.some((a) => !a.twoHanded && !isPhoneActivity(a))) problem("every built-in location needs at least one one-handed activity that is not a phone one", "activities");
     if (place.activities.some((a) => (a.phone === true) !== PHONE_WORDS.test(a.text))) problem("an activity carries the phone flag exactly when its text names her phone", "activities");
-    if (place.room === true) {
-      if (place.details === undefined || place.details.length < 2 || place.details.length > 3) problem("a room carries 2 or 3 details", "details");
-    } else {
-      if (place.details !== undefined) problem("only a room carries details", "details");
-      if (place.activities.some((a) => a.messyOk === true)) problem("only an activity in a room can be messyOk", "activities");
-    }
+    // K-3 (5a.2): every built-in place carries 2 or 3 ordinary details; a room's go into its room phrase, the others into the sentence's `with {detail}`.
+    if (place.details === undefined || place.details.length < 2 || place.details.length > 3) problem("a place carries 2 or 3 details", "details");
+    if (place.room !== true && place.activities.some((a) => a.messyOk === true)) problem("only an activity in a room can be messyOk", "activities");
   });
+
+const BuiltInOutfitText = OutfitSchema.refine((outfit) => !hasBannedWord(outfit), { message: "outfit text must not use a paper, screen, staging or luxury word" })
+  .refine((outfit) => outfit.length <= POOL_TEXT_MAX, { message: `outfit text must be at most ${POOL_TEXT_MAX} characters` })
+  .refine((outfit) => !isOwnerBannedOutfit(outfit), { message: "no denim shorts and no denim skirts, anywhere (the owner)" });
 
 /** The built-in pools: the shared shape plus the phone, room and look rules above. */
 export const BuiltInPoolSchema = z
   .strictObject({
     locations: z.array(BuiltInPlaceSchema).min(1),
-    outfits: z
-      .array(
-        OutfitSchema.refine((outfit) => !POOL_BANNED_WORDS.test(outfit), { message: "outfit text must not use a paper, screen, staging or luxury word" }).refine((outfit) => outfit.length <= POOL_TEXT_MAX, {
-          message: `outfit text must be at most ${POOL_TEXT_MAX} characters`,
-        }),
-      )
-      .min(1),
+    outfits: z.array(BuiltInOutfitText).min(1),
     shotDeck: z.array(z.enum(SHOTS)).min(1),
     poses: CategoryPoses.optional(),
+    captureDeck: z.array(z.enum(CAPTURES)).min(1).optional(),
+    outfitInfo: z.array(z.strictObject({ text: BuiltInOutfitText, showsLegs: TRUE, pinOnly: TRUE })).min(1).optional(),
+    legwear: z.strictObject({ items: z.array(BuiltInOutfitText).min(1), share: z.number().min(0).max(1) }).optional(),
   })
   .refine((pool) => !pool.shotDeck.includes("mirror") || pool.locations.some((l) => l.mirror === true), MIRROR_NEEDS_A_PLACE);
 

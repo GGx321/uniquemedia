@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { POOL_TIMES, youthWords } from "../../shared/engine";
+import { withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { sentenceProblems } from "./assembler";
 import { artefactLine, CAPTURE_LINE, CONSTRAINTS, IMPERFECTIONS, lightOf, phoneHandLine, roomStateOf } from "./phoneLook";
 import { POOLS, type Place, type Pool } from "./pools";
@@ -71,8 +72,8 @@ describe("the built-in pools: the hard lists", () => {
 });
 
 describe("the built-in pools: the soft list, paper and screens", () => {
-  test("no text uses a word of the soft list (studio, photographer, editorial, golden hour, luxury and mood words)", () => {
-    expect(failures(BUILT_IN, (t) => SOFT_LIST.exec(t)?.[0] ?? null)).toEqual([]);
+  test("no text uses a word of the soft list (studio, photographer, editorial, golden hour, luxury and mood words), «silk pajamas» exempt (K-22)", () => {
+    expect(failures(BUILT_IN, (t) => SOFT_LIST.exec(withoutExemptLookPhrases(t))?.[0] ?? null)).toEqual([]);
   });
 
   test("no text names paper, a book, a screen, a desk or studying: her phone is the only screen", () => {

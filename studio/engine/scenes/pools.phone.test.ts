@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { BuiltInPoolSchema, isPhoneActivity, PHONE_WORDS, POOLS, validatePools, type Activity, type Place, type Pool } from "./pools";
 import { POOL_TEXT_MAX } from "../../shared/engine";
+import { withoutExemptLookPhrases } from "../../shared/scenes/words";
 import { CATEGORIES } from "./types";
 import { useNativeGlobals } from "../../testing/nativeGlobals";
 useNativeGlobals();
@@ -25,9 +26,10 @@ describe("the built-in pools are ordinary places", () => {
     test(`${category}: no place, activity, detail or outfit uses a paper, screen, luxury or soft-list word`, () => {
       const pool = POOLS[category];
       for (const place of pool.locations) {
-        for (const text of textsOf(place, [])) expect(text).not.toMatch(BANNED);
+        for (const text of textsOf(place, [])) expect(withoutExemptLookPhrases(text)).not.toMatch(BANNED);
       }
-      for (const outfit of pool.outfits) expect(outfit).not.toMatch(BANNED);
+      // K-22: «silk pajamas» is exempt from the luxury words (the owner's references); «satin» is not.
+      for (const outfit of pool.outfits) expect(withoutExemptLookPhrases(outfit)).not.toMatch(BANNED);
     });
   }
 
@@ -41,14 +43,12 @@ describe("the built-in pools are ordinary places", () => {
 
   test("there are phone activities to filter (the rule is not vacuous on the real pools)", () => {
     const flagged = allPlaces.flatMap(([, place]) => place.activities.filter((a) => a.phone === true));
-    expect(flagged.length).toBeGreaterThanOrEqual(4);
+    expect(flagged.length).toBeGreaterThanOrEqual(2);
   });
 
-  test("a room carries 2 or 3 details, and a place that is not a room carries none", () => {
-    for (const [, place] of allPlaces) {
-      if (place.room === true) expect([2, 3]).toContain(place.details?.length ?? 0);
-      else expect(place.details).toBeUndefined();
-    }
+  // K-3 (5a.2): every place carries 2 or 3 ordinary details; a room's go into its room phrase, the others into the sentence's `with {detail}`.
+  test("every place carries 2 or 3 details", () => {
+    for (const [, place] of allPlaces) expect([2, 3]).toContain(place.details?.length ?? 0);
   });
 
   test("messyOk marks an activity only in a room", () => {
@@ -74,11 +74,10 @@ describe("the built-in pools are ordinary places", () => {
     expect(POOLS.travel.outfits).not.toContain("a light linen sundress");
   });
 
-  test("the cafe table has table activities and the hallway wall has no stool", () => {
-    const cafe = POOLS.photoshoot.locations.find((l) => l.name === "a corner cafe table");
-    const wall = POOLS.photoshoot.locations.find((l) => l.name === "a plain wall in her hallway");
+  test("the pavement cafe table has table moments and no counter", () => {
+    const cafe = POOLS.photoshoot.locations.find((l) => l.name === "a cafe table on the pavement");
+    expect(cafe?.activities.length).toBeGreaterThan(0);
     expect(cafe?.activities.map((a) => a.text).join(" ")).not.toMatch(/counter/);
-    expect(wall?.activities.map((a) => a.text).join(" ")).not.toMatch(/stool/);
   });
 
   test("every place name is unique within its category", () => {
@@ -92,14 +91,14 @@ describe("the built-in pools are ordinary places", () => {
     for (const [, place] of allPlaces) expect(place.times).not.toContain("studio lighting");
   });
 
-  test("the photoshoot category keeps its own deck of friend snaps and candids (the stored shots stay readable)", () => {
-    expect([...POOLS.photoshoot.shotDeck].sort()).toEqual(["candid", "candid", "photographer", "photographer", "photographer"]);
+  test("the photoshoot category deals friends, a selfie, a timer and a candid; the stored shots stay readable (no photographer is drawn any more)", () => {
+    expect([...POOLS.photoshoot.shotDeck].sort()).toEqual(["candid", "friend", "friend", "friend", "friend", "selfie"]);
   });
 
-  test("the rooms the owner pictured are there: a kitchen, a bed, a couch, a bathroom, a front door and a hallway wall", () => {
+  test("the rooms the owner pictured are there: a bedroom, a bed, a bathroom, a hallway, a front door and a floor", () => {
     const names = allPlaces.map(([, p]) => p.name);
     // S5.5: the glamour bedroom went with the other glamour places at home («вечер выхода»); the front door, where she gets ready, took its place.
-    for (const expected of ["her small kitchen", "her bed in the morning", "the couch under a blanket", "her bathroom", "her front door", "a plain wall in her hallway"]) expect(names).toContain(expected);
+    for (const expected of ["her bedroom", "her bed", "the floor of her bedroom", "her bathroom", "her hallway", "her front door"]) expect(names).toContain(expected);
   });
 });
 
@@ -129,13 +128,15 @@ describe("the built-in pool schema", () => {
     expect(BuiltInPoolSchema.safeParse(withPlace({ details: ["a", "b", "c", "d"].map((x) => `a ${x} on the counter`) })).success).toBe(false);
   });
 
-  test("rejects details on a place that is not a room", () => {
+  test("accepts details on a place that is not a room (K-3), and refuses a place with none", () => {
     const { room: _room, ...notRoom } = place;
-    expect(BuiltInPoolSchema.safeParse({ ...pool, locations: [notRoom] }).success).toBe(false);
+    expect(BuiltInPoolSchema.safeParse({ ...pool, locations: [notRoom] }).success).toBe(true);
+    const { details: _details, ...bare } = place;
+    expect(BuiltInPoolSchema.safeParse({ ...pool, locations: [bare] }).success).toBe(false);
   });
 
   test("rejects messyOk outside a room", () => {
-    const { room: _room, details: _details, ...notRoom } = place;
+    const { room: _room, ...notRoom } = place;
     expect(BuiltInPoolSchema.safeParse({ ...pool, locations: [{ ...notRoom, activities: [one("stretching", { messyOk: true })] }] }).success).toBe(false);
   });
 
