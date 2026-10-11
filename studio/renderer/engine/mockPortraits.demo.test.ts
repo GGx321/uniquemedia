@@ -37,8 +37,8 @@ describe("a failed slot at a cost (demo only)", () => {
     const result = await run(m, NINI.avatarId);
     expect(result.candidates.map((c) => c.likeness)).toEqual([0.76, 0.72, 0.61]);
     expect(result.failedSlots).toEqual([
-      { slot: 4, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true },
-      { slot: 5, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true },
+      { slot: 4, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true, charge: "worst-until-reconcile" },
+      { slot: 5, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true, charge: "worst-until-reconcile" },
     ]);
     const money = await m.client.request("money.status", {});
     if (!money.ok || money.result.ledger !== "open") throw new Error("the ledger is not open");

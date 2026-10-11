@@ -126,8 +126,8 @@ export function failedSlotOf(slot: number, outcome: MockPortraitSlot): FailedPor
     case "age-rejected":
       return { slot, reason: "age-rejected" };
     case "refused":
-      return { slot, reason: "failed", error: { ...MOCK_PORTRAIT_REFUSAL }, reserveLeftOpen: false };
+      return { slot, reason: "failed", error: { ...MOCK_PORTRAIT_REFUSAL }, reserveLeftOpen: false, charge: "free" };
     case "failed":
-      return { slot, reason: "failed", error: { ...outcome.error }, reserveLeftOpen: outcome.settle === "open" };
+      return { slot, reason: "failed", error: { ...outcome.error }, reserveLeftOpen: outcome.settle === "open", charge: outcome.settle === "open" ? "worst-until-reconcile" : outcome.settle };
   }
 }

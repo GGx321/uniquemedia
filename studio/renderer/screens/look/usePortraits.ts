@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import type { AvatarPortraits, AvatarSummary, EngineError, Estimate, ImageAgeCheck, PortraitCandidate } from "../../../shared/engine";
+import type { AvatarPortraits, AvatarSummary, EngineError, Estimate, PortraitCandidate } from "../../../shared/engine";
 import { useEngine } from "../../engine/react";
 import { isActiveJob, type EngineView, type JobView } from "../../engine/store";
 import type { LookLanding } from "../../navigation";
@@ -57,11 +57,6 @@ export interface Portraits {
    * the list too, so the window may meet the limit before it sees 15: the panel then offers «Удалить варианты», which clears them all.
    */
   readonly capRefused: boolean;
-  /**
-   * Review M2: the age check as the window's settings say it (`on` while they are not known: an image paid before a refused check is never said to be
-   * free). What a failed slot cost depends on it.
-   */
-  readonly ageCheck: ImageAgeCheck;
   readonly estimate: Estimate | null;
   readonly estimating: boolean;
   readonly estimateError: EngineError | null;
@@ -298,7 +293,6 @@ export function usePortraits(
     panelOpen,
     actionable,
     capRefused,
-    ageCheck: imageAgeCheck === "off" ? "off" : "on",
     estimate,
     estimating,
     estimateError,

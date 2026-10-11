@@ -206,7 +206,7 @@ describe("PortraitsResult", () => {
       { slot: 2, reason: "no-face" },
       { slot: 3, reason: "multiple-faces" },
       { slot: 4, reason: "age-rejected" },
-      { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+      { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false, charge: "free" },
     ];
     expect(parses(result({ failedSlots }))).toBe(true);
   });
@@ -253,7 +253,14 @@ describe("PortraitsResult", () => {
 
   test("a failed slot says whether its reserve was left open", () => {
     expect(parses(result({ failedSlots: [{ slot: 1, reason: "failed", error: { code: "TIMEOUT" } }] }))).toBe(false);
-    expect(parses(result({ failedSlots: [{ slot: 1, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true }] }))).toBe(true);
+    expect(parses(result({ failedSlots: [{ slot: 1, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true, charge: "worst-until-reconcile" }] }))).toBe(true);
+  });
+
+  test("a failed slot says what it cost: free, paid or worst-until-reconcile, and nothing else", () => {
+    const slot = (charge: unknown) => ({ slot: 1, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: false, charge });
+    for (const charge of ["free", "paid", "worst-until-reconcile"]) expect(parses(result({ failedSlots: [slot(charge)] }))).toBe(true);
+    expect(parses(result({ failedSlots: [slot("open")] }))).toBe(false);
+    expect(parses(result({ failedSlots: [{ slot: 1, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: false }] }))).toBe(false);
   });
 
   test("a reason outside the closed set is refused", () => {

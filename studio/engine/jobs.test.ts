@@ -270,7 +270,7 @@ describe("JobRegistry: reference portrait jobs", () => {
       failedSlots: [
         { slot: 3, reason: "unlike", likeness: 0.48 },
         { slot: 4, reason: "no-face" },
-        { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+        { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false, charge: "free" },
       ],
     });
 
@@ -291,7 +291,7 @@ describe("JobRegistry: reference portrait jobs", () => {
         failedSlots: [
           { slot: 3, reason: "unlike", likeness: 0.48 },
           { slot: 4, reason: "no-face" },
-          { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+          { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false, charge: "free" },
         ],
       },
     });

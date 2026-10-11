@@ -634,15 +634,26 @@ export const PortraitCandidate = z.strictObject({
  * - `age-rejected`: the age check did not say a clear yes; the image was dropped.
  * - `unlike`: the face is not the source photo's (likeness under the gate); the image was dropped and never stored.
  * - `no-face` / `multiple-faces`: the image has no face, or more than one; dropped and never stored.
- * - `failed`: the slot could not finish; `error` says why. `reserveLeftOpen` as in `FailedCandidateSlot`.
+ * - `failed`: the slot could not finish; `error` says why. `reserveLeftOpen` as in `FailedCandidateSlot`. `charge` is what the slot cost, as the engine's ledger settled it
+ *   for the batch's own age-check mode (not the setting as it is now): the window shows it as it is.
  */
+export const PortraitSlotCharge = z.enum(["free", "paid", "worst-until-reconcile"]);
+
 export const FailedPortraitSlot = z.discriminatedUnion("reason", [
   z.strictObject({ slot: PortraitSlot, reason: z.literal("age-rejected") }),
   z.strictObject({ slot: PortraitSlot, reason: z.literal("unlike"), likeness: z.number().min(-1).lt(PORTRAIT_MIN_LIKENESS) }),
   z.strictObject({ slot: PortraitSlot, reason: z.literal("no-face") }),
   z.strictObject({ slot: PortraitSlot, reason: z.literal("multiple-faces") }),
-  z.strictObject({ slot: PortraitSlot, reason: z.literal("failed"), error: EngineError, reserveLeftOpen: z.boolean() }),
+  z.strictObject({ slot: PortraitSlot, reason: z.literal("failed"), error: EngineError, reserveLeftOpen: z.boolean(), charge: PortraitSlotCharge }),
 ]);
+
+/**
+ * What a failed portrait slot cost, decided by the engine from the ledger outcome of BOTH its requests (the image and, with the check on, the age check):
+ * - `worst-until-reconcile`: a request's reserve was left open (a timeout, a lost connection): it counts at its worst case until a reconcile. Wins over `paid`;
+ * - `paid`: a request settled above zero (a billed image the slot could not use, a bill above the worst case, a broken step after the image came);
+ * - `free`: nothing was sent, or every request settled at zero.
+ */
+export type PortraitSlotCharge = z.infer<typeof PortraitSlotCharge>;
 
 export const PortraitsResult = z
   .strictObject({

@@ -370,7 +370,7 @@ describe("the image age check off (owner's decision, 2026-09-27: off by default)
     const details = results.map((r) => (r.kind === "failed" ? r.error.detail : undefined));
     expect(details.every((d) => d?.includes("animated"))).toBe(true);
     expect(details.every((d) => !d?.includes("age-check") && !d?.includes("age check"))).toBe(true);
-    expect(results).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false })));
+    expect(results).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false, charge: "paid" })));
     expect(net.ageCalls()).toHaveLength(0);
   });
 
@@ -378,7 +378,7 @@ describe("the image age check off (owner's decision, 2026-09-27: off by default)
     const net = network();
     const { outcomes } = run(net, { imageAgeCheck: "off", descriptor: { age: 25, text: "25-year-old European woman who looks 17." } });
 
-    expect(await outcomes).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "DESCRIPTOR_INVALID" }), fatal: true, reserveLeftOpen: false })));
+    expect(await outcomes).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "DESCRIPTOR_INVALID" }), fatal: true, reserveLeftOpen: false, charge: "free" })));
     expect(net.calls).toHaveLength(0);
   });
 
@@ -418,7 +418,7 @@ describe("the age gate: nothing is stored without a clear yes, and nothing is as
     const { outcomes, stored } = run(net);
 
     const results = await outcomes;
-    expect(results.filter((o) => o.kind === "failed")).toEqual([{ slot: 4, kind: "failed", error: expect.objectContaining({ code: "BUDGET_EXCEEDED" }), fatal: false, reserveLeftOpen: false }]);
+    expect(results.filter((o) => o.kind === "failed")).toEqual([{ slot: 4, kind: "failed", error: expect.objectContaining({ code: "BUDGET_EXCEEDED" }), fatal: false, reserveLeftOpen: false, charge: "free" }]);
     expect([net.imageCalls().length, net.ageCalls().length, stored.length]).toEqual([3, 3, 3]);
     const attempts = money.lines().filter((l) => l.type === "reserve").map((l) => String(l.attemptId));
     for (const image of attempts.filter((id) => id.endsWith("#1") && !id.includes(":age#"))) expect(attempts).toContain(image.replace(/#1$/, ":age#1"));
@@ -547,7 +547,7 @@ describe("a slot that cannot finish", () => {
     const { outcomes, stored } = run(net, { concurrency: 1 });
 
     expect(await outcomes).toEqual([
-      { slot: 1, kind: "failed", error: expect.objectContaining({ code: "NETWORK" }), fatal: false, reserveLeftOpen: true },
+      { slot: 1, kind: "failed", error: expect.objectContaining({ code: "NETWORK" }), fatal: false, reserveLeftOpen: true, charge: "worst-until-reconcile" },
       ...[2, 3, 4].map((n) => ({ ...passed(n), photoId: `photo-${String(n - 1).padStart(8, "0")}` })),
     ]);
     expect(stored).toHaveLength(3);
@@ -561,7 +561,7 @@ describe("a slot that cannot finish", () => {
 
     expect(await outcomes).toEqual([
       passed(1),
-      { slot: 2, kind: "failed", error: expect.objectContaining({ code: "AUTH_INVALID" }), fatal: true, reserveLeftOpen: false },
+      { slot: 2, kind: "failed", error: expect.objectContaining({ code: "AUTH_INVALID" }), fatal: true, reserveLeftOpen: false, charge: "free" },
       { slot: 3, kind: "skipped" },
       { slot: 4, kind: "skipped" },
     ]);
@@ -573,7 +573,7 @@ describe("a slot that cannot finish", () => {
     const net = network({ image: () => portrait(JPEG) });
     const { outcomes, stored } = run(net);
 
-    expect(await outcomes).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false })));
+    expect(await outcomes).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false, charge: "paid" })));
     expect([net.ageCalls().length, stored.length]).toEqual([0, 0]);
   });
 
@@ -582,7 +582,7 @@ describe("a slot that cannot finish", () => {
     const { outcomes, stored } = run(net);
 
     const results = await outcomes;
-    expect(results).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false })));
+    expect(results).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "INTERNAL" }), fatal: false, reserveLeftOpen: false, charge: "paid" })));
     expect(results[0]).toMatchObject({ error: { detail: expect.stringContaining("animated") } });
     expect([net.ageCalls().length, stored.length]).toEqual([0, 0]);
   });
@@ -667,7 +667,7 @@ describe("a slot that cannot finish", () => {
     const net = network();
     const { outcomes } = run(net, { descriptor: { age: 25, text: "25-year-old European woman who looks 17." } });
 
-    expect(await outcomes).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "DESCRIPTOR_INVALID" }), fatal: true, reserveLeftOpen: false })));
+    expect(await outcomes).toEqual([1, 2, 3, 4].map((slot) => ({ slot, kind: "failed", error: expect.objectContaining({ code: "DESCRIPTOR_INVALID" }), fatal: true, reserveLeftOpen: false, charge: "free" })));
     expect(net.calls).toHaveLength(0);
     expect(money.lines()).toEqual([]);
   });
@@ -790,7 +790,7 @@ describe("the network pool and cancel", () => {
 });
 
 describe("candidateJobEnd", () => {
-  const failed = (slot: number, code: EngineError["code"], fatal = false, reserveLeftOpen = false): SlotOutcome => ({ slot, kind: "failed", error: { code }, fatal, reserveLeftOpen });
+  const failed = (slot: number, code: EngineError["code"], fatal = false, reserveLeftOpen = false): SlotOutcome => ({ slot, kind: "failed", error: { code }, fatal, reserveLeftOpen, charge: "free" });
   const rejected = (slot: number): SlotOutcome => ({ slot, kind: "rejected", why: "not-adult" });
 
   test("every candidate passed: done, in slot order", () => {

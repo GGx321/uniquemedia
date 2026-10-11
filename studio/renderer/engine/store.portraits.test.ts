@@ -93,7 +93,7 @@ test("a portrait batch first heard of at its job.done is a portrait batch, compl
         candidates: [{ avatarId: "avatar-zoe-0001", photoId: "photo-00000001", likeness: 0.76 }],
         failedSlots: [
           { slot: 2, reason: "unlike", likeness: 0.48 },
-          { slot: 3, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+          { slot: 3, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false, charge: "free" },
         ],
       },
     },

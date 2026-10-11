@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { FfmpegError } from "../../node/runFfmpeg";
 import { timeoutSignal, untilAborted } from "../money/timeoutSignal";
-import { PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type AvatarDescriptor, type EngineError, type FailedCandidateSlot, type FailedPortraitSlot, type ImageAgeCheck, type ImageQuality } from "../../shared/engine";
+import { PORTRAIT_MIN_LIKENESS, PORTRAITS_PER_BATCH, type AvatarDescriptor, type EngineError, type FailedCandidateSlot, type FailedPortraitSlot, type ImageAgeCheck, type PortraitSlotCharge, type ImageQuality } from "../../shared/engine";
 import type { FaceVerdict } from "../face/verdict";
 import type { CandidatesJobEnd, PortraitsJobEnd } from "../jobs";
 import type { LibraryReference, NewPhotoMeta } from "../library";
@@ -120,6 +120,7 @@ export const PORTRAIT_RANK_TIMEOUT_MS = QA_GATE_TIMEOUT_MS;
  * - rejected: the age check did not say a clear yes (or refused to answer); the image is dropped.
  * - failed: the slot could not finish; `fatal` stops the job from starting more slots;
  *   `reserveLeftOpen`: a request of it may have been billed (timeout, network), so its reserve waits for a reconcile.
+ *   `charge`: what the slot cost, from the ledger outcome of its image AND its age check (see `resultCharge` and `mergeCharge`).
  * - aborted: a cancel stopped it. skipped: it never started (a cancel or a fatal error came first).
  */
 export type SlotOutcome =
@@ -127,7 +128,7 @@ export type SlotOutcome =
   | { slot: number; kind: "ranked-out"; why: "unlike"; likeness: number }
   | { slot: number; kind: "ranked-out"; why: "no-face" | "multiple-faces" }
   | { slot: number; kind: "rejected"; why: AgeRejection | "age-check-refused" | "empty-answer" }
-  | { slot: number; kind: "failed"; error: EngineError; fatal: boolean; reserveLeftOpen: boolean }
+  | { slot: number; kind: "failed"; error: EngineError; fatal: boolean; reserveLeftOpen: boolean; charge: PortraitSlotCharge }
   | { slot: number; kind: "aborted" }
   | { slot: number; kind: "skipped" };
 
@@ -200,8 +201,28 @@ function imageChoiceOf(spec: BatchSpec): ImageChoice {
   return { ...spec.image, refs: spec.references.length };
 }
 
-function failed(slot: number, error: EngineError, fatal: boolean, reserveLeftOpen = false): SlotOutcome {
-  return { slot, kind: "failed", error: { ...error, ...(error.detail === undefined ? {} : { detail: truncate(error.detail) }) }, fatal, reserveLeftOpen };
+/** `charge` is "free" unless the caller knows better: a failure that happens before anything is sent (a refused hold, a descriptor the rules refuse) costs nothing. */
+function failed(slot: number, error: EngineError, fatal: boolean, reserveLeftOpen = false, charge: PortraitSlotCharge = "free"): SlotOutcome {
+  return { slot, kind: "failed", error: { ...error, ...(error.detail === undefined ? {} : { detail: truncate(error.detail) }) }, fatal, reserveLeftOpen, charge };
+}
+
+/** What one client result cost, from what it did to the ledger: a bill above zero is paid, a reserve left open waits at its worst case, anything else (blocked, released, zero) is free. */
+function resultCharge(result: ImageResult | ChatResult): PortraitSlotCharge {
+  if (result.status === "ok") return result.costMicros > 0 || result.aboveWorst ? "paid" : "free";
+  if (result.status === "blocked") return "free";
+  if (result.ledger.action === "left-open") return "worst-until-reconcile";
+  return result.ledger.action === "settled" && result.ledger.costMicros > 0 ? "paid" : "free";
+}
+
+/** Two requests of one slot: an open reserve outranks a settled bill (the slot's cost is then not yet known), a bill outranks nothing. */
+function mergeCharge(a: PortraitSlotCharge, b: PortraitSlotCharge): PortraitSlotCharge {
+  if (a === "worst-until-reconcile" || b === "worst-until-reconcile") return "worst-until-reconcile";
+  return a === "paid" || b === "paid" ? "paid" : "free";
+}
+
+/** A slot that failed after its image came back: the image is part of what it cost. */
+function afterImage(outcome: SlotOutcome, image: ImageOk): SlotOutcome {
+  return outcome.kind === "failed" ? { ...outcome, charge: mergeCharge(outcome.charge, resultCharge(image)) } : outcome;
 }
 
 /** A client result that ended the slot, with whether its reserve was left open until a reconcile. */
@@ -209,7 +230,7 @@ function failedBy(slot: number, result: ImageResult | ChatResult, what: string):
   const mapped = toEngineError(result);
   if (mapped === null) return internal(slot, `${what} ended without a result`);
   const leftOpen = "ledger" in result && result.ledger.action === "left-open";
-  return failed(slot, mapped.error, mapped.fatal, leftOpen);
+  return failed(slot, mapped.error, mapped.fatal, leftOpen, resultCharge(result));
 }
 
 function internal(slot: number, detail: string): SlotOutcome {
@@ -280,7 +301,8 @@ export async function runBatch(deps: CandidateJobDeps, job: CandidateJob, spec: 
       try {
         outcome = await runSlot(deps, job, spec, slot, () => fatal);
       } catch (error) {
-        outcome = failed(slot, deps.errorOf(error), true);
+        // A throw (a ledger write, a bug) can come from anywhere in the slot, after a request may have been billed: an ambiguous slot is never said to be free.
+        outcome = failed(slot, deps.errorOf(error), true, false, "paid");
       }
       outcomes[index] = outcome;
       if (outcome.kind === "failed" && outcome.fatal) fatal = true;
@@ -347,6 +369,12 @@ async function sendPair(deps: CandidateJobDeps, job: CandidateJob, spec: BatchSp
   if (image.status === "aborted") return { slot, kind: "aborted" };
   // A refusal is free and never retried; a bill above the worst case halts every later reserve.
   if (image.status !== "ok" || image.aboveWorst) return failedBy(slot, image, "the image attempt");
+  return afterImage(await judgeImage(deps, job, spec, slot, ageShape, image, attemptId), image);
+}
+
+/** Everything of a slot after its billed image came: the checks, the optional age check and the store. A failure here is merged with the image's own cost by the caller. */
+async function judgeImage(deps: CandidateJobDeps, job: CandidateJob, spec: BatchSpec, slot: number, ageShape: ChatPriceShape | null, image: ImageOk, attemptId: string): Promise<SlotOutcome> {
+  const { prompt } = spec;
   const size = imageSize(image.bytes);
   if (size === null) return internal(slot, `the ${image.mediaType} image's size cannot be read`);
   if (isAnimatedImage(image.bytes)) {
@@ -568,7 +596,7 @@ export function portraitJobEnd(outcomes: readonly SlotOutcome[], cancelRequested
     .flatMap((o): FailedPortraitSlot[] => {
       if (o.kind === "rejected") return [{ slot: o.slot, reason: "age-rejected" }];
       if (o.kind === "ranked-out") return [o.why === "unlike" ? { slot: o.slot, reason: "unlike", likeness: o.likeness } : { slot: o.slot, reason: o.why }];
-      if (o.kind === "failed") return [{ slot: o.slot, reason: "failed", error: o.error, reserveLeftOpen: o.reserveLeftOpen }];
+      if (o.kind === "failed") return [{ slot: o.slot, reason: "failed", error: o.error, reserveLeftOpen: o.reserveLeftOpen, charge: o.charge }];
       return [];
     });
   if (candidates.length === 0 && failedSlots.every((f) => f.reason === "failed")) {

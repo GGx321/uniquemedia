@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { ERROR_MESSAGES_RU, NO_ANSWER_DETAIL_PREFIX, type ErrorCode, type FailedPortraitSlot } from "../../../shared/engine";
+import { ERROR_MESSAGES_RU, NO_ANSWER_DETAIL_PREFIX, type ErrorCode, type FailedPortraitSlot, type PortraitSlotCharge } from "../../../shared/engine";
 import { errorText } from "../../lib/errors";
 import {
   ageRejectedLine,
@@ -11,7 +11,6 @@ import {
   likenessText,
   NONE_PASSED,
   paidFailureLine,
-  slotCharge,
   startRefusalText,
   variantLabel,
 } from "./portraitModel";
@@ -19,13 +18,13 @@ import {
 // S5.3d: what the reference portrait says (.omc/stage5/design 16–17, README «Для S5.3d»): a slot's own words by its outcome, the paid failures only
 // in the summary (a moderation refusal is free), the age check's line agreed in number, and the limit.
 
-const refused: FailedPortraitSlot = { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false };
-const timedOut = (slot: number): Extract<FailedPortraitSlot, { reason: "failed" }> => ({ slot, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true });
-const failedWith = (slot: number, code: ErrorCode): Extract<FailedPortraitSlot, { reason: "failed" }> => ({ slot, reason: "failed", error: { code }, reserveLeftOpen: false });
+const refused: FailedPortraitSlot = { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false, charge: "free" };
+const timedOut = (slot: number): Extract<FailedPortraitSlot, { reason: "failed" }> => ({ slot, reason: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true, charge: "worst-until-reconcile" });
+const failedWith = (slot: number, code: ErrorCode, charge: PortraitSlotCharge = "free"): Extract<FailedPortraitSlot, { reason: "failed" }> => ({ slot, reason: "failed", error: { code }, reserveLeftOpen: false, charge });
 
 describe("a finished batch's slots without a portrait", () => {
   test("each says why, in slot order: the face check's drops and the age check's are paid, a refusal is free, a failure paid", () => {
-    const tiles = goneTiles("off", [
+    const tiles = goneTiles([
       refused,
       { slot: 4, reason: "unlike", likeness: 0.4812 },
       { slot: 1, reason: "no-face" },
@@ -44,79 +43,75 @@ describe("a finished batch's slots without a portrait", () => {
   });
 
   test("a failure that may have been billed is said as paid (16e); one that sent nothing or settled at 0 as free", () => {
-    expect(goneTiles("off", [timedOut(1)]).map((t) => [t.title, t.sub, t.look])).toEqual([["Не получилось · стоимость учтена", null, "failed"]]);
-    expect(goneTiles("off", [failedWith(2, "BUDGET_EXCEEDED")]).map((t) => [t.title, t.sub, t.look])).toEqual([["Не получилось · бесплатно", null, "failed"]]);
-    expect(goneTiles("off", [failedWith(3, "INTERNAL")]).map((t) => t.title)).toEqual(["Не получилось · стоимость учтена"]);
+    expect(goneTiles([timedOut(1)]).map((t) => [t.title, t.sub, t.look])).toEqual([["Не получилось · стоимость учтена", null, "failed"]]);
+    expect(goneTiles([failedWith(2, "BUDGET_EXCEEDED")]).map((t) => [t.title, t.sub, t.look])).toEqual([["Не получилось · бесплатно", null, "failed"]]);
+    expect(goneTiles([failedWith(3, "INTERNAL", "paid")]).map((t) => t.title)).toEqual(["Не получилось · стоимость учтена"]);
   });
 });
 
-describe("what a failed slot cost (the money rules of settleRule.ts)", () => {
-  test("never sent: the budget refused its hold — free", () => {
-    for (const code of ["BUDGET_EXCEEDED", "RUN_CAP_EXCEEDED", "RECONCILE_REQUIRED"] as const) expect(slotCharge(failedWith(1, code), "off")).toBe("free");
+describe("what a failed slot cost: the engine's own charge, shown as it is", () => {
+  const cost = (slot: Extract<FailedPortraitSlot, { reason: "failed" }>) => goneTiles([slot])[0]?.title;
+
+  test("free, paid and worst-until-reconcile each have their own words on the tile", () => {
+    expect(cost(failedWith(1, "NETWORK", "free"))).toBe("Не получилось · бесплатно");
+    expect(cost(failedWith(1, "NETWORK", "paid"))).toBe("Не получилось · стоимость учтена");
+    expect(cost(failedWith(1, "NETWORK", "worst-until-reconcile"))).toBe("Не получилось · стоимость учтена");
   });
 
-  test("age check off — a final non-2xx answer settles at 0: free (the image is the slot's only request)", () => {
-    for (const code of ["MODERATION_REFUSED", "AUTH_INVALID", "INSUFFICIENT_CREDITS", "RATE_LIMITED"] as const) expect(slotCharge(failedWith(1, code), "off")).toBe("free");
-    // A 5xx that outlasted the transport retries is NETWORK with its reserve settled (not left open).
-    expect(slotCharge(failedWith(1, "NETWORK"), "off")).toBe("free");
+  test("the same code is free or paid by the charge alone: an age check turned on mid-batch cannot relabel a paid image (the window has no setting to read)", () => {
+    // AUTH_INVALID settled at 0 on the image (free) versus on the age check after a billed image (paid): the code is the same, the money is not.
+    expect(cost(failedWith(1, "AUTH_INVALID", "free"))).toBe("Не получилось · бесплатно");
+    expect(cost(failedWith(1, "AUTH_INVALID", "paid"))).toBe("Не получилось · стоимость учтена");
   });
 
-  test("age check on — the image was paid before the check: a check refused by the budget or answered non-2xx is never free (review M2)", () => {
-    for (const code of ["RATE_LIMITED", "NETWORK", "BUDGET_EXCEEDED", "RUN_CAP_EXCEEDED"] as const) expect(slotCharge(failedWith(1, code), "on")).toBe("paid");
-    for (const code of ["AUTH_INVALID", "INSUFFICIENT_CREDITS", "RECONCILE_REQUIRED", "INTERNAL"] as const) expect(slotCharge(failedWith(1, code), "on")).toBe("paid");
-    // The coordinator's rule: a model's moderation refusal stays free; a reserve left open stays open.
-    expect(slotCharge(failedWith(1, "MODERATION_REFUSED"), "on")).toBe("free");
-    expect(slotCharge(timedOut(1), "on")).toBe("open");
+  test("a moderation refusal keeps its own tile when free", () => {
+    expect(goneTiles([refused]).map((t) => t.title)).toEqual(["Модель отказалась · бесплатно"]);
   });
 
-  test("age check on — the tiles and the lines say those slots cost, and none of them «ничего не стоили»", () => {
-    const slots = (["RATE_LIMITED", "NETWORK", "BUDGET_EXCEEDED", "RUN_CAP_EXCEEDED"] as const).map((code, i) => failedWith(i + 1, code));
-    expect(goneTiles("on", slots).map((t) => t.title)).toEqual(Array.from({ length: 4 }, () => "Не получилось · стоимость учтена"));
-    expect(freeFailureLine("on", slots)).toBeNull();
-    expect(paidFailureLine("on", slots)).toBe("4\u00a0варианта не удалось получить: причины разные — подробности в журнале. Стоимость попытки учтена.");
-    expect(goneTiles("on", [refused]).map((t) => t.title)).toEqual(["Модель отказалась · бесплатно"]);
+  test("the lines count the paid and the open slots, and the free ones apart, by the charge", () => {
+    const slots = [failedWith(1, "RATE_LIMITED", "paid"), failedWith(2, "BUDGET_EXCEEDED", "free"), timedOut(3)];
+    expect(paidFailureLine(slots)).toBe("2\u00a0варианта не удалось получить: причины разные — подробности в журнале. До сверки попытка считается по худшей цене. Стоимость попытки учтена.");
+    expect(freeFailureLine(slots)).toBe(`1\u00a0вариант не удалось получить: ${ERROR_MESSAGES_RU.BUDGET_EXCEEDED.charAt(0).toLowerCase()}${ERROR_MESSAGES_RU.BUDGET_EXCEEDED.slice(1)} Эти попытки ничего не стоили.`);
   });
 
-  test("a timeout or a lost connection leaves the reserve open at its worst until a reconcile — counted", () => {
-    expect(slotCharge(timedOut(1), "off")).toBe("open");
-    expect(slotCharge({ slot: 1, reason: "failed", error: { code: "NETWORK" }, reserveLeftOpen: true }, "off")).toBe("open");
-  });
-
-  test("anything else may have bought its image (a paid answer it could not use, a bill above the worst case) — counted", () => {
-    for (const code of ["INTERNAL", "SETTLE_ABOVE_WORST", "LEDGER_WRITE_FAILED", "TIMEOUT"] as const) expect(slotCharge(failedWith(1, code), "off")).toBe("paid");
+  test("four paid slots with different codes say so, and none of them «ничего не стоили»", () => {
+    const slots = (["RATE_LIMITED", "NETWORK", "BUDGET_EXCEEDED", "RUN_CAP_EXCEEDED"] as const).map((code, i) => failedWith(i + 1, code, "paid"));
+    expect(goneTiles(slots).map((t) => t.title)).toEqual(Array.from({ length: 4 }, () => "Не получилось · стоимость учтена"));
+    expect(freeFailureLine(slots)).toBeNull();
+    expect(paidFailureLine(slots)).toBe("4 варианта не удалось получить: причины разные — подробности в журнале. Стоимость попытки учтена.");
   });
 });
 
 describe("the summary of failed slots (16e)", () => {
   test("counts only the paid ones, with their shared reason", () => {
-    expect(paidFailureLine("off", [timedOut(1), timedOut(2), refused])).toBe(
+    expect(paidFailureLine([timedOut(1), timedOut(2), refused])).toBe(
       `2 варианта не удалось получить: ${ERROR_MESSAGES_RU.TIMEOUT} Стоимость попытки учтена.`,
     );
   });
 
   test("says nothing when the only failure was a free refusal (16)", () => {
-    expect(paidFailureLine("off", [refused, { slot: 4, reason: "unlike", likeness: 0.48 }])).toBeNull();
+    expect(paidFailureLine([refused, { slot: 4, reason: "unlike", likeness: 0.48 }])).toBeNull();
   });
 
   test("leaves out what cost nothing, and says the worst-price rule for a lost connection whose text does not", () => {
-    expect(paidFailureLine("off", [failedWith(1, "BUDGET_EXCEEDED"), failedWith(2, "RATE_LIMITED")])).toBeNull();
-    expect(paidFailureLine("off", [{ slot: 1, reason: "failed", error: { code: "NETWORK" }, reserveLeftOpen: true }])).toBe(
+    expect(paidFailureLine([failedWith(1, "BUDGET_EXCEEDED"), failedWith(2, "RATE_LIMITED")])).toBeNull();
+    expect(paidFailureLine([{ slot: 1, reason: "failed", error: { code: "NETWORK" }, reserveLeftOpen: true, charge: "worst-until-reconcile" }])).toBe(
       `1 вариант не удалось получить: ${ERROR_MESSAGES_RU.NETWORK.charAt(0).toLowerCase()}${ERROR_MESSAGES_RU.NETWORK.slice(1)} До сверки попытка считается по худшей цене. Стоимость попытки учтена.`,
     );
   });
 
   test("the free failures other than a refusal say why, and that they cost nothing", () => {
-    expect(freeFailureLine("off", [failedWith(1, "BUDGET_EXCEEDED"), failedWith(2, "BUDGET_EXCEEDED"), refused])).toBe(
+    expect(freeFailureLine([failedWith(1, "BUDGET_EXCEEDED"), failedWith(2, "BUDGET_EXCEEDED"), refused])).toBe(
       `2 варианта не удалось получить: ${ERROR_MESSAGES_RU.BUDGET_EXCEEDED.charAt(0).toLowerCase()}${ERROR_MESSAGES_RU.BUDGET_EXCEEDED.slice(1)} Эти попытки ничего не стоили.`,
     );
-    expect(freeFailureLine("off", [refused, timedOut(2)])).toBeNull();
+    expect(freeFailureLine([refused, timedOut(2)])).toBeNull();
   });
 
   test("names no reason when the paid failures disagree, and still says the worst-price rule for the reserves left open", () => {
-    expect(paidFailureLine("off", [timedOut(1), { slot: 2, reason: "failed", error: { code: "NETWORK" }, reserveLeftOpen: true }])).toBe(
+    expect(paidFailureLine([timedOut(1), { slot: 2, reason: "failed", error: { code: "NETWORK" }, reserveLeftOpen: true, charge: "worst-until-reconcile" }])).toBe(
       "2 варианта не удалось получить: причины разные — подробности в журнале. До сверки попытка считается по худшей цене. Стоимость попытки учтена.",
     );
-    expect(paidFailureLine("off", [failedWith(1, "INTERNAL"), failedWith(2, "SETTLE_ABOVE_WORST")])).toBe(
+    expect(paidFailureLine([failedWith(1, "INTERNAL", "paid"), failedWith(2, "SETTLE_ABOVE_WORST", "paid")])).toBe(
       "2 варианта не удалось получить: причины разные — подробности в журнале. Стоимость попытки учтена.",
     );
   });
@@ -159,7 +154,6 @@ describe("words around the numbers", () => {
   test("17's line names the gate", () => {
     expect(NONE_PASSED).toBe("Ни один вариант не похож на исходное фото (порог 0.55). Платные попытки учтены.");
   });
-
   test("a refusal adds that nothing was started, unless its own text already says nothing was spent", () => {
     expect(startRefusalText({ code: "BUDGET_EXCEEDED" })).toBe(`${ERROR_MESSAGES_RU.BUDGET_EXCEEDED} Варианты не запускались — ничего не потрачено.`);
     expect(startRefusalText({ code: "FACE_GATE_UNAVAILABLE" })).toBe(ERROR_MESSAGES_RU.FACE_GATE_UNAVAILABLE);

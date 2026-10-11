@@ -498,8 +498,110 @@ describe("money on a portrait slot", () => {
   });
 });
 
+// I5.20 / S5.3R: what a failed slot cost is decided HERE from what actually happened (the ledger outcome of its image and of its age check), not guessed by the window
+// from the setting, which a mid-batch toggle can change.
+describe("what a failed portrait slot cost (charge)", () => {
+  const AUTH: Reply = { status: 401, body: { error: { message: "bad key" } } };
+  const OUTAGE: Reply = { status: 503, body: { error: { message: "upstream down" } } };
+
+  test("a moderation refusal settled at zero is free", async () => {
+    const net = network({ image: (_call, n) => (n === 2 ? MODERATION : image()) });
+    const { outcomes } = run(net);
+
+    expect((await outcomes)[1]).toMatchObject({ slot: 2, kind: "failed", charge: "free" });
+  });
+
+  for (const imageAgeCheck of ["off", "on"] as const) {
+    test(`a 5xx outage settled at zero is free, with the age check ${imageAgeCheck}`, async () => {
+      const { outcomes } = run(network({ image: () => OUTAGE }), { job: { imageAgeCheck }, clientOverrides: { sleep: async () => {} } });
+
+      expect((await outcomes)[0]).toMatchObject({ slot: 1, kind: "failed", error: { code: "NETWORK" }, reserveLeftOpen: false, charge: "free" });
+    });
+  }
+
+  test("an image that timed out leaves its reserve open: worst-until-reconcile", async () => {
+    const { outcomes } = run(network({ image: (_call, n) => (n === 1 ? { hang: true } : image()) }), { clientOverrides: { timeoutMs: 20 } });
+
+    expect((await outcomes)[0]).toMatchObject({ slot: 1, kind: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true, charge: "worst-until-reconcile" });
+  });
+
+  test("an age check that failed after a billed image is paid, although the check itself settled at zero", async () => {
+    const { outcomes } = run(network({ age: () => AUTH }), { job: { imageAgeCheck: "on" } });
+
+    expect((await outcomes)[0]).toMatchObject({ slot: 1, kind: "failed", error: { code: "AUTH_INVALID" }, fatal: true, reserveLeftOpen: false, charge: "paid" });
+  });
+
+  test("an age check that timed out after a billed image is worst-until-reconcile", async () => {
+    const { outcomes } = run(network({ age: () => ({ hang: true }) }), { job: { imageAgeCheck: "on" }, clientOverrides: { timeoutMs: 20 } });
+
+    expect((await outcomes)[0]).toMatchObject({ slot: 1, kind: "failed", error: { code: "TIMEOUT" }, reserveLeftOpen: true, charge: "worst-until-reconcile" });
+  });
+
+  test("a slot that broke after its billed image came (the rank threw), with the age check off, is paid", async () => {
+    const { outcomes } = run(network(), {
+      job: { imageAgeCheck: "off" },
+      batch: {
+        rank: async () => {
+          throw new Error("the face worker died");
+        },
+      },
+    });
+
+    expect((await outcomes)[0]).toMatchObject({ slot: 1, kind: "failed", error: { code: "INTERNAL" }, charge: "paid" });
+  });
+
+  test("a failure that settles at zero on the image is free whatever the age check mode says (a 401 with the check off)", async () => {
+    const { outcomes } = run(network({ image: () => AUTH }), { job: { imageAgeCheck: "off" } });
+
+    expect((await outcomes)[0]).toMatchObject({ slot: 1, kind: "failed", error: { code: "AUTH_INVALID" }, charge: "free" });
+  });
+
+  test("a slot the budget refused sent nothing: free", async () => {
+    const tight = await setupMoney({ runCapMicros: IMAGE_WORST });
+    const { client } = makeClient(network().fetch);
+    const outcomes = await runPortraitJob(
+      {
+        generateImage: (params) => client.generateImage(params),
+        chat: (params) => client.chat(params),
+        budget: tight.budget,
+        priceBook: tight.priceBook,
+        downscale: (bytes, signal) => downscaleToJpeg(bytes, { maxSide: AGE_CHECK_MAX_SIDE, signal }),
+        store: async () => ({ id: "photo-00000001" }),
+        errorOf: (error): EngineError => ({ code: "INTERNAL", detail: String(error) }),
+      },
+      { jobId: JOB_ID, scope: SCOPE, imageModel: IMAGE_MODEL, descriptor: DESCRIPTOR, concurrency: 1, signal: new AbortController().signal, imageAgeCheck: "off" },
+      { references: [REFERENCE], rank: async () => match(0.7) },
+    );
+    await tight.cleanup();
+
+    expect(outcomes.find((o) => o.kind === "failed")).toMatchObject({ error: { code: "RUN_CAP_EXCEEDED" }, charge: "free" });
+  });
+
+  test("the finished batch carries each failed slot's charge into the contract", () => {
+    const end = portraitJobEnd(
+      [
+        { slot: 1, kind: "failed", error: { code: "MODERATION_REFUSED" }, fatal: false, reserveLeftOpen: false, charge: "free" },
+        { slot: 2, kind: "failed", error: { code: "TIMEOUT" }, fatal: false, reserveLeftOpen: true, charge: "worst-until-reconcile" },
+        { slot: 3, kind: "failed", error: { code: "INTERNAL" }, fatal: false, reserveLeftOpen: false, charge: "paid" },
+        { slot: 4, kind: "ranked-out", why: "unlike", likeness: 0.4 },
+      ],
+      false,
+    );
+
+    expect(end).toMatchObject({
+      status: "done",
+      failedSlots: [
+        { slot: 1, reason: "failed", charge: "free" },
+        { slot: 2, reason: "failed", charge: "worst-until-reconcile" },
+        { slot: 3, reason: "failed", charge: "paid" },
+        { slot: 4, reason: "unlike" },
+      ],
+    });
+  });
+});
+
 function failedSlot(slot: number, code: EngineError["code"], fatal = false): SlotOutcome {
-  return { slot, kind: "failed", error: { code }, fatal, reserveLeftOpen: false };
+  return { slot, kind: "failed", error: { code }, fatal, reserveLeftOpen: false, charge: "free" };
 }
 
 describe("how a portrait batch ends", () => {
@@ -547,7 +649,7 @@ describe("how a portrait batch ends", () => {
         { slot: 2, reason: "no-face" },
         { slot: 3, reason: "multiple-faces" },
         { slot: 4, reason: "unlike", likeness: 0.52 },
-        { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false },
+        { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED" }, reserveLeftOpen: false, charge: "free" },
       ],
     });
   });

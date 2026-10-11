@@ -5,9 +5,7 @@ import {
   PORTRAIT_MIN_LIKENESS,
   PORTRAITS_PER_BATCH,
   type EngineError,
-  type ErrorCode,
   type FailedPortraitSlot,
-  type ImageAgeCheck,
 } from "../../../shared/engine";
 import { errorText } from "../../lib/errors";
 import { afterColon, countOf } from "../../lib/format";
@@ -77,34 +75,10 @@ export function likenessText(likeness: number): string {
 export const THRESHOLD_TEXT = likenessText(PORTRAIT_MIN_LIKENESS);
 
 /**
- * What a failed slot cost, as the engine's money rules settle it (`studio/engine/money/settleRule.ts`, and the slot's own hold in `candidateJob.ts`
- * `runSlot`):
- * - `free`: nothing was sent (the budget refused the slot's hold: BUDGET_EXCEEDED, RUN_CAP_EXCEEDED, RECONCILE_REQUIRED), or a final non-2xx answer
- *   settled it at 0 (MODERATION_REFUSED 400, AUTH_INVALID 401, INSUFFICIENT_CREDITS 402, RATE_LIMITED 429, and NETWORK when it is a 5xx that outlasted
- *   the transport retries, i.e. its reserve was NOT left open);
- * - `open`: a timeout, a lost connection or an abort may have been billed, so its reserve stays open at the worst case until a reconcile
- *   (`reserveLeftOpen`);
- * - `paid`: everything else, said as paid because it may have bought its image (a 2xx it could not use, a bill above the worst case, a slot that
- *   broke after its image came). An ambiguous code is never said to be free.
- * With the age check ON (review M2) a slot is a paid image, then a free face rank, then a paid age check (`candidateJob.ts` `runSlot`): an age check
- * refused by the budget or answered non-2xx comes back as that same code with its reserve settled, while the image before it was billed. So with the
- * check on every failed slot but a model's moderation refusal is said as paid (`open` when its reserve was left open); with it off the image is the
- * slot's only request and the mapping above holds.
- * The window reads this from the code, `reserveLeftOpen` and the age check; a per-slot `imagePaid` flag set by `portraitJobEnd` in the contract would
- * be the robust answer (backlog).
+ * What a failed slot cost is the engine's word, carried by the slot (`FailedPortraitSlot.charge`, settled from the ledger outcome of its image and its age check for the
+ * mode the batch was started in): `free`, `paid`, or `worst-until-reconcile` (a reserve left open, counted at its worst case until a reconcile). The window shows it and
+ * guesses nothing: the age-check setting can change while a batch runs, and the code alone does not say which request failed.
  */
-export type SlotCharge = "free" | "open" | "paid";
-
-const NEVER_SENT: ReadonlySet<ErrorCode> = new Set(["BUDGET_EXCEEDED", "RUN_CAP_EXCEEDED", "RECONCILE_REQUIRED"]);
-const SETTLED_AT_ZERO: ReadonlySet<ErrorCode> = new Set(["MODERATION_REFUSED", "AUTH_INVALID", "INSUFFICIENT_CREDITS", "RATE_LIMITED", "NETWORK"]);
-
-export function slotCharge(slot: Extract<FailedPortraitSlot, { reason: "failed" }>, ageCheck: ImageAgeCheck): SlotCharge {
-  if (slot.reserveLeftOpen) return "open";
-  if (ageCheck === "on") return slot.error.code === "MODERATION_REFUSED" ? "free" : "paid";
-  if (NEVER_SENT.has(slot.error.code) || SETTLED_AT_ZERO.has(slot.error.code)) return "free";
-  return "paid";
-}
-
 type FailedSlot = Extract<FailedPortraitSlot, { reason: "failed" }>;
 
 function failedOnly(failedSlots: readonly FailedPortraitSlot[]): FailedSlot[] {
@@ -125,7 +99,7 @@ export interface GoneTile {
 const PAID = "стоимость учтена";
 
 /** The finished batch's slots without a portrait, in slot order, each with its own words (16, 16b, 16e, 17). */
-export function goneTiles(ageCheck: ImageAgeCheck, failedSlots: readonly FailedPortraitSlot[]): GoneTile[] {
+export function goneTiles(failedSlots: readonly FailedPortraitSlot[]): GoneTile[] {
   return [...failedSlots]
     .sort((a, b) => a.slot - b.slot)
     .map((f): GoneTile => {
@@ -140,7 +114,7 @@ export function goneTiles(ageCheck: ImageAgeCheck, failedSlots: readonly FailedP
         case "age-rejected":
           return { key, look: "dropped", icon: "eyeOff", tone: "muted", title: "Скрыт проверкой возраста", sub: PAID };
         case "failed":
-          if (slotCharge(f, ageCheck) !== "free") return { key, look: "failed", icon: "alert", tone: "danger-text", title: "Не получилось · стоимость учтена", sub: null };
+          if (f.charge !== "free") return { key, look: "failed", icon: "alert", tone: "danger-text", title: "Не получилось · стоимость учтена", sub: null };
           return f.error.code === "MODERATION_REFUSED"
             ? { key, look: "failed", icon: "close", tone: "muted", title: "Модель отказалась · бесплатно", sub: null }
             : { key, look: "failed", icon: "alert", tone: "muted", title: "Не получилось · бесплатно", sub: null };
@@ -160,21 +134,21 @@ function failureHead(slots: readonly FailedSlot[]): string {
 }
 
 /**
- * 16e: the failures that may have cost (`open` and `paid`) in one line, their shared reason when they agree — «2 варианта не удалось получить: OpenRouter
+ * 16e: the failures that may have cost (`worst-until-reconcile` and `paid`) in one line, their shared reason when they agree — «2 варианта не удалось получить: OpenRouter
  * не ответил вовремя. До сверки попытка считается по худшей цене. Стоимость попытки учтена.» A reserve left open says the worst-price rule when the
  * code's own text does not. What cost nothing is not counted (its tile says «бесплатно»); null when nothing failed at a cost.
  */
-export function paidFailureLine(ageCheck: ImageAgeCheck, failedSlots: readonly FailedPortraitSlot[]): string | null {
-  const counted = failedOnly(failedSlots).filter((f) => slotCharge(f, ageCheck) !== "free");
+export function paidFailureLine(failedSlots: readonly FailedPortraitSlot[]): string | null {
+  const counted = failedOnly(failedSlots).filter((f) => f.charge !== "free");
   if (counted.length === 0) return null;
   const head = failureHead(counted);
-  const worst = counted.some((f) => slotCharge(f, ageCheck) === "open") && !head.includes("худшей цене") ? ` ${WORST_UNTIL_RECONCILE}` : "";
+  const worst = counted.some((f) => f.charge === "worst-until-reconcile") && !head.includes("худшей цене") ? ` ${WORST_UNTIL_RECONCILE}` : "";
   return `${head}${worst} Стоимость попытки учтена.`;
 }
 
 /** The free failures other than a model's refusal (whose tile says it all): why, and that they cost nothing; null when there are none. */
-export function freeFailureLine(ageCheck: ImageAgeCheck, failedSlots: readonly FailedPortraitSlot[]): string | null {
-  const free = failedOnly(failedSlots).filter((f) => slotCharge(f, ageCheck) === "free" && f.error.code !== "MODERATION_REFUSED");
+export function freeFailureLine(failedSlots: readonly FailedPortraitSlot[]): string | null {
+  const free = failedOnly(failedSlots).filter((f) => f.charge === "free" && f.error.code !== "MODERATION_REFUSED");
   return free.length === 0 ? null : `${failureHead(free)} Эти попытки ничего не стоили.`;
 }
 

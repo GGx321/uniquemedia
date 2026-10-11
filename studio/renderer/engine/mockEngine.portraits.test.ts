@@ -180,7 +180,7 @@ describe("avatars.generatePortraits: the batch", () => {
     expect(done.payload.result.candidates.map((c) => c.likeness)).toEqual([0.76, 0.72, 0.61]);
     expect(done.payload.result.failedSlots).toEqual([
       { slot: 4, reason: "unlike", likeness: 0.48 },
-      { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED", detail: expect.any(String) }, reserveLeftOpen: false },
+      { slot: 5, reason: "failed", error: { code: "MODERATION_REFUSED", detail: expect.any(String) }, reserveLeftOpen: false, charge: "free" },
     ]);
   });
 
