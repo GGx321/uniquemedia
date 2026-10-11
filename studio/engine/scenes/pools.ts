@@ -258,6 +258,7 @@ const BuiltInActivitySchema = z.strictObject({
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
   hair: z.enum(["tied", "loose", "own"]).optional(),
   expression: TRUE,
+  handAtFace: TRUE,
   outdoor: TRUE,
   object: TRUE,
   outfits: z.array(z.string().min(1)).min(1).optional(),

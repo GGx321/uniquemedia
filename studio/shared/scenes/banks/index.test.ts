@@ -32,11 +32,44 @@ describe("the banks load valid", () => {
 describe("who takes the photo (I5.32: the capture decks, exact cycles)", () => {
   const sorted = (deck: readonly Capture[]): Capture[] => [...deck].sort();
 
-  // The owner's over-her-shoulder self POV (2026-10-11) takes 1 of 12, beside the prone selfie: together they keep the prone body's 1 in 6.
-  test("«Дом» shoots herself: 4 phone-over-face mirror frames of 12, 2 mirrors, 2 close selfies from above, a prone selfie, an over-her-shoulder POV, 2 timers; never a friend", () => {
+  // Plan r1.5 §5.1: prone selfies are a typical owner subject (2 of 12); the over-her-shoulder POV takes 1 of 12 beside them.
+  test("«Дом» shoots herself: 4 phone-over-face mirror frames of 12, 2 mirrors, 2 close selfies from above, 2 prone selfies, an over-her-shoulder POV, 1 timer; never a friend", () => {
     expect(sorted(BANKS.home.captureDeck)).toEqual(
-      sorted(["mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror", "mirror", "above", "above", "prone", "over-shoulder", "timer", "timer"]),
+      sorted(["mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror", "mirror", "above", "above", "prone", "prone", "over-shoulder", "timer"]),
     );
+  });
+
+  // The prone and over-the-shoulder capture lines say «on the bed» (phoneLook.ts), so a moment of either lies at a place that is a bed, never on the rug.
+  test("the bed line only lands on bed places: every prone and over-shoulder moment is at «her bed»", () => {
+    for (const place of BANKS.home.places) {
+      for (const moment of place.moments) {
+        if (moment.captures.some((c) => c === "prone" || c === "over-shoulder")) expect(place.name, moment.text).toBe("her bed");
+      }
+    }
+  });
+
+  // Plan r1.5 #3: the look back along her body is turned, never straight on.
+  test("every over-her-shoulder moment is three-quarter: she looks back along her body", () => {
+    const pov = BANKS.home.places.flatMap((p) => p.moments).filter((m) => m.captures.includes("over-shoulder"));
+    expect(pov.length).toBeGreaterThanOrEqual(2);
+    for (const moment of pov) expect(moment.angle).toBe("three-quarter");
+  });
+
+  // Owner rule: side or back to the mirror shows only her reflection, so such a moment is a phone-over-face frame tagged mirrorBack.
+  test("a moment that stands or sits sideways to the mirror is a mirrorBack phone-over-face frame", () => {
+    for (const place of BANKS.home.places) {
+      for (const moment of place.moments) {
+        if (/sideways to the mirror|counter by the mirror/.test(moment.text)) expect({ text: moment.text, back: moment.mirrorBack, captures: moment.captures }).toEqual({ text: moment.text, back: true, captures: ["mirror-hidden"] });
+      }
+    }
+  });
+
+  // The prone selfie keeps one hand free, so its arm line says «one arm out»; a hand at her face (cheek on her hand) takes no hand cue.
+  test("the prone selfie stretches one arm out, and a moment with a hand at her face is tagged so", () => {
+    const moments = BANKS.home.places.flatMap((p) => p.moments);
+    expect(moments.some((m) => m.text === "lies on her stomach, one arm out")).toBe(true);
+    expect(moments.some((m) => /\barms out\b/.test(m.text))).toBe(false);
+    for (const moment of moments.filter((m) => /cheek on her hand|head on her hand/.test(m.text))) expect(moment.handAtFace, moment.text).toBe(true);
   });
 
   test("the over-her-shoulder POV lies on the bed, feet up in platform sneakers, in leggings or lounge shorts", () => {
@@ -137,7 +170,7 @@ describe("what any content must keep", () => {
     expect(counter).toMatchObject({ captures: ["mirror-hidden"], angle: "three-quarter", outfits: ["an open-back top and grey jeans"] });
     // r1.5 (owner note): side to the mirror, only her reflection is in the picture, so S5.6b's capture line adds that sentence for this moment alone.
     expect(counter?.mirrorBack).toBe(true);
-    expect(BANK_CATEGORIES.flatMap((c) => places(c).flatMap((p) => p.moments)).filter((m) => m.mirrorBack === true)).toHaveLength(1);
+    expect(BANK_CATEGORIES.flatMap((c) => places(c).flatMap((p) => p.moments)).filter((m) => m.mirrorBack === true)).toHaveLength(2);
     for (const moment of moments("home").filter((m) => /lies on her stomach/.test(m.text))) expect(moment.outfits ?? []).toContain("grey leggings and a cropped tee");
     expect(CUES.find((c) => c.text === "her tongue out a little")?.captures).toEqual(["above", "prone"]);
   });

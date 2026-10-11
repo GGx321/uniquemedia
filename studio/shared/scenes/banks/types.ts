@@ -49,6 +49,8 @@ export interface Moment {
   hair?: MomentHair;
   /** The moment shows her expression itself (laughs, smiles): no cue is added, so none contradicts it. */
   expression?: true;
+  /** A hand is already at her face (cheek on her hand): no hand cue («her hand at her cheek», «a finger near her lips») is added. */
+  handAtFace?: true;
   /** Outdoors in daylight: the only moments a cap may go to. */
   outdoor?: true;
   /** Posing by an object (a lamppost, a shop window): a moment, not a capture kind (r1.2). */
@@ -124,6 +126,8 @@ export interface Cue {
   level?: "flirty";
   /** The only captures this cue goes with («a finger near her lips» on «Дом»'s close selfies). Absent: every capture. */
   captures?: readonly Capture[];
+  /** The cue uses her free hand: never added to a moment with a hand at her face (`handAtFace`). */
+  hand?: true;
 }
 
 /** A hairstyle, as it reads after «Today her hair is …». */

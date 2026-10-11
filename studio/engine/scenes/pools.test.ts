@@ -54,8 +54,8 @@ describe("the shipped pools", () => {
   // 5a.2 (S5.6b, I5.32): the decks are the captures, dealt in exact cycles; the stored `shotDeck` is the five shots they ride on (I5.27).
   const sortedDeck = (deck: readonly string[] | undefined): string[] => [...(deck ?? [])].sort();
 
-  test("«Дом» deals 12: four phone-over-face mirror selfies, two mirrors, two from above, one prone, one over the shoulder, two timers, and never a friend", () => {
-    expect(sortedDeck(POOLS.home.captureDeck)).toEqual(sortedDeck(["mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror", "mirror", "above", "above", "prone", "over-shoulder", "timer", "timer"]));
+  test("«Дом» deals 12: four phone-over-face mirror selfies, two mirrors, two from above, two prone, one over the shoulder, one timer, and never a friend", () => {
+    expect(sortedDeck(POOLS.home.captureDeck)).toEqual(sortedDeck(["mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror-hidden", "mirror", "mirror", "above", "above", "prone", "prone", "over-shoulder", "timer"]));
   });
 
   test("«Улица» and «Виды» deal 6: three friends, a selfie, a timer and a candid", () => {

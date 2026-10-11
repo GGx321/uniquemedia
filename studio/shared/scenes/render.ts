@@ -100,6 +100,8 @@ export interface SentenceParts {
   gaze?: MomentGaze | undefined;
   /** The moment shows her expression itself: no cue. */
   expression?: boolean | undefined;
+  /** A hand is already at her face: no hand cue. */
+  handAtFace?: boolean | undefined;
   /** The place's details for `with {detail}`; none for a room or a custom place. */
   details: readonly string[];
 }
@@ -118,9 +120,9 @@ function gazeOptions(capture: Capture, pose: ScenePose, gaze: MomentGaze | undef
   return byLevel(fitting, gaze === "focus" ? "ordinary" : level);
 }
 
-function cueOptions(capture: Capture, level: Level): readonly Cue[] {
+function cueOptions(capture: Capture, level: Level, handAtFace: boolean): readonly Cue[] {
   return byLevel(
-    CUES.filter((c) => c.captures === undefined || c.captures.includes(capture)),
+    CUES.filter((c) => (c.captures === undefined || c.captures.includes(capture)) && !(handAtFace && c.hand === true)),
     level,
   );
 }
@@ -139,7 +141,7 @@ function draw(parts: SentenceParts, frame: Frame, key: string): string {
   if (faceVisibleOf(frame) !== "no") {
     const gazes = gazeOptions(frame.capture, frame.pose, parts.gaze, frame.level, frame.framing);
     if (gazes.length > 0) clauses.push(pick(gazes, key, "gaze").text);
-    const cues = parts.expression === true ? [] : cueOptions(frame.capture, frame.level);
+    const cues = parts.expression === true ? [] : cueOptions(frame.capture, frame.level, parts.handAtFace === true);
     if (cues.length > 0) clauses.push(pick(cues, key, "cue").text);
   }
   if (parts.details.length > 0) clauses.push(`with ${pick(parts.details, key, "detail")}`);

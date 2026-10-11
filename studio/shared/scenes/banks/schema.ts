@@ -213,6 +213,7 @@ const MomentSchema = z.strictObject({
   gaze: z.enum(["own", "viewer", "focus"]).optional(),
   hair: z.enum(["tied", "loose", "own"]).optional(),
   expression: z.literal(true).optional(),
+  handAtFace: z.literal(true).optional(),
   outdoor: z.literal(true).optional(),
   object: z.literal(true).optional(),
   outfits: z.array(z.string()).optional(),
@@ -316,7 +317,7 @@ const GazeBankSchema = z
   });
 
 const CueBankSchema = z
-  .array(z.strictObject({ text: z.string(), level: z.literal("flirty").optional(), captures: z.array(CaptureSchema).optional() }))
+  .array(z.strictObject({ text: z.string(), level: z.literal("flirty").optional(), captures: z.array(CaptureSchema).optional(), hand: z.literal(true).optional() }))
   .min(1)
   .superRefine((cues, ctx) => {
     const add = adder(ctx);

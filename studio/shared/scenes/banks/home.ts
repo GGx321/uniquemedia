@@ -27,7 +27,7 @@ export const HOME: CategoryBank = {
       details: ["a string of fairy lights", "a bedside lamp", "a plain wall behind her"],
       times: ["morning", "evening", "night"],
       moments: [
-        { text: "stands sideways to the mirror", motion: "she turns her hips a little", captures: ["mirror"], twoHanded: false, angle: "three-quarter" },
+        { text: "stands sideways to the mirror", motion: "she turns her hips a little", captures: ["mirror-hidden"], twoHanded: false, angle: "three-quarter", mirrorBack: true },
         { text: "stands with her weight on one hip", motion: "she shifts her weight slowly", captures: ["mirror-hidden", "mirror"], twoHanded: false },
         { text: "adjusts the hem of her top", motion: "she smooths the hem down slowly", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false, gaze: "focus" },
         { text: "tucks her hair behind one ear", motion: "she tucks her hair back slowly", captures: ["mirror", "timer"], twoHanded: false, hair: "own" },
@@ -44,9 +44,9 @@ export const HOME: CategoryBank = {
       times: ["morning", "evening", "night"],
       moments: [
         { text: "lies back on the pillow", motion: "she slowly blinks and smiles", captures: ["above"], twoHanded: false, messyOk: true },
-        { text: "lies on her side, head on her hand", motion: "she smiles a little and looks away", captures: ["above", "timer"], twoHanded: false },
+        { text: "lies on her side, head on her hand", motion: "she smiles a little and looks away", captures: ["above", "timer"], twoHanded: false, handAtFace: true },
         {
-          text: "lies on her stomach, arms out",
+          text: "lies on her stomach, one arm out",
           motion: "she lifts her hips a little",
           startPose: "flat on her stomach, hips down",
           captures: ["prone"],
@@ -57,10 +57,10 @@ export const HOME: CategoryBank = {
         { text: "lies on her stomach, legs bent up", motion: "she kicks her feet slowly", captures: ["timer"], twoHanded: false, angle: "back", outfits: PRONE, noLegwear: true },
         { text: "lies on her stomach, hips behind", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies on her stomach, on her elbows", motion: "she shifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
-        { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE },
-        { text: "lies prone, sneakers raised behind", motion: "her raised sneakers swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, outfits: SNEAKERS, noLegwear: true },
-        { text: "lies prone, feet up in sneakers", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, outfits: SNEAKERS, noLegwear: true },
-        { text: "lies prone, glancing back", motion: "she turns her head a little further", captures: ["over-shoulder"], twoHanded: false, gaze: "own", outfits: SNEAKERS, noLegwear: true },
+        { text: "lies prone, her cheek on her hand", motion: "she slowly blinks and smiles", captures: ["prone"], twoHanded: false, outfits: PRONE, handAtFace: true },
+        { text: "lies prone, sneakers raised behind", motion: "her raised sneakers swing slowly behind her", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
+        { text: "lies prone, feet up in sneakers", motion: "she crosses her raised ankles slowly", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", outfits: SNEAKERS, noLegwear: true },
+        { text: "lies prone, glancing back", motion: "she turns her head a little further", captures: ["over-shoulder"], twoHanded: false, angle: "three-quarter", gaze: "own", outfits: SNEAKERS, noLegwear: true },
         { text: "sits cross-legged", motion: "she rocks a little side to side", captures: ["timer"], twoHanded: false },
         { text: "rests her cheek on the pillow", motion: "she slowly closes her eyes", captures: ["above"], twoHanded: false },
         { text: "lies curled under the blanket", motion: "she pulls the blanket up a little", captures: ["above", "timer"], twoHanded: false, messyOk: true },
@@ -81,7 +81,7 @@ export const HOME: CategoryBank = {
         { text: "sits with her legs to one side", motion: "she leans back a little", captures: ["mirror-hidden", "mirror", "timer"], twoHanded: false },
         { text: "sits hugging her knees", motion: "she rocks a little on the floor", captures: ["timer"], twoHanded: true },
         { text: "leans back on her hands on the rug", motion: "she tilts her head a little", captures: ["timer"], twoHanded: true },
-        { text: "lies on her stomach on the rug", motion: "she lifts her hips a little", captures: ["prone"], twoHanded: false, outfits: PRONE },
+        { text: "lies on her stomach on the rug", motion: "she lifts her hips a little", captures: ["mirror-hidden"], twoHanded: false, outfits: PRONE },
         { text: "lies back on the rug", motion: "she slowly turns her head", captures: ["above", "timer"], twoHanded: false },
       ],
     },
@@ -143,5 +143,5 @@ export const HOME: CategoryBank = {
   ],
   legwear: { items: ["white knee-high socks", "black knee-high socks", "thigh-high socks", "sheer black tights"], share: 0.4 },
   // ⅓ phone-over-face mirror frames (I5.32), never a friend; the prone selfie and the over-her-shoulder POV share the prone body's 1 in 6.
-  captureDeck: ["mirror-hidden", "mirror", "above", "mirror-hidden", "prone", "timer", "mirror-hidden", "mirror", "above", "mirror-hidden", "over-shoulder", "timer"],
+  captureDeck: ["mirror-hidden", "mirror", "above", "mirror-hidden", "prone", "timer", "mirror-hidden", "mirror", "above", "mirror-hidden", "over-shoulder", "prone"],
 };
